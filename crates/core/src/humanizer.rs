@@ -62,7 +62,8 @@ pub const HUMANIZER_CONTEXT: usize = 8192;
 /// draft token, floored and capped per the publisher's usage guide
 /// (256..=2048), and always clampable by the caller via `--max-new`.
 pub fn default_max_new(draft_tokens: usize) -> u32 {
-    (draft_tokens * 5 / 2).clamp(256, 2048) as u32
+    // Saturate so an absurd count lands on the cap, not a wrapped floor.
+    (draft_tokens.saturating_mul(5) / 2).clamp(256, 2048) as u32
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +317,15 @@ mod tests {
         assert_eq!(default_max_new(1000), 2048);
         assert_eq!(default_max_new(4000), 2048);
         assert_eq!(default_max_new(400), 1000);
+    }
+
+    #[test]
+    fn default_budget_saturates_instead_of_wrapping() {
+        // A wrapping `* 5` turns a huge count into a small one, which
+        // clamps to the 256 floor in release (and panics in debug) rather
+        // than the 2048 cap the input deserves.
+        assert_eq!(default_max_new(usize::MAX), 2048);
+        assert_eq!(default_max_new(usize::MAX / 5 + 1), 2048);
     }
 
     #[test]

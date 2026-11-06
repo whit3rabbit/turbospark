@@ -55,6 +55,7 @@ pub fn resized_dims(
     orig_w: usize,
     params: &PreprocessParams,
 ) -> Result<(usize, usize), VisionIoError> {
+    params.check_geometry()?;
     if orig_h == 0 || orig_w == 0 {
         return Err(VisionIoError::InvalidDimensions {
             detail: format!("source image is {orig_w}x{orig_h}; both edges must be positive"),

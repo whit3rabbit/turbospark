@@ -1480,11 +1480,16 @@ impl ImageBackend for MetalImageBackend {
         let framed = frame_prompt(prompt, &self.tokenizer)
             .map_err(|e| format!("failed to frame image prompt: {e}"))?;
         let (padded_ids, mask) = tokenize_prompt(&framed, &self.tokenizer, max_tokens);
+        // A hostile tokenizer.json can emit negative or oversized ids; `as u32`
+        // would alias them onto other rows, so refuse instead.
         let ids: Vec<u32> = padded_ids
             .into_iter()
             .zip(mask)
-            .filter_map(|(id, active)| (active != 0).then_some(id as u32))
-            .collect();
+            .filter(|&(_, active)| active != 0)
+            .map(|(id, _)| {
+                u32::try_from(id).map_err(|_| format!("image prompt token id {id} out of range"))
+            })
+            .collect::<Result<_, _>>()?;
         if ids.is_empty() {
             return Err("image prompt produced no active tokens".to_string());
         }
@@ -1541,6 +1546,14 @@ impl ImageBackend for MetalImageBackend {
         cancellation: &CancellationToken,
         progress: &mut dyn FnMut(u32, u32),
     ) -> Result<Vec<f32>, String> {
+        // Same guard as denoise_steps_impl: denoise_impl indexes timesteps and
+        // sigmas by request.scheduler_steps, so a mismatched direct trait call
+        // would panic instead of returning an error.
+        if scheduler.timesteps.len() != request.scheduler_steps as usize
+            || scheduler.sigmas.len() != request.scheduler_steps as usize + 1
+        {
+            return Err("native image scheduler shape does not match the request".to_string());
+        }
         let mut step_observer = |_: usize, _: &[f32]| {};
         self.denoise_impl(
             conditioning,

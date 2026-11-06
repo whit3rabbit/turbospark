@@ -229,7 +229,13 @@ pub fn decoded_to_rgb8(decoded: &[f32], height: usize, width: usize) -> Result<V
 pub fn encode_rgb8_png(rgb: &[u8], width: usize, height: usize) -> Result<Vec<u8>, String> {
     let width_u32 = u32::try_from(width).map_err(|_| "PNG width exceeds u32".to_string())?;
     let height_u32 = u32::try_from(height).map_err(|_| "PNG height exceeds u32".to_string())?;
-    if width == 0 || height == 0 || rgb.len() != width * height * VAE_OUT_CHANNELS {
+    // Checked like decoded_to_rgb8: u32-sized dims can overflow usize here,
+    // and a wrapped product could match a short buffer in release builds.
+    let expected = width
+        .checked_mul(height)
+        .and_then(|plane| plane.checked_mul(VAE_OUT_CHANNELS))
+        .ok_or_else(|| "PNG dimensions overflow".to_string())?;
+    if width == 0 || height == 0 || rgb.len() != expected {
         return Err("RGB buffer must exactly match nonzero width * height * 3".to_string());
     }
     let mut bytes = Vec::new();
@@ -412,6 +418,25 @@ impl VaeAttention {
     pub fn forward(&self, x: &[f32], h: usize, w: usize) -> Result<Vec<f32>, String> {
         let n = h * w;
         let c = self.channels;
+
+        // Projection tensors come straight from the checkpoint; check their
+        // element counts here, like conv2d and group_norm, so a malformed
+        // install returns an error instead of panicking on a row slice.
+        let square = c
+            .checked_mul(c)
+            .ok_or_else(|| "VAE attention channel count overflows".to_string())?;
+        let projections = [
+            (&self.q_weight, &self.q_bias),
+            (&self.k_weight, &self.k_bias),
+            (&self.v_weight, &self.v_bias),
+            (&self.out_weight, &self.out_bias),
+        ];
+        if projections
+            .iter()
+            .any(|(weight, bias)| weight.len() != square || bias.len() != c)
+        {
+            return Err("VAE attention projection shape mismatch".to_string());
+        }
 
         // GroupNorm
         let normed = group_norm(
@@ -762,5 +787,57 @@ impl VaeDecoder {
             1,
             1,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn attention(c: usize) -> VaeAttention {
+        VaeAttention {
+            channels: c,
+            norm_weight: vec![1.0; c],
+            norm_bias: vec![0.0; c],
+            q_weight: vec![0.0; c * c],
+            q_bias: vec![0.0; c],
+            k_weight: vec![0.0; c * c],
+            k_bias: vec![0.0; c],
+            v_weight: vec![0.0; c * c],
+            v_bias: vec![0.0; c],
+            out_weight: vec![0.0; c * c],
+            out_bias: vec![0.0; c],
+        }
+    }
+
+    // A checkpoint tensor with the wrong element count must surface as an
+    // error, like the conv and GroupNorm checks, not as a slice panic.
+    #[test]
+    fn attention_rejects_short_projection_tensors() {
+        let c = GROUP_NORM_GROUPS;
+        let (h, w) = (2, 2);
+        let x = vec![0.5f32; c * h * w];
+        assert!(attention(c).forward(&x, h, w).is_ok());
+
+        let mutations: [fn(&mut VaeAttention); 8] = [
+            |a| a.q_weight.truncate(1),
+            |a| a.q_bias.truncate(1),
+            |a| a.k_weight.truncate(1),
+            |a| a.k_bias.truncate(1),
+            |a| a.v_weight.truncate(1),
+            |a| a.v_bias.truncate(1),
+            |a| a.out_weight.truncate(1),
+            |a| a.out_bias.truncate(1),
+        ];
+        for (index, mutate) in mutations.iter().enumerate() {
+            let mut bad = attention(c);
+            mutate(&mut bad);
+            let result = std::panic::catch_unwind(|| bad.forward(&x, h, w));
+            match result {
+                Ok(Err(_)) => {}
+                Ok(Ok(_)) => panic!("mutation {index} was accepted"),
+                Err(_) => panic!("mutation {index} panicked instead of returning an error"),
+            }
+        }
     }
 }

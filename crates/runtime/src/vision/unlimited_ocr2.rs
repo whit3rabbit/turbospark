@@ -33,6 +33,7 @@ const SAM_HEADS: usize = 12;
 const SAM_DEPTH: usize = 12;
 const SAM_MLP: usize = 3072;
 const SAM_GLOBAL: [usize; 4] = [2, 5, 8, 11];
+const SAM_SOURCE_GRID: usize = 64;
 const SAM_EPS: f32 = 1e-6;
 const NECK: usize = 256;
 const CLIP_DIM: usize = 1024;
@@ -49,6 +50,161 @@ fn gpu_err(e: gpu::GpuError) -> RealForwardError {
 
 fn unsupported(detail: String) -> RealForwardError {
     RealForwardError::Unsupported(detail)
+}
+
+/// The real index is 61 KB.
+const INDEX_LIMIT: u64 = 1 << 20;
+/// The real bin is 803 MB, and the tower's shape is fixed by the constants
+/// above. Both files come from a downloaded checkpoint, and the bin is held
+/// three times over at open (read, Metal buffer, host table), so an unbounded
+/// one exhausts memory before any shape check runs.
+const BIN_LIMIT: u64 = 2 << 30;
+
+/// `whisper/admission.rs`'s bounded read: the length check refuses without
+/// reading, and `take` still caps a file that grows or lies about its size.
+fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let len = file.metadata().map_err(|e| e.to_string())?.len();
+    let mut bytes = Vec::new();
+    if len <= limit {
+        file.take(limit + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
+    }
+    let seen = len.max(bytes.len() as u64);
+    if seen > limit {
+        return Err(format!("{seen} bytes exceeds the {limit} byte limit"));
+    }
+    Ok(bytes)
+}
+
+/// Every weight a view reads, with its element count. The kernels size their
+/// reads from these constants and never see the index's shape, so an entry
+/// shorter than this reads past the Metal buffer however well it fits the bin.
+fn required_tensors() -> Vec<(String, usize)> {
+    let mut out: Vec<(String, usize)> = [
+        ("sam.patch_embed.proj.weight", SAM_DIM * 16 * 16 * 3),
+        ("sam.patch_embed.proj.bias", SAM_DIM),
+        ("sam.pos_embed", SAM_SOURCE_GRID * SAM_SOURCE_GRID * SAM_DIM),
+        ("sam.neck.0.weight", NECK * SAM_DIM),
+        ("sam.neck.1.weight", NECK),
+        ("sam.neck.1.bias", NECK),
+        ("sam.neck.2.weight", NECK * 3 * 3 * NECK),
+        ("sam.neck.3.weight", NECK),
+        ("sam.neck.3.bias", NECK),
+        ("sam.net_2.weight", 512 * 3 * 3 * NECK),
+        ("sam.net_3.weight", CLIP_DIM * 3 * 3 * 512),
+        ("clip.embeddings.class_embedding", CLIP_DIM),
+        (
+            "clip.embeddings.position_embedding.weight",
+            (CLIP_SOURCE_GRID * CLIP_SOURCE_GRID + 1) * CLIP_DIM,
+        ),
+        ("clip.pre_layrnorm.weight", CLIP_DIM),
+        ("clip.pre_layrnorm.bias", CLIP_DIM),
+        ("projector.weight", OUT_DIM * CLIP_DIM * 2),
+        ("projector.bias", OUT_DIM),
+        ("image_newline", OUT_DIM),
+        ("view_separator", OUT_DIM),
+    ]
+    .into_iter()
+    .map(|(name, n)| (name.to_string(), n))
+    .collect();
+    for block in 0..SAM_DEPTH {
+        let side = if SAM_GLOBAL.contains(&block) {
+            SAM_SOURCE_GRID
+        } else {
+            WINDOW
+        };
+        let rel_pos = (2 * side - 1) * (SAM_DIM / SAM_HEADS);
+        for (suffix, n) in [
+            ("norm1.weight", SAM_DIM),
+            ("norm1.bias", SAM_DIM),
+            ("norm2.weight", SAM_DIM),
+            ("norm2.bias", SAM_DIM),
+            ("attn.qkv.weight", 3 * SAM_DIM * SAM_DIM),
+            ("attn.qkv.bias", 3 * SAM_DIM),
+            ("attn.proj.weight", SAM_DIM * SAM_DIM),
+            ("attn.proj.bias", SAM_DIM),
+            ("attn.rel_pos_h", rel_pos),
+            ("attn.rel_pos_w", rel_pos),
+            ("mlp.lin1.weight", SAM_MLP * SAM_DIM),
+            ("mlp.lin1.bias", SAM_MLP),
+            ("mlp.lin2.weight", SAM_DIM * SAM_MLP),
+            ("mlp.lin2.bias", SAM_DIM),
+        ] {
+            out.push((format!("sam.blocks.{block}.{suffix}"), n));
+        }
+    }
+    for block in 0..CLIP_DEPTH {
+        for (suffix, n) in [
+            ("layer_norm1.weight", CLIP_DIM),
+            ("layer_norm1.bias", CLIP_DIM),
+            ("layer_norm2.weight", CLIP_DIM),
+            ("layer_norm2.bias", CLIP_DIM),
+            ("self_attn.qkv_proj.weight", 3 * CLIP_DIM * CLIP_DIM),
+            ("self_attn.qkv_proj.bias", 3 * CLIP_DIM),
+            ("self_attn.out_proj.weight", CLIP_DIM * CLIP_DIM),
+            ("self_attn.out_proj.bias", CLIP_DIM),
+            ("mlp.fc1.weight", CLIP_MLP * CLIP_DIM),
+            ("mlp.fc1.bias", CLIP_MLP),
+            ("mlp.fc2.weight", CLIP_DIM * CLIP_MLP),
+            ("mlp.fc2.bias", CLIP_DIM),
+        ] {
+            out.push((format!("clip.transformer.blocks.{block}.{suffix}"), n));
+        }
+    }
+    out
+}
+
+/// `uocr2_tower.json` against the bin it indexes. This is the only check between
+/// a checkpoint's file and both readers: `host` slices with these numbers, and
+/// the GPU binds the offsets with no bounds check of its own.
+fn parse_tower_index(
+    index_bytes: &[u8],
+    bin_bytes: u64,
+) -> Result<HashMap<String, (u64, Vec<u64>)>, RealForwardError> {
+    let bad = |detail: String| unsupported(format!("reading uocr2_tower.json: {detail}"));
+    let root: serde_json::Value =
+        serde_json::from_slice(index_bytes).map_err(|e| bad(e.to_string()))?;
+    let mut index = HashMap::new();
+    for (name, entry) in root.as_object().into_iter().flatten() {
+        let offset = entry["offset"].as_u64();
+        let shape: Option<Vec<u64>> = entry["shape"]
+            .as_array()
+            .and_then(|s| s.iter().map(serde_json::Value::as_u64).collect());
+        let (Some(offset), Some(shape)) = (offset, shape) else {
+            return Err(bad(format!("bad entry {name}")));
+        };
+        // Checked, because release builds wrap: a huge shape would come out as a
+        // tiny tensor that passes the bin check below.
+        let end = shape
+            .iter()
+            .try_fold(1u64, |n, d| n.checked_mul(*d))
+            .and_then(|n| n.checked_mul(2))
+            .and_then(|n| offset.checked_add(n));
+        // Even, because the weights are FP16 and `host` halves this offset while
+        // the GPU binds it whole: odd, the two would read different weights.
+        if offset % 2 != 0 || end.is_none_or(|end| end > bin_bytes) {
+            return Err(bad(format!(
+                "{name} (offset {offset}, shape {shape:?}) does not fit a {bin_bytes} byte bin"
+            )));
+        }
+        index.insert(name.clone(), (offset, shape));
+    }
+    for (name, want) in required_tensors() {
+        let (_, shape) = index
+            .get(&name)
+            .ok_or_else(|| RealForwardError::MissingTensor(format!("uocr2_tower/{name}")))?;
+        // In range after the loop above, so this cannot overflow.
+        let have: u64 = shape.iter().product();
+        if have != want as u64 {
+            return Err(bad(format!(
+                "{name} has {have} values, the tower reads {want}"
+            )));
+        }
+    }
+    Ok(index)
 }
 
 /// Intermediate rows of a view, for the parity gate.
@@ -77,25 +233,11 @@ pub(crate) struct Uocr2Tower {
 impl Uocr2Tower {
     pub(crate) fn open(context: &gpu::MetalContext, dir: &Path) -> Result<Self, RealForwardError> {
         let read_err = |what: &str, e: String| unsupported(format!("reading {what}: {e}"));
-        let index_bytes = std::fs::read(dir.join("uocr2_tower.json"))
-            .map_err(|e| read_err("uocr2_tower.json", e.to_string()))?;
-        let root: serde_json::Value = serde_json::from_slice(&index_bytes)
-            .map_err(|e| read_err("uocr2_tower.json", e.to_string()))?;
-        let mut index = HashMap::new();
-        for (name, entry) in root.as_object().into_iter().flatten() {
-            let offset = entry["offset"].as_u64();
-            let shape: Option<Vec<u64>> = entry["shape"]
-                .as_array()
-                .and_then(|s| s.iter().map(serde_json::Value::as_u64).collect());
-            match (offset, shape) {
-                (Some(offset), Some(shape)) => {
-                    index.insert(name.clone(), (offset, shape));
-                }
-                _ => return Err(read_err("uocr2_tower.json", format!("bad entry {name}"))),
-            }
-        }
-        let raw = std::fs::read(dir.join("uocr2_tower.bin"))
-            .map_err(|e| read_err("uocr2_tower.bin", e.to_string()))?;
+        let index_bytes = read_bounded(&dir.join("uocr2_tower.json"), INDEX_LIMIT)
+            .map_err(|e| read_err("uocr2_tower.json", e))?;
+        let raw = read_bounded(&dir.join("uocr2_tower.bin"), BIN_LIMIT)
+            .map_err(|e| read_err("uocr2_tower.bin", e))?;
+        let index = parse_tower_index(&index_bytes, raw.len() as u64)?;
         let weights = context.new_buffer_with_data(&raw);
         let bytes = raw
             .chunks_exact(2)
@@ -128,6 +270,7 @@ impl Uocr2Tower {
     }
 
     fn host(&self, name: &str) -> Result<Vec<f32>, RealForwardError> {
+        // `parse_tower_index` proved this range is inside the bin.
         let (offset, shape) = self.entry(name)?;
         let n: u64 = shape.iter().product();
         let start = (*offset / 2) as usize;
@@ -153,7 +296,7 @@ impl Uocr2Tower {
             return Ok(());
         }
         let source = self.host("sam.pos_embed")?;
-        let sam_pos = bicubic_resize_antialias(&source, 64, SAM_DIM, grid);
+        let sam_pos = bicubic_resize_antialias(&source, SAM_SOURCE_GRID, SAM_DIM, grid);
         let clip = self.host("clip.embeddings.position_embedding.weight")?;
         let clip_grid = grid / 4;
         let mut clip_pos = clip[..CLIP_DIM].to_vec();
@@ -782,5 +925,29 @@ impl Uocr2Tower {
         }
         rows.extend_from_slice(&separator);
         Ok(rows)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The refusals must not refuse a real checkpoint. Reads the index and the
+    /// bin's length only, so it opens no model.
+    #[test]
+    #[ignore = "needs TURBOSPARK_UOCR2_INSTALL_DIR, a real install"]
+    fn a_real_install_passes_the_index_checks() {
+        let dir = std::path::PathBuf::from(
+            std::env::var_os("TURBOSPARK_UOCR2_INSTALL_DIR")
+                .expect("set TURBOSPARK_UOCR2_INSTALL_DIR"),
+        );
+        let index_bytes = std::fs::read(dir.join("uocr2_tower.json")).unwrap();
+        let bin_bytes = std::fs::metadata(dir.join("uocr2_tower.bin"))
+            .unwrap()
+            .len();
+        let index = parse_tower_index(&index_bytes, bin_bytes).unwrap();
+        // Everything read, plus CLIP's patch embedding, which SAM's output
+        // replaces and no pass reads.
+        assert_eq!(index.len(), required_tensors().len() + 1);
     }
 }

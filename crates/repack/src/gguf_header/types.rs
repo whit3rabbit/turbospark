@@ -18,6 +18,13 @@ pub const DEFAULT_ALIGNMENT: u64 = 32;
 /// the count fields, so they are rejected by name rather than misparsed.
 pub const SUPPORTED_VERSION: u32 = 3;
 
+/// Deepest array-of-array nesting the parser walks. The spec allows nested
+/// arrays, but each level costs one parser stack frame for 12 file bytes, so
+/// the byte cap alone admits enough levels to overflow the stack, which aborts
+/// the process rather than returning an error. No metadata reader in this
+/// crate expects anything but a flat array, so this is far above real use.
+pub const MAX_ARRAY_DEPTH: u32 = 64;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum GgufHeaderError {
     /// The buffer ends before the header does. `needed` is the absolute
@@ -42,6 +49,11 @@ pub enum GgufHeaderError {
     },
     InvalidUtf8 {
         context: String,
+    },
+    /// A metadata array nests deeper than [`MAX_ARRAY_DEPTH`].
+    ArrayTooDeep {
+        context: String,
+        max_depth: u32,
     },
     DuplicateTensor {
         name: String,
@@ -112,6 +124,9 @@ impl std::fmt::Display for GgufHeaderError {
             }
             GgufHeaderError::InvalidUtf8 { context } => {
                 write!(f, "{context} is not valid UTF-8")
+            }
+            GgufHeaderError::ArrayTooDeep { context, max_depth } => {
+                write!(f, "{context}: array nesting exceeds the depth limit of {max_depth}")
             }
             GgufHeaderError::DuplicateTensor { name } => {
                 write!(f, "duplicate tensor name {name}")

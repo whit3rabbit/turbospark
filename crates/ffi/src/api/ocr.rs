@@ -231,6 +231,40 @@ pub unsafe extern "C" fn ts_ocr_cancel(ptr: *const TsOcrSession) {
     })
 }
 
+/// Validates a pixel page's shape and returns `(packed_row_bytes,
+/// source_bytes)`. The side ceiling matches `ts_ocr_add_page_file`
+/// (`MAX_IMAGE_DIM`): without it, dimensions in the gigapixel range reach
+/// `Vec::with_capacity`, whose failure aborts the process instead of
+/// returning through the ABI guard.
+fn rgb_page_layout(
+    width: usize,
+    height: usize,
+    row_bytes: usize,
+) -> Result<(usize, usize), (c_int, String)> {
+    if width == 0 || height == 0 {
+        return Err((
+            abi::TS_ERR_INVALID_ARGUMENT,
+            "rgb, width and height are required".into(),
+        ));
+    }
+    let max = turbospark_vision_io::MAX_IMAGE_DIM as usize;
+    if width > max || height > max {
+        return Err((
+            abi::TS_ERR_INVALID_ARGUMENT,
+            format!("page {width}x{height} exceeds the {max} pixel side limit"),
+        ));
+    }
+    let packed = width.checked_mul(3).filter(|&w| row_bytes >= w).ok_or((
+        abi::TS_ERR_INVALID_ARGUMENT,
+        "row_bytes is smaller than width * 3".into(),
+    ))?;
+    let total = row_bytes
+        .checked_mul(height)
+        .filter(|&t| t <= isize::MAX as usize)
+        .ok_or((abi::TS_ERR_INVALID_ARGUMENT, "image is too large".into()))?;
+    Ok((packed, total))
+}
+
 /// Adds one page from interleaved RGB8 pixels. `row_bytes` is the stride
 /// of one row (at least `width * 3`).
 #[no_mangle]
@@ -246,20 +280,10 @@ pub unsafe extern "C" fn ts_ocr_add_page_rgb(
             abi::TS_ERR_INVALID_ARGUMENT,
             "session must not be null".into(),
         ))?;
-        if rgb.is_null() || width == 0 || height == 0 {
-            return Err((
-                abi::TS_ERR_INVALID_ARGUMENT,
-                "rgb, width and height are required".into(),
-            ));
+        if rgb.is_null() {
+            return Err((abi::TS_ERR_INVALID_ARGUMENT, "rgb is required".into()));
         }
-        let packed = width.checked_mul(3).filter(|&w| row_bytes >= w).ok_or((
-            abi::TS_ERR_INVALID_ARGUMENT,
-            "row_bytes is smaller than width * 3".into(),
-        ))?;
-        let total = row_bytes
-            .checked_mul(height)
-            .filter(|&t| t <= isize::MAX as usize)
-            .ok_or((abi::TS_ERR_INVALID_ARGUMENT, "image is too large".into()))?;
+        let (packed, total) = rgb_page_layout(width, height, row_bytes)?;
         #[cfg(target_os = "macos")]
         {
             let src = std::slice::from_raw_parts(rgb, total);
@@ -395,4 +419,26 @@ pub unsafe extern "C" fn ts_ocr_read_json(
             unsupported()
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rgb_page_layout_refuses_sides_past_the_file_decode_limit() {
+        let max = turbospark_vision_io::MAX_IMAGE_DIM as usize;
+        assert_eq!(
+            rgb_page_layout(max, max, max * 3).unwrap(),
+            (max * 3, max * 3 * max)
+        );
+        // 100k x 100k is 30 GB of RGB: refused before any allocation.
+        let err = rgb_page_layout(100_000, 100_000, 300_000).unwrap_err();
+        assert_eq!(err.0, abi::TS_ERR_INVALID_ARGUMENT);
+        assert!(err.1.contains("side limit"), "{}", err.1);
+        assert!(rgb_page_layout(max + 1, 1, (max + 1) * 3).is_err());
+        assert!(rgb_page_layout(1, max + 1, 3).is_err());
+        assert!(rgb_page_layout(0, 1, 3).is_err());
+        assert!(rgb_page_layout(2, 2, 5).is_err());
+    }
 }

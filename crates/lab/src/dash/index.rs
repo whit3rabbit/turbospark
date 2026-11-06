@@ -250,13 +250,13 @@ fn short_rev(v: &Value) -> Option<String> {
 /// only when it resolves inside the lab dir, so a crafted ledger cannot turn
 /// the index into an arbitrary-file reader.
 fn read_record_file(lab_root: &Path, path: &str) -> Option<String> {
-    let inside = std::fs::canonicalize(path)
-        .map(|p| p.starts_with(lab_root))
-        .unwrap_or(false);
-    if !inside {
+    // Read the resolved path, not the original: re-resolving `path` after
+    // the check would follow a symlink swapped in between check and read.
+    let resolved = std::fs::canonicalize(path).ok()?;
+    if !resolved.starts_with(lab_root) {
         return None;
     }
-    std::fs::read_to_string(path).ok()
+    std::fs::read_to_string(resolved).ok()
 }
 
 fn load_experiment(lab: &Path, name: &str) -> Experiment {
@@ -564,6 +564,26 @@ impl LabIndex {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn record_file_read_stays_inside_lab_root() {
+        let base = std::env::temp_dir().join(format!("tslab-rec-{}", std::process::id()));
+        let lab = base.join("lab");
+        std::fs::create_dir_all(&lab).unwrap();
+        let outside = base.join("secret.txt");
+        std::fs::write(&outside, "secret").unwrap();
+        std::fs::write(lab.join("run.json"), "inside").unwrap();
+        let link = lab.join("link.json");
+        let _ = std::fs::remove_file(&link);
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        let root = std::fs::canonicalize(&lab).unwrap();
+        assert_eq!(
+            read_record_file(&root, lab.join("run.json").to_str().unwrap()).as_deref(),
+            Some("inside")
+        );
+        assert_eq!(read_record_file(&root, link.to_str().unwrap()), None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
     use super::*;
 
     #[test]

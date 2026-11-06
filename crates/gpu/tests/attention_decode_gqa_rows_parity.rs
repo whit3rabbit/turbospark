@@ -360,3 +360,34 @@ fn windowed_range_and_wrapped_ring() {
         &[(8, 2, 8, 4, 16), (8, 1, 16, 2, 3)],
     );
 }
+
+/// `first_query_position + live_rows` is the last row's exclusive end. A
+/// wrapped end would size the K/V check from a tiny count while the rows
+/// still read near `first`, so it must be refused. Not committed: nothing
+/// runs on the device.
+#[test]
+fn a_wrapping_last_row_end_is_refused() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let (hd, nq, nkv) = (128u32, 8u32, 2u32);
+    let scratch = GqaRowsScratch::new(&context, 4, nq, hd, 16);
+    let buf = context.new_output_buffer(256);
+    let pass = context.begin_pass();
+    let result = encode_attention_decode_gqa_rows(
+        &mut context,
+        &pass,
+        (&buf, 0),
+        &buf,
+        &buf,
+        &scratch,
+        (&buf, 0),
+        hd,
+        nq,
+        nkv,
+        u32::MAX,
+        1,
+        0,
+        0,
+        1.0,
+    );
+    assert!(result.is_err(), "a u32-wrapping row end must be refused");
+}

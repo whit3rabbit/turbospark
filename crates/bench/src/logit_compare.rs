@@ -14,10 +14,16 @@ pub fn log_softmax(logits: &[f64]) -> Vec<f64> {
     logits.iter().map(|v| v - log_z).collect()
 }
 
-/// Indices of the `k` largest logits, largest first.
+/// Indices of the `k` largest logits, largest first. NaN ranks above every
+/// number, so a broken arm cannot panic the sort and shows up as a top-1
+/// disagreement; finite and infinite values keep the `partial_cmp` order.
 pub fn top_k(logits: &[f64], k: usize) -> Vec<usize> {
     let mut idx: Vec<usize> = (0..logits.len()).collect();
-    idx.sort_by(|&a, &b| logits[b].partial_cmp(&logits[a]).unwrap());
+    idx.sort_by(|&a, &b| {
+        let (x, y) = (logits[b], logits[a]);
+        x.partial_cmp(&y)
+            .unwrap_or_else(|| x.is_nan().cmp(&y.is_nan()))
+    });
     idx.truncate(k);
     idx
 }
@@ -41,7 +47,14 @@ pub fn compare(reference: &[f64], arm: &[f64]) -> Comparison {
         .iter()
         .zip(arm)
         .map(|(a, b)| (a - b).abs())
-        .fold(0.0, f64::max);
+        // f64::max drops NaN; carry it so a broken arm is not reported finite.
+        .fold(0.0, |m: f64, d| {
+            if m.is_nan() || d.is_nan() {
+                f64::NAN
+            } else {
+                m.max(d)
+            }
+        });
     let (t5r, t5s) = (top_k(reference, 5), top_k(arm, 5));
     Comparison {
         kl,
@@ -72,5 +85,20 @@ mod tests {
         let c = compare(&r, &a);
         assert!(c.kl > 0.0);
         assert!((compare(&r, &shifted).kl - c.kl).abs() < 1e-12);
+    }
+
+    /// A broken arm that emits NaN must fail the comparison (NaN KL, which
+    /// the tslab judge and the arm probes treat as over the bound), not
+    /// panic in the top-k sort and abort the whole gate.
+    #[test]
+    fn nan_arm_fails_the_comparison_without_panicking() {
+        let r = [1.0, 2.0, 3.0, -1.0, 0.5, 0.0];
+        let a = [1.0, f64::NAN, 3.0, -1.0, 0.5, 0.0];
+        let c = compare(&r, &a);
+        assert!(c.kl.is_nan());
+        assert!(c.max_abs_dlogit.is_nan());
+        assert!(!c.top1_agree);
+        // The reference itself broken fails the same way.
+        assert!(compare(&a, &r).kl.is_nan());
     }
 }

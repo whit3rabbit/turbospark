@@ -127,3 +127,53 @@ fn verify_install_full_sha256_fails_when_a_file_is_tampered() {
     let err = verify_install_full_sha256(&dir, &toy_arch()).unwrap_err();
     assert!(matches!(err, model_io::ModelError::ChecksumMismatch { .. }));
 }
+
+/// Adds one extra `manifest.files` entry whose bytes hash to `content`, so
+/// the only thing that can refuse it is the path itself.
+fn add_manifest_entry(dir: &std::path::Path, key: &str, content: &[u8]) {
+    let manifest_path = dir.join("manifest.json");
+    let manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    let entry = format!(
+        r#""files": {{
+                {}: {{"size": {}, "sha256": "{}"}},"#,
+        serde_json::to_string(key).unwrap(),
+        content.len(),
+        sha256_hex(content)
+    );
+    let patched = manifest.replacen(r#""files": {"#, &entry, 1);
+    assert_ne!(patched, manifest, "manifest files block not found");
+    std::fs::write(&manifest_path, patched).unwrap();
+}
+
+// A third-party manifest must not make the verifier open files outside the
+// install directory: a matching hash would confirm a guessed file's contents.
+#[test]
+fn verify_install_full_sha256_refuses_a_parent_dir_entry() {
+    let root = tempdir();
+    let dir = root.join("install");
+    std::fs::create_dir_all(&dir).unwrap();
+    write_install(&dir, b"model weight bytes");
+    std::fs::write(root.join("outside.bin"), b"secret bytes").unwrap();
+    add_manifest_entry(&dir, "../outside.bin", b"secret bytes");
+    let err = verify_install_full_sha256(&dir, &toy_arch()).unwrap_err();
+    assert!(
+        matches!(err, model_io::ModelError::IndexCorrupt { .. }),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn verify_install_full_sha256_refuses_an_absolute_entry() {
+    let root = tempdir();
+    let dir = root.join("install");
+    std::fs::create_dir_all(&dir).unwrap();
+    write_install(&dir, b"model weight bytes");
+    let outside = root.join("outside.bin");
+    std::fs::write(&outside, b"secret bytes").unwrap();
+    add_manifest_entry(&dir, outside.to_str().unwrap(), b"secret bytes");
+    let err = verify_install_full_sha256(&dir, &toy_arch()).unwrap_err();
+    assert!(
+        matches!(err, model_io::ModelError::IndexCorrupt { .. }),
+        "{err:?}"
+    );
+}

@@ -3,6 +3,7 @@
 use super::{Channel, StructuredAssistantDecoder, StructuredAssistantEvent};
 use crate::error::ToolCallParserError;
 use crate::tool_call::QwenToolCallParser;
+use crate::NO_SUCH_TOKEN_ID;
 
 impl<'a> StructuredAssistantDecoder<'a> {
     pub(super) fn consume_chatml(
@@ -10,7 +11,13 @@ impl<'a> StructuredAssistantDecoder<'a> {
         token_id: i32,
         delta: &str,
     ) -> Result<Vec<StructuredAssistantEvent>, ToolCallParserError> {
-        if token_id == self.tokenizer.tool_call_start_id {
+        // A Qwen2-era table has no tool pair, so both ids are the sentinel,
+        // and flushed text and withheld tails also arrive with the sentinel
+        // as their id. Without the guard a flush would open a phantom span
+        // (or close one), the way the Mistral arm guards its marker.
+        if self.tokenizer.tool_call_start_id != NO_SUCH_TOKEN_ID
+            && token_id == self.tokenizer.tool_call_start_id
+        {
             if let Some(tokens) = self.tool_tokens.take() {
                 // A second start inside an open span abandons the first one;
                 // what it had buffered is still model output.
@@ -21,7 +28,9 @@ impl<'a> StructuredAssistantDecoder<'a> {
             self.tool_tokens = Some(Vec::new());
             return Ok(Vec::new());
         }
-        if token_id == self.tokenizer.tool_call_end_id {
+        if self.tokenizer.tool_call_end_id != NO_SUCH_TOKEN_ID
+            && token_id == self.tokenizer.tool_call_end_id
+        {
             let Some(tokens) = self.tool_tokens.take() else {
                 self.failed = true;
                 return Err(ToolCallParserError::Malformed);

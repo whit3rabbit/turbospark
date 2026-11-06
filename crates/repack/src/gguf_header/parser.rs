@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use super::types::{
     GgufHeader, GgufHeaderError, GgufTensorInfo, GgufValue, DEFAULT_ALIGNMENT, MAGIC,
-    SUPPORTED_VERSION,
+    MAX_ARRAY_DEPTH, SUPPORTED_VERSION,
 };
 
 /// Bounds-checked forward reader. Every read that runs off the end reports
@@ -67,7 +67,15 @@ impl<'a> Cursor<'a> {
         })
     }
 
-    fn value(&mut self, type_id: u32, context: &str) -> Result<GgufValue, GgufHeaderError> {
+    /// `depth` counts the arrays enclosing this value. Without it a crafted
+    /// file recurses once per 12 bytes until the stack overflows, which aborts
+    /// the process instead of reaching any caller's error handling.
+    fn value(
+        &mut self,
+        type_id: u32,
+        context: &str,
+        depth: u32,
+    ) -> Result<GgufValue, GgufHeaderError> {
         Ok(match type_id {
             0 => GgufValue::U8(self.u8()?),
             1 => GgufValue::I8(self.u8()? as i8),
@@ -81,6 +89,12 @@ impl<'a> Cursor<'a> {
             7 => GgufValue::Bool(self.u8()? != 0),
             8 => GgufValue::String(self.string(context)?),
             9 => {
+                if depth >= MAX_ARRAY_DEPTH {
+                    return Err(GgufHeaderError::ArrayTooDeep {
+                        context: context.to_string(),
+                        max_depth: MAX_ARRAY_DEPTH,
+                    });
+                }
                 let elem_type = self.u32()?;
                 let len = self.u64()?;
                 // An array header is 12 bytes and its shortest element is 1
@@ -94,7 +108,7 @@ impl<'a> Cursor<'a> {
                 }
                 let mut items = Vec::new();
                 for _ in 0..len {
-                    items.push(self.value(elem_type, context)?);
+                    items.push(self.value(elem_type, context, depth + 1)?);
                 }
                 GgufValue::Array(items)
             }
@@ -147,7 +161,7 @@ pub fn parse_header(leading_bytes: &[u8], max_bytes: u64) -> Result<GgufHeader, 
     for _ in 0..kv_count {
         let key = c.string("metadata key")?;
         let type_id = c.u32()?;
-        let value = c.value(type_id, &key)?;
+        let value = c.value(type_id, &key, 0)?;
         if metadata.insert(key.clone(), value).is_some() {
             return Err(GgufHeaderError::DuplicateKey { name: key });
         }

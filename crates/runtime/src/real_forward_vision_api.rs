@@ -240,7 +240,8 @@ impl RealForwardRunner {
         }
         let path = self.vision_dir().join("preprocessor_config.json");
         let json =
-            std::fs::read_to_string(&path).map_err(|e| bad(format!("{}: {e}", path.display())))?;
+            crate::model_dir_read::read_bounded_string(&path, crate::model_dir_read::CONFIG_LIMIT)
+                .map_err(|e| bad(format!("{}: {e}", path.display())))?;
         let params = turbospark_vision_io::MiniCpmParams::from_preprocessor_config_json(&json)
             .map_err(|e| bad(format!("{}: {e}", path.display())))?;
         let prepared = images

@@ -7,9 +7,10 @@ use std::cell::Cell;
 use std::collections::BTreeMap;
 
 use turbospark_repack::{
+    control_vector::{parse_control_vector, ControlVectorError},
     fetch_gguf_header, ggml_type_block, ggml_type_name, parse_gguf_header, DownloadError,
-    GgufBuilder, GgufHeader, GgufHeaderError, GgufTensorInfo, GgufValue, RangeSource,
-    GGUF_DEFAULT_MAX_HEADER_BYTES, GGUF_INITIAL_FETCH_BYTES,
+    GgufBuilder, GgufHeader, GgufHeaderError, GgufTensorInfo, GgufValue, MemoryRangeSource,
+    RangeSource, GGUF_DEFAULT_MAX_HEADER_BYTES, GGUF_INITIAL_FETCH_BYTES, GGUF_MAX_ARRAY_DEPTH,
 };
 
 /// A fixture exercising every value kind the reader implements, plus three
@@ -182,6 +183,103 @@ fn rejects_counts_that_cannot_fit_the_cap() {
         parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES),
         Err(GgufHeaderError::HeaderTooLarge { .. })
     ));
+}
+
+/// A valid GGUF whose one metadata value is `depth` arrays nested inside each
+/// other around a single U32. Written by hand because the point is the wire
+/// form a hostile file would use, 12 bytes per level.
+fn nested_array_gguf(depth: u32) -> Vec<u8> {
+    assert!(depth >= 1);
+    let key = b"nested";
+    let mut out = Vec::with_capacity(64 + depth as usize * 12);
+    out.extend_from_slice(b"GGUF");
+    out.extend_from_slice(&3u32.to_le_bytes());
+    out.extend_from_slice(&0u64.to_le_bytes()); // tensor count
+    out.extend_from_slice(&1u64.to_le_bytes()); // kv count
+    out.extend_from_slice(&(key.len() as u64).to_le_bytes());
+    out.extend_from_slice(key);
+    out.extend_from_slice(&9u32.to_le_bytes()); // outermost value is an array
+    for level in 1..=depth {
+        let elem_type: u32 = if level == depth { 4 } else { 9 };
+        out.extend_from_slice(&elem_type.to_le_bytes());
+        out.extend_from_slice(&1u64.to_le_bytes());
+    }
+    out.extend_from_slice(&7u32.to_le_bytes()); // innermost U32
+    out
+}
+
+/// Deep enough to overflow any thread's stack in any build profile if the
+/// parser recurses per level, and still inside both real byte caps: 12 MiB
+/// against 64 MiB for a checkpoint and 16 MiB for a control vector. Without
+/// the depth limit each caller below aborts the test binary.
+const HOSTILE_ARRAY_DEPTH: u32 = 1_000_000;
+
+#[test]
+fn refuses_array_nesting_that_would_overflow_the_stack() {
+    let bytes = nested_array_gguf(HOSTILE_ARRAY_DEPTH);
+    assert_eq!(
+        parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES),
+        Err(GgufHeaderError::ArrayTooDeep {
+            context: "nested".to_string(),
+            max_depth: GGUF_MAX_ARRAY_DEPTH,
+        })
+    );
+}
+
+/// The install path: `fetch_gguf_header` is what the catalog runs on a remote
+/// file, so a hostile checkpoint reaches the parser before any weight.
+#[test]
+fn ranged_fetch_refuses_hostile_array_nesting() {
+    let bytes = nested_array_gguf(HOSTILE_ARRAY_DEPTH);
+    let source = MemoryRangeSource::new(&bytes);
+    assert!(matches!(
+        fetch_gguf_header(&source),
+        Err(DownloadError::GgufHeader(
+            GgufHeaderError::ArrayTooDeep { .. }
+        ))
+    ));
+}
+
+/// The steering path: the CLI, the server, and the FFI all load a control
+/// vector through this parser, with the file's own length as the byte cap.
+#[test]
+fn control_vector_refuses_hostile_array_nesting() {
+    let bytes = nested_array_gguf(HOSTILE_ARRAY_DEPTH);
+    match parse_control_vector(&bytes) {
+        Err(ControlVectorError::Header { detail }) => {
+            assert!(detail.contains("ArrayTooDeep"), "{detail}");
+        }
+        other => panic!("expected a header refusal, got {other:?}"),
+    }
+}
+
+/// Pins the limit from both sides, so it cannot drift by one or quietly start
+/// refusing shallow nesting the spec allows.
+#[test]
+fn array_nesting_limit_is_exact() {
+    let at_limit = parse_gguf_header(
+        &nested_array_gguf(GGUF_MAX_ARRAY_DEPTH),
+        GGUF_DEFAULT_MAX_HEADER_BYTES,
+    )
+    .expect("nesting at the limit parses");
+    let mut value = at_limit.metadata.get("nested").expect("key present");
+    for _ in 0..GGUF_MAX_ARRAY_DEPTH {
+        let items = value.as_array().expect("one array per level");
+        assert_eq!(items.len(), 1);
+        value = &items[0];
+    }
+    assert_eq!(value, &GgufValue::U32(7));
+
+    assert_eq!(
+        parse_gguf_header(
+            &nested_array_gguf(GGUF_MAX_ARRAY_DEPTH + 1),
+            GGUF_DEFAULT_MAX_HEADER_BYTES,
+        ),
+        Err(GgufHeaderError::ArrayTooDeep {
+            context: "nested".to_string(),
+            max_depth: GGUF_MAX_ARRAY_DEPTH,
+        })
+    );
 }
 
 #[test]

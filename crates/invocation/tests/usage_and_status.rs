@@ -179,3 +179,28 @@ fn stream_routing_matches_the_documented_split() {
     assert!(routing.primary.is_none());
     assert!(routing.diagnostic.is_some());
 }
+
+/// Every declared flag must reach a handled arm in the parser's token scan.
+/// The scan's `unreachable!` arms fire only if `OPTIONS` and the match
+/// arms diverge (a flag added to the table but not the scan). The arm is
+/// selected before the value is validated, so any value text reaches it;
+/// this test turns that divergence into a named test failure instead of a
+/// production panic.
+#[test]
+fn every_declared_option_reaches_a_handled_parser_arm() {
+    for opt in OPTIONS {
+        if opt.flag == "--help" || opt.flag == "--version" {
+            continue;
+        }
+        let mut tokens = tok(&["--model", "m", "--chat", opt.flag]);
+        if opt.takes_value {
+            tokens.push("1".to_string());
+        }
+        let result = std::panic::catch_unwind(|| parse(&tokens));
+        assert!(
+            result.is_ok(),
+            "declared option {} has no handled arm in the parser",
+            opt.flag
+        );
+    }
+}

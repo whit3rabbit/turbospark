@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 
 use turbospark_repack::{
     fetch_safetensors_header, orchestrate_llama_checkpoint, LlamaCheckpointDims, MemoryRangeSource,
+    OrchestrateError,
 };
 
 fn f32_tensor_bytes(rows: usize, cols: usize, seed: f32) -> Vec<u8> {
@@ -127,4 +128,72 @@ fn reports_a_missing_tensor_by_name() {
 
     let err = orchestrate_llama_checkpoint(&header, &source, dims).unwrap_err();
     assert!(err.to_string().contains("q_proj"));
+}
+
+/// One-tensor blob whose embedding table declares `data_offsets` verbatim, so
+/// the parser's ordering check passes and only `absolute_range` can refuse it.
+fn blob_with_embed_offsets(start: u64, end: u64) -> Vec<u8> {
+    let mut entries = BTreeMap::new();
+    entries.insert(
+        "model.embed_tokens.weight".to_string(),
+        serde_json::json!({
+            "dtype": "F32",
+            "shape": [1, 64],
+            "data_offsets": [start, end],
+        }),
+    );
+    let header_json = serde_json::to_vec(&entries).unwrap();
+    let mut out = (header_json.len() as u64).to_le_bytes().to_vec();
+    out.extend_from_slice(&header_json);
+    out
+}
+
+fn small_dims() -> LlamaCheckpointDims {
+    LlamaCheckpointDims {
+        hidden_size: 64,
+        intermediate_size: 64,
+        num_heads: 1,
+        num_kv_heads: 1,
+        head_dim: 64,
+        num_layers: 1,
+        vocab_size: 1,
+        tie_word_embeddings: true,
+    }
+}
+
+/// `absolute_range` returns `None` for a present tensor when the data region
+/// start plus an offset overflows `u64`. A hostile header must get a named
+/// error for that tensor, not a panic in the orchestrator.
+#[test]
+fn offset_overflowing_the_data_region_is_a_named_error_not_a_panic() {
+    let blob = blob_with_embed_offsets(u64::MAX - 1, u64::MAX);
+    let source = MemoryRangeSource::new(&blob);
+    let header = fetch_safetensors_header(&source).expect("offsets are ordered, so header parses");
+    assert!(header.tensors.contains_key("model.embed_tokens.weight"));
+    assert_eq!(header.absolute_range("model.embed_tokens.weight"), None);
+
+    let err = orchestrate_llama_checkpoint(&header, &source, small_dims()).unwrap_err();
+    assert!(
+        matches!(
+            &err,
+            OrchestrateError::TensorRangeOverflow(name) if name == "model.embed_tokens.weight"
+        ),
+        "unexpected error: {err}"
+    );
+}
+
+/// A huge offset that still fits in `u64` resolves to a real range, and the
+/// range source refuses it. Pins the boundary of the overflow refusal above.
+#[test]
+fn huge_addressable_offset_is_refused_by_the_range_source() {
+    let blob = blob_with_embed_offsets(1 << 63, 1 << 63);
+    let source = MemoryRangeSource::new(&blob);
+    let header = fetch_safetensors_header(&source).unwrap();
+    assert!(header.absolute_range("model.embed_tokens.weight").is_some());
+
+    let err = orchestrate_llama_checkpoint(&header, &source, small_dims()).unwrap_err();
+    assert!(
+        matches!(err, OrchestrateError::Download(_)),
+        "unexpected error: {err}"
+    );
 }

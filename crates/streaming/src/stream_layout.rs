@@ -49,7 +49,14 @@ impl StreamLayout {
         subdir: &str,
     ) -> Self {
         let expert_stride = layer.expert_stride;
-        let path = layout_dir.join(subdir).join(&layer.file);
+        // The decoder refuses anything but a bare name, but `LayerLayout`'s
+        // fields are public and this join is what would leave the install.
+        // Only the final component joins; a name with none (`..`) resolves to
+        // the directory, whose open or size check then fails closed.
+        let file = std::path::Path::new(&layer.file)
+            .file_name()
+            .unwrap_or_default();
+        let path = layout_dir.join(subdir).join(file);
         let expert_offsets: Vec<u64> = layer.experts.iter().map(|e| e.offset).collect();
         // Spans the HIGHEST offset rather than `count * stride`. The two
         // agree only while the writer emits dense `e * stride` offsets, and
@@ -63,7 +70,10 @@ impl StreamLayout {
             .iter()
             .copied()
             .max()
-            .map_or(0, |highest| highest + expert_stride);
+            // Saturating, not wrapping: `LayerLayout`'s fields are public, and
+            // a wrapped window would be tiny and pass `open`'s size check on a
+            // short file. `u64::MAX` fails that check instead.
+            .map_or(0, |highest| highest.saturating_add(expert_stride));
         Self {
             path: path.display().to_string(),
             stream_offset: 0,
@@ -82,7 +92,12 @@ impl StreamLayout {
                 }
             }
         }
-        let per_layer = self.experts_per_layer as u64 * self.expert_stride;
-        layer as u64 * per_layer + expert as u64 * self.expert_stride
+        // Saturating so an out-of-range `layer` or `expert` cannot wrap back
+        // onto a real expert: `u64::MAX` fails every caller's checked
+        // `offset + stride` bound.
+        let per_layer = (self.experts_per_layer as u64).saturating_mul(self.expert_stride);
+        (layer as u64)
+            .saturating_mul(per_layer)
+            .saturating_add((expert as u64).saturating_mul(self.expert_stride))
     }
 }

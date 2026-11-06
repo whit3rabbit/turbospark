@@ -84,7 +84,9 @@ impl Table {
             _ => return Ok(Table::Loaded(w.embedding(base, rows, cols, None)?)),
         };
         let len = w.file(&name)?.raw_bytes(&name)?.len();
-        if len != rows * cols * width {
+        // Checked: rows and cols come from the checkpoint, and a product
+        // that wraps to `len` would admit rows the mapping does not hold.
+        if rows.checked_mul(cols).and_then(|n| n.checked_mul(width)) != Some(len) {
             return Err(tensor_error(
                 &name,
                 format!("{len} bytes for {dtype:?} [{rows}, {cols}]"),

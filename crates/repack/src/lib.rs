@@ -123,7 +123,8 @@ pub use gguf_config::{arch_from_gguf, GgufConfigError};
 pub use gguf_header::{
     ggml_type_block, ggml_type_name, parse_header as parse_gguf_header, GgufHeader,
     GgufHeaderError, GgufTensorInfo, GgufValue, DEFAULT_ALIGNMENT,
-    DEFAULT_MAX_HEADER_BYTES as GGUF_DEFAULT_MAX_HEADER_BYTES, SUPPORTED_VERSION as GGUF_VERSION,
+    DEFAULT_MAX_HEADER_BYTES as GGUF_DEFAULT_MAX_HEADER_BYTES,
+    MAX_ARRAY_DEPTH as GGUF_MAX_ARRAY_DEPTH, SUPPORTED_VERSION as GGUF_VERSION,
 };
 pub use gguf_names::{
     family_for_architecture, gguf_architecture, map_gguf_name, GgufMapping, GgufNameError,

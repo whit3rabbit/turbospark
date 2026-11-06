@@ -190,6 +190,9 @@ fn open_real_model(
     if let Some(ref mcp) = args.mcp_config {
         eprintln!("  mcp config: {} (accepted, not honoured)", mcp.display());
     }
+    if let Some(queue) = turbospark_server::ChatModel::generation_queue(&model) {
+        queue.set_max_queued(args.max_queued);
+    }
     Ok(Arc::new(model))
 }
 

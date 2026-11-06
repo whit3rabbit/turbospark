@@ -143,13 +143,11 @@ async fn run_full(
     prompt_ids: Vec<foundation::TokenId>,
     config: GenerationConfig,
     cancel: crate::cancel::Cancel,
+    ticket: Option<crate::queue::QueueTicket>,
 ) -> Result<(String, RawDecodeResult), crate::handler::GenError> {
-    let permit = match model.generation_queue() {
-        Some(queue) => match queue.acquire(&cancel).await {
-            Some(permit) => Some(permit),
-            None => return Ok((String::new(), crate::handler::cancelled_before_start())),
-        },
-        None => None,
+    let permit = match crate::queue::admit(ticket, &cancel).await {
+        Some(permit) => permit,
+        None => return Ok((String::new(), crate::handler::cancelled_before_start())),
     };
     let joined =
         crate::queue::run_blocking(permit, move || {
@@ -199,15 +197,17 @@ fn stream_response(
     config: GenerationConfig,
     model_name: String,
     cancel: crate::cancel::Cancel,
+    ticket: Option<crate::queue::QueueTicket>,
 ) -> Response {
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+    let (tx, rx) = tokio::sync::mpsc::channel::<Event>(crate::cancel::STREAM_BACKLOG);
     let id = request_id("cmpl-");
     let created = now_unix();
     let cancel_for_task = cancel.clone();
 
     // The FIFO gate's acquisition point for this endpoint's streaming path.
-    // See `handler::stream_response`'s longer note.
-    let gate = model.generation_queue();
+    // The ticket was reserved by the handler. See `handler::stream_response`'s
+    // longer note.
+    let gate = ticket;
     let cancel_for_gate = cancel.clone();
     tokio::spawn(async move {
         let _ = crate::queue::run_gated(gate, &cancel_for_gate, move || {
@@ -216,10 +216,13 @@ fn stream_response(
                 // Fast-path disconnect detection: `CancelOnDrop` below catches
                 // the same event even with no chunk in flight (a long prefill
                 // sends none), so this is a speed-up rather than the only
-                // detector.
-                if tx.send(Event::default().data(chunk.to_string())).is_err() {
-                    cancel_for_task.store(true, std::sync::atomic::Ordering::Relaxed);
-                }
+                // detector. A full backlog (client connected but not reading)
+                // cancels too.
+                crate::cancel::send_or_cancel(
+                    &tx,
+                    Event::default().data(chunk.to_string()),
+                    &cancel_for_task,
+                );
             };
             let flag = crate::cancel::as_cancel_flag(&cancel_for_task);
             let result = model.run_completion(&prompt_ids, &config, None, &flag, &mut |progress| {
@@ -255,11 +258,11 @@ fn stream_response(
                     let body = serde_json::json!({
                         "error": {"message": e.to_string(), "type": "server_error"}
                     });
-                    let _ = tx.send(Event::default().event("error").data(body.to_string()));
+                    let _ = tx.try_send(Event::default().event("error").data(body.to_string()));
                     return;
                 }
             }
-            let _ = tx.send(Event::default().data("[DONE]"));
+            let _ = tx.try_send(Event::default().data("[DONE]"));
         })
         .await;
     });
@@ -267,11 +270,8 @@ fn stream_response(
     let stream: std::pin::Pin<
         Box<dyn Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
     > = Box::pin(
-        crate::cancel::CancelOnDrop::new(
-            tokio_stream::wrappers::UnboundedReceiverStream::new(rx),
-            cancel,
-        )
-        .map(Ok),
+        crate::cancel::CancelOnDrop::new(tokio_stream::wrappers::ReceiverStream::new(rx), cancel)
+            .map(Ok),
     );
     Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(SSE_KEEP_ALIVE))
@@ -330,14 +330,19 @@ pub async fn completions(
     config.rate = model.rate_control();
     let prompt_ids = model.tokenizer().encode(&prompt, true);
     let cancel = crate::cancel::new_cancel();
+    // Reserved before either branch: a streaming 200 cannot turn into a 429.
+    let ticket = match crate::queue::reserve(model.as_ref()) {
+        Ok(ticket) => ticket,
+        Err(crate::queue::QueueFull) => return crate::handler::queue_full_response(),
+    };
 
     let mut response = if request.stream.unwrap_or(false) {
-        stream_response(model, prompt_ids, config, request.model, cancel)
+        stream_response(model, prompt_ids, config, request.model, cancel, ticket)
     } else {
         // Set if THIS future is dropped (client gone) before `run_full`
         // resolves; defused right after, whatever it returned.
         let mut guard = crate::cancel::CancelGuard::new(cancel.clone());
-        let result = run_full(model, prompt_ids, config, cancel).await;
+        let result = run_full(model, prompt_ids, config, cancel, ticket).await;
         guard.defuse();
         match result {
             Ok((text, decode)) => Json(text_completion_full(

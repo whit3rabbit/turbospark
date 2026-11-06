@@ -249,6 +249,29 @@ pub fn remove(store: &Store, alias: &str, yes: bool) -> Result<(), Error> {
         // Not a text install: an audio alias has its own ownership-checked delete.
         return audio::remove_audio(store, alias, yes);
     };
+    // `resolve` lets any existing directory stand in for an alias, which
+    // suits `--model` but would make `rm` a recursive delete of whatever
+    // folder it is handed (or a same-named folder in the cwd). A path form
+    // is honored only when it is a recorded install, and that row is the one
+    // forgotten.
+    let mut record_alias = alias.to_string();
+    if std::path::Path::new(alias).is_dir() {
+        let canonical = std::fs::canonicalize(&path).ok();
+        let owner = store
+            .installed()
+            .into_values()
+            .find(|row| canonical.is_some() && std::fs::canonicalize(&row.path).ok() == canonical);
+        match owner {
+            Some(row) => record_alias = row.alias,
+            None => {
+                return Err(Error::Failed(format!(
+                    "{} is not a recorded install, nothing deleted. `rm` takes \
+                     an installed alias.",
+                    path.display()
+                )))
+            }
+        }
+    }
     let bytes = catalog::directory_bytes(&path);
     if !yes {
         // The re-download cost is the thing a user actually wants to weigh,
@@ -274,7 +297,7 @@ pub fn remove(store: &Store, alias: &str, yes: bool) -> Result<(), Error> {
     let rm_res = std::fs::remove_dir_all(&path);
     pb.finish_and_clear();
     rm_res.map_err(|e| Error::Failed(format!("removing {}: {e}", path.display())))?;
-    store.forget(alias).map_err(Error::Failed)?;
+    store.forget(&record_alias).map_err(Error::Failed)?;
     println!("removed {} ({})", path.display(), human_bytes(bytes));
     Ok(())
 }
@@ -488,15 +511,7 @@ pub fn pull_image(
         .alias
         .as_deref()
         .ok_or_else(|| Error::Usage("pull-image needs --alias <NAME>".to_string()))?;
-    if alias.is_empty()
-        || !alias
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-    {
-        return Err(Error::Usage(
-            "--alias must contain only ASCII letters, digits, '.', '_' or '-'".to_string(),
-        ));
-    }
+    check_alias(alias)?;
     // Where the install lands, settled before any download (10.4). Into a
     // library the source and the build stage on its drive and publish with
     // one rename, so a partial build never shows there. This Mac and `--out`
@@ -776,6 +791,7 @@ fn resolve_vision_plan(
                         .to_string(),
                 )
             })?;
+            check_alias(&alias)?;
             let weights = RepoRef::parse(&repo).map_err(Error::Usage)?;
             Ok(InstallPlan::for_vision_tower(
                 &alias,
@@ -805,6 +821,22 @@ fn resolve_vision_plan(
     }
 }
 
+/// A user-chosen `--alias` becomes a folder name, a store row, and text
+/// printed raw ("installed X"), so it is held to plain ASCII. The store's own
+/// rule only refuses path escapes and would pass terminal escapes through.
+fn check_alias(alias: &str) -> Result<(), Error> {
+    if alias.is_empty()
+        || !alias
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    {
+        return Err(Error::Usage(
+            "--alias must contain only ASCII letters, digits, '.', '_' or '-'".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 /// Read `pull`'s two argument forms, without the probe a `--repo` pull
 /// plans from.
 fn pull_source(
@@ -832,6 +864,7 @@ fn pull_source(
                         .to_string(),
                 )
             })?;
+            check_alias(&alias)?;
             let weights = RepoRef::parse(&repo).map_err(Error::Usage)?;
             let sidecars = match &options.sidecar_repo {
                 Some(text) => RepoRef::parse(text).map_err(Error::Usage)?,

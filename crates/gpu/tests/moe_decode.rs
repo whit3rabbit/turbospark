@@ -239,3 +239,41 @@ fn routed_blobs_refuses_an_encoder_other_than_its_allocator() {
         .expect_err("a GGUF encoder must not populate an affine argument buffer");
     assert!(err.to_string().contains("layout mismatch"), "{err}");
 }
+
+/// `top_k * f_dim` sizes the phase-1 grid. Past u32 it would wrap to a few
+/// rows and leave the rest of `acts` stale, so it must be refused. The
+/// pass is dropped without a commit, so nothing runs on the device.
+#[test]
+fn moe_phase1_refuses_a_wrapping_row_count() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let routed = RoutedBlobsBuffer::new(&mut context, false).expect("arg buffer");
+    let offsets = MoeExpertOffsets {
+        gate_w: 0,
+        gate_s: 0,
+        gate_b: 0,
+        up_w: 0,
+        up_s: 0,
+        up_b: 0,
+        down_w: 0,
+        down_s: 0,
+        down_b: 0,
+    };
+    let buf = context.new_output_buffer(256);
+    let pass = context.begin_pass();
+    let result = turbospark_gpu::encode_moe_phase1(
+        &mut context,
+        &pass,
+        &routed,
+        &offsets,
+        (&buf, 0),
+        (&buf, 0),
+        64,
+        1 << 30,
+        8,
+        false,
+    );
+    assert!(
+        result.is_err(),
+        "a u32-wrapping top_k * f_dim must be refused"
+    );
+}

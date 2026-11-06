@@ -16,6 +16,13 @@ pub enum ModelIntegrityPolicy {
     /// Fully hash all model files using SHA-256 on load.
     FullSha256,
     /// Fast validation checking file sizes against a trusted receipt.
+    ///
+    /// Not tamper protection: the receipt lives in the same model directory
+    /// it describes, so anyone who can rewrite the weights can rewrite the
+    /// receipt too. It only catches truncation and accidental corruption.
+    /// `FullSha256` is not tamper protection either: its expected digests
+    /// come from the same directory's manifest. Both assume the model
+    /// directory's writers are trusted.
     SizeCheckTrustedReceipt,
 }
 
@@ -82,7 +89,9 @@ pub fn load(dir: &Path, max_bytes: u64) -> Result<VerifiedInstallReceipt, ModelE
             "{FILE_NAME} size {size} exceeds metadata cap {max_bytes}"
         )));
     }
-    let data = std::fs::read(&path).map_err(|e| invalid(format!("{FILE_NAME}: {e}")))?;
+    let data = crate::bounded_read::read_capped(&path, max_bytes)
+        .map_err(|e| invalid(format!("{FILE_NAME}: {e}")))?
+        .ok_or_else(|| invalid(format!("{FILE_NAME} size exceeds metadata cap {max_bytes}")))?;
     serde_json::from_slice(&data).map_err(|e| invalid(format!("{FILE_NAME}: {e}")))
 }
 

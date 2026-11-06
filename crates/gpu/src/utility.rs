@@ -302,7 +302,10 @@ pub fn encode_split_q_gate(
         &FunctionConstantValues::new(),
         b"",
     )?;
-    let count = heads * dim;
+    // A wrapped count would shrink the grid and leave most of q/gate stale.
+    let count = heads
+        .checked_mul(dim)
+        .ok_or_else(|| GpuError::InvalidInput("split_q_gate heads * dim overflows u32".into()))?;
     pass.encode_threads_3d(
         &pipeline,
         &[(packed.0, 0, packed.1), (q.0, 1, q.1), (gate.0, 2, gate.1)],

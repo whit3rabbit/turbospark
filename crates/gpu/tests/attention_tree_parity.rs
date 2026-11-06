@@ -236,3 +236,77 @@ fn the_barrier_kernel_declines_the_tree() {
     pass.commit_and_wait();
     assert!(!served);
 }
+
+/// A path slot past the K/V buffers is refused before encoding. The tree
+/// reads `slot_start + path[i]`, which a branching node puts above its own
+/// `seq_len` (the branching test above relies on that), so the buffer
+/// check sized from `seq_len` does not cover it. The pass is dropped
+/// without a commit, so the unfixed encode never runs its OOB read.
+#[test]
+fn a_path_slot_past_the_kv_buffers_is_refused() {
+    let mut f = Fixture::new();
+    let base = 4u32;
+    // Room for base + 2 tokens: exactly the seq_len of a depth-1 path.
+    let kv = f
+        .context
+        .new_buffer_with_data(&bytes(&values(0xD1, (base as usize + 2) * ROW)));
+    let encode = |f: &mut Fixture, path: &[u32]| {
+        let pass = f.context.begin_pass();
+        encode_attention_decode_tree(
+            &mut f.context,
+            &pass,
+            (&f.q, 0),
+            &kv,
+            &kv,
+            &f.scratch,
+            (&f.out, 0),
+            HEAD_DIM,
+            Q_HEADS,
+            KV_HEADS,
+            0,
+            base,
+            base,
+            path,
+            0,
+            f.scale,
+        )
+    };
+    // Slot base + 1 is the last stored token: served.
+    assert!(encode(&mut f, &[0, 1]).unwrap());
+    // Slot base + 2 is one past the buffers.
+    assert!(encode(&mut f, &[0, 2]).is_err());
+    // A u32-wrapping slot must not pass the check either.
+    assert!(encode(&mut f, &[0, u32::MAX]).is_err());
+}
+
+/// `base + path.len()` is the tree row's `seq_len`. With a ring the slot
+/// check above is skipped, so a wrapped `seq_len` must be refused on its
+/// own. Not committed: nothing runs on the device.
+#[test]
+fn a_wrapping_tree_seq_len_is_refused() {
+    let mut f = Fixture::new();
+    let kv = f.context.new_output_buffer(256);
+    let pass = f.context.begin_pass();
+    let result = encode_attention_decode_tree(
+        &mut f.context,
+        &pass,
+        (&f.q, 0),
+        &kv,
+        &kv,
+        &f.scratch,
+        (&f.out, 0),
+        HEAD_DIM,
+        Q_HEADS,
+        KV_HEADS,
+        0,
+        u32::MAX,
+        0,
+        &[0],
+        16,
+        f.scale,
+    );
+    assert!(
+        result.is_err(),
+        "a u32-wrapping tree seq_len must be refused"
+    );
+}

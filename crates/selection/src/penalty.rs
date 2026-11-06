@@ -17,7 +17,12 @@ pub fn apply_repetition_penalty(scores: &mut [f32], history: &[TokenId], penalty
         return;
     }
     let seen: HashSet<TokenId> = history.iter().copied().collect();
-    let penalty = penalty as f32;
+    // `ShapingConfig` accepts any finite positive f64, and a request can send
+    // one outside the f32 range. Unclamped, the cast gives inf (0 * inf is
+    // NaN) or 0 (s / 0 is inf), and both poison the softmax. Clamping is a
+    // no-op, bit for bit, for every penalty already representable as a
+    // normal f32.
+    let penalty = (penalty as f32).clamp(f32::MIN_POSITIVE, f32::MAX);
     for &id in &seen {
         let Ok(idx) = usize::try_from(id) else {
             continue;
@@ -26,7 +31,10 @@ pub fn apply_repetition_penalty(scores: &mut [f32], history: &[TokenId], penalty
             continue;
         }
         let s = scores[idx];
-        scores[idx] = if s > 0.0 { s / penalty } else { s * penalty };
+        let attenuated = if s > 0.0 { s / penalty } else { s * penalty };
+        // Saturate rather than overflow: a score of -inf on every candidate
+        // makes the softmax max -inf and every exp NaN.
+        scores[idx] = attenuated.clamp(f32::MIN, f32::MAX);
     }
 }
 

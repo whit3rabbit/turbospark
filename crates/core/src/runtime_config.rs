@@ -106,6 +106,12 @@ const fn is_sorted_ascending(values: &[u32]) -> bool {
 /// The largest value in `set`. `const fn` so [`crate::prefill::MAX_CHUNK_TOKENS`]
 /// can derive from [`ALLOWED_CHUNK_SIZES`] instead of duplicating its
 /// maximum as a separate literal.
+///
+/// # Panics
+///
+/// Panics if `set` is empty: there is no maximum to return. In a const
+/// context, as for the shipped tables (const-asserted non-empty below), that
+/// panic is a compile error rather than a runtime one.
 pub const fn max_of(set: &[u32]) -> u32 {
     let mut max = set[0];
     let mut i = 1;

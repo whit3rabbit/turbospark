@@ -55,7 +55,8 @@ pub struct PanelScore {
 impl PanelScore {
     /// Errors over reference tokens.
     pub fn cpwer(&self) -> f64 {
-        self.errors as f64 / self.ref_tokens as f64
+        // max(1) matches the per-clip rows: an empty selection reads 0, not NaN.
+        self.errors as f64 / self.ref_tokens.max(1) as f64
     }
 }
 
@@ -159,6 +160,17 @@ mod tests {
             read_seglst(&dir.join("E_seglst.json")).unwrap(),
             read_frozen_counts(&dir.join("frozen_counts.json")).unwrap(),
         )
+    }
+
+    #[test]
+    fn empty_panel_cpwer_is_finite() {
+        // A selection with no reference tokens must not print NaN.
+        let p = PanelScore {
+            clips: Vec::new(),
+            errors: 0,
+            ref_tokens: 0,
+        };
+        assert_eq!(p.cpwer(), 0.0);
     }
 
     #[test]

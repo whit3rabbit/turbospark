@@ -245,6 +245,11 @@ pub fn parse_pinpoints(root: &serde_json::Value) -> Result<Vec<(usize, usize)>, 
         ) else {
             return Err(bad("an entry is not a [height, width] pair of integers"));
         };
+        // The chosen pinpoint is the canvas the image is resized and padded
+        // to; an unbounded one is a multi-GB allocation from a config.
+        for edge in [h, w] {
+            crate::params::check_config_edge("image_grid_pinpoints", edge as usize)?;
+        }
         out.push((h as usize, w as usize));
     }
     if out.is_empty() {

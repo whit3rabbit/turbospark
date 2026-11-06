@@ -287,11 +287,28 @@ fn argmax(scores: &[f32]) -> TokenId {
 /// Reweight the surviving candidates' full-distribution probabilities by
 /// the inverse-temperature power, then renormalize over just the surviving
 /// set.
+///
+/// Each probability is divided by the top surviving probability before the
+/// power. Renormalization cancels that factor, but it pins the top weight
+/// at 1: without it a tiny temperature drives every `p^(1/T)` below f64's
+/// range and the all-zero fallback below turns a near-greedy request into
+/// a uniform draw.
 fn reweight(surviving: &[u32], exps: &[f64], sum: f64, temperature: f64) -> Vec<f64> {
     let inv_t = 1.0 / temperature;
+    let top = surviving
+        .iter()
+        .map(|&i| exps[i as usize] / sum)
+        .fold(0.0f64, f64::max);
     let weighted: Vec<f64> = surviving
         .iter()
-        .map(|&i| (exps[i as usize] / sum).powf(inv_t))
+        .map(|&i| {
+            let p = exps[i as usize] / sum;
+            if top > 0.0 {
+                (p / top).powf(inv_t)
+            } else {
+                p.powf(inv_t)
+            }
+        })
         .collect();
     let total: f64 = weighted.iter().sum();
     if total <= 0.0 {

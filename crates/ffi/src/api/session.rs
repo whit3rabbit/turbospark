@@ -25,6 +25,9 @@ pub unsafe extern "C" fn ts_session_open(
         if out.is_null() {
             return Err((abi::TS_ERR_INVALID_ARGUMENT, "out must not be null".into()));
         }
+        // Cleared before anything can fail, like every other open: a caller
+        // reusing `out` must never read a stale handle after an error.
+        *out = std::ptr::null_mut();
         let dir = strings::required(model_dir, "modelDir")
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
         let options = parse_json_or_default::<wire::OpenOptions>(options_json, "options")?;

@@ -250,8 +250,11 @@ impl Qwen3AsrMetalEngine {
     /// 8-bit affine text decoder this module keeps packed on the GPU.
     pub fn open(model_dir: &Path) -> Result<Self, String> {
         let config_json: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(model_dir.join("config.json"))
-                .map_err(|error| format!("config.json: {error}"))?,
+            &crate::model_dir_read::read_bounded(
+                &model_dir.join("config.json"),
+                crate::model_dir_read::CONFIG_LIMIT,
+            )
+            .map_err(|error| format!("config.json: {error}"))?,
         )
         .map_err(|error| format!("config.json: {error}"))?;
         let config = Qwen3Config::from_json(&config_json).map_err(|error| error.to_string())?;

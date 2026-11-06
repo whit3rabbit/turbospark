@@ -169,6 +169,33 @@ async fn a_request_rejected_by_auth_is_still_recorded() {
     assert_eq!(finished["status"], 401);
 }
 
+/// A rebinding attempt is a row somebody opens the console to find, the same
+/// as a bad key. This holds because the check sits inside the observer layer.
+#[tokio::test]
+async fn a_request_refused_by_the_host_check_is_still_recorded() {
+    let (base, recorder) = serve(None).await;
+    let response = reqwest::Client::new()
+        .post(format!("{base}/v1/chat/completions"))
+        .header(reqwest::header::HOST, "rebind.example")
+        .json(&serde_json::json!({
+            "model": "whatever",
+            "max_tokens": 3,
+            "messages": [{"role": "user", "content": "hi"}],
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 403);
+
+    assert_eq!(
+        recorder.kinds(),
+        vec!["requestStarted", "requestFinished"],
+        "no handler ran, so there is nothing between the two"
+    );
+    let finished = recorder.find("requestFinished").expect("a finished event");
+    assert_eq!(finished["status"], 403);
+}
+
 /// `/health` is exempt from AUTH and deliberately not from observation: a
 /// host watching its own server wants to see probes too, and the layer
 /// costs a request with no observer configured exactly nothing.

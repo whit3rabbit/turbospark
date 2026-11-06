@@ -66,6 +66,18 @@ fn parse_pinned(value: &str) -> Option<i64> {
         t.next()?.parse::<i64>().ok()?,
         t.next().unwrap_or("0").parse::<i64>().ok()?,
     );
+    // Python datetime's ranges (the transformers reference). Out-of-range
+    // time fields would roll into another day, and an unbounded year
+    // overflows i64 below (wrapping silently in release). With these bounds
+    // the arithmetic cannot overflow.
+    if t.next().is_some()
+        || !(1..=9999).contains(&y)
+        || !(0..=23).contains(&hh)
+        || !(0..=59).contains(&mm)
+        || !(0..=59).contains(&ss)
+    {
+        return None;
+    }
     Some(days_from_civil(y, m, day) * 86_400 + hh * 3600 + mm * 60 + ss)
 }
 
@@ -125,4 +137,47 @@ fn format_utc(secs: i64, format: &str) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pinned_clock_accepts_documented_forms() {
+        assert_eq!(parse_pinned("1970-01-01"), Some(0));
+        assert_eq!(parse_pinned("1970-01-02T01:02:03"), Some(86_400 + 3723));
+        assert_eq!(
+            parse_pinned("9999-12-31T23:59:59").map(|s| format_utc(s, "%Y-%m-%d %H:%M:%S")),
+            Some("9999-12-31 23:59:59".to_string())
+        );
+    }
+
+    // An out-of-range time field used to roll silently into another day, so
+    // the "pinned" prompt carried a date nobody asked for.
+    #[test]
+    fn pinned_clock_rejects_out_of_range_time_fields() {
+        for bad in [
+            "2026-01-01T24:00:00",
+            "2026-01-01T-1:00:00",
+            "2026-01-01T00:60:00",
+            "2026-01-01T00:00:60",
+        ] {
+            assert_eq!(parse_pinned(bad), None, "{bad}");
+        }
+    }
+
+    // A huge year overflowed i64 in days_from_civil and the `* 86_400`:
+    // a panic in debug, a silently wrapped date in release (no overflow checks).
+    #[test]
+    fn pinned_clock_rejects_years_that_overflow() {
+        for bad in [
+            "9223372036854775807-01-01",
+            "-9223372036854775807-01-01",
+            "10000-01-01",
+            "2026-01-01T9223372036854775807:00:00",
+        ] {
+            assert_eq!(parse_pinned(bad), None, "{bad}");
+        }
+    }
 }

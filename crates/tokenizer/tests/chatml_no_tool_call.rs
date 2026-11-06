@@ -8,7 +8,10 @@
 
 use std::path::PathBuf;
 
-use turbospark_tokenizer::{ChatDialect, MfTokenizer, NO_SUCH_TOKEN_ID};
+use turbospark_tokenizer::{
+    ChatDialect, MfTokenizer, StructuredAssistantDecoder, StructuredAssistantEvent,
+    NO_SUCH_TOKEN_ID,
+};
 
 /// Copy the fixture into a scratch directory with `drop` removed from its
 /// added tokens, and load it.
@@ -46,4 +49,29 @@ fn one_side_of_the_pair_without_the_other_is_still_refused() {
         Err(e) => e,
     };
     assert!(err.contains("</tool_call>"), "{err}");
+}
+
+/// Flushed text and withheld tails reach the decoder with the token id
+/// `NO_SUCH_TOKEN_ID` (`consume_flushed_text`, and the runtime's
+/// `RawDecodeProgress::Tail`). On this table the tool ids are that same
+/// sentinel, so an unguarded comparison opened a phantom tool span on the
+/// first flush (swallowing the text) and refused the second one.
+#[test]
+fn flushed_text_is_content_when_the_tool_ids_are_the_sentinel() {
+    let tok = load_without(
+        &["<tool_call>", "</tool_call>"],
+        "chatml_no_tool_call_flush",
+    )
+    .unwrap();
+    assert_eq!(tok.tool_call_start_id, NO_SUCH_TOKEN_ID);
+    let mut decoder = StructuredAssistantDecoder::new(&tok, Default::default(), String::new, &[]);
+    assert_eq!(
+        decoder.consume_flushed_text("first").unwrap(),
+        vec![StructuredAssistantEvent::Content("first".to_string())]
+    );
+    assert_eq!(
+        decoder.consume(NO_SUCH_TOKEN_ID, "second").unwrap(),
+        vec![StructuredAssistantEvent::Content("second".to_string())]
+    );
+    assert!(decoder.finish().unwrap().is_empty());
 }

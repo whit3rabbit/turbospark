@@ -500,7 +500,8 @@ impl SpeakerDecoder {
         }
         let latent = config.latent_dim;
         let linear = |weight_name: String, input: usize, output: usize| -> Result<Linear> {
-            Ok(Linear::new(
+            Linear::checked(
+                weight_name.strip_suffix(".weight").unwrap_or(&weight_name),
                 file.load_as_f32(&weight_name)?,
                 Some(file.load_as_f32(&format!(
                     "{}.bias",
@@ -508,7 +509,7 @@ impl SpeakerDecoder {
                 ))?),
                 input,
                 output,
-            ))
+            )
         };
         Ok(Self {
             implicit_codebook: implicit,
@@ -598,12 +599,13 @@ struct FeatDecoder {
 impl FeatDecoder {
     fn load(file: &SafetensorsFile, prefix: &str, config: &FeatDecoderConfig) -> Result<Self> {
         let dim = config.vocos_dim;
-        let linear_pre = Linear::new(
+        let linear_pre = Linear::checked(
+            &format!("{prefix}.linear_pre"),
             file.load_as_f32(&format!("{prefix}.linear_pre.weight"))?,
             Some(file.load_as_f32(&format!("{prefix}.linear_pre.bias"))?),
             config.input_channels,
             dim,
-        );
+        )?;
         let mut stages = Vec::with_capacity(config.sample_ratios.len());
         for (index, _ratio) in config.sample_ratios.iter().enumerate() {
             let stage_prefix = format!("{prefix}.downsample.{index}");
@@ -632,12 +634,13 @@ impl FeatDecoder {
             linear_pre,
             stages,
             vocos_backbone,
-            linear: Linear::new(
+            linear: Linear::checked(
+                &format!("{prefix}.linear"),
                 file.load_as_f32(&format!("{prefix}.linear.weight"))?,
                 Some(file.load_as_f32(&format!("{prefix}.linear.bias"))?),
                 dim,
                 config.out_channels,
-            ),
+            )?,
             config: config.clone(),
         })
     }

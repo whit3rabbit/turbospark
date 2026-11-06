@@ -107,14 +107,27 @@ pub async fn responses(
     let degraded = responses_warnings(&request, streaming && may_produce_reasoning(&model, effort));
     let request_model = request.model.clone();
     let cancel = crate::cancel::new_cancel();
+    // Reserved before either branch: a streaming 200 cannot turn into a 429.
+    let ticket = match crate::queue::reserve(model.as_ref()) {
+        Ok(ticket) => ticket,
+        Err(crate::queue::QueueFull) => return crate::handler::queue_full_response(),
+    };
 
     let mut response = if streaming {
-        stream_response(model, chat_request, tools, effort, request_model, cancel)
+        stream_response(
+            model,
+            chat_request,
+            tools,
+            effort,
+            request_model,
+            cancel,
+            ticket,
+        )
     } else {
         // Set if THIS future is dropped (client gone) before `run_guarded`
         // resolves; defused right after, whatever it returned (Gotcha 25).
         let mut guard = crate::cancel::CancelGuard::new(cancel.clone());
-        let result = run_guarded(model, &chat_request, effort, cancel).await;
+        let result = run_guarded(model, &chat_request, effort, cancel, ticket).await;
         guard.defuse();
         match result {
             Ok(generated) => Json(build_response(
@@ -142,24 +155,33 @@ fn stream_response(
     effort: ReasoningEffort,
     request_model: String,
     cancel: crate::cancel::Cancel,
+    ticket: Option<crate::queue::QueueTicket>,
 ) -> Response {
     if !tools.is_empty() && model.guardrails().active() {
-        return buffered_stream_response(model, chat_request, effort, request_model, cancel);
+        return buffered_stream_response(
+            model,
+            chat_request,
+            effort,
+            request_model,
+            cancel,
+            ticket,
+        );
     }
     let planned = match plan(&model, &chat_request) {
         Ok(p) => p,
         Err(e) => return error_response(StatusCode::BAD_REQUEST, e),
     };
 
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+    let (tx, rx) = tokio::sync::mpsc::channel::<Event>(crate::cancel::STREAM_BACKLOG);
     let id = request_id("resp_");
     let model_name = request_model;
     let cancel_for_task = cancel.clone();
 
     // The FIFO gate's acquisition point for this endpoint's live-stream
     // path (the non-streaming and buffered arms acquire inside
-    // `run_guarded`). See `handler::stream_response`'s longer note.
-    let gate = model.generation_queue();
+    // `run_guarded`). The ticket was reserved by the handler. See
+    // `handler::stream_response`'s longer note.
+    let gate = ticket;
     let cancel_for_gate = cancel.clone();
     tokio::spawn(async move {
         let _ = crate::queue::run_gated(gate, &cancel_for_gate, move || {
@@ -167,10 +189,9 @@ fn stream_response(
                 // Fast-path disconnect detection: `CancelOnDrop` below catches
                 // the same event even with no chunk in flight (a long prefill
                 // sends none), so this is a speed-up rather than the only
-                // detector (Gotcha 25).
-                if tx.send(ev).is_err() {
-                    cancel_for_task.store(true, std::sync::atomic::Ordering::Relaxed);
-                }
+                // detector (Gotcha 25). A full backlog (client connected but
+                // not reading) cancels too.
+                crate::cancel::send_or_cancel(&tx, ev, &cancel_for_task);
             };
             send(created_event(&id, &model_name));
 
@@ -254,11 +275,8 @@ fn stream_response(
     let stream: std::pin::Pin<
         Box<dyn Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
     > = Box::pin(
-        crate::cancel::CancelOnDrop::new(
-            tokio_stream::wrappers::UnboundedReceiverStream::new(rx),
-            cancel,
-        )
-        .map(Ok),
+        crate::cancel::CancelOnDrop::new(tokio_stream::wrappers::ReceiverStream::new(rx), cancel)
+            .map(Ok),
     );
     Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(SSE_KEEP_ALIVE))
@@ -278,6 +296,7 @@ fn buffered_stream_response(
     effort: ReasoningEffort,
     request_model: String,
     cancel: crate::cancel::Cancel,
+    ticket: Option<crate::queue::QueueTicket>,
 ) -> Response {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     let id = request_id("resp_");
@@ -293,7 +312,7 @@ fn buffered_stream_response(
         // Nothing is sent until the whole generation is done, so
         // `CancelOnDrop` below is the only signal this path has that the
         // client is gone (Gotcha 25).
-        match run_guarded(model, &chat_request, effort, cancel).await {
+        match run_guarded(model, &chat_request, effort, cancel, ticket).await {
             // Discarded silently, same contract as the live path.
             Ok(generated) if generated.decode.reason == runtime::StopReason::Cancelled => (),
             Ok(generated) => {

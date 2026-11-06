@@ -1,0 +1,11 @@
+# cargo-audit configuration, read by `cargo audit` locally and by
+# .github/workflows/audit.yml. Each ignore names why it is safe to carry.
+
+[advisories]
+ignore = [
+    # paste 1.0.15 is unmaintained, with no known vulnerability. It is a
+    # build-time proc-macro reached only through `metal` (crates/gpu), so no
+    # checkpoint or network input reaches it. Drop this when metal moves off
+    # it.
+    "RUSTSEC-2024-0436",
+]

@@ -119,9 +119,8 @@ pub fn ls(catalog: &Catalog, store: &Store, options: &Options) -> Result<(), Err
         return Ok(());
     }
     let mut table = Table::new(&["NAME", "TAG", "KIND", "SIZE", "WHERE", "ADDED"]).right(3);
-    let mut total = 0u64;
+    let total = total_install_bytes(installs.iter().map(|e| e.row.install_bytes));
     for entry in &installs {
-        total += entry.row.install_bytes;
         let place = match entry.availability {
             Availability::Available => Cell::new(entry.library_name.clone()),
             _ => Cell::styled(
@@ -704,9 +703,21 @@ pub fn home(catalog: &Catalog, store: &Store, options: &Options) -> Result<(), E
     Ok(())
 }
 
+/// Sum of registry row sizes. Rows come from an on-disk registry that can be
+/// corrupt, so saturate: a bogus size must not panic (debug) or wrap (release).
+fn total_install_bytes(sizes: impl Iterator<Item = u64>) -> u64 {
+    sizes.fold(0u64, u64::saturating_add)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn total_install_bytes_saturates_on_corrupt_rows() {
+        assert_eq!(total_install_bytes([1u64, 2].into_iter()), 3);
+        assert_eq!(total_install_bytes([u64::MAX, 5].into_iter()), u64::MAX);
+    }
 
     #[test]
     fn status_words_are_user_words() {

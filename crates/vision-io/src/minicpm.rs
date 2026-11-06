@@ -81,10 +81,10 @@ impl MiniCpmParams {
             }
         };
         let std = triple("image_std")?;
-        if std.contains(&0.0) {
+        if std.iter().any(|s| *s <= 0.0) {
             return Err(VisionIoError::BadConfig {
                 field: "image_std".into(),
-                why: "a zero standard deviation".into(),
+                why: "entries must be positive".into(),
             });
         }
         Ok(Self {
@@ -350,6 +350,20 @@ pub fn canvas_positions(
             grids: canvas.len(),
         });
     }
+    // The fill loop below writes `thumb_start + r * cw + c`, so a run that is
+    // not exactly `rows * cols` long would index past the sequence or leave
+    // fill tokens unpositioned. The splice always emits exact runs; this
+    // guards direct callers of this pub fn (mrope.rs checks the same).
+    for (k, (&(start, end), &(ch, cw))) in runs.iter().zip(canvas).enumerate() {
+        if ch.checked_mul(cw) != Some(end - start) {
+            return Err(VisionIoError::InvalidDimensions {
+                detail: format!(
+                    "image {k} fill run has {} tokens but its canvas is {ch}x{cw}",
+                    end - start
+                ),
+            });
+        }
+    }
 
     // Group the runs into frames and the frames into groups.
     let mut groups: Vec<(usize, Vec<Frame>)> = Vec::new();
@@ -614,5 +628,35 @@ mod tests {
         assert!(
             minicpm_splice_and_positions(&[PAD], &[GridThw::new(1, 6, 8)], &IDS, &digits).is_err()
         );
+    }
+
+    /// Zero was already refused; a negative std is refused too, matching the
+    /// positivity rule every other parser in this crate applies.
+    #[test]
+    fn a_non_positive_image_std_is_refused() {
+        for std in ["[0.0, 0.5, 0.5]", "[0.5, -0.5, 0.5]", "[0.5, 0.5, 1e-50]"] {
+            let json = format!(r#"{{"image_std": {std}}}"#);
+            assert!(
+                MiniCpmParams::from_preprocessor_config_json(&json).is_err(),
+                "image_std {std} must be refused"
+            );
+        }
+        assert!(MiniCpmParams::from_preprocessor_config_json("{}").is_ok());
+    }
+
+    /// `canvas_positions` is pub: a direct caller whose fill run is not
+    /// `rows * cols` long must get an error, not an out-of-bounds panic
+    /// (short run at the end) or a silently mispositioned sequence.
+    #[test]
+    fn canvas_positions_refuses_a_run_that_does_not_fill_the_canvas() {
+        // <image> PAD PAD </image> against a 2x2 canvas: two tokens short.
+        let short = [9001, PAD, PAD, 9002];
+        assert!(canvas_positions(&short, &IDS, &[(2, 2)]).is_err());
+        // Five fill tokens against a 2x2 canvas: one token left unpositioned.
+        let long = [9001, PAD, PAD, PAD, PAD, PAD, 9002];
+        assert!(canvas_positions(&long, &IDS, &[(2, 2)]).is_err());
+        // The exact length still works.
+        let exact = [9001, PAD, PAD, PAD, PAD, 9002];
+        assert!(canvas_positions(&exact, &IDS, &[(2, 2)]).is_ok());
     }
 }
