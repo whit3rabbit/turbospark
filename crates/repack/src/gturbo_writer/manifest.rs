@@ -2,19 +2,23 @@
 
 use std::path::Path;
 
-use model_io::ArchConfig;
+use model_io::{
+    ArchConfig, HEADER_BYTES, MANIFEST_VERSION_MAJOR, MANIFEST_VERSION_MINOR, TRAILER_BYTES,
+};
 
 use super::types::{io_err, WriterError};
+use crate::resident_writer::index_format_trailer;
 
-/// A `model_weights.bin` with a valid 24-byte `ResidentIndexHeader`
-/// (`index_size == HEADER_BYTES`, zero entries) followed by the raw
-/// resident tensor region.
+/// A `model_weights.bin` with a valid 24-byte `ResidentIndexHeader` (zero
+/// entries) and the format trailer, followed by the raw resident tensor
+/// region. `index_size` is header plus trailer.
 pub(crate) fn build_empty_resident_index(resident_tensor_bytes: &[u8]) -> Vec<u8> {
-    const HEADER_BYTES: u64 = 24;
-    let mut bytes = Vec::with_capacity(HEADER_BYTES as usize + resident_tensor_bytes.len());
-    bytes.extend_from_slice(&HEADER_BYTES.to_le_bytes()); // index_size
+    let index_size = (HEADER_BYTES + TRAILER_BYTES) as u64;
+    let mut bytes = Vec::with_capacity(index_size as usize + resident_tensor_bytes.len());
+    bytes.extend_from_slice(&index_size.to_le_bytes());
     bytes.extend_from_slice(&(resident_tensor_bytes.len() as u64).to_le_bytes()); // resident_size
     bytes.extend_from_slice(&0u64.to_le_bytes()); // entry_count
+    bytes.extend_from_slice(&index_format_trailer());
     bytes.extend_from_slice(resident_tensor_bytes);
     bytes
 }
@@ -77,8 +81,8 @@ pub(crate) fn build_manifest_json(
 
     Ok(serde_json::json!({
         "magic": "GTURBO",
-        "versionMajor": 1,
-        "versionMinor": 0,
+        "versionMajor": MANIFEST_VERSION_MAJOR,
+        "versionMinor": MANIFEST_VERSION_MINOR,
         "flags": {},
         "modelID": model_id,
         "sourceSnapshotHash": null,

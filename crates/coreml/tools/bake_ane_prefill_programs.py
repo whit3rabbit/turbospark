@@ -91,10 +91,15 @@ def bf16(raw):
     return (raw.view(np.uint16).astype(np.uint32) << 16).view(np.float32)
 
 
+INDEX_MAGIC = b"GTURBIDX"
+INDEX_FORMAT_VERSION = 1
+
+
 class Install:
     """The resident index of `model_weights.bin`, as `model-io`'s
-    `resident_index::load` reads it: a 24-byte header, 72-byte entries, then
-    names. Only INT4 affine entries (dtype 4) are used here."""
+    `resident_index::load` reads it: a 24-byte header, 72-byte entries, the
+    names, then (manifest 1.1 and later) a 16-byte format trailer in the page
+    padding. Only INT4 affine entries (dtype 4) are used here."""
 
     def __init__(self, path):
         self.path = Path(path).expanduser() / "model_weights.bin"
@@ -103,6 +108,7 @@ class Install:
         if index_size + resident_size > len(self.mm):
             raise SystemExit(f"{self.path}: index region runs past the file")
         self.entries = {}
+        string_table_end = 24 + count * 72
         for i in range(count):
             p = bytes(self.mm[24 + i * 72 : 24 + (i + 1) * 72])
             name_off, name_len, dtype = struct.unpack("<IHB", p[:7])
@@ -110,10 +116,24 @@ class Install:
             rows, cols, _, _ = struct.unpack("<IIII", p[24:40])
             s_off, s_size, b_off, b_size = struct.unpack("<QQQQ", p[40:72])
             name = bytes(self.mm[name_off : name_off + name_len]).decode()
+            string_table_end = max(string_table_end, name_off + name_len)
             self.entries[name] = dict(
                 dtype=dtype, offset=offset, size=size, rows=rows, cols=cols,
                 s_off=s_off, s_size=s_size, b_off=b_off, b_size=b_size,
             )
+        # Same rule as the Rust reader: a trailer counts only past the string
+        # table, and a format this tool does not know is refused by name. No
+        # trailer is the legacy layout.
+        trailer_start = index_size - 16
+        if trailer_start >= string_table_end:
+            trailer = bytes(self.mm[trailer_start:index_size])
+            if trailer[:8] == INDEX_MAGIC:
+                (version,) = struct.unpack("<I", trailer[8:12])
+                if version != INDEX_FORMAT_VERSION:
+                    raise SystemExit(
+                        f"{self.path}: index format {version} is not supported "
+                        f"(this tool reads format {INDEX_FORMAT_VERSION})"
+                    )
 
     def int4(self, name):
         e = self.entries.get(name)

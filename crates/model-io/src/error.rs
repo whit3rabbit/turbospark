@@ -16,6 +16,13 @@ pub enum ModelError {
         major: i64,
         minor: i64,
     },
+    /// `model_weights.bin` carries a format trailer naming an index layout
+    /// this build does not read. Reinstalling writes the layout this build
+    /// knows; upgrading reads the one the install has.
+    UnsupportedIndexFormat {
+        found: u32,
+        supported: u32,
+    },
     UnknownFlag {
         name: String,
     },
@@ -81,7 +88,16 @@ impl fmt::Display for ModelError {
             ),
             ModelError::UnsupportedVersion { major, minor } => write!(
                 f,
-                "manifest version {major}.{minor} is not supported (need 1.x)"
+                "manifest version {major}.{minor} is not supported (this build reads {}.0 \
+                 through {}.{})",
+                crate::manifest::MANIFEST_VERSION_MAJOR,
+                crate::manifest::MANIFEST_VERSION_MAJOR,
+                crate::manifest::MANIFEST_VERSION_MINOR
+            ),
+            ModelError::UnsupportedIndexFormat { found, supported } => write!(
+                f,
+                "model_weights.bin index format {found} is not supported (this build reads \
+                 format {supported}); reinstall the model or upgrade turbospark"
             ),
             ModelError::UnknownFlag { name } => {
                 write!(f, "manifest.flags contains unknown key \"{name}\"")

@@ -13,6 +13,19 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Added
+- `model_weights.bin` ends its index region with a 16-byte format trailer
+  (`GTURBIDX`, format version 1) inside the page padding, and the manifest
+  loader now checks `versionMinor`. A trailer naming a format this build does
+  not read fails with `UnsupportedIndexFormat`, and a manifest newer than
+  `MANIFEST_VERSION_MINOR` fails with `UnsupportedVersion`, so an install
+  written by a later turbospark is refused by name instead of misread.
+
+### Changed
+- New installs are written as manifest 1.1. Installs written before (1.0, no
+  trailer) still load, and the Swift reader and turbospark 0.7.x open 1.1
+  installs unchanged because the header and entry offsets did not move.
+
 ## [0.7.1] - 2026-11-03
 
 ### Changed

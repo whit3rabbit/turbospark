@@ -64,7 +64,7 @@ Top-level fields (writer: `build_manifest_json`; reader: `Manifest` in
 |---|---|---|
 | `magic` | string | Always `"GTURBO"`. Anything else fails with `NotAGTurboDirectory`. |
 | `versionMajor` | i64 | `1`. Any other major fails with `UnsupportedVersion`. |
-| `versionMinor` | i64 | `0`. |
+| `versionMinor` | i64 | `1` (writer: `MANIFEST_VERSION_MINOR`). Minor 0 and 1 load; a newer minor fails with `UnsupportedVersion`. Minor 1 means the `model_weights.bin` index region ends with the format trailer. |
 | `flags` | map string -> bool | Only `streamingPresent`, `turboQuantKV`, `aneSharedExpert` are recognized; any other key is an error. `turboQuantKV: true` is refused (removed runtime support). |
 | `modelID` | string | Model identifier. Note the exact spelling: `modelID`, not `modelId`. |
 | `sourceSnapshotHash` | string or null | Source HF repository snapshot hash when recorded. The writer emits `null`. |
@@ -191,15 +191,24 @@ Layout (writer: `build_empty_resident_index` and
 reader in `crates/model-io`):
 
 ```
-offset 0   u64 LE  index_size     # bytes of the entry table that follows
+offset 0   u64 LE  index_size     # bytes of the whole index region: header, entries, names, padding
 offset 8   u64 LE  resident_size  # bytes of the raw tensor region
 offset 16  u64 LE  entry_count     # named tensor entries
-offset 24  [entry_count entries]  # named resident tensor index
-then       [resident_size bytes]  # raw tensor data region, mmap'ed at open
+offset 24  [entry_count entries]  # named resident tensor index, 72 bytes each
+then       [string table]         # entry names, then zero padding to a 16 KiB page
+index_size - 16  [format trailer] # "GTURBIDX", u32 LE format version (1), u32 LE reserved (0)
+index_size [resident_size bytes]  # raw tensor data region, mmap'ed at open
 ```
 
-The minimal form the batch writer produces has `index_size = 24` and zero
-entries, wrapping just the raw tensor bytes. Real installs carry a full
+The format trailer (manifest 1.1 and later) sits in the page padding, past
+the last name. The reader refuses a trailer naming a format version other
+than the one it implements (`INDEX_FORMAT_VERSION`) with
+`UnsupportedIndexFormat`, and reads a region with no trailer as the layout
+written before 1.1. Older readers skip the padding, so they open a 1.1
+install unchanged.
+
+The minimal form the batch writer produces has `index_size = 40` (header
+plus trailer) and zero entries, wrapping just the raw tensor bytes. Real installs carry a full
 named index built by `resident_writer`; a caller-supplied complete
 `model_weights.bin` goes through
 `write_gturbo_install_with_resident_index_and_experts`. Whether an install
@@ -295,7 +304,8 @@ order:
 1. `manifest.json` exists, else `PartialInstall`; size within the read cap
    (default `DEFAULT_MAX_BYTES` = 4 MiB), else `IndexCorrupt`.
 2. `magic == "GTURBO"`, else `NotAGTurboDirectory`.
-3. `versionMajor == 1`, else `UnsupportedVersion`.
+3. `versionMajor == 1` and `versionMinor <= MANIFEST_VERSION_MINOR` (1),
+   else `UnsupportedVersion`.
 4. Every `flags` key in `{streamingPresent, turboQuantKV, aneSharedExpert}`;
    `turboQuantKV: true` refused.
 5. `arch` validated field by field against the resolved `ArchConfig`
