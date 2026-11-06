@@ -169,6 +169,9 @@ pub fn rank_top_k_u32_into(keys: &[f64], k: usize, out: &mut Vec<u32>) {
         return;
     }
     if k < keys.len() {
+        // Same width guard as `fill_identity`: the fast path's `i as u32`
+        // would otherwise wrap silently on a > u32::MAX domain.
+        assert_u32_domain(keys.len());
         if let Some(cut) = kth_largest_value(keys, k) {
             out.clear();
             for (i, &v) in keys.iter().enumerate() {
@@ -244,12 +247,18 @@ fn argmin(values: &[f64]) -> (usize, f64) {
     (at, values[at])
 }
 
-/// The identity permutation `0..len` in `out`, reusing its capacity.
-fn fill_identity(out: &mut Vec<u32>, len: usize) {
+/// Every `u32` index route checks the domain width here, so no path can
+/// truncate an index silently.
+fn assert_u32_domain(len: usize) {
     assert!(
         u32::try_from(len).is_ok(),
         "candidate domain exceeds u32 index range"
     );
+}
+
+/// The identity permutation `0..len` in `out`, reusing its capacity.
+fn fill_identity(out: &mut Vec<u32>, len: usize) {
+    assert_u32_domain(len);
     out.clear();
     out.extend(0..len as u32);
 }

@@ -176,7 +176,10 @@ pub fn load(file_path: &Path) -> Result<ResidentIndex, ModelError> {
         )));
     }
 
-    let region_len = header.index_size as usize;
+    // Checked so a 32-bit target refuses a >4 GiB index instead of truncating
+    // it. entry_count is bounded by index_size above, so its casts below fit.
+    let region_len = usize::try_from(header.index_size)
+        .map_err(|_| corrupt("indexSize exceeds the address space"))?;
     let mut index_buf = vec![0u8; region_len];
     {
         use std::io::Seek;

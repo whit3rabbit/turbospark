@@ -34,6 +34,31 @@ contracts.
   (GLM, Flint) still splits: the decoder keys on ids, so resolve the ids
   rather than leaving the sentinel. A template with no thinking-off switch
   (Flint) belongs in the always-split arm of both unions.
+- Checkpoint `tokenizer.json` regexes run on Oniguruma (the `tokenizers`
+  `onig` feature), so a crafted checkpoint can make encode panic (retry cap
+  hit) or stall with no cancellation (quadratic patterns under the cap).
+  This is an accepted risk for now: it needs a model the user chose to
+  install, and the FFI guard and server poison recovery contain the panic.
+  Do not swap the regex engine without a token-equality corpus across
+  families plus the quality digests. `fancy-regex` closes the stall but moved
+  token ids on qwen3vl-4b-vision and unlimited-ocr-2-4bit (long whitespace
+  runs), anchors `$` differently from HF, and silently stops splitting on a
+  limit hit. The ignored tests in `tests/regex_backend_hostile_pattern.rs`
+  are the acceptance bar for that later research
+  (https://github.com/whit3rabbit/turbospark/issues/250).
+- Message text that spells a control marker (`<|im_end|>`, `<|im_start|>`,
+  think or tool markers) encodes to the real marker id, so a tool result or
+  pasted page can close its turn and open a new one. This is accepted
+  behavior and matches HF transformers, vLLM and llama.cpp: every path
+  renders one string, then encodes it with added-token extraction on.
+  `tests/content_marker_spelling.rs` pins it. Do not "fix" it with
+  escaping or `encode_special_tokens` on the whole string: templates parse
+  content themselves (Qwen3 splits assistant text on `</think>`), the
+  Unlimited-OCR-2 flatten path puts `<image>` in content on purpose, and
+  benign prompts must keep their exact ids for the frozen digests. A real fix
+  is span-protected encoding for untrusted roles, applied at every
+  render-then-encode site (server `handler/plan.rs`, FFI
+  `generate/prompt.rs`, CLI, lab, bench), with per-family template gates.
 
 ## Checks
 

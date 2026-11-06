@@ -56,6 +56,12 @@ static HF_ENDPOINT_OVERRIDE: std::sync::RwLock<Option<String>> = std::sync::RwLo
 /// mirror set before this crate ever runs), defaulting to
 /// `https://huggingface.co`.
 pub fn hf_endpoint() -> String {
+    let endpoint = configured_hf_endpoint();
+    warn_once_if_insecure(&endpoint);
+    endpoint
+}
+
+fn configured_hf_endpoint() -> String {
     if let Ok(guard) = HF_ENDPOINT_OVERRIDE.read() {
         if let Some(url) = guard.as_ref() {
             return url.trim_end_matches('/').to_string();
@@ -65,6 +71,36 @@ pub fn hf_endpoint() -> String {
         .unwrap_or_else(|_| "https://huggingface.co".to_string())
         .trim_end_matches('/')
         .to_string()
+}
+
+/// The warning for a mirror that is not https. Plain http lets anyone on the
+/// path read and rewrite metadata (file lists, sizes, unpinned revisions).
+/// The token is still withheld by the https host allowlist and pinned
+/// content stays digest-verified, so this warns rather than refuses: local
+/// http mirrors are a legitimate setup.
+fn insecure_endpoint_warning(endpoint: &str) -> Option<String> {
+    let lower = endpoint.to_ascii_lowercase();
+    if lower.starts_with("https://") {
+        return None;
+    }
+    Some(format!(
+        "warning: Hugging Face endpoint {endpoint:?} is not https; metadata \
+         from it can be read or altered in transit and HF_TOKEN is not sent to it"
+    ))
+}
+
+/// Warns once per distinct endpoint, since `hf_endpoint` runs for every URL.
+fn warn_once_if_insecure(endpoint: &str) {
+    static LAST_WARNED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+    let Some(message) = insecure_endpoint_warning(endpoint) else {
+        return;
+    };
+    if let Ok(mut last) = LAST_WARNED.lock() {
+        if last.as_deref() != Some(endpoint) {
+            *last = Some(endpoint.to_string());
+            eprintln!("{message}");
+        }
+    }
 }
 
 /// Sets (`Some`) or clears (`None`) the in-process override [`hf_endpoint`]
@@ -102,9 +138,18 @@ impl RepoRef {
             Some((_, _)) => return Err(format!("{text:?}: empty revision after '@'")),
             None => (text, "main"),
         };
-        if repo.split('/').count() != 2 || repo.split('/').any(str::is_empty) {
+        // `file_url` and `api_url` splice both halves into the URL with
+        // `format!`, and discovery feeds this a hub-authored
+        // `cardData.base_model`. The hub charset rules keep `?`, `#`, `%` and
+        // dot segments from rewriting the request path or query.
+        if !crate::hub_validation::valid_repo_id(repo) {
             return Err(format!(
                 "{repo:?} is not owner/name (try mlx-community/gemma-4-26b-a4b-it-4bit)"
+            ));
+        }
+        if !crate::hub_validation::valid_relative_path(revision) {
+            return Err(format!(
+                "{text:?}: revision {revision:?} is not a valid ref"
             ));
         }
         Ok(Self::new(repo, revision))
@@ -174,6 +219,12 @@ pub struct RepoFile {
 /// Carries the `HF_TOKEN` bearer when one is set. Without it a gated
 /// repository answers 401, which reads like a bug in this code rather than
 /// like a missing credential, so [`Client::get`] says so by name.
+/// Ceiling for the sidecar, config, processor, and index files fetched whole
+/// into memory. The largest real one seen locally is a 31 MiB Gemma 4
+/// `tokenizer.json`; 256 MiB keeps headroom for larger vocabularies while a
+/// hostile mirror can no longer make a "small" JSON fetch buffer gigabytes.
+const MAX_SMALL_FILE_BYTES: usize = 256 * 1024 * 1024;
+
 pub struct Client {
     inner: reqwest::blocking::Client,
     exact_source_head: std::sync::OnceLock<reqwest::blocking::Client>,
@@ -314,14 +365,14 @@ impl Client {
     /// and 404 (the file is not in this repo at this revision, which is the
     /// sidecar-list trap).
     pub fn get(&self, url: &str) -> Result<Vec<u8>, String> {
-        self.get_with_limit(url, None)
+        self.get_with_limit(url, MAX_SMALL_FILE_BYTES)
     }
 
     /// One small file with a hard response-body ceiling. Metadata callers use
     /// this before parsing so an oversized Hub response cannot be fully
     /// buffered before validation rejects it.
     pub fn get_bounded(&self, url: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
-        self.get_with_limit(url, Some(max_bytes))
+        self.get_with_limit(url, max_bytes)
     }
 
     /// Bounded GET for live catalog search and trending. It keeps connection
@@ -467,17 +518,11 @@ impl Client {
         }
     }
 
-    fn get_with_limit(&self, url: &str, max_bytes: Option<usize>) -> Result<Vec<u8>, String> {
+    fn get_with_limit(&self, url: &str, max_bytes: usize) -> Result<Vec<u8>, String> {
         let response = self.send_retrying(url)?;
         let status = response.status().as_u16();
         match status {
-            200 => match max_bytes {
-                Some(max_bytes) => read_response_bounded(response, url, max_bytes),
-                None => response
-                    .bytes()
-                    .map(|b| b.to_vec())
-                    .map_err(|e| format!("reading {url}: {e}")),
-            },
+            200 => read_response_bounded(response, url, max_bytes),
             401 | 403 if !self.has_token() => Err(format!(
                 "GET {url}: HTTP {status}. This repository is gated and no HF_TOKEN \
                  is set; accept its licence on huggingface.co, then export a token."
@@ -499,10 +544,7 @@ impl Client {
     pub fn get_optional(&self, url: &str) -> Result<Option<Vec<u8>>, String> {
         let response = self.send_retrying(url)?;
         match response.status().as_u16() {
-            200 => response
-                .bytes()
-                .map(|b| Some(b.to_vec()))
-                .map_err(|e| format!("reading {url}: {e}")),
+            200 => read_response_bounded(response, url, MAX_SMALL_FILE_BYTES).map(Some),
             404 => Ok(None),
             other => Err(format!("GET {url}: HTTP {other}")),
         }
@@ -1185,5 +1227,49 @@ mod token_host_tests {
             "token leaked to a non-official host: {request}"
         );
         assert!(!request.contains("hf_secret_token_value"));
+    }
+
+    /// Answers one GET with a declared body far above the small-file ceiling
+    /// and then trickles a few bytes, so an unbounded reader would wait on
+    /// (and try to buffer) the whole claimed length.
+    fn serve_oversized_declared_body() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let url = format!("http://{}/tokenizer.json", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf);
+            let declared = MAX_SMALL_FILE_BYTES as u64 * 4;
+            let _ = stream.write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {declared}\r\nConnection: close\r\n\r\n{{"
+                )
+                .as_bytes(),
+            );
+        });
+        url
+    }
+
+    #[test]
+    fn non_https_endpoint_warns_and_https_does_not() {
+        assert!(super::insecure_endpoint_warning("http://mirror.local:8080")
+            .is_some_and(|w| w.contains("not https")));
+        assert!(super::insecure_endpoint_warning("ftp://x").is_some());
+        assert!(super::insecure_endpoint_warning("https://huggingface.co").is_none());
+        assert!(super::insecure_endpoint_warning("HTTPS://hf-mirror.com").is_none());
+    }
+
+    #[test]
+    fn sidecar_get_refuses_a_body_over_the_small_file_ceiling() {
+        let client = Client::with_token(None);
+        let error = client
+            .get(&serve_oversized_declared_body())
+            .expect_err("oversized sidecar must be refused");
+        assert!(error.contains("limit"), "unexpected error: {error}");
+
+        let error = client
+            .get_optional(&serve_oversized_declared_body())
+            .expect_err("oversized optional sidecar must be refused");
+        assert!(error.contains("limit"), "unexpected error: {error}");
     }
 }

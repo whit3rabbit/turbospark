@@ -56,6 +56,33 @@ impl Linear {
         }
     }
 
+    /// [`Linear::new`] for weights loaded without a shape check. The
+    /// asserts in `new` are debug-only, so a checkpoint whose tensor sizes
+    /// disagree with its config would otherwise surface as a slice panic
+    /// deep in `forward` instead of a load error.
+    pub fn checked(
+        name: &str,
+        weight: Vec<f32>,
+        bias: Option<Vec<f32>>,
+        input: usize,
+        output: usize,
+    ) -> Result<Self> {
+        let want = input.checked_mul(output);
+        if want != Some(weight.len()) {
+            return Err(SpeechError::Tensor {
+                name: format!("{name}.weight"),
+                why: format!("expected {output}x{input} values, got {}", weight.len()),
+            });
+        }
+        if let Some(b) = bias.as_ref().filter(|b| b.len() != output) {
+            return Err(SpeechError::Tensor {
+                name: format!("{name}.bias"),
+                why: format!("expected {output} values, got {}", b.len()),
+            });
+        }
+        Ok(Self::new(weight, bias, input, output))
+    }
+
     /// Plain f32 checkpoint: `{name}.weight [output, input]` and, when
     /// `has_bias`, `{name}.bias [output]`.
     pub fn load(
@@ -154,22 +181,58 @@ impl RmsNorm {
     }
 }
 
+/// Byte ceiling for `model.safetensors.index.json`. The index comes from a
+/// downloaded checkpoint, so an unbounded read lets a crafted file exhaust
+/// memory before JSON parsing. Real indexes are well under 1 MiB (the
+/// largest local one, a 26B MoE, is about 180 KB), so 64 MiB never refuses
+/// a real checkpoint.
+const INDEX_MAX_BYTES: u64 = 64 << 20;
+
+fn read_index_capped(path: &Path) -> Result<Vec<u8>> {
+    use std::io::Read;
+    let file = std::fs::File::open(path)
+        .map_err(|error| bad_config("model.safetensors.index.json", error))?;
+    let mut bytes = Vec::new();
+    // Read one byte past the cap so an oversized file is detected without
+    // trusting metadata length.
+    file.take(INDEX_MAX_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| bad_config("model.safetensors.index.json", error))?;
+    if bytes.len() as u64 > INDEX_MAX_BYTES {
+        return Err(bad_config(
+            "model.safetensors.index.json",
+            format!("larger than {INDEX_MAX_BYTES} bytes"),
+        ));
+    }
+    Ok(bytes)
+}
+
 /// Opens the checkpoint shards: the `model.safetensors.index.json`
 /// `weight_map` order when present, otherwise the single model file.
 pub fn open_shards(dir: &Path) -> Result<Vec<SafetensorsFile>> {
     let index_path = dir.join("model.safetensors.index.json");
     let mut names: Vec<String> = Vec::new();
     if index_path.is_file() {
-        let value: Value = serde_json::from_slice(
-            &std::fs::read(&index_path)
-                .map_err(|error| bad_config("model.safetensors.index.json", error))?,
-        )
-        .map_err(|error| bad_config("model.safetensors.index.json", error))?;
+        let value: Value = serde_json::from_slice(&read_index_capped(&index_path)?)
+            .map_err(|error| bad_config("model.safetensors.index.json", error))?;
         let map = value
             .get("weight_map")
             .and_then(Value::as_object)
             .ok_or_else(|| bad_config("model.safetensors.index.json", "weight_map missing"))?;
         for shard in map.values().filter_map(Value::as_str) {
+            // The shard name is joined onto the checkpoint dir, so an
+            // absolute path replaces the base and `..` escapes it. Same
+            // rule as the embeddings `module_path` and the catalog
+            // installer's `safe_relative`: plain relative components only.
+            if !Path::new(shard)
+                .components()
+                .all(|c| matches!(c, std::path::Component::Normal(_)))
+            {
+                return Err(bad_config(
+                    "model.safetensors.index.json",
+                    format!("shard {shard:?} must be relative and stay inside the checkpoint"),
+                ));
+            }
             if !names.iter().any(|name| name == shard) {
                 names.push(shard.to_owned());
             }
@@ -474,9 +537,64 @@ mod tests {
         let empty = open_shards(&dir).err().unwrap();
         assert!(empty.to_string().contains("no shards listed"), "{empty}");
 
+        // An index past the byte cap is refused before parsing. A sparse
+        // file keeps the test cheap.
+        let big = std::fs::File::create(dir.join("model.safetensors.index.json")).unwrap();
+        big.set_len(INDEX_MAX_BYTES + 1).unwrap();
+        drop(big);
+        let oversized = open_shards(&dir).err().unwrap();
+        assert!(oversized.to_string().contains("larger than"), "{oversized}");
+
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_file(a);
         let _ = std::fs::remove_file(b);
+    }
+
+    #[test]
+    fn open_shards_refuses_shard_names_outside_the_checkpoint() {
+        // A real, parseable shard sits beside the checkpoint dir, so a
+        // traversal that is not refused would open it successfully.
+        let root =
+            std::env::temp_dir().join(format!("turbospark_nn_escape_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("ckpt");
+        std::fs::create_dir_all(&dir).unwrap();
+        let outside = temp_safetensors("escape_outside", &[("o", vec![1], vec![1.0])]);
+        std::fs::copy(&outside, root.join("outside.safetensors")).unwrap();
+        let absolute = root.join("outside.safetensors");
+
+        for shard in [
+            "../outside.safetensors".to_owned(),
+            absolute.to_string_lossy().into_owned(),
+        ] {
+            let index = serde_json::json!({ "weight_map": { "o": shard } });
+            std::fs::write(dir.join("model.safetensors.index.json"), index.to_string()).unwrap();
+            let refused = open_shards(&dir).err();
+            assert!(
+                refused
+                    .as_ref()
+                    .is_some_and(|e| e.to_string().contains("inside the checkpoint")),
+                "{shard}: {refused:?}"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_file(outside);
+    }
+
+    #[test]
+    fn checked_linear_refuses_sizes_that_disagree_with_the_dims() {
+        assert!(Linear::checked("l", vec![0.0; 6], Some(vec![0.0; 2]), 3, 2).is_ok());
+        let weight = Linear::checked("l", vec![0.0; 5], None, 3, 2)
+            .err()
+            .unwrap();
+        assert!(weight.to_string().contains("l.weight"), "{weight}");
+        let bias = Linear::checked("l", vec![0.0; 6], Some(vec![0.0; 3]), 3, 2)
+            .err()
+            .unwrap();
+        assert!(bias.to_string().contains("l.bias"), "{bias}");
+        // input * output overflowing usize is a refusal, not a wrap.
+        assert!(Linear::checked("l", vec![], None, usize::MAX, 2).is_err());
     }
 
     #[test]

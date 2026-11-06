@@ -465,6 +465,12 @@ pub unsafe extern "C" fn ts_kv_quant_supported(
         if layer_mask.is_null() || layer_mask_len == 0 || num_layers == 0 {
             return 0;
         }
+        // Open refuses a manifest whose mask is not one entry per layer, so
+        // a mismatch is a "no" here too. The `isize` bound is what
+        // `from_raw_parts` requires; past it the slice itself is undefined.
+        if layer_mask_len != num_layers || layer_mask_len > isize::MAX as usize {
+            return 0;
+        }
         let mask = std::slice::from_raw_parts(layer_mask, layer_mask_len);
         models::kv_quant_supported(full_head_dim, mask, num_layers) as c_int
     })
@@ -966,4 +972,34 @@ pub unsafe extern "C" fn ts_model_resolve_path(
             ))
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A manifest whose mask length is not `numLayers` is refused at open
+    /// (`model_io` arch validation), so the predicate must answer no too.
+    /// The slice is formed from a real buffer here, so every case is defined.
+    #[test]
+    fn kv_quant_supported_refuses_a_mask_length_that_is_not_num_layers() {
+        let mask = [1u8; 8];
+        unsafe {
+            assert_eq!(ts_kv_quant_supported(128, mask.as_ptr(), 4, 4), 1);
+            assert_eq!(ts_kv_quant_supported(128, mask.as_ptr(), 8, 1), 0);
+            assert_eq!(ts_kv_quant_supported(128, mask.as_ptr(), 3, 4), 0);
+        }
+    }
+
+    /// A length past `isize::MAX` cannot back a slice; it must be refused
+    /// before `from_raw_parts`, even when `num_layers` agrees with it.
+    #[test]
+    fn kv_quant_supported_refuses_a_length_past_isize_max() {
+        let mask = [1u8; 1];
+        unsafe {
+            for len in [isize::MAX as usize + 1, usize::MAX] {
+                assert_eq!(ts_kv_quant_supported(128, mask.as_ptr(), len, len), 0);
+            }
+        }
+    }
 }

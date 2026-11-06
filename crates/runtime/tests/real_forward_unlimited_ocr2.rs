@@ -238,3 +238,259 @@ fn a_decoded_page_marker_advances_without_error() {
     }
     assert!(logits.iter().all(|v| v.to_f32().is_finite()));
 }
+
+/// Every tensor of a real install's `uocr2_tower.json`, dumped from
+/// `Unlimited-OCR-2-4bit.gturbo` rather than derived from the tower's constants,
+/// so the validator's table is checked against something it did not produce.
+fn real_tower_layout() -> Vec<(String, Vec<u64>)> {
+    let mut out: Vec<(String, Vec<u64>)> = Vec::new();
+    let mut add = |name: String, shape: &[u64]| out.push((name, shape.to_vec()));
+    for (name, shape) in [
+        ("sam.patch_embed.proj.weight", &[768, 16, 16, 3][..]),
+        ("sam.patch_embed.proj.bias", &[768]),
+        ("sam.pos_embed", &[1, 64, 64, 768]),
+        ("sam.neck.0.weight", &[256, 1, 1, 768]),
+        ("sam.neck.1.weight", &[256]),
+        ("sam.neck.1.bias", &[256]),
+        ("sam.neck.2.weight", &[256, 3, 3, 256]),
+        ("sam.neck.3.weight", &[256]),
+        ("sam.neck.3.bias", &[256]),
+        ("sam.net_2.weight", &[512, 3, 3, 256]),
+        ("sam.net_3.weight", &[1024, 3, 3, 512]),
+        ("clip.embeddings.class_embedding", &[1024]),
+        ("clip.embeddings.patch_embedding.weight", &[1024, 14, 14, 3]),
+        ("clip.embeddings.position_embedding.weight", &[257, 1024]),
+        ("clip.pre_layrnorm.weight", &[1024]),
+        ("clip.pre_layrnorm.bias", &[1024]),
+        ("projector.weight", &[1280, 2048]),
+        ("projector.bias", &[1280]),
+        ("image_newline", &[1280]),
+        ("view_separator", &[1280]),
+    ] {
+        add(name.to_string(), shape);
+    }
+    for block in 0..12 {
+        let rel: &[u64] = if [2, 5, 8, 11].contains(&block) {
+            &[127, 64]
+        } else {
+            &[27, 64]
+        };
+        for (suffix, shape) in [
+            ("norm1.weight", &[768][..]),
+            ("norm1.bias", &[768]),
+            ("norm2.weight", &[768]),
+            ("norm2.bias", &[768]),
+            ("attn.qkv.weight", &[2304, 768]),
+            ("attn.qkv.bias", &[2304]),
+            ("attn.proj.weight", &[768, 768]),
+            ("attn.proj.bias", &[768]),
+            ("attn.rel_pos_h", rel),
+            ("attn.rel_pos_w", rel),
+            ("mlp.lin1.weight", &[3072, 768]),
+            ("mlp.lin1.bias", &[3072]),
+            ("mlp.lin2.weight", &[768, 3072]),
+            ("mlp.lin2.bias", &[768]),
+        ] {
+            add(format!("sam.blocks.{block}.{suffix}"), shape);
+        }
+    }
+    for block in 0..24 {
+        for (suffix, shape) in [
+            ("layer_norm1.weight", &[1024][..]),
+            ("layer_norm1.bias", &[1024]),
+            ("layer_norm2.weight", &[1024]),
+            ("layer_norm2.bias", &[1024]),
+            ("self_attn.qkv_proj.weight", &[3072, 1024]),
+            ("self_attn.qkv_proj.bias", &[3072]),
+            ("self_attn.out_proj.weight", &[1024, 1024]),
+            ("self_attn.out_proj.bias", &[1024]),
+            ("mlp.fc1.weight", &[4096, 1024]),
+            ("mlp.fc1.bias", &[4096]),
+            ("mlp.fc2.weight", &[1024, 4096]),
+            ("mlp.fc2.bias", &[1024]),
+        ] {
+            add(format!("clip.transformer.blocks.{block}.{suffix}"), shape);
+        }
+    }
+    out
+}
+
+/// The smallest view through a tower whose entries all sit at offset 0 of a bin
+/// as long as the largest one: zeros are enough to reach every weight the view
+/// reads, with no 800 MB file. `edit` then spoils the index. Returns the length
+/// of the projected rows.
+fn run_tower_with_index(
+    edit: impl FnOnce(&mut serde_json::Map<String, serde_json::Value>),
+) -> Result<usize, turbospark_runtime::RealForwardError> {
+    let dir = tempdir();
+    let arch = build_synthetic_unlimited_ocr2_install(&dir, VOCAB).unwrap();
+    let mut runner = RealForwardRunner::open_with_max_context(&dir, arch, 1024).unwrap();
+    let layout = real_tower_layout();
+    let largest: u64 = layout
+        .iter()
+        .map(|(_, shape)| shape.iter().product::<u64>() * 2)
+        .max()
+        .unwrap();
+    let mut index = serde_json::Map::new();
+    for (name, shape) in layout {
+        index.insert(name, serde_json::json!({ "offset": 0u64, "shape": shape }));
+    }
+    edit(&mut index);
+    std::fs::write(dir.join("uocr2_tower.bin"), vec![0u8; largest as usize]).unwrap();
+    std::fs::write(
+        dir.join("uocr2_tower.json"),
+        serde_json::to_vec(&serde_json::Value::Object(index)).unwrap(),
+    )
+    .unwrap();
+    const SIDE: usize = 64;
+    let ran = runner
+        .unlimited_ocr2_view_stages(&vec![0.0; SIDE * SIDE * 3], SIDE)
+        .map(|stages| stages.projected.len());
+    let _ = std::fs::remove_dir_all(&dir);
+    ran
+}
+
+fn set_entry(
+    index: &mut serde_json::Map<String, serde_json::Value>,
+    name: &str,
+    offset: u64,
+    shape: &[u64],
+) {
+    index.insert(
+        name.to_string(),
+        serde_json::json!({ "offset": offset, "shape": shape }),
+    );
+}
+
+/// Refused by name, as an error, rather than by a panic or a wrong answer.
+fn assert_refuses(ran: Result<usize, turbospark_runtime::RealForwardError>, name: &str) {
+    let message = ran
+        .expect_err("a spoiled tower index was accepted")
+        .to_string();
+    assert!(
+        message.contains("uocr2_tower.json") && message.contains(name),
+        "refused for some other reason: {message}"
+    );
+}
+
+/// The control for the refusals below: the real layout is accepted, and it
+/// names every weight this view reads.
+#[test]
+fn tower_index_with_the_real_layout_runs() {
+    assert_eq!(run_tower_with_index(|_| {}).unwrap(), 1280);
+}
+
+/// 2^32 * 2^32 wraps to 0 elements in release, so `host` returns an empty table
+/// where the shape claimed an impossible one.
+#[test]
+fn tower_index_refuses_a_shape_that_overflows() {
+    let ran = run_tower_with_index(|index| {
+        set_entry(index, "sam.pos_embed", 0, &[1 << 32, 1 << 32, 1]);
+    });
+    assert_refuses(ran, "sam.pos_embed");
+}
+
+/// Bytes, not elements: 2^63 elements are in range of a u64 and still wrap the
+/// byte length to 0.
+#[test]
+fn tower_index_refuses_a_byte_length_that_overflows() {
+    let ran = run_tower_with_index(|index| {
+        set_entry(index, "sam.pos_embed", 0, &[1 << 63]);
+    });
+    assert_refuses(ran, "sam.pos_embed");
+}
+
+#[test]
+fn tower_index_refuses_an_offset_past_the_bin() {
+    let ran = run_tower_with_index(|index| {
+        set_entry(index, "sam.pos_embed", 1 << 40, &[1, 64, 64, 768]);
+    });
+    assert_refuses(ran, "sam.pos_embed");
+}
+
+/// The GPU binds this offset as-is, so a range check on `host` alone misses it.
+#[test]
+fn tower_index_refuses_an_end_that_wraps() {
+    let ran = run_tower_with_index(|index| {
+        set_entry(index, "sam.net_3.weight", u64::MAX - 1, &[1024, 3, 3, 512]);
+    });
+    assert_refuses(ran, "sam.net_3.weight");
+}
+
+/// `host` floors an odd offset while the GPU binds it, so the two would read
+/// different weights from one entry.
+#[test]
+fn tower_index_refuses_an_odd_offset() {
+    let ran = run_tower_with_index(|index| {
+        set_entry(index, "sam.pos_embed", 1, &[1, 64, 64, 768]);
+    });
+    assert_refuses(ran, "sam.pos_embed");
+}
+
+/// In the bin, and too short for the table built from it.
+#[test]
+fn tower_index_refuses_a_short_host_tensor() {
+    let ran = run_tower_with_index(|index| {
+        set_entry(index, "sam.pos_embed", 0, &[4]);
+    });
+    assert_refuses(ran, "sam.pos_embed");
+}
+
+/// The kernels size their reads from the tower's constants, not this shape, so
+/// a short entry at the bin's tail would read past the Metal buffer. Offset 0
+/// keeps the unfixed read inside the buffer: the failure is that it is accepted.
+#[test]
+fn tower_index_refuses_a_short_gpu_tensor() {
+    let ran = run_tower_with_index(|index| {
+        set_entry(index, "sam.net_3.weight", 0, &[1]);
+    });
+    assert_refuses(ran, "sam.net_3.weight");
+}
+
+/// Opens the tower over a `uocr2_tower.json`/`.bin` pair of the given sizes.
+/// Both are sparse, so an oversized file costs no disk, only the reads.
+fn open_tower_with_sizes(
+    index_bytes: u64,
+    bin_bytes: u64,
+) -> Result<usize, turbospark_runtime::RealForwardError> {
+    let dir = tempdir();
+    let arch = build_synthetic_unlimited_ocr2_install(&dir, VOCAB).unwrap();
+    let mut runner = RealForwardRunner::open_with_max_context(&dir, arch, 1024).unwrap();
+    for (name, len) in [
+        ("uocr2_tower.json", index_bytes),
+        ("uocr2_tower.bin", bin_bytes),
+    ] {
+        std::fs::File::create(dir.join(name))
+            .and_then(|file| file.set_len(len))
+            .unwrap();
+    }
+    const SIDE: usize = 64;
+    let ran = runner
+        .unlimited_ocr2_view_stages(&vec![0.0; SIDE * SIDE * 3], SIDE)
+        .map(|stages| stages.projected.len());
+    let _ = std::fs::remove_dir_all(&dir);
+    ran
+}
+
+fn assert_too_large(ran: Result<usize, turbospark_runtime::RealForwardError>, name: &str) {
+    let message = ran
+        .expect_err("an oversized tower file was read")
+        .to_string();
+    assert!(
+        message.contains(name) && message.contains("byte limit"),
+        "refused for some other reason: {message}"
+    );
+}
+
+/// The real index is 61 KB; a crafted one must not be read whole.
+#[test]
+fn tower_refuses_an_oversized_index() {
+    assert_too_large(open_tower_with_sizes((1 << 20) + 1, 2), "uocr2_tower.json");
+}
+
+/// The real bin is 803 MB. Before the bound this one was read whole and copied
+/// twice more (Metal buffer and host table), about 6 GiB for one image.
+#[test]
+fn tower_refuses_an_oversized_bin() {
+    assert_too_large(open_tower_with_sizes(2, (2 << 30) + 1), "uocr2_tower.bin");
+}

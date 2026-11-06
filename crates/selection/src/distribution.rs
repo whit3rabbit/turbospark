@@ -13,6 +13,8 @@
 //! composite match a sequential sampled decode in distribution rather
 //! than merely in argmax.
 
+use std::collections::HashMap;
+
 use crate::derive::{derive_step_value, to_unit_interval};
 
 /// A normalized distribution over an explicit support, parallel arrays in
@@ -34,6 +36,9 @@ impl ShapedDistribution {
             probs.len(),
             "support and probabilities must be parallel"
         );
+        // `draw` falls back to the last entry on rounding, so an empty
+        // support would panic there instead of at the faulty constructor.
+        assert!(!support.is_empty(), "support must not be empty");
         Self { support, probs }
     }
 
@@ -92,10 +97,19 @@ pub fn residual(p: &ShapedDistribution, q: &ShapedDistribution) -> Option<Shaped
     /// Below this much residual mass, treat p as covered by q.
     const RESIDUAL_EPSILON: f64 = 1e-12;
 
+    // A hash join, because `top_k: 0` from a request makes both supports the
+    // whole vocabulary and `q.probability` per entry is then ~3.4e10 steps per
+    // rejected proposal. Lookup only, so hash order cannot reach the output;
+    // `or_insert` keeps the first occurrence, as `probability` does.
+    let mut q_mass: HashMap<u32, f64> = HashMap::with_capacity(q.support.len());
+    for (&token, &prob) in q.support.iter().zip(&q.probs) {
+        q_mass.entry(token).or_insert(prob);
+    }
+
     let mut support: Vec<u32> = Vec::with_capacity(p.support.len());
     let mut probs: Vec<f64> = Vec::with_capacity(p.support.len());
     for (i, &token) in p.support.iter().enumerate() {
-        let mass = (p.probs[i] - q.probability(token)).max(0.0);
+        let mass = (p.probs[i] - q_mass.get(&token).copied().unwrap_or(0.0)).max(0.0);
         if mass > 0.0 {
             support.push(token);
             probs.push(mass);
@@ -117,6 +131,14 @@ mod tests {
 
     fn dist(support: &[u32], probs: &[f64]) -> ShapedDistribution {
         ShapedDistribution::new(support.to_vec(), probs.to_vec())
+    }
+
+    /// An empty support has no token to draw, so `draw` would panic on its
+    /// tail fallback far from the bad construction. Refuse it at `new`.
+    #[test]
+    #[should_panic(expected = "support must not be empty")]
+    fn new_refuses_an_empty_support() {
+        let _ = ShapedDistribution::new(Vec::new(), Vec::new());
     }
 
     #[test]
@@ -171,6 +193,77 @@ mod tests {
         let r = residual(&p, &q).expect("all mass survives");
         assert_eq!(r.support(), &[5]);
         assert_eq!(r.probability(5), 1.0);
+    }
+
+    /// `top_k: 0` over HTTP makes both supports the whole vocabulary, in
+    /// different rank orders, and a rejected proposal runs this join with no
+    /// cancellation point inside it. A scan per entry is ~3.4e10 steps here,
+    /// about 11 s per rejection even optimized. The join runs on a worker so
+    /// the red case fails at the budget instead of holding the suite; the
+    /// budget is over 25x what the hash join takes in a debug build.
+    #[test]
+    fn residual_at_full_vocabulary_is_not_a_quadratic_join() {
+        const GEMMA_VOCAB: u32 = 262_144;
+        const BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
+        let n = GEMMA_VOCAB as f64;
+        let weight_sum = n * (n + 1.0) / 2.0;
+        let support: Vec<u32> = (0..GEMMA_VOCAB).collect();
+        let probs: Vec<f64> = (0..GEMMA_VOCAB)
+            .map(|t| f64::from(t + 1) / weight_sum)
+            .collect();
+        let p = ShapedDistribution::new(support.clone(), probs);
+        // Reversed, so no entry of p sits near its own position in q.
+        let q = ShapedDistribution::new(
+            support.into_iter().rev().collect(),
+            vec![1.0 / n; GEMMA_VOCAB as usize],
+        );
+
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done.send(residual(&p, &q));
+        });
+        let r = finished
+            .recv_timeout(BUDGET)
+            .expect("residual over a full vocabulary must not take seconds")
+            .expect("p is not q, so mass survives");
+        // p exceeds uniform q on the upper half of the tokens, in p's order.
+        let upper_half: Vec<u32> = (GEMMA_VOCAB / 2..GEMMA_VOCAB).collect();
+        assert_eq!(r.support(), upper_half);
+    }
+
+    /// The draw walks the residual's support in order, so the join must keep
+    /// p's order and the exact float values or a seeded run's corrections
+    /// change. `probability` answers with the FIRST occurrence of a duplicate,
+    /// and `ShapedDistribution::new` admits duplicates, so q has one here.
+    #[test]
+    fn residual_keeps_p_order_and_matches_probability_bit_for_bit() {
+        let p = dist(&[9, 2, 40, 7, 1000], &[0.3, 0.25, 0.2, 0.15, 0.1]);
+        let q = dist(&[7, 40, 40, 2, 11], &[0.05, 0.1, 0.6, 0.3, 0.05]);
+
+        let mass: Vec<f64> = p
+            .support()
+            .iter()
+            .zip(&p.probs)
+            .map(|(&t, &w)| (w - q.probability(t)).max(0.0))
+            .collect();
+        let total: f64 = mass.iter().filter(|&&m| m > 0.0).sum();
+        let (want_support, want_probs): (Vec<u32>, Vec<f64>) = p
+            .support()
+            .iter()
+            .zip(&mass)
+            .filter(|(_, &m)| m > 0.0)
+            .map(|(&t, &m)| (t, m / total))
+            .unzip();
+
+        // 40 is the discriminator: first occurrence leaves it 0.1, last would
+        // clamp it out.
+        assert_eq!(want_support, [9, 40, 7, 1000]);
+        let r = residual(&p, &q).expect("mass survives");
+        assert_eq!(r.support(), want_support);
+        let got_bits: Vec<u64> = r.probs.iter().map(|w| w.to_bits()).collect();
+        let want_bits: Vec<u64> = want_probs.iter().map(|w| w.to_bits()).collect();
+        assert_eq!(got_bits, want_bits);
     }
 
     /// A seeded draw is reproducible and stays inside the support, for the

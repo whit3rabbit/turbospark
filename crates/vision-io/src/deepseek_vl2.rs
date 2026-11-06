@@ -97,7 +97,12 @@ impl DeepseekVl2Params {
                     .map(|v| v as usize)
                     .ok_or_else(|| bad("candidate_resolutions", "a non-integer entry".into()))
             };
-            candidates.push((get(0)?, get(1)?));
+            let (w, h) = (get(0)?, get(1)?);
+            // The chosen candidate is the canvas the image is padded to, and
+            // `select_best_resolution` multiplies the pair unchecked.
+            crate::params::check_config_edge("candidate_resolutions", w)?;
+            crate::params::check_config_edge("candidate_resolutions", h)?;
+            candidates.push((w, h));
         }
         let image_size = candidates
             .first()
@@ -138,11 +143,16 @@ impl DeepseekVl2Params {
             }
             Ok(out)
         };
+        // The normalization divides by it: zero would be silent inf or NaN.
+        let image_std = triple("image_std")?;
+        if image_std.iter().any(|s| *s <= 0.0) {
+            return Err(bad("image_std", "entries must be positive".into()));
+        }
         Ok(Self {
             image_size,
             candidates,
             image_mean: triple("image_mean")?,
-            image_std: triple("image_std")?,
+            image_std,
             downsample_ratio,
         })
     }
@@ -556,5 +566,36 @@ mod tests {
         // 14*14 = 196 > 96, so it is image; channel 0 is red = 1, 1 and 2 = -1.
         let row = (14 * 27 + 5) * DSVL2_PATCH_DIM;
         assert_eq!(&t.pixels[row..row + 3], &[1.0, -1.0, -1.0]);
+    }
+
+    /// The normalization divides by `image_std`: a zero (or a value that
+    /// rounds to zero in f32) would put inf or NaN in every tile silently.
+    #[test]
+    fn a_non_positive_image_std_is_refused() {
+        for std in ["[0.0,0.5,0.5]", "[0.5,-0.5,0.5]", "[0.5,0.5,1e-50]"] {
+            let text = CONFIG.replace(
+                "\"image_std\": [0.5,0.5,0.5]",
+                &format!("\"image_std\": {std}"),
+            );
+            assert_ne!(text, CONFIG, "image_std must appear in the fixture");
+            assert!(
+                DeepseekVl2Params::from_processor_config_json(&text).is_err(),
+                "image_std {std} must be refused"
+            );
+        }
+    }
+
+    /// The chosen candidate is the canvas a decoded image is padded to, so a
+    /// hostile entry is a multi-GB allocation (and `cw * ch` wraps in
+    /// release). Each edge is held to the decode ceiling; the real list
+    /// tops out at 3456.
+    #[test]
+    fn a_candidate_past_the_decode_ceiling_is_refused() {
+        let text = CONFIG.replace("[1152,1152]]", "[1152,1152],[384,4227072]]");
+        assert_ne!(
+            text, CONFIG,
+            "the last candidate must appear in the fixture"
+        );
+        assert!(DeepseekVl2Params::from_processor_config_json(&text).is_err());
     }
 }

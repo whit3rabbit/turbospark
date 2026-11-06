@@ -377,6 +377,14 @@ impl StepAudio2HiFT {
                 why: "speech_feat must be row-major mel frames".to_string(),
             });
         }
+        // Zero frames (empty speech tokens) would panic in the convs,
+        // sine_gen's zero-width chunks, and istft's `frames - 1`; infer
+        // runs this check first, so it guards the whole vocoder.
+        if frames == 0 {
+            return Err(SpeechError::Input {
+                why: "speech_feat must hold at least one mel frame".to_string(),
+            });
+        }
         let mut h = to_cm(speech_feat, frames, MEL_CHANNELS);
         for conv in &self.f0_condnet {
             h = conv.forward(&h);

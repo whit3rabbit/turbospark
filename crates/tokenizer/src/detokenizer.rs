@@ -33,6 +33,14 @@ impl<'a> MfDetokenizer<'a> {
     }
 
     /// Pushes a single token ID into the detokenizer, returning any newly emitted text.
+    ///
+    /// Cost: each push re-decodes the whole `stable_ids` history, so a
+    /// generation of n tokens is O(n^2) decode work. This is deliberate:
+    /// `clean_up_tokenization_spaces` and merge rules can rewrite text an
+    /// earlier decode already produced, and only a full decode lets
+    /// `commit_delta` reconcile that. The caller bounds n (max tokens and
+    /// the context window); a sliding decode window would change emitted
+    /// text and needs its own parity check before it replaces this.
     pub fn push(&mut self, id: i32) -> String {
         let token = self.tokenizer.id_to_token(id).unwrap_or_default();
         if is_byte_fallback(&token) {

@@ -14,5 +14,5 @@ pub use ggml::{ggml_type_block, ggml_type_name};
 pub use parser::parse_header;
 pub use types::{
     GgufHeader, GgufHeaderError, GgufTensorInfo, GgufValue, DEFAULT_ALIGNMENT,
-    DEFAULT_MAX_HEADER_BYTES, SUPPORTED_VERSION,
+    DEFAULT_MAX_HEADER_BYTES, MAX_ARRAY_DEPTH, SUPPORTED_VERSION,
 };

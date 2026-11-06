@@ -144,8 +144,14 @@ impl<'a> StructuredAssistantDecoder<'a> {
                     self.failed = true;
                     return Err(ToolCallParserError::Malformed);
                 }
-                // Unreachable: the four IDLE_MARKS are all matched above.
-                Some((_, _)) => unreachable!("an unmatched idle mark"),
+                // Unreachable today: the four IDLE_MARKS are all matched
+                // above. A mark added later without its own arm fails this
+                // one decode as Malformed instead of panicking the process.
+                Some((_, _)) => {
+                    debug_assert!(false, "an unmatched idle mark");
+                    self.failed = true;
+                    return Err(ToolCallParserError::Malformed);
+                }
                 None => {}
             }
             let held = partial_mark_prefix_length(&self.held_text, &IDLE_MARKS);

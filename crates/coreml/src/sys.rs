@@ -35,11 +35,12 @@ use objc2_core_ml::{
 };
 use objc2_foundation::{NSArray, NSDictionary, NSError, NSNumber, NSProcessInfo, NSString, NSURL};
 
-use crate::cache::{cache_key, compiled_path_for, copy_dir, is_cache_entry_for};
-use crate::error::{CoreMlError, Result};
-use crate::tensor::{
-    element_count, gather_strided, scatter_strided, strided_extent, DType, Tensor,
+use crate::cache::{
+    cache_key, compiled_path_for, copy_dir, is_cache_entry_for, is_staging_name, source_id,
+    source_marker,
 };
+use crate::error::{CoreMlError, Result};
+use crate::tensor::{element_count, gather_strided, scatter_strided, strided_bytes, DType, Tensor};
 use crate::{
     check_inputs, Capability, ComputeDevice, ComputePlan, ComputeUnits, FeatureKind, FeatureSpec,
     LoadOptions, OpPlacement,
@@ -254,18 +255,22 @@ fn write_multiarray(name: &str, arr: &MLMultiArray, t: &Tensor) -> Result<()> {
     let src = t.to_bytes();
     let shape = t.shape().to_vec();
     let mut failure: Option<CoreMlError> = None;
+    // A handler that never runs must not report a write that did not
+    // happen (the input would silently keep its uninitialized contents).
+    let ran = std::cell::Cell::new(false);
     {
         let failure_ref = &mut failure;
         let failure_cell = std::cell::RefCell::new(failure_ref);
         let block = RcBlock::new(
             |ptr: NonNull<std::ffi::c_void>, size: isize, strides: NonNull<NSArray<NSNumber>>| {
+                ran.set(true);
                 // SAFETY: Core ML passes a live strides array for the
                 // duration of the block.
                 let strides = numbers(unsafe { strides.as_ref() });
                 let res = (|| -> Result<()> {
-                    let extent = strided_extent(&shape, &strides)?;
+                    let bytes = strided_bytes(&shape, &strides, elem)?;
                     let size = usize::try_from(size).unwrap_or(0);
-                    if extent * elem > size {
+                    if bytes > size {
                         return Err(CoreMlError::Prediction(format!(
                             "{name}: buffer of {size} bytes is smaller than its strides imply"
                         )));
@@ -290,6 +295,9 @@ fn write_multiarray(name: &str, arr: &MLMultiArray, t: &Tensor) -> Result<()> {
     }
     match failure {
         Some(e) => Err(e),
+        None if !ran.get() => Err(CoreMlError::Prediction(format!(
+            "{name}: buffer not exposed"
+        ))),
         None => Ok(()),
     }
 }
@@ -310,7 +318,7 @@ fn from_multiarray(name: &str, arr: &MLMultiArray) -> Result<Tensor> {
         got: format!("MLMultiArrayDataType {}", dt.0),
     })?;
     let shape = to_usizes(name, &shape)?;
-    let extent = strided_extent(&shape, &strides)?;
+    let bytes = strided_bytes(&shape, &strides, dtype.size())?;
     let ustrides: Vec<usize> = strides.iter().map(|&s| s as usize).collect();
     let elem = dtype.size();
     let mut out: Option<Result<Vec<u8>>> = None;
@@ -318,7 +326,7 @@ fn from_multiarray(name: &str, arr: &MLMultiArray) -> Result<Tensor> {
         let out_cell = std::cell::RefCell::new(&mut out);
         let block = RcBlock::new(|ptr: NonNull<std::ffi::c_void>, size: isize| {
             let size = usize::try_from(size).unwrap_or(0);
-            let res = if extent * elem > size {
+            let res = if bytes > size {
                 Err(CoreMlError::Prediction(format!(
                     "{name}: buffer of {size} bytes is smaller than its strides imply"
                 )))
@@ -413,7 +421,14 @@ pub struct CoreMlModel {
     states: Vec<FeatureSpec>,
     path: PathBuf,
     function: Option<String>,
+    /// Process-unique id that states record. Not the address: a move would
+    /// orphan a state, and a new model at a freed address would accept a
+    /// stale one (a mismatched MLState can raise an uncaught NSException).
+    id: u64,
 }
+
+/// Source of `CoreMlModel::id`. Starts at 1 and never repeats in practice.
+static NEXT_MODEL_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 impl std::fmt::Debug for CoreMlModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -472,6 +487,7 @@ impl CoreMlModel {
                 states,
                 path: path.to_path_buf(),
                 function: opts.function.clone(),
+                id: NEXT_MODEL_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             })
         })
     }
@@ -547,8 +563,8 @@ impl CoreMlModel {
         })
     }
 
-    fn owner_id(&self) -> usize {
-        self as *const Self as usize
+    fn owner_id(&self) -> u64 {
+        self.id
     }
 
     /// Runs one prediction that reads and updates `state`.
@@ -589,7 +605,7 @@ unsafe impl Send for SendState {}
 /// `Sync`: one prediction at a time.
 pub struct CoreMlState {
     state: SendState,
-    owner: usize,
+    owner: u64,
     specs: Vec<FeatureSpec>,
 }
 
@@ -626,6 +642,10 @@ impl CoreMlState {
         for spec in &self.specs {
             let key = NSString::from_str(&spec.name);
             let mut failure: Option<CoreMlError> = None;
+            // Set only by the inner handler, so it proves both accessors ran.
+            // Otherwise a skipped handler would report a copy that did not
+            // happen, like `read` refuses below.
+            let ran = std::cell::Cell::new(false);
             {
                 let cell = std::cell::RefCell::new(&mut failure);
                 let outer = RcBlock::new(|src_arr: NonNull<MLMultiArray>| {
@@ -633,6 +653,7 @@ impl CoreMlState {
                     // (synchronous, nested) blocks.
                     let src_arr = unsafe { src_arr.as_ref() };
                     let inner = RcBlock::new(|dst_arr: NonNull<MLMultiArray>| {
+                        ran.set(true);
                         let dst_arr = unsafe { dst_arr.as_ref() };
                         let r = copy_array(&spec.name, src_arr, dst_arr);
                         if let Err(e) = r {
@@ -656,6 +677,12 @@ impl CoreMlState {
             }
             if let Some(e) = failure {
                 return Err(e);
+            }
+            if !ran.get() {
+                return Err(CoreMlError::Prediction(format!(
+                    "state {}: buffer not exposed",
+                    spec.name
+                )));
             }
         }
         Ok(())
@@ -708,7 +735,7 @@ fn copy_array(name: &str, src: &MLMultiArray, dst: &MLMultiArray) -> Result<()> 
         .map(DType::size)
         .ok_or_else(|| CoreMlError::Prediction(format!("state {name}: unsupported dtype")))?;
     let shape = to_usizes(name, &ss)?;
-    let bytes = strided_extent(&shape, &sd)? * elem;
+    let bytes = strided_bytes(&shape, &sd, elem)?;
     // Read the source's raw buffer, then write it into the destination.
     // Same layout on both sides, so the strided bytes copy one to one.
     let mut raw: Option<Result<Vec<u8>>> = None;
@@ -739,10 +766,14 @@ fn copy_array(name: &str, src: &MLMultiArray, dst: &MLMultiArray) -> Result<()> 
         )))
     })?;
     let mut failure: Option<CoreMlError> = None;
+    // Like the read above, a handler that never runs must not report a
+    // copy that did not happen (the KV state would silently stay stale).
+    let ran = std::cell::Cell::new(false);
     {
         let cell = std::cell::RefCell::new(&mut failure);
         let block = RcBlock::new(
             |ptr: NonNull<std::ffi::c_void>, size: isize, strides: NonNull<NSArray<NSNumber>>| {
+                ran.set(true);
                 // SAFETY: Core ML passes a live strides array for the block.
                 let now = numbers(unsafe { strides.as_ref() });
                 let size = usize::try_from(size).unwrap_or(0);
@@ -766,6 +797,9 @@ fn copy_array(name: &str, src: &MLMultiArray, dst: &MLMultiArray) -> Result<()> 
     }
     match failure {
         Some(e) => Err(e),
+        None if !ran.get() => Err(CoreMlError::Prediction(format!(
+            "state {name}: destination buffer not exposed"
+        ))),
         None => Ok(()),
     }
 }
@@ -819,8 +853,13 @@ pub fn compile_if_needed(path: &Path, cache_root: &Path) -> Result<PathBuf> {
                     .map_err(|e| CoreMlError::Compile(format!("copying compiled model: {e}")))?;
                 let _ = fs::remove_dir_all(&compiled_tmp);
             }
+            let source = source_id(path, cache_root);
             match fs::rename(&staging, &dest) {
-                Ok(()) => {}
+                // Best effort: a missing marker only makes this entry
+                // prunable by a same-stem package, costing one recompile.
+                Ok(()) => {
+                    let _ = fs::write(source_marker(&dest), &source);
+                }
                 Err(_) if dest.is_dir() => {
                     // Another process finished the same compile first.
                     let _ = fs::remove_dir_all(&staging);
@@ -832,7 +871,7 @@ pub fn compile_if_needed(path: &Path, cache_root: &Path) -> Result<PathBuf> {
                     )));
                 }
             }
-            prune_stale(cache_root, &stem, &dest);
+            prune_stale(cache_root, &stem, &dest, &source);
             Ok(dest.clone())
         },
     )
@@ -859,7 +898,15 @@ fn serialized_cold_compile<T>(
     compile()
 }
 
-fn prune_stale(cache_root: &Path, stem: &str, keep: &Path) {
+/// A staging dir lives only between compile and rename (a copy at most),
+/// so one this old was left by a crashed process, not one mid-publish.
+const STAGING_ORPHAN_AGE: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// Removes this package's older entries and orphaned staging dirs. An entry
+/// whose marker names a different package with the same stem is kept, or
+/// two such packages would prune each other on every open. An entry with no
+/// marker (written before markers existed) is treated as this package's.
+fn prune_stale(cache_root: &Path, stem: &str, keep: &Path, source: &str) {
     let Ok(entries) = fs::read_dir(cache_root) else {
         return;
     };
@@ -867,8 +914,27 @@ fn prune_stale(cache_root: &Path, stem: &str, keep: &Path) {
         let name = entry.file_name();
         let name = name.to_string_lossy();
         let path = entry.path();
-        if path != keep && is_cache_entry_for(&name, stem) && path.is_dir() {
+        if !path.is_dir() {
+            continue;
+        }
+        if path != keep && is_cache_entry_for(&name, stem) {
+            let marker = source_marker(&path);
+            match fs::read_to_string(&marker) {
+                Ok(owner) if owner != source => continue,
+                _ => {}
+            }
             let _ = fs::remove_dir_all(&path);
+            let _ = fs::remove_file(&marker);
+        } else if is_staging_name(&name) {
+            let old = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > STAGING_ORPHAN_AGE);
+            if old {
+                let _ = fs::remove_dir_all(&path);
+            }
         }
     }
 }
@@ -1175,10 +1241,15 @@ mod shared_plane {
             if rows == 0 || cols == 0 {
                 return Err(CoreMlError::Prediction("empty shared plane".into()));
             }
+            // Without this, release builds (no overflow checks) would wrap
+            // to a tiny bytes-per-row that no longer matches `cols`.
+            let row_bytes = cols.checked_mul(2).ok_or_else(|| {
+                CoreMlError::Prediction(format!("shared plane of {cols} columns overflows"))
+            })?;
             autoreleasepool(|_| {
                 // SAFETY: plain C calls with a valid key and value; the keys
                 // are framework statics.
-                let bpr = unsafe { IOSurfaceAlignProperty(kIOSurfaceBytesPerRow, cols * 2) };
+                let bpr = unsafe { IOSurfaceAlignProperty(kIOSurfaceBytesPerRow, row_bytes) };
                 let keys = unsafe {
                     [
                         key(kIOSurfaceWidth),
@@ -1401,6 +1472,18 @@ mod shared_plane {
                 }
                 Ok(())
             })
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::SharedF16Plane;
+
+        #[test]
+        fn new_refuses_row_bytes_overflow() {
+            // cols * 2 bytes per half overflows usize; must be an error, not
+            // a debug panic or a release wrap to a tiny bytes-per-row.
+            assert!(SharedF16Plane::new(1, usize::MAX / 2 + 1).is_err());
         }
     }
 }

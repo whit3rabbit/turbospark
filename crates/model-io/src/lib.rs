@@ -12,6 +12,7 @@
 mod arch_baselines;
 mod arch_config;
 mod arch_validation;
+mod bounded_read;
 mod cgroup;
 mod context_policy;
 mod dash_config;

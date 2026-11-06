@@ -7,12 +7,14 @@
 //! rather than silently ignored.
 
 use std::convert::Infallible;
+use std::sync::Arc;
 
 use axum::body::Body;
 use axum::extract::{FromRequest, Multipart, Query, Request, State};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use tokio::sync::Semaphore;
 use tokio_stream::wrappers::ReceiverStream;
 use turbospark_audio::conversion::{to_mono_resampled, MonoResampleStrategy};
 use turbospark_audio::error::AudioError as WavError;
@@ -272,17 +274,33 @@ pub(crate) fn decode_wav_16k(bytes: &[u8]) -> Result<Vec<f32>, (StatusCode, Stri
     .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))
 }
 
-pub(crate) async fn decode_blocking(bytes: Vec<u8>) -> Result<Vec<f32>, Response> {
-    tokio::task::spawn_blocking(move || decode_wav_16k(&bytes))
-        .await
-        .map_err(|_| {
-            error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "audio decode failed",
-                None,
-            )
-        })?
-        .map_err(|(status, message)| error(status, message, Some("file")))
+pub(crate) async fn decode_blocking(
+    slots: &Arc<Semaphore>,
+    bytes: Vec<u8>,
+) -> Result<Vec<f32>, Response> {
+    // The semaphore is never closed, so acquire only fails if that changes.
+    let permit = slots.clone().acquire_owned().await.map_err(|_| {
+        error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "audio decode failed",
+            None,
+        )
+    })?;
+    // The permit moves into the blocking task: a client that disconnects
+    // drops this future but not the decode, which keeps its memory until done.
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        decode_wav_16k(&bytes)
+    })
+    .await
+    .map_err(|_| {
+        error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "audio decode failed",
+            None,
+        )
+    })?
+    .map_err(|(status, message)| error(status, message, Some("file")))
 }
 
 fn timestamp(seconds: f64, comma: bool) -> String {
@@ -417,7 +435,7 @@ async fn run(audio: AudioState, state: ServerState, request: Request) -> Respons
     if let Err(r) = audio.model_for(&model, AudioTask::SpeechToText) {
         return r;
     }
-    let samples = match decode_blocking(bytes).await {
+    let samples = match decode_blocking(&audio.decode_slots, bytes).await {
         Ok(s) => s,
         Err(r) => return r,
     };
@@ -527,4 +545,55 @@ fn ndjson(
         .headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     response
+}
+
+#[cfg(test)]
+mod decode_gate_tests {
+    use super::*;
+    use std::time::Duration;
+
+    fn tiny_wav() -> Vec<u8> {
+        // 16 kHz mono 16-bit PCM, 160 frames.
+        let frames = 160u32;
+        let data_len = frames * 2;
+        let mut b = Vec::new();
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&(36 + data_len).to_le_bytes());
+        b.extend_from_slice(b"WAVEfmt ");
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&16_000u32.to_le_bytes());
+        b.extend_from_slice(&32_000u32.to_le_bytes());
+        b.extend_from_slice(&2u16.to_le_bytes());
+        b.extend_from_slice(&16u16.to_le_bytes());
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&data_len.to_le_bytes());
+        b.resize(b.len() + data_len as usize, 0);
+        b
+    }
+
+    // A decode must not start while every decode slot is held: that is what
+    // keeps N parallel 128 MiB uploads from expanding to f32 all at once.
+    #[tokio::test]
+    async fn decode_waits_for_a_free_decode_slot() {
+        let slots = Arc::new(Semaphore::new(1));
+        let held = slots.clone().acquire_owned().await.unwrap();
+        let task = {
+            let slots = slots.clone();
+            tokio::spawn(async move { decode_blocking(&slots, tiny_wav()).await.is_ok() })
+        };
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(
+            !task.is_finished(),
+            "decode ran while every decode slot was held"
+        );
+        drop(held);
+        let ok = tokio::time::timeout(Duration::from_secs(10), task)
+            .await
+            .expect("decode did not resume after a slot freed")
+            .unwrap();
+        assert!(ok, "the tiny WAV must decode once admitted");
+        assert_eq!(slots.available_permits(), 1, "the decode slot leaked");
+    }
 }

@@ -462,6 +462,90 @@ fn physical_io_is_sampled_only_under_the_seam() {
     }
 }
 
+/// The whole chain a crafted checkpoint walks: `layout.json` decode, the path
+/// join, the streamer open, the read. A `file` naming something outside the
+/// install must stop before the bytes reach an expert slot, where inference
+/// would consume them as weights. If the decoder lets one through, the `Ok` arm
+/// carries on and reports what it managed to read, so a failure here shows the
+/// escape itself rather than only a missing error.
+#[test]
+fn a_layout_file_outside_the_install_never_reaches_an_expert_slot() {
+    let outside = write_layer_file();
+    let root = outside.parent().unwrap();
+    let install = root.join("install");
+    let experts = install.join(model_io::PACKED_EXPERTS_DIR);
+    std::fs::create_dir_all(&experts).unwrap();
+
+    let relative = "../../layer_00.bin".to_string();
+    for file in [outside.display().to_string(), relative] {
+        std::fs::write(
+            experts.join("layout.json"),
+            format!(
+                r#"{{"expertStride": {EXPERT_STRIDE}, "numLayers": 1, "expertsPerLayer": 1,
+                    "layers": [{{"layer": 0, "file": "{file}", "experts": [
+                        {{"expert": 0, "offset": 0, "size": {EXPERT_STRIDE}, "tensors": {{}}}}
+                    ]}}]}}"#
+            ),
+        )
+        .unwrap();
+
+        match model_io::load_packed_experts_layout(&install, 1024 * 1024) {
+            Err(model_io::ModelError::IndexCorrupt { .. }) => {}
+            Err(other) => panic!("{file}: expected IndexCorrupt, got {other:?}"),
+            Ok(layout) => {
+                let stream = StreamLayout::from_packed_experts_layer(&layout.layers[0], &install);
+                let opened = PreadExpertStreamer::open(stream, 1, ExpertCachePolicy::Lfu);
+                let Ok(mut streamer) = opened else {
+                    panic!("{file}: decoded, and only the open stopped it");
+                };
+                let slot = streamer.load_expert(0, 0).unwrap();
+                panic!(
+                    "{file}: read {} bytes from outside the install into an expert slot",
+                    streamer.slot_data(slot).len()
+                );
+            }
+        }
+    }
+}
+
+/// The second check on the same invariant, for a `LayerLayout` that did not
+/// come through the decoder (its fields are public). The path must stay under
+/// the layout's own directory whatever `file` says, so the join cannot be the
+/// step that leaves the install.
+#[test]
+fn the_stream_path_stays_under_the_layout_directory() {
+    let dir = std::path::Path::new("/install");
+    let base = dir.join(model_io::PACKED_EXPERTS_DIR);
+    for file in ["/etc/passwd", "../model_weights.bin", "a/../../b", ".."] {
+        let layer = model_io::LayerLayout {
+            layer: 0,
+            file: file.to_string(),
+            expert_stride: 64,
+            experts: Vec::new(),
+        };
+        let path = StreamLayout::from_packed_experts_layer(&layer, dir).path;
+        let path = std::path::Path::new(&path);
+        assert!(path.starts_with(&base), "{file:?} resolved to {path:?}");
+        assert!(
+            !path
+                .components()
+                .any(|c| c == std::path::Component::ParentDir),
+            "{file:?} resolved to {path:?}"
+        );
+    }
+    // The ordinary case is untouched by the containment.
+    let layer = model_io::LayerLayout {
+        layer: 0,
+        file: "layer_00.bin".to_string(),
+        expert_stride: 64,
+        experts: Vec::new(),
+    };
+    assert_eq!(
+        StreamLayout::from_packed_experts_layer(&layer, dir).path,
+        base.join("layer_00.bin").display().to_string()
+    );
+}
+
 /// `nocache_active` reports the DESCRIPTOR's state, not the environment's
 /// request. Under the default environment it must be false, so a run that
 /// never asked for the disk-bound arm cannot report having been in it.

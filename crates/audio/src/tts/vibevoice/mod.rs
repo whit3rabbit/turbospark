@@ -160,6 +160,34 @@ pub struct DiffusionHeadConfig {
 }
 
 impl DiffusionHeadConfig {
+    /// Refuses ddpm step counts the scheduler cannot use. Both come from
+    /// the checkpoint config.json: zero training steps leaves an empty
+    /// schedule that `set_timesteps` indexes at -1, a huge count is an
+    /// allocation and loop bomb in `betas_for_alpha_bar`, and zero
+    /// inference steps would return the initial noise as the latent.
+    /// Published checkpoints ship 1000 training steps, so the ceiling is
+    /// far above any real value.
+    pub fn validate(&self) -> Result<()> {
+        const MAX_TRAIN_STEPS: usize = 100_000;
+        if self.ddpm_num_steps == 0 || self.ddpm_num_steps > MAX_TRAIN_STEPS {
+            return Err(SpeechError::BadConfig {
+                field: "diffusion_head_config.ddpm_num_steps".into(),
+                why: format!("{} is outside 1..={MAX_TRAIN_STEPS}", self.ddpm_num_steps),
+            });
+        }
+        if self.ddpm_num_inference_steps == 0 || self.ddpm_num_inference_steps > self.ddpm_num_steps
+        {
+            return Err(SpeechError::BadConfig {
+                field: "diffusion_head_config.ddpm_num_inference_steps".into(),
+                why: format!(
+                    "{} is outside 1..={}",
+                    self.ddpm_num_inference_steps, self.ddpm_num_steps
+                ),
+            });
+        }
+        Ok(())
+    }
+
     pub fn from_json(value: &Value) -> Self {
         let i = |key: &str, default: usize| {
             value
@@ -223,6 +251,8 @@ impl ModelConfig {
         // declared rope_scaling is ignored, so it is dropped here.
         let mut decoder = qwen2::from_json(&decoder_value)?;
         decoder.rope_scaling = None;
+        let diffusion_head = DiffusionHeadConfig::from_json(&diffusion_value);
+        diffusion_head.validate()?;
         Ok(Self {
             sample_rate: value
                 .get("sample_rate")
@@ -230,7 +260,7 @@ impl ModelConfig {
                 .unwrap_or(24000) as u32,
             acoustic_tokenizer: AcousticTokenizerConfig::from_json(&acoustic_value),
             decoder,
-            diffusion_head: DiffusionHeadConfig::from_json(&diffusion_value),
+            diffusion_head,
             acoustic_vae_dim: value
                 .get("acoustic_vae_dim")
                 .and_then(Value::as_u64)

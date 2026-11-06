@@ -43,6 +43,24 @@ use crate::store::{directory_bytes, InstalledModel, ModelModality, Store, StoreE
 /// deliberately does not carry one.
 pub const VISION_SIDECAR_FILES: [&str; 2] = ["preprocessor_config.json", "config.json"];
 
+/// Every top-level name an install plan fetches as a sidecar: the probe's
+/// `KNOWN_SIDECARS`, the vision-tower pair, and the processor file the
+/// shipped rows name. `remove_stale_sidecars` deletes only these, because
+/// `pull --out <DIR>` can point at a folder that already holds the user's
+/// own files. A test keeps this in step with the shipped rows.
+pub const OWNED_SIDECAR_NAMES: [&str; 10] = [
+    "tokenizer.json",
+    "tokenizer_config.json",
+    "chat_template.jinja",
+    "chat_template.json",
+    "generation_config.json",
+    "vocab.json",
+    "merges.txt",
+    "config.json",
+    "preprocessor_config.json",
+    "processor_config.json",
+];
+
 /// Everything needed to install one model, whether it came from the catalog
 /// or from a `--repo` probe.
 #[derive(Debug, Clone)]
@@ -601,8 +619,9 @@ fn fetch_sidecars(
     Ok(())
 }
 
-/// Remove top-level files that are neither generated install payloads nor
-/// sidecars fetched for this exact plan. A failed pull can leave sidecars in
+/// Remove top-level sidecar files ([`OWNED_SIDECAR_NAMES`]) that were not
+/// fetched for this exact plan. Generated payloads and any other file are
+/// left alone. A failed pull can leave sidecars in
 /// the destination, and the staged repack writer preserves the files it finds
 /// there. Pruning only after every current sidecar has downloaded keeps a
 /// retry from publishing files supplied by an earlier or unrelated plan.
@@ -618,12 +637,16 @@ fn remove_stale_sidecars(plan: &InstallPlan, dir: &Path) -> Result<(), String> {
             continue;
         }
         let name = entry.file_name();
-        let generated = matches!(name.to_str(), Some("manifest.json" | "model_weights.bin"));
+        // Only a name some plan fetches can be a stale sidecar. Anything else
+        // is not ours to delete: `--out` may name a folder of the user's.
+        let owned = name
+            .to_str()
+            .is_some_and(|name| OWNED_SIDECAR_NAMES.contains(&name));
         let current = plan
             .sidecar_files
             .iter()
             .any(|sidecar| name == std::ffi::OsStr::new(sidecar));
-        if !generated && !current {
+        if owned && !current {
             std::fs::remove_file(entry.path())
                 .map_err(|e| format!("removing stale sidecar {}: {e}", entry.path().display()))?;
         }
@@ -1150,6 +1173,53 @@ mod vision_gate_tests {
         );
         assert!(dir.join("packed_experts").is_dir());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// `pull --out <DIR>` writes into a folder the user named, which may
+    /// already hold their own files. The sweep exists for stale sidecars, so
+    /// a file no plan could have fetched must survive it.
+    #[test]
+    fn sidecar_prune_keeps_files_no_plan_could_have_fetched() {
+        let dir = std::env::temp_dir().join(format!(
+            "turbospark-sidecar-prune-user-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir(&dir).unwrap();
+
+        let plan = InstallPlan::from_entry(&vision_row());
+        std::fs::write(dir.join("config.json"), b"current").unwrap();
+        std::fs::write(dir.join("tokenizer.json"), b"stale").unwrap();
+        std::fs::write(dir.join("thesis.docx"), b"user").unwrap();
+        std::fs::write(dir.join(".DS_Store"), b"user").unwrap();
+
+        remove_stale_sidecars(&plan, &dir).unwrap();
+
+        assert!(!dir.join("tokenizer.json").exists());
+        assert_eq!(std::fs::read(dir.join("config.json")).unwrap(), b"current");
+        assert_eq!(std::fs::read(dir.join("thesis.docx")).unwrap(), b"user");
+        assert_eq!(std::fs::read(dir.join(".DS_Store")).unwrap(), b"user");
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The sweep only knows the names in [`OWNED_SIDECAR_NAMES`], so a
+    /// shipped row that fetches any other name would leave that file stale
+    /// across a retry under a different plan.
+    #[test]
+    fn every_shipped_sidecar_name_is_one_the_prune_owns() {
+        let catalog = crate::Catalog::embedded().unwrap();
+        for entry in catalog.entries() {
+            for name in &entry.sidecars.files {
+                assert!(
+                    OWNED_SIDECAR_NAMES.contains(&name.as_str()),
+                    "{}: sidecar {name:?} is not in OWNED_SIDECAR_NAMES",
+                    entry.alias
+                );
+            }
+        }
+        for name in crate::KNOWN_SIDECARS.iter().chain(&VISION_SIDECAR_FILES) {
+            assert!(OWNED_SIDECAR_NAMES.contains(name), "{name:?}");
+        }
     }
 
     /// **THE GATE BYPASS, MUTATION-CHECKED.** `gate()` must never reach the

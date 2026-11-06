@@ -43,6 +43,35 @@ pub(crate) fn new_cancel() -> Cancel {
     Arc::new(AtomicBool::new(false))
 }
 
+/// Events a live stream may queue ahead of a client that is connected but not
+/// reading. Generation is producer driven and never waits on the reader, so an
+/// unbounded queue held every chunk of a stalled reader's turn (about 200
+/// bytes per token, up to the whole context window per connection). At 1024
+/// the reader is tens of seconds behind at real decode rates before it is
+/// cut off, on top of whatever the kernel socket buffers already absorb, so a
+/// client that is merely slow never hits it. Small under `cfg(test)` so the
+/// backlog tests plateau quickly in a debug build.
+#[cfg(not(test))]
+pub(crate) const STREAM_BACKLOG: usize = 1024;
+#[cfg(test)]
+pub(crate) const STREAM_BACKLOG: usize = 32;
+
+/// Queues `item` for the client without waiting. A closed receiver (client
+/// gone) or a full one (client stopped reading) cancels the generation
+/// instead: blocking here would hold the runner and the FIFO gate for every
+/// other request while one reader stalls. Returns whether `item` was queued.
+pub(crate) fn send_or_cancel<T>(
+    tx: &tokio::sync::mpsc::Sender<T>,
+    item: T,
+    cancel: &Cancel,
+) -> bool {
+    if tx.try_send(item).is_ok() {
+        return true;
+    }
+    cancel.store(true, Ordering::Relaxed);
+    false
+}
+
 /// The `runtime::CancelFlag` the decode loop polls, built from `cancel`.
 /// Call this ONCE, on the blocking thread the generation itself runs on, and
 /// pass `&flag` down -- not `cancel` itself, which is not the type
@@ -169,3 +198,7 @@ mod tests {
         assert!(cancel.load(Ordering::Relaxed));
     }
 }
+
+#[cfg(test)]
+#[path = "stream_backlog_tests.rs"]
+mod stream_backlog_tests;

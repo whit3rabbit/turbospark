@@ -72,3 +72,14 @@ fn an_empty_conversation_is_returned_unchanged() {
     assert_eq!(outcome.removed_turn_count(), 0);
     assert_eq!(outcome.measured_length(), 0);
 }
+
+#[test]
+fn an_unmeasurable_sentinel_of_u64_max_fails_closed() {
+    // The FFI caller returns u64::MAX when a slice cannot be rendered.
+    let turns = ["a", "b", "c"];
+    let outcome = fit_conversation_window(&turns, false, u64::MAX, |_: &[&str]| u64::MAX);
+    assert_eq!(outcome.retained_turns(), &["c"]);
+    assert_eq!(outcome.removed_turn_count(), 2);
+    assert_eq!(outcome.measured_length(), u64::MAX);
+    assert!(!outcome.has_room_for_generation());
+}

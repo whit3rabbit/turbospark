@@ -47,6 +47,12 @@ pub(crate) const MAX_AUDIO_UPLOAD_BYTES: usize = 128 * 1024 * 1024;
 /// Concurrent realtime WebSockets.
 const MAX_REALTIME_SOCKETS: usize = 8;
 
+/// Concurrent upload decodes. Each decode of a full-size upload transiently
+/// holds up to 4x `MAX_AUDIO_UPLOAD_BYTES` of f32 plus the resampled copy, so
+/// without a gate a handful of parallel uploads commit several GiB at once.
+/// Excess requests wait for a slot rather than fail.
+const MAX_CONCURRENT_DECODES: usize = 2;
+
 /// Longest decoded clip a transcription request may carry. Qwen3-ASR refuses
 /// past 20 minutes on its own; this is the server-wide ceiling.
 pub(crate) const MAX_TRANSCRIBE_SECONDS: f64 = 30.0 * 60.0;
@@ -238,6 +244,8 @@ pub(crate) struct AudioState {
     pub(crate) metrics: Arc<AudioMetrics>,
     /// Open realtime sockets are capped; each holds up to 300 s of PCM.
     pub(crate) realtime_slots: Arc<tokio::sync::Semaphore>,
+    /// Bounds concurrent WAV decodes; see [`MAX_CONCURRENT_DECODES`].
+    pub(crate) decode_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl AudioState {
@@ -247,6 +255,7 @@ impl AudioState {
             jobs: Arc::new(JobStore::default()),
             metrics: Arc::new(AudioMetrics::default()),
             realtime_slots: Arc::new(tokio::sync::Semaphore::new(MAX_REALTIME_SOCKETS)),
+            decode_slots: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_DECODES)),
         }
     }
 

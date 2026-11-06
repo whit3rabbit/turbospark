@@ -81,6 +81,13 @@ impl SDEDpmSolver {
                 why: format!("beta_schedule {beta_schedule}: only the cosine family is ported"),
             });
         }
+        // prediction_type comes from checkpoint config.json; refuse an
+        // unported value here so step() never sees one.
+        if !matches!(prediction_type, "epsilon" | "v_prediction" | "sample") {
+            return Err(SpeechError::Unsupported {
+                why: format!("prediction_type {prediction_type}: not ported"),
+            });
+        }
         let betas = betas_for_alpha_bar(num_train_timesteps, 0.999);
         let mut alphas_cumprod = Vec::with_capacity(betas.len());
         let mut product = 1.0f64;
@@ -171,7 +178,7 @@ impl SDEDpmSolver {
                 "epsilon" => (s - sigma * m) / alpha,
                 "v_prediction" => alpha * s - sigma * m,
                 "sample" => m,
-                other => panic!("unknown prediction_type {other}"),
+                other => unreachable!("prediction_type {other} is refused in new()"),
             })
             .collect()
     }
@@ -376,5 +383,25 @@ mod tests {
             prev_x0 = Some(x0_pred);
         }
         let _ = x0;
+    }
+
+    #[test]
+    fn unknown_prediction_type_is_refused_not_panicked() {
+        // prediction_type comes from the checkpoint config.json. An
+        // unported value must fail as Unsupported at construction, not
+        // panic later inside step().
+        match SDEDpmSolver::new(20, "cosine", "flow") {
+            Err(crate::SpeechError::Unsupported { .. }) => {}
+            Err(other) => panic!("expected Unsupported, got {other:?}"),
+            Ok(mut scheduler) => {
+                scheduler.set_timesteps(2);
+                let sample = vec![0.0f32; 2];
+                let _ = scheduler.step(&sample, &sample, None, &sample);
+                panic!("unknown prediction_type was accepted");
+            }
+        }
+        for known in ["epsilon", "v_prediction", "sample"] {
+            assert!(SDEDpmSolver::new(20, "cosine", known).is_ok(), "{known}");
+        }
     }
 }

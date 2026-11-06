@@ -15,6 +15,11 @@ use std::path::Path;
 /// Install-relative file holding `{"sparse_attention_config": {...}}`.
 pub const DASH_SIDECAR: &str = "unlimited_ocr2_dash.json";
 
+/// Largest sidecar [`DashConfig::load`] accepts. The shipped one is a few
+/// KiB of per-layer arrays; the cap matches the manifest default so a
+/// downloaded install cannot make the reader buffer an arbitrary file.
+const DASH_SIDECAR_MAX_BYTES: u64 = 4 * 1024 * 1024;
+
 /// Upstream's `DASH_INFER_TOPM`: scores entering the entmax prior. A constant
 /// of the inference path, not a key in the checkpoint.
 pub const DASH_INFER_TOPM: usize = 16;
@@ -45,6 +50,13 @@ fn usize_key(sp: &serde_json::Value, key: &str) -> Result<usize, String> {
         .and_then(serde_json::Value::as_u64)
         .map(|v| v as usize)
         .ok_or_else(|| format!("sparse_attention_config.{key} is missing or not an integer"))
+}
+
+/// Token ids are signed 32-bit across crates; a truncating cast would alias
+/// an out-of-range id onto a real one and route the wrong positions.
+fn token_id_key(sp: &serde_json::Value, key: &str) -> Result<i32, String> {
+    let id = usize_key(sp, key)?;
+    i32::try_from(id).map_err(|_| format!("sparse_attention_config.{key} {id} exceeds i32"))
 }
 
 fn f64_key(sp: &serde_json::Value, key: &str) -> Result<f64, String> {
@@ -133,6 +145,31 @@ impl DashConfig {
                  {head_dim}"
             ));
         }
+        // The attention kernel takes the key count as a u32 and the position
+        // and bias buffers are sized from it, so a wrapped product would size
+        // them wrong (release builds carry no overflow checks).
+        let max_keys = topk
+            .checked_add(local_blocks)
+            .and_then(|blocks| blocks.checked_mul(block_size))
+            .filter(|&keys| u32::try_from(keys).is_ok());
+        if max_keys.is_none() {
+            return Err(format!(
+                "block size {block_size} with {local_blocks} local and {topk} top-k blocks \
+                 exceeds a u32 key count"
+            ));
+        }
+        let per_page_image_tokens = usize_key(sp, "per_page_image_tokens")?;
+        let rope_page_mod = usize_key(sp, "sparse_rope_page_mod")?;
+        // Both divide a signed page coordinate in compute::dash; a value
+        // above i64::MAX would cast negative.
+        for (key, value) in [
+            ("per_page_image_tokens", per_page_image_tokens),
+            ("sparse_rope_page_mod", rope_page_mod),
+        ] {
+            if i64::try_from(value).is_err() {
+                return Err(format!("sparse_attention_config.{key} {value} exceeds i64"));
+            }
+        }
         let sigma = f64_key(sp, "dash_sigma")?;
         if sigma <= 0.0 {
             return Err(format!("dash_sigma {sigma} must be positive"));
@@ -152,13 +189,13 @@ impl DashConfig {
             index_dim,
             topk,
             sigma: sigma as f32,
-            image_token_id: usize_key(sp, "image_token_id")? as i32,
-            page_token_id: usize_key(sp, "page_token_id")? as i32,
-            per_page_image_tokens: usize_key(sp, "per_page_image_tokens")?,
+            image_token_id: token_id_key(sp, "image_token_id")?,
+            page_token_id: token_id_key(sp, "page_token_id")?,
+            per_page_image_tokens,
             rope_tok_theta: f64_key(sp, "sparse_rope_tok_theta")? as f32,
             rope_page_theta: f64_key(sp, "sparse_rope_page_theta")? as f32,
             rope_page_pairs,
-            rope_page_mod: usize_key(sp, "sparse_rope_page_mod")?,
+            rope_page_mod,
             idx_scale,
             floor,
         })
@@ -177,8 +214,12 @@ impl DashConfig {
     /// Read an install's sidecar. A missing one is an error rather than a
     /// default: nothing about the weights says how to route.
     pub fn load(dir: &Path, layers: usize, head_dim: usize) -> Result<Self, String> {
-        let bytes = std::fs::read(dir.join(DASH_SIDECAR))
-            .map_err(|e| format!("reading {DASH_SIDECAR}: {e}"))?;
+        let bytes =
+            crate::bounded_read::read_capped(&dir.join(DASH_SIDECAR), DASH_SIDECAR_MAX_BYTES)
+                .map_err(|e| format!("reading {DASH_SIDECAR}: {e}"))?
+                .ok_or_else(|| {
+                    format!("{DASH_SIDECAR} size exceeds metadata cap {DASH_SIDECAR_MAX_BYTES}")
+                })?;
         let root: serde_json::Value =
             serde_json::from_slice(&bytes).map_err(|e| format!("parsing {DASH_SIDECAR}: {e}"))?;
         let sparse = root
@@ -242,6 +283,16 @@ mod tests {
             ("dash_topk_blocks", serde_json::json!(17)),
             ("sparse_rope_page_pairs", serde_json::json!(64)),
             ("dash_scale_per_layer", serde_json::json!([128.0])),
+            // Above i32::MAX: `as i32` would alias 128815 or go negative.
+            ("image_token_id", serde_json::json!(4_295_096_111u64)),
+            ("page_token_id", serde_json::json!(2_147_483_648u64)),
+            // The kernel's key count is a u32 and the buffers are sized from
+            // it; these overflow `topk * bs + local * bs`.
+            ("sparse_block_size", serde_json::json!(1u64 << 62)),
+            ("sparse_local_block", serde_json::json!(1u64 << 30)),
+            // Reduced as i64 in compute::dash.
+            ("sparse_rope_page_mod", serde_json::json!(u64::MAX)),
+            ("per_page_image_tokens", serde_json::json!(1u64 << 63)),
         ] {
             let mut sp = shipped();
             sp[key] = value;

@@ -29,6 +29,11 @@ pub const AUDIO_MODALITY: &str = "audio";
 /// Default filename for the speech receipt inside an install directory.
 pub const SPEECH_RECEIPT_FILENAME: &str = "speech-receipt.json";
 
+/// Largest receipt [`SpeechInstallReceipt::read_from_dir`] accepts. A real
+/// one is a few KiB; the cap matches the decoder receipt's default so a
+/// downloaded install cannot make the reader buffer an arbitrary file.
+pub const SPEECH_RECEIPT_MAX_BYTES: u64 = 4 * 1024 * 1024;
+
 /// Typed speech install receipt.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,12 +105,19 @@ impl SpeechInstallReceipt {
     /// Reads and parses the receipt from an install directory.
     pub fn read_from_dir(dir: &Path) -> Result<Self, ModelError> {
         let path = dir.join(SPEECH_RECEIPT_FILENAME);
-        let json = std::fs::read_to_string(&path).map_err(|e| ModelError::IoFailed {
-            call: format!("read {}", path.display()),
-            detail: e.to_string(),
-        })?;
+        let bytes = crate::bounded_read::read_capped(&path, SPEECH_RECEIPT_MAX_BYTES)
+            .map_err(|e| ModelError::IoFailed {
+                call: format!("read {}", path.display()),
+                detail: e.to_string(),
+            })?
+            .ok_or_else(|| ModelError::TrustedReceiptInvalid {
+                detail: format!(
+                    "{} size exceeds metadata cap {SPEECH_RECEIPT_MAX_BYTES}",
+                    path.display()
+                ),
+            })?;
         let receipt: Self =
-            serde_json::from_str(&json).map_err(|e| ModelError::TrustedReceiptInvalid {
+            serde_json::from_slice(&bytes).map_err(|e| ModelError::TrustedReceiptInvalid {
                 detail: format!("{} is not a speech receipt: {e}", path.display()),
             })?;
         receipt.validate()?;

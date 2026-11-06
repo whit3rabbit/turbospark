@@ -335,7 +335,7 @@ pub fn read_minicpm_vision_entries(
                 name: format!("{VISION_INSTALL_PREFIX}{install_prefix}{}", table[slot]),
                 dtype: converted.dtype,
                 bytes: converted.bytes,
-                shape: resident_shape(&shape),
+                shape: resident_shape(name, &shape)?,
             }));
         }
     }

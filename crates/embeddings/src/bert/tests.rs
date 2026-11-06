@@ -407,6 +407,54 @@ fn max_seq_length_follows_sentence_transformers() {
 }
 
 #[test]
+fn max_seq_length_beyond_the_position_table_is_refused() {
+    // A larger cut would never truncate: every long text would be
+    // tokenized in full, then fail the forward's position check.
+    let dir = scratch_copy("tiny_xlmr", "msl-limit");
+    let write = |n: u64| {
+        std::fs::write(
+            dir.join("sentence_bert_config.json"),
+            serde_json::json!({"max_seq_length": n, "do_lower_case": false}).to_string(),
+        )
+        .unwrap();
+    };
+    write(26);
+    assert_eq!(BertEmbedder::load(&dir).unwrap().max_seq_length(), 26);
+    write(27);
+    assert!(matches!(
+        BertEmbedder::load(&dir),
+        Err(EmbeddingError::BadConfig { .. })
+    ));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn load_refuses_module_paths_that_leave_the_checkpoint() {
+    // A Pooling config outside the checkpoint dir must not be reachable
+    // through modules.json, by `..` or by an absolute path.
+    let dir = scratch_copy("tiny_bert", "escape");
+    let outside = dir.with_file_name(format!(
+        "{}-outside",
+        dir.file_name().unwrap().to_str().unwrap()
+    ));
+    let _ = std::fs::remove_dir_all(&outside);
+    std::fs::rename(dir.join("1_Pooling"), &outside).unwrap();
+    let parent = format!("../{}", outside.file_name().unwrap().to_str().unwrap());
+    for path in [parent.as_str(), outside.to_str().unwrap()] {
+        edit_json(&dir.join("modules.json"), |v| {
+            v[1]["path"] = Value::String(path.to_owned())
+        });
+        let err = BertEmbedder::load(&dir).unwrap_err();
+        assert!(
+            matches!(err, EmbeddingError::BadConfig { .. }),
+            "{path}: {err}"
+        );
+    }
+    std::fs::remove_dir_all(&outside).unwrap();
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn load_refuses_unsupported_pipelines() {
     let dir = scratch_copy("tiny_bert", "pipe");
     edit_json(&dir.join("1_Pooling/config.json"), |v| {
@@ -908,4 +956,24 @@ fn real_timing() {
             );
         }
     }
+}
+
+#[test]
+fn load_refuses_a_word_table_whose_byte_size_wraps() {
+    // vocab * hidden * 4 wraps to the real byte length, so an unchecked
+    // multiply would accept a 2^56-row table backed by 96 rows of bytes
+    // and later slice past the mapping. The load must refuse it.
+    let dir = scratch_copy("tiny_bert", "wrap");
+    let rows = crate::testutil::wrapping_f32_rows(96, 64);
+    edit_json(&dir.join("config.json"), |v| {
+        v["vocab_size"] = serde_json::json!(rows)
+    });
+    crate::testutil::set_safetensors_shape(
+        &dir.join("model.safetensors"),
+        "embeddings.word_embeddings.weight",
+        &[rows, 64],
+    );
+    let err = BertEmbedder::load(&dir).unwrap_err();
+    assert!(matches!(err, EmbeddingError::Tensor { .. }), "{err}");
+    std::fs::remove_dir_all(&dir).unwrap();
 }

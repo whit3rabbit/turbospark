@@ -183,7 +183,8 @@ result is discarded.
   `text_to_speech` or `music_generation`.
 - `POST /v1/audio/models {"model_id":"ALIAS"}` attaches an installed
   catalog alias. Paths are refused because the route is reachable over HTTP.
-  `DELETE /v1/audio/models/ID` unloads (409 while jobs run).
+  It refuses with 400 once 8 models are attached or loading (startup
+  `--*-model` flags are not capped). Unload one first. `DELETE /v1/audio/models/ID` unloads (409 while jobs run).
 - `GET /v1/metrics` is Prometheus text for the audio routes only:
   request counts and time by endpoint and status, in-flight, 429s, models,
   jobs by status.

@@ -392,7 +392,11 @@ fn a_shallow_match_does_not_destroy_a_gdn_familys_recurrent_state() {
 #[test]
 fn a_session_pool_is_refused_by_name_on_qwen4_exp() {
     let dir = temp_dir();
-    let arch = build_synthetic_qwen4_exp_decode_install(&dir, VOCAB, "qwen4-pool")
+    // The synthetic qwen4 EOS id (999) must sit inside the vocabulary, or
+    // open refuses the n-gram hash bound. VOCAB (128) is too small for it.
+    let vocab = 2048;
+    assert!(turbospark_repack::QWEN4_DECODE_NGRAM_EOS_TOKEN_ID < vocab);
+    let arch = build_synthetic_qwen4_exp_decode_install(&dir, vocab, "qwen4-pool")
         .expect("qwen4 install builds");
 
     let runner = RealForwardRunner::open_with_slot_policy_speculation_steering_and_sessions(

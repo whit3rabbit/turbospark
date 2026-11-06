@@ -47,6 +47,14 @@ pub fn vision_rope_freq_rows(
             detail: format!("vision head_dim {head_dim} must be a positive multiple of 4"),
         });
     }
+    // theta is the base of the frequency ladder: zero, negative or non-finite
+    // gives inf or NaN rows the tower would rotate by without any error.
+    if !(theta.is_finite() && theta > 0.0) {
+        return Err(VisionIoError::InvalidDimensions {
+            detail: format!("vision rope theta {theta} must be finite and positive"),
+        });
+    }
+    params.check_geometry()?;
     let merge = params.merge_size;
     if grid.h == 0 || grid.w == 0 || grid.h % merge != 0 || grid.w % merge != 0 {
         return Err(VisionIoError::InvalidDimensions {

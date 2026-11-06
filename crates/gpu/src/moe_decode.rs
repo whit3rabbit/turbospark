@@ -335,7 +335,12 @@ fn encode_moe_phase1_named(
         &moe_function_constants(use_silu),
         &constants_key(use_silu),
     )?;
-    let rows = (top_k * f_dim) as u64;
+    // The kernel indexes rows in u32, so a product past u32 is refused
+    // rather than widened: wrapped, it would shrink the grid silently.
+    let rows = top_k
+        .checked_mul(f_dim)
+        .ok_or_else(|| GpuError::InvalidInput("moe phase1 top_k * f_dim overflows u32".into()))?
+        as u64;
     pass.encode_threadgroups(
         &pipeline,
         &[(routed.buffer(), 0, 0), (x.0, 2, x.1), (acts.0, 3, acts.1)],

@@ -24,6 +24,11 @@ pub const TRUNK_ROLE_FILE: &str = "trunk_role.json";
 /// The only kind this crate writes.
 pub const HEADLESS_TRUNK_KIND: &str = "headless_trunk";
 
+/// Largest marker [`read`] accepts. A real one is under 100 bytes; the cap
+/// matches the vision sidecar record so a downloaded install cannot make the
+/// reader buffer an arbitrary file.
+pub const TRUNK_ROLE_MAX_BYTES: u64 = 64 * 1024;
+
 /// `trunk_role.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -43,12 +48,16 @@ pub fn has_marker(dir: &Path) -> bool {
 /// Reads and validates the marker in `dir`.
 pub fn read(dir: &Path) -> Result<TrunkRoleRecord, ModelError> {
     let path = dir.join(TRUNK_ROLE_FILE);
-    let text = std::fs::read_to_string(&path).map_err(|e| ModelError::IoFailed {
-        call: format!("read {}", path.display()),
-        detail: e.to_string(),
-    })?;
+    let bytes = crate::bounded_read::read_capped(&path, TRUNK_ROLE_MAX_BYTES)
+        .map_err(|e| ModelError::IoFailed {
+            call: format!("read {}", path.display()),
+            detail: e.to_string(),
+        })?
+        .ok_or_else(|| ModelError::IndexCorrupt {
+            detail: format!("{TRUNK_ROLE_FILE} size exceeds metadata cap {TRUNK_ROLE_MAX_BYTES}"),
+        })?;
     let record: TrunkRoleRecord =
-        serde_json::from_str(&text).map_err(|e| ModelError::IndexCorrupt {
+        serde_json::from_slice(&bytes).map_err(|e| ModelError::IndexCorrupt {
             detail: format!("{TRUNK_ROLE_FILE}: {e}"),
         })?;
     if record.kind != HEADLESS_TRUNK_KIND {

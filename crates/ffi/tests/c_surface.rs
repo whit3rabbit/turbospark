@@ -31,9 +31,9 @@ use turbospark_ffi::{
     ts_image_buffer_free, ts_image_session_open, ts_last_error, ts_model_delete, ts_probe_json,
     ts_recommend_json, ts_recommend_progress_json, ts_repo_variants_json,
     ts_server_attach_audio_model, ts_server_attach_embedding_model, ts_server_attach_session,
-    ts_server_detach_audio_model, ts_server_detach_model, ts_server_info_json,
-    ts_server_poll_events_json, ts_server_set_idle_unload, ts_server_start, ts_server_stop,
-    ts_session_cancel, ts_session_count_text_tokens, ts_session_count_tokens,
+    ts_server_complete_audio_speech_request, ts_server_detach_audio_model, ts_server_detach_model,
+    ts_server_info_json, ts_server_poll_events_json, ts_server_set_idle_unload, ts_server_start,
+    ts_server_stop, ts_session_cancel, ts_session_count_text_tokens, ts_session_count_tokens,
     ts_session_count_tokens_with_tools, ts_session_detokenize_json, ts_session_fit_window_json,
     ts_session_fit_window_with_tools_json, ts_session_info_json, ts_session_open,
     ts_session_render_prompt, ts_session_tokenize_json, ts_string_free, ts_stt_close, ts_stt_open,
@@ -2761,4 +2761,73 @@ fn fitting_with_tools_keeps_less_than_fitting_without() {
     assert!(
         with["retained"].as_array().unwrap().len() < without["retained"].as_array().unwrap().len()
     );
+}
+
+/// The speech completion copies `sample_count` samples out of Swift's buffer,
+/// so the count is bounded before the slice exists. The buffers here really
+/// hold the claimed samples, so the oversized call stays well defined before
+/// the fix: it copies and then fails on the unknown request id, which is
+/// what the bound assertion catches.
+#[test]
+fn server_complete_audio_speech_refuses_a_count_over_the_output_limit() {
+    // runtime::native_audio::MAX_OUTPUT_SAMPLES, the in-process speech cap.
+    const MAX: usize = 44_100 * 2 * 360;
+    let mut server_ptr: *mut Server = ptr::null_mut();
+    let opts = CString::new(r#"{"port":0}"#).unwrap();
+    let code = unsafe { ts_server_start(ptr::null(), opts.as_ptr(), &mut server_ptr) };
+    assert_eq!(code, abi::TS_OK);
+    let pcm = vec![0.0f32; MAX + 1];
+
+    let code = unsafe {
+        ts_server_complete_audio_speech_request(
+            server_ptr,
+            7,
+            pcm.as_ptr(),
+            MAX + 1,
+            24_000,
+            ptr::null(),
+        )
+    };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    let why = last_error();
+    assert!(why.contains("limit"), "must fail on the bound, got: {why}");
+
+    // The largest legal count passes the bound and fails on the request id,
+    // so a bound off by one would report the limit here.
+    let code = unsafe {
+        ts_server_complete_audio_speech_request(
+            server_ptr,
+            7,
+            pcm.as_ptr(),
+            MAX,
+            24_000,
+            ptr::null(),
+        )
+    };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    let why = last_error();
+    assert!(why.contains("no longer active"), "got: {why}");
+
+    unsafe { ts_server_stop(server_ptr) };
+}
+
+/// Every other open-style entry point nulls `*out` before it can fail, so a
+/// caller that reuses one out variable across attempts never reads the
+/// previous attempt's handle back after a failure and frees it twice. The
+/// seeded value is a dangling sentinel that nothing dereferences.
+#[test]
+fn a_failed_session_open_clears_a_seeded_out_handle() {
+    let seeded = ptr::NonNull::<Session>::dangling().as_ptr();
+
+    let mut session: *mut Session = seeded;
+    let code = unsafe { ts_session_open(ptr::null(), ptr::null(), &mut session) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    assert!(session.is_null(), "a refused argument must clear *out");
+
+    // Past argument parsing: the open itself fails on a missing directory.
+    let missing = CString::new("/nonexistent/turbospark-ffi-06-model").unwrap();
+    let mut session: *mut Session = seeded;
+    let code = unsafe { ts_session_open(missing.as_ptr(), ptr::null(), &mut session) };
+    assert_ne!(code, abi::TS_OK);
+    assert!(session.is_null(), "a failed open must clear *out");
 }

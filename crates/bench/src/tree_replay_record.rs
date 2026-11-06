@@ -33,6 +33,10 @@ pub fn argmax(logits: &[LogitValue]) -> i32 {
 
 /// Top-k by logit with full-vocabulary softmax probabilities.
 pub fn top_k(logits: &[LogitValue], k: usize) -> Result<DepthCandidates, String> {
+    // k == 0 would index an empty `best` below; callers get an error instead.
+    if k == 0 {
+        return Err("top_k needs k >= 1".into());
+    }
     let max = logits
         .iter()
         .map(|v| v.to_f32())
@@ -102,6 +106,11 @@ pub fn record_mtp(
             "the MTP head drafts {} deep, {depth} asked",
             runner.mtp_draft_depth()
         ));
+    }
+    // An empty prompt leaves no hidden row to prime from, and `base - 1`
+    // below would underflow.
+    if prompt.is_empty() {
+        return Err("record_mtp needs a non-empty prompt".into());
     }
     let vocab = runner.vocab_size();
     let mut logits = vec![LogitValue::from_f32(0.0); vocab];
@@ -202,4 +211,18 @@ pub fn record_dflash(
         next = argmax(&logits);
     }
     Ok((stream, lattices))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // k == 0 used to index best[-1] and panic; it must be a plain error.
+    #[test]
+    fn top_k_zero_is_an_error_not_a_panic() {
+        let logits = [LogitValue::from_f32(1.0), LogitValue::from_f32(2.0)];
+        assert!(top_k(&logits, 0).is_err());
+        let c = top_k(&logits, 1).expect("k = 1");
+        assert_eq!(c.tokens, vec![1]);
+    }
 }
