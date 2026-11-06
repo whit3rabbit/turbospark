@@ -8,6 +8,50 @@ use model_io::ArchConfig;
 use crate::real_forward_types::RealForwardError;
 use model_io::ExpertCacheSlots;
 
+/// Upper bounds on the manifest dimensions that size buffers at open.
+///
+/// `DecodeScratch`, `AttentionScratch` and the KV cache are allocated from
+/// these BEFORE any tensor is bound and checked against its bytes on disk, so
+/// a manifest's numbers alone decide those allocations. Each bound sits far
+/// past every family this port runs (largest shipped baselines: hidden 6656,
+/// FFN 19968, 64 heads, head dim 512, vocab 262144, 64 layers, 512 experts)
+/// and past the largest public checkpoints (hidden 18432, FFN 73728, 128
+/// heads), so only a hand-made manifest reaches them. With every factor
+/// bounded, the scratch products stay far inside u64 and a few GiB at most.
+const ARCH_DIM_CEILINGS: [(&str, i64); 13] = [
+    ("hidden_size", 1 << 16),
+    ("intermediate_size", 1 << 18),
+    ("moe_intermediate_size", 1 << 18),
+    ("dense_lead_intermediate_size", 1 << 18),
+    ("num_heads", 1 << 10),
+    ("num_kv_heads", 1 << 10),
+    ("num_full_kv_heads", 1 << 10),
+    ("head_dim", 1 << 10),
+    ("full_head_dim", 1 << 10),
+    ("vocab_size", 1 << 22),
+    ("num_layers", 1 << 10),
+    ("num_experts", 1 << 14),
+    ("top_k_experts", 1 << 14),
+];
+
+fn arch_dims(a: &ArchConfig) -> [i64; 13] {
+    [
+        a.hidden_size,
+        a.intermediate_size,
+        a.moe_intermediate_size,
+        a.dense_lead_intermediate_size,
+        a.num_heads,
+        a.num_kv_heads,
+        a.num_full_kv_heads,
+        a.head_dim,
+        a.full_head_dim,
+        a.vocab_size,
+        a.num_layers,
+        a.num_experts,
+        a.top_k_experts,
+    ]
+}
+
 pub(crate) fn validate_arch_config(expecting: &ArchConfig) -> Result<(), RealForwardError> {
     for (name, value) in [
         ("num_kv_heads", expecting.num_kv_heads),
@@ -18,6 +62,20 @@ pub(crate) fn validate_arch_config(expecting: &ArchConfig) -> Result<(), RealFor
         if value <= 0 {
             return Err(RealForwardError::Unsupported(format!(
                 "{name} must be positive, got {value}"
+            )));
+        }
+    }
+    for ((name, ceiling), value) in ARCH_DIM_CEILINGS.iter().zip(arch_dims(expecting)) {
+        if value < 0 {
+            return Err(RealForwardError::Unsupported(format!(
+                "manifest {name} is negative ({value})"
+            )));
+        }
+        if value > *ceiling {
+            return Err(RealForwardError::Unsupported(format!(
+                "manifest {name} {value} is past {ceiling}; no supported checkpoint has a \
+                 dimension that large, so the install is refused before buffers are sized \
+                 from it"
             )));
         }
     }
@@ -339,6 +397,30 @@ fn expert_table_bytes(layout: &model_io::PackedExpertsLayout) -> (u64, u64) {
         per_slot,
         per_slot.saturating_mul(layout.experts_per_layer as u64),
     )
+}
+
+/// One token's routing must fit the slot cache outright, or
+/// `streaming::ExpertCache::plan` aborts the process on the first routed
+/// layer instead of failing the open. The router selects at most
+/// `experts_per_layer` distinct experts and the open caps slots there, so
+/// the demand is `min(top_k, experts_per_layer)`. `Auto` never resolves
+/// below 16 and every streamed family caps top_k at 16 or less, so only an
+/// explicit smaller slot count reaches this (qwen4 has its own copy).
+fn check_routing_fits_slots(
+    slots: usize,
+    top_k: i64,
+    experts_per_layer: usize,
+) -> Result<(), RealForwardError> {
+    let needed = usize::try_from(top_k.max(0))
+        .unwrap_or(usize::MAX)
+        .min(experts_per_layer);
+    if slots < needed {
+        return Err(RealForwardError::Unsupported(format!(
+            "this install routes {needed} experts per token, which does not fit a {slots}-slot \
+             cache; raise --expert-cache-slots to at least {needed}"
+        )));
+    }
+    Ok(())
 }
 
 /// Whether mapped residency was asked for by name (the flag or the
@@ -674,6 +756,13 @@ fn open_expert_streamers_with(
         }
     };
     let expert_cache_slots = resolve(wiring.active);
+    if layout.num_layers > 0 {
+        check_routing_fits_slots(
+            expert_cache_slots,
+            expecting.top_k_experts,
+            experts_per_layer,
+        )?;
+    }
     let working_set = bytes_per_slot * expert_cache_slots as u64;
     let mut streamers: Vec<Option<streaming::PreadExpertStreamer>> = Vec::new();
     // Read once per open, like the other streamer seams: every layer's
@@ -795,8 +884,9 @@ fn open_expert_streamers_with(
 #[cfg(test)]
 mod tests {
     use super::{
-        guard_mapped_residency, mapped_residency_refusal, mapped_residency_supported,
-        resolve_expert_residency, validate_arch_config,
+        arch_dims, check_routing_fits_slots, guard_mapped_residency, mapped_residency_refusal,
+        mapped_residency_supported, resolve_expert_residency, validate_arch_config,
+        ARCH_DIM_CEILINGS,
     };
     use model_io::ModelFamily;
 
@@ -833,6 +923,56 @@ mod tests {
         // Admitted by the flow's mapped arm, but no gate has run it yet.
         ModelFamily::UnlimitedOcr2,
     ];
+
+    /// A manifest dimension past its ceiling is refused at open,
+    /// before `DecodeScratch` or the KV cache is sized from it, and every
+    /// shipped baseline stays inside the ceilings.
+    #[test]
+    fn manifest_dims_past_the_ceiling_are_refused_and_baselines_pass() {
+        let baselines = [
+            model_io::deepseek_v2_lite_16b(),
+            model_io::deepseek_vl2_tiny(),
+            model_io::minimax_m2(),
+            model_io::gemma4_26b_a4b(),
+            model_io::gemma4_12b_dense(),
+            model_io::unlimited_ocr2_12l(),
+            model_io::muse_glimmer_30b(),
+            model_io::deepseek_v4_flash_284b_a13b(),
+            model_io::flint_40b_a2_5b(),
+            model_io::gpt_oss_20b(),
+            model_io::mixtral_8x7b(),
+            model_io::spark_x25_4b(),
+            model_io::qwen_gdn_dense_27b(),
+            model_io::qwen_gdn_moe_35b_a3b(),
+            model_io::qwen3_30b_a3b(),
+            model_io::qwen3_4b(),
+            model_io::qwen2_5_7b(),
+            model_io::qwen4_exp_125b_a6b(),
+            model_io::qwen3_vl_4b(),
+            model_io::lfm3_1_7b(),
+        ];
+        for arch in &baselines {
+            for ((name, ceiling), value) in ARCH_DIM_CEILINGS.iter().zip(arch_dims(arch)) {
+                assert!(
+                    (0..=*ceiling).contains(&value),
+                    "{} {name} {value} is past its ceiling {ceiling}",
+                    arch.family.as_str()
+                );
+            }
+        }
+
+        let mut arch = model_io::gemma4_26b_a4b();
+        arch.vocab_size = 1 << 40;
+        let error = validate_arch_config(&arch).expect_err("a 2^40 vocabulary");
+        assert!(error.to_string().contains("vocab_size"), "{error}");
+        let mut arch = model_io::gemma4_26b_a4b();
+        arch.num_heads = 1 << 20;
+        let error = validate_arch_config(&arch).expect_err("a million heads");
+        assert!(error.to_string().contains("num_heads"), "{error}");
+        let mut arch = model_io::gemma4_26b_a4b();
+        arch.hidden_size = -1;
+        assert!(validate_arch_config(&arch).is_err(), "a negative width");
+    }
 
     fn assert_invalid_kv_dimension(name: &str, value: i64, mutate: fn(&mut model_io::ArchConfig)) {
         let mut arch = model_io::gemma4_26b_a4b();
@@ -987,5 +1127,23 @@ mod tests {
             Ok(Mapped)
         );
         assert!(guard_mapped_residency(true, Mapped, 0, resident, table / 2).is_err());
+    }
+
+    /// A slot count below one token's routing makes `ExpertCache::plan`
+    /// abort on the first routed layer, so the open must refuse it instead.
+    #[test]
+    fn slot_cache_smaller_than_one_tokens_routing_is_refused_at_open() {
+        // `--expert-cache-slots 8` (the smallest allowed value) against a
+        // checkpoint routing 16 of 128 experts.
+        let err = check_routing_fits_slots(8, 16, 128).expect_err("8 slots cannot hold top-16");
+        assert!(err.to_string().contains("--expert-cache-slots"), "{err}");
+        // Exactly top_k fits, and the real Gemma 4 install (top-8 of 128)
+        // at the smallest allowed slot count still opens.
+        assert!(check_routing_fits_slots(16, 16, 128).is_ok());
+        assert!(check_routing_fits_slots(8, 8, 128).is_ok());
+        // The router never selects more than `experts_per_layer` distinct
+        // experts, and the open caps slots there too, so a top_k past the
+        // expert count is not refused by this check.
+        assert!(check_routing_fits_slots(4, 8, 4).is_ok());
     }
 }

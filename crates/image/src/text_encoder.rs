@@ -211,11 +211,16 @@ impl ShardedSafetensors {
         let mut out = Vec::with_capacity(token_ids.len() * HIDDEN_SIZE);
         for &id in token_ids {
             let row_idx = usize::try_from(id).map_err(|_| format!("invalid token id {id}"))?;
-            let start = row_idx * HIDDEN_SIZE * 2;
-            let end = start + HIDDEN_SIZE * 2;
-            if end > raw_bytes.len() {
+            // Checked so a huge i64 id cannot wrap onto a valid row in release
+            // (or panic in debug) before the end-of-table check sees it.
+            let row_bytes_len = HIDDEN_SIZE * 2;
+            let end = row_idx
+                .checked_add(1)
+                .and_then(|rows| rows.checked_mul(row_bytes_len));
+            let Some(end) = end.filter(|&end| end <= raw_bytes.len()) else {
                 return Err(format!("token id {id} out of embedding table bounds"));
-            }
+            };
+            let start = end - row_bytes_len;
             let row_bytes = &raw_bytes[start..end];
             for chunk in row_bytes.chunks_exact(2) {
                 let u = u16::from_le_bytes([chunk[0], chunk[1]]);
@@ -266,21 +271,29 @@ pub struct LayerWeights {
 }
 
 impl LayerWeights {
+    /// Every weight is checked against the Qwen3 layer geometry at load
+    /// time, matching the Metal path, so a crafted but self-consistent
+    /// checkpoint returns an error instead of tripping a length assert in
+    /// `forward_layer`.
     pub fn load(shards: &ShardedSafetensors, layer_idx: usize) -> Result<Self, String> {
         let p = format!("model.layers.{layer_idx}");
+        let q_dim = NUM_Q_HEADS * HEAD_DIM;
+        let kv_dim = NUM_KV_HEADS * HEAD_DIM;
+        let load = |suffix: &str, shape: &[usize]| {
+            shards.load_tensor_shape(&format!("{p}.{suffix}"), shape)
+        };
         Ok(Self {
-            input_layernorm: shards.load_tensor(&format!("{p}.input_layernorm.weight"))?,
-            q_proj: shards.load_tensor(&format!("{p}.self_attn.q_proj.weight"))?,
-            k_proj: shards.load_tensor(&format!("{p}.self_attn.k_proj.weight"))?,
-            v_proj: shards.load_tensor(&format!("{p}.self_attn.v_proj.weight"))?,
-            o_proj: shards.load_tensor(&format!("{p}.self_attn.o_proj.weight"))?,
-            q_norm: shards.load_tensor(&format!("{p}.self_attn.q_norm.weight"))?,
-            k_norm: shards.load_tensor(&format!("{p}.self_attn.k_norm.weight"))?,
-            post_attention_layernorm: shards
-                .load_tensor(&format!("{p}.post_attention_layernorm.weight"))?,
-            gate_proj: shards.load_tensor(&format!("{p}.mlp.gate_proj.weight"))?,
-            up_proj: shards.load_tensor(&format!("{p}.mlp.up_proj.weight"))?,
-            down_proj: shards.load_tensor(&format!("{p}.mlp.down_proj.weight"))?,
+            input_layernorm: load("input_layernorm.weight", &[HIDDEN_SIZE])?,
+            q_proj: load("self_attn.q_proj.weight", &[q_dim, HIDDEN_SIZE])?,
+            k_proj: load("self_attn.k_proj.weight", &[kv_dim, HIDDEN_SIZE])?,
+            v_proj: load("self_attn.v_proj.weight", &[kv_dim, HIDDEN_SIZE])?,
+            o_proj: load("self_attn.o_proj.weight", &[HIDDEN_SIZE, q_dim])?,
+            q_norm: load("self_attn.q_norm.weight", &[HEAD_DIM])?,
+            k_norm: load("self_attn.k_norm.weight", &[HEAD_DIM])?,
+            post_attention_layernorm: load("post_attention_layernorm.weight", &[HIDDEN_SIZE])?,
+            gate_proj: load("mlp.gate_proj.weight", &[INTERMEDIATE_SIZE, HIDDEN_SIZE])?,
+            up_proj: load("mlp.up_proj.weight", &[INTERMEDIATE_SIZE, HIDDEN_SIZE])?,
+            down_proj: load("mlp.down_proj.weight", &[HIDDEN_SIZE, INTERMEDIATE_SIZE])?,
         })
     }
 }
@@ -480,4 +493,121 @@ where
     }
 
     Ok(x)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    const LAYER_TENSORS: [&str; 11] = [
+        "input_layernorm.weight",
+        "self_attn.q_proj.weight",
+        "self_attn.k_proj.weight",
+        "self_attn.v_proj.weight",
+        "self_attn.o_proj.weight",
+        "self_attn.q_norm.weight",
+        "self_attn.k_norm.weight",
+        "post_attention_layernorm.weight",
+        "mlp.gate_proj.weight",
+        "mlp.up_proj.weight",
+        "mlp.down_proj.weight",
+    ];
+
+    fn temporary_directory(label: &str) -> PathBuf {
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let sequence = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "turbospark-image-text-encoder-{label}-{}-{nanos}-{sequence}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).expect("create test directory");
+        root
+    }
+
+    /// A self-consistent single-file component: a valid one-row embedding
+    /// table and every layer-0 tensor present but one element long. Header
+    /// shapes match payload bytes, so only a load-time shape check against the
+    /// Qwen3 layer geometry can refuse it before the CPU forward asserts.
+    fn write_undersized_layer_component(directory: &Path) {
+        let mut header = serde_json::Map::new();
+        let mut payload = Vec::new();
+        header.insert(
+            "model.embed_tokens.weight".to_string(),
+            serde_json::json!({
+                "dtype": "BF16",
+                "shape": [1, HIDDEN_SIZE],
+                "data_offsets": [0, HIDDEN_SIZE * 2]
+            }),
+        );
+        payload.resize(HIDDEN_SIZE * 2, 0);
+        for suffix in LAYER_TENSORS {
+            let start = payload.len();
+            payload.extend_from_slice(&1.0f32.to_le_bytes());
+            header.insert(
+                format!("model.layers.0.{suffix}"),
+                serde_json::json!({
+                    "dtype": "F32",
+                    "shape": [1],
+                    "data_offsets": [start, payload.len()]
+                }),
+            );
+        }
+        let header_bytes = serde_json::to_vec(&header).expect("serialize header");
+        let mut file = Vec::with_capacity(8 + header_bytes.len() + payload.len());
+        file.extend_from_slice(&(header_bytes.len() as u64).to_le_bytes());
+        file.extend_from_slice(&header_bytes);
+        file.extend_from_slice(&payload);
+        fs::write(directory.join("model.safetensors"), file).expect("write component");
+    }
+
+    #[test]
+    fn undersized_layer_weights_are_refused_instead_of_panicking() {
+        let root = temporary_directory("undersized");
+        let source = root.join("source");
+        fs::create_dir_all(&source).expect("create source");
+        write_undersized_layer_component(&source);
+        let packed_dir = root.join("packed");
+        crate::packed::pack_component(&source, "model.safetensors.index.json", &packed_dir)
+            .expect("pack undersized component");
+
+        for shards in [
+            ShardedSafetensors::open(&source).expect("open source component"),
+            ShardedSafetensors::open_packed(&packed_dir).expect("open packed component"),
+        ] {
+            let error =
+                encode_tokens(&[0], &shards).expect_err("undersized layer weights must be refused");
+            assert!(
+                error.contains("input_layernorm.weight") && error.contains("expected"),
+                "unexpected error: {error}"
+            );
+        }
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn huge_token_id_is_refused_without_offset_wrap() {
+        let root = temporary_directory("huge-id");
+        write_undersized_layer_component(&root);
+        let shards = ShardedSafetensors::open(&root).expect("open component");
+        // (2^64 / 5120) + 1 rows wraps start to a small in-bounds offset.
+        let wrapping_id = (u64::MAX / (HIDDEN_SIZE as u64 * 2) + 1) as i64;
+        for id in [wrapping_id, i64::MAX, 1] {
+            let error = shards
+                .load_token_embeddings(&[id])
+                .expect_err("out-of-table id must be refused");
+            assert!(error.contains("out of embedding table bounds"), "{error}");
+        }
+        assert_eq!(
+            shards.load_token_embeddings(&[0]).unwrap().len(),
+            HIDDEN_SIZE
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
 }

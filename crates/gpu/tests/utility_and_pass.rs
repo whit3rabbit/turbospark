@@ -1335,3 +1335,26 @@ fn two_steer_dispatches_compose_and_measure_in_distinct_slots() {
          vector 0's block"
     );
 }
+
+/// `heads * dim` is the dispatch count. A product past u32 must be refused:
+/// wrapped, it shrinks the grid and leaves most of `q`/`gate` stale. The
+/// pass is dropped without a commit, so nothing runs on the device.
+#[test]
+fn split_q_gate_refuses_a_wrapping_element_count() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let buf = context.new_output_buffer(256);
+    let pass = context.begin_pass();
+    let result = turbospark_gpu::encode_split_q_gate(
+        &mut context,
+        &pass,
+        (&buf, 0),
+        (&buf, 0),
+        (&buf, 0),
+        1 << 16,
+        1 << 16,
+    );
+    assert!(
+        result.is_err(),
+        "a u32-wrapping heads * dim must be refused"
+    );
+}

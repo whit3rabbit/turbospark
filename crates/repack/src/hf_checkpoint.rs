@@ -30,7 +30,13 @@ use crate::safetensors_header::SafetensorsHeader;
 #[derive(Debug)]
 pub enum OrchestrateError {
     MissingTensor(String),
-    UnsupportedDtype { tensor: String, dtype: String },
+    /// The header's `data_offsets` for this tensor overflow `u64` once added
+    /// to the data region start, so the tensor has no addressable byte range.
+    TensorRangeOverflow(String),
+    UnsupportedDtype {
+        tensor: String,
+        dtype: String,
+    },
     Download(DownloadError),
     Quantize(RepackError),
 }
@@ -40,6 +46,9 @@ impl std::fmt::Display for OrchestrateError {
         match self {
             OrchestrateError::MissingTensor(name) => {
                 write!(f, "checkpoint is missing tensor: {name}")
+            }
+            OrchestrateError::TensorRangeOverflow(name) => {
+                write!(f, "tensor {name} has data_offsets that overflow u64")
             }
             OrchestrateError::UnsupportedDtype { tensor, dtype } => {
                 write!(f, "tensor {tensor} has unsupported dtype {dtype}")
@@ -82,9 +91,10 @@ fn decode_tensor_f32(
         .tensors
         .get(name)
         .ok_or_else(|| OrchestrateError::MissingTensor(name.to_string()))?;
+    // The tensor is present, so `None` here can only mean offset overflow.
     let (start, end) = header
         .absolute_range(name)
-        .expect("tensor present in header.tensors, so absolute_range must resolve");
+        .ok_or_else(|| OrchestrateError::TensorRangeOverflow(name.to_string()))?;
     let bytes = source.read_range(start, end)?;
 
     match info.dtype.as_str() {

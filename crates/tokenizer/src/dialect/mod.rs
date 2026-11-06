@@ -28,13 +28,40 @@ pub(crate) use self::resolve::{
 use crate::error::TokenizerError;
 
 const MAX_GENERATION_CONFIG_BYTES: u64 = 1 << 20;
+/// Bound for the other checkpoint sidecars (`tokenizer_config.json`, both
+/// chat-template files). They come from an untrusted model directory and are
+/// read whole, so an unbounded read lets a hostile checkpoint exhaust memory.
+/// Higher than the generation-config cap because real `tokenizer_config.json`
+/// files with a large `added_tokens_decoder` exceed 1 MiB (about 1.2 MB is the
+/// largest known); installed templates are under 20 KB.
+const MAX_SIDECAR_BYTES: u64 = 16 << 20;
+
+/// Read at most `cap` bytes of `path`; `None` if absent, unreadable, or over
+/// the cap, so an oversized sidecar is treated as if it were not shipped.
+/// The `take` bound covers a file that grows after the metadata check.
+fn read_capped(path: &Path, cap: u64) -> Option<Vec<u8>> {
+    let file = std::fs::File::open(path).ok()?;
+    if file.metadata().ok()?.len() > cap {
+        return None;
+    }
+    let mut bytes = Vec::new();
+    file.take(cap + 1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() as u64 > cap {
+        return None;
+    }
+    Some(bytes)
+}
+
+fn read_sidecar_string(path: &Path) -> Option<String> {
+    String::from_utf8(read_capped(path, MAX_SIDECAR_BYTES)?).ok()
+}
 
 /// The template out of an HF `chat_template.json`: a bare string under
 /// `chat_template`, or the list-of-named-templates form (`default` if present,
 /// else the first).
 fn read_chat_template_json(path: &Path) -> Option<String> {
     let value: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+        serde_json::from_slice(&read_capped(path, MAX_SIDECAR_BYTES)?).ok()?;
     match value.get("chat_template")? {
         serde_json::Value::String(template) => Some(template.clone()),
         serde_json::Value::Array(named) => {
@@ -49,18 +76,7 @@ fn read_chat_template_json(path: &Path) -> Option<String> {
 }
 
 fn read_generation_config(path: &Path) -> Option<GenerationConfig> {
-    let file = std::fs::File::open(path).ok()?;
-    if file.metadata().ok()?.len() > MAX_GENERATION_CONFIG_BYTES {
-        return None;
-    }
-    let mut bytes = Vec::new();
-    file.take(MAX_GENERATION_CONFIG_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    if bytes.len() as u64 > MAX_GENERATION_CONFIG_BYTES {
-        return None;
-    }
-    serde_json::from_slice(&bytes).ok()
+    serde_json::from_slice(&read_capped(path, MAX_GENERATION_CONFIG_BYTES)?).ok()
 }
 
 /// Chat framing dialect, resolved from the loaded tokenizer's special
@@ -430,8 +446,7 @@ impl MfTokenizer {
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| TokenizerError::InvalidChatTemplate(e.to_string()))?;
         let config_path = dir.join("tokenizer_config.json");
-        let config: TokenizerConfig = std::fs::read_to_string(&config_path)
-            .ok()
+        let config: TokenizerConfig = read_sidecar_string(&config_path)
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         // Two conventions, and which one a checkpoint uses is a matter of
@@ -448,8 +463,7 @@ impl MfTokenizer {
         // concatenates `message.content` as a string and fails on an image
         // part, while `chat_template.json` carries the one that renders
         // `<|vision_start|><|image_pad|><|vision_end|>`.
-        let chat_template_source = std::fs::read_to_string(dir.join("chat_template.jinja"))
-            .ok()
+        let chat_template_source = read_sidecar_string(&dir.join("chat_template.jinja"))
             .or_else(|| read_chat_template_json(&dir.join("chat_template.json")))
             .or_else(|| config.chat_template_source());
         // `generation_config.json` is the authority for the checkpoint's

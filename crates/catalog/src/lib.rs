@@ -80,7 +80,7 @@ pub use install::{
     gate, human_bytes, install, install_destination, install_text_into, install_variant,
     install_with_byte_progress, record, record_into, ByteProgressCallback, CancelFlag, InstallKind,
     InstallPlan, InstallTarget, Installed, VariantInstallPlan, INSTALL_CANCELLED,
-    VISION_SIDECAR_FILES,
+    OWNED_SIDECAR_NAMES, VISION_SIDECAR_FILES,
 };
 pub use music::{
     embedded_music_entries, embedded_music_entry, install_music, install_music_into,

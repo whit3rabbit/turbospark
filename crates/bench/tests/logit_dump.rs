@@ -207,6 +207,32 @@ fn dump_reference_logits() {
     );
 }
 
+/// Reads one id array from a `TURBOSPARK_LOGIT_DUMP_IDS` file.
+fn id_list(v: &serde_json::Value, key: &str) -> Result<Vec<i32>, String> {
+    v[key]
+        .as_array()
+        .ok_or_else(|| format!("no {key} array"))?
+        .iter()
+        .map(|x| {
+            let id = x
+                .as_i64()
+                .ok_or_else(|| format!("{key}: non-integer id {x}"))?;
+            // Token ids are signed 32-bit across crates; `as i32` would wrap
+            // an out-of-range id into a different, valid-looking token.
+            i32::try_from(id).map_err(|_| format!("{key}: id {id} is outside i32"))
+        })
+        .collect()
+}
+
+#[test]
+fn id_list_refuses_ids_outside_signed_32_bit() {
+    let v = serde_json::json!({"ids": [1, 4294967297_i64], "neg": [-2147483649_i64], "ok": [0, 2147483647]});
+    assert!(id_list(&v, "ids").is_err(), "2^32+1 must not wrap to id 1");
+    assert!(id_list(&v, "neg").is_err());
+    assert_eq!(id_list(&v, "ok").unwrap(), vec![0, i32::MAX]);
+    assert!(id_list(&v, "missing").is_err());
+}
+
 fn dump(install: &Path, out: &Path, assistant_prefix: &str, max_context: u32) {
     std::fs::create_dir_all(out).expect("create the dump directory");
     let (mut runner, tokenizer) =
@@ -234,14 +260,7 @@ fn dump(install: &Path, out: &Path, assistant_prefix: &str, max_context: u32) {
     if let Some(path) = std::env::var_os("TURBOSPARK_LOGIT_DUMP_IDS") {
         let text = std::fs::read_to_string(&path).expect("read the id file");
         let v: serde_json::Value = serde_json::from_str(&text).expect("parse the id file");
-        let list = |key: &str| -> Vec<i32> {
-            v[key]
-                .as_array()
-                .unwrap_or_else(|| panic!("id file has no {key} array"))
-                .iter()
-                .map(|x| x.as_i64().expect("integer id") as i32)
-                .collect()
-        };
+        let list = |key: &str| id_list(&v, key).unwrap_or_else(|e| panic!("id file: {e}"));
         prompt_ids = list("prompt_ids");
         answer_ids = list("ids");
         assert!(!prompt_ids.is_empty() && !answer_ids.is_empty());

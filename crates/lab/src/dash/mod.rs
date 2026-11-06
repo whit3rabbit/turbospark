@@ -118,12 +118,17 @@ fn urldecode(s: &str) -> String {
     while i < bytes.len() {
         match bytes[i] {
             b'+' => out.push(b' '),
-            b'%' if i + 2 < bytes.len() => match u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                Ok(b) => {
+            // Parse the two hex digits from bytes, not `&s[..]`: a multi-byte
+            // char after `%` would put the slice end off a char boundary.
+            b'%' if i + 2 < bytes.len() => match std::str::from_utf8(&bytes[i + 1..i + 3])
+                .ok()
+                .and_then(|h| u8::from_str_radix(h, 16).ok())
+            {
+                Some(b) => {
                     out.push(b);
                     i += 2;
                 }
-                Err(_) => out.push(b'%'),
+                None => out.push(b'%'),
             },
             b => out.push(b),
         }
@@ -307,4 +312,18 @@ pub fn serve_cmd(mut args: crate::args::Args) -> Result<crate::schema::CmdOutput
     Ok(crate::schema::CmdOutput::ok(
         serde_json::json!({"url": url}),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::urldecode;
+
+    #[test]
+    fn urldecode_survives_multibyte_after_percent() {
+        // A raw `%` followed by a multi-byte char must not slice the str
+        // inside that char (it used to panic the connection task).
+        assert_eq!(urldecode("%\u{20AC}x"), "%\u{20AC}x");
+        assert_eq!(urldecode("a%e2%82%ac+b"), "a\u{20AC} b");
+        assert_eq!(urldecode("%zz%4"), "%zz%4");
+    }
 }

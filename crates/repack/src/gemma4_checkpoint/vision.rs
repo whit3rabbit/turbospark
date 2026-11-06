@@ -236,13 +236,31 @@ pub fn vision_arch_for_manifest<'a>(
 /// `(T, P_h, P_w, C)` order -- which is why the tensor needs no permutation.
 ///
 /// Every other vision tensor is rank 1 or 2 and passes through unchanged.
-pub(super) fn resident_shape(shape: &[u64]) -> (u32, u32, u32, u32) {
+///
+/// The shape is checkpoint header data and nothing upstream ties a raw
+/// tensor's shape to its byte length, so a dim or flattened product past
+/// `u32::MAX` is refused by name instead of truncated into the index.
+pub(super) fn resident_shape(
+    name: &str,
+    shape: &[u64],
+) -> Result<(u32, u32, u32, u32), Gemma4Error> {
+    let too_wide = || Gemma4Error::ShapeMismatch {
+        tensor: name.to_string(),
+        detail: format!("shape {shape:?} exceeds the 32-bit resident index shape fields"),
+    };
     if shape.len() <= 4 {
-        return shape4(shape);
+        if shape.iter().any(|&d| d > u64::from(u32::MAX)) {
+            return Err(too_wide());
+        }
+        return Ok(shape4(shape));
     }
-    let rows = shape[0] as u32;
-    let cols: u64 = shape[1..].iter().product();
-    (rows, cols as u32, 0, 0)
+    let rows = u32::try_from(shape[0]).map_err(|_| too_wide())?;
+    let cols = shape[1..]
+        .iter()
+        .try_fold(1u64, |acc, &d| acc.checked_mul(d))
+        .and_then(|cols| u32::try_from(cols).ok())
+        .ok_or_else(too_wide)?;
+    Ok((rows, cols, 0, 0))
 }
 
 /// Reads the tower, converting every tensor to FP16.
@@ -569,7 +587,7 @@ pub fn read_vision_entries_quantized(
             name: format!("{VISION_INSTALL_PREFIX}{}", resident_tensors[slot]),
             dtype: converted.dtype,
             bytes: converted.bytes,
-            shape: resident_shape(&shape),
+            shape: resident_shape(name, &shape)?,
         }));
     }
 
@@ -590,7 +608,7 @@ pub fn read_vision_entries_quantized(
                 ),
                 dtype: converted.dtype,
                 bytes: converted.bytes,
-                shape: resident_shape(&shape),
+                shape: resident_shape(name, &shape)?,
             }));
         }
     }
@@ -692,13 +710,29 @@ fn dequantize_affine_to_fp16(
     };
     let (rows, words) = (*rows as usize, *words as usize);
     let per_word = 32 / bits;
-    let cols = words * per_word;
+    // The shape is checkpoint data: an unchecked product can wrap in release
+    // to match a short byte range and then index past it. Every byte length
+    // this reader compares against or allocates is derived checked, here.
+    let overflow = || mismatch(format!("plane shape {shape:?} overflows usize"));
+    let cols = words.checked_mul(per_word).ok_or_else(overflow)?;
     if cols % group != 0 {
         return Err(mismatch(format!(
             "{cols} columns is not a whole number of {group}-element groups"
         )));
     }
     let groups = cols / group;
+    let packed_bytes = rows
+        .checked_mul(words)
+        .and_then(|n| n.checked_mul(4))
+        .ok_or_else(overflow)?;
+    let companion_bytes = rows
+        .checked_mul(groups)
+        .and_then(|n| n.checked_mul(2))
+        .ok_or_else(overflow)?;
+    let out_bytes = rows
+        .checked_mul(cols)
+        .and_then(|n| n.checked_mul(2))
+        .ok_or_else(overflow)?;
     let scales_name = format!("{base}.scales");
     let biases_name = format!("{base}.biases");
     // The companions are BF16 on every qwen conversion; the DeepSeek-VL2 MLX
@@ -721,9 +755,9 @@ fn dequantize_affine_to_fp16(
     let packed = shards.read(name)?;
     let scales = shards.read(&scales_name)?;
     let biases = shards.read(&biases_name)?;
-    if packed.len() != rows * words * 4
-        || scales.len() != rows * groups * 2
-        || biases.len() != rows * groups * 2
+    if packed.len() != packed_bytes
+        || scales.len() != companion_bytes
+        || biases.len() != companion_bytes
     {
         return Err(mismatch(
             "plane byte lengths disagree with their shapes".to_string(),
@@ -739,7 +773,7 @@ fn dequantize_affine_to_fp16(
             compute::bf16_to_f32(bits)
         }
     };
-    let mut out = Vec::with_capacity(rows * cols * 2);
+    let mut out = Vec::with_capacity(out_bytes);
     let mut lossy = 0usize;
     for r in 0..rows {
         for c in 0..cols {
@@ -789,6 +823,112 @@ mod tests {
     use crate::safetensors_header::SafetensorsHeader;
 
     use super::*;
+
+    /// A crafted header can declare `[2^63, 8]` words with `[2^63, 1]`
+    /// companions and empty byte ranges: every unchecked byte-length product
+    /// wraps to 0 and matches the empty reads, and the row loop then indexes
+    /// past the end. The plane must be refused by name instead.
+    #[test]
+    fn affine_plane_with_overflowing_shape_is_refused_without_panicking() {
+        let base = "vision_tower.blocks.0.attn.qkv";
+        let info = |dtype: &str, shape: Vec<u64>| crate::safetensors_header::TensorInfo {
+            dtype: dtype.to_string(),
+            shape,
+            data_offsets: (0, 0),
+        };
+        let header = SafetensorsHeader {
+            tensors: BTreeMap::from([
+                (format!("{base}.weight"), info("U32", vec![1 << 63, 8])),
+                (format!("{base}.scales"), info("BF16", vec![1 << 63, 1])),
+                (format!("{base}.biases"), info("BF16", vec![1 << 63, 1])),
+            ]),
+            metadata: None,
+            header_len: 0,
+        };
+        // Empty ranges sit just past the 8-byte length prefix.
+        let source = MemoryRangeSource::new(&[0; 8]);
+        let shards = Gemma4Shards::single(&header, &source);
+        let err = read_tower_tensor(
+            &shards,
+            &format!("{base}.weight"),
+            Some(&Gemma4Quant::default()),
+        )
+        .err()
+        .expect("an overflowing plane shape must be refused");
+        assert!(matches!(err, Gemma4Error::ShapeMismatch { .. }), "{err}");
+    }
+
+    /// The well-formed counterpart: one row of eight 4-bit words at group 64,
+    /// every code 1, scale 1.0 and bias 0.5, must decode to 64 values of 1.5.
+    #[test]
+    fn affine_plane_with_a_valid_shape_dequantizes() {
+        let base = "vision_tower.blocks.0.attn.qkv";
+        let info =
+            |dtype: &str, shape: Vec<u64>, data_offsets| crate::safetensors_header::TensorInfo {
+                dtype: dtype.to_string(),
+                shape,
+                data_offsets,
+            };
+        let header = SafetensorsHeader {
+            tensors: BTreeMap::from([
+                (format!("{base}.weight"), info("U32", vec![1, 8], (0, 32))),
+                (format!("{base}.scales"), info("BF16", vec![1, 1], (32, 34))),
+                (format!("{base}.biases"), info("BF16", vec![1, 1], (34, 36))),
+            ]),
+            metadata: None,
+            header_len: 0,
+        };
+        let mut file = vec![0u8; 8];
+        file.extend_from_slice(&[0x11; 32]);
+        file.extend_from_slice(&0x3F80u16.to_le_bytes());
+        file.extend_from_slice(&0x3F00u16.to_le_bytes());
+        let source = MemoryRangeSource::new(&file);
+        let shards = Gemma4Shards::single(&header, &source);
+        let (converted, shape) = read_tower_tensor(
+            &shards,
+            &format!("{base}.weight"),
+            Some(&Gemma4Quant::default()),
+        )
+        .expect("a well-formed plane dequantizes");
+        assert_eq!(shape, vec![1, 64]);
+        assert_eq!(converted.bytes, 0x3E00u16.to_le_bytes().repeat(64));
+        assert_eq!(converted.lossy, 0);
+    }
+
+    /// A raw tower tensor's shape is never checked against its bytes, so a
+    /// dim or flattened product past u32::MAX must be refused, not truncated
+    /// into a plausible index shape such as `(7, 4, 0, 0)`.
+    #[test]
+    fn resident_shape_refuses_dims_past_u32() {
+        for shape in [
+            vec![(1u64 << 32) + 7, 4],
+            vec![4, 1u64 << 32],
+            vec![1152, 1 << 16, 1 << 16, 1, 1],
+            vec![(1u64 << 32) + 1, 3, 2, 16, 16],
+        ] {
+            let err = resident_shape("t", &shape)
+                .err()
+                .unwrap_or_else(|| panic!("{shape:?} must be refused"));
+            assert!(matches!(err, Gemma4Error::ShapeMismatch { .. }), "{err}");
+        }
+    }
+
+    #[test]
+    fn resident_shape_keeps_real_tower_shapes() {
+        // The patch embedding conv flattens to its GEMM shape.
+        assert_eq!(
+            resident_shape("t", &[1152, 3, 2, 16, 16]).unwrap(),
+            (1152, 1536, 0, 0)
+        );
+        assert_eq!(
+            resident_shape("t", &[1152, 4304]).unwrap(),
+            (1152, 4304, 0, 0)
+        );
+        assert_eq!(
+            resident_shape("t", &[u64::from(u32::MAX)]).unwrap(),
+            (u32::MAX, 0, 0, 0)
+        );
+    }
 
     #[test]
     fn direct_reader_rejects_unbounded_depth_without_allocating() {

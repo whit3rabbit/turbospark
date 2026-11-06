@@ -476,7 +476,7 @@ pub unsafe extern "C" fn ts_embedding_install(
 /// Computes the cosine similarity between two float vectors of length `len`.
 /// Both vectors are L2-normalized first, so arbitrary nonzero inputs give a
 /// true cosine in [-1, 1]; a zero vector yields 0.0. Returns 0.0 if either
-/// pointer is null, len is 0, or an internal panic is caught at the boundary
+/// pointer is null or not f32-aligned, len is 0, or an internal panic is caught at the boundary
 /// (read `ts_last_error` to see why; there is no status code here to carry
 /// `TS_ERR_PANIC` through, so the sentinel is the only signal a caller gets,
 /// same as the null/zero-length case).
@@ -492,8 +492,32 @@ pub unsafe extern "C" fn ts_cosine_similarity(a: *const f32, b: *const f32, len:
         if len > isize::MAX as usize / std::mem::size_of::<f32>() {
             return 0.0;
         }
+        // Swift `[Float]` is always aligned, but a C caller can hand in a
+        // pointer into a packed byte buffer; a misaligned slice is UB.
+        if !a.is_aligned() || !b.is_aligned() {
+            return 0.0;
+        }
         let slice_a = std::slice::from_raw_parts(a, len);
         let slice_b = std::slice::from_raw_parts(b, len);
         compute::cosine_similarity(slice_a, slice_b)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ts_cosine_similarity;
+
+    // A C caller can pass a float pointer that is not 4-byte aligned (for
+    // example one carved out of a packed byte buffer). Building a slice from
+    // it is undefined behaviour, so the entry point must refuse it with the
+    // documented 0.0 sentinel instead of reading through it.
+    #[test]
+    fn misaligned_pointer_returns_sentinel() {
+        let buf = [0u32; 8];
+        let base = buf.as_ptr() as *const u8;
+        let misaligned = unsafe { base.add(1) } as *const f32;
+        let aligned = buf.as_ptr() as *const f32;
+        assert_eq!(unsafe { ts_cosine_similarity(misaligned, aligned, 3) }, 0.0);
+        assert_eq!(unsafe { ts_cosine_similarity(aligned, misaligned, 3) }, 0.0);
+    }
 }

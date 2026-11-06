@@ -454,13 +454,24 @@ fn pass_through_packed_impl(
         }
     }
     let rows = w.shape[0];
-    let cols = w.shape[1] * factor;
+    // Shape fields come straight from the checkpoint header. Release builds
+    // do not check overflow, so a wrapped product here could match the byte
+    // counts below and record an entry the header never declared.
+    let overflow = || Gemma4Error::ShapeMismatch {
+        tensor: name.to_string(),
+        detail: format!("packed shape {:?} overflows at {bits} bits", w.shape),
+    };
+    let cols = w.shape[1].checked_mul(factor).ok_or_else(overflow)?;
     let packed = shards.read(name)?;
     // Scales and biases are checked against `rows*cols/group` below; the
     // packed run itself was not, so a shard whose `data_offsets` disagree
     // with its declared `shape` (a corrupt but non-hostile checkpoint) would
     // otherwise write an index entry whose shape and byte size disagree.
-    let expected_packed_bytes = (rows * w.shape[1] * 4) as usize;
+    let expected_packed_bytes = rows
+        .checked_mul(w.shape[1])
+        .and_then(|words| words.checked_mul(4))
+        .and_then(|bytes| usize::try_from(bytes).ok())
+        .ok_or_else(overflow)?;
     if packed.len() != expected_packed_bytes {
         return Err(Gemma4Error::ShapeMismatch {
             tensor: name.to_string(),
@@ -475,7 +486,10 @@ fn pass_through_packed_impl(
     let (scales, scales_lossy) = read_companion_plane(shards, &scales_name, qwen2_wide_f16)?;
     let (biases, biases_lossy) = read_companion_plane(shards, &biases_name, qwen2_wide_f16)?;
     let group = group_size as u64;
-    let expected_groups = (rows * cols / group) as usize;
+    let expected_groups = rows
+        .checked_mul(cols)
+        .and_then(|values| usize::try_from(values / group).ok())
+        .ok_or_else(overflow)?;
     if cols % group != 0 || scales.len() != expected_groups || biases.len() != expected_groups {
         return Err(Gemma4Error::ShapeMismatch {
             tensor: name.to_string(),

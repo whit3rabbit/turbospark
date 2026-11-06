@@ -5,8 +5,9 @@
 
 pub mod weights;
 
-use std::fs;
 use std::path::Path;
+
+use crate::model_dir_read::{read_bounded_string, CONFIG_LIMIT};
 
 pub use compute::cosine_similarity;
 use compute::encoder::{
@@ -61,7 +62,7 @@ const NON_CLS_POOLING: &[&str] = &[
 /// conversions ship none.
 pub fn check_pooling(model_dir: &Path) -> Result<(), String> {
     let path = model_dir.join("1_Pooling").join("config.json");
-    let text = match fs::read_to_string(&path) {
+    let text = match read_bounded_string(&path, CONFIG_LIMIT) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
         Err(e) => return Err(format!("failed to read {}: {e}", path.display())),
@@ -80,7 +81,7 @@ pub fn check_pooling(model_dir: &Path) -> Result<(), String> {
 /// are opened. Returns the `model_type`.
 pub fn check_encoder_dir(model_dir: &Path) -> Result<&'static str, String> {
     let config_path = model_dir.join("config.json");
-    let text = fs::read_to_string(&config_path)
+    let text = read_bounded_string(&config_path, CONFIG_LIMIT)
         .map_err(|e| format!("failed to read {}: {e}", config_path.display()))?;
     let v: serde_json::Value = serde_json::from_str(&text)
         .map_err(|e| format!("failed to parse {}: {e}", config_path.display()))?;
@@ -102,7 +103,7 @@ impl EncoderRunner {
     pub fn open(model_dir: &Path) -> Result<Self, String> {
         check_encoder_dir(model_dir)?;
         let config_path = model_dir.join("config.json");
-        let config_str = fs::read_to_string(&config_path)
+        let config_str = read_bounded_string(&config_path, CONFIG_LIMIT)
             .map_err(|e| format!("failed to read {}: {e}", config_path.display()))?;
         let config = EncoderConfig::from_json_str(&config_str)
             .map_err(|e| format!("failed to parse {}: {e}", config_path.display()))?;

@@ -78,6 +78,20 @@ fn get_str(v: &serde_json::Value, key: &str) -> Result<String, String> {
         .ok_or_else(|| format!("config.json {key} is missing"))
 }
 
+/// A package name joined under the install dir. config.json is model data,
+/// so a `..`, absolute, or nested path would let it read a package from (and
+/// write its compiled cache entry for) anywhere outside the install.
+fn get_package_name(v: &serde_json::Value, key: &str) -> Result<String, String> {
+    let name = get_str(v, key)?;
+    let mut parts = std::path::Path::new(&name).components();
+    match (parts.next(), parts.next()) {
+        (Some(std::path::Component::Normal(_)), None) => Ok(name),
+        _ => Err(format!(
+            "config.json {key} must be a bare package name, got {name:?}"
+        )),
+    }
+}
+
 impl OcrConfig {
     pub fn parse(v: &serde_json::Value) -> Result<Self, String> {
         let mut capacities: Vec<usize> = v
@@ -132,8 +146,8 @@ impl OcrConfig {
             ngram_size: get_usize(v, "ngram_size")?,
             ngram_window: get_usize(v, "ngram_window")?,
             max_length: get_usize(v, "max_length")?,
-            decoder: get_str(v, "decoder")?,
-            encoder: get_str(v, "encoder")?,
+            decoder: get_package_name(v, "decoder")?,
+            encoder: get_package_name(v, "encoder")?,
         };
         if c.vocab_half * 2 != c.vocab_size {
             return Err(format!(
@@ -596,13 +610,21 @@ impl UnlimitedOcrCoreMl {
             return Err("the Unlimited OCR decoder is not qualified on the Neural Engine".into());
         }
         let config_value: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(dir.join(CONFIG)).map_err(|e| format!("read {CONFIG}: {e}"))?,
+            &crate::model_dir_read::read_bounded(
+                &dir.join(CONFIG),
+                crate::model_dir_read::CONFIG_LIMIT,
+            )
+            .map_err(|e| format!("read {CONFIG}: {e}"))?,
         )
         .map_err(|e| format!("{CONFIG}: {e}"))?;
         let config = OcrConfig::parse(&config_value)?;
         let embeddings = F16Table::open(&dir.join(EMBEDDINGS), config.vocab_size, config.hidden)?;
         let tok: serde_json::Value = serde_json::from_slice(
-            &std::fs::read(dir.join(TOKENIZER)).map_err(|e| format!("read {TOKENIZER}: {e}"))?,
+            &crate::model_dir_read::read_bounded(
+                &dir.join(TOKENIZER),
+                crate::model_dir_read::TOKENIZER_LIMIT,
+            )
+            .map_err(|e| format!("read {TOKENIZER}: {e}"))?,
         )
         .map_err(|e| format!("{TOKENIZER}: {e}"))?;
         let detok = TokenDecoder::from_tokenizer_json(&tok, &[config.bos, config.eos])?;
@@ -936,6 +958,34 @@ mod tests {
         assert!(OcrConfig::parse(&v).is_ok());
         v["image_size"] = serde_json::json!(640);
         assert!(OcrConfig::parse(&v).is_err());
+    }
+
+    #[test]
+    fn config_refuses_package_paths_outside_the_install() {
+        let base = serde_json::json!({
+            "hidden_size": 8, "head_dim": 4, "vocab_size": 10, "vocab_half": 5,
+            "rope_theta": 1e4, "ring": 4, "chunk": 4, "capacities": [8], "page_tokens": 2,
+            "image_size": 1024, "bos_id": 0, "eos_id": 1, "image_token_id": 2,
+            "prompt_suffix_ids": {}, "ngram_size": 3, "ngram_window": 8, "max_length": 32,
+            "decoder": "D.mlpackage", "encoder": "E.mlpackage"
+        });
+        assert!(OcrConfig::parse(&base).is_ok());
+        for key in ["decoder", "encoder"] {
+            for bad in [
+                "../../evil.mlpackage",
+                "/tmp/evil.mlpackage",
+                "sub/x.mlpackage",
+                "..",
+                "",
+            ] {
+                let mut v = base.clone();
+                v[key] = serde_json::json!(bad);
+                assert!(
+                    OcrConfig::parse(&v).is_err(),
+                    "{key} = {bad:?} must be refused"
+                );
+            }
+        }
     }
 
     #[test]

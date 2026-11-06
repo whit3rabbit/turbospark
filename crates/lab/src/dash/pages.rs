@@ -1017,8 +1017,11 @@ pub fn compare_page(ix: &LabIndex, p: &Params) -> String {
             kinds
                 .iter()
                 .map(|k| format!(
-                    "<a href=\"/compare?{}\">{k}</a>",
-                    query_string(p, &[("kind", Some(k))])
+                    "<a href=\"/compare?{}\">{}</a>",
+                    query_string(p, &[("kind", Some(k))]),
+                    // Kinds are code literals today; escape anyway so a future
+                    // record-derived kind cannot inject markup.
+                    esc(k)
                 ))
                 .collect::<Vec<_>>()
                 .join(" &middot; ")

@@ -161,8 +161,11 @@ pub struct MoonshineMetalEngine {
 
 impl MoonshineMetalEngine {
     pub fn open(model_dir: &Path) -> Result<Self, String> {
-        let config_text = std::fs::read_to_string(model_dir.join("config.json"))
-            .map_err(|error| error.to_string())?;
+        let config_text = crate::model_dir_read::read_bounded_string(
+            &model_dir.join("config.json"),
+            crate::model_dir_read::CONFIG_LIMIT,
+        )
+        .map_err(|error| error.to_string())?;
         let config_value: serde_json::Value =
             serde_json::from_str(&config_text).map_err(|error| error.to_string())?;
         let config =

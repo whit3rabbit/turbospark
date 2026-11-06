@@ -68,7 +68,13 @@ impl PreadExpertStreamer {
             path: layout.path.clone(),
             detail: e.to_string(),
         })?;
-        let required = layout.stream_offset + layout.stream_size;
+        // Checked: every per-expert bound below relies on this window not
+        // wrapping, and `StreamLayout`'s fields are public.
+        let required = layout.stream_offset.checked_add(layout.stream_size).ok_or(
+            StreamerError::OffsetOutOfRange {
+                offset: layout.stream_offset,
+            },
+        )?;
         if meta.len() < required {
             return Err(StreamerError::SizeMismatch {
                 expected: required,
@@ -233,19 +239,32 @@ impl PreadExpertStreamer {
             return Err(StreamerError::SlotOutOfRange { slot });
         }
         self.cache.invalidate_slot(slot);
-        let region_offset = self.layout.expert_offset(layer, expert);
-        if region_offset + self.layout.expert_stride > self.layout.stream_size {
-            return Err(StreamerError::OffsetOutOfRange {
-                offset: region_offset,
-            });
-        }
-        let file_offset = self.layout.stream_offset + region_offset;
+        let file_offset = self.expert_file_offset(layer, expert)?;
         let stride = self.layout.expert_stride as usize;
         read_full(
             &self.file,
             &mut self.slots[slot].as_mut_slice()[..stride],
             file_offset,
         )
+    }
+
+    /// File offset of `expert`'s blob, refusing one whose whole stride does
+    /// not fit the stream window. Checked rather than plain adds: release
+    /// builds do not trap overflow, and a wrapped `offset + stride` passes
+    /// the window bound and preads valid-but-wrong bytes into a slot. Once
+    /// `end <= stream_size`, `stream_offset + offset` cannot wrap because
+    /// `open` checked `stream_offset + stream_size`.
+    fn expert_file_offset(&self, layer: usize, expert: usize) -> Result<u64, StreamerError> {
+        let region_offset = self.layout.expert_offset(layer, expert);
+        let out_of_range = StreamerError::OffsetOutOfRange {
+            offset: region_offset,
+        };
+        match region_offset.checked_add(self.layout.expert_stride) {
+            Some(end) if end <= self.layout.stream_size => {
+                Ok(self.layout.stream_offset + region_offset)
+            }
+            _ => Err(out_of_range),
+        }
     }
 
     /// Generates an expert cache plan for requested expert indices.
@@ -309,12 +328,7 @@ impl PreadExpertStreamer {
             if slot >= self.slot_count {
                 return Err(StreamerError::SlotOutOfRange { slot });
             }
-            let region_offset = self.layout.expert_offset(0, plan.experts[index]);
-            if region_offset + self.layout.expert_stride > self.layout.stream_size {
-                return Err(StreamerError::OffsetOutOfRange {
-                    offset: region_offset,
-                });
-            }
+            self.expert_file_offset(0, plan.experts[index])?;
         }
 
         let stride = self.layout.expert_stride as usize;
@@ -324,8 +338,9 @@ impl PreadExpertStreamer {
         let chunks_per_miss = stride.div_ceil(MISS_READ_CHUNK_BYTES).max(1);
         let mut chunks: Vec<ReadChunk> = Vec::with_capacity(plan.misses.len() * chunks_per_miss);
         for &index in &plan.misses {
-            let file_offset =
-                self.layout.stream_offset + self.layout.expert_offset(0, plan.experts[index]);
+            // Validated above, and `file_offset + stride` cannot wrap: it is at
+            // most the window end `open` checked.
+            let file_offset = self.expert_file_offset(0, plan.experts[index])?;
             let base = self.slots[plan.assigned_slots[index]].as_ptr() as *mut u8;
             let mut start = 0usize;
             while start < stride {
@@ -432,14 +447,8 @@ impl PreadExpertStreamer {
         experts
             .iter()
             .filter_map(|&expert| {
-                let region_offset = self.layout.expert_offset(0, expert);
-                if region_offset + self.layout.expert_stride > self.layout.stream_size {
-                    return None;
-                }
-                Some((
-                    self.layout.stream_offset + region_offset,
-                    self.layout.expert_stride,
-                ))
+                let file_offset = self.expert_file_offset(0, expert).ok()?;
+                Some((file_offset, self.layout.expert_stride))
             })
             .collect()
     }

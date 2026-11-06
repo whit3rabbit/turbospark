@@ -36,7 +36,10 @@ They live in `crates/runtime/src/coreml/`, because they need the tokenizer
   other.
 - The compile cache key covers `Manifest.json`, every file's path, size and
   mtime, and the OS build string. Pruning only removes
-  `<stem>-<16 hex>.mlmodelc` entries in the cache root the caller passed.
+  `<stem>-<16 hex>.mlmodelc` entries in the cache root the caller passed,
+  skipping any whose `<stem>-<16 hex>.source` marker names another package
+  (same-stem packages would otherwise prune each other on every open), and
+  `.staging-*.mlmodelc` dirs older than an hour (crash orphans).
   Callers pass a directory inside the model's install, never a new
   `~/.turbospark` path.
 - The `ane-prefill` cargo feature compiles low-level IOSurface plane sharing

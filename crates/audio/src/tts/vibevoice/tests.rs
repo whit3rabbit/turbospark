@@ -269,3 +269,33 @@ fn voice_kv_normalizes_both_storage_orders() {
     assert_eq!(got, vec![1.0, 3.0, 2.0, 4.0]);
     assert!(voice_kv("k", &[2, 2, 2, 1], vec![0.0; 8]).is_err());
 }
+
+/// The ddpm step counts come from the checkpoint config.json. Zero
+/// training steps indexes an empty schedule, a huge count is an
+/// allocation bomb, and zero (or more than the training steps)
+/// inference steps would return the initial noise or a degenerate grid.
+/// Each must fail at parse time as BadConfig.
+#[test]
+fn ddpm_step_counts_out_of_range_are_refused() {
+    let base: Value = serde_json::from_str(
+        &std::fs::read_to_string(testdata("generate/config.json")).expect("fixture"),
+    )
+    .expect("fixture json");
+    assert!(super::ModelConfig::from_json(&base).is_ok());
+    let cases: [(&str, u64); 4] = [
+        ("ddpm_num_steps", 0),
+        ("ddpm_num_steps", 1 << 40),
+        ("ddpm_num_inference_steps", 0),
+        // The fixture trains 20 steps.
+        ("ddpm_num_inference_steps", 21),
+    ];
+    for (field, bad) in cases {
+        let mut value = base.clone();
+        value["diffusion_head_config"][field] = Value::from(bad);
+        match super::ModelConfig::from_json(&value) {
+            Err(SpeechError::BadConfig { .. }) => {}
+            Err(other) => panic!("{field}={bad}: expected BadConfig, got {other:?}"),
+            Ok(_) => panic!("{field}={bad}: accepted"),
+        }
+    }
+}

@@ -10,13 +10,37 @@ use std::path::Path;
 
 use model_io::{ArchConfig, LinearAttentionConfig, ModelFamily};
 
+/// Read an install's `manifest.json` under model-io's metadata cap
+/// (`model_io::DEFAULT_MAX_BYTES`, the bound `manifest::load` applies).
+///
+/// A downloaded install is untrusted, and a plain `fs::read` would take
+/// whatever the path yields: a multi-gigabyte file, or a symlink to
+/// `/dev/zero`, which never ends. Reading one byte past the cap enforces it
+/// even when a stat would report a small or zero length.
+pub(crate) fn read_manifest_capped(path: &Path) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let cap = model_io::DEFAULT_MAX_BYTES;
+    let file = std::fs::File::open(path)
+        .map_err(|e| format!("no manifest.json at {}: {e}", path.display()))?;
+    let mut bytes = Vec::new();
+    file.take(cap + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("reading {}: {e}", path.display()))?;
+    if bytes.len() as u64 > cap {
+        return Err(format!(
+            "manifest.json at {} exceeds metadata cap {cap}",
+            path.display()
+        ));
+    }
+    Ok(bytes)
+}
+
 /// Read `model_dir/manifest.json` and rebuild the `ArchConfig` it
 /// describes. Accepts `gemma4` and `qwen36`; rejects `deepseekV4Flash`,
 /// whose compressed-attention kernels are unported.
 pub fn peek_manifest_arch(model_dir: &Path) -> Result<ArchConfig, String> {
     let manifest_path = model_dir.join("manifest.json");
-    let bytes = std::fs::read(&manifest_path)
-        .map_err(|e| format!("no manifest.json at {}: {e}", manifest_path.display()))?;
+    let bytes = read_manifest_capped(&manifest_path)?;
     let value: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|e| format!("manifest.json: {e}"))?;
     let m: model_io::ManifestArch = serde_json::from_value(value["arch"].clone())
@@ -189,4 +213,28 @@ pub fn peek_manifest_arch(model_dir: &Path) -> Result<ArchConfig, String> {
     // loader cannot drift apart a second time.
     arch.vision = m.vision_config();
     Ok(arch)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A manifest over model-io's metadata cap is refused before it is
+    /// parsed. The fixture is valid JSON padded with trailing whitespace, so
+    /// an uncapped read would parse it and fail later on a missing field.
+    #[test]
+    fn an_oversized_manifest_is_refused_at_the_cap() {
+        let dir = std::env::temp_dir().join(format!(
+            "turbospark-manifest-peek-cap-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut bytes = br#"{"arch":{}}"#.to_vec();
+        bytes.resize(model_io::DEFAULT_MAX_BYTES as usize + 1, b' ');
+        std::fs::write(dir.join("manifest.json"), &bytes).unwrap();
+
+        let err = peek_manifest_arch(&dir).unwrap_err();
+        assert!(err.contains("exceeds metadata cap"), "got: {err}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

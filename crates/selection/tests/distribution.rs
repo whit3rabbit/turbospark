@@ -53,3 +53,23 @@ fn raised_temperature_spreads_selection_across_multiple_candidates() {
         "dominant candidate should not win every single trial under a raised temperature"
     );
 }
+
+/// A tiny nonzero temperature must approach greedy, not uniform. The
+/// inverse-temperature power of every surviving probability underflows to
+/// zero when the top probability is modest (0.3^1000 is below f64's
+/// range), and the all-zero fallback then spread the draw uniformly over
+/// the whole surviving set: the opposite of what a near-zero temperature
+/// asks for. Reachable from `--temperature 0.001` and from HTTP requests.
+#[test]
+fn tiny_nonzero_temperature_approaches_greedy_not_uniform() {
+    // Flat-ish logits: the top candidate holds roughly 0.3 of the mass.
+    let scores = logits(&[0.0, 0.5, 1.0, 0.2, 0.4]);
+    let view = LogitsView::new(&scores);
+    let config = ShapingConfig::new(1e-3, 0, None, 1.0, Some(7)).unwrap();
+    let history: Vec<TokenId> = vec![];
+
+    for position in 0..200 {
+        let chosen = select(view, &config, &history, position).unwrap();
+        assert_eq!(chosen, 2, "position {position} drew a non-argmax candidate");
+    }
+}

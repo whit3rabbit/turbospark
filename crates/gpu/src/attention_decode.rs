@@ -1181,7 +1181,24 @@ pub fn encode_attention_decode_tree(
     }
     // The highest slot must exist in the cache the chain round would have
     // filled: slot_start + max(path) < the chain row's seq_len at full depth.
-    let seq_len = base + path.len() as u32;
+    // The caller owns that invariant, but the buffers bound what the GPU may
+    // read: the inner `seq_len` check does not cover a branching node's slot,
+    // which sits above its own `seq_len`. With a ring the kernel wraps slots
+    // mod the capacity the inner check already sizes, so only the flat
+    // layout needs this. u64 so a wrapping `slot_start + path[i]` cannot pass.
+    if ring_capacity == 0 {
+        let top = slot_start as u64 + *path.iter().max().expect("non-empty") as u64;
+        let need = (top + 1) * num_kv_heads as u64 * head_dim as u64 * 2;
+        if k_buffer.length() < need || v_buffer.length() < need {
+            return Err(GpuError::PipelineCreate(format!(
+                "tree attention slot {top} is past the K/V buffers"
+            )));
+        }
+    }
+    // A wrapped seq_len would size the inner K/V check from a tiny count.
+    let seq_len = base
+        .checked_add(path.len() as u32)
+        .ok_or_else(|| GpuError::InvalidInput("tree attention seq_len overflows u32".into()))?;
     let mut map = [0u32; 2 + ATTENTION_TREE_MAX_DEPTH];
     map[0] = base;
     map[1] = slot_start;
@@ -1518,7 +1535,11 @@ pub fn encode_attention_decode_gqa_rows_with(
     );
     assert!(kv_start <= first_query_position);
     // The last row's exclusive end, and the union every chunk splits.
-    let last_end = first_query_position + live_rows;
+    // A wrapped end would size the K/V check below from a tiny count while
+    // the rows still read near `first_query_position`.
+    let last_end = first_query_position
+        .checked_add(live_rows)
+        .ok_or_else(|| invalid_batch_input("query position range overflows u32"))?;
     assert!(
         ring_capacity == 0 || last_end - kv_start <= ring_capacity,
         "attention window larger than ring capacity: rows would alias"

@@ -71,6 +71,7 @@ pub fn patch_rows(
     width: usize,
     params: &PreprocessParams,
 ) -> Result<(Vec<f32>, GridThw), VisionIoError> {
+    params.check_geometry()?;
     let factor = params.spatial_factor();
     for (value, axis) in [(height, "height"), (width, "width")] {
         if value == 0 || value % factor != 0 {

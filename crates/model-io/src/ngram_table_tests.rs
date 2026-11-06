@@ -300,3 +300,60 @@ fn an_absent_table_reads_as_none_rather_than_an_error() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The reference builds every multiplier as `2h + 1` with `h` non-negative,
+/// so a real one is a positive odd number. A negative multiplier times a
+/// non-negative token id is a negative hash term, and the XOR of those can set
+/// the sign bit, which `ple_ngram_rows` then casts to `u64`: a different row
+/// on every token, with no error.
+#[test]
+fn a_non_positive_multiplier_is_refused() {
+    for bad in [0i64, -1, i64::MIN] {
+        let mut l = real();
+        l.multipliers[1] = bad;
+        let err = l.validate().expect_err("refused");
+        assert!(format!("{err:?}").contains("multiplier"), "{bad}: {err:?}");
+    }
+}
+
+/// A header that validates can still carry a multiplier large enough that
+/// `token * multiplier` overflows i64 for an ordinary in-vocab token, and
+/// `ple_ngram_rows` panics on that every decode step. Pinned end to end:
+/// the layout passes `validate()` (which knows no vocabulary), the hash
+/// really does panic for the largest token, and `check_hash_bound` is what
+/// refuses it at load time.
+#[test]
+fn a_multiplier_that_overflows_the_hash_is_refused_by_the_hash_bound() {
+    let max_token = 248_319i64; // qwen4_exp vocab_size 248,320, minus one.
+    let mut l = real();
+    l.multipliers = vec![1, i64::MAX / 2, 5];
+    l.validate()
+        .expect("validate() alone cannot see the vocabulary");
+
+    let hashed = std::panic::catch_unwind(|| {
+        crate::ple_ngram_rows(
+            &[max_token, max_token, max_token],
+            8,
+            &l.multipliers,
+            &l.head_vocab_sizes,
+            &l.head_offsets,
+        )
+    });
+    assert!(hashed.is_err(), "the per-token hash overflows and panics");
+
+    let err = l.check_hash_bound(max_token).expect_err("refused");
+    assert!(format!("{err:?}").contains("overflow"), "{err:?}");
+}
+
+/// The checkpoint's own frozen multipliers against its own vocabulary must
+/// pass: (248,320 - 1) * 23,703,573,157,769 is about 5.9e18, under 2^63.
+/// A bound that refused this would refuse the only real table.
+#[test]
+fn the_real_multipliers_pass_the_hash_bound() {
+    let mut l = real();
+    l.multipliers = vec![23_703_573_157_769, 20_109_073_645_365, 8_052_911_324_071];
+    l.validate().expect("real multipliers validate");
+    l.check_hash_bound(248_319).expect("real multipliers fit");
+    // EOS (248,044) sits inside the vocabulary, so the same bound covers it.
+    l.check_hash_bound(248_044).expect("eos fits");
+}

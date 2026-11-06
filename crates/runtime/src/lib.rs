@@ -27,6 +27,8 @@ mod kv_prefix;
 mod kv_write;
 mod lab_hooks;
 #[cfg(target_os = "macos")]
+mod model_dir_read;
+#[cfg(target_os = "macos")]
 mod moe_prefill_pipeline;
 mod pacing;
 mod power;

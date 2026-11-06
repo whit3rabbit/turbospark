@@ -13,11 +13,58 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Added
+- `turbospark-server --max-queued N` (default 64) bounds the generation
+  queue. A full queue answers 429 with `Retry-After: 2` before any response
+  starts, on the OpenAI, Anthropic, Ollama and embeddings endpoints. `0`
+  keeps it unbounded.
+- A new `Audit` CI workflow runs `cargo audit` on dependency changes and
+  every Monday. `.cargo/audit.toml` ignores `paste` (unmaintained, build-time
+  only through `metal`) with the reason written down.
+
+### Changed
+- `turbospark-model pull --out DIR` refuses a folder holding files
+  TurboSpark did not write, before any network request, because an install
+  replaces that folder whole. A new, empty, interrupted or installed folder
+  still works.
+- `turbospark-model pull --repo ... --alias` and `pull-vision --alias` now
+  apply the same alias charset as `pull-image` and refuse `../` style names.
+- `turbospark rm DIR` removes a directory only when it is a recorded install.
+- The agent launchers (`turbospark` with Claude Code, Codex and the other
+  connectors) refuse to start a server when something that is not their own
+  daemon already answers `/health` on the port.
+- A non-https `HF_ENDPOINT` prints a warning.
+
 ### Security
 - "Automatically start server on app launch" no longer starts a server
   without an API key. On a new install, where the key is not saved in the
   Keychain, the app skips the start and shows a warning toast that says how
   to set one (#150). Starting the server by hand is unchanged.
+- Bumped `rustls-webpki` to 0.103.16 and `webpki-roots` to 1.0.10 in
+  `Cargo.lock` (RUSTSEC-2026-0382, RUSTSEC-2026-0381: distrusted emSign
+  certificates). This is the TLS stack every Hugging Face download uses.
+- Server: with no API key, a request whose `Host` is not a loopback name
+  gets 403, which stops DNS-rebinding pages. Audio WebSockets check
+  `Origin`. Stream
+  backlogs, concurrent audio decodes and HTTP-attached audio models are
+  bounded.
+- Model intake and open: crafted checkpoints, manifests and configs are
+  refused instead of driving huge allocations, panics or path escapes. This
+  covers size caps on every small metadata file read (JSON configs, indexes,
+  manifests, tokenizer sidecars, Hugging Face small files), checked shape
+  arithmetic in repack, image, embeddings, Core ML and GPU dispatch, open-time
+  ceilings on manifest dimensions, shard and package names that must stay
+  inside the checkpoint, and GGUF array nesting depth.
+- FFI: pointer and length arguments are checked before any slice is formed,
+  out pointers are cleared first, and the daemon pid is matched to the
+  server binary before it is signalled.
+- NaN-safe sorts and checked arithmetic replace panicking paths in sampling,
+  audio, the bench harnesses and `tslab`.
+- Documented, not changed: a crafted `tokenizer.json` regex can stall
+  encode (#250), and message text that spells chat-template control markers
+  encodes to the real marker ids, as in HF transformers, vLLM and llama.cpp.
+  Clients that put untrusted text into messages must sanitize it (see the
+  server README).
 
 ## [0.7.1] - 2026-11-03
 

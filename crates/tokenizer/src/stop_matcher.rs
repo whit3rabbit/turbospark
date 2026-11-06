@@ -6,14 +6,21 @@
 /// prefix, so a stop string split across two `push` calls is still caught.
 pub struct StreamingStopMatcher {
     stops: Vec<String>,
+    /// KMP failure table per stop, so the withheld-suffix scan is linear in
+    /// pending plus stop length. Stops arrive uncapped from HTTP `stop`
+    /// fields, and the old per-length rebuild was quadratic per push.
+    failures: Vec<Vec<usize>>,
     pending: String,
     stopped: bool,
 }
 
 impl StreamingStopMatcher {
     pub fn new(stops: Vec<String>) -> Self {
+        let stops: Vec<String> = stops.into_iter().filter(|s| !s.is_empty()).collect();
+        let failures = stops.iter().map(|s| failure_table(s.as_bytes())).collect();
         Self {
-            stops: stops.into_iter().filter(|s| !s.is_empty()).collect(),
+            stops,
+            failures,
             pending: String::new(),
             stopped: false,
         }
@@ -63,34 +70,44 @@ impl StreamingStopMatcher {
     /// Longest suffix of `pending` (in bytes) that is a proper prefix of any
     /// stop string, i.e. the tail that must be withheld pending more input.
     fn longest_possible_suffix(&self) -> usize {
+        let text = self.pending.as_bytes();
         let mut best = 0usize;
-        let pending_len = self.pending.chars().count();
-        for stop in &self.stops {
-            let stop_len = stop.chars().count();
-            let maximum = pending_len.min(stop_len.saturating_sub(1));
-            for length in (1..=maximum).rev() {
-                let suffix = char_suffix(&self.pending, length);
-                let prefix = char_prefix(stop, length);
-                if suffix == prefix {
-                    best = best.max(byte_len_of_char_suffix(&self.pending, length));
-                    break;
+        for (stop, fail) in self.stops.iter().zip(&self.failures) {
+            let pat = stop.as_bytes();
+            // Matched length of the longest stop prefix ending at each byte.
+            // A byte match starting at the stop's first byte starts on a char
+            // boundary of pending, so the byte count is a valid split point.
+            let mut k = 0usize;
+            for &byte in text {
+                while k > 0 && (k == pat.len() || pat[k] != byte) {
+                    k = fail[k - 1];
+                }
+                if pat[k] == byte {
+                    k += 1;
                 }
             }
+            if k == pat.len() {
+                k = fail[k - 1];
+            }
+            best = best.max(k);
         }
         best
     }
 }
 
-fn char_suffix(s: &str, n_chars: usize) -> String {
-    let total = s.chars().count();
-    let skip = total.saturating_sub(n_chars);
-    s.chars().skip(skip).collect()
-}
-
-fn char_prefix(s: &str, n_chars: usize) -> String {
-    s.chars().take(n_chars).collect()
-}
-
-fn byte_len_of_char_suffix(s: &str, n_chars: usize) -> usize {
-    char_suffix(s, n_chars).len()
+/// Standard KMP prefix function: `fail[i]` is the length of the longest
+/// proper prefix of `pat[..=i]` that is also its suffix.
+fn failure_table(pat: &[u8]) -> Vec<usize> {
+    let mut fail = vec![0usize; pat.len()];
+    let mut k = 0usize;
+    for i in 1..pat.len() {
+        while k > 0 && pat[i] != pat[k] {
+            k = fail[k - 1];
+        }
+        if pat[i] == pat[k] {
+            k += 1;
+        }
+        fail[i] = k;
+    }
+    fail
 }

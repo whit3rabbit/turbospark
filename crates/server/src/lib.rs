@@ -98,6 +98,7 @@ mod embeddings;
 mod encoder_model;
 mod guardrails;
 mod handler;
+mod host_check;
 mod images;
 mod messages;
 mod model;
@@ -185,7 +186,7 @@ pub use handler::AppState;
 pub use images::{ImageError, ImageGenerateRequest, ImageProvider, MAX_IMAGE_PROMPT_BYTES};
 /// Trait and canned test backend for chat generation.
 pub use model::{ChatModel, ScriptedChatModel};
-pub use queue::{GenerationPermit, GenerationQueue};
+pub use queue::{GenerationPermit, GenerationQueue, QueueFull, QueueTicket, DEFAULT_MAX_QUEUED};
 #[cfg(target_os = "macos")]
 /// GPU-backed chat model running real forward passes against `.gturbo` installs.
 pub use real_model::RealChatModel;
@@ -212,8 +213,9 @@ use axum::Router;
 #[derive(Default, Clone)]
 pub struct RouterOptions {
     /// Require this key on every request except `GET /health`. `None`
-    /// (the default) leaves the router exactly as unauthenticated as it was
-    /// before this option existed.
+    /// (the default) leaves the router unauthenticated, but then every route
+    /// except `/health` refuses a `Host` that does not name loopback
+    /// (`host_check`), since a keyless server only binds loopback.
     pub api_key: Option<String>,
     /// Where request and generation events go. `None` (the default) means
     /// nothing is recorded and no event is even BUILT
@@ -366,7 +368,11 @@ pub fn build_router_with_options(state: impl Into<ServerState>, options: RouterO
             auth::ApiKey(key.into()),
             auth::require_api_key,
         )),
-        None => protected,
+        // No key means a loopback bind, where a DNS-rebinding page would
+        // otherwise be same-origin. See `host_check`. Inside `protected` so
+        // `/health` stays exempt, and inside the observer so a refusal is
+        // recorded like a 401.
+        None => protected.layer(axum::middleware::from_fn(host_check::require_loopback_host)),
     };
 
     let router = Router::new()

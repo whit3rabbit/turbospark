@@ -432,3 +432,33 @@ fn real_checkpoint_parity() {
     eprintln!("logits ref  {want:?}");
     assert!(ld < 1e-3, "logits");
 }
+
+#[test]
+fn load_refuses_a_token_table_whose_byte_size_wraps() {
+    // vocab * hidden * 4 wraps to the real byte length, so an unchecked
+    // multiply would accept a 2^57-row table backed by 128 rows of bytes
+    // and later slice past the mapping. The load must refuse it.
+    let dir = std::env::temp_dir().join(format!("tse-siglip2-wrap-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for f in [
+        "config.json",
+        "preprocessor_config.json",
+        "model.safetensors",
+    ] {
+        std::fs::copy(tiny_dir().join(f), dir.join(f)).unwrap();
+    }
+    let rows = crate::testutil::wrapping_f32_rows(128, 32);
+    let path = dir.join("config.json");
+    let mut v: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    v["text_config"]["vocab_size"] = json!(rows);
+    std::fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+    crate::testutil::set_safetensors_shape(
+        &dir.join("model.safetensors"),
+        "text_model.embeddings.token_embedding.weight",
+        &[rows, 32],
+    );
+    let err = Siglip2::load(&dir).unwrap_err();
+    assert!(matches!(err, crate::EmbeddingError::Tensor { .. }), "{err}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
