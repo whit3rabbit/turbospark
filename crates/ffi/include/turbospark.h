@@ -26,6 +26,9 @@
  *    ts_generate() blocks for the whole turn, so call it from a background
  *    thread. The ONE exception is ts_session_cancel(), which is safe from
  *    any thread and never blocks -- that is what makes a Stop button work.
+ *    The token callback runs while ts_generate() holds the session's engine
+ *    lock, so a callback that calls back into the same session (anything
+ *    but ts_session_cancel()) deadlocks; hand the work to another thread.
  *    ts_install()'s byte callback is ALSO called concurrently from worker
  *    threads; see below.
  *
@@ -453,7 +456,9 @@ int32_t ts_image_generate(const TsImageSession *s, const char *options_json,
                           uint8_t **out_png, size_t *out_png_len,
                           char **out_metadata_json);
 
-/* Frees the byte buffer returned by ts_image_generate. */
+/* Frees the byte buffer returned by ts_image_generate. bytes and len must be
+ * exactly the out_png and out_png_len pair from one call, passed once: the
+ * length rebuilds the allocation and cannot be validated here. NULL is a no-op. */
 void ts_image_buffer_free(uint8_t *bytes, size_t len);
 
 /* ---- introspection ---- */

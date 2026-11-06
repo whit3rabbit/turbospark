@@ -84,7 +84,9 @@ COMMANDS:
                                 process, while it moves
 
 OPTIONS:
-    --out <DIR>                 install here instead of the default store
+    --out <DIR>                 install here instead of the default store. DIR must be
+                                new, empty, or a TurboSpark install: a folder holding
+                                other files is refused, since a pull can replace it whole
     --library <NAME>            for `pull`, `pull-vision`, `pull-image` and
                                 `pull-audio`: install into this library (a
                                 name or id from `library list`). Without it

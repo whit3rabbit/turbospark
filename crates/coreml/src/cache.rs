@@ -73,6 +73,30 @@ pub(crate) fn is_cache_entry_for(name: &str, stem: &str) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
+/// Sidecar beside a cache entry naming the package that compiled it
+/// (`<stem>-<key>.source`). Two packages can share a stem and a cache root,
+/// so the stem alone cannot tell a stale entry from another package's.
+pub(crate) fn source_marker(entry: &Path) -> PathBuf {
+    entry.with_extension("source")
+}
+
+/// What `source_marker` records for `package`: its path relative to the
+/// cache root's parent when it lies there (an install keeps its cache
+/// inside itself, so a moved install still matches), else the full path.
+pub(crate) fn source_id(package: &Path, cache_root: &Path) -> String {
+    let rel = cache_root
+        .parent()
+        .and_then(|base| package.strip_prefix(base).ok())
+        .unwrap_or(package);
+    rel.to_string_lossy().into_owned()
+}
+
+/// True for the `.staging-*.mlmodelc` names `compile_if_needed` publishes
+/// through. Only such names are ever pruned as orphans.
+pub(crate) fn is_staging_name(name: &str) -> bool {
+    name.starts_with(".staging-") && name.ends_with(".mlmodelc")
+}
+
 fn walk(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) -> io::Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;

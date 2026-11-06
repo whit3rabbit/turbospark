@@ -4,7 +4,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read as _, Seek as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
 use super::chunks::{
@@ -167,7 +167,19 @@ pub struct HttpRangeSource {
     /// bytes across retries and app launches.
     cache_dir: Option<PathBuf>,
     pinned_identity: Option<(String, u64, Option<String>)>,
+    /// The file length the server reported, from the first `Content-Range`
+    /// carrying one. Safetensors `data_offsets` come from the checkpoint and
+    /// nothing else compares them to the file, so this is what `read_range`
+    /// holds a declared range against before allocating for it.
+    source_len: OnceLock<u64>,
 }
+
+/// The longest range `read_range` accepts when the server reports no file
+/// length, so there is nothing to check it against. RFC 9110 allows `*`, and
+/// Hugging Face does send a real total, so this only applies to a mirror. Far
+/// above any single tensor, which keeps real reads working there, and far below
+/// where the allocator fails, which is the abort this exists to stop.
+const UNKNOWN_LENGTH_MAX_RANGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 
 /// `connect_timeout` bounds the TCP/TLS handshake; `timeout` bounds the
 /// ENTIRE request (reqwest's blocking client has no separate read timeout in
@@ -210,6 +222,7 @@ impl HttpRangeSource {
             cancel: None,
             cache_dir: None,
             pinned_identity: None,
+            source_len: OnceLock::new(),
         }
     }
 
@@ -222,6 +235,7 @@ impl HttpRangeSource {
             cancel: None,
             cache_dir: None,
             pinned_identity: None,
+            source_len: OnceLock::new(),
         }
     }
 
@@ -376,22 +390,12 @@ impl HttpRangeSource {
         }
     }
 
-    /// One `Range` GET, no retry, written straight into `dst`. Length is
-    /// checked here so a truncated body is a retryable error rather than
-    /// silent corruption.
-    fn read_chunk(
+    /// Issues one `Range` GET and requires a 206.
+    fn send_range(
         &self,
         start: u64,
-        end_exclusive: u64,
-        dst: &mut [u8],
-    ) -> Result<(), DownloadError> {
-        if let Some(cancel) = &self.cancel {
-            cancel.checkpoint()?;
-        }
-        if self.read_cached_chunk(start, end_exclusive, dst) {
-            return Ok(());
-        }
-        let end_inclusive = end_exclusive.saturating_sub(1);
+        end_inclusive: u64,
+    ) -> Result<reqwest::blocking::Response, DownloadError> {
         let mut request = self.client.get(&self.url).header(
             reqwest::header::RANGE,
             format!("bytes={start}-{end_inclusive}"),
@@ -406,7 +410,7 @@ impl HttpRangeSource {
         if let Some((_, _, Some(validator))) = &self.pinned_identity {
             request = request.header(reqwest::header::IF_MATCH, format!("\"{validator}\""));
         }
-        let mut response = request
+        let response = request
             .send()
             .map_err(|e| DownloadError::Request(e.to_string()))?;
         if response.status().as_u16() != 206 {
@@ -426,6 +430,95 @@ impl HttpRangeSource {
                 retry_after,
             });
         }
+        Ok(response)
+    }
+
+    /// Keeps the file length from a 206's `Content-Range: bytes a-b/total`. A
+    /// missing header or a `*` total leaves it unknown rather than failing:
+    /// the body length check still protects the read itself.
+    fn note_source_len(&self, response: &reqwest::blocking::Response) {
+        let total = response
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.rsplit_once('/'))
+            .and_then(|(_, total)| total.trim().parse::<u64>().ok());
+        if let Some(total) = total {
+            let _ = self.source_len.set(total);
+        }
+    }
+
+    fn known_source_len(&self) -> Option<u64> {
+        match &self.pinned_identity {
+            Some((_, total_bytes, _)) => Some(*total_bytes),
+            None => self.source_len.get().copied(),
+        }
+    }
+
+    /// Asks the server for the file length with a one-byte range. Bypasses the
+    /// range cache, since a cache hit carries no `Content-Range`, and reports
+    /// no progress, since no weight bytes moved.
+    fn probe_source_len(&self) -> Result<Option<u64>, DownloadError> {
+        self.with_retries(|| {
+            if let Some(cancel) = &self.cancel {
+                cancel.checkpoint()?;
+            }
+            self.note_source_len(&self.send_range(0, 0)?);
+            Ok(())
+        })?;
+        Ok(self.known_source_len())
+    }
+
+    /// Refuses a range the file cannot hold, before anything is sized from it.
+    ///
+    /// Reads of at most one chunk skip the probe: their buffer is bounded no
+    /// matter what the header claims, and a short body already fails them, so
+    /// they stay one request as they always were. `ShortRead` reports what the
+    /// file does hold, matching `MemoryRangeSource`, because `fetch_gguf_header`
+    /// re-reads exactly `actual` bytes after a speculative read past EOF.
+    fn check_range_within_source(
+        &self,
+        start: u64,
+        end_exclusive: u64,
+    ) -> Result<(), DownloadError> {
+        let requested = end_exclusive - start;
+        let source_len = match self.known_source_len() {
+            None if requested > MAX_RANGE_BYTES => self.probe_source_len()?,
+            known => known,
+        };
+        match source_len {
+            Some(total) if end_exclusive > total => Err(DownloadError::ShortRead {
+                expected: requested,
+                actual: total.saturating_sub(start),
+            }),
+            None if requested > UNKNOWN_LENGTH_MAX_RANGE_BYTES => {
+                Err(DownloadError::InvalidRange {
+                    start,
+                    end_exclusive,
+                })
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// One `Range` GET, no retry, written straight into `dst`. Length is
+    /// checked here so a truncated body is a retryable error rather than
+    /// silent corruption.
+    fn read_chunk(
+        &self,
+        start: u64,
+        end_exclusive: u64,
+        dst: &mut [u8],
+    ) -> Result<(), DownloadError> {
+        if let Some(cancel) = &self.cancel {
+            cancel.checkpoint()?;
+        }
+        if self.read_cached_chunk(start, end_exclusive, dst) {
+            return Ok(());
+        }
+        let end_inclusive = end_exclusive.saturating_sub(1);
+        let mut response = self.send_range(start, end_inclusive)?;
+        self.note_source_len(&response);
         if let Some((_, total_bytes, validator)) = &self.pinned_identity {
             if response
                 .content_length()
@@ -502,8 +595,18 @@ impl HttpRangeSource {
         Ok(())
     }
 
-    /// [`Self::read_chunk`] under the retry ladder: [`RANGE_ATTEMPTS`]
-    /// attempts with an exponential backoff capped at four seconds.
+    /// [`Self::read_chunk`] under [`Self::with_retries`].
+    fn read_chunk_retrying(
+        &self,
+        start: u64,
+        end_exclusive: u64,
+        dst: &mut [u8],
+    ) -> Result<(), DownloadError> {
+        self.with_retries(|| self.read_chunk(start, end_exclusive, dst))
+    }
+
+    /// The retry ladder: [`RANGE_ATTEMPTS`] attempts with an exponential
+    /// backoff capped at four seconds.
     ///
     /// **A STATUS IS FATAL OR THROTTLED, AND FOR THE LIFE OF THIS SURFACE
     /// EVERY STATUS WAS FATAL.** The reasoning this replaces was sound for the
@@ -523,15 +626,13 @@ impl HttpRangeSource {
     /// 5xx joins it for the same reason: a gateway error is the server saying
     /// "not now". Everything else stays fatal, so a 404 still fails on the
     /// first attempt rather than eight times.
-    fn read_chunk_retrying(
+    fn with_retries(
         &self,
-        start: u64,
-        end_exclusive: u64,
-        dst: &mut [u8],
+        mut attempt_once: impl FnMut() -> Result<(), DownloadError>,
     ) -> Result<(), DownloadError> {
         let mut last = None;
         for attempt in 0..RANGE_ATTEMPTS {
-            match self.read_chunk(start, end_exclusive, dst) {
+            match attempt_once() {
                 Ok(()) => return Ok(()),
                 // A cancel is not a network condition: retrying it would
                 // spend the ladder's backoffs pretending the caller did not
@@ -691,6 +792,7 @@ impl RangeSource for HttpRangeSource {
                 end_exclusive,
             });
         }
+        self.check_range_within_source(start, end_exclusive)?;
         let chunks = chunk_ranges(start, end_exclusive, MAX_RANGE_BYTES);
         let mut out = vec![0u8; (end_exclusive - start) as usize];
         fill_chunks(

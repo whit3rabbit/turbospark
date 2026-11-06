@@ -119,6 +119,11 @@ pub unsafe extern "C" fn ts_image_generate(
 }
 
 /// Reclaims a PNG byte buffer returned by `ts_image_generate`.
+///
+/// `ptr` and `len` must be exactly the pair one `ts_image_generate` call
+/// returned, freed once. The allocation is rebuilt from `len`, and a raw
+/// pointer carries no size to check it against, so a mismatch is undefined
+/// behavior rather than an error code.
 #[no_mangle]
 pub unsafe extern "C" fn ts_image_buffer_free(ptr: *mut u8, len: usize) {
     abi::guard_value((), || {

@@ -124,13 +124,18 @@ fn beta_log_density(x: f64, dim: usize) -> f64 {
 /// `np.interp`: clamps outside `cdf`'s range, otherwise interpolates
 /// between the bracketing samples. `cdf` must be nondecreasing.
 fn interp(q: f64, cdf: &[f64], grid: &[f64]) -> f64 {
+    // np.interp returns NaN for a NaN query. Without this a NaN passes both
+    // clamps and total_cmp sorts it past the end, indexing out of bounds.
+    if q.is_nan() {
+        return f64::NAN;
+    }
     if q <= cdf[0] {
         return grid[0];
     }
     if q >= cdf[cdf.len() - 1] {
         return grid[grid.len() - 1];
     }
-    let idx = match cdf.binary_search_by(|probe| probe.partial_cmp(&q).unwrap()) {
+    let idx = match cdf.binary_search_by(|probe| probe.total_cmp(&q)) {
         Ok(i) => return grid[i],
         Err(i) => i,
     };
@@ -370,4 +375,19 @@ pub fn dequantize_row(
     let rotated: Vec<f32> = indices.iter().map(|&i| codebook[i as usize]).collect();
     let unit = rht_inverse(&rotated, signs);
     unit.iter().map(|&u| u * row.norm).collect()
+}
+
+#[cfg(test)]
+mod interp_tests {
+    use super::interp;
+
+    // A NaN query fails both clamp comparisons and reaches the binary
+    // search; the comparator must stay total so it cannot panic.
+    #[test]
+    fn interp_nan_query_does_not_panic() {
+        let cdf = [0.0, 0.5, 1.0];
+        let grid = [-1.0, 0.0, 1.0];
+        assert!(interp(f64::NAN, &cdf, &grid).is_nan());
+        assert_eq!(interp(0.25, &cdf, &grid), -0.5);
+    }
 }

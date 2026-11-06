@@ -126,6 +126,9 @@ impl ClipPreprocessParams {
                 ),
             ));
         }
+        // The crop is what every image is resized to, so it is an
+        // allocation the config controls.
+        crate::params::check_config_edge("size.shortest_edge", shortest)?;
         if shortest == 0 || shortest % CLIP_PATCH != 0 {
             return Err(bad(
                 "size.shortest_edge",
@@ -157,7 +160,7 @@ impl ClipPreprocessParams {
             size: shortest,
             layout: ClipLayout::Crop,
             image_mean: triple("image_mean")?,
-            image_std: triple("image_std")?,
+            image_std: positive_std(triple("image_std")?)?,
             rescale_factor,
             pinpoints: Vec::new(),
         })
@@ -318,7 +321,7 @@ impl ClipPreprocessParams {
             size: crate::onevision::OV_TILE,
             layout: ClipLayout::OneVision,
             image_mean: triple("image_mean")?,
-            image_std: triple("image_std")?,
+            image_std: positive_std(triple("image_std")?)?,
             rescale_factor,
             pinpoints,
         })
@@ -364,6 +367,9 @@ impl ClipPreprocessParams {
                 .and_then(|s| s.get("longest_edge"))
                 .and_then(serde_json::Value::as_u64)
                 .ok_or_else(|| bad("size.longest_edge", "missing".into()))? as usize;
+        // Only a downscale cap, but `tokens()` squares it for the worst-case
+        // token count, which would wrap.
+        crate::params::check_config_edge("size.longest_edge", longest)?;
         if longest == 0 || longest % want != 0 {
             return Err(bad(
                 "size.longest_edge",
@@ -395,11 +401,24 @@ impl ClipPreprocessParams {
             size: longest,
             layout: ClipLayout::Pixtral,
             image_mean: triple("image_mean")?,
-            image_std: triple("image_std")?,
+            image_std: positive_std(triple("image_std")?)?,
             rescale_factor,
             pinpoints: Vec::new(),
         })
     }
+}
+
+/// The normalization divides by `image_std`, so a zero (or a value that
+/// rounds to zero in f32) would make every pixel inf or NaN with no error.
+/// Same rule as `DeepseekOcrParams`.
+fn positive_std(std: [f32; 3]) -> Result<[f32; 3], VisionIoError> {
+    if std.iter().any(|s| *s <= 0.0) {
+        return Err(VisionIoError::BadConfig {
+            field: "image_std".into(),
+            why: "entries must be positive".into(),
+        });
+    }
+    Ok(std)
 }
 
 /// One image as tower input.
@@ -747,5 +766,74 @@ mod tests {
         assert!(clip_expand_image_placeholders(&[1, 9, 2], 9, 9, &[3, 2]).is_err());
         assert!(clip_expand_image_placeholders(&[1, 9, 9], 9, 9, &[1, 1]).is_err());
         assert!(clip_expand_image_placeholders(&[1, 9, 2], 9, 9, &[0]).is_err());
+    }
+
+    /// The normalization divides by `image_std`, so a zero (or a value that
+    /// rounds to zero in f32) turns every pixel into inf or NaN with no error.
+    /// Each of the three layouts reads its own triple, so each is checked.
+    #[test]
+    fn a_non_positive_image_std_is_refused_in_every_layout() {
+        let pixtral = r#"{"do_resize": true, "do_rescale": true, "do_normalize": true,
+          "resample": 3, "patch_size": {"height": 16, "width": 16},
+          "size": {"longest_edge": 1024}, "image_processor_type": "PixtralImageProcessor",
+          "image_mean": [0.5, 0.5, 0.5], "image_std": [0.5, 0.5, 0.5],
+          "rescale_factor": 0.00392156862745098}"#;
+        let onevision = r#"{"do_convert_rgb":true,"do_normalize":true,"do_pad":true,
+          "do_rescale":true,"do_resize":true,
+          "image_grid_pinpoints":[[384,384],[384,768]],
+          "image_mean":[0.5,0.5,0.5],"image_processor_type":"LlavaOnevisionImageProcessor",
+          "image_std": [0.5, 0.5, 0.5],"resample":3,"rescale_factor":0.00392156862745098,
+          "size":{"height":384,"width":384}}"#;
+        let clip_std = "\"image_std\": [0.26862954, 0.26130258, 0.27577711]";
+        for (config, good) in [
+            (CONFIG, clip_std),
+            (pixtral, "\"image_std\": [0.5, 0.5, 0.5]"),
+            (onevision, "\"image_std\": [0.5, 0.5, 0.5]"),
+        ] {
+            assert!(ClipPreprocessParams::from_preprocessor_config_json(config).is_ok());
+            for std in ["[0.0, 0.5, 0.5]", "[0.5, -0.5, 0.5]", "[0.5, 0.5, 1e-50]"] {
+                let text = config.replace(good, &format!("\"image_std\": {std}"));
+                assert_ne!(text, config, "{good} must appear in the fixture");
+                assert!(
+                    ClipPreprocessParams::from_preprocessor_config_json(&text).is_err(),
+                    "image_std {std} must be refused"
+                );
+            }
+        }
+    }
+
+    /// A config-declared resize target is the allocation a decoded image is
+    /// stretched to, so each layout's own size field is held to the decode
+    /// ceiling: a CLIP crop edge, a Pixtral longest edge, a OneVision
+    /// pinpoint. The real values (336, 1024, 2304) sit well under it.
+    #[test]
+    fn a_declared_size_past_the_decode_ceiling_is_refused_in_every_layout() {
+        let over = crate::decode::MAX_IMAGE_DIM as usize + 1;
+        let crop = (over / CLIP_PATCH + 1) * CLIP_PATCH;
+        let clip = CONFIG.replace("336", &crop.to_string());
+        let pixtral = r#"{"do_resize": true, "do_rescale": true, "do_normalize": true,
+          "resample": 3, "patch_size": {"height": 16, "width": 16},
+          "size": {"longest_edge": 1048576}, "image_processor_type": "PixtralImageProcessor",
+          "image_mean": [0.5, 0.5, 0.5], "image_std": [0.5, 0.5, 0.5],
+          "rescale_factor": 0.00392156862745098}"#;
+        let onevision = r#"{"do_convert_rgb":true,"do_normalize":true,"do_pad":true,
+          "do_rescale":true,"do_resize":true,
+          "image_grid_pinpoints":[[384,384],[384,393216]],
+          "image_mean":[0.5,0.5,0.5],"image_processor_type":"LlavaOnevisionImageProcessor",
+          "image_std": [0.5, 0.5, 0.5],"resample":3,"rescale_factor":0.00392156862745098,
+          "size":{"height":384,"width":384}}"#;
+        for config in [clip.as_str(), pixtral, onevision] {
+            assert!(
+                ClipPreprocessParams::from_preprocessor_config_json(config).is_err(),
+                "{config} must be refused"
+            );
+        }
+        // The real edges still parse, so the ceiling is not refusing them.
+        let real = onevision
+            .replace("393216", "2304")
+            .replace("[384,384],", "[2304,2304],");
+        assert!(ClipPreprocessParams::from_preprocessor_config_json(&real).is_ok());
+        let real = pixtral.replace("1048576", "1024");
+        assert!(ClipPreprocessParams::from_preprocessor_config_json(&real).is_ok());
     }
 }

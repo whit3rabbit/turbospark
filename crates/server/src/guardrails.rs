@@ -404,9 +404,10 @@ pub(crate) async fn run_guarded(
     request: &ChatCompletionRequest,
     effort: ReasoningEffort,
     cancel: Cancel,
+    ticket: Option<crate::queue::QueueTicket>,
 ) -> Result<Generated, GenError> {
-    let gate = match model.generation_queue() {
-        Some(queue) => match queue.acquire(&cancel).await {
+    let gate = match ticket {
+        Some(ticket) => match ticket.acquire(&cancel).await {
             Some(permit) => Some(permit),
             // Cancelled while queued: the client is gone, nothing was
             // generated, and the shape below is the one every caller's

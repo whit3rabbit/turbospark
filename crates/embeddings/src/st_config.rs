@@ -130,9 +130,28 @@ impl DenseConfig {
 pub struct ModuleEntry {
     pub idx: usize,
     pub name: String,
+    #[serde(deserialize_with = "module_path")]
     pub path: String,
     #[serde(rename = "type")]
     pub kind: String,
+}
+
+/// A module path is joined onto the checkpoint dir, so it must be plain
+/// relative components: an absolute path replaces the base and `..`
+/// escapes it. Empty is the Transformer at the root. Same rule as the
+/// catalog installer's `safe_relative`.
+fn module_path<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    let path = String::deserialize(d)?;
+    if Path::new(&path)
+        .components()
+        .all(|c| matches!(c, std::path::Component::Normal(_)))
+    {
+        Ok(path)
+    } else {
+        Err(serde::de::Error::custom(format!(
+            "module path {path:?} must be relative and stay inside the checkpoint"
+        )))
+    }
 }
 
 /// The module kinds this crate executes, in pipeline order.
@@ -223,6 +242,52 @@ mod tests {
         .unwrap();
         assert!(c.include_prompt);
         assert_eq!(c.modes(), vec![PoolingMode::LastToken]);
+    }
+
+    #[test]
+    fn read_modules_refuses_paths_that_leave_the_checkpoint() {
+        // The Dense and Pooling configs are read from `dir.join(path)`, so a
+        // `..` or absolute module path would read files outside the
+        // checkpoint. Each case points at a valid config to prove the
+        // refusal comes from the path, not from a missing file.
+        let root = std::env::temp_dir().join(format!("tse-modpath-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("ckpt");
+        let outside = root.join("outside");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(
+            outside.join("config.json"),
+            br#"{"word_embedding_dimension": 4, "pooling_mode_mean_tokens": true}"#,
+        )
+        .unwrap();
+        let write = |path: &str| {
+            let modules = serde_json::json!([
+                {"idx": 0, "name": "0", "path": "", "type": "sentence_transformers.models.Transformer"},
+                {"idx": 1, "name": "1", "path": path, "type": "sentence_transformers.models.Pooling"},
+            ]);
+            std::fs::write(dir.join("modules.json"), modules.to_string()).unwrap();
+        };
+        write("../outside");
+        assert!(matches!(
+            read_modules(&dir),
+            Err(EmbeddingError::BadConfig { .. })
+        ));
+        write(outside.to_str().unwrap());
+        assert!(matches!(
+            read_modules(&dir),
+            Err(EmbeddingError::BadConfig { .. })
+        ));
+        // A plain relative path is still accepted.
+        std::fs::create_dir_all(dir.join("1_Pooling")).unwrap();
+        std::fs::copy(
+            outside.join("config.json"),
+            dir.join("1_Pooling/config.json"),
+        )
+        .unwrap();
+        write("1_Pooling");
+        assert_eq!(read_modules(&dir).unwrap().len(), 2);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

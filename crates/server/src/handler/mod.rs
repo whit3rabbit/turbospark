@@ -356,6 +356,14 @@ pub(crate) fn status_for(e: &RuntimeError) -> axum::http::StatusCode {
     }
 }
 
+/// 429 in the OpenAI error shape for a full generation queue.
+pub(crate) fn queue_full_response() -> Response {
+    crate::queue::with_retry_after(error_response(
+        axum::http::StatusCode::TOO_MANY_REQUESTS,
+        crate::queue::QUEUE_FULL_MESSAGE.to_string(),
+    ))
+}
+
 pub(crate) fn gen_error_response(e: GenError) -> Response {
     match e {
         GenError::Runtime(e) => error_response(status_for(&e), e.to_string()),
@@ -551,6 +559,11 @@ pub async fn chat_completions(
     // streaming and non-streaming responses below.
     let degraded = merge_degradation(openai_request_warnings(&request), dropped_images);
     let cancel = crate::cancel::new_cancel();
+    // Reserved before either branch: a streaming 200 cannot turn into a 429.
+    let ticket = match crate::queue::reserve(model.as_ref()) {
+        Ok(ticket) => ticket,
+        Err(crate::queue::QueueFull) => return queue_full_response(),
+    };
 
     let mut response = if request.stream.unwrap_or(false) {
         stream_response(
@@ -563,6 +576,7 @@ pub async fn chat_completions(
             &request,
             include_usage,
             cancel,
+            ticket,
         )
     } else {
         // Set if THIS async fn's own future is dropped (client gone) before
@@ -571,7 +585,7 @@ pub async fn chat_completions(
         // after the await, whatever it returned: there is nothing left a
         // later drop of this function could usefully cancel.
         let mut guard = crate::cancel::CancelGuard::new(cancel.clone());
-        let result = run_guarded(model, &request, effort, cancel).await;
+        let result = run_guarded(model, &request, effort, cancel, ticket).await;
         guard.defuse();
         let generated = match result {
             Ok(r) => r,
@@ -629,20 +643,28 @@ fn stream_response(
     request: &ChatCompletionRequest,
     include_usage: bool,
     cancel: crate::cancel::Cancel,
+    ticket: Option<crate::queue::QueueTicket>,
 ) -> Response {
     if !tools.is_empty() && model.guardrails().active() {
-        return buffered_stream_response(model, request.clone(), effort, include_usage, cancel);
+        return buffered_stream_response(
+            model,
+            request.clone(),
+            effort,
+            include_usage,
+            cancel,
+            ticket,
+        );
     }
     let model_name = request.model.clone();
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+    let (tx, rx) = tokio::sync::mpsc::channel::<Event>(crate::cancel::STREAM_BACKLOG);
     let id = request_id("chatcmpl-");
     let created = now_unix();
     let cancel_for_task = cancel.clone();
 
     // The FIFO gate's acquisition point for this endpoint's live-stream
     // path (the non-streaming and buffered arms acquire inside
-    // `run_guarded`). See `queue.rs`.
-    let gate = model.generation_queue();
+    // `run_guarded`). The ticket was reserved by the handler. See `queue.rs`.
+    let gate = ticket;
     let cancel_for_gate = cancel.clone();
     tokio::spawn(async move {
         let _ = crate::queue::run_gated(gate, &cancel_for_gate, move || {
@@ -652,13 +674,13 @@ fn stream_response(
                 // stream around it -- is already gone. `CancelOnDrop` catches
                 // the same event independent of whether a send was ever
                 // attempted (a long prefill sends none), so this is a speed-up
-                // for the common case rather than the only detector.
-                if tx
-                    .send(Event::default().data(serde_json::to_string(&chunk).unwrap_or_default()))
-                    .is_err()
-                {
-                    cancel_for_task.store(true, std::sync::atomic::Ordering::Relaxed);
-                }
+                // for the common case rather than the only detector. A full
+                // backlog (client connected but not reading) cancels too.
+                crate::cancel::send_or_cancel(
+                    &tx,
+                    Event::default().data(serde_json::to_string(&chunk).unwrap_or_default()),
+                    &cancel_for_task,
+                );
             };
             send(completion_chunk(
                 id.clone(),
@@ -731,11 +753,11 @@ fn stream_response(
                     let body = serde_json::json!({
                         "error": {"message": e.to_string(), "type": "server_error"}
                     });
-                    let _ = tx.send(Event::default().event("error").data(body.to_string()));
+                    let _ = tx.try_send(Event::default().event("error").data(body.to_string()));
                     return;
                 }
             }
-            let _ = tx.send(Event::default().data("[DONE]"));
+            let _ = tx.try_send(Event::default().data("[DONE]"));
         })
         .await;
     });
@@ -743,11 +765,8 @@ fn stream_response(
     let stream: std::pin::Pin<
         Box<dyn Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
     > = Box::pin(
-        crate::cancel::CancelOnDrop::new(
-            tokio_stream::wrappers::UnboundedReceiverStream::new(rx),
-            cancel,
-        )
-        .map(Ok),
+        crate::cancel::CancelOnDrop::new(tokio_stream::wrappers::ReceiverStream::new(rx), cancel)
+            .map(Ok),
     );
     Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(SSE_KEEP_ALIVE))
@@ -772,6 +791,7 @@ fn buffered_stream_response(
     effort: ReasoningEffort,
     include_usage: bool,
     cancel: crate::cancel::Cancel,
+    ticket: Option<crate::queue::QueueTicket>,
 ) -> Response {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     let id = request_id("chatcmpl-");
@@ -792,7 +812,7 @@ fn buffered_stream_response(
         // own failure detection cannot fire during it -- `CancelOnDrop`
         // below is the ONLY signal this path has that the client is gone,
         // which is exactly why the plan calls this path out separately.
-        match run_guarded(model, &request, effort, cancel).await {
+        match run_guarded(model, &request, effort, cancel, ticket).await {
             // Discarded silently, same contract as the live path: the
             // client that would read this turn is the one already gone.
             Ok(generated) if generated.decode.reason == runtime::StopReason::Cancelled => return,

@@ -13,7 +13,7 @@
 //! Dropped requests signal cancellation, while the worker retains the permit
 //! until the model has stopped. HTTP task spellings remain adapter-owned.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
@@ -490,9 +490,35 @@ fn task_of_alias(alias: &str) -> Option<AudioTask> {
     None
 }
 
+/// Most models an HTTP `load` may leave attached at once, matching the FFI
+/// host's `DEFAULT_MAX_ATTACHED_MODELS`. Loads take installed aliases only,
+/// but nothing else stops a caller from making every install resident.
+/// Startup `attach` is operator-chosen and is not capped.
+const MAX_HTTP_ATTACHED_MODELS: usize = 8;
+
 pub struct RealAudioProvider {
     store: Option<catalog::Store>,
     workers: Arc<Mutex<HashMap<String, Arc<Worker>>>>,
+    /// Aliases an HTTP `load` is opening. They count toward the cap and
+    /// refuse a second concurrent open of the same alias, which would
+    /// otherwise map the model twice. Lock order: `workers`, then this.
+    loading: Arc<Mutex<HashSet<String>>>,
+}
+
+/// Releases an in-flight `load` reservation on every exit, including a panic
+/// in the opener.
+struct LoadingSlot {
+    loading: Arc<Mutex<HashSet<String>>>,
+    id: String,
+}
+
+impl Drop for LoadingSlot {
+    fn drop(&mut self) {
+        self.loading
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&self.id);
+    }
 }
 
 impl RealAudioProvider {
@@ -500,6 +526,7 @@ impl RealAudioProvider {
         Self {
             store: catalog::Store::default_store().ok(),
             workers: Arc::new(Mutex::new(HashMap::new())),
+            loading: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -679,17 +706,33 @@ impl AudioProvider for RealAudioProvider {
             };
             // Opening reads gigabytes; keep it off the async workers.
             let workers = Arc::clone(&self.workers);
+            let loading = Arc::clone(&self.loading);
             let id = alias.clone();
             tokio::task::spawn_blocking(move || {
-                if workers
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner())
-                    .contains_key(&id)
-                {
-                    return Err(AudioError::Invalid(format!("{id:?} is already attached")));
-                }
+                // Check and reserve under one hold of both locks so concurrent
+                // loads cannot all pass the cap or open the same alias twice.
+                let _slot = {
+                    let attached = workers.lock().unwrap_or_else(|p| p.into_inner());
+                    let mut pending = loading.lock().unwrap_or_else(|p| p.into_inner());
+                    if attached.contains_key(&id) || pending.contains(&id) {
+                        return Err(AudioError::Invalid(format!("{id:?} is already attached")));
+                    }
+                    let held = attached.len() + pending.len();
+                    if held >= MAX_HTTP_ATTACHED_MODELS {
+                        return Err(AudioError::Invalid(format!(
+                            "{held} audio models are attached or loading (limit \
+                             {MAX_HTTP_ATTACHED_MODELS}); unload one first"
+                        )));
+                    }
+                    pending.insert(id.clone());
+                    LoadingSlot {
+                        loading: Arc::clone(&loading),
+                        id: id.clone(),
+                    }
+                };
                 let worker = spawn_worker(&id, task, dir).map_err(AudioError::Failed)?;
                 let info = worker.info.clone();
+                // Insert before `_slot` drops so the alias is never in neither set.
                 workers
                     .lock()
                     .unwrap_or_else(|p| p.into_inner())
@@ -986,6 +1029,7 @@ mod tests {
         let provider = RealAudioProvider {
             store: None,
             workers: Arc::new(Mutex::new(HashMap::new())),
+            loading: Default::default(),
         };
         let err = provider
             .attach("/definitely/not/a/model/dir", AudioTask::SpeechToText)
@@ -1004,6 +1048,7 @@ mod tests {
         let provider = RealAudioProvider {
             store: None,
             workers: Arc::new(Mutex::new(HashMap::new())),
+            loading: Default::default(),
         };
         for task in [
             AudioTask::SpeechToText,
@@ -1019,11 +1064,60 @@ mod tests {
         }
     }
 
+    /// A loopback caller may keep naming installed aliases; the HTTP load
+    /// must refuse once the cap is reached, before opening anything.
+    #[test]
+    fn http_load_refuses_past_the_attached_model_cap() {
+        let alias = catalog::audio_catalog::AudioCatalog::embedded()
+            .unwrap()
+            .entries()
+            .find(|p| {
+                p.capabilities.http_api
+                    && valid_alias(&p.identity.alias)
+                    && task_of_alias(&p.identity.alias).is_some()
+            })
+            .map(|p| p.identity.alias.clone())
+            .expect("the catalog has an HTTP-served audio alias");
+        let root =
+            std::env::temp_dir().join(format!("turbospark-audio-real-cap-{}", std::process::id()));
+        let store = catalog::Store::new(&root);
+        // An empty install dir: without the cap, load tries to open it and
+        // fails as `Failed`, which is the red signal.
+        std::fs::create_dir_all(store.audio_install_path(&alias)).unwrap();
+        let mut map = HashMap::new();
+        for i in 0..MAX_HTTP_ATTACHED_MODELS {
+            let (tx, _rx) = sync_channel::<Work>(1);
+            let id = format!("fake-{i}");
+            let info = AudioModelInfo {
+                id: id.clone(),
+                task: AudioTask::SpeechToText,
+                family: None,
+            };
+            map.insert(id, Arc::new(Worker { info, tx }));
+        }
+        let provider = RealAudioProvider {
+            store: Some(store),
+            workers: Arc::new(Mutex::new(map)),
+            loading: Default::default(),
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let err = rt.block_on(provider.load(alias)).unwrap_err();
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            matches!(&err, AudioError::Invalid(m) if m.contains("limit")),
+            "{err:?}"
+        );
+        assert_eq!(provider.models().len(), MAX_HTTP_ATTACHED_MODELS);
+    }
+
     #[test]
     fn an_unknown_model_is_not_found_not_a_panic() {
         let provider = RealAudioProvider {
             store: None,
             workers: Arc::new(Mutex::new(HashMap::new())),
+            loading: Default::default(),
         };
         let rt = tokio::runtime::Builder::new_current_thread()
             .build()

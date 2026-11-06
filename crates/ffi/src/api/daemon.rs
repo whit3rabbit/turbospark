@@ -60,11 +60,68 @@ fn is_pid_alive(pid: i32) -> bool {
     }
 }
 
+/// The file name the daemon is spawned from (`find_server_binary`), on every
+/// install path: the app bundle, its Homebrew symlink, and a cargo build.
+const SERVER_BINARY_NAME: &str = "turbospark-server";
+
+/// Whether a live pid is the server, judged by its executable's file name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PidIdentity {
+    Server,
+    Other,
+    /// The executable could not be read (another user's process, a zombie,
+    /// or a platform without a lookup). Not proof either way.
+    Unknown,
+}
+
+/// A pid file outlives a crashed daemon or a reboot, and the OS then hands
+/// the pid to an unrelated process. Liveness alone would report, and stop
+/// would signal, that process, so callers also check what it is running.
+fn pid_identity(pid: i32) -> PidIdentity {
+    let Some(exe) = pid_executable(pid) else {
+        return PidIdentity::Unknown;
+    };
+    if exe.file_name().and_then(|n| n.to_str()) == Some(SERVER_BINARY_NAME) {
+        PidIdentity::Server
+    } else {
+        PidIdentity::Other
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn pid_executable(pid: i32) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    extern "C" {
+        // libproc, part of libSystem.
+        fn proc_pidpath(pid: i32, buffer: *mut std::os::raw::c_void, size: u32) -> i32;
+    }
+    // PROC_PIDPATHINFO_MAXSIZE (4 * MAXPATHLEN).
+    let mut buf = vec![0u8; 4096];
+    let len = unsafe { proc_pidpath(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
+    if len <= 0 {
+        return None;
+    }
+    buf.truncate((len as usize).min(buf.len()));
+    Some(PathBuf::from(std::ffi::OsStr::from_bytes(&buf)))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn pid_executable(pid: i32) -> Option<PathBuf> {
+    fs::read_link(format!("/proc/{pid}/exe")).ok()
+}
+
+#[cfg(not(unix))]
+fn pid_executable(_pid: i32) -> Option<PathBuf> {
+    None
+}
+
 fn get_running_pid() -> Option<i32> {
     let path = pid_file();
     let text = fs::read_to_string(&path).ok()?;
     let pid = text.trim().parse::<i32>().ok()?;
-    if is_pid_alive(pid) {
+    // `Unknown` keeps the file: an unreadable executable is how another
+    // user's live daemon answers too (see `is_pid_alive`'s EPERM note).
+    if is_pid_alive(pid) && pid_identity(pid) != PidIdentity::Other {
         Some(pid)
     } else {
         let _ = fs::remove_file(&path);
@@ -368,6 +425,15 @@ fn stop_daemon_internal() -> Result<(), String> {
         return Ok(());
     };
 
+    // Signal only a pid positively identified as the server. `Unknown` is
+    // refused with the files kept, rather than killing an unverified pid.
+    if pid_identity(pid) != PidIdentity::Server {
+        return Err(format!(
+            "pid {pid} in {} could not be verified as {SERVER_BINARY_NAME}; not signalling it",
+            pid_file().display()
+        ));
+    }
+
     #[cfg(unix)]
     {
         extern "C" {
@@ -382,7 +448,8 @@ fn stop_daemon_internal() -> Result<(), String> {
                 break;
             }
         }
-        if is_pid_alive(pid) {
+        // Re-checked: the pid could have exited and been reused in the wait.
+        if is_pid_alive(pid) && pid_identity(pid) == PidIdentity::Server {
             unsafe {
                 kill(pid, 9); // SIGKILL
             }

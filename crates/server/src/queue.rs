@@ -44,6 +44,15 @@
 //! `handler::exec::run_full` itself NEVER acquires -- every caller above it
 //! already holds the gate, and a nested acquire on a one-permit semaphore
 //! would deadlock.
+//!
+//! # Depth limit
+//!
+//! Each request handler reserves a [`QueueTicket`] with [`reserve`] before
+//! it branches into streaming or not, and the acquisition points above wait
+//! on that ticket. Reserving is synchronous and bounded by `--max-queued`
+//! ([`DEFAULT_MAX_QUEUED`]), so a flood gets 429 with `Retry-After` while a
+//! status line can still say so; checking inside the spawned stream task
+//! would come after a 200 was already sent.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -63,31 +72,41 @@ pub struct GenerationPermit {
     _permit: Arc<OwnedSemaphorePermit>,
 }
 
+/// How many requests may WAIT behind the active one per runner by default
+/// (`--max-queued`). Each waiter holds its parsed request and a connection,
+/// so an unbounded queue lets one client pin memory without limit. 64 is far
+/// past any interactive use of a one-at-a-time runner, so only a flood is
+/// refused.
+pub const DEFAULT_MAX_QUEUED: usize = 64;
+
 /// A one-at-a-time FIFO admission gate. See the module docs.
 pub struct GenerationQueue {
     permits: Arc<Semaphore>,
     queued: AtomicUsize,
+    /// Waiters allowed at once; 0 means unbounded.
+    max_queued: AtomicUsize,
 }
 
-struct QueuedCountGuard<'a>(&'a AtomicUsize);
+/// The queue already holds its `--max-queued` waiters. Callers answer 429
+/// with `Retry-After`, before any response body is started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct QueueFull;
 
-impl Drop for QueuedCountGuard<'_> {
+/// A reserved place in the queue, counted in [`GenerationQueue::queued`]
+/// from the moment it is taken. Reserving is synchronous so a handler can
+/// refuse with 429 before it commits to a streaming 200; dropping the ticket
+/// unused gives the place back.
+pub struct QueueTicket {
+    queue: Arc<GenerationQueue>,
+}
+
+impl Drop for QueueTicket {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::Release);
+        self.queue.queued.fetch_sub(1, Ordering::Release);
     }
 }
 
-impl GenerationQueue {
-    /// A fresh gate with one permit, behind an `Arc` because
-    /// `acquire` hands out OWNED permits (they must outlive `&self`
-    /// across a `spawn_blocking` move).
-    pub fn shared() -> Arc<Self> {
-        Arc::new(Self {
-            permits: Arc::new(Semaphore::new(1)),
-            queued: AtomicUsize::new(0),
-        })
-    }
-
+impl QueueTicket {
     /// Waits for admission in ARRIVAL order, or returns `None` when the
     /// request was cancelled while queued (client gone: fold into the
     /// silent-discard path rather than starting a generation nobody will
@@ -96,11 +115,11 @@ impl GenerationQueue {
     /// The cancel check is AFTER the wait, deliberately: checking before
     /// would race a disconnect that lands during the wait, which is exactly
     /// the window the check exists for.
-    pub async fn acquire(self: &Arc<Self>, cancel: &Cancel) -> Option<GenerationPermit> {
-        self.queued.fetch_add(1, Ordering::Release);
-        let queued = QueuedCountGuard(&self.queued);
-        let permit = self.permits.clone().acquire_owned().await;
-        drop(queued);
+    pub async fn acquire(self, cancel: &Cancel) -> Option<GenerationPermit> {
+        let permit = self.queue.permits.clone().acquire_owned().await;
+        // The waiter count drops as the permit arrives (or the wait is
+        // aborted), so `load()` never counts the active request twice.
+        drop(self);
         match permit {
             // The semaphore is never closed here, so the `Err` arm is
             // unreachable in practice; treating it as "no admission" keeps
@@ -111,6 +130,63 @@ impl GenerationQueue {
             }),
             _ => None,
         }
+    }
+}
+
+impl GenerationQueue {
+    /// A fresh gate with one permit and [`DEFAULT_MAX_QUEUED`] waiters,
+    /// behind an `Arc` because tickets and permits are OWNED (they must
+    /// outlive `&self` across a `spawn_blocking` move).
+    pub fn shared() -> Arc<Self> {
+        Arc::new(Self {
+            permits: Arc::new(Semaphore::new(1)),
+            queued: AtomicUsize::new(0),
+            max_queued: AtomicUsize::new(DEFAULT_MAX_QUEUED),
+        })
+    }
+
+    /// Sets how many requests may wait at once; 0 removes the bound. Takes
+    /// effect for the next reservation; waiters already queued stay.
+    pub fn set_max_queued(&self, max: usize) {
+        self.max_queued.store(max, Ordering::Release);
+    }
+
+    /// Takes a place in the queue now, or refuses when it already holds its
+    /// limit. The compare-exchange loop keeps a burst of concurrent
+    /// reservations from overshooting the limit.
+    pub fn try_reserve(self: &Arc<Self>) -> Result<QueueTicket, QueueFull> {
+        let max = self.max_queued.load(Ordering::Acquire);
+        let mut current = self.queued.load(Ordering::Acquire);
+        loop {
+            if max != 0 && current >= max {
+                return Err(QueueFull);
+            }
+            match self.queued.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => {
+                    return Ok(QueueTicket {
+                        queue: Arc::clone(self),
+                    })
+                }
+                Err(seen) => current = seen,
+            }
+        }
+    }
+
+    /// Reserves without the limit and waits. For internal callers that are
+    /// not admitting a new client request (pool tests, fixtures); request
+    /// handlers go through [`Self::try_reserve`] so a full queue is a 429.
+    pub async fn acquire(self: &Arc<Self>, cancel: &Cancel) -> Option<GenerationPermit> {
+        self.queued.fetch_add(1, Ordering::Release);
+        QueueTicket {
+            queue: Arc::clone(self),
+        }
+        .acquire(cancel)
+        .await
     }
 
     /// How many requests are waiting for admission right now. For tests
@@ -142,7 +218,7 @@ impl GenerationQueue {
 /// moving them onto the async executor would park a worker instead of a
 /// blocking thread, which is the starvation this module exists to end.
 pub(crate) async fn run_gated<T, F>(
-    queue: Option<std::sync::Arc<GenerationQueue>>,
+    ticket: Option<QueueTicket>,
     cancel: &Cancel,
     body: F,
 ) -> Option<std::result::Result<T, tokio::task::JoinError>>
@@ -150,13 +226,49 @@ where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    let permit = match queue {
+    let permit = match ticket {
         // The `?` is the cancelled-while-queued case: fold to the caller's
         // silence rather than starting a generation nobody will read.
-        Some(queue) => Some(queue.acquire(cancel).await?),
+        Some(ticket) => Some(ticket.acquire(cancel).await?),
         None => None,
     };
     Some(run_blocking(permit, body).await)
+}
+
+/// The request handlers' admission check: reserve a place on the model's
+/// gate (`Ok(None)` for an ungated backend), synchronously, so a full queue
+/// is refused before any response, streaming or not, has been started.
+pub(crate) fn reserve(
+    model: &dyn crate::model::ChatModel,
+) -> Result<Option<QueueTicket>, QueueFull> {
+    model
+        .generation_queue()
+        .map(|queue| queue.try_reserve())
+        .transpose()
+}
+
+/// Waits on a reserved ticket; an ungated backend admits at once.
+pub(crate) async fn admit(
+    ticket: Option<QueueTicket>,
+    cancel: &Cancel,
+) -> Option<Option<GenerationPermit>> {
+    match ticket {
+        Some(ticket) => ticket.acquire(cancel).await.map(Some),
+        None => Some(None),
+    }
+}
+
+/// The message every wire format's 429 carries for [`QueueFull`].
+pub(crate) const QUEUE_FULL_MESSAGE: &str = "the generation queue is full; retry shortly";
+
+/// Adds `Retry-After: 2` to a 429 built in a wire format's own error shape,
+/// matching the audio and image queues.
+pub(crate) fn with_retry_after(mut response: axum::response::Response) -> axum::response::Response {
+    response.headers_mut().insert(
+        axum::http::header::RETRY_AFTER,
+        axum::http::HeaderValue::from_static("2"),
+    );
+    response
 }
 
 /// Runs blocking model work while retaining any permit acquired by an outer
@@ -228,11 +340,15 @@ mod tests {
 
         let waiting_queue = queue.clone();
         let waiter = tokio::spawn(async move {
-            run_gated(Some(waiting_queue), &cancel, move || {
-                let _ = started_tx.send(());
-                let _ = release_rx.recv_timeout(Duration::from_secs(10));
-                let _ = finished_tx.send(());
-            })
+            run_gated(
+                Some(waiting_queue.try_reserve().expect("room")),
+                &cancel,
+                move || {
+                    let _ = started_tx.send(());
+                    let _ = release_rx.recv_timeout(Duration::from_secs(10));
+                    let _ = finished_tx.send(());
+                },
+            )
             .await
         });
 

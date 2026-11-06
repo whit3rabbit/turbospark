@@ -773,7 +773,6 @@ fn a_refused_destination_fails_before_any_network_request() {
             "already installed in This Mac",
         ),
         (repo("mine", Some("T9")), "already installed in This Mac"),
-        (repo("../escape", None), "is not a valid install alias"),
     ] {
         let outcome = fixture.run_against(&hub, &args);
         assert_eq!(outcome.code, 1, "{args:?}: {}", outcome.stderr);
@@ -784,7 +783,89 @@ fn a_refused_destination_fails_before_any_network_request() {
         );
         assert_eq!(hub.connections(), 0, "{args:?} reached the network");
     }
+    // A path-escaping alias is now a usage error at argument parsing, before
+    // the store's own "not a valid install alias" refusal is reached.
+    let args = repo("../escape", None);
+    let outcome = fixture.run_against(&hub, &args);
+    assert_eq!(outcome.code, 2, "{args:?}: {}", outcome.stderr);
+    assert!(
+        outcome
+            .stderr
+            .contains("--alias must contain only ASCII letters"),
+        "{args:?}: {}",
+        outcome.stderr
+    );
+    assert_eq!(hub.connections(), 0, "{args:?} reached the network");
     assert_eq!(fs::read(fixture.home.join("installed.json")).unwrap(), rows);
+}
+
+/// `--out` into a folder holding the user's own files is refused before the
+/// network: a streamed publish replaces the folder whole and
+/// would delete them. A folder with only an interrupted pull's leftovers, or
+/// a finished install (`manifest.json`), still proceeds.
+#[test]
+fn out_into_a_folder_with_foreign_files_is_refused_before_any_network_request() {
+    let fixture = Fixture::new("pull-out-foreign");
+    let hub = Hub::start();
+    let pull = |out: &std::path::Path| {
+        fixture.run_against(
+            &hub,
+            &[
+                "pull",
+                "--repo",
+                "owner/name",
+                "--alias",
+                "fresh",
+                "--out",
+                out.to_str().unwrap(),
+            ],
+        )
+    };
+
+    let user = fixture.base.join("user-folder");
+    fs::create_dir_all(user.join("photos")).unwrap();
+    fs::write(user.join("notes.txt"), b"mine").unwrap();
+    fs::write(user.join("tokenizer.json"), b"{}").unwrap();
+    let outcome = pull(&user);
+    assert_eq!(outcome.code, 2, "{}", outcome.stderr);
+    assert!(
+        outcome
+            .stderr
+            .contains("already holds files TurboSpark did not write")
+            && outcome.stderr.contains("notes.txt")
+            && outcome.stderr.contains("photos"),
+        "{}",
+        outcome.stderr
+    );
+    assert_eq!(hub.connections(), 0, "a refused --out reached the network");
+    assert_eq!(fs::read(user.join("notes.txt")).unwrap(), b"mine");
+    assert!(user.join("photos").is_dir());
+
+    // Leftovers of an interrupted pull, and a finished install with extra
+    // files, both pass the guard and go on to the (dead) hub.
+    let leftovers = fixture.base.join("interrupted");
+    fs::create_dir_all(leftovers.join(".download-cache")).unwrap();
+    fs::write(leftovers.join("tokenizer.json"), b"{}").unwrap();
+    let installed = fixture.base.join("installed");
+    fs::create_dir_all(installed.join("packed_experts")).unwrap();
+    fs::write(installed.join("manifest.json"), b"{}").unwrap();
+    fs::write(installed.join("notes.txt"), b"x").unwrap();
+    for dir in [leftovers, installed] {
+        let before = hub.connections();
+        let outcome = pull(&dir);
+        assert!(
+            !outcome.stderr.contains("did not write"),
+            "{}: {}",
+            dir.display(),
+            outcome.stderr
+        );
+        assert!(
+            hub.connections() > before,
+            "{}: passed the guard but never reached the network: {}",
+            dir.display(),
+            outcome.stderr
+        );
+    }
 }
 
 /// Without `--library` a pull goes to the default library, and when that

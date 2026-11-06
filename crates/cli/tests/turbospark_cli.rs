@@ -173,6 +173,61 @@ fn turbospark_start_agent_dry_run_with_model_prints_concrete_plan() {
     assert!(stdout_codex.contains("-m x.gturbo") || stdout_codex.contains("-m gemma4.gturbo"));
 }
 
+/// Dry-run stdout lands in transcripts and CI logs, so a real key must not
+/// appear there on any agent's branch. One agent per `print_plan` arm.
+#[test]
+fn turbospark_start_agent_dry_run_masks_an_exported_key() {
+    const SECRET: &str = "sentinel-secret-value";
+    let home = isolated_home();
+    let plan = |agent: &str, key: Option<&str>| {
+        // A user's own Anthropic credential would divert the claude arm away
+        // from the line under test.
+        let mut cmd = turbospark();
+        cmd.env("TURBOSPARK_HOME", &home)
+            .env_remove("ANTHROPIC_API_KEY")
+            .env_remove("ANTHROPIC_AUTH_TOKEN")
+            .env_remove("TURBOSPARK_API_KEY")
+            .args(["start", agent, "--dry-run"]);
+        if let Some(key) = key {
+            cmd.env("TURBOSPARK_API_KEY", key);
+        }
+        cmd.output().unwrap()
+    };
+    let cases = [
+        ("claude", "ANTHROPIC_API_KEY"),
+        ("codex", "TURBOSPARK_API_KEY"),
+        ("opencode", "OPENAI_API_KEY"),
+    ];
+    for (agent, var) in cases {
+        let masked = plan(agent, Some(SECRET));
+        assert!(masked.status.success(), "{agent}");
+        let stdout = String::from_utf8_lossy(&masked.stdout);
+        assert!(
+            !stdout.contains(SECRET),
+            "{agent} leaked the key:\n{stdout}"
+        );
+        assert!(
+            stdout.contains(&format!("{var}=<set from env>")),
+            "{agent}:\n{stdout}"
+        );
+        assert!(
+            !String::from_utf8_lossy(&masked.stderr).contains(SECRET),
+            "{agent} leaked the key on stderr"
+        );
+
+        // The placeholder is not a secret and tells the user what the agent
+        // will really receive, so it stays visible.
+        let placeholder = plan(agent, None);
+        assert!(placeholder.status.success(), "{agent}");
+        let stdout = String::from_utf8_lossy(&placeholder.stdout);
+        assert!(
+            stdout.contains(&format!("{var}=local")),
+            "{agent}:\n{stdout}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&home);
+}
+
 #[test]
 fn turbospark_model_then_agent_launches_the_same_way() {
     let home = isolated_home();
@@ -216,6 +271,64 @@ fn turbospark_start_agent_without_model_or_server_refuses() {
         "{stderr}"
     );
     assert!(stderr.contains("--model"));
+}
+
+/// A listener this launcher did not start can answer /health on the port
+/// (another user's process on a shared machine). Handing the agent's
+/// prompts and code context to it is refused, not done "as-is".
+#[test]
+fn turbospark_start_agent_refuses_an_unverified_listener_on_the_port() {
+    use std::io::{Read, Write};
+    let home = isolated_home();
+    let model = home.join("fake-install");
+    std::fs::create_dir_all(&model).unwrap();
+    // An empty PATH keeps a real `dsh` (or a PATH turbospark-server) out of
+    // the run; the squatter is the only thing that can make this succeed.
+    let empty_path = home.join("empty-path");
+    std::fs::create_dir_all(&empty_path).unwrap();
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let served = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let served_in = served.clone();
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut buf = [0u8; 1024];
+            let _ = stream.read(&mut buf);
+            served_in.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok");
+        }
+    });
+
+    let output = turbospark()
+        .env("TURBOSPARK_HOME", &home)
+        .env("PATH", &empty_path)
+        .env_remove("TURBOSPARK_API_KEY")
+        .args([
+            "start",
+            "dsh",
+            "--model",
+            model.to_str().unwrap(),
+            "--port",
+            &port.to_string(),
+        ])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&home);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // The squatter really was probed, so a pass is not a missed listener.
+    assert!(
+        served.load(std::sync::atomic::Ordering::SeqCst) > 0,
+        "{stderr}"
+    );
+    assert_eq!(output.status.code(), Some(1), "{stdout}\n{stderr}");
+    assert!(
+        !stdout.contains("Connecting dsh"),
+        "launched against the squatter:\n{stdout}"
+    );
+    assert!(stderr.contains(&format!("port {port}")), "{stderr}");
 }
 
 #[test]

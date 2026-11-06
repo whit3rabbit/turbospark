@@ -63,13 +63,79 @@ fn default_layer_norm_eps() -> f32 {
     1e-12
 }
 
+/// Ceiling on `hidden_size` and `intermediate_size`. The largest published
+/// XLM-RoBERTa (XXL) is 4096 wide with a 16384 MLP, so this only refuses
+/// values that would make the loader's zero-filled default bias (a weight
+/// file may omit biases) a multi-gigabyte allocation.
+pub const MAX_ENCODER_WIDTH: usize = 1 << 18;
+
+/// Ceiling on `num_hidden_layers`, which sizes a `Vec::with_capacity` before
+/// any layer tensor is checked. XLM-RoBERTa XXL has 48.
+pub const MAX_ENCODER_LAYERS: usize = 1024;
+
 impl EncoderConfig {
-    /// Parse from a `config.json` string or bytes.
+    /// Parse from a `config.json` string or bytes, then [`validate`](Self::validate).
+    ///
+    /// The config comes from a downloaded model dir, so a value that would
+    /// panic or over-allocate downstream is a parse error here rather than a
+    /// crash later.
     pub fn from_json_str(s: &str) -> Result<Self, serde_json::Error> {
-        serde_json::from_str(s)
+        let config: Self = serde_json::from_str(s)?;
+        config
+            .validate()
+            .map_err(<serde_json::Error as serde::de::Error>::custom)?;
+        Ok(config)
+    }
+
+    /// Structural checks, matching the embeddings crate's BERT config:
+    /// positive dims, heads dividing `hidden_size`, `pad_token_id` inside the
+    /// vocabulary (which also keeps `position_offset` from overflowing), plus
+    /// the allocation ceilings above. `type_vocab_size` may be 0 (no token
+    /// type table).
+    pub fn validate(&self) -> Result<(), String> {
+        for (field, n, max) in [
+            ("hidden_size", self.hidden_size, MAX_ENCODER_WIDTH),
+            (
+                "intermediate_size",
+                self.intermediate_size,
+                MAX_ENCODER_WIDTH,
+            ),
+            (
+                "num_hidden_layers",
+                self.num_hidden_layers,
+                MAX_ENCODER_LAYERS,
+            ),
+            ("num_attention_heads", self.num_attention_heads, usize::MAX),
+            (
+                "max_position_embeddings",
+                self.max_position_embeddings,
+                usize::MAX,
+            ),
+            ("vocab_size", self.vocab_size, usize::MAX),
+        ] {
+            if n == 0 || n > max {
+                return Err(format!("{field} {n} outside 1..={max}"));
+            }
+        }
+        if self.hidden_size % self.num_attention_heads != 0 {
+            return Err(format!(
+                "num_attention_heads {} does not divide hidden_size {}",
+                self.num_attention_heads, self.hidden_size
+            ));
+        }
+        if self.pad_token_id >= self.vocab_size {
+            return Err(format!(
+                "pad_token_id {} outside vocab_size {}",
+                self.pad_token_id, self.vocab_size
+            ));
+        }
+        Ok(())
     }
 
     /// Head dimension: `hidden_size / num_attention_heads`.
+    ///
+    /// Configs from [`from_json_str`](Self::from_json_str) are validated, so
+    /// the assert only fires for a hand-built config with zero heads.
     pub fn head_dim(&self) -> usize {
         assert!(
             self.num_attention_heads > 0,
@@ -160,5 +226,54 @@ mod tests {
         assert!(cfg.is_roberta());
         assert!(cfg.is_int8_quantized());
         assert_eq!(cfg.quantization.unwrap().group_size, 64);
+    }
+
+    /// A downloaded `config.json` is untrusted. Each case would otherwise
+    /// parse and reach a panic (remainder by zero in the compute block, the
+    /// `head_dim` assert, `pad_token_id + 1` overflow) or a huge zero-filled
+    /// bias allocation when the weight file omits that bias.
+    #[test]
+    fn rejects_dims_that_panic_or_overallocate_downstream() {
+        let base = |patch: &str| {
+            format!(
+                r#"{{"model_type":"bert","hidden_size":384,"num_hidden_layers":12,
+                "num_attention_heads":12,"intermediate_size":1536,{patch}"vocab_size":30522}}"#
+            )
+        };
+        assert!(EncoderConfig::from_json_str(&base("")).is_ok());
+        for (patch, field) in [
+            (r#""num_attention_heads":0,"#, "num_attention_heads"),
+            (r#""num_attention_heads":7,"#, "num_attention_heads"),
+            (r#""hidden_size":0,"#, "hidden_size"),
+            (r#""intermediate_size":0,"#, "intermediate_size"),
+            (r#""num_hidden_layers":0,"#, "num_hidden_layers"),
+            (r#""max_position_embeddings":0,"#, "max_position_embeddings"),
+            (r#""hidden_size":4294967296,"#, "hidden_size"),
+            (r#""intermediate_size":4294967296,"#, "intermediate_size"),
+            (r#""num_hidden_layers":4294967296,"#, "num_hidden_layers"),
+            (r#""pad_token_id":18446744073709551615,"#, "pad_token_id"),
+        ] {
+            // A later duplicate key wins in serde_json, so the patch must
+            // replace the field rather than repeat it.
+            let json = base(patch);
+            let json = dedupe_first(&json, field);
+            let err = EncoderConfig::from_json_str(&json)
+                .expect_err(&format!("{patch} should be refused"));
+            assert!(err.to_string().contains(field), "{patch}: {err}");
+        }
+    }
+
+    /// Drops the first `"field":value,` occurrence so the patched one is the
+    /// only one left.
+    fn dedupe_first(json: &str, field: &str) -> String {
+        let key = format!("\"{field}\":");
+        let first = json.find(&key).unwrap();
+        match json[first + key.len()..].find(&key) {
+            None => json.to_string(),
+            Some(_) => {
+                let end = first + json[first..].find(',').unwrap() + 1;
+                format!("{}{}", &json[..first], &json[end..])
+            }
+        }
     }
 }

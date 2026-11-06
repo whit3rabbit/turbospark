@@ -327,6 +327,37 @@ async fn audio_routes_require_the_api_key_but_health_does_not() {
     assert_eq!(health["state"], "ready");
 }
 
+/// The audio router merges into the protected router apart from the chat
+/// routes, so it needs its own proof that the check covers it. The realtime
+/// route counts most: a rebinding page reaches it without any CORS check.
+#[tokio::test]
+async fn audio_routes_on_a_keyless_server_refuse_a_host_that_is_not_loopback() {
+    let fake = Fake::new();
+    let base = spawn_with(Some(fake), None).await;
+    let client = reqwest::Client::new();
+    for path in [
+        "/v1/audio/models",
+        "/v1/metrics",
+        "/v1/audio/transcriptions/realtime?model=stt",
+    ] {
+        let response = client
+            .get(format!("{base}{path}"))
+            .header(reqwest::header::HOST, "rebind.example")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), 403, "{path}");
+    }
+    // The same route with a loopback name is served, so the 403 above is the
+    // check and not a route that always refuses.
+    let served = client
+        .get(format!("{base}/v1/audio/models"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(served.status(), 200);
+}
+
 #[tokio::test]
 async fn models_are_listed_on_both_surfaces() {
     let fake = Fake::new();
@@ -1586,6 +1617,41 @@ mod realtime {
 
         socket.send(Message::Binary(vec![0, 0, 0])).await.unwrap();
         assert_eq!(json_reply(&mut socket).await["type"], "error");
+    }
+
+    /// A browser WebSocket is not CORS-bound and its Host is the real
+    /// loopback address, so on a keyless server any web page could stream
+    /// audio here. `Origin` is the only header that names the page.
+    #[tokio::test]
+    async fn keyless_handshake_refuses_a_cross_origin_page() {
+        let fake = Fake::new();
+        let base = spawn_with(Some(fake), None).await;
+        let with_origin = |origin: Option<&'static str>| {
+            let url = format!(
+                "{}/v1/audio/transcriptions/realtime?model=stt-test",
+                base.replace("http://", "ws://")
+            );
+            let mut request = url.into_client_request().unwrap();
+            if let Some(origin) = origin {
+                request
+                    .headers_mut()
+                    .insert("origin", origin.parse().unwrap());
+            }
+            tokio_tungstenite::connect_async(request)
+        };
+        for origin in [
+            "https://evil.example",
+            "null",
+            "http://127.0.0.1.evil.example",
+        ] {
+            let refused = with_origin(Some(origin)).await.unwrap_err();
+            assert_eq!(status(refused), 403, "{origin}");
+        }
+        // Non-browser clients send no Origin, and a page served from loopback
+        // is the user's own, so both still upgrade.
+        for origin in [None, Some("http://localhost:3000"), Some("http://[::1]")] {
+            assert!(with_origin(origin).await.is_ok(), "{origin:?}");
+        }
     }
 
     #[tokio::test]

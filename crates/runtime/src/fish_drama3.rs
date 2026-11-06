@@ -92,13 +92,25 @@ impl Backbone for TrunkBackbone {
 pub fn expected_trunk_arch(
     install: &std::path::Path,
 ) -> std::result::Result<model_io::ArchConfig, String> {
-    let text = std::fs::read_to_string(install.join("config.json")).map_err(|e| e.to_string())?;
+    let text = crate::model_dir_read::read_bounded_string(
+        &install.join("config.json"),
+        crate::model_dir_read::CONFIG_LIMIT,
+    )
+    .map_err(|e| e.to_string())?;
     let root: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
     let vocab = root
         .get("text_config")
         .and_then(|t| t.get("vocab_size"))
         .and_then(serde_json::Value::as_i64)
         .ok_or("config.json: text_config.vocab_size missing")?;
+    // The manifest check only compares this for equality, and the runner
+    // casts it `as usize`, so a non-positive value would wrap. Token ids are
+    // signed 32-bit, so a vocabulary past i32::MAX cannot be addressed.
+    if vocab <= 0 || i32::try_from(vocab).is_err() {
+        return Err(format!(
+            "config.json: text_config.vocab_size {vocab} is out of range"
+        ));
+    }
     let mut arch = model_io::qwen_gdn_moe_35b_a3b();
     arch.vocab_size = vocab;
     Ok(arch)
@@ -724,5 +736,37 @@ mod tests {
         let mut tail = frames(2, 0.1);
         tail.extend(vec![0.0; 100]);
         assert_eq!(longest(&[tail]), 1);
+    }
+
+    /// config.json's trunk vocabulary sizes the logits and embedding reads
+    /// (`as usize`), and the manifest check only compares it for equality, so
+    /// an install whose two files agree on a bad value must be refused here.
+    #[test]
+    fn trunk_vocab_out_of_range_is_refused() {
+        let dir = std::env::temp_dir().join(format!(
+            "ts-drama3-vocab-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |vocab: &str| {
+            std::fs::write(
+                dir.join("config.json"),
+                format!(r#"{{"text_config":{{"vocab_size":{vocab}}}}}"#),
+            )
+            .unwrap();
+        };
+        for bad in ["-1", "0", "2147483648"] {
+            write(bad);
+            let err = expected_trunk_arch(&dir).expect_err(bad);
+            assert!(err.contains("vocab_size"), "{bad}: {err}");
+        }
+        // The real Drama 3 vocabulary (`crates/repack/tests/fish_drama3.rs`).
+        write("252288");
+        assert_eq!(expected_trunk_arch(&dir).unwrap().vocab_size, 252_288);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

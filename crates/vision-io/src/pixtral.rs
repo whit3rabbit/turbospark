@@ -128,6 +128,13 @@ pub fn pixtral_rope_freq_rows(
             detail: format!("pixtral head_dim {head_dim} must be a positive multiple of 4"),
         });
     }
+    // theta is the base of the frequency ladder: zero, negative or non-finite
+    // gives inf or NaN rows the tower would rotate by without any error.
+    if !(theta.is_finite() && theta > 0.0) {
+        return Err(VisionIoError::InvalidDimensions {
+            detail: format!("pixtral rope theta {theta} must be finite and positive"),
+        });
+    }
     let quarter = head_dim / 4;
     let freq = |j: usize| (theta as f64).powf(-2.0 * j as f64 / head_dim as f64);
     let mut out = Vec::with_capacity(grid_h * grid_w * (head_dim / 2));

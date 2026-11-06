@@ -221,7 +221,12 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
                 "auto" => speculation = Speculation::Auto,
                 "off" => speculation = Speculation::Off,
                 "adaptive" => speculation = Speculation::Adaptive(DEFAULT_ADAPTIVE_CAP),
-                v if v.starts_with("adaptive:") => match v["adaptive:".len()..].parse::<u32>() {
+                // strip_prefix keeps the guard and the slice in one expression.
+                v if v.starts_with("adaptive:") => match v
+                    .strip_prefix("adaptive:")
+                    .unwrap_or_default()
+                    .parse::<u32>()
+                {
                     Ok(n) if ALLOWED_SPECULATION_BLOCKS.contains(&n) && n >= MIN_ADAPTIVE_CAP => {
                         speculation = Speculation::Adaptive(n)
                     }

@@ -424,11 +424,15 @@ fn write_from_views(specs: &[EntryView<'_>], out: &mut dyn Write) -> io::Result<
             "resident index string table offset {name_offset} exceeds the 32-bit field \
              (string table over 4 GiB)"
         );
-        assert!(
-            name_len <= u16::MAX as usize,
-            "tensor name {:?} is {name_len} bytes, exceeding the 16-bit name-length field",
-            specs[i].name()
-        );
+        // The name comes from the checkpoint header, so an oversized one is
+        // hostile or corrupt input: refuse it through the fallible writer
+        // instead of panicking the install.
+        if name_len > u16::MAX as usize {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("tensor name is {name_len} bytes, exceeding the 16-bit name-length field"),
+            ));
+        }
         let mut entry = [0u8; ENTRY_BYTES];
         entry[0..4].copy_from_slice(&(name_offset as u32).to_le_bytes());
         entry[4..6].copy_from_slice(&(name_len as u16).to_le_bytes());
@@ -487,4 +491,25 @@ fn write_from_views(specs: &[EntryView<'_>], out: &mut dyn Write) -> io::Result<
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Tensor names come from untrusted checkpoint headers, so an oversized
+    // one must surface as an error from the fallible writer, not a panic.
+    #[test]
+    fn oversized_tensor_name_returns_error_not_panic() {
+        let specs = vec![ResidentEntrySpec::Raw(RawTensorSpec {
+            name: "a".repeat(u16::MAX as usize + 1),
+            dtype: DTYPE_FP32,
+            bytes: vec![0u8; 4],
+            shape: (1, 0, 0, 0),
+        })];
+        let mut out = Vec::new();
+        let err = write_resident_weights_bin_mixed(&specs, &mut out)
+            .expect_err("a >64 KiB tensor name must be refused");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
 }

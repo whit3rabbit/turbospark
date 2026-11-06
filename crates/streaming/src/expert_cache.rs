@@ -374,8 +374,10 @@ pub fn coalesced_adjacent_advice_ranges(ranges: &[(u64, u64)]) -> Vec<(u64, u64)
     let mut result: Vec<(u64, u64)> = Vec::new();
     for range in sorted {
         if let Some(last) = result.last_mut() {
-            let last_end = last.0 + last.1;
-            let range_end = range.0 + range.1;
+            // Saturating: the ranges are caller-supplied, and advice past the
+            // end of the address space is clipped rather than wrapped to 0.
+            let last_end = last.0.saturating_add(last.1);
+            let range_end = range.0.saturating_add(range.1);
             if range.0 <= last_end {
                 last.1 = last_end.max(range_end) - last.0;
                 continue;

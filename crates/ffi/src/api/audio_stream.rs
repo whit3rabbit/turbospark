@@ -130,12 +130,16 @@ mod native {
                 return Err(invalid("out must not be null"));
             }
             *out = std::ptr::null_mut();
+            // Before the slice exists: forming one over more than the caller
+            // allocated is already undefined, so the runtime's own length
+            // check on the finished slice comes too late. The bound also
+            // keeps the byte length inside `isize`.
+            if pcm.is_null() || count == 0 || count > runtime::native_audio::MAX_PCM_CHUNK {
+                return Err(invalid("invalid PCM chunk pointer or sample count"));
+            }
             let stream = handle
                 .as_ref()
                 .ok_or_else(|| invalid("stream must not be null"))?;
-            if pcm.is_null() || count == 0 {
-                return Err(invalid("invalid PCM chunk pointer or sample count"));
-            }
             let _guard = InFlight::enter(&stream.in_flight);
             let samples = std::slice::from_raw_parts(pcm, count);
             let update = stream.session.append(samples).map_err(stream_error)?;
@@ -280,6 +284,41 @@ mod tests {
                 abi::TS_ERR_INVALID_ARGUMENT,
                 "unknown options are refused"
             );
+        }
+    }
+
+    fn last_error_text() -> String {
+        let mut buf = [0u8; 256];
+        let n = unsafe { crate::ts_last_error(buf.as_mut_ptr().cast(), buf.len()) };
+        String::from_utf8_lossy(&buf[..n.min(buf.len() - 1)]).into_owned()
+    }
+
+    /// A real stream needs a Neural Engine model, so this reads which check
+    /// fired: a NULL handle is only reported once the count has passed. No
+    /// slice is formed here, so the oversized counts stay well defined.
+    #[test]
+    fn append_refuses_an_oversized_count_before_touching_the_stream() {
+        let max = runtime::native_audio::MAX_PCM_CHUNK;
+        let pcm = vec![0.0f32; max];
+        unsafe {
+            for count in [max + 1, isize::MAX as usize, usize::MAX] {
+                let mut json: *mut c_char = std::ptr::dangling_mut();
+                let code = ts_audio_stream_append(std::ptr::null(), pcm.as_ptr(), count, &mut json);
+                assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT, "count {count}");
+                assert!(json.is_null(), "count {count} leaves *out NULL");
+                let why = last_error_text();
+                assert!(
+                    why.contains("sample count"),
+                    "count {count} must fail on the bound, got: {why}"
+                );
+            }
+            // The largest legal chunk passes the bound, so the failure moves
+            // on to the handle. A bound off by one would report the count.
+            let mut json: *mut c_char = std::ptr::null_mut();
+            let code = ts_audio_stream_append(std::ptr::null(), pcm.as_ptr(), max, &mut json);
+            assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+            let why = last_error_text();
+            assert!(why.contains("stream must not be null"), "got: {why}");
         }
     }
 

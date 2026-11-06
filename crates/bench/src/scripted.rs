@@ -128,11 +128,14 @@ fn run_once(tok: &MfTokenizer, prompt: &str) -> Result<RunStats, String> {
 /// Runs the benchmark harness in real mode using a synthetic model on Metal.
 #[cfg(target_os = "macos")]
 pub fn run_real_mode(tok: &MfTokenizer) -> std::process::ExitCode {
-    let dir = std::env::temp_dir().join(format!("turbospark-bench-real-{}", std::process::id()));
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        eprintln!("failed to create temp install dir: {e}");
-        return std::process::ExitCode::from(1);
-    }
+    let guard = match TempInstallDir::create("turbospark-bench-real") {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("failed to create temp install dir: {e}");
+            return std::process::ExitCode::from(1);
+        }
+    };
+    let dir = guard.path().to_path_buf();
     let arch = match repack::build_synthetic_gemma4_install(&dir, tok.vocab_size as i64, 2, "bench")
     {
         Ok(a) => a,
@@ -189,7 +192,8 @@ pub fn run_real_mode(tok: &MfTokenizer) -> std::process::ExitCode {
         0.0
     };
     println!("aggregate: {total_tokens} tokens in {total_seconds:.4}s = {aggregate:.1} tokens/sec");
-    let _ = std::fs::remove_dir_all(&dir);
+    // `runner` drops before `guard` (reverse declaration order), so the
+    // install is closed before the guard removes it.
     std::process::ExitCode::SUCCESS
 }
 
@@ -239,4 +243,89 @@ fn one_hot(vocab_size: usize, index: usize) -> Vec<LogitValue> {
         v[index] = LogitValue::from_f32(1.0);
     }
     v
+}
+
+/// Scratch install directory for `--real`, removed on drop.
+///
+/// The name carries the pid plus a time nonce and is created with
+/// `create_dir` (not `create_dir_all`), so a stale or planted directory or
+/// symlink at the same path is never reused: `AlreadyExists` moves on to the
+/// next name. The guard makes every early-return path clean up too.
+/// Only `run_real_mode` (macOS) and the tests use it.
+#[cfg(any(target_os = "macos", test))]
+pub(crate) struct TempInstallDir {
+    path: std::path::PathBuf,
+}
+
+#[cfg(any(target_os = "macos", test))]
+impl TempInstallDir {
+    pub(crate) fn create(prefix: &str) -> std::io::Result<Self> {
+        let base = std::env::temp_dir();
+        let pid = std::process::id();
+        for attempt in 0u32..64 {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let path = base.join(format!("{prefix}-{pid}-{nanos:x}-{attempt}"));
+            match std::fs::create_dir(&path) {
+                Ok(()) => return Ok(Self { path }),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "could not create a unique temp install dir",
+        ))
+    }
+
+    pub(crate) fn path(&self) -> &std::path::Path {
+        &self.path
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+impl Drop for TempInstallDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TempInstallDir;
+
+    #[test]
+    fn temp_install_dir_is_exclusive_per_call() {
+        let a = TempInstallDir::create("turbospark-bench-tmptest-excl").unwrap();
+        let b = TempInstallDir::create("turbospark-bench-tmptest-excl").unwrap();
+        // A colliding name must never hand back a directory that already
+        // existed (a stale run's or a planted one).
+        assert_ne!(a.path(), b.path());
+        assert!(a.path().is_dir() && b.path().is_dir());
+    }
+
+    #[test]
+    fn temp_install_dir_refuses_preexisting_predictable_path() {
+        let planted = std::env::temp_dir().join(format!(
+            "turbospark-bench-tmptest-planted-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&planted).unwrap();
+        let g = TempInstallDir::create("turbospark-bench-tmptest-planted").unwrap();
+        assert_ne!(g.path(), planted.as_path());
+        std::fs::remove_dir_all(&planted).unwrap();
+    }
+
+    #[test]
+    fn temp_install_dir_is_removed_on_drop() {
+        let g = TempInstallDir::create("turbospark-bench-tmptest-drop").unwrap();
+        let path = g.path().to_path_buf();
+        std::fs::write(path.join("weights.bin"), b"x").unwrap();
+        drop(g);
+        // Early error returns in run_real_mode drop the guard, so the
+        // synthetic install must not outlive them.
+        assert!(!path.exists());
+    }
 }

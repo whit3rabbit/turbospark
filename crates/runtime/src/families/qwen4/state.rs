@@ -1278,6 +1278,13 @@ impl RealQwen4State {
                 arch.ple.ngram_heads()
             ));
         }
+        // Decode refuses token ids at or past `vocab_size`, but the context
+        // also holds `eos_token_id` from config, so the hash must fit for the
+        // larger of the two. Refusing here beats `ple_ngram_rows`'s per-token
+        // overflow panic.
+        ngram_layout
+            .check_hash_bound((arch.vocab_size - 1).max(arch.ple.eos_token_id))
+            .map_err(RealForwardError::Model)?;
         let ngram_table = ResidentBuffer::map(
             &install_dir
                 .join(model_io::NGRAM_TABLE_DIR)

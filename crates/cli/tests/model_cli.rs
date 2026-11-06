@@ -444,6 +444,28 @@ fn a_malformed_pull_vision_repo_reference_is_a_usage_error() {
     );
 }
 
+/// A `--repo` pull's `--alias` is recorded and printed raw ("installed X"),
+/// so it meets the charset pull-image already enforces. A terminal escape
+/// is refused before the repo is even parsed: the malformed repo here would
+/// otherwise be the error, which keeps this case offline.
+#[test]
+fn a_repo_pull_alias_with_control_characters_is_refused() {
+    for command in ["pull", "pull-vision"] {
+        for bad in ["evil\u{1b}]0;title\u{7}", "a\nb", "tab\tbed", "sp ace"] {
+            let (code, _, stderr) = run(&[command, "--repo", "notowneronly", "--alias", bad]);
+            assert_eq!(code, 2, "{command} {bad:?}: {stderr}");
+            assert!(
+                stderr.contains("ASCII letters"),
+                "{command} {bad:?}: {stderr}"
+            );
+            assert!(
+                !stderr.contains('\u{1b}'),
+                "{command}: echoed raw: {stderr}"
+            );
+        }
+    }
+}
+
 #[test]
 fn a_bare_discover_does_not_swallow_the_next_flag() {
     // Parse only: `--budget 1` makes every row refuse, so nothing reaches the
@@ -648,4 +670,20 @@ fn path_and_rm_name_an_uninstalled_audio_model_without_deleting_anything() {
     let (code, _, err) = run(&["rm", "speaker-diarization-coreml", "--yes"]);
     assert_eq!(code, 1);
     assert!(err.contains("not installed"), "{err}");
+}
+
+#[test]
+fn rm_refuses_a_directory_that_is_not_a_recorded_install() {
+    // `resolve` lets an existing directory stand in for an alias, which is
+    // right for `--model` but would let `rm` delete any folder it is given.
+    let dir =
+        std::env::temp_dir().join(format!("turbospark-model-rm-stray-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create stray dir");
+    std::fs::write(dir.join("keep.txt"), b"x").expect("write marker");
+    let (code, _, err) = run(&["rm", dir.to_str().expect("utf8 path"), "--yes"]);
+    let survived = dir.join("keep.txt").is_file();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(survived, "rm deleted an unrecorded directory: {err}");
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("not a recorded install"), "{err}");
 }

@@ -2752,12 +2752,9 @@ fn compress_spkcache_simple(
         })
         .collect();
     let mut idx: Vec<usize> = (0..frames).collect();
-    idx.sort_by(|&a, &b| {
-        frame_scores[b]
-            .partial_cmp(&frame_scores[a])
-            .unwrap()
-            .then(a.cmp(&b))
-    });
+    // total_cmp, not partial_cmp().unwrap(): a NaN score (NaN preds from
+    // bad checkpoint weights) would otherwise panic mid-stream.
+    idx.sort_by(|&a, &b| frame_scores[b].total_cmp(&frame_scores[a]).then(a.cmp(&b)));
     idx.truncate(target_len);
     idx.sort_unstable();
     let mut out_embs = Vec::with_capacity(target_len * emb_dim);
@@ -2824,7 +2821,10 @@ fn log_pred_scores(preds: &[f32], frames: usize, num_speakers: usize, threshold:
 /// unspecified; exact float ties only arise in degenerate inputs.
 fn top_k_indices(values: &[f32], k: usize) -> Vec<usize> {
     let mut idx: Vec<usize> = (0..values.len()).collect();
-    idx.sort_by(|&a, &b| values[b].partial_cmp(&values[a]).unwrap().then(a.cmp(&b)));
+    // total_cmp: NaN scores (inf - inf from config boosts, or NaN preds)
+    // must not panic. NaN is never selected as a valid slot downstream
+    // because callers test `> NEG_INFINITY`.
+    idx.sort_by(|&a, &b| values[b].total_cmp(&values[a]).then(a.cmp(&b)));
     idx.truncate(k);
     idx
 }
@@ -3323,5 +3323,21 @@ mod tests {
         assert_eq!(mc.chunk_right_context, 1);
         assert_eq!(mc.fifo_len, 264);
         assert_eq!(mc.spkcache_update_period, 222);
+    }
+
+    // A NaN speaker probability (from NaN checkpoint weights) or a NaN
+    // score (an infinite config boost added to a -inf masked score) must
+    // not abort the cache compression sort.
+    #[test]
+    fn test_spkcache_sorts_tolerate_nan_scores() {
+        let idx = top_k_indices(&[1.0, f32::NAN, 3.0, f32::NEG_INFINITY], 2);
+        assert_eq!(idx.len(), 2);
+        assert!(idx.contains(&2));
+
+        let embs = [0.0f32, 1.0, 2.0];
+        let preds = [0.5f32, f32::NAN, 0.9];
+        let (out_embs, out_preds) = compress_spkcache_simple(&embs, &preds, 3, 2, 1);
+        assert_eq!(out_embs.len(), 2);
+        assert_eq!(out_preds.len(), 2);
     }
 }

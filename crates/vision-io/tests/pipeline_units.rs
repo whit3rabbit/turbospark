@@ -318,3 +318,96 @@ fn an_absent_pixel_budget_is_still_refused() {
     }"#;
     assert!(PreprocessParams::from_preprocessor_config_json(json).is_err());
 }
+
+/// The normalization divides by `image_std`, so a zero (or a value that rounds
+/// to zero in f32) would make every embedding inf or NaN with no error.
+#[test]
+fn a_non_positive_image_std_is_refused() {
+    for std in ["[0.0, 0.5, 0.5]", "[0.5, -0.5, 0.5]", "[0.5, 0.5, 1e-50]"] {
+        let json = format!(
+            r#"{{
+            "size": {{"shortest_edge": 65536, "longest_edge": 16777216}},
+            "patch_size": 16, "merge_size": 2, "temporal_patch_size": 2,
+            "image_mean": [0.5, 0.5, 0.5], "image_std": {std}
+        }}"#
+        );
+        assert!(
+            PreprocessParams::from_preprocessor_config_json(&json).is_err(),
+            "image_std {std} must be refused"
+        );
+    }
+}
+
+/// The pixel FLOOR upscales every smaller image to it, so a hostile
+/// `min_pixels` (in either spelling) would turn a 1x1 PNG into a multi-GB
+/// resize target past the decode ceiling. The ceiling is the largest image
+/// decode admits, `MAX_IMAGE_DIM^2`, which the qwen3_5 checkpoints' own
+/// 16,777,216 ceiling equals exactly.
+#[test]
+fn a_pixel_floor_above_the_decode_ceiling_is_refused() {
+    let cap = (MAX_IMAGE_DIM as u64) * (MAX_IMAGE_DIM as u64);
+    for budget in [
+        format!(r#""min_pixels": {}, "max_pixels": {}"#, cap + 1, u64::MAX),
+        format!(
+            r#""size": {{"shortest_edge": {}, "longest_edge": {}}}"#,
+            1u64 << 40,
+            1u64 << 41
+        ),
+    ] {
+        let json = format!(
+            r#"{{ {budget},
+            "patch_size": 16, "merge_size": 2, "temporal_patch_size": 2,
+            "image_mean": [0.5, 0.5, 0.5], "image_std": [0.5, 0.5, 0.5]
+        }}"#
+        );
+        assert!(
+            PreprocessParams::from_preprocessor_config_json(&json).is_err(),
+            "{budget} must be refused"
+        );
+    }
+}
+
+/// A ceiling above what decode can produce is clamped, not refused: it never
+/// changes a real image's resize, and refusing it would refuse a checkpoint
+/// for a value that cannot hurt. The real 16,777,216 is kept as declared.
+#[test]
+fn a_pixel_ceiling_above_the_decode_ceiling_is_clamped() {
+    let cap = (MAX_IMAGE_DIM as usize) * (MAX_IMAGE_DIM as usize);
+    let parse = |max: u64| {
+        let json = format!(
+            r#"{{ "size": {{"shortest_edge": 65536, "longest_edge": {max}}},
+            "patch_size": 16, "merge_size": 2, "temporal_patch_size": 2,
+            "image_mean": [0.5, 0.5, 0.5], "image_std": [0.5, 0.5, 0.5] }}"#
+        );
+        PreprocessParams::from_preprocessor_config_json(&json)
+            .expect("parses")
+            .max_pixels
+    };
+    assert_eq!(parse(16_777_216), 16_777_216);
+    assert_eq!(parse(u64::MAX), cap);
+}
+
+/// Every resized edge is at least one `patch_size * merge_size`, so a huge
+/// factor is an upscale the pixel floor never sees; and Muse derives its
+/// pixel ceiling as `tokens * factor^2`, which wraps silently in release.
+#[test]
+fn a_spatial_factor_or_token_cap_that_overflows_is_refused_or_bounded() {
+    let json = r#"{
+        "size": {"shortest_edge": 65536, "longest_edge": 16777216},
+        "patch_size": 65536, "merge_size": 2, "temporal_patch_size": 2,
+        "image_mean": [0.5, 0.5, 0.5], "image_std": [0.5, 0.5, 0.5]
+    }"#;
+    assert!(PreprocessParams::from_preprocessor_config_json(json).is_err());
+
+    let muse = format!(
+        r#"{{ "max_image_tokens": {},
+        "patch_size": 14, "merge_size": 2, "temporal_patch_size": 2,
+        "image_mean": [0.5, 0.5, 0.5], "image_std": [0.5, 0.5, 0.5] }}"#,
+        u64::MAX / 4
+    );
+    let p = PreprocessParams::from_preprocessor_config_json(&muse).expect("parses");
+    assert_eq!(
+        p.max_pixels,
+        (MAX_IMAGE_DIM as usize) * (MAX_IMAGE_DIM as usize)
+    );
+}

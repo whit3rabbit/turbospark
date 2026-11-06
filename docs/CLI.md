@@ -231,6 +231,7 @@ turbospark start claude --model gemma4
 turbospark start codex --model gemma4 --port 9000
 
 # Print the exact command, env, and endpoint without touching anything.
+# A TURBOSPARK_API_KEY from the environment prints as <set from env>.
 turbospark start claude --model gemma4 --dry-run
 
 # Connect to whatever the daemon is already serving (no restart).
@@ -271,8 +272,10 @@ The endpoint is the daemon's port from `~/.turbospark/run/server.meta`
 (default 8080). Credentials: `TURBOSPARK_API_KEY` from the environment is
 handed to the agent when set; otherwise the placeholder `local` is used,
 which a loopback server without `--api-key` accepts (it serves unsecured).
-A launch against a server the launcher did not start and cannot verify says
-so rather than pretending the model is known.
+With `--model` and no daemon of its own running, the launcher refuses when
+something else already answers `/health` on the port (on a shared machine it
+could be another user's process), rather than sending the agent's prompts to
+an unverified listener. Stop that listener or pass `--port <free-port>`.
 
 ## `turbospark-check`
 
@@ -469,7 +472,7 @@ turbospark-model <command> [flags...]
 | `info` | `<alias>` | none | prints one catalog row in full, including its gate targets |
 | `probe` | `<repo>[@rev]` | `--file NAME.gguf`, `--sidecar-repo REPO[@rev]` | reads a Hugging Face repo's headers only, no download; reports whether this engine would run it |
 | `recommend` | none | `--context N`, `--budget BYTES`, `--load-guard TIER`, `--probe`, `--discover [N]` | ranks models by whether they fit this machine and how much is known about them; `--load-guard` MUST match what the session will open with, since the ranking and the loader's refusal share one memory budget; `--budget` accepts bare bytes or suffixes (`36G`, `36GB`, `36GiB`); `--context` defaults to `4096`; `--probe` reads every curated row's header for exact numbers, `--discover` also ranks the N most-downloaded GGUF repos on Hugging Face (default `20`) through the same probe |
-| `pull` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--out DIR`, `--library NAME`, `--file NAME.gguf`, `--sidecar-repo REPO[@rev]`, `--force` | installs a curated model, or any repository the probe accepts; `--out` overrides install destination; `--library` installs into a [model library](#model-libraries) instead (not with `--out`); `--force` installs past a probe refusal |
+| `pull` | `<alias>`, or `--repo REPO[@rev] --alias NAME` | `--out DIR`, `--library NAME`, `--file NAME.gguf`, `--sidecar-repo REPO[@rev]`, `--force` | installs a curated model, or any repository the probe accepts; `--out` overrides install destination and is refused when `DIR` holds files TurboSpark did not write (an install can replace the folder whole); `--library` installs into a [model library](#model-libraries) instead (not with `--out`); `--force` installs past a probe refusal |
 | `pull-audio` | `<alias>` | `--accept ID` (repeatable), `--library NAME` | installs one pinned audio model into `<root>/models/audio/<alias>.gturbo`, the place the app reads, or into a [model library](#model-libraries) with `--library`. A model with terms prints them and refuses until each id is passed with `--accept`. Rows marked `app only` (FluidAudio Core ML) install here but run only in the TurboSpark app. `fish-drama3-4bit` converts on install: use `pull-drama3` |
 | `pull-image` | `--alias NAME`, or `--repo REPO[@rev]` | `--source DIR`, `--model-id ID`, `--model-revision REV`, `--library NAME` | downloads and installs a pinned image model export |
 | `pull-drama3` | none | `--out DIR`, `--accept-fish-license` | converts Fish Audio Drama 3 into `DIR` from its pinned MLX checkpoint. Needs about 25 GiB free and tens of minutes. See [`docs/FISH_DRAMA3.md`](FISH_DRAMA3.md) |
@@ -620,6 +623,7 @@ unimplemented and uses `GET /health` for liveness.
 | `--pool-size` | positive integer | `1` | how many independent runners to open of `--model`'s ONE install; N > 1 serves N concurrent generations behind one public id, routed to the least-busy member. Each member pays the load guard on its own, so one that does not fit refuses at startup |
 | `--session-slots` | positive integer | `1` | concurrent conversation KV states maintained in pool |
 | `--max-concurrent-requests` | positive integer | `1` | alias for `--session-slots` (omlx compatibility) |
+| `--max-queued` | integer, `0` = no limit | `64` | requests allowed to wait behind the active generation per runner; past it a request gets 429 with `Retry-After: 2` instead of queueing |
 | `--hf-endpoint` | url | unset, `$HF_ENDPOINT` | Hugging Face mirror endpoint (e.g. `https://hf-mirror.com`) |
 | `--paged-ssd-cache-dir` | path | none | tiered KV SSD cache directory hint (omlx compatibility) |
 | `--hot-cache-max-size` | string | none | in-memory hot cache size hint, e.g. `20%` (omlx compatibility) |

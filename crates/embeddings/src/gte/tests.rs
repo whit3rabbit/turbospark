@@ -500,3 +500,24 @@ fn real_text_api_timing() {
         assert_eq!(got.len(), 768);
     }
 }
+
+#[test]
+fn load_refuses_a_word_table_whose_byte_size_wraps() {
+    // vocab * hidden * 4 wraps to the real byte length, so an unchecked
+    // multiply would accept a 2^56-row table backed by 96 rows of bytes
+    // and later slice past the mapping. The load must refuse it.
+    let dir = scratch_copy("wrap");
+    let rows = crate::testutil::wrapping_f32_rows(96, 64);
+    let path = dir.join("config.json");
+    let mut v: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    v["vocab_size"] = serde_json::json!(rows);
+    std::fs::write(&path, serde_json::to_vec(&v).unwrap()).unwrap();
+    crate::testutil::set_safetensors_shape(
+        &dir.join("model.safetensors"),
+        "embeddings.word_embeddings.weight",
+        &[rows, 64],
+    );
+    let err = Gte::load(&dir).unwrap_err();
+    assert!(matches!(err, EmbeddingError::Tensor { .. }), "{err}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}

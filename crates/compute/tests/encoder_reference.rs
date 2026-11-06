@@ -295,3 +295,36 @@ fn encoder_embeddings_lookup_refuses_token_type_ids_with_no_table() {
         &config,
     );
 }
+
+/// A type id past the end of `token_type_embeddings` must be refused with the
+/// same named-table message its sibling word and position tables give, not a
+/// bare index panic deep in the row loop.
+#[test]
+#[should_panic(expected = "exceeds token_type_embeddings len")]
+fn encoder_embeddings_lookup_refuses_type_id_past_type_table() {
+    let input_ids = vec![0u32, 1];
+    let token_type_ids = vec![0u32, 2u32]; // table below holds types 0 and 1 only
+    let word_emb = vec![0.0f32; 4 * 2];
+    let pos_emb = vec![0.0f32; 4 * 2];
+    let type_emb = vec![0.0f32; 4 * 2];
+    let gamma = vec![1.0; 4];
+    let beta = vec![0.0; 4];
+    let config = EncoderReferenceConfig {
+        hidden_size: 4,
+        num_attention_heads: 2,
+        intermediate_size: 8,
+        layer_norm_eps: 1e-5,
+        position_offset: 0,
+        use_tanh_gelu: false,
+    };
+    let _ = encoder_embeddings_lookup(
+        &input_ids,
+        Some(&token_type_ids),
+        &word_emb,
+        &pos_emb,
+        Some(&type_emb),
+        &gamma,
+        &beta,
+        &config,
+    );
+}

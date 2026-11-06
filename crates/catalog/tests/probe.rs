@@ -342,6 +342,42 @@ fn a_repo_reference_parses_with_and_without_a_revision() {
     }
 }
 
+/// `file_url` and `api_url` interpolate by `format!`, and `parse` is fed a
+/// hub-authored `cardData.base_model` during discovery. A query, fragment,
+/// percent escape, or dot segment in either half would rewrite the request
+/// path (`a/b#x` drops `/resolve/...`, `../..` climbs out of a mirror prefix).
+#[test]
+fn a_repo_reference_refuses_url_structure_characters() {
+    for bad in [
+        "owner/name?x=1",
+        "owner/name#frag",
+        "owner/na%2Fme",
+        "../..",
+        "owner/..",
+        "./name",
+        "owner/na me",
+        "owner/name@main?x=1",
+        "owner/name@main#frag",
+        "owner/name@../../evil",
+        "owner/name@ma%2Fin",
+        "owner/name@a//b",
+    ] {
+        assert!(RepoRef::parse(bad).is_err(), "{bad:?} should not parse");
+    }
+    // Real repo ids and revisions keep parsing, including dotted names and
+    // the slash-bearing PR refs the hub publishes.
+    for good in [
+        "mlx-community/gemma-4-26b-a4b-it-4bit",
+        "Qwen/Qwen3-VL-4B-Instruct",
+        "unsloth/Llama-3.1-8B.Q4_K_M",
+        "owner/name@0123456789abcdef0123456789abcdef01234567",
+        "owner/name@v1.0",
+        "owner/name@refs/pr/3",
+    ] {
+        assert!(RepoRef::parse(good).is_ok(), "{good:?} should parse");
+    }
+}
+
 #[test]
 fn minimax_safetensors_remain_explicitly_refused() {
     let report = evaluate_config(r#"{"model_type":"minimax_m2"}"#, &repo(), None).unwrap();

@@ -150,10 +150,12 @@ fn type_shares(header: &repack::GgufHeader, family: model_io::ModelFamily) -> Ve
         let slot = by_id.entry(info.ggml_type).or_insert((0, Some(0), true));
         slot.0 += 1;
         slot.2 &= source_transcoded;
-        match (slot.1, info.byte_size(name)) {
-            (Some(total), Ok(size)) => slot.1 = Some(total + size),
-            _ => slot.1 = None,
-        }
+        // Checked: sizes come off an untrusted header, and a wrapped sum
+        // would misreport the share instead of marking it unsized.
+        slot.1 = match (slot.1, info.byte_size(name)) {
+            (Some(total), Ok(size)) => total.checked_add(size),
+            _ => None,
+        };
     }
     let mut shares: Vec<TypeShare> = by_id
         .into_iter()
@@ -187,7 +189,7 @@ fn gguf_expert_stride(header: &repack::GgufHeader, arch: &ArchConfig) -> Option<
     let mut total = 0u64;
     for (name, info) in &header.tensors {
         if name.starts_with("blk.0.") && name.contains("_exps") {
-            total += info.byte_size(name).ok()?;
+            total = total.checked_add(info.byte_size(name).ok()?)?;
         }
     }
     (total > 0).then(|| total / arch.num_experts as u64)
@@ -278,6 +280,53 @@ mod tests {
 
         assert!(share.executable, "Q2_0 routed experts have a kernel pair");
         assert!(!share.transcoded, "the type share includes routed weights");
+    }
+
+    /// Two F32 tensors of 2^61 elements each are 2^63 bytes apiece: each
+    /// sizes on its own, but their sum passes u64::MAX. The header is
+    /// attacker-authored and nothing upstream bounds extents against the
+    /// file, so the sum must refuse rather than wrap (release) or panic
+    /// (debug).
+    fn overflowing_header(names: &[&str]) -> GgufHeader {
+        let tensors = names
+            .iter()
+            .map(|name| {
+                (
+                    (*name).to_string(),
+                    GgufTensorInfo {
+                        ggml_type: 0,
+                        dims: vec![1u64 << 61],
+                        offset: 0,
+                    },
+                )
+            })
+            .collect();
+        GgufHeader {
+            version: 3,
+            metadata: BTreeMap::new(),
+            tensors,
+            alignment: 32,
+            data_region_start: 0,
+        }
+    }
+
+    #[test]
+    fn type_share_bytes_that_overflow_u64_are_reported_unsized() {
+        let header = overflowing_header(&["blk.0.attn_q.weight", "blk.1.attn_q.weight"]);
+        let shares = type_shares(&header, ModelFamily::Gemma4);
+        assert_eq!(share(&shares, "F32").bytes, None);
+    }
+
+    #[test]
+    fn an_expert_stride_that_overflows_u64_is_not_reported() {
+        let (bytes, _) = repack::build_synthetic_gemma4_gguf(repack::SyntheticGgufShape::default());
+        let real = repack::parse_gguf_header(&bytes, repack::GGUF_DEFAULT_MAX_HEADER_BYTES)
+            .expect("fixture parses");
+        let arch = repack::arch_from_gguf(&real).expect("fixture arch");
+        assert!(arch.num_experts > 0, "fixture must be MoE to reach the sum");
+        let header =
+            overflowing_header(&["blk.0.ffn_gate_exps.weight", "blk.0.ffn_down_exps.weight"]);
+        assert_eq!(super::gguf_expert_stride(&header, &arch), None);
     }
 
     #[test]

@@ -129,10 +129,18 @@ pub fn ggml_scheme_name(ggml_type: u32) -> &'static str {
 
 /// GGUF stores dims fastest-varying first; the resident index stores logical
 /// shape. Reversing is the whole conversion.
+///
+/// Panics if a dim exceeds `u32::MAX`. Writer invariant, as in
+/// `repack::resident_spec_from_int4_rows`: `ResidentTensorSpec` stores shape as
+/// `u32`, and a silent truncation would record a plausible, wrong shape that
+/// no later read reports. Reaching it needs a tensor whose byte range really
+/// holds 2^32 elements, because the header parser ties dims to byte sizes.
 pub fn logical_shape(dims: &[u64]) -> (u32, u32, u32, u32) {
     let mut out = [0u32; 4];
     for (slot, d) in out.iter_mut().zip(dims.iter().rev()) {
-        *slot = *d as u32;
+        *slot = u32::try_from(*d).unwrap_or_else(|_| {
+            panic!("GGUF dims {dims:?} exceed the 32-bit resident index shape fields")
+        });
     }
     (out[0], out[1], out[2], out[3])
 }
@@ -161,4 +169,26 @@ pub struct GgufRepackOutput {
     /// Tensors recognized and deliberately not carried, with the reason.
     pub ignored: Vec<String>,
     pub lossy_narrowing: Vec<(String, usize)>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::logical_shape;
+
+    /// GGUF dims are u64 header data; the resident index stores u32. A dim
+    /// past u32::MAX must not be truncated into a plausible, wrong shape.
+    #[test]
+    #[should_panic(expected = "exceed the 32-bit resident index shape fields")]
+    fn logical_shape_refuses_a_dim_past_u32() {
+        logical_shape(&[2, (1u64 << 32) + 1]);
+    }
+
+    #[test]
+    fn logical_shape_reverses_in_range_dims() {
+        assert_eq!(logical_shape(&[2048, 151_936]), (151_936, 2048, 0, 0));
+        assert_eq!(
+            logical_shape(&[u64::from(u32::MAX), 1]),
+            (1, u32::MAX, 0, 0)
+        );
+    }
 }

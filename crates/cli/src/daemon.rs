@@ -25,6 +25,16 @@ fn root_dir() -> PathBuf {
     catalog::default_root().unwrap_or_else(|| PathBuf::from(".turbospark"))
 }
 
+/// `start` and `stop` act on the pid file (spawn or signal), so they refuse
+/// the CWD-relative fallback: with no TURBOSPARK_HOME or HOME, a
+/// `.turbospark/run/server.pid` planted in the working directory would
+/// otherwise choose which process gets signalled.
+fn require_root() -> Result<(), String> {
+    catalog::default_root().map(|_| ()).ok_or_else(|| {
+        "neither TURBOSPARK_HOME nor HOME is set; set one to manage the server".to_string()
+    })
+}
+
 fn run_dir() -> PathBuf {
     root_dir().join("run")
 }
@@ -243,6 +253,7 @@ fn create_private_run_dir(path: &Path) -> Result<(), std::io::Error> {
 
 /// Start the server as a background daemon.
 pub fn start(args: &[String]) -> Result<(), String> {
+    require_root()?;
     let run = run_dir();
     create_private_run_dir(&run)
         .map_err(|e| format!("creating run directory {}: {e}", run.display()))?;
@@ -329,6 +340,7 @@ pub fn start(args: &[String]) -> Result<(), String> {
 
 /// Stop the background daemon if running.
 pub fn stop() -> Result<(), String> {
+    require_root()?;
     let run = run_dir();
     create_private_run_dir(&run)
         .map_err(|e| format!("creating run directory {}: {e}", run.display()))?;

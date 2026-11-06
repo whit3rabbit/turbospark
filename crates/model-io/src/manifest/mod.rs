@@ -16,6 +16,7 @@ pub use types::{
 
 use crate::arch_baselines::all_known_architectures;
 use crate::arch_config::{ArchConfig, ModelFamily};
+use crate::bounded_read::read_capped;
 use crate::error::ModelError;
 
 /// Default maximum byte limit for reading `manifest.json`.
@@ -56,10 +57,14 @@ pub fn load(dir: &Path, expecting: &ArchConfig, max_bytes: u64) -> Result<Manife
             detail: format!("manifest.json size {size} exceeds metadata cap {max_bytes}"),
         });
     }
-    let data = std::fs::read(&manifest_path).map_err(|e| ModelError::IoFailed {
-        call: "read".to_string(),
-        detail: e.to_string(),
-    })?;
+    let data = read_capped(&manifest_path, max_bytes)
+        .map_err(|e| ModelError::IoFailed {
+            call: "read".to_string(),
+            detail: e.to_string(),
+        })?
+        .ok_or_else(|| ModelError::IndexCorrupt {
+            detail: format!("manifest.json size exceeds metadata cap {max_bytes}"),
+        })?;
     let raw: serde_json::Value =
         serde_json::from_slice(&data).map_err(|e| ModelError::IndexCorrupt {
             detail: format!("manifest.json: {e}"),
@@ -334,10 +339,14 @@ pub fn peek_family(dir: &Path, max_bytes: u64) -> Result<ModelFamily, ModelError
             detail: format!("manifest.json size {size} exceeds metadata cap {max_bytes}"),
         });
     }
-    let data = std::fs::read(&manifest_path).map_err(|e| ModelError::IoFailed {
-        call: "read".to_string(),
-        detail: e.to_string(),
-    })?;
+    let data = read_capped(&manifest_path, max_bytes)
+        .map_err(|e| ModelError::IoFailed {
+            call: "read".to_string(),
+            detail: e.to_string(),
+        })?
+        .ok_or_else(|| ModelError::IndexCorrupt {
+            detail: format!("manifest.json size exceeds metadata cap {max_bytes}"),
+        })?;
     let manifest: Manifest =
         serde_json::from_slice(&data).map_err(|e| ModelError::IndexCorrupt {
             detail: format!("manifest.json: {e}"),
