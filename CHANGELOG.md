@@ -36,6 +36,10 @@ when this file gets updated relative to the version bump and the tag.
 - A non-https `HF_ENDPOINT` prints a warning.
 
 ### Security
+- "Automatically start server on app launch" no longer starts a server
+  without an API key. On a new install, where the key is not saved in the
+  Keychain, the app skips the start and shows a warning toast that says how
+  to set one (#150). Starting the server by hand is unchanged.
 - Bumped `rustls-webpki` to 0.103.16 and `webpki-roots` to 1.0.10 in
   `Cargo.lock` (RUSTSEC-2026-0382, RUSTSEC-2026-0381: distrusted emSign
   certificates). This is the TLS stack every Hugging Face download uses.

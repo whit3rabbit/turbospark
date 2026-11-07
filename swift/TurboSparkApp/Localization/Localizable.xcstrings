@@ -587211,6 +587211,137 @@
           }
         }
       }
+    },
+    "The server did not start on launch because it has no API key. Set a key in the Server pane and turn on Remember this key in the Keychain.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لم يبدأ الخادم عند التشغيل لأنه لا يملك مفتاح API. عيّن مفتاحًا في جزء الخادم وفعّل «تذكّر هذا المفتاح في سلسلة المفاتيح»."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Server wurde beim Start nicht gestartet, weil er keinen API-Schlüssel hat. Lege im Bereich Server einen Schlüssel fest und aktiviere „Diesen Schlüssel im Schlüsselbund merken“."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The server did not start on launch because it has no API key. Set a key in the Server pane and turn on Remember this key in the Keychain."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El servidor no se inició al abrir la app porque no tiene clave de API. Define una clave en el panel Servidor y activa «Recordar esta clave en el Llavero»."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le serveur n'a pas démarré au lancement car il n'a pas de clé d'API. Définissez une clé dans le panneau Serveur et activez « Mémoriser cette clé dans le trousseau »."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "השרת לא הופעל בעת ההפעלה כי אין לו מפתח API. הגדר מפתח בחלונית השרת והפעל את \"זכור מפתח זה במחזיק המפתחות\"."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "लॉन्च पर सर्वर शुरू नहीं हुआ क्योंकि इसकी कोई API कुंजी नहीं है। सर्वर पैन में एक कुंजी सेट करें और \"इस कुंजी को कीचेन में याद रखें\" चालू करें।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Server tidak dimulai saat peluncuran karena tidak memiliki kunci API. Atur kunci di panel Server dan aktifkan \"Ingat kunci ini di Keychain\"."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il server non è stato avviato all'apertura perché non ha una chiave API. Imposta una chiave nel pannello Server e attiva «Ricorda questa chiave nel Portachiavi»."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API キーがないため、起動時にサーバーを開始しませんでした。サーバーパネルでキーを設定し、「このキーをキーチェーンに記憶」をオンにしてください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "API 키가 없어 실행 시 서버를 시작하지 않았습니다. 서버 패널에서 키를 설정하고 '이 키를 키체인에 기억'을 켜세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De server is bij het opstarten niet gestart omdat er geen API-sleutel is. Stel een sleutel in het Server-paneel in en zet 'Deze sleutel onthouden in de sleutelhanger' aan."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Serwer nie uruchomił się przy starcie, ponieważ nie ma klucza API. Ustaw klucz w panelu Serwer i włącz „Zapamiętaj ten klucz w pęku kluczy”."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O servidor não foi iniciado na abertura porque não tem chave de API. Defina uma chave no painel Servidor e ative \"Lembrar esta chave nas Chaves\"."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сервер не запустился при старте, потому что у него нет ключа API. Задайте ключ на панели «Сервер» и включите «Запомнить этот ключ в Связке ключей»."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Servern startades inte vid start eftersom den saknar API-nyckel. Ange en nyckel i Server-panelen och slå på ”Kom ihåg den här nyckeln i nyckelringen”."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sunucu, API anahtarı olmadığı için açılışta başlatılmadı. Sunucu bölmesinde bir anahtar belirleyin ve \"Bu anahtarı Anahtar Zinciri'nde hatırla\" seçeneğini açın."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сервер не запустився під час старту, бо не має ключа API. Задайте ключ на панелі «Сервер» і ввімкніть «Запам'ятати цей ключ у Зв'язці ключів»."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Máy chủ không khởi động khi mở ứng dụng vì chưa có khóa API. Hãy đặt khóa trong ngăn Máy chủ và bật \"Ghi nhớ khóa này trong Chuỗi khóa\"."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "服务器没有在启动时运行，因为它没有 API 密钥。请在“服务器”面板中设置密钥，并打开“在钥匙串中记住此密钥”。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "伺服器沒有在啟動時執行，因為它沒有 API 金鑰。請在「伺服器」面板中設定金鑰，並開啟「在鑰匙圈中記住此金鑰」。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
