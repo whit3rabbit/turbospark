@@ -51,7 +51,10 @@ prompt recall until the user approves it.
 
 The actual current user message or subagent task is the search query. The
 claim-ID keyed index combines FTS and optional semantic recall, with lexical
-fallback if the encoder or embedding index is missing or stale. Main-turn
+fallback if the encoder is missing or no active claim has a current
+embedding. A partial index still ranks: claims without a current row compete
+on lexical rank only, and the recall task embeds them after it publishes its
+result, so a new or edited claim needs no manual rebuild. Main-turn
 semantic waiting is bounded at 200 ms. The Rust FFI holds one serialized
 encoder instance, avoiding a model reload on each call. A turn caches one
 recall result for its prompt assembly, context estimates, and retries.
