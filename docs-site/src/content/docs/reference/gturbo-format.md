@@ -74,6 +74,7 @@ Top-level fields (writer: `build_manifest_json`; reader: `Manifest` in
 | `expertsPerLayer` | i64 | Routed experts per layer. |
 | `numLayers` | i64 | Layer count; drives the per-layer file check on read. |
 | `expertStride` | u64 | Model-wide MAXIMUM per-expert stride in bytes. Must be a multiple of 4096. Do not address a specific layer with it; use the layer's own stride. |
+| `producer` | object or absent | Which build wrote the install: `{tool, version, gitRev?}`. The writer emits `tool: "turbospark-repack"` and its crate version, and omits `gitRev` (no build-time revision in the workspace). Informational only; the loader never refuses on it, and an install without it loads with `producer: None`. |
 
 ### arch: shape fields (required)
 

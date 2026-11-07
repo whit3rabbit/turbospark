@@ -27,6 +27,11 @@ when this file gets updated relative to the version bump and the tag.
   not read fails with `UnsupportedIndexFormat`, and a manifest newer than
   `MANIFEST_VERSION_MINOR` fails with `UnsupportedVersion`, so an install
   written by a later turbospark is refused by name instead of misread.
+- `.gturbo` `manifest.json` carries an optional `producer` block
+  (`{tool, version, gitRev?}`) recording which turbospark build wrote the
+  install. The repack writer emits `turbospark-repack` and its crate
+  version. The loader reads it as `Manifest.producer` and never refuses on
+  it, so every existing install still loads.
 
 ### Changed
 - New installs are written as manifest 1.1. Installs written before (1.0, no

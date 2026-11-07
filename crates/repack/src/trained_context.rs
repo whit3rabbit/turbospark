@@ -187,6 +187,7 @@ mod tests {
             "modelID": "fixture",
             "arch": { "hiddenSize": 64, "numLayers": 2 },
             "quant": { "attention": "q8_0" },
+            "producer": { "tool": "turbospark-repack", "version": "0.0.0" },
         });
         std::fs::write(
             dir.join("manifest.json"),
@@ -203,6 +204,10 @@ mod tests {
         assert_eq!(after["magic"], original["magic"]);
         assert_eq!(after["modelID"], original["modelID"]);
         assert_eq!(after["quant"], original["quant"]);
+        assert_eq!(
+            after["producer"], original["producer"],
+            "the producer block is another writer's and must survive the rewrite"
+        );
         assert_eq!(after["arch"]["hiddenSize"], 64);
         assert_eq!(after["arch"]["numLayers"], 2);
 

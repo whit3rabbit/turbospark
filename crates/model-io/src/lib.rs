@@ -83,9 +83,9 @@ pub use kv_quant::{
 pub use load_guard::{GuardBudget, LoadGuard, LoadPolicy};
 pub use manifest::{
     known_flags, load as load_manifest, peek_family, validate as validate_manifest, Manifest,
-    ManifestArch, ManifestFileEntry, ManifestHadamard, ManifestHadamardSigns, ManifestQuant,
-    ManifestQuantSlot, DEFAULT_MAX_BYTES, EXECUTABLE_GGUF_TYPES, MANIFEST_VERSION_MAJOR,
-    MANIFEST_VERSION_MINOR, REQUIRED_FILES,
+    ManifestArch, ManifestFileEntry, ManifestHadamard, ManifestHadamardSigns, ManifestProducer,
+    ManifestQuant, ManifestQuantSlot, DEFAULT_MAX_BYTES, EXECUTABLE_GGUF_TYPES,
+    MANIFEST_VERSION_MAJOR, MANIFEST_VERSION_MINOR, REQUIRED_FILES,
 };
 pub use ngram_hash::{
     build_layer_multipliers, derive_head_vocab_and_offsets, find_nth_prime_after, ple_ngram_rows,

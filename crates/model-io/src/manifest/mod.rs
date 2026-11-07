@@ -11,7 +11,7 @@ pub(crate) use quant::validate_quant;
 pub use quant::EXECUTABLE_GGUF_TYPES;
 pub use types::{
     Manifest, ManifestArch, ManifestFileEntry, ManifestHadamard, ManifestHadamardSigns,
-    ManifestQuant, ManifestQuantSlot,
+    ManifestProducer, ManifestQuant, ManifestQuantSlot,
 };
 
 use crate::arch_baselines::all_known_architectures;

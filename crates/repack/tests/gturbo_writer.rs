@@ -120,6 +120,21 @@ fn writer_output_round_trips_through_every_model_io_loader() {
     assert_eq!(manifest.num_layers, NUM_LAYERS as i64);
     assert_eq!(manifest.expert_stride, EXPERT_STRIDE);
 
+    // The writer records which build produced the install. `gitRev` is
+    // omitted (not null) because the workspace exposes no build-time rev.
+    let producer = manifest
+        .producer
+        .expect("the writer records its provenance");
+    assert_eq!(producer.tool, "turbospark-repack");
+    assert_eq!(producer.version, env!("CARGO_PKG_VERSION"));
+    assert_eq!(producer.git_rev, None);
+    let raw: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(
+        raw["producer"],
+        serde_json::json!({"tool": "turbospark-repack", "version": env!("CARGO_PKG_VERSION")})
+    );
+
     let layout = model_io::load_packed_experts_layout(
         &dir,
         model_io::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
