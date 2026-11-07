@@ -52,6 +52,7 @@ import argparse
 import bisect
 import json
 import math
+import struct
 import sys
 
 from pilot_ceiling import ExpertCache, passes
@@ -159,6 +160,187 @@ class DecayedLfu(KeyedCache):
             self.last_use[k] = now
 
 
+class ClassLru:
+    """Upstream llama.cpp's ClassLRU, ported from upstream's own simulator.
+
+    This is the policy of llama.cpp PR #31233 ("moe-cache : LRFU/MQ-like
+    hybrid cache, ClassLRU"), which the MoE-cache CPU-share work of PR #30966
+    builds on. It is a decaying-frequency score per expert, bucketed into
+    frequency classes, one LRU list per class, and the victim chosen by the
+    largest age/2^class.
+
+    It differs from [`DecayedLfu`] in two ways that matter. The score
+    DECAYS CONTINUOUSLY (a half-life in tokens, `crf * 2**(-elapsed/H)`)
+    where `DecayedLfu` counts up and halves in steps, and it survives
+    eviction: a frequently used expert keeps its score after it leaves the
+    cache, so a stale hot set cannot hold the slots forever.
+
+    The port is over upstream's Python model of its own C++
+    (`llama.cpp` `scripts/moe-cache-tune.py`, `class ClassLRU`), not over
+    the C++, and it is checked against upstream's file miss for miss by
+    `test_expert_policy_replay.py`.
+
+    `layers` is the set of layers sharing one slot pool and one class-LRU
+    structure, which is upstream's "group". Upstream groups layers that
+    share a device and an expert tensor layout; one layer is the degenerate
+    group, and this engine's per-layer slot cache is the shape one group
+    takes. `n_slots` is the pool size.
+    """
+
+    N_CLASS = 8
+    CRF_HALF_LIFE = 128.0  # tokens
+
+    def __init__(self, layers, n_expert, n_slots):
+        self.layers = list(layers)
+        self.n_expert = n_expert
+        self.n_slots = n_slots
+        self.slot_map = {il: [n_slots] * n_expert for il in self.layers}
+        self.key_of = [-1] * n_slots
+        self.prev = [s - 1 for s in range(n_slots)]
+        self.next = [s + 1 if s + 1 < n_slots else -1 for s in range(n_slots)]
+        self.head = [0] + [-1] * (self.N_CLASS - 1)
+        self.tail = [n_slots - 1] + [-1] * (self.N_CLASS - 1)
+        self.list_of = [0] * n_slots
+        self.n_filled = 0
+        self.crf = {}       # key -> CRF, 0 before the first use
+        self.last_use = {}  # key -> layer clock at the last use
+        self.clock = {il: 0 for il in self.layers}
+        self.seen = [0] * n_expert
+        self.seen_gen = 0
+
+    def move(self, s, c):
+        frm = self.list_of[s]
+        if frm == c and s == self.tail[frm]:
+            return
+        prev, nxt, head, tail = self.prev, self.next, self.head, self.tail
+        if prev[s] >= 0:
+            nxt[prev[s]] = nxt[s]
+        else:
+            head[frm] = nxt[s]
+        if nxt[s] >= 0:
+            prev[nxt[s]] = prev[s]
+        else:
+            tail[frm] = prev[s]
+        prev[s] = tail[c]
+        nxt[s] = -1
+        if tail[c] >= 0:
+            nxt[tail[c]] = s
+        else:
+            head[c] = s
+        tail[c] = s
+        self.list_of[s] = c
+
+    def class_of(self, key):
+        return min(self.N_CLASS - 1, int(f32(math.log2(self.crf[key]))))
+
+    def decayed_crf(self, il, key):
+        crf = self.crf.get(key, 0.0)
+        if crf == 0.0:
+            return 0.0
+        x = f32(f32(-(self.clock[il] - self.last_use[key])) / self.CRF_HALF_LIFE)
+        return f32(crf * f32(2.0 ** x))
+
+    def use(self, il, key):
+        self.crf[key] = f32(self.decayed_crf(il, key) + 1.0)
+        self.last_use[key] = self.clock[il]
+
+    def is_selected(self, il, key):
+        return (key >= 0 and key // self.n_expert == il
+                and self.seen[key % self.n_expert] == self.seen_gen)
+
+    def victim(self, il):
+        res, res_score = -1, -1.0
+        for c in range(self.N_CLASS):
+            s = self.head[c]
+            while s >= 0 and self.is_selected(il, self.key_of[s]):
+                s = self.next[s]
+            if s < 0:
+                continue
+            key = self.key_of[s]
+            if key < 0:
+                return s  # unused slot
+            score = math.ldexp(
+                float(self.clock[key // self.n_expert] - self.last_use[key]), -c)
+            if score > res_score:
+                res, res_score = s, score
+        if res < 0:
+            raise RuntimeError("no MoE cache victim")
+        return res
+
+    def plan(self, il, ids):
+        """One plan for one layer. Returns the number of misses."""
+        self.seen_gen += 1
+        seen, gen = self.seen, self.seen_gen
+        uniq = []
+        for e in ids:
+            if seen[e] != gen:
+                seen[e] = gen
+                uniq.append(e)
+        if len(uniq) > self.n_slots:
+            raise RuntimeError(
+                f"layer {il}: {len(uniq)} experts for {self.n_slots} slots")
+
+        slots = self.slot_map[il]
+        n_slots = self.n_slots
+        misses = []
+        for e in uniq:
+            key = il * self.n_expert + e
+            self.use(il, key)
+            if slots[e] < n_slots:
+                self.move(slots[e], self.class_of(key))
+            else:
+                misses.append(e)
+
+        misses.sort()
+        for e in misses:
+            s = self.victim(il)
+            key = self.key_of[s]
+            if key >= 0:
+                self.slot_map[key // self.n_expert][key % self.n_expert] = n_slots
+            else:
+                self.n_filled += 1
+            key = il * self.n_expert + e
+            self.key_of[s] = key
+            slots[e] = s
+            self.move(s, self.class_of(key))
+        self.clock[il] += 1  # one token per plan in a decode-step replay
+        return len(misses)
+
+
+class ClassLruPerLayer:
+    """One [`ClassLru`] per layer, each with its own slots.
+
+    This is the placement this engine's per-layer slot cache can express,
+    and the shape the engine's own policy uses.
+    """
+
+    name = "classlru"
+
+    def __init__(self, layer, slots, num_experts):
+        self.layer = layer
+        self.cache = ClassLru([layer], num_experts, slots)
+
+    def plan(self, group, now):
+        return self.cache.plan(self.layer, list(group))
+
+
+class ClassLruPool:
+    """One [`ClassLru`] shared by every layer, upstream's group semantics.
+
+    The replay keys a pool by (layer, expert), so the layer index comes
+    from the key rather than from `now`.
+    """
+
+    name = "pool classlru"
+
+    def __init__(self, slots, num_experts, layer_count):
+        self.cache = ClassLru(range(layer_count), num_experts, slots * layer_count)
+
+    def plan(self, group, now):
+        layer = group[0][0]
+        return self.cache.plan(layer, [e for (_, e) in group])
+
+
 class Oracle(KeyedCache):
     """Belady: evict the key whose next request is farthest away."""
 
@@ -171,7 +353,7 @@ class Oracle(KeyedCache):
     def victim_key(self, key, now):
         times = self.uses[key]
         i = bisect.bisect_right(times, now)
-        # Never requested again sorts first: it is the free eviction.
+        # Never requested again sorts first: that is the free eviction.
         return -(times[i] if i < len(times) else math.inf)
 
 
@@ -268,8 +450,10 @@ def arms(steps, slots, num_experts, layer_count, half_lives):
     yield "lru", replay(steps, lambda layer: Lru(slots))
     for h in half_lives:
         yield f"lfu-decay h={h}", replay(steps, lambda layer, h=h: DecayedLfu(slots, h))
+    yield "classlru", replay(steps, lambda layer: ClassLruPerLayer(layer, slots, num_experts))
     yield "oracle", replay(steps, lambda layer: Oracle(slots, per_layer_uses[layer]))
     yield "pool lru", replay(steps, None, pool=Lru(slots * layer_count))
+    yield "pool classlru", replay(steps, None, pool=ClassLruPool(slots, num_experts, layer_count))
     yield "pool oracle", replay(steps, None, pool=Oracle(slots * layer_count, uses))
 
 
@@ -284,6 +468,16 @@ def compulsory(steps, skips):
                 if p >= skips[c]:
                     out[c] = out.get(c, 0) + 1
     return out
+
+
+def f32(x):
+    """Round a float through float32, as upstream's simulator does.
+
+    Upstream models its own C++ `float` scores, and the class boundaries
+    are `floor(log2f(crf))`, so the float32 rounding is part of the
+    policy's decisions rather than a detail of the port.
+    """
+    return struct.unpack("<f", struct.pack("<f", x))[0]
 
 
 def parse_list(text, cast):

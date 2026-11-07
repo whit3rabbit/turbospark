@@ -49,6 +49,8 @@ budget, a cold-read tuning pass, or Neural Engine offload.
 | Neural Engine prefill matmuls, Metal converting weights and activations | phhusson `main-npu` | **Phase 0 measured** (2026-10-18): the fork loses on an M4 Max, but the same matmul through public Core ML, split with Steel, ran 1.10x to 1.77x faster per matmul (1.24x or more in 8 of 10 cases) | an opt-in Phase 1 split prototype with real-model gates, a separate decision from MoE work |
 | Neural Engine row-split prefill on repacked 2-bit weights | phhusson `apple/bonsai-pq20`, `h3.c-ane` | not started; one encoding, private API | only if the `main-npu` route is taken and Bonsai needs more |
 | Cross-device zero-copy buffers | llama.cpp #30340 | unified memory already has it | only a fence lesson, for ANE work |
+| Computing MoE cache misses on the CPU instead of uploading them | llama.cpp #30966 | **does not apply**: the trick exists to dodge a PCIe upload, and this engine has no upload (zero-copy, `StorageModeShared`) | none |
+| A decaying-frequency score per expert, bucketed into classes (ClassLRU) | llama.cpp #31233 | **measured, default unchanged**: ported and priced as a replay arm (`classlru`, `pool classlru` in `scripts/expert_policy_replay.py`) | a decode A/B at the `auto` slots, see `docs/EXPERT_ROUTING.md` |
 
 ## What could transfer, and how to price it first
 
@@ -1240,6 +1242,102 @@ One lesson transfers to any future ANE work. Reading another backend's
 buffer zero-copy without a fence produced perplexity above 7,000 until the
 scheduler synchronized shared producers (41.36 after). A shared buffer needs
 a fence per handoff.
+
+## llama.cpp #30966 and #31233: the MoE cache CPU share, and ClassLRU
+
+Read 2026-11-07, after PR #30966 merged upstream ("llama_moe_cache: run
+missed experts on CPU, add tuning script"). It is three separable things, and
+only the third transfers.
+
+**`--moe-cache-cpu-share F` does not apply here.** The flag computes a share
+of the MoE cache misses ON THE CPU from the host experts instead of uploading
+them to the device, and upstream's own text says why: it is faster "when the
+CPU reads the host experts faster than the device can upload them". The whole
+mechanism exists to dodge a PCIe crossing. This engine has no crossing to
+dodge. Expert bytes reach Metal zero-copy (`wrap_page_aligned_no_copy`,
+`StorageModeShared`, `crates/gpu/src/resident_metal.rs`), so the GPU reads the
+same physical pages the host wrote, and there is no upload for a CPU share to
+avoid. This is the same conclusion the jitllm row above reached for "moving
+blocks between devices": on unified memory there is no link to avoid, and CPU
+and GPU draw on the same DRAM bandwidth.
+
+Two further costs argue against it anyway. The CPU would need a quantized
+expert FFN, and the only CPU FFN in this tree is the FP32 reference in
+`crates/compute/src/moe.rs`, which the GPU crate keeps test-only
+(`crates/gpu/Cargo.toml`). And the bottleneck this engine has is not an
+upload but the exposed expert `pread` (3.13 ms/token at 32 slots, 16% of a
+19.54 ms token, `docs/DECODE_BUDGET.md`), which a CPU share does not touch.
+
+Upstream's other two parts are the same conclusion wearing different clothes.
+`scripts/moe-cache-tune.py` fits the machine's upload and CPU speeds and
+replays routing through a copy of the cache logic to predict the arguments;
+that job is already done here by `scripts/expert_policy_replay.py` with a
+Belady oracle, which prices a policy rather than a bandwidth. The
+`ggml_backend_sched_prefetch_inputs` change copies the next split's inputs
+to host memory before the current split computes, so a CPU split does not
+wait on the device split; that is ggml scheduler work with no counterpart
+here, because this engine's split is Metal command buffers, not a multi-device
+scheduler.
+
+**ClassLRU (#31233) does transfer, and it is now priced here.** #31233
+("moe-cache : LRFU/MQ-like hybrid cache, ClassLRU") replaces a segmented LRU
+with a per-expert score that DECAYS with a 128-token half-life
+(`crf = crf * 2**(-elapsed/128) + 1`), buckets the scores into eight
+frequency classes, keeps one LRU list per class, and evicts the victim with
+the largest `age / 2**class`. Two properties separate it from the
+`TURBOSPARK_EXPERT_CACHE_DECAY` seam this repo already has: the decay is
+CONTINUOUS where the seam's is stepwise, and the score SURVIVES EVICTION, so
+a stale hot set cannot hold the slots forever. #30966 then uses that same
+score to decide which misses go to the CPU.
+
+It is ported here as two arms in `scripts/expert_policy_replay.py`,
+`classlru` (one per layer, the shape this engine's slot cache has) and
+`pool classlru` (upstream's group semantics, one pool for every layer). The
+port is over upstream's OWN Python model of its own C++
+(`llama.cpp` `scripts/moe-cache-tune.py`, `class ClassLRU`), not over the
+C++, and it was checked against upstream's file MISS FOR MISS on real
+captures at 16, 32, 64 and 96 slots in both placements, eight of eight
+configurations identical. `scripts/test_expert_policy_replay.py` pins the
+counts so the port cannot drift.
+
+Priced on two real captures from the Gemma 4 26B-A4B install (30 layers,
+top-8 of 128, 337 and 256 passes, two domains), slot hit rate:
+
+| slots | `lfu (engine)` | `classlru` | `pool classlru` | `oracle` |
+|---:|---:|---:|---:|---:|
+| 16 | 61.9% | 68.5% | 68.3% | 76.6% |
+| 32 | 81.2% | 86.4% | 87.3% | 91.8% |
+| 96 | 97.5% | 97.6% | 97.6% | 97.7% |
+
+Hit rate is not the deciding metric in this repo, though: the decay seam won
+hit rate and lost 17-50% of decode at the `auto` 96 slots, because its misses
+were cold device reads that no replay counts. So the misses were also split
+by KIND, which is the metric that separates a real win from thrash:
+
+| slots | arm | re-read misses | first-touch misses |
+|---:|---|---:|---:|
+| 16 | `lfu (engine)` | 50,934 | 3,251 |
+| 16 | `classlru` | 41,619 | 3,251 |
+| 32 | `lfu (engine)` | 23,562 | 3,251 |
+| 32 | `classlru` | 16,099 | 3,251 |
+
+The first-touch column is the same for every arm because it is the compulsory
+floor: an expert this session has never held is a first touch under any
+policy. ClassLRU cuts RE-READ misses, the cold reads of bytes the cache
+already held once, by 18% against the engine's LFU at 16 slots and 32% at 32.
+That is the shape a safe policy change has, and the opposite of the trap the
+decay seam walked into.
+
+What this is NOT: a decision to ship. The default stays cumulative LFU, and
+`TURBOSPARK_EXPERT_CACHE_DECAY` stays a seam. What is measured is a replay
+over ONE install's captures on ONE machine, warm, and the standing rule from
+`docs/EXPERT_ROUTING.md` still applies: slot-hit evidence alone is not enough
+to flip a default, and a flip owes an arm the `auto` 96-slot case cannot
+lose. At 96 slots the arms are within noise (97.6% against 97.5%), so the
+honest reading is that ClassLRU buys its advantage at 16 and 32 slots, which
+is the pinned benchmark protocol's count, not the count `auto` picks on a
+large machine. The next step is a decode A/B on the qwen4exp and Ornith
+installs at `auto` slots, against physical bytes and not hit rate.
 
 ## Found while reviewing
 
