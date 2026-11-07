@@ -115,6 +115,8 @@ fn writer_output_round_trips_through_every_model_io_loader() {
 
     let manifest = model_io::load_manifest(&dir, &arch, model_io::DEFAULT_MAX_BYTES).unwrap();
     assert_eq!(manifest.magic, "GTURBO");
+    assert_eq!(manifest.version_major, model_io::MANIFEST_VERSION_MAJOR);
+    assert_eq!(manifest.version_minor, model_io::MANIFEST_VERSION_MINOR);
     assert_eq!(manifest.num_layers, NUM_LAYERS as i64);
     assert_eq!(manifest.expert_stride, EXPERT_STRIDE);
 
@@ -132,8 +134,54 @@ fn writer_output_round_trips_through_every_model_io_loader() {
     let index = model_io::load_resident_index(&weights_path).unwrap();
     assert_eq!(index.header.entry_count, 0);
     assert_eq!(index.header.resident_size, 4);
+    // The empty index is header plus the format trailer, and the trailer
+    // names the layout this reader implements.
+    assert_eq!(
+        index.header.index_size as usize,
+        model_io::HEADER_BYTES + model_io::TRAILER_BYTES
+    );
+    assert_index_trailer(&std::fs::read(&weights_path).unwrap(), &index);
 
     verify_install_full_sha256(&dir, &arch).unwrap();
+}
+
+/// The last `TRAILER_BYTES` of the index region are the magic, the format
+/// version and a zero reserved word.
+fn assert_index_trailer(bytes: &[u8], index: &model_io::ResidentIndex) {
+    let end = index.header.index_size as usize;
+    let trailer = &bytes[end - model_io::TRAILER_BYTES..end];
+    assert_eq!(&trailer[..8], &model_io::INDEX_MAGIC);
+    assert_eq!(
+        u32::from_le_bytes(trailer[8..12].try_into().unwrap()),
+        model_io::INDEX_FORMAT_VERSION
+    );
+    assert_eq!(&trailer[12..16], &[0u8; 4]);
+}
+
+#[test]
+fn a_named_resident_index_ends_with_the_format_trailer_inside_its_page_padding() {
+    use turbospark_repack::{build_resident_weights_bin, ResidentTensorSpec};
+    // One INT4 affine tensor: 64 x 64 at 4 bits is 2048 packed bytes with a
+    // 2-byte scale and bias per 64-wide group.
+    let spec = ResidentTensorSpec {
+        name: "layers.0.attn.q.weight".to_string(),
+        packed: vec![0u8; 2048],
+        scales: vec![0u16; 64],
+        biases: vec![0u16; 64],
+        rows: 64,
+        cols: 64,
+    };
+    let bytes = build_resident_weights_bin(&[spec]);
+    let path = tempdir().join("model_weights.bin");
+    std::fs::write(&path, &bytes).unwrap();
+    let index = model_io::load_resident_index(&path).unwrap();
+    assert_eq!(index.header.entry_count, 1);
+    assert_eq!(
+        index.header.index_size % 16_384,
+        0,
+        "index region stays page aligned"
+    );
+    assert_index_trailer(&bytes, &index);
 }
 
 #[test]

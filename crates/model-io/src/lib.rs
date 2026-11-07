@@ -84,7 +84,8 @@ pub use load_guard::{GuardBudget, LoadGuard, LoadPolicy};
 pub use manifest::{
     known_flags, load as load_manifest, peek_family, validate as validate_manifest, Manifest,
     ManifestArch, ManifestFileEntry, ManifestHadamard, ManifestHadamardSigns, ManifestQuant,
-    ManifestQuantSlot, DEFAULT_MAX_BYTES, EXECUTABLE_GGUF_TYPES, REQUIRED_FILES,
+    ManifestQuantSlot, DEFAULT_MAX_BYTES, EXECUTABLE_GGUF_TYPES, MANIFEST_VERSION_MAJOR,
+    MANIFEST_VERSION_MINOR, REQUIRED_FILES,
 };
 pub use ngram_hash::{
     build_layer_multipliers, derive_head_vocab_and_offsets, find_nth_prime_after, ple_ngram_rows,
@@ -103,7 +104,7 @@ pub use packed_experts_layout::{
 pub use resident_buffer::ResidentBuffer;
 pub use resident_index::{
     load as load_resident_index, ResidentIndex, ResidentIndexEntry, ResidentIndexHeader,
-    ENTRY_BYTES, HEADER_BYTES,
+    ENTRY_BYTES, HEADER_BYTES, INDEX_FORMAT_VERSION, INDEX_MAGIC, TRAILER_BYTES,
 };
 pub use safetensors::SafetensorsFile;
 pub use sha256::{hash_data, hash_file, hash_file_observed, verify_file};

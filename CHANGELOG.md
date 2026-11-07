@@ -21,8 +21,17 @@ when this file gets updated relative to the version bump and the tag.
 - A new `Audit` CI workflow runs `cargo audit` on dependency changes and
   every Monday. `.cargo/audit.toml` ignores `paste` (unmaintained, build-time
   only through `metal`) with the reason written down.
+- `model_weights.bin` ends its index region with a 16-byte format trailer
+  (`GTURBIDX`, format version 1) inside the page padding, and the manifest
+  loader now checks `versionMinor`. A trailer naming a format this build does
+  not read fails with `UnsupportedIndexFormat`, and a manifest newer than
+  `MANIFEST_VERSION_MINOR` fails with `UnsupportedVersion`, so an install
+  written by a later turbospark is refused by name instead of misread.
 
 ### Changed
+- New installs are written as manifest 1.1. Installs written before (1.0, no
+  trailer) still load, and the Swift reader and turbospark 0.7.x open 1.1
+  installs unchanged because the header and entry offsets did not move.
 - `turbospark-model pull --out DIR` refuses a folder holding files
   TurboSpark did not write, before any network request, because an install
   replaces that folder whole. A new, empty, interrupted or installed folder

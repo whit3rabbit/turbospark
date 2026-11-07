@@ -1,15 +1,16 @@
 //! Builds a `model_weights.bin` resident-tensor index with real, named
 //! entries, matching the on-disk format `turbospark_model_io::resident_index`
 //! reads (24-byte header, 72-byte fixed entry table, then a string table,
-//! then the raw tensor data region). `gturbo_writer::write_gturbo_install`
+//! then the format trailer in the page padding, then the raw tensor data
+//! region). `gturbo_writer::write_gturbo_install`
 //! only ever writes an *empty* index (`entry_count == 0`); this module is
 //! for callers that need real, addressable tensors — e.g. a small synthetic
 //! model whose weights a real forward pass reads back by name.
 
 use std::io::{self, Write};
 
-const HEADER_BYTES: usize = 24;
-const ENTRY_BYTES: usize = 72;
+// The layout constants come from the reader so the two cannot drift.
+use model_io::{ENTRY_BYTES, HEADER_BYTES, INDEX_FORMAT_VERSION, INDEX_MAGIC, TRAILER_BYTES};
 
 /// One named resident tensor: INT4-affine packed weight rows (see
 /// `turbospark_compute::quant::Int4AffineRow`), concatenated across `rows`
@@ -278,6 +279,15 @@ impl EntryView<'_> {
 }
 
 /// Writes `n` zero bytes to `out` without allocating an `n`-byte buffer.
+/// The format trailer that closes an index region: magic, format version,
+/// reserved. See `model_io::resident_index`.
+pub(crate) fn index_format_trailer() -> [u8; TRAILER_BYTES] {
+    let mut trailer = [0u8; TRAILER_BYTES];
+    trailer[..8].copy_from_slice(&INDEX_MAGIC);
+    trailer[8..12].copy_from_slice(&INDEX_FORMAT_VERSION.to_le_bytes());
+    trailer
+}
+
 fn write_zeros(out: &mut dyn Write, n: usize) -> io::Result<()> {
     const ZEROS: [u8; 64] = [0u8; 64];
     let mut remaining = n;
@@ -342,8 +352,10 @@ fn write_from_views(specs: &[EntryView<'_>], out: &mut dyn Write) -> io::Result<
     // region start page-aligned, which is what lets the runtime mmap it
     // and hand the mapping straight to Metal via newBufferWithBytesNoCopy
     // (page-aligned base required) with a zero slice shift.
+    // The trailer is reserved before rounding so it always fits in the
+    // padding and never overlaps the string table.
     const PAGE_BYTES: usize = 16_384;
-    let index_size = string_table_end.div_ceil(PAGE_BYTES) * PAGE_BYTES;
+    let index_size = (string_table_end + TRAILER_BYTES).div_ceil(PAGE_BYTES) * PAGE_BYTES;
 
     // PASS 1: placement, from lengths alone.
     let mut placed = Vec::with_capacity(entry_count);
@@ -439,11 +451,13 @@ fn write_from_views(specs: &[EntryView<'_>], out: &mut dyn Write) -> io::Result<
         out.write_all(&entry)?;
     }
 
-    // String table, then pad the index region up to `index_size`.
+    // String table, then pad the index region up to `index_size`, with the
+    // format trailer in its last bytes.
     for spec in specs {
         out.write_all(spec.name().as_bytes())?;
     }
-    write_zeros(out, index_size - string_table_end)?;
+    write_zeros(out, index_size - string_table_end - TRAILER_BYTES)?;
+    out.write_all(&index_format_trailer())?;
 
     // PASS 2: the data region, streamed straight from each spec's own
     // bytes. Padding is taken from pass 1's `placed` entries rather than

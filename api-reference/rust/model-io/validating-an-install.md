@@ -32,7 +32,7 @@ fn load(dir: &Path) -> Result<turbospark_model_io::Manifest, ModelError> {
 
 1. `manifest.json` exists, is under `max_bytes`, and parses as JSON.
 2. The manifest does not declare the `image-generation` capability.
-3. `magic` is `GTURBO`, and `version_major` is `1`.
+3. `magic` is `GTURBO`, `version_major` is `1`, and `version_minor` is no newer than `MANIFEST_VERSION_MINOR` (1). Minor 0 installs, written before the `model_weights.bin` format trailer, still load.
 4. Every key in `flags` is one of `streamingPresent`, `turboQuantKV`, or `aneSharedExpert`. A `turboQuantKV` flag set to `true` is rejected, because KV quantization is chosen at open time.
 5. Each `arch` field matches the expected `ArchConfig`. A mismatch names the field.
 6. A `quant` block, when present, is structurally valid. A manifest whose layer count and hidden size match a shipped baseline must carry one.
@@ -126,7 +126,8 @@ Every failure in this guide is a `ModelError`. The install path raises these var
 | --- | --- |
 | `PartialInstall { path }` | The directory has no `manifest.json` |
 | `NotAGTurboDirectory` | `magic` is not `GTURBO` |
-| `UnsupportedVersion { major, minor }` | `version_major` is not `1` |
+| `UnsupportedVersion { major, minor }` | `version_major` is not `1`, or `version_minor` is newer than this build reads |
+| `UnsupportedIndexFormat { found, supported }` | The `model_weights.bin` format trailer names an index layout this build does not read |
 | `UnsupportedCapability { capability }` | The manifest declares `image-generation` |
 | `UnknownFlag { name }` | `flags` contains an unknown key |
 | `ArchMismatch { field, expected, actual }` | An `arch` field differs from the expected `ArchConfig` |
