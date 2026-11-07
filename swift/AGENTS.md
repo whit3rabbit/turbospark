@@ -139,6 +139,12 @@ staging files changed.
   testing credential storage: builds before v0.3.2 create the TypeSafe Keychain
   item at start when it is missing and read it on every start, which recreates
   the state under test.
+- "Start server on launch" never serves keyless. With no key in the field
+  (no Keychain opt-in, or a failed read) the auto-start branch in
+  `AppModel+Persistence.swift` refuses with a warning toast
+  (`AppModel.autoStartNeedsKey`, #150): an auto-start never shows the
+  Server pane that warns about a missing key. A start the user clicks may
+  still run keyless, because the pane shows the warning there.
 - macOS privacy prompts (microphone, screen and system audio recording) are
   opt-in the same way. Only `RecordingPermissions` calls
   `AVCaptureDevice.requestAccess` or `CGRequestScreenCaptureAccess`, from the
@@ -307,19 +313,6 @@ for runtime or release changes.
 
 ## Open issues
 
-- **Auto-started server has no API key on a new install**
-  ([#150](https://github.com/whit3rabbit/turbospark/issues/150)). The server key is
-  session-only unless the user opts in to Keychain storage
-  (`ServerKeychain.resolveOptIn`), so `serverAPIKeyInput` is empty at launch.
-  With "start server on launch" on (`serverAutoStartOnLaunch`,
-  `AppModel+Persistence.swift`, the `server == nil` auto-start branch), the
-  server then starts with `apiKey: nil` and any local process can drive the
-  loaded models over loopback. The Server pane warns about it, but an
-  auto-start never shows that pane. Someone who already had a stored key is
-  unaffected, because the first launch adopts the existing item. Options:
-  generate a per-session key at auto-start (as TypeSafe does) and put it in
-  the field so Copy works, or refuse to auto-start without a key. This needs a
-  decision before either is built.
 - **A fresh build directory fails to link on Xcode 27.0 (beta, build 27A266a).**
   `swift build` into a new `--scratch-path` stops with "Build input file cannot
   be found: .../CSyntext.o". `CSyntext` is a header-only C target in the

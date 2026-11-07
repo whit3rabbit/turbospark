@@ -18,6 +18,12 @@ Checkpoint manifests, tensor metadata, mappings, and resident buffers.
   family defaults, and reject missing or mismatched manifest fields.
 - Keep on-disk names, canonical family strings, ArchConfig fields, and
   manifest serialization synchronized.
+- The index layout constants (`HEADER_BYTES`, `ENTRY_BYTES`, `TRAILER_BYTES`,
+  `INDEX_MAGIC`, `INDEX_FORMAT_VERSION`) and the manifest version constants
+  live here and repack imports them. Bump `MANIFEST_VERSION_MINOR` for a
+  layout addition an older reader can skip, and the major (with
+  `INDEX_FORMAT_VERSION`) for one an older reader would misparse. Both
+  readers refuse a newer value by name instead of guessing.
 - Distinguish resident allocation from on-disk size. MoE expert tables may
   stream, while slots, KV, and resident core determine the working set.
 - A new family or checkpoint is not complete until model-io, runtime, FFI,

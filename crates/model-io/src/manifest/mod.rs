@@ -22,6 +22,18 @@ use crate::error::ModelError;
 /// Default maximum byte limit for reading `manifest.json`.
 pub const DEFAULT_MAX_BYTES: u64 = 4 * 1024 * 1024;
 
+/// The manifest format the writer emits and this loader reads. The major
+/// changes when an older reader would misparse the install; the minor
+/// changes when the layout gains something an older reader can skip. The
+/// loader accepts any minor up to [`MANIFEST_VERSION_MINOR`] and refuses a
+/// newer one, so an install written by a later turbospark is refused by
+/// name instead of being read with the fields it does not know ignored.
+pub const MANIFEST_VERSION_MAJOR: i64 = 1;
+/// Minor 1: `model_weights.bin`'s index region ends with the format
+/// trailer (`resident_index::INDEX_MAGIC`). Minor 0 installs have none and
+/// still load.
+pub const MANIFEST_VERSION_MINOR: i64 = 1;
+
 /// Required file entries (relative to `model.gturbo/`).
 pub const REQUIRED_FILES: [&str; 2] = ["model_weights.bin", "packed_experts/layout.json"];
 
@@ -82,7 +94,7 @@ pub fn validate(m: &Manifest, expected: &ArchConfig) -> Result<(), ModelError> {
     if m.magic != "GTURBO" {
         return Err(ModelError::NotAGTurboDirectory);
     }
-    if m.version_major != 1 {
+    if m.version_major != MANIFEST_VERSION_MAJOR || m.version_minor > MANIFEST_VERSION_MINOR {
         return Err(ModelError::UnsupportedVersion {
             major: m.version_major,
             minor: m.version_minor,

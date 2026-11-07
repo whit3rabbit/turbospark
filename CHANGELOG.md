@@ -21,6 +21,12 @@ when this file gets updated relative to the version bump and the tag.
 - A new `Audit` CI workflow runs `cargo audit` on dependency changes and
   every Monday. `.cargo/audit.toml` ignores `paste` (unmaintained, build-time
   only through `metal`) with the reason written down.
+- `model_weights.bin` ends its index region with a 16-byte format trailer
+  (`GTURBIDX`, format version 1) inside the page padding, and the manifest
+  loader now checks `versionMinor`. A trailer naming a format this build does
+  not read fails with `UnsupportedIndexFormat`, and a manifest newer than
+  `MANIFEST_VERSION_MINOR` fails with `UnsupportedVersion`, so an install
+  written by a later turbospark is refused by name instead of misread.
 - `.gturbo` `manifest.json` carries an optional `producer` block
   (`{tool, version, gitRev?}`) recording which turbospark build wrote the
   install. The repack writer emits `turbospark-repack` and its crate
@@ -28,6 +34,9 @@ when this file gets updated relative to the version bump and the tag.
   it, so every existing install still loads.
 
 ### Changed
+- New installs are written as manifest 1.1. Installs written before (1.0, no
+  trailer) still load, and the Swift reader and turbospark 0.7.x open 1.1
+  installs unchanged because the header and entry offsets did not move.
 - `turbospark-model pull --out DIR` refuses a folder holding files
   TurboSpark did not write, before any network request, because an install
   replaces that folder whole. A new, empty, interrupted or installed folder
@@ -41,6 +50,10 @@ when this file gets updated relative to the version bump and the tag.
 - A non-https `HF_ENDPOINT` prints a warning.
 
 ### Security
+- "Automatically start server on app launch" no longer starts a server
+  without an API key. On a new install, where the key is not saved in the
+  Keychain, the app skips the start and shows a warning toast that says how
+  to set one (#150). Starting the server by hand is unchanged.
 - Bumped `rustls-webpki` to 0.103.16 and `webpki-roots` to 1.0.10 in
   `Cargo.lock` (RUSTSEC-2026-0382, RUSTSEC-2026-0381: distrusted emSign
   certificates). This is the TLS stack every Hugging Face download uses.

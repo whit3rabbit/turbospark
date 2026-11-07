@@ -4,13 +4,31 @@
 
 use std::io::Write;
 
-use turbospark_model_io::{load_resident_index, ModelError, ENTRY_BYTES, HEADER_BYTES};
+use turbospark_model_io::{
+    load_resident_index, ModelError, ENTRY_BYTES, HEADER_BYTES, INDEX_FORMAT_VERSION, INDEX_MAGIC,
+    TRAILER_BYTES,
+};
 
+/// The legacy layout: header, one entry, the name, then data. No padding
+/// and no trailer, which is what every install written before manifest 1.1
+/// looks like.
 fn build_index_bytes(name: &str) -> Vec<u8> {
+    build_index_bytes_with_trailer(name, None)
+}
+
+/// `trailer = Some(version)` appends page-style zero padding and a format
+/// trailer naming `version` to the index region, as the repack writer does.
+fn build_index_bytes_with_trailer(name: &str, trailer: Option<u32>) -> Vec<u8> {
     let name_bytes = name.as_bytes();
     let name_offset = HEADER_BYTES + ENTRY_BYTES; // right after the single entry
     let string_table_len = name_bytes.len();
-    let index_size = name_offset + string_table_len;
+    let string_table_end = name_offset + string_table_len;
+    // 7 bytes of padding before the trailer, so the test proves the reader
+    // finds it by position from the end rather than right after the names.
+    let index_size = match trailer {
+        Some(_) => string_table_end + 7 + TRAILER_BYTES,
+        None => string_table_end,
+    };
 
     let mut buf = Vec::new();
     // Header: indexSize, residentSize, entryCount.
@@ -38,11 +56,70 @@ fn build_index_bytes(name: &str) -> Vec<u8> {
 
     // String table.
     buf.extend_from_slice(name_bytes);
+    assert_eq!(buf.len(), string_table_end);
+
+    if let Some(version) = trailer {
+        buf.extend_from_slice(&[0u8; 7]);
+        buf.extend_from_slice(&INDEX_MAGIC);
+        buf.extend_from_slice(&version.to_le_bytes());
+        buf.extend_from_slice(&0u32.to_le_bytes());
+    }
     assert_eq!(buf.len(), index_size);
 
     // Trailing tensor data region (arbitrary, just enough to not be empty).
     buf.extend_from_slice(&[0u8; 4096]);
     buf
+}
+
+#[test]
+fn legacy_index_without_a_trailer_loads() {
+    let path = write_file(&build_index_bytes("legacy.weight"));
+    let index = load_resident_index(&path).unwrap();
+    assert_eq!(index.header.entry_count, 1);
+    assert!(index.entries.contains_key("legacy.weight"));
+}
+
+#[test]
+fn trailer_naming_the_supported_format_loads() {
+    let path = write_file(&build_index_bytes_with_trailer(
+        "w",
+        Some(INDEX_FORMAT_VERSION),
+    ));
+    let index = load_resident_index(&path).unwrap();
+    assert_eq!(index.header.entry_count, 1);
+}
+
+#[test]
+fn trailer_naming_an_unknown_format_is_refused_by_name() {
+    let path = write_file(&build_index_bytes_with_trailer(
+        "w",
+        Some(INDEX_FORMAT_VERSION + 1),
+    ));
+    let err = load_resident_index(&path).unwrap_err();
+    assert_eq!(
+        err,
+        ModelError::UnsupportedIndexFormat {
+            found: INDEX_FORMAT_VERSION + 1,
+            supported: INDEX_FORMAT_VERSION,
+        }
+    );
+    assert!(err.to_string().contains("index format 2 is not supported"));
+}
+
+#[test]
+fn magic_inside_the_string_table_is_not_a_trailer() {
+    // A legacy name whose last 16 bytes spell a trailer with an unknown
+    // version. The name ends exactly at index_size, so the bytes sit where
+    // a trailer would, but they belong to the string table and the file is
+    // the legacy layout.
+    let mut name = b"x.".to_vec();
+    name.extend_from_slice(&INDEX_MAGIC);
+    name.extend_from_slice(&(INDEX_FORMAT_VERSION + 1).to_le_bytes());
+    name.extend_from_slice(&0u32.to_le_bytes());
+    let name = String::from_utf8(name).unwrap();
+    let path = write_file(&build_index_bytes(&name));
+    let index = load_resident_index(&path).unwrap();
+    assert!(index.entries.contains_key(&name));
 }
 
 fn set_u64(bytes: &mut [u8], field_offset: usize, value: u64) {

@@ -6,6 +6,7 @@ use std::io::Write;
 
 use turbospark_model_io::{
     load_manifest, peek_family, LinearAttentionConfig, ManifestProducer, ModelError, ModelFamily,
+    MANIFEST_VERSION_MAJOR, MANIFEST_VERSION_MINOR,
 };
 
 fn toy_arch() -> turbospark_model_io::ArchConfig {
@@ -220,10 +221,13 @@ fn hadamard_signs_are_unique_bounded_architecture_ranges() {
 
 #[test]
 fn load_succeeds_for_a_matching_toy_manifest() {
+    // The toy manifest is 1.0, the version every install written before the
+    // index trailer carries, so this is also the legacy-acceptance case.
     let dir = tempfile_dir();
     write_manifest(dir.path(), &toy_manifest_json());
     let manifest = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap();
     assert_eq!(manifest.magic, "GTURBO");
+    assert_eq!(manifest.version_minor, 0);
     assert_eq!(manifest.num_layers, 2);
 }
 
@@ -276,6 +280,55 @@ fn the_producer_block_is_optional_and_round_trips() {
     assert_eq!(
         serde_json::to_value(&got).unwrap(),
         serde_json::json!({"tool": "other", "version": "1"})
+    );
+}
+
+#[test]
+fn the_current_minor_version_loads() {
+    let dir = tempfile_dir();
+    let json = toy_manifest_json().replace(
+        "\"versionMinor\": 0",
+        &format!("\"versionMinor\": {MANIFEST_VERSION_MINOR}"),
+    );
+    assert_ne!(json, toy_manifest_json(), "the replace did not apply");
+    write_manifest(dir.path(), &json);
+    let manifest = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap();
+    assert_eq!(manifest.version_minor, MANIFEST_VERSION_MINOR);
+}
+
+#[test]
+fn a_newer_minor_version_is_refused_by_name() {
+    let dir = tempfile_dir();
+    let newer = MANIFEST_VERSION_MINOR + 1;
+    let json =
+        toy_manifest_json().replace("\"versionMinor\": 0", &format!("\"versionMinor\": {newer}"));
+    assert_ne!(json, toy_manifest_json(), "the replace did not apply");
+    write_manifest(dir.path(), &json);
+    let err = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap_err();
+    assert_eq!(
+        err,
+        ModelError::UnsupportedVersion {
+            major: MANIFEST_VERSION_MAJOR,
+            minor: newer,
+        }
+    );
+    assert!(
+        err.to_string().contains(&format!(
+            "this build reads 1.0 through 1.{MANIFEST_VERSION_MINOR}"
+        )),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_different_major_version_is_refused() {
+    let dir = tempfile_dir();
+    let json = toy_manifest_json().replace("\"versionMajor\": 1", "\"versionMajor\": 2");
+    assert_ne!(json, toy_manifest_json(), "the replace did not apply");
+    write_manifest(dir.path(), &json);
+    assert_eq!(
+        load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap_err(),
+        ModelError::UnsupportedVersion { major: 2, minor: 0 }
     );
 }
 
