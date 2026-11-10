@@ -264,6 +264,11 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
             numLayers: arch["numLayers"] as? Int)
     }
 
+    /// The install can use the prefill bank when the runner streams its experts.
+    static func supportsMoEPrefillBank(atInstallPath path: String) -> Bool {
+        !path.isEmpty && ManifestFactsCache.facts(forInstallPath: path).supportsMoEPrefillBank
+    }
+
     // MARK: - Resolution
 
     /// - Parameter sessionInfo: the OPEN session's own report, when this
@@ -483,6 +488,7 @@ struct ManifestFacts: Equatable {
     var experts: Int?
     var topK: Int?
     var supportsKvQuant = false
+    var supportsMoEPrefillBank = false
 
     /// Pure parse of the manifest bytes; an unreadable manifest yields the
     /// all-nil value, matching the old inline behaviour.
@@ -497,6 +503,7 @@ struct ManifestFacts: Equatable {
         facts.vocab = arch["vocabSize"] as? Int
         facts.experts = arch["numExperts"] as? Int
         facts.topK = arch["topKExperts"] as? Int
+        facts.supportsMoEPrefillBank = arch["family"] as? String == "qwen4exp" && (facts.experts ?? 0) > 1
         facts.supportsKvQuant = ModelFeatureDescriptor.kvQuantEligible(
             fullHeadDim: arch["fullHeadDim"] as? Int,
             fullAttentionLayerMask: arch["fullAttentionLayerMask"] as? [Int],

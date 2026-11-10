@@ -313,6 +313,22 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[off("0", "vision_attn_mma")],
     },
     Knob {
+        name: "qwen4_prefill",
+        env: "TURBOSPARK_QWEN4_PREFILL",
+        values: &["<unset>", "off", "wide", "bank"],
+        read_at: ReadAt::Open,
+        exactness: Exactness::BitExact,
+        families: &["qwen4exp"],
+        quotable: true,
+        doc: "docs/ENV.md",
+        engagement: &[
+            on("wide", "qwen4_prefill_wide"),
+            on("bank", "qwen4_prefill_bank"),
+            off("wide", "qwen4_prefill_fallback"),
+            off("bank", "qwen4_prefill_fallback"),
+        ],
+    },
+    Knob {
         name: "routed_batch",
         env: "TURBOSPARK_ROUTED_BATCH",
         values: &["<unset>", "1"],

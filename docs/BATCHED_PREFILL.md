@@ -1767,6 +1767,48 @@ to the same few experts (99% cache hits), and these seams then read +47.5%
 to 70.2, record `1793441796301-81562-20`). The digests matched across arms
 then too, so exactness held; the speed did not survive real routing.
 
+### Flash Next prefill-only expert bank experiment
+
+`TURBOSPARK_QWEN4_PREFILL=wide` widens the per-token-kernel prefill driver
+from 16 to up to 128 rows. `bank` uses the same width and reads the actual
+router's expert union once per layer into a temporary shared Metal buffer.
+The next layer reuses its address space after the reads and GPU passes
+finish. Each outer chunk owns its scratch and unmaps it before returning,
+including on errors. The separate per-layer LFU remains available to decode.
+The bank does not populate it, so first-token decode can read more experts.
+Both arms are opt-in and fall back before changing forward state if their
+scratch and bank cannot be admitted under the host's memory pressure.
+
+The initial screen used a 6,060-token chat-templated REAP-288 prompt at
+8,192 context on an Apple M4 Max with 36 GiB, on AC and an internal SSD.
+`scripts/prefill_bank_replay.py` reproduced all 501,126 expert misses at the
+resolved 96 slots, including the previous-token slot pins. The replay
+projected 16.4% fewer requested expert bytes with the bank. The 128-row
+control with LFU barely moved the byte count. The replay estimates requested
+bytes from per-layer expert strides and does not estimate physical SSD reads.
+
+The 72-token hardware diagnostic matched prefill logits and 32 greedy tokens
+across all arms. The bank's extra footprint was gone by the post-prefill
+sample, but it requested more expert bytes on this short prompt. On the
+6,060-token diagnostic all three output digests also matched. The wide and
+bank arms fell back on some chunks when macOS reported memory pressure, so
+the lab rejected their timing comparison. The I/O sampler itself also
+disqualifies timing. See the `qwen4-prefill-bank-mmap-short-io` and
+`qwen4-prefill-bank-mmap-long-io` ledgers for the underlying records.
+
+A follow-up on the same machine and internal SSD used `long-synthesis`
+(2,940 prompt tokens, 32 decode steps, 8,192 context, 48 wired slots).
+All arms completed without fallback and matched both output digests. The
+bank requested 558 GB of expert reads against 1,483 GB for the baseline
+and 1,482 GB for the wide control. Physical expert reads were 554 GB for
+the bank, 768 GB for the baseline, and 466 GB for the wide control. The
+wide run had a mixed page cache while both other runs were classified as
+cold. The bank's sampled footprint fell from 7.94 GB peak to 7.14 GB at
+the end of prefill, close to the 7.14 GB baseline. The run was instrumented
+and had foreign CPU activity, so it establishes no throughput verdict.
+The `qwen4-prefill-bank-mmap-48-io` ledger includes per-arm first-token
+time, decode time, and the requested and physical I/O counters.
+
 ## Measuring chunked prefill: the instrument, and what it could not see before
 
 Until 2026-09-05 `crates/bench/src/real_model.rs` reached only

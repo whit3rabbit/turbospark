@@ -73,7 +73,7 @@ use foundation::LogitValue;
 use super::attn::{encode_full_attention_block, encode_linear_block};
 use super::hc::encode_hyper_connection;
 use super::ple::encode_ple_layer;
-use super::{batched, moe, moe_batch};
+use super::{batched, moe, moe_batch, prefill_bank};
 use super::{layer_tensor, TRUNK_PREFIX};
 use crate::moe_prefill_pipeline::routed_pipeline_banks;
 use crate::real_forward::RealForwardRunner;
@@ -114,15 +114,71 @@ impl RealForwardRunner {
             }
             return Ok(());
         }
+        if let Some(mode) = self.real_qwen4.as_mut().and_then(|state| {
+            state.prefill_footprint = None;
+            state.prefill_experiment
+        }) {
+            let rows = tokens.len().min(prefill_bank::WIDE_ROWS);
+            match mode.allocate(self, rows) {
+                Ok(mut resources) => {
+                    foundation::engaged!("qwen4_prefill_wide");
+                    if resources.bank.is_some() {
+                        foundation::engaged!("qwen4_prefill_bank");
+                    }
+                    self.swap_qwen4_prefill_rows(&mut resources.buffers);
+                    // Autoreleased Metal commands may still retain the no-copy
+                    // view after waiting. Drain the pool before freeing its pages.
+                    let result = gpu::autorelease_pool(|| {
+                        self.walk_qwen4_prefill(
+                            tokens,
+                            start_position,
+                            logits,
+                            rows,
+                            resources.bank.as_mut(),
+                        )
+                    });
+                    let footprint = gpu::process_footprint();
+                    self.real_qwen4
+                        .as_mut()
+                        .expect("Qwen4 prefill")
+                        .prefill_footprint = footprint;
+                    self.swap_qwen4_prefill_rows(&mut resources.buffers);
+                    return result;
+                }
+                Err(reason) => {
+                    foundation::engaged!("qwen4_prefill_fallback");
+                    eprintln!("[qwen4-prefill] fallback: {reason}");
+                }
+            }
+        }
+        self.walk_qwen4_prefill(tokens, start_position, logits, MAX_PREFILL_BATCH, None)
+    }
+
+    fn swap_qwen4_prefill_rows(&mut self, buffers: &mut [gpu::MetalBuffer; 5]) {
+        let state = self.real_qwen4.as_mut().expect("Qwen4 prefill");
+        for (old, new) in prefill_bank::row_buffers(state).into_iter().zip(buffers) {
+            std::mem::swap(old, new);
+        }
+    }
+
+    fn walk_qwen4_prefill(
+        &mut self,
+        tokens: &[i32],
+        start_position: usize,
+        logits: &mut [LogitValue],
+        rows: usize,
+        mut bank: Option<&mut prefill_bank::PrefillBank>,
+    ) -> Result<(), RealForwardError> {
         let mut offset = 0usize;
         while offset < tokens.len() {
-            let take = (tokens.len() - offset).min(MAX_PREFILL_BATCH);
+            let take = (tokens.len() - offset).min(rows);
             let last = offset + take == tokens.len();
             self.prefill_micro_batch_qwen4(
                 &tokens[offset..offset + take],
                 start_position + offset,
                 last,
                 logits,
+                bank.as_deref_mut(),
             )?;
             offset += take;
         }
@@ -135,10 +191,11 @@ impl RealForwardRunner {
         start_position: usize,
         want_head: bool,
         logits: &mut [LogitValue],
+        bank: Option<&mut prefill_bank::PrefillBank>,
     ) -> Result<(), RealForwardError> {
         let started = Instant::now();
         let result =
-            self.prefill_micro_batch_qwen4_inner(tokens, start_position, want_head, logits);
+            self.prefill_micro_batch_qwen4_inner(tokens, start_position, want_head, logits, bank);
         // One forward pass per TOKEN, not per micro-batch, matching every
         // other chunked driver's phase divisor (`crates/runtime/CLAUDE.md`
         // Gotcha 6).
@@ -153,6 +210,7 @@ impl RealForwardRunner {
         start_position: usize,
         want_head: bool,
         logits: &mut [LogitValue],
+        mut bank: Option<&mut prefill_bank::PrefillBank>,
     ) -> Result<(), RealForwardError> {
         let arch = self.arch.clone();
         let hidden = arch.hidden_size as usize;
@@ -471,6 +529,22 @@ impl RealForwardRunner {
                 continue;
             }
 
+            let loaded_bank = if let Some(bank) = bank.as_deref_mut() {
+                let streamer = self.streamers[layer].as_mut().ok_or_else(|| {
+                    RealForwardError::Unsupported(format!(
+                        "prefill bank layer {layer} has no streamer"
+                    ))
+                })?;
+                Some(bank.load_layer(
+                    self.real_qwen4.as_ref().expect("Qwen4 prefill"),
+                    streamer,
+                    &mut self.phases,
+                    m,
+                    top_k,
+                )?)
+            } else {
+                None
+            };
             let mut previous_slots: HashSet<usize> = HashSet::new();
             for t in 0..m {
                 if banks == 1 {
@@ -561,6 +635,7 @@ impl RealForwardRunner {
                         top_k,
                         use_silu,
                         &slot,
+                        loaded_bank.as_ref(),
                     )?;
 
                     let x_off = (t * wide_dim * 2) as u64;
@@ -582,7 +657,12 @@ impl RealForwardRunner {
                     self.retire_routed(&mut pending_routed);
                 }
                 debug_assert!(pending_routed.is_none(), "routed pipeline depth is 1");
-                pending_routed = Some(routed_pass.commit());
+                let committed = routed_pass.commit();
+                pending_routed = Some(if loaded_bank.is_some() {
+                    committed.waiting_on_drop()
+                } else {
+                    committed
+                });
                 previous_slots = used.into_iter().collect();
             }
 

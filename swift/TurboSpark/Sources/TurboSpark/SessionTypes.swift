@@ -63,6 +63,10 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
     public let anePrefill: AnePrefill?
     /// Whether this session's expert slot cache is wired, and why not.
     public let expertSlotsWiring: ExpertSlotsWiring?
+    /// Whether the loaded configuration can use the shared expert bank.
+    public let moePrefillBankSupported: Bool?
+    /// Whether the bank is configured for this session. Admission is per prefill.
+    public let moePrefillBankEnabled: Bool?
 
     /// The reasoning levels this checkpoint accepts. **BUILD A PICKER FROM
     /// THIS AND FROM NOTHING ELSE.**

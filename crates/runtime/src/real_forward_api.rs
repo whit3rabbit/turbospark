@@ -123,6 +123,12 @@ impl RealForwardRunner {
         self.expert_cache_slots
     }
 
+    /// Footprint sampled while the last experimental Qwen4 prefill's
+    /// temporary buffers were still live. Consume it before sampling decode.
+    pub fn take_prefill_experiment_footprint(&mut self) -> Option<u64> {
+        self.real_qwen4.as_mut()?.prefill_footprint.take()
+    }
+
     /// The routed slot cache's eviction policy, or `None` when no layer
     /// streams (a dense install, or mapped residency). Printed beside
     /// [`Self::expert_cache_slots`] so a run names the cache arm it measured

@@ -43,6 +43,14 @@
      "baseline": "sparse", "candidates": ["dense:qsa_force_dense=1"]}
   ],
   "findings": [
+    {"id": "qwen4exp.prefill-bank-io-2026-11-09", "date": "2026-11-09", "install": "qwen4-reap288", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "8564bb26 plus the prefill bank prototype",
+     "workload": "Internal SSD, long-synthesis (2940 prompt tokens), 32 decode steps, 8192 context, 128 outer chunk, 48 wired streamed slots",
+     "arms": {"base": {}, "wide": {"qwen4_prefill": "wide"}, "bank": {"qwen4_prefill": "bank"}},
+     "metric": "expert_bytes_requested", "values": {"base": 1482613669888, "wide": 1481805152256, "bank": 558295269376},
+     "verdict": "reading",
+     "provenance": {"kind": "ledger", "experiment": "qwen4-prefill-bank-mmap-48-io", "record": "1794271338098-36430-5"},
+     "conditions": "One diagnostic round, disk I/O instrumentation and foreign CPU activity. Cold cache for base and bank, mixed for wide. No fallback.",
+     "note": "Prefill and greedy decode digests match. The bank footprint drops before decode. No throughput verdict."},
     {"id": "qwen4exp.dflash2-acceptance-2026-10-31", "date": "2026-10-31", "install": "qwen4-reap288", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "ea6b2d6d plus the uncommitted norm fix and TURBOSPARK_QWEN4_TAP_FILE",
      "workload": "offline: greedy 256-token chat-template generations of 6 prompts (math, code, explain, chat, copy, wet) with every position's taps captured; incoai/Qwen3.8-Flash-Next-DFlash2 @ a22a1744 run in a numpy port with the install's INT4 embed and head; accept the leading matches against the target's own greedy tokens",
      "arms": {"b2": {}, "b3": {}, "b4": {}, "b5": {}, "b8": {}},

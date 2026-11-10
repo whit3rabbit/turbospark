@@ -90,6 +90,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var anePrefillDir: String
     /// Expert cache locking ("auto", "on", "off").
     public var expertSlotsWiring: String
+    public var moePrefillBank: Bool
     /// Expert residency ("auto", "streamed", "mapped").
     public var expertResidency: String
     /// Output generation rate cap in tokens/second (0 = uncapped).
@@ -332,6 +333,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         anePrefill: String = "auto",
         anePrefillDir: String = "",
         expertSlotsWiring: String = "auto",
+        moePrefillBank: Bool = false,
         expertResidency: String = "auto",
         maxTokensPerSec: Double = 0,
         steeringPath: String = "",
@@ -421,6 +423,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.anePrefill = anePrefill
         self.anePrefillDir = anePrefillDir
         self.expertSlotsWiring = expertSlotsWiring
+        self.moePrefillBank = moePrefillBank
         self.expertResidency = expertResidency
         self.maxTokensPerSec = maxTokensPerSec
         self.steeringPath = steeringPath
@@ -561,6 +564,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.anePrefill = c.decodeLenient(String.self, forKey: .anePrefill, fallback: "auto")
         self.anePrefillDir = c.decodeLenient(String.self, forKey: .anePrefillDir, fallback: "")
         self.expertSlotsWiring = c.decodeLenient(String.self, forKey: .expertSlotsWiring, fallback: "auto")
+        self.moePrefillBank = c.decodeLenient(Bool.self, forKey: .moePrefillBank, fallback: false)
         self.expertResidency = c.decodeLenient(String.self, forKey: .expertResidency, fallback: "auto")
         self.maxTokensPerSec = c.decodeLenient(Double.self, forKey: .maxTokensPerSec, fallback: 0)
         self.steeringPath = c.decodeLenient(String.self, forKey: .steeringPath, fallback: "")

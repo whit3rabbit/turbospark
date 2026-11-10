@@ -199,6 +199,8 @@ fn session_info_is_json_the_swift_side_can_decode() {
     let json: serde_json::Value = serde_json::from_str(&unsafe { take(out) }).unwrap();
     // camelCase, so a Codable needs no CodingKeys.
     assert_eq!(json["maxContext"], 4096);
+    assert_eq!(json["moePrefillBankSupported"], false);
+    assert_eq!(json["moePrefillBankEnabled"], false);
     assert!(json["vocabSize"].as_u64().unwrap() > 0);
     assert!(json.get("reasoningSupport").is_some());
     // The menu a GUI draws. Non-empty and opening at "off" on every install:

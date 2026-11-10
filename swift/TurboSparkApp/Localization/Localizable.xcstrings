@@ -173555,6 +173555,137 @@
         }
       }
     },
+    "Experimental. Uses extra memory to reduce expert reads on long text prompts when experts are streamed. Takes effect on the next model load.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental. Uses extra memory to reduce expert reads on long text prompts when experts are streamed. Takes effect on the next model load."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental. Usa memoria adicional para reducir las lecturas de expertos con indicaciones de texto largas cuando los expertos se cargan bajo demanda. Se aplica la próxima vez que se cargue el modelo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expérimental. Utilise plus de mémoire pour réduire les lectures d’experts pour les longues requêtes textuelles quand les experts sont chargés à la demande. Prend effet au prochain chargement du modèle."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimentell. Nutzt zusätzlichen Speicher, um bei langen Texteingaben weniger Expertendaten zu lesen, wenn Experten bei Bedarf geladen werden. Wirksam ab dem nächsten Laden des Modells."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sperimentale. Usa memoria aggiuntiva per ridurre le letture degli esperti con prompt di testo lunghi quando gli esperti vengono caricati su richiesta. Ha effetto al prossimo caricamento del modello."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimental. Usa memória extra para reduzir as leituras de especialistas em prompts de texto longos quando os especialistas são carregados sob demanda. Entra em vigor no próximo carregamento do modelo."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Экспериментальная функция. Использует дополнительную память, чтобы реже читать данные экспертов при длинных текстовых запросах, если эксперты загружаются по требованию. Вступает в силу при следующей загрузке модели."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "実験的な機能です。エキスパートを必要に応じて読み込む場合、追加のメモリを使って長いテキストプロンプトでの読み込みを減らします。次回のモデル読み込み時に適用されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "실험적 기능입니다. 전문가를 필요할 때 불러오는 경우, 추가 메모리를 사용하여 긴 텍스트 프롬프트의 전문가 읽기 횟수를 줄입니다. 다음 모델 로드 시 적용됩니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实验性功能。按需加载专家时，使用额外内存减少长文本提示的专家读取。下次加载模型时生效。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "實驗性功能。按需載入專家時，使用額外記憶體以減少長文字提示的專家讀取。下次載入模型時生效。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ميزة تجريبية. تستخدم ذاكرة إضافية لتقليل عمليات قراءة الخبراء عند معالجة مطالبات نصية طويلة وتحميل الخبراء عند الحاجة. يسري الإعداد عند التحميل التالي للنموذج."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "תכונה ניסיונית. משתמשת בזיכרון נוסף כדי לצמצם קריאות של מומחים בהנחיות טקסט ארוכות כשהמומחים נטענים לפי דרישה. ההגדרה תחול בטעינה הבאה של המודל."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्रायोगिक सुविधा। एक्सपर्ट को ज़रूरत पड़ने पर लोड करने वाले मोड में लंबे टेक्स्ट प्रॉम्प्ट के लिए एक्सपर्ट रीड कम करने हेतु अतिरिक्त मेमोरी का उपयोग करती है। अगली बार मॉडल लोड होने पर लागू होगी।"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimenteel. Gebruikt extra geheugen om bij lange tekstprompts minder expertgegevens te lezen wanneer experts op aanvraag worden geladen. Gaat in wanneer het model opnieuw wordt geladen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Funkcja eksperymentalna. Używa dodatkowej pamięci, aby ograniczyć odczyty danych ekspertów przy długich poleceniach tekstowych, gdy eksperci są ładowani na żądanie. Zaczyna działać po następnym załadowaniu modelu."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deneysel. Uzmanlar gerektiğinde yükleniyorsa uzun metin istemlerinde uzman okumalarını azaltmak için ek bellek kullanır. Model bir sonraki yüklemede uygulanır."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Експериментальна функція. Використовує додаткову пам’ять, щоб рідше зчитувати дані експертів для довгих текстових запитів, коли експерти завантажуються за потреби. Набуває чинності під час наступного завантаження моделі."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experimentell. Använder extra minne för att minska antalet expertläsningar vid långa textprompter när experterna läses in vid behov. Gäller nästa gång modellen läses in."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tính năng thử nghiệm. Dùng thêm bộ nhớ để giảm số lần đọc chuyên gia với lời nhắc văn bản dài khi chuyên gia được tải theo nhu cầu. Có hiệu lực vào lần tải mô hình tiếp theo."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eksperimental. Menggunakan memori tambahan untuk mengurangi pembacaan pakar pada prompt teks panjang ketika pakar dimuat sesuai kebutuhan. Berlaku saat model dimuat berikutnya."
+          }
+        }
+      }
+    },
     "Expert Cache Locking": {
       "extractionState": "manual",
       "localizations": {
@@ -336821,6 +336952,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "預填充 %lld/%lld"
+          }
+        }
+      }
+    },
+    "Prefill Expert Cache": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prefill Expert Cache"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Caché de expertos para prefill"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cache d’experts pour le préremplissage"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Experten-Cache für Prefill"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cache degli esperti per il prefill"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cache de especialistas para pré-preenchimento"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кэш экспертов для предзаполнения"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プリフィル用エキスパートキャッシュ"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "프리필 전문가 캐시"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "预填充专家缓存"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "預填充專家快取"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ذاكرة الخبراء المؤقتة للتعبئة المسبقة"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מטמון מומחים למילוי מקדים"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्रीफ़िल एक्सपर्ट कैश"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expertcache voor prefill"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pamięć podręczna ekspertów dla fazy prefill"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ön doldurma için uzman önbelleği"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кеш експертів для попереднього заповнення"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expertcache för förifyllning"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bộ nhớ đệm chuyên gia cho bước nạp trước"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cache pakar untuk pengisian awal"
           }
         }
       }

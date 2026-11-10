@@ -81,6 +81,7 @@ extension AppModel {
         self.runtimeOptions.anePrefill = AppAnePrefillOption(rawValue: settings.anePrefill) ?? .auto
         self.runtimeOptions.anePrefillDir = settings.anePrefillDir
         self.runtimeOptions.expertSlotsWiring = AppExpertSlotsWiringOption(rawValue: settings.expertSlotsWiring) ?? .auto
+        self.runtimeOptions.moePrefillBank = settings.moePrefillBank
         self.runtimeOptions.expertResidency = AppExpertResidencyOption(rawValue: settings.expertResidency) ?? .auto
         self.runtimeOptions.maxTokensPerSec = settings.maxTokensPerSec
         self.runtimeOptions.steeringPath = settings.steeringPath.isEmpty ? nil : settings.steeringPath
@@ -266,6 +267,7 @@ extension AppModel {
             anePrefill: runtimeOptions.anePrefill.rawValue,
             anePrefillDir: runtimeOptions.anePrefillDir,
             expertSlotsWiring: runtimeOptions.expertSlotsWiring.rawValue,
+            moePrefillBank: runtimeOptions.moePrefillBank,
             expertResidency: runtimeOptions.expertResidency.rawValue,
             maxTokensPerSec: runtimeOptions.maxTokensPerSec,
             steeringPath: runtimeOptions.steeringPath ?? "",
