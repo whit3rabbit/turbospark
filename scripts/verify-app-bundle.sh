@@ -22,8 +22,8 @@
 #   3. every peer binary the `turbospark` front end execs is in the bundle.
 #      0.6.0 shipped without turbospark-image because the packaging lists
 #      were hand-kept and nothing compared them to the dispatch table.
-#   4. the app stays alive for a few seconds. It is run with an empty HOME so
-#      it cannot touch real user data.
+#   4. the bundled openkindd can run MLX and the app stays alive for a few
+#      seconds. Both run with an empty HOME to isolate user data.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -99,10 +99,27 @@ done
   || fail "computer-use helper --self-test printed no manifest"
 echo "==> computer-use helper: $(codesign -dv "$helper" 2>&1 | sed -n 's/^CDHash=//p')"
 
-# 4. Launch smoke -----------------------------------------------------------
+# 4. Daemon and app smoke ---------------------------------------------------
 home="$(mktemp -d)"
 log="$(mktemp)"
 trap 'rm -rf "$home" "$log"; [ -n "${pid:-}" ] && kill "$pid" 2>/dev/null || true' EXIT
+
+openkind_dir="$(cd "$contents/MacOS" && pwd)"
+[ -x "$openkind_dir/openkindd" ] || fail "openkindd missing from the bundle"
+[ -s "$openkind_dir/mlx.metallib" ] || fail "openkindd Metal library missing from the bundle"
+report="$(cd "$home" && HOME="$home" "$openkind_dir/openkindd" --diagnose-backends --json)" \
+  || fail "openkindd backend diagnostics failed"
+if ! printf '%s\n' "$report" | python3 -c '
+import json
+import sys
+
+backends = json.load(sys.stdin)["backends"]
+sys.exit(not any(entry["backend"] == "mlx-fp32" and entry["ready"] for entry in backends))
+'; then
+  printf '%s\n' "$report" >&2
+  fail "openkindd could not run MLX with its bundled Metal library"
+fi
+echo "==> openkindd MLX probe passed"
 
 echo "==> launching for ${smoke_seconds}s with an empty HOME"
 HOME="$home" "$exe" >"$log" 2>&1 &

@@ -105,7 +105,7 @@ The root `manifest.json` contains metadata for model architecture validation, qu
   "expertStride": 33554432,
   "producer": {
     "tool": "turbospark-repack",
-    "version": "0.7.1"
+    "version": "0.8.0"
   }
 }
 ```

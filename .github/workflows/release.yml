@@ -170,8 +170,8 @@ jobs:
       - name: Build app bundle (also builds the CLI and the server)
         env:
           VER: ${{ needs.check-version.outputs.version }}
-          OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION || 'b9061ee352fe9d15de2ea4683fb9c093e0fc785e' }}
-          OPENKIND_SERVER_VERSION: ${{ vars.OPENKIND_SERVER_VERSION || '0.4.0' }}
+          OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION || 'd601b670a9ef9be2f16cc40ae55a9ccaadb73df1' }}
+          OPENKIND_SERVER_VERSION: ${{ vars.OPENKIND_SERVER_VERSION || '0.5.1' }}
         run: ./scripts/make-app-bundle.sh --version "${VER}"
 
       - name: Stage CLI zip
@@ -186,12 +186,12 @@ jobs:
           # package. The front end hands image, music, clone, speak, steer
           # and ocr to the siblings, so all of them ship (the same list as
           # make-app-bundle.sh).
-          bins="turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-music turbospark-clone turbospark-speak turbospark-steer turbospark-ocr"
-          for bin in $bins; do
+          bins=(turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-music turbospark-clone turbospark-speak turbospark-steer turbospark-ocr)
+          for bin in "${bins[@]}"; do
             cp "target/aarch64-apple-darwin/release/$bin" dist/stage/
           done
-          cd dist/stage && zip "../turbospark-${VER}-macos-arm64.zip" $bins
-          cd .. && rm -rf stage
+          (cd dist/stage && zip "../turbospark-${VER}-macos-arm64.zip" "${bins[@]}")
+          rm -rf dist/stage
 
       # Runs the app, not just `ls` it. v0.2.0 and v0.3.0 packaged cleanly and
       # crashed on launch; this is the gate that would have stopped them. It
@@ -202,8 +202,8 @@ jobs:
       - name: Build DMG
         env:
           VER: ${{ needs.check-version.outputs.version }}
-          OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION || 'b9061ee352fe9d15de2ea4683fb9c093e0fc785e' }}
-          OPENKIND_SERVER_VERSION: ${{ vars.OPENKIND_SERVER_VERSION || '0.4.0' }}
+          OPENKIND_RELEASE_REVISION: ${{ vars.OPENKIND_RELEASE_REVISION || 'd601b670a9ef9be2f16cc40ae55a9ccaadb73df1' }}
+          OPENKIND_SERVER_VERSION: ${{ vars.OPENKIND_SERVER_VERSION || '0.5.1' }}
         run: ./scripts/make-dmg.sh --version "${VER}"
 
       # The Sparkle feed that lets installed apps update in place. Signed with
