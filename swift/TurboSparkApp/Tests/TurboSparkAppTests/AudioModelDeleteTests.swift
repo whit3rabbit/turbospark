@@ -45,7 +45,8 @@ final class AudioModelDeleteTests: XCTestCase {
         let (controller, root) = try controller()
         defer { try? FileManager.default.removeItem(at: root) }
         controller.profiles = ["music-a", "music-b", "music-c", "music-d", "music-e"].map { profile(alias: $0) }
-        controller.selectPage(.music)
+        controller.selectPage(.advanced)
+        controller.selectTask(AudioTask.music.rawValue)
         XCTAssertEqual(aliases(controller.pickerProfiles), [], "nothing installed lists nothing")
         XCTAssertEqual(aliases(controller.availableProfiles).count, 5, "the catalog list itself is unchanged")
 
@@ -60,7 +61,8 @@ final class AudioModelDeleteTests: XCTestCase {
         let (controller, root) = try controller()
         defer { try? FileManager.default.removeItem(at: root) }
         controller.profiles = [profile(alias: "music-a"), profile(alias: "music-b")]
-        controller.selectPage(.music)
+        controller.selectPage(.advanced)
+        controller.selectTask(AudioTask.music.rawValue)
         let json = """
         {"record":{"alias":"music-a","path":"/Volumes/Away/music-a","family":"minimax_music3",
                    "status":"runs","install_bytes":10},
@@ -75,7 +77,8 @@ final class AudioModelDeleteTests: XCTestCase {
         let (controller, root) = try controller()
         defer { try? FileManager.default.removeItem(at: root) }
         controller.profiles = [profile(alias: "music-a")]
-        controller.selectPage(.music)
+        controller.selectPage(.advanced)
+        controller.selectTask(AudioTask.music.rawValue)
         XCTAssertNil(controller.recipe.modelID)
     }
 
@@ -84,7 +87,8 @@ final class AudioModelDeleteTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         controller.profiles = [profile(alias: "music-a"), profile(alias: "music-b")]
         controller.installedPaths = ["music-a": "/models/music-a", "music-b": "/models/music-b"]
-        controller.selectPage(.music)
+        controller.selectPage(.advanced)
+        controller.selectTask(AudioTask.music.rawValue)
         controller.selectModel("music-a")
         controller.flushPreferences()
         XCTAssertEqual(controller.preferences.selectedModels[controller.modelSelectionKey], "music-a")
@@ -106,7 +110,8 @@ final class AudioModelDeleteTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         controller.profiles = [profile(alias: "music-a")]
         controller.installedPaths = ["music-a": "/models/music-a"]
-        controller.selectPage(.music)
+        controller.selectPage(.advanced)
+        controller.selectTask(AudioTask.music.rawValue)
         XCTAssertEqual(controller.recipe.modelID, "music-a")
         controller.flushPreferences()
 
@@ -128,7 +133,8 @@ final class AudioModelDeleteTests: XCTestCase {
         controller.profiles = [profile(alias: "music-a")]
         controller.installedPaths = ["music-a": "/models/music-a"]
         controller.preferences.localModels["music-a"] = Data([1])
-        controller.selectPage(.music)
+        controller.selectPage(.advanced)
+        controller.selectTask(AudioTask.music.rawValue)
         controller.installedPaths["music-a"] = nil
         controller.forgetChoices(of: "music-a")
         XCTAssertEqual(controller.recipe.modelID, "music-a", "the folder the user chose still serves it")
@@ -162,7 +168,8 @@ final class AudioModelDeleteTests: XCTestCase {
         let music = profile(alias: "music-a")
         controller.profiles = [music]
         controller.installedPaths = ["music-a": "/models/music-a"]
-        controller.selectPage(.music)
+        controller.selectPage(.advanced)
+        controller.selectTask(AudioTask.music.rawValue)
         XCTAssertTrue(controller.canDelete(music))
         controller.deleteBlockedReason = { $0 == "music-a" ? "attached to the server" : nil }
         controller.deleteModel(music)
@@ -178,7 +185,8 @@ final class AudioModelDeleteTests: XCTestCase {
         controller.profiles = [profile(alias: "music-a"), profile(alias: "music-b")]
         controller.installedPaths = ["music-b": "/models/music-b"]
         controller.preferences.localModels["music-a"] = Data([1])
-        controller.selectPage(.music)
+        controller.selectPage(.advanced)
+        controller.selectTask(AudioTask.music.rawValue)
         controller.selectModel("music-a")
         var told: [String] = []
         controller.onInstalledModelsChanged = { told.append($0) }

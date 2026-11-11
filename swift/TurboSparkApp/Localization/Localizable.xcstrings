@@ -587342,6 +587342,661 @@
           }
         }
       }
+    },
+    "Choose a voice cloning model": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "اختر نموذجًا لاستنساخ الصوت"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stimmklon-Modell auswählen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a voice cloning model"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Elige un modelo de clonación de voz"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choisissez un modèle de clonage vocal"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "בחירת מודל לשכפול קול"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "वॉइस क्लोनिंग मॉडल चुनें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pilih model kloning suara"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scegli un modello di clonazione vocale"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "音声クローンのモデルを選択"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "음성 복제 모델 선택"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kies een model voor stemklonen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wybierz model klonowania głosu"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Escolha um modelo de clonagem de voz"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выберите модель клонирования голоса"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Välj en modell för röstkloning"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ses klonlama modeli seçin"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Виберіть модель клонування голосу"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chọn mô hình nhân bản giọng nói"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择语音克隆模型"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選擇語音複製模型"
+          }
+        }
+      }
+    },
+    "Download the music model": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "نزّل نموذج الموسيقى"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Musikmodell herunterladen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download the music model"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Descarga el modelo de música"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Téléchargez le modèle musical"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הורדת מודל המוזיקה"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "संगीत मॉडल डाउनलोड करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Unduh model musik"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Scarica il modello musicale"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "音楽モデルをダウンロード"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "음악 모델 다운로드"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Download het muziekmodel"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pobierz model muzyczny"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Baixe o modelo de música"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Скачайте музыкальную модель"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ladda ned musikmodellen"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Müzik modelini indirin"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Завантажте музичну модель"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tải mô hình âm nhạc"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下载音乐模型"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "下載音樂模型"
+          }
+        }
+      }
+    },
+    "Voice cloning needs one of these models on this Mac. Pick one to download.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يحتاج استنساخ الصوت إلى أحد هذه النماذج على هذا الـ Mac. اختر نموذجًا لتنزيله."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Für das Klonen von Stimmen ist eines dieser Modelle auf diesem Mac nötig. Wähle eines zum Herunterladen aus."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voice cloning needs one of these models on this Mac. Pick one to download."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La clonación de voz necesita uno de estos modelos en este Mac. Elige uno para descargarlo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le clonage vocal nécessite l'un de ces modèles sur ce Mac. Choisissez-en un à télécharger."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "שכפול קול דורש אחד מהמודלים האלה ב-Mac הזה. בחרו מודל להורדה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "वॉइस क्लोनिंग के लिए इस Mac पर इनमें से एक मॉडल चाहिए। डाउनलोड करने के लिए एक चुनें।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kloning suara memerlukan salah satu model ini di Mac ini. Pilih satu untuk diunduh."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La clonazione vocale richiede uno di questi modelli su questo Mac. Sceglierne uno da scaricare."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "音声クローンには、このMacに次のいずれかのモデルが必要です。ダウンロードするモデルを選んでください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "음성 복제에는 이 Mac에 다음 모델 중 하나가 필요합니다. 다운로드할 모델을 선택하세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stemklonen heeft een van deze modellen op deze Mac nodig. Kies er een om te downloaden."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Klonowanie głosu wymaga jednego z tych modeli na tym Macu. Wybierz model do pobrania."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A clonagem de voz precisa de um destes modelos neste Mac. Escolha um para baixar."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Для клонирования голоса на этом Mac нужна одна из этих моделей. Выберите, какую скачать."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Röstkloning kräver en av dessa modeller på den här Macen. Välj en att ladda ned."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ses klonlama için bu Mac'te bu modellerden biri gerekir. İndirmek için birini seçin."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Для клонування голосу на цьому Mac потрібна одна з цих моделей. Виберіть, яку завантажити."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nhân bản giọng nói cần một trong các mô hình này trên máy Mac này. Hãy chọn một mô hình để tải về."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "语音克隆需要在这台 Mac 上安装下列模型之一。请选择一个进行下载。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "語音複製需要在這台 Mac 上安裝下列其中一個模型。請選擇一個進行下載。"
+          }
+        }
+      }
+    },
+    "Music generation needs its model on this Mac. Download it to continue.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يحتاج توليد الموسيقى إلى نموذجه على هذا الـ Mac. نزّله للمتابعة."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Für die Musikerzeugung ist das zugehörige Modell auf diesem Mac nötig. Lade es herunter, um fortzufahren."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Music generation needs its model on this Mac. Download it to continue."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La generación de música necesita su modelo en este Mac. Descárgalo para continuar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La génération de musique nécessite son modèle sur ce Mac. Téléchargez-le pour continuer."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "יצירת מוזיקה דורשת את המודל שלה ב-Mac הזה. הורידו אותו כדי להמשיך."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "संगीत बनाने के लिए इस Mac पर उसका मॉडल चाहिए। जारी रखने के लिए उसे डाउनलोड करें।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pembuatan musik memerlukan modelnya di Mac ini. Unduh untuk melanjutkan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La generazione di musica richiede il suo modello su questo Mac. Scaricalo per continuare."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "音楽の生成には、このMacに専用のモデルが必要です。続けるにはダウンロードしてください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "음악 생성에는 이 Mac에 전용 모델이 필요합니다. 계속하려면 다운로드하세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Muziek genereren heeft het bijbehorende model op deze Mac nodig. Download het om verder te gaan."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Generowanie muzyki wymaga swojego modelu na tym Macu. Pobierz go, aby kontynuować."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A geração de música precisa do modelo dela neste Mac. Baixe-o para continuar."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Для создания музыки на этом Mac нужна её модель. Скачайте её, чтобы продолжить."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Musikgenerering kräver sin modell på den här Macen. Ladda ned den för att fortsätta."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Müzik üretimi için bu Mac'te kendi modeli gerekir. Devam etmek için indirin."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Для створення музики на цьому Mac потрібна її модель. Завантажте її, щоб продовжити."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tạo nhạc cần mô hình riêng trên máy Mac này. Hãy tải về để tiếp tục."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "音乐生成需要在这台 Mac 上安装对应的模型。请下载后继续。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "音樂生成需要在這台 Mac 上安裝對應的模型。請下載後繼續。"
+          }
+        }
+      }
+    },
+    "May not fit this Mac": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "قد لا يناسب هذا الـ Mac"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Passt womöglich nicht auf diesen Mac"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "May not fit this Mac"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Puede que no quepa en este Mac"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Risque de ne pas tenir sur ce Mac"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ייתכן שלא יתאים ל-Mac הזה"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस Mac पर शायद न चले"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mungkin tidak muat di Mac ini"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Potrebbe non adattarsi a questo Mac"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このMacでは動作しない可能性があります"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 Mac에서는 실행되지 않을 수 있음"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Past mogelijk niet op deze Mac"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Może nie zmieścić się na tym Macu"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pode não caber neste Mac"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Может не поместиться на этом Mac"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Får kanske inte plats på den här Macen"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu Mac'e sığmayabilir"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Може не вміститися на цьому Mac"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Có thể không chạy được trên máy Mac này"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可能无法在这台 Mac 上运行"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "可能無法在這台 Mac 上執行"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

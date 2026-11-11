@@ -237,6 +237,8 @@ final class AudioWorkspaceController: ObservableObject {
         var choices = profiles.filter {
             $0.identity.task == task && speechProfileMatchesPage($0) && AudioRuntimeProvider($0) != .unsupported
         }
+        if page == .music { return choices.filter { $0.identity.alias == Self.defaultMusicProfileAlias } }
+        if page == .voiceClone { return Self.curatedCloneProfiles(choices) }
         if page == .advanced && task == .speechToText { choices.append(Self.localQwenProfile) }
         if task == .music { choices = Self.preferredMusicProfiles(choices) }
         return choices
@@ -257,7 +259,18 @@ final class AudioWorkspaceController: ObservableObject {
                 || profile.identity.repository.isEmpty
         }
     }
-    static let defaultMusicProfileAlias = "minimax-music3-turbo-4bit-8step"
+    nonisolated static let defaultMusicProfileAlias = "minimax-music3-turbo-4bit-8step"
+    /// The voice-cloning models the Voice Cloning page offers, in the order it
+    /// lists them. One size per engine: the other Qwen3-TTS and OmniVoice installs
+    /// in the catalog stay usable from Advanced and Voiceover, they are not choices
+    /// here. A model absent from this list is never listed on the page.
+    nonisolated static let curatedCloneAliases = [
+        "omnivoice-8bit", "qwen3-tts-12hz-17b-base-8bit", "fish-drama3-4bit", "megatts3-f32",
+    ]
+    /// `profiles` narrowed to `curatedCloneAliases`, in that order.
+    nonisolated static func curatedCloneProfiles(_ profiles: [AudioProfile]) -> [AudioProfile] {
+        curatedCloneAliases.compactMap { alias in profiles.first { $0.identity.alias == alias } }
+    }
     static let localQwenProfile = AudioProfile(
         identity: AudioProfileIdentity(task: .speechToText, alias: "local-qwen3-asr", repository: "", revision: "", assetFingerprint: ""),
         family: "qwen3_asr", displayName: "Qwen3-ASR (local checkpoint)",
@@ -381,7 +394,8 @@ final class AudioWorkspaceController: ObservableObject {
             if preferences.speechModes == nil { preferences.speechModes = [:] }
             preferences.speechModes?[speech.mode.rawValue] = speech
         }
-        if let model = recipe.modelID { preferences.selectedModels[modelSelectionKey] = model }
+        // Music has a fixed model. Its card must not replace Advanced's saved choice.
+        if page != .music, let model = recipe.modelID { preferences.selectedModels[modelSelectionKey] = model }
         do {
             try library.savePreferences(preferences)
             if !isBusy && error == nil { status = AppStrings.localized("Saved in this profile") }
@@ -412,6 +426,11 @@ final class AudioWorkspaceController: ObservableObject {
         normalizeModelOptions()
     }
     func restoreModelSelection() {
+        // The Music card also represents the model before it has been downloaded.
+        if page == .music {
+            recipe.modelID = availableProfiles.first?.identity.alias
+            return
+        }
         // The choice follows what the menu lists (`pickerProfiles`), not the
         // catalog. A saved choice that was deleted, or whose drive is gone for good,
         // must not pin a row in the menu or come back on the next refresh; with no
@@ -468,6 +487,7 @@ final class AudioWorkspaceController: ObservableObject {
         }.map(\.element)
     }
     func selectModel(_ alias: String?) {
+        guard page != .music else { restoreModelSelection(); return }
         recipe.modelID = alias
         normalizeModelOptions()
     }
@@ -672,12 +692,19 @@ final class AudioWorkspaceController: ObservableObject {
     func applyPreset(_ preset: AudioPreset) {
         restoreRecipe(preset.recipe)
     }
-    func restoreRecipe(_ value: AudioRecipe) {
+    func restoreRecipe(_ value: AudioRecipe, replaying: Bool = false) {
         recipe = value
         if recipe.experimentalBackend != nil { page = .advanced; return }
         switch AudioTask(rawValue: recipe.task) {
         case .textToSpeech: page = value.speech?.mode == .clone ? .voiceClone : value.speech?.mode == .design ? .voiceDesign : .voiceover
-        case .music: page = .music
+        case .music:
+            // Exact replays retain their original checkpoint in Advanced.
+            if replaying, let alias = value.modelID, alias != Self.defaultMusicProfileAlias {
+                page = .advanced
+            } else {
+                page = .music
+                restoreModelSelection()
+            }
         case .speechToText: page = .transcribe
         case .enhancement, .separation: page = .cleanup
         default: page = .advanced
@@ -686,7 +713,7 @@ final class AudioWorkspaceController: ObservableObject {
     func runAgain(_ item: AudioLibraryItem) {
         guard !isBusy, !hasRecordingActivity else { return }
         select(item)
-        restoreRecipe(item.recipe)
+        restoreRecipe(item.recipe, replaying: true)
         do {
             if let profile = selectedProfile, item.modelFamily != nil {
                 preferences.localModels[profile.identity.alias] = try modelBookmark(for: profile, source: item)

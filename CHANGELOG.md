@@ -13,6 +13,22 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Added
+- Music and Voice Cloning ask for a model before they open. While none of the
+  page's curated models is on the Mac, a card over the page lists each one with
+  its download size and estimated memory, flags a model that may not fit this
+  Mac, and downloads the one the user picks. The sidebar and the Audio library
+  stay usable. The card lifts when an install lands.
+- Voice Cloning offers four models: OmniVoice 8-bit, Qwen3-TTS 1.7B Base, Fish
+  Audio Drama 3 and MegaTTS3. They also appear in Discover under Voice
+  Cloning. Fish Audio Drama 3 downloads a large source checkpoint (about
+  23.8 GB) and converts it to a smaller install.
+
+### Changed
+- The Music page uses one fixed model, MiniMax Music 3 Turbo, and shows its
+  install state before it is downloaded. Other music checkpoints stay
+  reachable from Advanced.
+
 ## [0.8.0] - 2026-11-09
 
 ### Added

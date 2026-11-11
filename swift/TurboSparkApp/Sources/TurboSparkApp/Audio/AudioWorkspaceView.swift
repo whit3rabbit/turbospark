@@ -20,36 +20,7 @@ struct AudioWorkspaceView: View {
         VStack(spacing: 0) {
             navigation
             Divider()
-            if controller.page == .library {
-                AudioLibraryView(controller: controller)
-            } else if controller.page == .transcribe {
-                SpeechToTextWorkspaceView(model: model, controller: controller)
-            } else if controller.page == .voiceClone {
-                VoiceCloneWorkspaceView(
-                    model: model, controller: controller,
-                    description: Text(LocalizedStringKey(pageDescription), bundle: .module),
-                    showPromptLibrary: { showingPrompts = true }, savePrompt: beginSavingPrompt)
-            } else {
-                GeometryReader { geometry in
-                    ScrollView {
-                        if geometry.size.width >= (940 * scale).rounded() && controller.page != .record {
-                            HStack(alignment: .top, spacing: 24) {
-                                workflow.frame(maxWidth: .infinity)
-                                modelPanel.frame(width: (300 * scale).rounded())
-                            }
-                            .frame(maxWidth: 1440)
-                            .frame(maxWidth: .infinity)
-                            .padding(24)
-                        } else {
-                            VStack(alignment: .leading, spacing: 20) {
-                                if controller.page != .record { compactModelPanel }
-                                workflow
-                            }
-                            .padding(24)
-                        }
-                    }
-                }
-            }
+            pageArea
             AudioWorkspaceStatusView(controller: controller)
         }
         .background(.appPage)
@@ -71,6 +42,55 @@ struct AudioWorkspaceView: View {
         .task {
             if controller.installedPaths.isEmpty || controller.profiles.isEmpty {
                 controller.refreshModels()
+            }
+        }
+    }
+
+    /// The page under the model gate. Music and Voice Cloning are disabled and
+    /// hidden from VoiceOver while the gate is up, so nothing under it can run.
+    private var pageArea: some View {
+        let gate = controller.modelGate
+        return ZStack {
+            pageContent
+                .disabled(gate != nil)
+                .accessibilityHidden(gate != nil)
+            if let gate {
+                AudioModelGateView(model: model, controller: controller, gate: gate)
+                    .transition(.opacity)
+            }
+        }
+        .tsAnimation(TSMotion.pane, value: gate != nil)
+    }
+
+    @ViewBuilder private var pageContent: some View {
+        if controller.page == .library {
+            AudioLibraryView(controller: controller)
+        } else if controller.page == .transcribe {
+            SpeechToTextWorkspaceView(model: model, controller: controller)
+        } else if controller.page == .voiceClone {
+            VoiceCloneWorkspaceView(
+                model: model, controller: controller,
+                description: Text(LocalizedStringKey(pageDescription), bundle: .module),
+                showPromptLibrary: { showingPrompts = true }, savePrompt: beginSavingPrompt)
+        } else {
+            GeometryReader { geometry in
+                ScrollView {
+                    if geometry.size.width >= (940 * scale).rounded() && controller.page != .record {
+                        HStack(alignment: .top, spacing: 24) {
+                            workflow.frame(maxWidth: .infinity)
+                            modelPanel.frame(width: (300 * scale).rounded())
+                        }
+                        .frame(maxWidth: 1440)
+                        .frame(maxWidth: .infinity)
+                        .padding(24)
+                    } else {
+                        VStack(alignment: .leading, spacing: 20) {
+                            if controller.page != .record { compactModelPanel }
+                            workflow
+                        }
+                        .padding(24)
+                    }
+                }
             }
         }
     }
@@ -159,7 +179,15 @@ struct AudioWorkspaceView: View {
             .appCardSurface(padding: 18)
     }
 
-    private var compactModelPanel: some View {
+    @ViewBuilder private var compactModelPanel: some View {
+        if controller.page == .music {
+            modelPanel
+        } else {
+            collapsibleModelPanel
+        }
+    }
+
+    private var collapsibleModelPanel: some View {
         DisclosureGroup {
             AudioModelPickerView(model: model, controller: controller).padding(.top, 12)
         } label: {
