@@ -244,19 +244,21 @@ close that gap, and CI calls exactly these, so a local `make dmg` and a
 release build the same thing:
 
 ```sh
-OPENKIND_RELEASE_REVISION=b9061ee352fe9d15de2ea4683fb9c093e0fc785e OPENKIND_SERVER_VERSION=0.4.0 make app-bundle
-OPENKIND_RELEASE_REVISION=b9061ee352fe9d15de2ea4683fb9c093e0fc785e OPENKIND_SERVER_VERSION=0.4.0 make dmg
+OPENKIND_RELEASE_REVISION=d601b670a9ef9be2f16cc40ae55a9ccaadb73df1 OPENKIND_SERVER_VERSION=0.5.1 make app-bundle
+OPENKIND_RELEASE_REVISION=d601b670a9ef9be2f16cc40ae55a9ccaadb73df1 OPENKIND_SERVER_VERSION=0.5.1 make dmg
 ```
 
 `OPENKIND_RELEASE_REVISION` pins the OpenKind Swift package. The bundled
 `openkindd` is installed from the `openkind-server` crates.io package at the
-exact `OPENKIND_SERVER_VERSION`; version `0.4.0` was published from the commit
-shown above (the `v0.4.0` tag; the crate's `.cargo_vcs_info.json` names the
+exact `OPENKIND_SERVER_VERSION`; version `0.5.1` was published from the commit
+shown above (the `v0.5.1` tag; the crate's `.cargo_vcs_info.json` names the
 same commit, which is the check to repeat when bumping). The app bundle records both pins, and the DMG check compares them
 to the build environment. Set both GitHub Actions variables together when
 upgrading OpenKind.
 Development builds use the sibling `../openkind` Swift package and can set
 `OPENKINDD_BINARY` to a locally built daemon for the TypeSafe pane.
+When assembling with `--skip-build`, place the daemon's matching
+`mlx.metallib` next to `OPENKINDD_BINARY`.
 
 `make-app-bundle.sh` builds the FFI staticlib via `scripts/swift-lib.sh`,
 the TurboSpark CLI and server via cargo, the app via SwiftPM, and OpenKind
@@ -273,9 +275,11 @@ TurboSpark.app/Contents/
 |   +-- turbospark-check       # the CLI, where the cask links it from
 |   +-- turbospark-model
 |   +-- turbospark-server
-|   \-- openkindd              # TypeSafe loopback daemon
+|   +-- openkindd              # TypeSafe loopback daemon
+|   \-- mlx.metallib           # link to the daemon's library under Resources
 \-- Resources/
     +-- TurboSparkApp_TurboSparkApp.bundle   # Bundle.module's resources
+    +-- mlx.metallib           # OpenKind daemon's Metal library
     +-- OpenKindRevision.txt   # exact Swift package commit
     \-- OpenKindServerVersion.txt # crates.io daemon version
 ```
@@ -303,8 +307,8 @@ Three facts about that layout that are decisions rather than defaults:
 
 `make-dmg.sh` wraps the bundle with an `/Applications` symlink, then
 **mounts the image it just built and checks it**: main executable present,
-all three TurboSpark CLI binaries and `openkindd` present, the OpenKind revision
-record and a resource `.bundle` in `Contents/Resources`,
+the TurboSpark CLI binaries, `openkindd` and its Metal library, the OpenKind
+revision record, and a resource `.bundle` in `Contents/Resources`,
 and `codesign --verify --deep --strict` on the mounted copy. That check is the
 reason the script exists rather than a one-line `hdiutil` call in the
 workflow -- `hdiutil create` exits 0 over a staging directory missing the

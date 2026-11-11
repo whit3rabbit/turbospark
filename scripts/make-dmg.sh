@@ -86,6 +86,7 @@ for bin in turbospark turbospark-check turbospark-model turbospark-server turbos
   [ -x "$mounted/Contents/MacOS/$bin" ] || { echo "CLI binary $bin missing from the bundle" >&2; exit 1; }
 done
 [ -x "$mounted/Contents/MacOS/openkindd" ] || { echo "openkindd missing from the bundle" >&2; exit 1; }
+[ -s "$mounted/Contents/MacOS/mlx.metallib" ] || { echo "openkindd Metal library missing from the bundle" >&2; exit 1; }
 [ -s "$mounted/Contents/Resources/OpenKindRevision.txt" ] || { echo "OpenKind revision missing from the bundle" >&2; exit 1; }
 [ -s "$mounted/Contents/Resources/OpenKindServerVersion.txt" ] || { echo "OpenKind server version missing from the bundle" >&2; exit 1; }
 if [ -n "${OPENKIND_RELEASE_REVISION:-}" ]; then

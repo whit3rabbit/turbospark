@@ -29,7 +29,7 @@
 #                      target directory of its own that no workspace cache
 #                      sees, and the mlx feature (mlx-sys, candle, mlx-rs) was
 #                      15 minutes of every package-macos leg. A matching
-#                      version already in the root makes the install a no-op.
+#                      daemon and kernel library make the install a no-op.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -82,9 +82,9 @@ sparkle_public_ed_key="O+w+eDlUPQQa1Y+quYgz9BiJljUdS01KeafmpSzoZ3g="
 app="$out_dir/TurboSpark.app"
 contents="$app/Contents"
 openkind_revision="${OPENKIND_RELEASE_REVISION:-}"
-openkind_server_version="${OPENKIND_SERVER_VERSION:-0.4.0}"
+openkind_server_version="${OPENKIND_SERVER_VERSION:-0.5.1}"
 openkind_bin="${OPENKINDD_BINARY:-}"
-openkind_build_dir=""
+openkind_metallib=""
 
 if [ "$skip_build" -eq 0 ]; then
   [[ "$openkind_revision" =~ ^[0-9a-f]{40}$ ]] || {
@@ -111,21 +111,31 @@ if [ "$skip_build" -eq 0 ]; then
   if [ -z "${BINDGEN_EXTRA_CLANG_ARGS:-}" ]; then
     export BINDGEN_EXTRA_CLANG_ARGS="-isysroot $SDKROOT"
   fi
-  if [ -n "${OPENKINDD_INSTALL_ROOT:-}" ]; then
-    openkind_install_root="$OPENKINDD_INSTALL_ROOT"
-  else
-    openkind_build_dir="$(mktemp -d)"
-    trap 'rm -rf "$openkind_build_dir"' EXIT
-    openkind_install_root="$openkind_build_dir/install"
-  fi
-  # Idempotent: cargo's bookkeeping in the root ("Ignored package ... is
-  # already installed") is what makes a cached root cheap, and it is
-  # version-checked, which a bare `[ -x ]` test would not be.
-  cargo install --locked --version "$openkind_server_version" --target "$target" --features mlx \
-    --root "$openkind_install_root" openkind-server
+  openkind_build_dir="$(mktemp -d)"
+  trap 'rm -rf "$openkind_build_dir"' EXIT
+  openkind_install_root="${OPENKINDD_INSTALL_ROOT:-$openkind_build_dir/install}"
   openkind_bin="$openkind_install_root/bin/openkindd"
+  openkind_metallib="$openkind_install_root/bin/mlx-${openkind_server_version}.metallib"
+  openkind_install_args=(
+    --locked
+    --version "$openkind_server_version"
+    --target "$target"
+    --features mlx
+    --root "$openkind_install_root"
+  )
+  # Rebuild a cached daemon if it predates the packaged Metal library.
+  if [ -x "$openkind_bin" ] && [ ! -s "$openkind_metallib" ]; then
+    openkind_install_args+=(--force)
+  fi
+  MLX_RS_METAL_PATH="$openkind_build_dir/metal" cargo install "${openkind_install_args[@]}" openkind-server
+  if [ -s "$openkind_build_dir/metal/mlx.metallib" ]; then
+    # Remove MLX's build-time fallback so the app smoke test exercises the bundle.
+    mv "$openkind_build_dir/metal/mlx.metallib" "$openkind_metallib"
+  fi
 fi
 [ -x "$openkind_bin" ] || { echo "openkindd binary missing; set OPENKINDD_BINARY for --skip-build" >&2; exit 1; }
+openkind_metallib="${openkind_metallib:-$(dirname "$openkind_bin")/mlx.metallib}"
+[ -s "$openkind_metallib" ] || { echo "openkindd Metal library missing at $openkind_metallib" >&2; exit 1; }
 
 if [ "$skip_build" -eq 0 ]; then
   echo "==> staging the FFI staticlib (crates/ffi -> SwiftPM)"
@@ -199,6 +209,9 @@ mkdir -p "$contents/MacOS" "$contents/Resources" "$contents/Frameworks"
 
 cp "$exe" "$contents/MacOS/TurboSparkApp"
 cp "$openkind_bin" "$contents/MacOS/openkindd"
+# MLX looks beside the daemon, and codesign expects data under Resources.
+cp "$openkind_metallib" "$contents/Resources/mlx.metallib"
+ln -s ../Resources/mlx.metallib "$contents/MacOS/mlx.metallib"
 if [ "$skip_build" -eq 0 ]; then
   printf '%s\n' "$openkind_revision" > "$contents/Resources/OpenKindRevision.txt"
   printf '%s\n' "$openkind_server_version" > "$contents/Resources/OpenKindServerVersion.txt"

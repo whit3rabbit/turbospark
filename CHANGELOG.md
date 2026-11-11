@@ -13,6 +13,8 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-09
+
 ### Added
 - `turbospark-server --max-queued N` (default 64) bounds the generation
   queue. A full queue answers 429 with `Retry-After: 2` before any response
@@ -79,6 +81,11 @@ when this file gets updated relative to the version bump and the tag.
   encodes to the real marker ids, as in HF transformers, vLLM and llama.cpp.
   Clients that put untrusted text into messages must sanitize it (see the
   server README).
+
+### Fixed
+
+- The app bundle now includes the OpenKind daemon's MLX Metal library and
+  verifies that the bundled daemon can run the MLX backend.
 
 ## [0.7.1] - 2026-11-03
 
