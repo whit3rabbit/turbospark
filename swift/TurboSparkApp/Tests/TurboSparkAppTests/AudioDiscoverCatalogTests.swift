@@ -28,27 +28,52 @@ final class AudioDiscoverCatalogTests: XCTestCase {
             profile("parakeet-ultra-coreml", operations: ["transcribe"], downloadBytes: 300),
             profile("parakeet-redux-coreml", operations: ["transcribe"], downloadBytes: 200),
             profile("speaker-diarization-coreml", task: .diarization, family: "pyannote_community1", operations: ["diarize"]),
+            profile(AudioWorkspaceController.defaultMusicProfileAlias, task: .music, family: "minimax_music3",
+                    operations: ["generate_music"], backend: "metal", downloadBytes: 400),
+            profile("minimax-music3-4bit", task: .music, family: "minimax_music3", operations: ["generate_music"], backend: "metal"),
             profile("parakeet-ultra-unsupported", operations: ["transcribe"], canRun: false),
             profile("parakeet-redux-wrong-operation", operations: ["stream_transcribe"]),
         ]
     }
 
-    func testListsTheFourRunnableProfilesInTheirJobGroups() {
+    func testListsRunnableRecommendationsInTheirJobGroups() {
         let entries = AudioDiscoverCatalog.entries(profiles: profiles, canRun: \.capabilities.canRun)
         XCTAssertEqual(entries.map(\.id), [
             "parakeet-unified-en-coreml",
             "parakeet-ultra-coreml",
             "parakeet-redux-coreml",
             "speaker-diarization-coreml",
+            AudioWorkspaceController.defaultMusicProfileAlias,
         ])
-        XCTAssertEqual(AudioDiscoverCatalog.grouped(entries).map(\.group), [.liveText, .finalTranscript, .speakers])
+        XCTAssertEqual(AudioDiscoverCatalog.grouped(entries).map(\.group), [.liveText, .finalTranscript, .speakers, .music])
         XCTAssertEqual(AudioDiscoverCatalog.grouped(entries).map { $0.entries.map(\.id) }, [
             ["parakeet-unified-en-coreml"],
             ["parakeet-ultra-coreml", "parakeet-redux-coreml"],
             ["speaker-diarization-coreml"],
+            [AudioWorkspaceController.defaultMusicProfileAlias],
         ])
         XCTAssertEqual(entries.first?.installedEntry.group, .available)
         XCTAssertEqual(entries.first?.installedEntry.profile?.identity.alias, "parakeet-unified-en-coreml")
+    }
+
+    func testMusicSearchFindsOnlyTheTurboRecommendation() {
+        for query in ["Music", "MiniMax", "Turbo"] {
+            XCTAssertEqual(
+                AudioDiscoverCatalog.entries(profiles: profiles, searchText: query, canRun: \.capabilities.canRun).map(\.id),
+                [AudioWorkspaceController.defaultMusicProfileAlias], query)
+        }
+    }
+
+    func testMusicRequiresTheMusicTaskOperationAndRunnableProvider() {
+        let alias = AudioWorkspaceController.defaultMusicProfileAlias
+        let invalid = [
+            profile(alias, operations: ["generate_music"]),
+            profile(alias, task: .music, operations: ["transcribe"]),
+            profile(alias, task: .music, operations: ["generate_music"], canRun: false),
+        ]
+        for candidate in invalid {
+            XCTAssertTrue(AudioDiscoverCatalog.entries(profiles: [candidate], canRun: \.capabilities.canRun).isEmpty)
+        }
     }
 
     func testSearchMatchesAliasesAndTaskNames() {
@@ -67,6 +92,7 @@ final class AudioDiscoverCatalogTests: XCTestCase {
             "speaker-diarization-coreml",
             "parakeet-redux-coreml",
             "parakeet-ultra-coreml",
+            AudioWorkspaceController.defaultMusicProfileAlias,
         ])
     }
 }

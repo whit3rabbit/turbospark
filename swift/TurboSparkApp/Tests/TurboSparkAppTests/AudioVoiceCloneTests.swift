@@ -8,10 +8,18 @@ import XCTest
 /// catalog's `voice_clone` capability, the request carries the clone options,
 /// and consent holds only for the exact reference region the user confirmed.
 final class AudioVoiceCloneTests: XCTestCase {
+    private static let curatedAlias = [
+        "omnivoice": "omnivoice-8bit", "fish_drama3": "fish-drama3-4bit", "megatts3": "megatts3-f32",
+    ]
+
     private func profile(family: String, operations: [String], canRun: Bool = true, backend: String = "portable_cpu",
                          acknowledgments: [AudioAcknowledgment] = []) -> AudioProfile {
         AudioProfile(
-            identity: AudioProfileIdentity(task: .textToSpeech, alias: family + "-test", repository: "someone/" + family,
+            // A curated clone alias where the family has one: the Voice Cloning page lists
+            // only those (`curatedCloneAliases`), so a made-up alias would never reach it.
+            identity: AudioProfileIdentity(task: .textToSpeech,
+                                           alias: Self.curatedAlias[family] ?? family + "-test",
+                                           repository: "someone/" + family,
                                            revision: String(repeating: "0", count: 40), assetFingerprint: family),
             family: family, displayName: family,
             capabilities: AudioCapabilities(languages: ["en"], operations: operations, backend: backend,

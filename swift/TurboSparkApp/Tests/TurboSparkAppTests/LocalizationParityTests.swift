@@ -622,6 +622,9 @@ final class LocalizationParityTests: XCTestCase {
         for group in AudioInstalledEntry.Group.allCases {
             values.append(("AudioInstalledEntry.Group.titleKey", group.titleKey))
         }
+        for group in AudioDiscoverCatalog.Group.allCases {
+            values.append(("AudioDiscoverCatalog.Group.titleKey", group.titleKey))
+        }
         for status in [AudioLibraryItem.Status.draft, .recording, .processing, .completed, .interrupted, .failed] {
             values.append(("AudioLibraryItem.Status.audioTitle", status.audioTitle))
         }

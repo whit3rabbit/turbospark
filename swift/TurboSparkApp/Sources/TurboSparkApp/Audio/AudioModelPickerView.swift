@@ -68,6 +68,7 @@ struct AudioModelPickerView: View {
                 leading: {
                     Label { Text("Audio model", bundle: .module) } icon: { Image(systemName: "cpu") }
                         .themedFont(.base, weight: .semibold)
+                        .accessibilityAddTraits(.isHeader)
                 },
                 actions: {
                     AppIconButton("arrow.clockwise", label: Text("Refresh", bundle: .module)) { controller.refreshModels() }
@@ -75,29 +76,7 @@ struct AudioModelPickerView: View {
                         .disabled(controller.isRefreshingModels)
                 }
             )
-            // The menu lists what is on this Mac. A selection that is not listed
-            // reads as no choice, so the picker never shows a blank for an unknown tag.
-            let listed = controller.pickerProfiles
-            Picker(selection: Binding(
-                get: { controller.recipe.modelID.flatMap { id in listed.contains { $0.identity.alias == id } ? id : nil } },
-                set: { controller.selectModel($0) })
-            ) {
-                Text("Choose a model", bundle: .module).tag(Optional<String>.none)
-                ForEach(listed) { profile in
-                    pickerRow(profile).tag(Optional(profile.identity.alias))
-                }
-            } label: { Text("Audio model", bundle: .module) }
-            .labelsHidden().frame(maxWidth: .infinity, alignment: .leading)
-            .help(
-                (controller.isBusy || controller.hasRecordingActivity)
-                    ? Text("Cannot change model while audio is active or recording.", bundle: .module)
-                    : Text("Audio model", bundle: .module)
-            )
-            .disabled(controller.isBusy || controller.hasRecordingActivity)
-
-            if listed.isEmpty && !controller.isRefreshingModels && controller.modelCatalogError == nil {
-                noModelInstalled
-            }
+            if controller.page != .music { modelSelection }
 
             if controller.isRefreshingModels && controller.profiles.isEmpty {
                 ProgressView().controlSize(.small)
@@ -110,7 +89,9 @@ struct AudioModelPickerView: View {
             if let profile = controller.selectedProfile {
                 modelSummary(profile)
                 Divider()
-                installControls(profile)
+                if controller.page != .music || controller.selectedAdoptable == nil {
+                    installControls(profile)
+                }
                 if !controller.selectedProfileIsRunnable {
                     VStack(alignment: .leading, spacing: 6) {
                         Label { Text("Runtime unavailable", bundle: .module) }
@@ -127,8 +108,12 @@ struct AudioModelPickerView: View {
                 }
                 installManagement(profile)
                 modelDetails(profile)
-            } else if !listed.isEmpty && !controller.isRefreshingModels && controller.modelCatalogError == nil {
-                Text("Choose a model", bundle: .module).foregroundStyle(.appSecondary)
+            } else if !controller.isRefreshingModels && controller.modelCatalogError == nil {
+                if controller.page == .music {
+                    Text("Runtime unavailable", bundle: .module).foregroundStyle(.appSecondary)
+                } else if !controller.pickerProfiles.isEmpty {
+                    Text("Choose a model", bundle: .module).foregroundStyle(.appSecondary)
+                }
             }
         }
         .themedFont(.small)
@@ -157,6 +142,33 @@ struct AudioModelPickerView: View {
         .task {
             if controller.installedPaths.isEmpty || controller.profiles.isEmpty {
                 controller.refreshModels()
+            }
+        }
+    }
+
+    private var modelSelection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Unknown tags read as no choice instead of a blank menu label.
+            let listed = controller.pickerProfiles
+            Picker(selection: Binding(
+                get: { controller.recipe.modelID.flatMap { id in listed.contains { $0.identity.alias == id } ? id : nil } },
+                set: { controller.selectModel($0) })
+            ) {
+                Text("Choose a model", bundle: .module).tag(Optional<String>.none)
+                ForEach(listed) { profile in
+                    pickerRow(profile).tag(Optional(profile.identity.alias))
+                }
+            } label: { Text("Audio model", bundle: .module) }
+            .labelsHidden().frame(maxWidth: .infinity, alignment: .leading)
+            .help(
+                (controller.isBusy || controller.hasRecordingActivity)
+                    ? Text("Cannot change model while audio is active or recording.", bundle: .module)
+                    : Text("Audio model", bundle: .module)
+            )
+            .disabled(controller.isBusy || controller.hasRecordingActivity)
+
+            if listed.isEmpty && !controller.isRefreshingModels && controller.modelCatalogError == nil {
+                noModelInstalled
             }
         }
     }
@@ -234,7 +246,7 @@ struct AudioModelPickerView: View {
 
     private func modelSummary(_ profile: AudioProfile) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            if controller.selectedLocalModelURL == nil {
+            if controller.page == .music || controller.selectedLocalModelURL == nil {
                 Text(profile.displayName).themedFont(.base, weight: .medium).fixedSize(horizontal: false, vertical: true)
             }
             if controller.selectedLocalModelURL == nil, !profile.identity.repository.isEmpty {
@@ -262,6 +274,8 @@ struct AudioModelPickerView: View {
                 } else if case .notConnected = controller.installStatus(for: profile) {
                     // A shape and a word: the state survives color blindness.
                     Label { Text("Not connected", bundle: .module) } icon: { Image(systemName: LibraryRowStatus.notConnected.glyph) }
+                } else if controller.page == .music && !controller.isRefreshingModels {
+                    AudioModelStateLabel(state: controller.modelState(profile, download: download))
                 }
             }.themedFont(.tiny).foregroundStyle(.appSecondary)
         }
@@ -324,7 +338,7 @@ struct AudioModelPickerView: View {
             }
             .foregroundStyle(.appSecondary)
             .accessibilityElement(children: .combine)
-        } else if !profile.identity.repository.isEmpty {
+        } else if !profile.identity.repository.isEmpty && (controller.page != .music || controller.selectedProfileIsRunnable) {
             if let download, download.status.canRetry {
                 if let failure = download.failure {
                     Text(failure).foregroundStyle(.appSecondary).textSelection(.enabled)

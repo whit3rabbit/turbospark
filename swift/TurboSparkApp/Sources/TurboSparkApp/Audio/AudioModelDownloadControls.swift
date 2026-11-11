@@ -10,9 +10,16 @@ struct AudioModelDownloadControls: View {
     @ObservedObject var controller: AudioWorkspaceController
     let profile: AudioProfile
     var size: ControlSize = .small
+    /// Count the destination's free space before the download starts, as the
+    /// model card does: a blocked install is disabled with the reason, a tight
+    /// one asks first. Off for the surfaces that never did.
+    var checksSpace = false
+    /// Called when the user presses Download, before the terms or the install.
+    var onStart: (() -> Void)?
 
     /// A profile whose install terms are on screen awaiting acceptance.
     @State private var acknowledging: AudioProfile?
+    @State private var confirmingLowSpace = false
 
     private var download: ModelDownload? { model.audioDownload(for: profile) }
     /// The default library for downloads, nil for This Mac (requirement 2.2).
@@ -46,11 +53,50 @@ struct AudioModelDownloadControls: View {
         }
     }
 
-    private var downloadButton: some View {
-        Button {
-            if profile.requiredAcknowledgments.isEmpty { controller.install(profile, library: library) }
-            else { acknowledging = profile }
-        } label: {
+    private var decision: ModelInstallDecision {
+        checksSpace ? model.audioInstallDecision(for: profile, library: library) : .allowed
+    }
+
+    private func request() {
+        onStart?()
+        switch decision {
+        case .blocked: return
+        case .confirm: confirmingLowSpace = true
+        case .allowed: proceed()
+        }
+    }
+
+    private func proceed() {
+        if profile.requiredAcknowledgments.isEmpty { controller.install(profile, library: library) }
+        else { acknowledging = profile }
+    }
+
+    @ViewBuilder private var downloadButton: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let reason = decision.reason {
+                Label {
+                    Text(verbatim: reason).fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: decision.isBlocked ? "xmark.octagon.fill" : "exclamationmark.triangle.fill")
+                        .accessibilityHidden(true)
+                }
+                .themedFont(.small)
+                .foregroundStyle(decision.isBlocked ? AnyShapeStyle(.appDanger) : AnyShapeStyle(AppAttention.color))
+            }
+            downloadAction
+        }
+        .alert(
+            Text("Install anyway?", bundle: .module), isPresented: $confirmingLowSpace
+        ) {
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
+            Button { proceed() } label: { Text("Install", bundle: .module) }
+        } message: {
+            Text(verbatim: decision.reason ?? "")
+        }
+    }
+
+    private var downloadAction: some View {
+        Button(action: request) {
             Label {
                 if profile.downloadBytes > 0 {
                     Text("Download model", bundle: .module) + Text(verbatim: " (\(MetricFormat.storage(profile.downloadBytes)))")
@@ -60,7 +106,7 @@ struct AudioModelDownloadControls: View {
             } icon: { Image(systemName: "arrow.down.circle") }
         }
         .appAction(.secondary, size: size)
-        .disabled(!model.canQueueModelDownload(.audio(identity: profile.identity)) || controller.isBusy)
+        .disabled(!model.canQueueModelDownload(.audio(identity: profile.identity)) || controller.isBusy || decision.isBlocked)
         .help(
             controller.isBusy
                 ? Text("Cannot change model while audio is active or recording.", bundle: .module)

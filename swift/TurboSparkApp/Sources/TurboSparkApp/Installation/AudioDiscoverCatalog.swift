@@ -1,13 +1,14 @@
 import Foundation
 import TurboSpark
 
-/// The first audio profiles surfaced in Discover. The task-to-model mapping
-/// follows the jobs already exposed by SpeechToTextModelPanel.
+/// Pinned audio profiles for the jobs exposed by the audio workspaces.
 enum AudioDiscoverCatalog {
     enum Group: Int, CaseIterable, Comparable, Identifiable {
         case liveText
         case finalTranscript
         case speakers
+        case music
+        case voiceCloning
 
         var id: Int { rawValue }
 
@@ -16,6 +17,8 @@ enum AudioDiscoverCatalog {
             case .liveText: return "Live Text"
             case .finalTranscript: return "Final Transcript"
             case .speakers: return "Speakers"
+            case .music: return "Music"
+            case .voiceCloning: return "Voice Cloning"
             }
         }
 
@@ -37,7 +40,8 @@ enum AudioDiscoverCatalog {
         ("parakeet-ultra-coreml", .finalTranscript),
         ("parakeet-redux-coreml", .finalTranscript),
         ("speaker-diarization-coreml", .speakers),
-    ]
+        (AudioWorkspaceController.defaultMusicProfileAlias, .music),
+    ] + AudioWorkspaceController.curatedCloneAliases.map { ($0, Group.voiceCloning) }
 
     /// Returns the pinned recommendations supported by this Mac, grouped by
     /// job. Rust Core ML profiles remain on the Rust audio-session route.
@@ -84,6 +88,11 @@ enum AudioDiscoverCatalog {
         case .liveText: return SpeechToTextJob.live.accepts(profile)
         case .finalTranscript: return SpeechToTextJob.final.accepts(profile)
         case .speakers: return SpeechToTextJob.speakers.accepts(profile)
+        case .music: return profile.identity.task == .music && profile.capabilities.operations.contains("generate_music")
+        case .voiceCloning:
+            // The Voice Cloning page's own test, so Discover offers only what the page lists.
+            return AudioWorkspaceController.curatedCloneProfiles([profile]).first != nil
+                && (AudioWorkspaceController.clonesNatively(profile) || profile.family == "qwen3_tts")
         }
     }
 
