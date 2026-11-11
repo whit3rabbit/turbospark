@@ -161,11 +161,8 @@ struct ModelHubFilter: Equatable {
                 let rhsRec = recommendations[rhs.alias]
 
                 if tab == .recommended {
-                    let lhsP = Self.recommendedPriority(entry: lhs, recommendation: lhsRec)
-                    let rhsP = Self.recommendedPriority(entry: rhs, recommendation: rhsRec)
-                    if lhsP.tier != rhsP.tier { return lhsP.tier < rhsP.tier }
-                    if lhsP.rank != rhsP.rank { return lhsP.rank < rhsP.rank }
-                    return lhsP.alias < rhsP.alias
+                    return Self.recommendedPrecedes(
+                        lhs, rhs, lhsVerdict: lhsRec?.verdict, rhsVerdict: rhsRec?.verdict)
                 }
 
                 let lhsRank = Self.verdictRank(lhsRec?.verdict)
@@ -182,34 +179,78 @@ struct ModelHubFilter: Equatable {
         return list
     }
 
-    /// Priorities for the Recommended tab: optimal MLX, optimal MoE, optimal dense, then tight fits.
-    static func recommendedPriority(
-        entry: CatalogEntry,
-        recommendation: ModelRecommendation?
-    ) -> (tier: Int, rank: Int, alias: String) {
-        let rank = verdictRank(recommendation?.verdict)
-        let isOptimal = rank <= 1
-        let visuals = visuals(for: entry)
-        let isMlx = visuals.formatLabel.localizedCaseInsensitiveContains("mlx")
-        let isMoe = visuals.capabilities.contains("MoE")
-            || recommendation?.verdict == .streams
-            || entry.name.localizedCaseInsensitiveContains("moe")
-            || entry.family.localizedCaseInsensitiveContains("moe")
+    // MARK: - Recommended tab order
 
-        let tier: Int
-        if isOptimal && isMlx {
-            tier = 0
-        } else if isOptimal && isMoe {
-            tier = 1
-        } else if isOptimal {
-            tier = 2
-        } else if isMlx || isMoe {
-            tier = 3
-        } else {
-            tier = 4
+    /// The order inside the Recommended tab, which is the order its sections
+    /// are drawn in.
+    ///
+    /// **FIT FIRST, BECAUSE THAT IS WHAT THE SECTION HEADERS SAY.** The order
+    /// this replaces ranked five hidden tiers (optimal MLX, optimal MoE,
+    /// optimal dense, ...) that no row or header ever named, so a streaming MoE
+    /// could sit above a model that fits entirely in memory for no reason a
+    /// reader could see. Now a row's section is its fit verdict, and inside a
+    /// section the keys are ones the card shows: how much evidence there is
+    /// (verified before runs before caveat), then MLX before GGUF (the format
+    /// native to this hardware), then name so a family stays together.
+    static func recommendedPrecedes(
+        _ lhs: CatalogEntry,
+        _ rhs: CatalogEntry,
+        lhsVerdict: ModelRecommendation.FitVerdict?,
+        rhsVerdict: ModelRecommendation.FitVerdict?
+    ) -> Bool {
+        let lhsFit = verdictRank(lhsVerdict)
+        let rhsFit = verdictRank(rhsVerdict)
+        if lhsFit != rhsFit { return lhsFit < rhsFit }
+        let lhsStatus = statusRank(lhs.status)
+        let rhsStatus = statusRank(rhs.status)
+        if lhsStatus != rhsStatus { return lhsStatus < rhsStatus }
+        let lhsMlx = isMlx(lhs)
+        let rhsMlx = isMlx(rhs)
+        if lhsMlx != rhsMlx { return lhsMlx }
+        return lhs.alias < rhs.alias
+    }
+
+    /// How much a catalog row has been taken on real hardware, best first.
+    static func statusRank(_ status: String) -> Int {
+        switch status {
+        case "verified": return 0
+        case "runs": return 1
+        case "caveat": return 2
+        default: return 3
         }
+    }
 
-        return (tier, rank, entry.alias)
+    private static func isMlx(_ entry: CatalogEntry) -> Bool {
+        visuals(for: entry).formatLabel.localizedCaseInsensitiveContains("mlx")
+    }
+
+    /// One visible group of the Recommended tab.
+    struct RecommendedSection: Equatable, Identifiable {
+        let verdict: ModelRecommendation.FitVerdict
+        let entries: [CatalogEntry]
+        var id: String { "\(verdict)" }
+    }
+
+    /// Splits an ALREADY-SORTED Recommended list into its fit sections,
+    /// keeping each section's order. Empty sections are not drawn, so a Mac
+    /// where nothing is tight shows no "Tight" header over nothing.
+    static func recommendedSections(
+        _ sorted: [CatalogEntry],
+        recommendations: [String: ModelRecommendation]
+    ) -> [RecommendedSection] {
+        var sections: [RecommendedSection] = []
+        for entry in sorted {
+            // A row with no assessment cannot be on this tab, but a caller
+            // that passes one gets it under "unknown" rather than a crash.
+            let verdict = recommendations[entry.alias]?.verdict ?? .unknown
+            if let last = sections.last, last.verdict == verdict {
+                sections[sections.count - 1] = RecommendedSection(
+                    verdict: verdict, entries: last.entries + [entry])
+            } else {
+                sections.append(RecommendedSection(verdict: verdict, entries: [entry]))
+            }
+        }
+        return sections
     }
 
     /// Identifies models that use Apple Silicon native MLX formats or MoE architectures.

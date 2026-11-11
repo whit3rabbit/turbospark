@@ -277,3 +277,74 @@ fn cached_payloads_can_be_revalidated_by_the_same_boundary() {
         assert_eq!(reread.rejected[0].rule, "safe_relative_path");
     }
 }
+
+#[test]
+fn search_meta_reads_format_architecture_gating_and_base_model() {
+    let validator = make_validator(HubValidationLimits::default());
+    let body = format!(
+        r#"[
+            {{"id":"o/gguf","sha":"{REVISION}","downloads":1,"likes":1,
+              "tags":["gguf","text-generation"],"gated":false,
+              "gguf":{{"architecture":"qwen35moe","total":9}},
+              "cardData":{{"base_model":"Qwen/Qwen3.8-35B-A3B"}}}},
+            {{"id":"o/mlx","sha":"{REVISION}","tags":["mlx"],"library_name":"mlx",
+              "gated":"manual","pipeline_tag":"text-generation",
+              "config":{{"model_type":"qwen3_moe"}},
+              "cardData":{{"base_model":["Qwen/Qwen3-4B","other/ignored"]}}}},
+            {{"id":"o/bare","sha":"{REVISION}"}}
+        ]"#
+    );
+    let report = validator.validate_search_payload(body.as_bytes()).unwrap();
+    assert!(report.rejected.is_empty());
+
+    let gguf = &report.valid[0].meta;
+    assert!(gguf.gguf && !gguf.mlx && !gguf.gated);
+    assert_eq!(gguf.gguf_architecture.as_deref(), Some("qwen35moe"));
+    assert_eq!(gguf.base_model.as_deref(), Some("Qwen/Qwen3.8-35B-A3B"));
+
+    let mlx = &report.valid[1].meta;
+    assert!(
+        mlx.mlx && !mlx.gguf && mlx.gated,
+        "a gating mode string gates"
+    );
+    assert_eq!(mlx.model_type.as_deref(), Some("qwen3_moe"));
+    assert_eq!(
+        mlx.base_model.as_deref(),
+        Some("Qwen/Qwen3-4B"),
+        "first of a list"
+    );
+    assert_eq!(mlx.pipeline_tag.as_deref(), Some("text-generation"));
+
+    assert_eq!(
+        report.valid[2].meta,
+        Default::default(),
+        "no metadata is not a rejection"
+    );
+}
+
+#[test]
+fn malformed_search_meta_loses_the_field_never_the_row() {
+    let validator = make_validator(HubValidationLimits::default());
+    let long = "a".repeat(65);
+    let body = format!(
+        r#"[{{"id":"o/odd","sha":"{REVISION}","downloads":4,
+              "tags":"not-an-array","gated":7,
+              "gguf":{{"architecture":"{long}"}},
+              "config":{{"model_type":"has space"}},
+              "pipeline_tag":["x"],
+              "cardData":{{"base_model":"../escape"}}}}]"#
+    );
+    let report = validator.validate_search_payload(body.as_bytes()).unwrap();
+    assert!(
+        report.rejected.is_empty(),
+        "optional metadata never rejects a row"
+    );
+    let row = &report.valid[0];
+    assert_eq!(row.downloads, Some(4));
+    // `gguf` is an object, so the format flag holds, but every bad token is gone.
+    assert!(row.meta.gguf && !row.meta.gated);
+    assert_eq!(row.meta.gguf_architecture, None);
+    assert_eq!(row.meta.model_type, None);
+    assert_eq!(row.meta.pipeline_tag, None);
+    assert_eq!(row.meta.base_model, None);
+}

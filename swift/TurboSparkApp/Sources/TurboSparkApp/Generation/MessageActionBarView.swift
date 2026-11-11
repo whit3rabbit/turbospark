@@ -12,6 +12,7 @@ struct MessageActionBarView: View {
     let text: String
     let messageID: UUID
     let date: Date
+    let isVisible: Bool
     /// Steps to a neighbouring version of this message. Rendered with the
     /// position/count when the message has more than one version.
     var variantStep: ((Int) -> Void)? = nil
@@ -81,6 +82,13 @@ struct MessageActionBarView: View {
             MessageTimestampBadge(date: date)
                 .padding(.leading, 4)
         }
+        // Keep the row height stable when revealing actions. Otherwise a
+        // legacy scrollbar can appear on hover and change the wrapping width.
+        .opacity(isVisible ? 1 : 0)
+        .allowsHitTesting(isVisible)
+        .disabled(!isVisible)
+        .accessibilityHidden(!isVisible)
+        .tsAnimation(TSMotion.hover, value: isVisible)
     }
 
     private var standingInstructionTitle: Text {

@@ -54,10 +54,13 @@ Text GGUF and safetensors reads and curated image files share
   the Xet CDN path because HTTP/2 can multiplex the requests onto one edge.
 - Each range has bounded retries. HTTP 429 and selected 5xx responses back off;
   permanent statuses fail immediately.
-- Image ranges are written into a pre-sized sibling partial file. The complete
-  file is renamed into place only after every range succeeds. Its eight
-  workers hold at most one 16 MiB range each, so this path adds at most about
-  128 MiB of range buffers.
+- Full-file downloads for pinned artifacts and image models take up to eight
+  files at a time. They share eight range workers, so small files can transfer
+  alongside large shards. Each worker holds at most one 16 MiB range, for at
+  most 128 MiB of range buffers per batch.
+- Whole files are written into pre-sized sibling partial files and renamed
+  into place after the batch finishes fetching. Pinned artifact receipts
+  still require verification of every staged file.
 - Progress callbacks may arrive from worker threads. Swift serializes their UI
   effects on the main actor and prevents out-of-order callbacks from reducing
   displayed progress.

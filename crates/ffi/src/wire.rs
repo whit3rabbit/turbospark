@@ -167,6 +167,37 @@ pub struct ProbeOptions {
     pub expert_cache_slots: Option<serde_json::Value>,
 }
 
+/// Arguments to `ts_hub_search_json`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct HubSearchOptions {
+    /// Results to request; absent means 20. The Hub's own page cap applies.
+    pub limit: Option<u32>,
+    /// `trending`, `downloads` or `likes`; absent means `downloads`, the
+    /// order that surfaces installable repositories rather than new ones.
+    pub sort: Option<String>,
+    /// `any`, `gguf` or `mlx`; absent means `any`.
+    pub format: Option<String>,
+    /// Skip the 15-minute response cache.
+    pub refresh: bool,
+}
+
+/// Arguments to `ts_hub_check_json`: `ProbeOptions`' three fit knobs, plus the
+/// repository a GGUF conversion was made from.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct HubCheckOptions {
+    pub context_window: Option<u32>,
+    pub load_guard: Option<serde_json::Value>,
+    pub expert_cache_slots: Option<serde_json::Value>,
+    /// `owner/name`: where to look for `tokenizer.json` when the GGUF
+    /// repository has none. A search row's `baseModel`.
+    pub sidecar_hint: Option<String>,
+    /// The `.gguf` whose header to read, instead of the best quantization.
+    /// The fit is per file, so a picker re-checks with the user's choice.
+    pub file: Option<String>,
+}
+
 /// Arguments to `ts_session_open`. Every field is optional; `{}` is valid and
 /// means "everything automatic", which is what the two user-facing binaries
 /// default to.

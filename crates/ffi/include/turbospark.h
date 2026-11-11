@@ -1602,6 +1602,80 @@ int32_t ts_context_ladder_json(const char *model_path, const char *options_json,
 int32_t ts_repo_variants_json(const char *repo, char **out);
 
 /*
+ * Searches Hugging Face for TEXT models. One list request, no repository is
+ * probed: a row carries advisory metadata and NEVER claims a model runs.
+ * Call ts_hub_check_json() on the row the user selects.
+ *
+ *   { "status": "ok" | "offline" | "rateLimited" | "needsAuth" | "error",
+ *     "message", "retryAfterSecs", "fetchedAt", "fromCache", "rejected",
+ *     "results": [ { "repoId", "revision", "downloads", "likes",
+ *                    "hasGguf", "hasMlx", "gated", "baseModel",
+ *                    "architecture", "archHint", "archNeeds",
+ *                    "bundledAliases" } ] }
+ *
+ * A failed request is a STATUS with an empty "results", not an error code,
+ * so a host can say "offline" and "slow down" differently. Error codes are
+ * for a malformed call.
+ *
+ * "archHint" is one of recognized, planned, unrecognized, unknown. It says
+ * whether this port KNOWS the architecture name and nothing about the
+ * checkpoint: quantization, a missing tokenizer and the dense/MoE split of
+ * one GGUF architecture are decided only by the check. Render "recognized"
+ * as "architecture recognized", never as "compatible". "unknown" for a
+ * safetensors row is NOT a negative: the registry's table holds supported
+ * rows only. "archNeeds" is the registry's next step for a "planned" row.
+ *
+ * "bundledAliases" lists curated catalog aliases for the same repository,
+ * so a host can send the user to the verified install.
+ *
+ * `query` is required, at least two characters. `options_json` may be NULL,
+ * "" or "{}". Keys: limit (default 20, at most 50), sort ("downloads"
+ * default, "trending", "likes"), format ("any" default, "gguf", "mlx"),
+ * refresh (true skips the 15-minute cache). Results are cached on disk by
+ * query, so a repeat search inside the window makes no request.
+ */
+int32_t ts_hub_search_json(const char *query, const char *options_json,
+                           char **out);
+
+/*
+ * The compatibility verdict for ONE repository, as a state to render:
+ *
+ *   { "repo", "revision",
+ *     "state": "runnable" | "refused" | "needsAuth" | "unavailable",
+ *     "reason", "kind": "gguf" | "mlx" | null, "file", "architecture",
+ *     "family", "downloadBytes", "trainedContext", "chatTemplate",
+ *     "warnings", "sidecarsMissing", "sidecarRepo",
+ *     "variants": [ same rows as ts_repo_variants_json ], "shardedSkipped",
+ *     "fit" }
+ *
+ * BRANCH ON "state". "refused" carries the probe's own reason. "needsAuth"
+ * (the Hub said 401 or 403) and "unavailable" (offline, 404, rate limited)
+ * are NOT verdicts on the checkpoint: do not show them as incompatible.
+ * Unlike ts_probe_json() this never fails for a repository with several GGUF
+ * files or none, it reports them.
+ *
+ * For GGUF the header is read from one representative file (the best
+ * quality one with kernels), so the verdict is the model's; per-file
+ * "executable" stays on "variants". "sidecarRepo" is set only when the GGUF
+ * repository had no tokenizer.json and options.sidecarHint supplied one that
+ * has it: an install of this result must pass the same repository.
+ *
+ * Seconds, not milliseconds: the file list, one header or config.json, and
+ * for safetensors a HEAD per shard. Call it for the repository the user
+ * picked, not for every search row.
+ *
+ * `options_json` may be NULL, "" or "{}". Keys: contextWindow, loadGuard and
+ * expertCacheSlots (ts_probe_json's spellings, for the "fit"),
+ * sidecarHint ("owner/name", a search row's baseModel), and file (the .gguf
+ * whose header to read instead of the best quantization). The fit is PER
+ * FILE: a smaller quantization can fit where the best one does not, so a
+ * quantization picker calls this again with the user's choice. A file the
+ * repository does not list is a "refused" state, not an error code.
+ */
+int32_t ts_hub_check_json(const char *repo, const char *options_json,
+                          char **out);
+
+/*
  * What a .gguf control vector declares, read from the file alone: no model,
  * no session, no network. A vector is around 1.3 MB, so this is milliseconds.
  *

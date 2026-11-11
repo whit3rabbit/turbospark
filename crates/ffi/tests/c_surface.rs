@@ -28,12 +28,13 @@ use turbospark_ffi::{
     abi, session_for_testing, session_for_testing_named, ts_cosine_similarity,
     ts_embedding_encode_json, ts_generate, ts_hf_endpoint_get, ts_hf_endpoint_set,
     ts_hf_token_clear, ts_hf_token_get, ts_hf_token_set, ts_hf_token_validate_json,
-    ts_image_buffer_free, ts_image_session_open, ts_last_error, ts_model_delete, ts_probe_json,
-    ts_recommend_json, ts_recommend_progress_json, ts_repo_variants_json,
-    ts_server_attach_audio_model, ts_server_attach_embedding_model, ts_server_attach_session,
-    ts_server_complete_audio_speech_request, ts_server_detach_audio_model, ts_server_detach_model,
-    ts_server_info_json, ts_server_poll_events_json, ts_server_set_idle_unload, ts_server_start,
-    ts_server_stop, ts_session_cancel, ts_session_count_text_tokens, ts_session_count_tokens,
+    ts_hub_check_json, ts_hub_search_json, ts_image_buffer_free, ts_image_session_open,
+    ts_last_error, ts_model_delete, ts_probe_json, ts_recommend_json, ts_recommend_progress_json,
+    ts_repo_variants_json, ts_server_attach_audio_model, ts_server_attach_embedding_model,
+    ts_server_attach_session, ts_server_complete_audio_speech_request,
+    ts_server_detach_audio_model, ts_server_detach_model, ts_server_info_json,
+    ts_server_poll_events_json, ts_server_set_idle_unload, ts_server_start, ts_server_stop,
+    ts_session_cancel, ts_session_count_text_tokens, ts_session_count_tokens,
     ts_session_count_tokens_with_tools, ts_session_detokenize_json, ts_session_fit_window_json,
     ts_session_fit_window_with_tools_json, ts_session_info_json, ts_session_open,
     ts_session_render_prompt, ts_session_tokenize_json, ts_string_free, ts_stt_close, ts_stt_open,
@@ -761,6 +762,65 @@ fn a_malformed_repository_is_rejected_before_any_network_call() {
             last_error()
         );
     }
+}
+
+/// The two Hub entry points fail a malformed call from the header alone, with
+/// no request: a NULL or too-short query, an unknown option spelling, a bad
+/// repository shape and an out-of-set slot count. (A short query returning a
+/// "no results" success would read as the Hub having nothing for "a".)
+#[test]
+fn the_hub_entry_points_refuse_a_malformed_call_before_any_network_call() {
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_hub_search_json(ptr::null(), ptr::null(), &mut out) };
+    assert_eq!(
+        code,
+        abi::TS_ERR_INVALID_ARGUMENT,
+        "a NULL query is refused"
+    );
+
+    for short in ["", " ", "a"] {
+        let query = c(short);
+        let mut out: *mut c_char = ptr::null_mut();
+        let code = unsafe { ts_hub_search_json(query.as_ptr(), ptr::null(), &mut out) };
+        assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT, "{short:?} is too short");
+        assert!(last_error().contains("at least 2"), "{:?}", last_error());
+    }
+
+    let query = c("qwen");
+    for (options, needle) in [
+        (r#"{"sort":"newest"}"#, "sort"),
+        (r#"{"format":"onnx"}"#, "format"),
+    ] {
+        let options = c(options);
+        let mut out: *mut c_char = ptr::null_mut();
+        let code = unsafe { ts_hub_search_json(query.as_ptr(), options.as_ptr(), &mut out) };
+        assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT, "{needle}");
+        assert!(last_error().contains(needle), "{:?}", last_error());
+    }
+
+    for bad in ["nameonly", "too/many/parts", "/leading", "trailing/"] {
+        let repo = c(bad);
+        let mut out: *mut c_char = ptr::null_mut();
+        let code = unsafe { ts_hub_check_json(repo.as_ptr(), ptr::null(), &mut out) };
+        assert_eq!(code, abi::TS_ERR_JSON, "{bad} should be refused");
+        assert!(last_error().contains("owner/name"), "{:?}", last_error());
+    }
+
+    // A bad hint is the same shape error, and a bad slot count is refused
+    // before the repository is read.
+    let repo = c("owner/name");
+    let hint = c(r#"{"sidecarHint":"nameonly"}"#);
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_hub_check_json(repo.as_ptr(), hint.as_ptr(), &mut out) };
+    assert_eq!(code, abi::TS_ERR_JSON);
+    let slots = c(r#"{"expertCacheSlots":12}"#);
+    let code = unsafe { ts_hub_check_json(repo.as_ptr(), slots.as_ptr(), &mut out) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT, "{:?}", last_error());
+    assert!(
+        last_error().contains("expertCacheSlots"),
+        "{:?}",
+        last_error()
+    );
 }
 
 /// **AN OUT-OF-SET SLOT COUNT IS AN ERROR AND NOT A PANIC, ON EVERY ENTRY

@@ -127,36 +127,43 @@ pub fn materialize_image_source(
     std::fs::create_dir_all(destination)
         .map_err(|e| format!("creating {}: {e}", destination.display()))?;
     let cache = destination.join(".download-cache");
-    for (remote, expected_size) in selected {
+    for batch in selected.chunks(HttpRangeSource::FILE_DOWNLOAD_WORKERS) {
         if cancel.is_some_and(CancelFlag::is_cancelled) {
             return Err(INSTALL_CANCELLED.to_string());
         }
-        let local = safe_join(destination, &remote)?;
-        let stage = format!("downloading {remote}");
-        progress(&stage);
-        // Rebuild even a size-matching source file from the verified range
-        // cache. Size alone cannot prove that a source left by a crashed pack
-        // is still intact; cache entries carry hashes and remain local I/O.
-        if local.exists() {
-            std::fs::remove_file(&local)
-                .map_err(|e| format!("removing incomplete {}: {e}", local.display()))?;
+        let mut files = Vec::with_capacity(batch.len());
+        for (remote, expected_size) in batch {
+            let local = safe_join(destination, remote)?;
+            progress(&format!("downloading {remote}"));
+            // Rebuild from verified ranges even if a previous source file
+            // has the right size. A crashed pack can leave corrupt bytes.
+            if local.exists() {
+                std::fs::remove_file(&local)
+                    .map_err(|e| format!("removing incomplete {}: {e}", local.display()))?;
+            }
+            let done = Arc::clone(&completed);
+            let report = Arc::clone(&on_bytes);
+            let range_progress: repack::ByteProgressCallback = Arc::new(move |delta| {
+                let cumulative = done.fetch_add(delta, Ordering::Relaxed) + delta;
+                report(cumulative, total);
+            });
+            let mut source = HttpRangeSource::with_progress(repo.file_url(remote), range_progress)
+                .with_optional_token(client.token())
+                .with_cache_dir(&cache);
+            if let Some(cancel) = cancel {
+                source = source.with_cancel(cancel.clone());
+            }
+            files.push((source, local, *expected_size));
         }
-        let done = Arc::clone(&completed);
-        let report = Arc::clone(&on_bytes);
-        let range_progress: repack::ByteProgressCallback = Arc::new(move |delta| {
-            let cumulative = done.fetch_add(delta, Ordering::Relaxed) + delta;
-            report(cumulative, total);
-        });
-        let mut source = HttpRangeSource::with_progress(repo.file_url(&remote), range_progress)
-            .with_optional_token(client.token())
-            .with_cache_dir(&cache);
-        if let Some(cancel) = cancel {
-            source = source.with_cancel(cancel.clone());
+        let downloads = files
+            .iter()
+            .map(|(source, path, size)| (source, path.as_path(), *size))
+            .collect::<Vec<_>>();
+        HttpRangeSource::download_batch(&downloads)
+            .map_err(|(index, error)| format!("downloading {}: {error}", batch[index].0))?;
+        for (remote, _) in batch {
+            progress(&format!("downloading {remote}"));
         }
-        source
-            .download_to(&local, expected_size)
-            .map_err(|e| format!("downloading {remote}: {e}"))?;
-        progress(&stage);
     }
     if cancel.is_some_and(CancelFlag::is_cancelled) {
         return Err(INSTALL_CANCELLED.to_string());

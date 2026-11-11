@@ -251,6 +251,12 @@ fn choose_quantization(
 /// reads as "no GGUF here" instead of "this port cannot walk a shard set".
 pub fn gguf_variants(client: &Client, repo: &RepoRef) -> Result<GgufVariants, String> {
     let files = client.file_list_with_sizes(repo)?;
+    Ok(gguf_variants_from_files(&files))
+}
+
+/// [`gguf_variants`] over a listing the caller already holds, so a flow that
+/// needs the file list for something else does not pay for a second API call.
+pub fn gguf_variants_from_files(files: &[crate::hf::RepoFile]) -> GgufVariants {
     let ggufs: Vec<&crate::hf::RepoFile> =
         files.iter().filter(|f| f.name.ends_with(".gguf")).collect();
     let sharded_skipped = ggufs.iter().filter(|f| f.name.contains("-of-0")).count();
@@ -274,10 +280,10 @@ pub fn gguf_variants(client: &Client, repo: &RepoRef) -> Result<GgufVariants, St
     // menu, so the key is built explicitly.
     variants.sort_by_key(|v| (v.ladder_rank.unwrap_or(usize::MAX), v.file.clone()));
 
-    Ok(GgufVariants {
+    GgufVariants {
         variants,
         sharded_skipped,
-    })
+    }
 }
 
 /// One publishable `.gguf` in a repository. See [`gguf_variants`].

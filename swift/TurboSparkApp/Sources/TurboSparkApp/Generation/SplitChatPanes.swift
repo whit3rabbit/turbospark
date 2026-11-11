@@ -174,10 +174,7 @@ private struct SplitPaneMessageRow: View {
         case .assistant:
             VStack(alignment: .leading, spacing: 6) {
                 if !message.content.isEmpty {
-                    ChatMessageMarkdownView(
-                        MessageContentPreview.make(message.content, includesTail: false)?
-                            .visible ?? message.content
-                    )
+                    ChatMessageMarkdownView(message.content)
                 }
                 ForEach(message.toolCalls) { call in
                     HStack(spacing: 5) {

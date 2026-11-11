@@ -7,7 +7,8 @@
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use repack::{fetch_safetensors_header, DownloadError, HttpRangeSource, RangeSource};
 use turbospark_repack as repack;
@@ -36,14 +37,24 @@ enum TotalHeader {
 /// before any request" from "the server answered and the read then failed".
 struct RangeServer {
     url: String,
-    requests: Arc<Mutex<Vec<String>>>,
+    requests: Arc<RequestLog>,
+}
+
+#[derive(Default)]
+struct RequestLog {
+    ranges: Mutex<Vec<String>>,
+    arrived: Condvar,
 }
 
 impl RangeServer {
     fn start(file: Vec<u8>, total: TotalHeader) -> Self {
+        Self::start_with_overlap(file, total, false)
+    }
+
+    fn start_with_overlap(file: Vec<u8>, total: TotalHeader, require_overlap: bool) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/weights", listener.local_addr().unwrap());
-        let requests = Arc::new(Mutex::new(Vec::new()));
+        let requests = Arc::new(RequestLog::default());
         let log = Arc::clone(&requests);
         let file = Arc::new(file);
         // Detached on purpose: it dies with the test process and every socket
@@ -53,22 +64,28 @@ impl RangeServer {
                 let Ok(socket) = socket else { return };
                 let file = Arc::clone(&file);
                 let log = Arc::clone(&log);
-                std::thread::spawn(move || serve(socket, &file, total, &log));
+                std::thread::spawn(move || serve(socket, &file, total, &log, require_overlap));
             }
         });
         Self { url, requests }
     }
 
     fn requests(&self) -> Vec<String> {
-        self.requests.lock().unwrap().clone()
+        self.requests.ranges.lock().unwrap().clone()
     }
 
     fn clear_requests(&self) {
-        self.requests.lock().unwrap().clear();
+        self.requests.ranges.lock().unwrap().clear();
     }
 }
 
-fn serve(mut socket: TcpStream, file: &[u8], total: TotalHeader, log: &Mutex<Vec<String>>) {
+fn serve(
+    mut socket: TcpStream,
+    file: &[u8],
+    total: TotalHeader,
+    log: &RequestLog,
+    require_overlap: bool,
+) {
     let mut request = Vec::new();
     let mut byte = [0u8; 1];
     while !request.ends_with(b"\r\n\r\n") {
@@ -83,7 +100,33 @@ fn serve(mut socket: TcpStream, file: &[u8], total: TotalHeader, log: &Mutex<Vec
         .find_map(|line| line.strip_prefix("range: bytes="))
         .expect("every source request is ranged")
         .to_string();
-    log.lock().unwrap().push(range.clone());
+    {
+        let mut ranges = log.ranges.lock().unwrap();
+        ranges.push(range.clone());
+        if require_overlap && range != "0-0" {
+            // Hold the first payload response until the second request arrives.
+            // The one-byte length probe does not count as an overlapping fetch.
+            log.arrived.notify_all();
+            let timed_out = log
+                .arrived
+                .wait_timeout_while(ranges, Duration::from_secs(3), |ranges| {
+                    ranges
+                        .iter()
+                        .filter(|range| range.as_str() != "0-0")
+                        .count()
+                        < 2
+                })
+                .unwrap()
+                .1
+                .timed_out();
+            if timed_out {
+                let _ = socket.write_all(
+                    b"HTTP/1.1 409 Conflict\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+                return;
+            }
+        }
+    }
 
     let (start, end) = range.split_once('-').unwrap();
     let (start, end): (u64, u64) = (start.parse().unwrap(), end.parse().unwrap());
@@ -220,6 +263,36 @@ fn a_multi_chunk_read_ending_exactly_at_eof_returns_the_file() {
         "the length is pinned after the first response: {:?}",
         server.requests()
     );
+}
+
+#[test]
+fn multi_chunk_reads_overlap_http_requests() {
+    let file = patterned(MULTI_CHUNK_LEN);
+    let server = RangeServer::start_with_overlap(file.clone(), TotalHeader::Real, true);
+    let source = HttpRangeSource::new(server.url);
+
+    let received = source
+        .read_range(0, file.len() as u64)
+        .expect("the server requires two overlapping requests");
+    assert_eq!(received, file);
+}
+
+#[test]
+fn multi_chunk_file_downloads_overlap_http_requests() {
+    let file = patterned(MULTI_CHUNK_LEN);
+    let server = RangeServer::start_with_overlap(file.clone(), TotalHeader::Real, true);
+    let source = HttpRangeSource::new(server.url);
+    let dir = scratch_dir("overlap");
+    let destination = dir.join("weights");
+
+    let downloaded = source.download_to(&destination, file.len() as u64);
+    let received = std::fs::read(&destination);
+    std::fs::remove_dir_all(dir).unwrap();
+    assert_eq!(
+        downloaded.expect("the server requires two overlapping requests"),
+        file.len() as u64
+    );
+    assert_eq!(received.unwrap(), file);
 }
 
 /// One byte past EOF is refused, and `actual` stays usable:

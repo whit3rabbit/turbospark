@@ -16,6 +16,17 @@ struct MessageRowView: View {
         speechManager.isSpeaking && speechManager.speakingMessageID == message.id
     }
 
+    private var showsMessageActions: Bool {
+        isHovered || isCurrentlySpeakingThis
+    }
+
+    private var showsAssistantContent: Bool {
+        guard !message.content.isEmpty else { return false }
+        guard !message.toolCalls.isEmpty else { return true }
+        let trimmed = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.starts(with: "<tool_call>") && !trimmed.starts(with: "Invoking tool")
+    }
+
     /// Variant navigation reads; the bar hides the switcher on "1 / 1".
     private var variantPosition: (position: Int, count: Int) {
         model.variantPosition(of: message)
@@ -159,24 +170,22 @@ struct MessageRowView: View {
 
                 imageAttachments
 
-                if isHovered || isCurrentlySpeakingThis {
-                    MessageActionBarView(
-                        text: message.content,
-                        messageID: message.id,
-                        date: message.createdAt,
-                        variantStep: variantPosition.count > 1 ? { stepVariant($0) } : nil,
-                        variantPosition: variantPosition.position,
-                        variantCount: variantPosition.count,
-                        editAction: canEditThisInPlace ? { _ = model.beginEdit(messageID: message.id) } : nil,
-                        branchAction: canBranchThis
-                            ? { branchTarget = AppModel.BranchTarget(id: message.id, originalText: message.content) }
-                            : nil,
-                        standingInstructionAction: standingInstructionAction,
-                        isStandingInstruction: message.isStandingInstruction,
-                        actionsDisabled: model.isRunning
-                    )
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                }
+                MessageActionBarView(
+                    text: message.content,
+                    messageID: message.id,
+                    date: message.createdAt,
+                    isVisible: showsMessageActions,
+                    variantStep: variantPosition.count > 1 ? { stepVariant($0) } : nil,
+                    variantPosition: variantPosition.position,
+                    variantCount: variantPosition.count,
+                    editAction: canEditThisInPlace ? { _ = model.beginEdit(messageID: message.id) } : nil,
+                    branchAction: canBranchThis
+                        ? { branchTarget = AppModel.BranchTarget(id: message.id, originalText: message.content) }
+                        : nil,
+                    standingInstructionAction: standingInstructionAction,
+                    isStandingInstruction: message.isStandingInstruction,
+                    actionsDisabled: model.isRunning
+                )
             }
         }
     }
@@ -230,17 +239,15 @@ struct MessageRowView: View {
                 )
                 .clipShape(RoundedRectangle(cornerRadius: AppMetrics.composerRadius, style: .continuous))
 
-                if isHovered || isCurrentlySpeakingThis {
-                    MessageActionBarView(
-                        text: message.content,
-                        messageID: message.id,
-                        date: message.createdAt,
-                        standingInstructionAction: standingInstructionAction,
-                        isStandingInstruction: message.isStandingInstruction,
-                        actionsDisabled: model.isRunning
-                    )
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                }
+                MessageActionBarView(
+                    text: message.content,
+                    messageID: message.id,
+                    date: message.createdAt,
+                    isVisible: showsMessageActions,
+                    standingInstructionAction: standingInstructionAction,
+                    isStandingInstruction: message.isStandingInstruction,
+                    actionsDisabled: model.isRunning
+                )
             }
         }
     }
@@ -372,54 +379,33 @@ struct MessageRowView: View {
                         artifactChips
                     }
 
-                    if !message.content.isEmpty && message.toolCalls.isEmpty {
-                        CollapsibleMessageContentView(
-                            text: message.content,
-                            isUser: false,
-                            maxHeight: 380,
-                            onPreviewHTML: previewHTML)
-                    } else if !message.content.isEmpty {
-                        let trimmed = message.content.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if !trimmed.starts(with: "<tool_call>") && !trimmed.starts(with: "Invoking tool") {
-                            CollapsibleMessageContentView(
-                                text: message.content,
-                                isUser: false,
-                                maxHeight: 380,
-                                onPreviewHTML: previewHTML)
-                        }
+                    if showsAssistantContent {
+                        MarkdownContentWithTablesView(text: message.content, onPreviewHTML: previewHTML)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     imageAttachments
 
-                    if isHovered || isCurrentlySpeakingThis {
-                        HStack(spacing: 6) {
-                            MessageActionBarView(
-                                text: message.content,
-                                messageID: message.id,
-                                date: message.createdAt,
-                                variantStep: variantPosition.count > 1 ? { stepVariant($0) } : nil,
-                                variantPosition: variantPosition.position,
-                                variantCount: variantPosition.count,
-                                retryAction: model.canRetry(response: message)
-                                    ? { _ = model.regenerateResponse() } : nil,
-                                actionsDisabled: model.isRunning
-                            )
-                            Spacer()
-                        }
-                        .padding(.top, 2)
-                        .transition(.opacity.combined(with: .scale(scale: 0.98)))
-                    }
+                    MessageActionBarView(
+                        text: message.content,
+                        messageID: message.id,
+                        date: message.createdAt,
+                        isVisible: showsMessageActions,
+                        variantStep: variantPosition.count > 1 ? { stepVariant($0) } : nil,
+                        variantPosition: variantPosition.position,
+                        variantCount: variantPosition.count,
+                        retryAction: model.canRetry(response: message)
+                            ? { _ = model.regenerateResponse() } : nil,
+                        actionsDisabled: model.isRunning
+                    )
+                    .padding(.top, 2)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
-        .onHover { hovering in
-            TSMotion.animate(TSMotion.hover) {
-                isHovered = hovering
-            }
-        }
+        .onHover { isHovered = $0 }
         .sheet(item: $branchTarget) { target in
             BranchEditSheet(
                 originalText: target.originalText,

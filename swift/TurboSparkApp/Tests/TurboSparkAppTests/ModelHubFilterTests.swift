@@ -405,8 +405,51 @@ final class ModelHubFilterTests: XCTestCase {
         XCTAssertEqual(result.map(\.alias), ["gemma4"])
     }
 
-    /// Tests that the Recommended tab prioritizes MLX and MoE architectures among runnable models.
-    func testRecommendedTabPrioritizesMlxAndMoE() throws {
+    /// The Recommended tab is ordered by fit first, because the fit is what
+    /// its section headers say. A streaming MLX model no longer outranks a
+    /// model that fits entirely in memory.
+    func testRecommendedTabOrdersByFitBeforeFormat() throws {
+        var filter = ModelHubFilter()
+        filter.tab = .recommended
+        filter.sort = .recommended
+        let recommendations = [
+            "gemma4": try recommendation(alias: "gemma4", verdict: "streams"),
+            "gemma4-gguf": try recommendation(alias: "gemma4-gguf", verdict: "resident"),
+            "mistral7b": try recommendation(alias: "mistral7b", verdict: "resident"),
+        ]
+        let result = filter.apply(
+            to: try catalog(), installedAliases: [], recommendations: recommendations)
+        // Resident group first (verified before runs), then the streaming MLX row.
+        XCTAssertEqual(result.map(\.alias), ["gemma4-gguf", "mistral7b", "gemma4"])
+    }
+
+    /// Inside one fit group the keys are ones the card shows: evidence
+    /// (verified, runs, caveat), then MLX before GGUF, then name.
+    func testWithinAFitGroupEvidenceThenFormatThenName() throws {
+        var filter = ModelHubFilter()
+        filter.tab = .recommended
+        filter.sort = .recommended
+        let rows = [
+            try entry(alias: "z-caveat-mlx", name: "Z (MLX INT4)", family: "qwen", status: "caveat"),
+            try entry(alias: "b-runs-gguf", name: "B (GGUF Q4_K_M)", family: "qwen", status: "runs"),
+            try entry(alias: "a-verified-gguf", name: "A (GGUF Q4_K_M)", family: "qwen", status: "verified"),
+            try entry(alias: "c-verified-mlx", name: "C (MLX INT4)", family: "qwen", status: "verified"),
+            try entry(alias: "d-verified-mlx", name: "D (MLX INT4)", family: "qwen", status: "verified"),
+        ]
+        var recommendations: [String: ModelRecommendation] = [:]
+        for row in rows {
+            recommendations[row.alias] = try recommendation(alias: row.alias, verdict: "resident")
+        }
+        let result = filter.apply(to: rows, installedAliases: [], recommendations: recommendations)
+        XCTAssertEqual(
+            result.map(\.alias),
+            ["c-verified-mlx", "d-verified-mlx", "a-verified-gguf", "b-runs-gguf", "z-caveat-mlx"],
+            "verified MLX by name, verified GGUF, then runs, then caveat even though it is MLX")
+    }
+
+    /// The tab's groups are its fit verdicts, in order, and a group with no
+    /// rows is not drawn.
+    func testRecommendedSectionsFollowTheFitVerdictAndSkipEmptyGroups() throws {
         var filter = ModelHubFilter()
         filter.tab = .recommended
         filter.sort = .recommended
@@ -416,14 +459,43 @@ final class ModelHubFilterTests: XCTestCase {
             "gemma4-gguf": try recommendation(alias: "gemma4-gguf", verdict: "resident"),
             "mistral7b": try recommendation(alias: "mistral7b", verdict: "resident"),
         ]
-        let result = filter.apply(
-            to: rows,
-            installedAliases: [],
-            recommendations: recommendations)
-        let aliases = result.map(\.alias)
-        XCTAssertEqual(aliases.first, "gemma4", "MLX/MoE model should be prioritized first")
-        XCTAssertEqual(aliases[1], "gemma4-gguf", "MoE model should be prioritized before dense")
-        XCTAssertEqual(aliases.last, "mistral7b", "dense model ranks after MLX and MoE models")
+        let sorted = filter.apply(to: rows, installedAliases: [], recommendations: recommendations)
+        let sections = ModelHubFilter.recommendedSections(sorted, recommendations: recommendations)
+        XCTAssertEqual(sections.map(\.verdict), [.resident, .streams], "no tight or unknown header over nothing")
+        XCTAssertEqual(sections[0].entries.map(\.alias), ["gemma4-gguf", "mistral7b"])
+        XCTAssertEqual(sections[1].entries.map(\.alias), ["gemma4"])
+        XCTAssertEqual(
+            sections.flatMap(\.entries).map(\.alias), sorted.map(\.alias),
+            "grouping reorders nothing and drops nothing")
+        XCTAssertTrue(ModelHubFilter.recommendedSections([], recommendations: [:]).isEmpty)
+    }
+
+    /// Every group the tab can show maps to its own heading: a verdict added to
+    /// the engine later must not silently reuse another group's title.
+    func testEveryRunnableVerdictHasItsOwnSectionAndHeader() throws {
+        let rows = [
+            try entry(alias: "a", name: "A", family: "qwen"),
+            try entry(alias: "b", name: "B", family: "qwen"),
+            try entry(alias: "c", name: "C", family: "qwen"),
+            try entry(alias: "d", name: "D", family: "qwen"),
+        ]
+        let recommendations = [
+            "a": try recommendation(alias: "a", verdict: "resident"),
+            "b": try recommendation(alias: "b", verdict: "streams"),
+            "c": try recommendation(alias: "c", verdict: "tight"),
+            "d": try recommendation(alias: "d", verdict: "unknown"),
+        ]
+        var filter = ModelHubFilter()
+        filter.tab = .recommended
+        filter.sort = .recommended
+        let sorted = rows.sorted {
+            ModelHubFilter.recommendedPrecedes(
+                $0, $1, lhsVerdict: recommendations[$0.alias]?.verdict,
+                rhsVerdict: recommendations[$1.alias]?.verdict)
+        }
+        let sections = ModelHubFilter.recommendedSections(sorted, recommendations: recommendations)
+        XCTAssertEqual(sections.map(\.verdict), [.resident, .streams, .tight, .unknown])
+        XCTAssertEqual(Set(sections.map(\.id)).count, 4, "each group has a distinct identity")
     }
 
     /// Tests identification helper for MLX formats and MoE architectures.

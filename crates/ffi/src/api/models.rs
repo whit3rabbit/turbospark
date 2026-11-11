@@ -382,6 +382,69 @@ pub unsafe extern "C" fn ts_probe_json(
     })
 }
 
+/// Searches Hugging Face for text models. One list request: no repository is
+/// probed, so every row carries advisory metadata only (format tags, the
+/// architecture string the Hub read) and never claims a model runs. Pair it
+/// with `ts_hub_check_json` on the row the user selects.
+///
+/// `query` is required and at least two characters. `options_json` may be
+/// NULL, "" or "{}".
+#[no_mangle]
+pub unsafe extern "C" fn ts_hub_search_json(
+    query: *const c_char,
+    options_json: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let query =
+            strings::required(query, "query").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let options =
+            abi::parse_json_or_default::<crate::wire::HubSearchOptions>(options_json, "options")?;
+        let json = models::hub_search_json(query, &options)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// The compatibility verdict for ONE Hugging Face repository, as a state a
+/// host can render: `runnable`, `refused` (with the probe's own reason),
+/// `needsAuth` or `unavailable`. The last two are not verdicts on the
+/// checkpoint. Unlike `ts_probe_json` this never fails for a repository with
+/// several GGUF files or none; it reports them.
+///
+/// Reads the file list, one GGUF header or `config.json`, and for
+/// safetensors a HEAD per shard: seconds for a repository the user picked,
+/// not for every row of a search. `repo` is `owner/name` or
+/// `owner/name@revision`.
+#[no_mangle]
+pub unsafe extern "C" fn ts_hub_check_json(
+    repo: *const c_char,
+    options_json: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let repo =
+            strings::required(repo, "repo").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let options =
+            abi::parse_json_or_default::<crate::wire::HubCheckOptions>(options_json, "options")?;
+        let guard = crate::wire::load_guard(&options.load_guard)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let slots = crate::wire::expert_cache_slots(&options.expert_cache_slots)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let context = options.context_window.filter(|c| *c > 0);
+        let json = models::hub_check_json(
+            repo,
+            options.sidecar_hint.as_deref(),
+            options.file.as_deref(),
+            context,
+            slots,
+            guard,
+        )
+        .map_err(|e| (abi::TS_ERR_JSON, e))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
 /// What a longer context window would cost an INSTALLED model.
 ///
 /// A different question from `ts_recommend_json`'s and NOT derivable from it:

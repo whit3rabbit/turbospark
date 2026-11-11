@@ -23,6 +23,7 @@
 pub mod audio_catalog;
 mod auth;
 mod catalog;
+mod check;
 pub mod drama3_install;
 pub mod embedding;
 mod entry;
@@ -56,6 +57,7 @@ pub use auth::{
     HfTokenValidationStatus,
 };
 pub use catalog::{Catalog, SCHEMA_VERSION};
+pub use check::{arch_hint, check_repo, ArchHint, CheckState, RepoCheck};
 pub use embedding::{EmbeddingCatalog, EmbeddingProfile};
 pub use entry::{
     CatalogEntry, EntryKind, Measured, MtpSource, Sidecars, Source, SourceKind, Status,
@@ -63,14 +65,14 @@ pub use entry::{
 pub use hf::{hf_endpoint, set_hf_endpoint_override, Client, PopularRepo, RepoFile, RepoRef};
 pub use hub::{
     matches_exact_source, BundledTarget, DownloadReceipt, EntryProvenance, FitSummary, HubClient,
-    HubDownloadProgress, HubEntry, HubError, HubGgufVariant, HubPage, HubQuery, HubSort,
+    HubDownloadProgress, HubEntry, HubError, HubFormat, HubGgufVariant, HubPage, HubQuery, HubSort,
     LiveTarget, PinnedArtifactPlan, PinnedSourceFile, PinnedSourceGroup, Refresh,
     ResolvedSourceFile, ResolvedSourceIdentity, SourceIdentityMismatch, VariantInstallability,
     VerifiedSourceFile, VerifiedSourceGroup, DEFAULT_TRENDING_LIMIT, MAX_HUB_PAGE_ENTRIES,
 };
 pub use hub_validation::{
     HubFileMetadata, HubMetadataValidator, HubRepoMetadata, HubSearchEntry, HubValidationError,
-    HubValidationLimits, RejectedHubEntry, ValidationReport,
+    HubValidationLimits, LiveMeta, RejectedHubEntry, ValidationReport,
 };
 pub use image::{
     image_family_for_model_id, materialize_image_source, normalize_mflux_source,
@@ -95,11 +97,11 @@ pub use quant::{
     group_variants, quant_label, QuantLabel, ShardSetIssue, ShardSetStatus, VariantFiles,
 };
 pub use recommend::{
-    context_ladder, discover, fit, from_entry, gguf_variants, name_params_hint, probe_entry,
-    rank_recommendations, recommend_catalog, recommend_catalog_probed,
-    recommend_catalog_probed_with_progress, CountedSource, DiscoverOptions, Evidence, Fit,
-    FitVerdict, GgufVariant, GgufVariants, LadderRung, Machine, Origin, Recommendation, Shape,
-    ThroughputBand,
+    context_ladder, discover, fit, from_entry, gguf_variants, gguf_variants_from_files,
+    name_params_hint, probe_entry, rank_recommendations, recommend_catalog,
+    recommend_catalog_probed, recommend_catalog_probed_with_progress, CountedSource,
+    DiscoverOptions, Evidence, Fit, FitVerdict, GgufVariant, GgufVariants, LadderRung, Machine,
+    Origin, Recommendation, Shape, ThroughputBand,
 };
 pub use speech::{
     embedded_entries as embedded_speech_entries, embedded_entry as embedded_speech_entry,

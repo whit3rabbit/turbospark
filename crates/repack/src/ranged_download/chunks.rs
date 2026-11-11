@@ -140,12 +140,14 @@ where
     std::thread::scope(|scope| {
         for _ in 0..workers {
             scope.spawn(|| {
-                // Pop under the lock and fetch outside it, so a stalled
-                // chunk holds up nothing but itself. A fixed split of the
-                // job list would instead let one slow edge idle a worker.
-                while let Some((index, start, end_exclusive, dst)) =
-                    queue.lock().expect("chunk queue lock").pop()
-                {
+                loop {
+                    // A `while let` condition would hold the lock through
+                    // the fetch, making every other worker wait.
+                    let Some((index, start, end_exclusive, dst)) =
+                        queue.lock().expect("chunk queue lock").pop()
+                    else {
+                        break;
+                    };
                     if let Err(err) = fetch(start, end_exclusive, dst) {
                         failures
                             .lock()

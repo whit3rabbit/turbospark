@@ -33,7 +33,9 @@ mod discover;
 mod fit;
 mod rank;
 
-pub use discover::{discover, gguf_variants, DiscoverOptions, GgufVariant, GgufVariants};
+pub use discover::{
+    discover, gguf_variants, gguf_variants_from_files, DiscoverOptions, GgufVariant, GgufVariants,
+};
 pub use fit::{context_ladder, fit, CountedSource, Fit, FitVerdict, LadderRung, Shape};
 pub use rank::{name_params_hint, rank, Evidence, Key};
 

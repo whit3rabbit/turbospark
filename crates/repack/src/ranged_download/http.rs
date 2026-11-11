@@ -675,79 +675,189 @@ impl HttpRangeSource {
         }
     }
 
-    /// Download a complete remote file into a sibling `.partial` file using
-    /// the same bounded concurrent ranges, retry ladder, cancellation, and
-    /// durable cache as `read_range`. Only a complete file is renamed into
-    /// `destination`.
+    /// The number of files and range workers available to one download batch.
+    pub const FILE_DOWNLOAD_WORKERS: usize = RANGE_CONCURRENCY;
+
+    /// Download a complete remote file. Only a complete file is renamed into
+    /// `destination`; an interrupted transfer resumes from the range cache.
     pub fn download_to(&self, destination: &Path, total_bytes: u64) -> Result<u64, DownloadError> {
+        Self::download_batch(&[(self, destination, total_bytes)]).map_err(|(_, error)| error)?;
+        Ok(total_bytes)
+    }
+
+    /// Download up to eight files using one pool of range workers. A failure
+    /// carries the file's index in the input so callers can report its path.
+    pub fn download_batch(files: &[(&Self, &Path, u64)]) -> Result<(), (usize, DownloadError)> {
+        if files.len() > Self::FILE_DOWNLOAD_WORKERS {
+            return Err((
+                0,
+                DownloadError::Request("download batch exceeds worker limit".into()),
+            ));
+        }
+        let pending = files
+            .iter()
+            .enumerate()
+            .map(|(index, &(source, destination, size))| {
+                PendingDownload::new(source, destination, size).map_err(|error| (index, error))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Rotate among files so even a large first shard leaves slots for the
+        // other files. Idle slots go to any file that still has ranges.
+        let queue = Mutex::new(
+            pending
+                .iter()
+                .enumerate()
+                .filter(|(_, file)| file.size != 0)
+                .map(|(index, _)| (index, 0u64))
+                .collect::<std::collections::VecDeque<_>>(),
+        );
+        let workers = pending
+            .iter()
+            .map(|file| {
+                file.size
+                    .div_ceil(MAX_RANGE_BYTES)
+                    .min(RANGE_CONCURRENCY as u64) as usize
+            })
+            .sum::<usize>()
+            .min(RANGE_CONCURRENCY);
+        let failures = Mutex::new(Vec::new());
+        std::thread::scope(|scope| {
+            for _ in 0..workers {
+                scope.spawn(|| loop {
+                    let (index, start, end) = {
+                        let mut queue = queue.lock().expect("download queue lock");
+                        let Some((index, start)) = queue.pop_front() else {
+                            break;
+                        };
+                        let size = pending[index].size;
+                        let end = start.saturating_add(MAX_RANGE_BYTES).min(size);
+                        if end < size {
+                            queue.push_back((index, end));
+                        }
+                        (index, start, end)
+                    };
+                    if let Err(error) = pending[index].fetch(start, end) {
+                        failures
+                            .lock()
+                            .expect("download failure lock")
+                            .push((index, start, error));
+                    }
+                });
+            }
+        });
+        if let Some((index, _, error)) = failures
+            .into_inner()
+            .expect("download failure lock")
+            .into_iter()
+            .min_by_key(|(index, start, _)| (*index, *start))
+        {
+            return Err((index, error));
+        }
+        for (index, file) in pending.into_iter().enumerate() {
+            file.publish().map_err(|error| (index, error))?;
+        }
+        Ok(())
+    }
+}
+
+struct PendingDownload<'a> {
+    source: &'a HttpRangeSource,
+    destination: &'a Path,
+    size: u64,
+    output: Mutex<File>,
+    partial: DownloadPartial,
+}
+
+impl<'a> PendingDownload<'a> {
+    fn new(
+        source: &'a HttpRangeSource,
+        destination: &'a Path,
+        size: u64,
+    ) -> Result<Self, DownloadError> {
+        static NEXT_PARTIAL: AtomicU64 = AtomicU64::new(0);
         if destination.exists() {
             return Err(DownloadError::Request(format!(
                 "refusing to overwrite {}",
                 destination.display()
             )));
         }
-        let parent = destination.parent().unwrap_or_else(|| Path::new("."));
-        fs::create_dir_all(parent).map_err(|e| DownloadError::Request(e.to_string()))?;
-        let name = destination
-            .file_name()
-            .ok_or_else(|| DownloadError::Request("download destination has no file name".into()))?
-            .to_string_lossy();
-        let partial = parent.join(format!(".{name}.partial"));
-        let file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&partial)
-            .map_err(|e| DownloadError::Request(e.to_string()))?;
-        file.set_len(total_bytes)
-            .map_err(|e| DownloadError::Request(e.to_string()))?;
-
-        let chunks = chunk_ranges(0, total_bytes, MAX_RANGE_BYTES);
-        let queue = Mutex::new(chunks.iter().copied().enumerate().collect::<Vec<_>>());
-        let output = Mutex::new(file);
-        let failures = Mutex::new(Vec::<(usize, DownloadError)>::new());
-        let workers = RANGE_CONCURRENCY.clamp(1, chunks.len().max(1));
-        std::thread::scope(|scope| {
-            for _ in 0..workers {
-                scope.spawn(|| {
-                    while let Some((index, (start, end_exclusive))) =
-                        queue.lock().expect("download queue lock").pop()
-                    {
-                        let mut bytes = vec![0u8; (end_exclusive - start) as usize];
-                        let result = self
-                            .read_chunk_retrying(start, end_exclusive, &mut bytes)
-                            .and_then(|()| {
-                                let mut output = output.lock().expect("download output lock");
-                                output
-                                    .seek(std::io::SeekFrom::Start(start))
-                                    .and_then(|_| output.write_all(&bytes))
-                                    .map_err(|e| DownloadError::Request(e.to_string()))
-                            });
-                        if let Err(error) = result {
-                            failures
-                                .lock()
-                                .expect("download failure lock")
-                                .push((index, error));
-                        }
-                    }
-                });
-            }
-        });
-        let mut failures = failures.into_inner().expect("download failure lock");
-        failures.sort_by_key(|(index, _)| *index);
-        if let Some((_, error)) = failures.into_iter().next() {
-            return Err(error);
+        if destination.file_name().is_none() {
+            return Err(DownloadError::Request(
+                "download destination has no file name".into(),
+            ));
         }
-        if let Some(cancel) = &self.cancel {
+        let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent).map_err(|error| DownloadError::Request(error.to_string()))?;
+        // A remote filename can match another file's conventional .partial
+        // name. Exclusive creation keeps each active transfer's bytes separate.
+        let (partial, output) = loop {
+            let id = NEXT_PARTIAL.fetch_add(1, Ordering::Relaxed);
+            let partial = parent.join(format!(
+                ".turbospark-download-{}-{id}.partial",
+                std::process::id()
+            ));
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&partial)
+            {
+                Ok(output) => break (partial, output),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(DownloadError::Request(error.to_string())),
+            }
+        };
+        let pending = Self {
+            source,
+            destination,
+            size,
+            output: Mutex::new(output),
+            partial: DownloadPartial(partial),
+        };
+        pending
+            .output
+            .lock()
+            .expect("download output lock")
+            .set_len(size)
+            .map_err(|error| DownloadError::Request(error.to_string()))?;
+        Ok(pending)
+    }
+
+    fn fetch(&self, start: u64, end: u64) -> Result<(), DownloadError> {
+        let mut bytes = vec![0u8; (end - start) as usize];
+        self.source.read_chunk_retrying(start, end, &mut bytes)?;
+        let mut output = self.output.lock().expect("download output lock");
+        output
+            .seek(std::io::SeekFrom::Start(start))
+            .and_then(|_| output.write_all(&bytes))
+            .map_err(|error| DownloadError::Request(error.to_string()))
+    }
+
+    fn publish(self) -> Result<(), DownloadError> {
+        if let Some(cancel) = &self.source.cancel {
             cancel.checkpoint()?;
         }
-        output
+        self.output
             .into_inner()
             .expect("download output lock")
             .sync_all()
-            .map_err(|e| DownloadError::Request(e.to_string()))?;
-        fs::rename(&partial, destination).map_err(|e| DownloadError::Request(e.to_string()))?;
-        Ok(total_bytes)
+            .map_err(|error| DownloadError::Request(error.to_string()))?;
+        if self.destination.exists() {
+            return Err(DownloadError::Request(format!(
+                "refusing to overwrite {}",
+                self.destination.display()
+            )));
+        }
+        fs::rename(&self.partial.0, self.destination)
+            .map_err(|error| DownloadError::Request(error.to_string()))
+    }
+}
+
+struct DownloadPartial(PathBuf);
+
+impl Drop for DownloadPartial {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
     }
 }
 

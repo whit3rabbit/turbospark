@@ -16,6 +16,7 @@ mod capabilities;
 mod catalog;
 mod control_vector;
 mod fit;
+mod hub;
 mod image_install;
 mod install;
 pub(crate) use install::{ActiveInstall, ActiveMove};
@@ -30,6 +31,7 @@ pub(crate) use catalog::{
 };
 pub use control_vector::control_vector_info_json;
 pub(crate) use fit::{context_ladder_json, recommend_json_with_progress};
+pub(crate) use hub::{hub_check_json, hub_search_json};
 pub(crate) use image_install::{catalog_json as image_catalog_json, install as image_install};
 pub(crate) use install::{
     cancel_active_installs, cancel_active_move, install, install_repo, installed_value,

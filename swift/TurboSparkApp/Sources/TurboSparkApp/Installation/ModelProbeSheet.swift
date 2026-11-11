@@ -225,7 +225,7 @@ struct ModelProbeSheet: View {
                         Picker(selection: $ggufFile) {
                             Text("Let the installer choose", bundle: .module).tag("")
                             ForEach(listed.variants) { v in
-                                variantLabel(v).tag(v.file)
+                                v.pickerLabel.tag(v.file)
                             }
                         } label: {
                             Text("Quantization", bundle: .module)
@@ -283,19 +283,6 @@ struct ModelProbeSheet: View {
                 }
             }
         } label: { Text("Quantization", bundle: .module) }
-    }
-
-    /// Quantization, size, kernel status and file name. The quantization
-    /// name, size and file are data; only the two status words translate.
-    private func variantLabel(_ v: RepoVariant) -> Text {
-        var label = v.quantLabel.map { Text(verbatim: $0) } ?? Text("unrecognized", bundle: .module)
-        if let bytes = v.bytes {
-            label = label + Text(verbatim: " - \(MetricFormat.storage(bytes))")
-        }
-        if !v.executable {
-            label = label + Text(verbatim: " (") + Text("no kernels", bundle: .module) + Text(verbatim: ")")
-        }
-        return label + Text(verbatim: " - \(v.file)")
     }
 
     /// A placeholder that shows an example value: the words are a catalog

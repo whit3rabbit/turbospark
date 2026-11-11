@@ -1551,6 +1551,8 @@ request metadata powers deterministic regeneration and the Gallery carousel.
 | `ts_probe_json(repo, file, sidecar, out)` | header-only, no download |
 | `ts_context_ladder_json(model_path, options_json, out)` | memory cost per context rung for installed model |
 | `ts_repo_variants_json(repo, out)` | list all GGUF variants published by repository |
+| `ts_hub_search_json(query, options_json, out)` | live Hugging Face text-model search, one list request, advisory metadata only (`archHint` is "architecture recognized", never "compatible"). A failed request is a `status`, not an error code. Swift: `hubSearch(query:limit:sort:format:refresh:)` |
+| `ts_hub_check_json(repo, options_json, out)` | compatibility verdict for ONE repository as a `state` (`runnable`, `refused`, `needsAuth`, `unavailable`); never fails for several or zero GGUF files. `file` re-reads that quantization's header for its own fit. Swift: `hubCheck(repo:sidecarHint:file:context:...)` |
 | `ts_control_vector_info_json(path, out)` | a `.gguf` control vector's shape: no model, no session, no network |
 | `ts_kv_quant_supported(full_head_dim, layer_mask, len, num_layers)` | whether `kvBits` would be accepted for an install with these arch facts; 1 or 0, never fails |
 | `ts_family_capabilities_json(family, out)` | `{family, known, steeringSupported}` from the persisted family spelling |
