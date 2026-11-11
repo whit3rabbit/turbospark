@@ -2,8 +2,8 @@
 
 Status: first slice only. The checkpoint reader, the dequantized speech-stage
 weights and the 60-tensor hash gate exist and pass against the real file. There
-is no forward pass, decoder, text normalizer, RNG, catalog entry, FFI,
-server route, CLI command or Swift surface yet. Nothing here is a speed or
+is no forward pass, decoder, text normalizer, sentence splitter, RNG, catalog
+entry, FFI, server route, CLI command or Swift surface yet. Nothing here is a speed or
 quality claim about a TurboSpark implementation.
 
 Underdog Woof is a small English TTS model with two fixed voices (Juno, Mira)
@@ -76,8 +76,59 @@ declares `int8_method = "rtn"`, and the loader refuses anything else.
 | Latents | 25 frames per second, normalized with stored `mean` and `std`. Up to 750 frames. |
 | Decoder | Adapted from Kyutai's Mimi (CC-BY 4.0). A 2-layer causal transformer with a 250-frame sliding window (width 512, 8 heads of 64), then a causal SEANet: conv k7 512 to 768, four transposed convs with strides 8, 6, 5, 4 and kernel 2 x stride, a residual block (conv k3, conv k1) after each, ELU, a final conv k3 48 to 1. About 15.3M parameters, grouped int8 (group 32) with fp16 for the small tensors. |
 | Sampling | Temperature 0.5. Stop when the per-frame EOS logit passes log(0.9 / 0.1). One `randn(32)` per frame, drawn after the EOS check, from a torch-compatible mt19937 with Box-Muller in groups of 16. Seed reproducibility depends on matching this stream exactly. |
-| Takes | A piece counts as bad when it holds a run of one second or more under -50 dBFS, or when it passes 0.095 s of audio per character, or when it hits the 750-frame cap. A bad piece is redrawn up to 3 more times and the take with the lowest (bad, silence, seconds per character) score is kept. The RNG is seeded once per call, not per piece, so every redraw and every later piece continues the same stream. Long text is split into sentences, then at commas. |
+| Takes | A piece counts as bad when it holds a run of one second or more under -50 dBFS, or when it passes 0.095 s of audio per character, or when it hits the 750-frame cap. A bad piece is redrawn up to 3 more times and the take with the lowest (bad, silence, seconds per character) score is kept. The RNG is seeded once per call, not per piece, so every redraw and every later piece continues the same stream. Long text is split into sentences, then at commas, and a piece still over 120 characters with no punctuation is cut once before a conjunction (upstream bug, see the splitter section). |
 | Frontend | A rule-based English normalizer (47 KB of Python plus a 590 KB respelling lexicon) that rewrites numbers, dates, times, money and codes the way they are spoken. It has to be ported exactly, and it is the largest piece after the decoder. |
+
+## Sentence splitter: upstream bug, fix on by default
+
+Upstream's `textsplit._split_conj` cuts a piece that is over 120 characters and
+has no punctuation once, before a conjunction near its middle. The left half can
+end mid-phrase ("... a final resting place for those", "... we take increased
+devotion to"). The model was trained on utterances that end at punctuation, and
+on such a piece it tends to repeat its last words. On Gettysburg sentence 3,
+Whisper hears "for those for those" at the boundary on every seed tried (0, 1
+and 2). The failure is deterministic, and the take-selection check (silence,
+seconds per character, frame cap) does not see it, so a redraw does not help.
+
+It was reported by the GitHub user Clay-Ferguson (`Clay-Ferguson/Buffy`, which
+declares no license, so none of its code is used here) and discussed upstream at
+<https://huggingface.co/ConwayResearch/Underdog-Woof/discussions/2>.
+
+The fix is four lines. The left half of a conjunction cut keeps a trailing
+comma, so every piece ends on punctuation. No cut position moves, so text that
+upstream already splits cleanly is split exactly as before. The patch is
+`splitter_fix.patch` in `cowWhySo/Underdog-Woof-MLX` (commit `d457e1f`). It
+applies to upstream's `textsplit.py` at revision `be70296` (line 22), and it
+produces the same pieces as that repo's `woof_split.py` on all 245 units of its
+test corpus. That repo's `validate_splitter.py` is the Python oracle for the gate
+below.
+
+Measured with whisper.cpp `base.en` as the judge, voice Juno, one machine:
+
+| Text | Splitter | Words | Insertions | WER | Pieces ending mid-phrase |
+| --- | --- | --- | --- | --- | --- |
+| Gettysburg Address (30 clips) | upstream | 804 | 8 | 2.4% | 6 of 57 |
+| Gettysburg Address (30 clips) | with the fix | 804 | 0 | 1.4% | 0 of 57 |
+| Declaration of Independence (33 clips) | upstream | 1335 | 2 | 2.0% | 3 of 101 |
+| Declaration of Independence (33 clips) | with the fix | 1335 | 2 | 2.2% | 1 of 101 |
+
+The Declaration shows no measurable change (three words of 1,335, within ASR
+noise). Its one remaining mid-phrase piece is a heading with no end punctuation
+in the input, not a splitter cut. ASR judges words, not prosody, so how the
+added pause sounds is not established. Other voices and text types are untested.
+
+**Requirement for the Rust port: port the splitter with this fix, on by
+default.** A user who installs Woof must not hit the repeat on a Gettysburg-length
+sentence. Keep a switch that reproduces upstream's exact pieces, because the
+decoder and speech gates compare against the unmodified reference and have to
+feed both sides the same pieces. The gate is pure logic and needs no weights:
+
+- Same number of pieces as upstream, and every piece equals upstream's piece or
+  upstream's piece plus one trailing comma.
+- No piece ends mid-phrase.
+- Text that upstream splits cleanly comes out unchanged.
+- The corpus exercises the bug: upstream's splitter must fail the no-mid-phrase
+  check on it, so the gate can fail.
 
 ## Crate layout
 
@@ -96,6 +147,7 @@ crates/audio/src/tts/underdog_woof/
   speech.rs     prefill and per-frame step, flow head, EOS                    (open)
   decoder.rs    windowed transformer and SEANet, CPU reference                (open)
   normalize.rs  rule-based text normalizer and respell lexicon                (open)
+  split.rs      sentence splitter with the comma fix, on by default           (open)
 crates/audio/testdata/tts_underdog_woof/
   tensor_hash_reference.json   frozen hashes of the 60 dequantized tensors    (done)
 ```
@@ -149,7 +201,10 @@ do not establish quality or speed.
    256 frames, which is what the port should be held to.
 6. **Normalizer.** Exact string equality against the Python normalizer on a
    corpus, including the respelling lexicon.
-7. **Free-running output is behavioral, never sample-exact.** Do not require a
+7. **Splitter.** Pure logic, no weights. The four checks in the splitter
+   section above, against a corpus that includes the Gettysburg Address and the
+   Declaration of Independence.
+8. **Free-running output is behavioral, never sample-exact.** Do not require a
    free-running waveform to match the reference sample for sample. The
    autoregressive trajectory is chaotic: a 1e-6 perturbation of one latent in
    pure NumPy reproduces the same mid-sentence divergence, the EOS logit is a
@@ -157,7 +212,7 @@ do not establish quality or speed.
    its own runtime (correlation 0.546 to 1.000). A third-party ONNX port
    reports the same. Gate on a sample-count band, an ASR transcription match,
    stall and silence caps, and a listening check.
-8. **Hardware.** Warm interleaved wall time, peak RSS and first-audio delay on
+9. **Hardware.** Warm interleaved wall time, peak RSS and first-audio delay on
    real Apple Silicon, on AC power, with the host load recorded.
 
 ## Performance facts and plan
@@ -192,9 +247,11 @@ Plan, in order:
 2. Speech stage on the CPU as a fused, exact-numerics step through
    Accelerate's sgemv, which removes the per-op overhead (a projection of about
    0.75 ms per frame, 1.5x on the speech stage, unbuilt). Keep fp32 activations.
-3. int8 activations only behind gate 5 and a listening check. They are out by
+3. The splitter with the comma fix, built together with the normalizer. It is
+   small pure logic, and it is the first thing a user would hit.
+4. int8 activations only behind gate 5 and a listening check. They are out by
    default.
-4. Batching independent streams helps server throughput, not single-stream
+5. Batching independent streams helps server throughput, not single-stream
    latency. Defer it.
 
 ## Cross-layer checklist (listed, not started)
@@ -203,8 +260,8 @@ Family support is cross-layer (root `AGENTS.md`). Kokoro is the template for a
 fixed-voice TTS that reached the app. Trace the family enum and the persisted
 string through each of these.
 
-- [ ] **Audio crate.** RNG, speech stage, decoder, normalizer, retry logic,
-      WAV output. Add a row to `crates/audio/MODELS.md` and `docs/audio/tts.md`,
+- [ ] **Audio crate.** RNG, speech stage, decoder, normalizer, sentence
+      splitter with the fix, retry logic, WAV output. Add a row to `crates/audio/MODELS.md` and `docs/audio/tts.md`,
       and a fixture generator under `crates/audio/tools/` (regeneration stays
       separate from tests).
 - [ ] **Install format.** Decide whether the install is the upstream `.npz` as
@@ -238,3 +295,5 @@ string through each of these.
 3. Install as the upstream `.npz`, or repack?
 4. Whether the shared `.npz` reader should move out of the family module once a
    second family needs it.
+5. If upstream adopts the splitter fix, the pinned revision changes. Re-pin, and
+   re-check the splitter gate corpus and the hash gate against the new revision.
