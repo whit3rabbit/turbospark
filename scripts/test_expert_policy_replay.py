@@ -3,6 +3,9 @@ import random
 import unittest
 
 from expert_policy_replay import (
+    ClassLru,
+    ClassLruPerLayer,
+    ClassLruPool,
     DecayedLfu,
     EngineLfu,
     Lru,
@@ -165,6 +168,71 @@ class DecayRebaseKeepsTheOrder(unittest.TestCase):
         rebased = misses_by_pass(steps, eager)
         self.assertGreater(eager_cache[0].base, 0, "the rebase never ran")
         self.assertEqual(plain, rebased)
+
+
+class ClassLruMatchesUpstream(unittest.TestCase):
+    """The ClassLRU arm is a port of upstream llama.cpp's own policy, so it
+    is pinned to upstream's numbers rather than to this repo's opinion of
+    them.
+
+    The golden counts below were produced by driving UPSTREAM's simulator
+    (`llama.cpp` `scripts/moe-cache-tune.py`, `class ClassLRU`, the Python
+    model of its own C++ `moe_cache_lru`) over the same deterministic
+    routing sequence, with upstream's CPU-share branch disabled
+    (`n_cpu = 0`, `n_zero = 0`) so the arm is a pure cache-replacement
+    policy. Upstream's file is not vendored here, so the numbers are
+    pinned; the port must reproduce them miss for miss.
+
+    Upstream's policy is llama.cpp PR #31233, which the MoE-cache
+    CPU-share work of PR #30966 builds on.
+    """
+
+    LAYERS, NUM_EXPERTS, TOP_K, PASSES = 3, 16, 2, 40
+
+    def sequence(self):
+        rng = random.Random(1234)
+        steps = []
+        for p in range(self.PASSES):
+            for layer in range(self.LAYERS):
+                steps.append((layer, rng.sample(range(self.NUM_EXPERTS),
+                                                self.TOP_K)))
+        return steps
+
+    def test_the_per_layer_placement_matches_upstream(self):
+        for slots, expected in ((4, 182), (8, 128)):
+            got = 0
+            for layer in range(self.LAYERS):
+                cache = ClassLru([layer], self.NUM_EXPERTS, slots)
+                for lay, group in self.sequence():
+                    if lay != layer:
+                        continue
+                    got += cache.plan(layer, list(group))
+            self.assertEqual(got, expected, f"per-layer at {slots} slots")
+
+    def test_the_pool_placement_matches_upstream(self):
+        for slots, expected in ((4, 189), (8, 133)):
+            cache = ClassLru(list(range(self.LAYERS)), self.NUM_EXPERTS,
+                             slots * self.LAYERS)
+            got = sum(cache.plan(layer, list(group))
+                      for layer, group in self.sequence())
+            self.assertEqual(got, expected, f"pool at {slots} slots")
+
+    def test_it_never_misses_less_than_the_oracle(self):
+        # The oracle bound is the harness's own invariant, and the new arms
+        # are checked against it here so a port that somehow beat Belady
+        # would fail here rather than in a replay nobody reads.
+        steps = self.one_layer_steps()
+        for slots in (4, 8):
+            bound = sum(misses_by_pass(steps, oracle_factory(steps, slots)))
+            got = sum(misses_by_pass(steps, lambda layer: ClassLruPerLayer(
+                layer, slots, self.NUM_EXPERTS)))
+            self.assertGreaterEqual(got, bound, f"at {slots} slots")
+
+    def one_layer_steps(self):
+        groups = [g for _, g in self.sequence()][:20]
+        cap = from_capture(capture([groups], self.NUM_EXPERTS, self.TOP_K),
+                            "synthetic")
+        return schedule([cap])
 
 
 if __name__ == "__main__":

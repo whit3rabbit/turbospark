@@ -265,6 +265,14 @@ unavailable to other apps while the session is open.
 `SessionInfo.expertSlotsWiring` reports what happened and why
 (`docs/QWEN4_EXP.md`, "Wired expert slots").
 
+**`moePrefillBank` opts into the temporary expert cache for streamed
+Flash Next text prefill.** Set it to `true` to request the bank or `false`
+to turn it off. Leaving it unset preserves the runtime experiment default.
+`SessionInfo.moePrefillBankSupported` and `moePrefillBankEnabled` report
+session capability and configuration. Each eligible prefill still needs
+room for the temporary bank and scratch. It uses ordinary prefill if
+admission fails.
+
 **`visionSidecar` points to an external vision tower directory.**
 When using modular multi-modal models where vision weights are stored
 separately (`.gturbo-vision`) from the primary text trunk, pass the path

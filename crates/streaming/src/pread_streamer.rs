@@ -357,16 +357,66 @@ impl PreadExpertStreamer {
             }
         }
 
+        self.read_expert_chunks(&chunks, (plan.misses.len() * stride) as u64)?;
+        self.cache.commit_plan(plan);
+        Ok(plan.assigned_slots.clone())
+    }
+
+    /// Reads sorted, distinct expert IDs into an expert-indexed bank. The
+    /// caller retires GPU reads of the bank before overwriting it.
+    pub fn read_experts_into_bank(
+        &mut self,
+        experts: &[usize],
+        bank: &mut [u8],
+    ) -> Result<(), StreamerError> {
+        let stride = self.layout.expert_stride as usize;
+        if stride == 0 {
+            return Err(StreamerError::SizeMismatch {
+                expected: 1,
+                actual: 0,
+            });
+        }
+        if experts.is_empty() {
+            return Ok(());
+        }
+        let mut slots = bank.chunks_exact_mut(stride);
+        let mut next = 0;
+        let mut chunks = Vec::new();
+        for &expert in experts {
+            if expert < next || expert >= self.layout.experts_per_layer {
+                return Err(StreamerError::SlotOutOfRange { slot: expert });
+            }
+            let target = slots
+                .nth(expert - next)
+                .ok_or(StreamerError::SlotOutOfRange { slot: expert })?;
+            let offset = self.expert_file_offset(0, expert)?;
+            for (index, chunk) in target.chunks_mut(MISS_READ_CHUNK_BYTES).enumerate() {
+                chunks.push(ReadChunk {
+                    dest: chunk.as_mut_ptr(),
+                    len: chunk.len(),
+                    file_offset: offset + (index * MISS_READ_CHUNK_BYTES) as u64,
+                });
+            }
+            next = expert + 1;
+        }
+        self.read_expert_chunks(&chunks, (experts.len() * stride) as u64)
+    }
+
+    fn read_expert_chunks(
+        &mut self,
+        chunks: &[ReadChunk],
+        bytes: u64,
+    ) -> Result<(), StreamerError> {
         // Requested bytes are free to count and always counted: misses
         // only, since a hit reads nothing. Physical bytes cost a syscall
         // pair per batch, so they are sampled only under the seam.
-        self.io_stats.bytes_requested += (plan.misses.len() * stride) as u64;
+        self.io_stats.bytes_requested += bytes;
         self.io_stats.batches += 1;
         let physical_before = disk_io::measure_physical_io()
             .then(disk_io::process_disk_bytes_read)
             .flatten();
 
-        let result = read_pool::run_batch(&self.file, &chunks);
+        let result = read_pool::run_batch(&self.file, chunks);
 
         // Sampled even when the batch FAILED: the bytes a partial read
         // pulled off the device were still pulled, and a probe that only
@@ -376,10 +426,7 @@ impl PreadExpertStreamer {
             self.io_stats.bytes_physical += after.saturating_sub(before);
             self.io_stats.samples += 1;
         }
-        result?;
-
-        self.cache.commit_plan(plan);
-        Ok(plan.assigned_slots.clone())
+        result
     }
 
     /// Plans and executes expert caching for requested expert indices.
@@ -521,6 +568,32 @@ pub(crate) fn read_full(
 #[cfg(test)]
 mod prefetch_tests {
     use super::*;
+
+    #[test]
+    fn prefill_bank_reads_rank_independent_offsets_without_warming_decode() {
+        let path =
+            std::env::temp_dir().join(format!("turbospark-bank-read-{}", std::process::id()));
+        let stride = 64;
+        std::fs::write(&path, [[1u8; 64], [2u8; 64], [3u8; 64]].concat()).unwrap();
+        let layout = StreamLayout {
+            path: path.display().to_string(),
+            stream_offset: 0,
+            stream_size: 3 * stride,
+            experts_per_layer: 3,
+            expert_stride: stride,
+            expert_offsets: None,
+        };
+        let mut streamer = PreadExpertStreamer::open(layout, 1, ExpertCachePolicy::Lfu).unwrap();
+        let mut bank = [0; 192];
+        streamer.read_experts_into_bank(&[0, 2], &mut bank).unwrap();
+        assert_eq!(bank.as_slice(), [[1u8; 64], [0u8; 64], [3u8; 64]].concat());
+        assert_eq!(streamer.resident_experts_snapshot(), vec![None]);
+        assert_eq!(streamer.io_stats().bytes_requested, 2 * stride);
+        assert!(streamer.read_experts_into_bank(&[2, 2], &mut bank).is_err());
+        assert_eq!(streamer.io_stats().bytes_requested, 2 * stride);
+        drop(streamer);
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn prefetch_refuses_cache_bypass_without_reading_or_changing_slots() {

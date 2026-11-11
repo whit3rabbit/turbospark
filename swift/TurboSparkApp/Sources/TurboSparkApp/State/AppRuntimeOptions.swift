@@ -499,6 +499,7 @@ public struct AppRuntimeOptions: Equatable, Sendable {
     public var anePrefillDir: String = ""
     /// Whether the expert slot cache is locked in memory.
     public var expertSlotsWiring: AppExpertSlotsWiringOption = .auto
+    public var moePrefillBank = false
     /// Where routed experts live while a model runs.
     public var expertResidency: AppExpertResidencyOption = .auto
     /// Maximum tokens per second rate cap (0 for uncapped).
@@ -529,6 +530,7 @@ public struct AppRuntimeOptions: Equatable, Sendable {
         anePrefill: AppAnePrefillOption = .auto,
         anePrefillDir: String = "",
         expertSlotsWiring: AppExpertSlotsWiringOption = .auto,
+        moePrefillBank: Bool = false,
         expertResidency: AppExpertResidencyOption = .auto,
         maxTokensPerSec: Double = 0,
         steeringPath: String? = nil,
@@ -549,6 +551,7 @@ public struct AppRuntimeOptions: Equatable, Sendable {
         self.anePrefill = anePrefill
         self.anePrefillDir = anePrefillDir
         self.expertSlotsWiring = expertSlotsWiring
+        self.moePrefillBank = moePrefillBank
         self.expertResidency = expertResidency
         self.maxTokensPerSec = maxTokensPerSec
         self.steeringPath = steeringPath

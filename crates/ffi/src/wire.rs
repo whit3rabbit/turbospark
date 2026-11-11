@@ -184,6 +184,9 @@ pub struct OpenOptions {
     /// to an unwired cache when the OS will not lock it. The environment
     /// variable `TURBOSPARK_EXPERT_SLOTS_WIRED` wins over this.
     pub expert_slots_wiring: Option<String>,
+    /// Enable the temporary Flash Next expert bank on eligible text prefill.
+    /// Absent leaves the runtime experiment selection in effect.
+    pub moe_prefill_bank: Option<bool>,
     /// `performance` | `balanced` | `efficiency`. Absent means ASK THE OS,
     /// which is what a user-facing binary should do (Low Power Mode selects
     /// `efficiency`) and what a measurement harness must not.
@@ -752,6 +755,8 @@ pub struct SessionInfo {
     pub ane_prefill: AnePrefillInfo,
     /// Whether this session's expert slot cache is wired, and why not.
     pub expert_slots_wiring: ExpertSlotsWiringInfo,
+    pub moe_prefill_bank_supported: bool,
+    pub moe_prefill_bank_enabled: bool,
 }
 
 /// Arguments to `ts_server_start`. `{}` is valid and means "an OS-assigned

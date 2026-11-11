@@ -716,6 +716,10 @@ fn json_string(value: &str) -> String {
 
 /// Per-open `qwen4_exp` decode state.
 pub(crate) struct RealQwen4State {
+    pub(crate) prefill_experiment: Option<super::prefill_bank::PrefillExperiment>,
+    pub(crate) prefill_temporary_limit: Option<u64>,
+    pub(crate) prefill_load_guard: model_io::LoadGuard,
+    pub(crate) prefill_footprint: Option<u64>,
     pub(crate) shape: gpu::GdnShape,
     pub(crate) gdn: gpu::GdnStateManager,
     pub(crate) rotary_dim: u32,
@@ -1333,6 +1337,10 @@ impl RealQwen4State {
         );
 
         Ok(Self {
+            prefill_experiment: super::prefill_bank::PrefillExperiment::from_env()?,
+            prefill_temporary_limit: None,
+            prefill_load_guard: model_io::LoadGuard::default(),
+            prefill_footprint: None,
             gdn: gpu::GdnStateManager::new(context.device(), arch),
             shape,
             rotary_dim: rotary_dim as u32,

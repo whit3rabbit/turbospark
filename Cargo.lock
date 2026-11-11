@@ -2575,6 +2575,7 @@ name = "turbospark-runtime"
 version = "0.8.0"
 dependencies = [
  "half",
+ "memmap2",
  "serde",
  "serde_json",
  "turbospark-audio",

@@ -840,6 +840,62 @@ trails per-layer LRU by 4.4 points at 16 slots and is within 1.8 points from
 32 up, so it buys no hit rate for a larger change. These are hit rates, and
 the A/B above is the reason not to act on a hit rate alone.
 
+### ClassLRU, the upstream policy, priced on Gemma 4 (2026-11-07)
+
+`scripts/expert_policy_replay.py` now carries upstream llama.cpp's ClassLRU
+(`llama.cpp` PR #31233) as two arms, `classlru` and `pool classlru`. The
+port is over upstream's own Python model of its own C++, checked against
+upstream's file miss for miss on real captures at 16, 32, 64 and 96 slots in
+both placements, eight of eight configurations identical; the counts are
+pinned in `scripts/test_expert_policy_replay.py`.
+
+Two real captures from the Gemma 4 26B-A4B install (30 layers, top-8 of 128,
+337 and 256 passes, two domains) replayed as one session:
+
+| slots | `lfu (engine)` | `lru` | `lfu-decay h=64` | `classlru` | `pool classlru` | `oracle` |
+|---:|---:|---:|---:|---:|---:|---:|
+| 16 | 61.9% | 65.9% | 66.8% | 68.5% | 68.3% | 76.6% |
+| 32 | 81.2% | 85.3% | 85.3% | 86.4% | 87.3% | 91.8% |
+| 64 | 94.3% | 95.8% | 95.6% | 95.8% | 96.0% | 97.2% |
+| 96 | 97.5% | 97.6% | 97.6% | 97.6% | 97.6% | 97.7% |
+
+Hit rate alone does not decide anything here, for the reason the decay A/B
+above gives: a policy that raises hit rate by evicting soon-to-be-needed
+experts moves misses into COLD reads, which no replay counts. So the misses
+were also split by kind, and this is the metric that separates a real win
+from thrash:
+
+| slots | arm | re-read misses | first-touch misses |
+|---:|---|---:|---:|
+| 16 | `lfu (engine)` | 50,934 | 3,251 |
+| 16 | `lru` | 47,905 | 3,251 |
+| 16 | `lfu-decay h=64` | 44,070 | 3,251 |
+| 16 | `classlru` | 41,619 | 3,251 |
+| 32 | `lfu (engine)` | 23,562 | 3,251 |
+| 32 | `lru` | 22,062 | 3,251 |
+| 32 | `lfu-decay h=64` | 17,721 | 3,251 |
+| 32 | `classlru` | 16,099 | 3,251 |
+
+The first-touch column is the same for every arm at every count because it
+is the compulsory floor: an expert this session has never held is a first
+touch under any policy, and no policy can avoid it. That is the floor the
+oracle row above also reports, and it is what makes the re-read column the
+one that separates the arms.
+
+ClassLRU cuts RE-READ misses, the cold reads of bytes the cache already held
+once, by 18% against the engine's LFU at 16 slots and 32% at 32, and it does
+that without the decay seam's failure mode, because its score survives
+eviction and decays continuously rather than in steps.
+
+This is a PRICING, not a decision. The default stays cumulative LFU and
+`TURBOSPARK_EXPERT_CACHE_DECAY` stays a seam. Three limits are named rather
+than buried: this is ONE install on ONE machine, warm; it is not the
+qwen4exp or Ornith captures the decay A/B used; and at 96 slots, the count
+`auto` picks on a large machine, the arms are within noise (97.6% against
+97.5%), so the advantage is at 16 and 32 slots, which is the pinned
+benchmark protocol's count. The standing decision below is unchanged and
+still governs.
+
 ### Standing decision
 
 - The default stays cumulative LFU, and `TURBOSPARK_EXPERT_CACHE_DECAY`
@@ -850,6 +906,10 @@ the A/B above is the reason not to act on a hit rate alone.
   have aged out. Neither is measured.
 - The 16-slot gain is real but belongs to a configuration `auto` does not
   pick on this machine.
+- ClassLRU is priced and is NOT the same as the decay seam: it cuts re-read
+  misses rather than trading them for cold ones. It still needs the decode
+  A/B the bullet above describes, on the same two families, before it can be
+  considered for a default.
 
 ## Read-pool depth on the disk-bound install, measured (2026-10-17)
 

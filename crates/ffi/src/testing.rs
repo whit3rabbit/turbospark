@@ -114,6 +114,8 @@ pub fn session_for_testing_named(
             // would: `off`.
             kv_bits: "off".to_string(),
             prefix_reuse: true,
+            moe_prefill_bank_supported: false,
+            moe_prefill_bank_enabled: false,
             ane_prefill: wire::AnePrefillInfo {
                 active: false,
                 mode: "off".to_string(),

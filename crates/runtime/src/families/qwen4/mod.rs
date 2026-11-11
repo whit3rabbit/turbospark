@@ -174,6 +174,7 @@ pub(crate) mod moe;
 mod moe_batch;
 pub(crate) mod ple;
 pub(crate) mod prefill;
+mod prefill_bank;
 mod produce;
 mod state;
 

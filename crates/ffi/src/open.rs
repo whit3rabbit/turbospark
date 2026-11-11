@@ -441,6 +441,12 @@ pub(crate) fn open_with_failure(
     // into a faster one.
     let prefix_reuse = options.prefix_reuse.unwrap_or(true);
     runner.set_prefix_reuse(prefix_reuse);
+    let temporary_limit = load_policy
+        .guard
+        .budget()
+        .hard_cap
+        .map(|cap| cap.saturating_sub(committed.slot_cache.saturating_add(plan.kv_bytes)));
+    runner.configure_moe_prefill_bank(options.moe_prefill_bank, load_policy.guard, temporary_limit);
     runner.set_ane_prefill(
         requested_ane_mode,
         options
@@ -623,6 +629,8 @@ pub(crate) fn open_with_failure(
         ),
         kv_bits: kv_quant.label(),
         prefix_reuse,
+        moe_prefill_bank_supported: runner.supports_moe_prefill_bank(),
+        moe_prefill_bank_enabled: runner.moe_prefill_bank_enabled(),
         expert_slots_wiring: {
             let outcome = runner.expert_slot_wiring();
             crate::wire::ExpertSlotsWiringInfo {

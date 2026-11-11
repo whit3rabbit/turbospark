@@ -104,7 +104,7 @@ class ExpertCache:
             reads += 1
         return reads
 
-    def plan(self, experts):
+    def plan(self, experts, protected=()):
         """Returns (hits, misses) as lists of expert ids, and commits."""
         clock = self.use_clock + 1
         reserved = [False] * self.slot_count
@@ -127,8 +127,10 @@ class ExpertCache:
                 reserved[slot] = True
                 assigned.append(slot)
 
+        # Chunked prefill may still have the previous token's slots in flight.
         evictable = sorted(
-            (s for s in range(self.slot_count) if not reserved[s]),
+            (s for s in range(self.slot_count)
+             if not reserved[s] and self.slot_expert[s] not in protected),
             key=self._eviction_key,
         )
         if len(misses) > len(evictable):

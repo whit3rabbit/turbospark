@@ -415,6 +415,7 @@ impl RealForwardRunner {
                 top_k,
                 use_silu,
                 &moe::RoutedSlot::sequential(),
+                None,
             )?;
 
             gpu::encode_hc_inject_add(

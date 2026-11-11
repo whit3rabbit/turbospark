@@ -212,6 +212,28 @@ extension EngineSettingsPaneView {
         }
     }
 
+    @ViewBuilder
+    var moePrefillBankSection: some View {
+        if model.session?.info.moePrefillBankSupported == true
+            || model.installed.contains(where: {
+                ModelFeatureDescriptor.supportsMoEPrefillBank(atInstallPath: $0.path)
+            }) {
+            Section {
+                Toggle(isOn: $model.runtimeOptions.moePrefillBank) {
+                    Text("Prefill Expert Cache", bundle: .module)
+                }
+                .settingsControl("Prefill Expert Cache", pane: .engine, timing: .modelReload)
+                .onChange(of: model.runtimeOptions.moePrefillBank) { _, _ in
+                    model.persistSettingsDebounced()
+                }
+
+                Text("Experimental. Uses extra memory to reduce expert reads on long text prompts when experts are streamed. Takes effect on the next model load.", bundle: .module)
+                    .themedFont(.tiny)
+                    .foregroundStyle(.appSecondary)
+            }
+        }
+    }
+
     /// Where routed experts live, and the streamed cache's size beside it,
     /// since mapped residency has no slot cache to size.
     var expertResidencySection: some View {

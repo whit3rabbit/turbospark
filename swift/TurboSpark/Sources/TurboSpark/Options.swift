@@ -256,6 +256,9 @@ public struct OpenOptions: Encodable, Sendable {
 
     /// Expert slot cache wiring (`nil` means `.auto`).
     public var expertSlotsWiring: ExpertSlotsWiring?
+    /// Enable the experimental shared expert bank for supported text prefill.
+    /// Nil preserves the engine's environment configuration.
+    public var moePrefillBank: Bool?
 
     /// Creates options for opening a model session.
     public init(
@@ -279,7 +282,8 @@ public struct OpenOptions: Encodable, Sendable {
         prefixReuse: Bool? = nil,
         anePrefill: AnePrefill? = nil,
         anePrefillDir: String? = nil,
-        expertSlotsWiring: ExpertSlotsWiring? = nil
+        expertSlotsWiring: ExpertSlotsWiring? = nil,
+        moePrefillBank: Bool? = nil
     ) {
         self.maxContext = maxContext
         self.expertCacheSlots = expertCacheSlots
@@ -302,6 +306,7 @@ public struct OpenOptions: Encodable, Sendable {
         self.anePrefill = anePrefill
         self.anePrefillDir = anePrefillDir
         self.expertSlotsWiring = expertSlotsWiring
+        self.moePrefillBank = moePrefillBank
     }
 }
 

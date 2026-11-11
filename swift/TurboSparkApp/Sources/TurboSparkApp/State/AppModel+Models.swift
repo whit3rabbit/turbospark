@@ -241,6 +241,9 @@ extension AppModel {
         // install's open would do first (`AppExpertResidencyOption`).
         let residency = runtimeOptions.expertResidency
         let residencyPath = modelPath ?? selected?.path ?? ""
+        if ModelFeatureDescriptor.supportsMoEPrefillBank(atInstallPath: residencyPath) {
+            options.moePrefillBank = runtimeOptions.moePrefillBank
+        }
         let preflight = residency == .auto || residencyPath.isEmpty
             ? nil
             : TurboSparkCapabilities.expertResidency(

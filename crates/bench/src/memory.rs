@@ -136,8 +136,13 @@ impl AppMemorySampler {
     /// `task_info` fails.
     pub fn sample(&mut self) -> Option<u64> {
         let bytes = read_process_footprint()?;
-        self.peak_bytes = Some(self.peak_bytes.map_or(bytes, |peak| peak.max(bytes)));
+        self.observe(bytes);
         Some(bytes)
+    }
+
+    /// Folds in a physical footprint sampled inside an operation.
+    pub fn observe(&mut self, bytes: u64) {
+        self.peak_bytes = Some(self.peak_bytes.map_or(bytes, |peak| peak.max(bytes)));
     }
 
     /// Returns the peak memory footprint in bytes recorded since creation or last reset.

@@ -59,6 +59,10 @@ pub struct PromptRecord {
     pub source: PromptSource,
     pub prompt_tokens: usize,
     pub prefill_s: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_token_s: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefill_end_footprint_bytes: Option<u64>,
     pub decode_tokens: usize,
     pub decode_s: f64,
     /// SHA-256 over the generated token ids (little-endian i32).
@@ -474,6 +478,9 @@ fn prefill(
             for (i, span) in spans.iter().enumerate() {
                 let tokens = &ids[span.token_offset..span.token_offset + span.token_count];
                 runner.prefill_chunk_with_status(tokens, span.start_position, logits, i == last)?;
+                if let Some(bytes) = runner.take_prefill_experiment_footprint() {
+                    sampler.observe(bytes);
+                }
                 sampler.sample();
             }
         }
@@ -904,6 +911,8 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
                     .map(|t| t.prompt_tokens - t.reused_tokens)
                     .sum(),
                 prefill_s: turns.iter().map(|t| t.prefill_s).sum(),
+                first_token_s: None,
+                prefill_end_footprint_bytes: None,
                 decode_tokens: turns.iter().map(|t| t.decode_tokens).sum(),
                 decode_s: turns.iter().map(|t| t.decode_s).sum(),
                 decode_digest: model_io::hash_data(&token_bytes),
@@ -937,6 +946,8 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
                 source: source.clone(),
                 prompt_tokens: result.prompt_tokens,
                 prefill_s: result.prefill_seconds,
+                first_token_s: None,
+                prefill_end_footprint_bytes: None,
                 decode_tokens: result.new_tokens,
                 decode_s: result.decode_seconds,
                 decode_digest: model_io::hash_data(&token_bytes),
@@ -962,6 +973,7 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
             &mut sampler,
         )?;
         let prefill_s = t0.elapsed().as_secs_f64();
+        let prefill_end_footprint_bytes = sampler.sample();
         let p1 = runner.phase_counters();
         let e1 = energy.mark();
         energy.account("prefill", &e0, &e1);
@@ -972,9 +984,13 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         }
 
         let mut generated: Vec<i32> = Vec::with_capacity(req.workload.decode_tokens);
+        let mut first_token_s = None;
         let t1 = Instant::now();
         for step in 0..req.workload.decode_tokens {
             let t = argmax(&logits)?;
+            if step == 0 {
+                first_token_s = Some(t0.elapsed().as_secs_f64());
+            }
             generated.push(t);
             runner.produce(t, ids.len() + step, &mut logits)?;
             if step % 8 == 0 {
@@ -1000,6 +1016,8 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
             source: source.clone(),
             prompt_tokens: ids.len(),
             prefill_s,
+            first_token_s,
+            prefill_end_footprint_bytes,
             decode_tokens: generated.len(),
             decode_s,
             decode_digest: model_io::hash_data(&token_bytes),

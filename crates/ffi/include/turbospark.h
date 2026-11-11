@@ -279,6 +279,9 @@ void ts_string_free(char *s);
  *                       environment variable TURBOSPARK_EXPERT_SLOTS_WIRED
  *                       (1, 0) overrides this. The outcome is reported as
  *                       sessionInfo.expertSlotsWiring.
+ *   moePrefillBank     boolean | null. Enables the experimental temporary expert
+ *                       bank for eligible streamed Flash Next text sessions.
+ *                       Null preserves TURBOSPARK_QWEN4_PREFILL.
  *   powerProfile      "performance" | "balanced" | "efficiency" | null
  *                       null ASKS THE OS, so Low Power Mode selects
  *                       efficiency. Name one explicitly when measuring.
@@ -559,6 +562,9 @@ void ts_image_buffer_free(uint8_t *bytes, size_t len);
  * expertSlotsWiring is {requested, active, wiredBytes, reason}: the request
  * the open used, whether the slot cache is wired, the bytes wired, and why it
  * is not (null when it is). An auto request that fell back says why here.
+ *
+ * moePrefillBankSupported and moePrefillBankEnabled describe the session's
+ * configuration. Each prompt still needs to pass memory admission.
  *
  * A NON-NULL BLOCK IS A STATEMENT ABOUT THE SESSION, NOT THE NEXT TURN.
  * Acceptance is argmax(target) == proposal, exact only at temperature 0, so

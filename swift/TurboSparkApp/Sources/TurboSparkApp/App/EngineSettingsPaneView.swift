@@ -34,6 +34,7 @@ struct EngineSettingsPaneView: View {
             anePrefillSection
             expertResidencySection
             expertSlotsWiringSection
+            moePrefillBankSection
             inProcessServerSection
         }
         .formStyle(.grouped)
