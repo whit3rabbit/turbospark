@@ -48,6 +48,10 @@ extension AppModel {
                 let result = await MemoryLedgerStore.shared.semanticSearch(
                     query, modelPath: model, scope: scope, limit: 40)
                 self?.memorySemanticResult = (key, result)
+                // Index new or edited claims after the result is published,
+                // inside the same single in-flight task, so the encoder never
+                // serves two callers and the 200 ms wait is not spent here.
+                _ = try? await MemoryLedgerStore.shared.indexMissingEmbeddings(modelPath: model)
                 self?.memorySemanticInFlight = nil
             }
         }

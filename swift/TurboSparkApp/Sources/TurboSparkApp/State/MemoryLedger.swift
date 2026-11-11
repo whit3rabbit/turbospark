@@ -354,6 +354,52 @@ public final class MemoryLedgerStore: @unchecked Sendable {
         try ProfileRepository.shared.saveMemoryEmbeddings(rows)
     }
 
+    /// Splits active claims into those with a row for their current text and
+    /// those that still need one. Stale rows (edited text) count as missing.
+    static func embeddingIndexPlan(
+        active: [MemoryClaim], rows: [MemoryClaimEmbedding]
+    ) -> (current: [MemoryClaimEmbedding], missing: [MemoryClaim]) {
+        let byClaim = Dictionary(rows.map { ($0.claimID, $0) }, uniquingKeysWith: { first, _ in first })
+        var current: [MemoryClaimEmbedding] = []
+        var missing: [MemoryClaim] = []
+        for claim in active where !claim.text.isEmpty {
+            if let row = byClaim[claim.id], row.sourceHash == hash(claim.text) {
+                current.append(row)
+            } else {
+                missing.append(claim)
+            }
+        }
+        return (current, missing)
+    }
+
+    /// Embeds only the active claims without a current row, so a new or
+    /// edited claim joins semantic recall without a manual rebuild.
+    /// `saveMemoryEmbeddings` replaces every row for the model, which is why
+    /// the current rows are written back with the new ones.
+    @discardableResult
+    public func indexMissingEmbeddings(modelPath: String) async throws -> Int {
+        let model = modelPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !model.isEmpty, ProfileRepository.shared.isAvailable else { return 0 }
+        let modelKey = Self.embeddingModelKey(model)
+        let active = snapshot().claims.filter { $0.status == .active }
+        let existing = try ProfileRepository.shared.loadMemoryEmbeddings(model: modelKey)
+        var (rows, missing) = Self.embeddingIndexPlan(active: active, rows: existing)
+        guard !missing.isEmpty else { return 0 }
+        for batchStart in stride(from: 0, to: missing.count, by: 16) {
+            let batch = Array(missing[batchStart..<min(batchStart + 16, missing.count)])
+            let vectors = try await TurboSparkEmbedding.encode(
+                texts: batch.map(\.text), modelPath: model)
+            guard vectors.count == batch.count else { return 0 }
+            for (claim, vector) in zip(batch, vectors) {
+                rows.append(MemoryClaimEmbedding(
+                    claimID: claim.id, model: modelKey,
+                    sourceHash: Self.hash(claim.text), vector: vector))
+            }
+        }
+        try ProfileRepository.shared.saveMemoryEmbeddings(rows)
+        return missing.count
+    }
+
     public func hasEmbeddingIndex(modelPath: String) -> Bool {
         guard ProfileRepository.shared.isAvailable else { return false }
         let active = snapshot().claims.filter { $0.status == .active && !$0.text.isEmpty }
@@ -374,17 +420,35 @@ public final class MemoryLedgerStore: @unchecked Sendable {
         let lexical = search(query, scope: scope, limit: 20)
         let model = modelPath.trimmingCharacters(in: .whitespacesAndNewlines)
         let modelKey = Self.embeddingModelKey(model)
-        guard !model.isEmpty, ProfileRepository.shared.isAvailable,
-              hasEmbeddingIndex(modelPath: model),
-              let rows = try? ProfileRepository.shared.loadMemoryEmbeddings(model: modelKey),
-              !rows.isEmpty,
-              let queryVector = try? await TurboSparkEmbedding.encode(text: query, modelPath: model)
-        else { return Array(lexical.prefix(limit)) }
-        guard modelKey == Self.embeddingModelKey(model) else { return Array(lexical.prefix(limit)) }
         let state = snapshot()
         let active = Dictionary(uniqueKeysWithValues: state.claims.filter {
             $0.status == .active && ($0.scope == "profile" || (scope != nil && $0.scope == scope))
         }.map { ($0.id, $0) })
+        // A partial index still ranks: claims with a current row get a
+        // semantic rank and the rest compete on lexical rank alone. Gating on
+        // a complete index turned semantic recall off after every new claim.
+        guard !model.isEmpty, ProfileRepository.shared.isAvailable,
+              let rows = try? ProfileRepository.shared.loadMemoryEmbeddings(model: modelKey),
+              Self.canRankSemantically(active: Array(active.values), rows: rows),
+              let queryVector = try? await TurboSparkEmbedding.encode(text: query, modelPath: model)
+        else { return Array(lexical.prefix(limit)) }
+        guard modelKey == Self.embeddingModelKey(model) else { return Array(lexical.prefix(limit)) }
+        return Self.hybridRank(
+            lexical: lexical, rows: rows, queryVector: queryVector, active: active, limit: limit)
+    }
+
+    /// True when at least one active claim has a current row. Requiring every
+    /// claim to be indexed is the defect this replaced.
+    static func canRankSemantically(active: [MemoryClaim], rows: [MemoryClaimEmbedding]) -> Bool {
+        !embeddingIndexPlan(active: active, rows: rows).current.isEmpty
+    }
+
+    /// Reciprocal-rank fusion (k=60) of lexical order and cosine order over
+    /// rows that still match their claim's text.
+    static func hybridRank(
+        lexical: [MemoryClaim], rows: [MemoryClaimEmbedding], queryVector: [Float],
+        active: [UUID: MemoryClaim], limit: Int
+    ) -> [MemoryClaim] {
         let semantic = rows.compactMap { row -> (MemoryClaim, Float)? in
             guard let claim = active[row.claimID], row.sourceHash == Self.hash(claim.text),
                   row.vector.count == queryVector.count else { return nil }

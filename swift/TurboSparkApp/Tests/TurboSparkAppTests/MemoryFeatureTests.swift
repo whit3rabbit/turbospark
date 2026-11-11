@@ -788,4 +788,44 @@ final class MemoryFeatureTests: XCTestCase {
         let view = TSIdlingMemorySparkView(size: 80)
         XCTAssertEqual(view.size, 80)
     }
+
+    // MARK: - Partial embedding index
+
+    private func embeddingRow(_ claim: MemoryClaim, text: String? = nil, vector: [Float]) -> MemoryClaimEmbedding {
+        MemoryClaimEmbedding(claimID: claim.id, model: "alias:test",
+                             sourceHash: MemoryLedgerStore.hash(text ?? claim.text), vector: vector)
+    }
+
+    /// One unindexed claim used to turn semantic recall off for every claim.
+    /// The plan must keep the indexed claim usable and list only the gap.
+    func testEmbeddingIndexPlanKeepsCurrentRowsAndListsGaps() {
+        let indexed = MemoryClaim(scope: "profile", kind: "preference", text: "Prefers dark roast", status: .active)
+        let fresh = MemoryClaim(scope: "profile", kind: "preference", text: "Lives in Denver", status: .active)
+        let edited = MemoryClaim(scope: "profile", kind: "preference", text: "Uses zsh now", status: .active)
+        let rows = [embeddingRow(indexed, vector: [1, 0]),
+                    embeddingRow(edited, text: "Uses bash", vector: [0, 1])]
+        let plan = MemoryLedgerStore.embeddingIndexPlan(active: [indexed, fresh, edited], rows: rows)
+        XCTAssertEqual(plan.current.map(\.claimID), [indexed.id])
+        XCTAssertEqual(Set(plan.missing.map(\.id)), [fresh.id, edited.id],
+                       "a missing row and a stale row both need embedding")
+        XCTAssertTrue(MemoryLedgerStore.canRankSemantically(active: [indexed, fresh, edited], rows: rows),
+                      "one unindexed claim must not turn semantic recall off")
+        XCTAssertFalse(MemoryLedgerStore.canRankSemantically(active: [fresh, edited], rows: rows),
+                       "only stale or missing rows leave nothing to rank")
+    }
+
+    /// A claim with no lexical overlap reaches recall through its vector,
+    /// while an unindexed lexical match is still returned beside it.
+    func testHybridRankMergesSemanticOnlyAndLexicalOnlyClaims() {
+        let coffee = MemoryClaim(scope: "profile", kind: "preference", text: "Prefers dark roast", status: .active)
+        let city = MemoryClaim(scope: "profile", kind: "preference", text: "Lives in Denver", status: .active)
+        let stale = MemoryClaim(scope: "profile", kind: "preference", text: "Uses zsh now", status: .active)
+        let active = Dictionary(uniqueKeysWithValues: [coffee, city, stale].map { ($0.id, $0) })
+        let rows = [embeddingRow(coffee, vector: [1, 0]),
+                    embeddingRow(stale, text: "Uses bash", vector: [1, 0])]
+        let ranked = MemoryLedgerStore.hybridRank(
+            lexical: [city], rows: rows, queryVector: [1, 0], active: active, limit: 5)
+        XCTAssertEqual(Set(ranked.map(\.id)), [coffee.id, city.id],
+                       "stale rows are ignored, semantic and lexical hits both survive")
+    }
 }
