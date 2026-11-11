@@ -32,6 +32,7 @@ private struct SplitChatPaneView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     let chatID: UUID
+    @StateObject private var follower = TranscriptFollower()
 
     private var chat: AppChat? {
         model.chats.first { $0.id == chatID }
@@ -112,12 +113,17 @@ private struct SplitChatPaneView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 14)
+                .background(TranscriptScrollObserver(follower: follower))
             }
             .onAppear {
                 proxy.scrollTo("pane-bottom-\(chatID.uuidString)", anchor: .bottom)
             }
+            // Follow new messages only while pinned, so a reader who scrolled
+            // up in a pane is not pulled back down.
             .onChange(of: chat.messages.count) { _, _ in
-                proxy.scrollTo("pane-bottom-\(chatID.uuidString)", anchor: .bottom)
+                if follower.isPinned {
+                    proxy.scrollTo("pane-bottom-\(chatID.uuidString)", anchor: .bottom)
+                }
             }
         }
     }

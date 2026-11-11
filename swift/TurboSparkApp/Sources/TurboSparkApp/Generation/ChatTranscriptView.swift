@@ -4,6 +4,24 @@ import SwiftUI
 @MainActor
 struct ChatTranscriptView: View {
     @ObservedObject var model: AppModel
+    /// Whether the reader is at the bottom. Streaming output scrolls the
+    /// transcript only while pinned, so scrolling up to reread is not undone
+    /// by the next token. The parent keys this view by chat, so a chat switch
+    /// starts pinned.
+    @StateObject private var follower = TranscriptFollower()
+
+    /// Scrolls to the newest row if the reader is following. `force` re-pins
+    /// first, for what the reader just asked for (a send, a question to answer).
+    private func followBottom(_ proxy: ScrollViewProxy, force: Bool = false) {
+        if force { follower.pin() }
+        guard follower.isPinned else { return }
+        proxy.scrollTo("bottom", anchor: .bottom)
+    }
+
+    /// Id of the newest row the human wrote, so a send re-pins the transcript.
+    private var lastHumanMessageID: UUID? {
+        model.selectedTurnMessages.last { $0.role == .user && !$0.isSynthetic }?.id
+    }
 
     /// Transcript turns (qwen-code collapse parity): a user prompt anchors
     /// each turn; a collapsed turn renders prompt + final answer with the
@@ -92,26 +110,44 @@ struct ChatTranscriptView: View {
                 }
                 .conversationColumn()
                 .padding(.vertical, 24)
+                .background(TranscriptScrollObserver(follower: follower))
             }
+            .overlay(alignment: .bottom) {
+                if !follower.isPinned {
+                    JumpToLatestButton {
+                        TSMotion.animate(TSMotion.pane) {
+                            followBottom(proxy, force: true)
+                        }
+                    }
+                    .padding(.bottom, 12)
+                    .transition(.opacity)
+                }
+            }
+            .tsAnimation(TSMotion.hover, value: follower.isPinned)
             .onChange(of: model.outputText) {
                 if model.isRunning {
-                    proxy.scrollTo("bottom", anchor: .bottom)
+                    followBottom(proxy)
                 }
             }
             .onChange(of: model.outputReasoningText) {
                 if model.isRunning {
-                    proxy.scrollTo("bottom", anchor: .bottom)
+                    followBottom(proxy)
                 }
+            }
+            // Sending is the reader asking to see the answer, wherever they
+            // had scrolled to.
+            .onChange(of: lastHumanMessageID) { _, id in
+                if id != nil { followBottom(proxy, force: true) }
             }
             .onChange(of: model.selectedCompactionBoundaryEvent) { _, event in
                 if event != nil {
-                    proxy.scrollTo("bottom", anchor: .bottom)
+                    followBottom(proxy)
                 }
             }
             .onChange(of: selectedRecoveryEvents) { _, events in
                 guard !events.isEmpty else { return }
                 TSMotion.animate(TSMotion.pane) {
-                    proxy.scrollTo("bottom", anchor: .bottom)
+                    followBottom(proxy)
                 }
             }
             // A parked question set scrolls itself into view: mid-turn it is
@@ -123,13 +159,15 @@ struct ChatTranscriptView: View {
                         ? AppStrings.localized("Assistant is asking a question. Please choose an answer.")
                         : AppStrings.localized("Assistant is asking \(count) questions. Please choose an answer.")
                     _ = AccessibilityNotification.Announcement.post(.init(announcement))
+                    // Forced: the user has to answer, so it outranks a
+                    // reader who scrolled up.
                     TSMotion.animate(TSMotion.pane) {
-                        proxy.scrollTo("bottom", anchor: .bottom)
+                        followBottom(proxy, force: true)
                     }
                 }
             }
             .onAppear {
-                proxy.scrollTo("bottom", anchor: .bottom)
+                followBottom(proxy, force: true)
             }
             // Turn navigation (qwen-code parity): the menu commands and
             // chords bump a token; this is where the jump actually lands.

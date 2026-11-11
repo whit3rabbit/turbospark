@@ -28,6 +28,10 @@ when this file gets updated relative to the version bump and the tag.
 - The Music page uses one fixed model, MiniMax Music 3 Turbo, and shows its
   install state before it is downloaded. Other music checkpoints stay
   reachable from Advanced.
+- The chat transcript follows a streaming reply only while you are at the
+  bottom. Scrolling up to reread stays put until you scroll back down, send a
+  message, or press the new "Jump to latest" button. Split panes follow new
+  messages the same way.
 
 ## [0.8.0] - 2026-11-09
 
