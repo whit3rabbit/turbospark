@@ -18,15 +18,16 @@ struct CodemodeResultStop: LocalizedError {
 /// text the model sees.
 ///
 /// Output policy (pi's the part that makes "only useful output reaches the
-/// model" true): the prelude hard-caps `text()`/`console` volume, each
-/// nested tool result is tail-truncated before it enters the VM, and this
+/// model" true): the prelude hard-caps `text()`/`console` volume, a
+/// nested tool result over the size limit is rejected with an error (never
+/// truncated; see `CodemodeWorkerSupervisor`), and this
 /// type joins the script's own output items with the return value. The
 /// `calls` telemetry is returned separately and must only ever land in
 /// archival output, never the prompt projection.
 enum CodemodeSandbox {
     /// An optional first line `// @options: { ... }` with `timeout_ms` and
-    /// `max_output_chars`. The sandbox does not act on unknown fields, and
-    /// a malformed line is a source error, matching pi's CodemodeSourceError
+    /// `max_output_chars`. An unknown field is a source error (the
+    /// parse throws), and so is a malformed line, matching pi's CodemodeSourceError
     /// behavior. The line is replaced with an empty line so stack-trace
     /// line numbers match the original source.
     struct ParsedSource: Equatable {
