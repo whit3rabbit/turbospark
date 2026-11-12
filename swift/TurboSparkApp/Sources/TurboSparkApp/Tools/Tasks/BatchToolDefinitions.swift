@@ -5,10 +5,11 @@ public enum BatchToolDefinitions {
     public static let batch = OpenAITool.function(
         name: "batch",
         description: """
-            Execute multiple independent tool calls in parallel (up to 25 calls).
+            Execute multiple independent tool calls in one request (up to 25 calls).
 
             Accepts an array of tool calls, each specifying a tool name and its arguments. \
-            Executes all calls concurrently. Partial failure is handled gracefully: if one \
+            Read-only calls run concurrently; file-write and terminal calls run one at a time \
+            so edits to one path cannot lose a write. Partial failure is handled gracefully: if one \
             tool call fails, the remaining calls continue and complete. Recursive batching \
             (calling batch within batch) is rejected.
 
@@ -29,7 +30,7 @@ public enum BatchToolDefinitions {
                         required: ["tool", "parameters"],
                         description: "An individual tool invocation specification."
                     ),
-                    description: "List of tool calls to execute concurrently (maximum 25)."
+                    description: "List of tool calls to execute (maximum 25). Read-only calls run in parallel; file-write and terminal calls are serialized."
                 ),
                 "tool_calls_json": .string(
                     description: "Optional JSON string encoding the tool_calls array if the model formats it as text."

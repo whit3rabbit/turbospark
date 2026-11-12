@@ -379,7 +379,9 @@ public enum PlanningInteractiveToolDefinitions {
                             "file": .string(description: "File path containing the issue."),
                             "line": .integer(description: "Line number of defect."),
                             "summary": .string(description: "One-sentence defect description."),
-                            "failure_scenario": .string(description: "Concrete inputs leading to failure.")
+                            "failure_scenario": .string(description: "Concrete inputs leading to failure."),
+                            "category": .string(description: "Optional label shown before the file (defaults to 'Defect')."),
+                            "verdict": .string(description: "Optional verdict shown after the failure scenario.")
                         ],
                         required: ["file", "summary", "failure_scenario"]
                     ),

@@ -99,7 +99,9 @@ public struct WebFetchInput: Codable, Sendable, Equatable {
     public var format: String?
     /// Optional timeout in seconds (maximum: 120, default: 30).
     public var timeout: Int?
-    /// Optional extraction instruction guiding what content or answer to extract.
+    /// Accepted so a model that sends an extraction instruction does not fail
+    /// decoding, but nothing reads it: WebFetch returns the page content and
+    /// the schema deliberately does not advertise it.
     public var prompt: String?
 
     enum CodingKeys: String, CodingKey {

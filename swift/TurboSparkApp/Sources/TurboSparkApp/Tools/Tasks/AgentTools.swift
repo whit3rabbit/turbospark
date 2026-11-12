@@ -16,7 +16,9 @@ public struct AgentInput: Codable, Sendable, Equatable {
     public var runInBackground: Bool?
     /// Name or identifier label assigned to the spawned agent.
     public var name: String?
-    /// Worktree or filesystem isolation policy.
+    /// Accepted so a model that sends it does not fail decoding, but no
+    /// executor honors it (no worktree isolation is applied), so the Agent
+    /// schema deliberately does not advertise it.
     public var isolation: String?
 
     enum CodingKeys: String, CodingKey {
