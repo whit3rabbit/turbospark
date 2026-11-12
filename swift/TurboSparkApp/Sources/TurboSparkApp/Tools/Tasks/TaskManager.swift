@@ -41,15 +41,39 @@ public final class TaskManager: @unchecked Sendable {
 
     public var onTasksUpdated: (@Sendable (UUID?, [TrackedTask]) -> Void)?
 
+    /// Source of new task ids. Internal so tests can force collisions; the
+    /// default is the first 8 hex characters of a UUID (32 bits).
+    var idGenerator: @Sendable () -> String = { UUID().uuidString.prefix(8).lowercased() }
+
     private init() {}
 
+    /// Statuses after which a task will not change again on its own. A
+    /// blocking `TaskOutput` stops waiting once it sees one of these.
+    static func isTerminalStatus(_ status: String) -> Bool {
+        switch status.lowercased() {
+        case "completed", "done", "stopped", "failed", "cancelled", "canceled", "deleted":
+            return true
+        default:
+            return false
+        }
+    }
+
     public func createTask(subject: String, description: String, activeForm: String? = nil, chatID: UUID? = nil) -> TrackedTask {
+        lock.lock()
+        // 8 UUID characters can collide; an unchecked insert would silently
+        // overwrite another task. Retry, then fall back to a full UUID.
+        var id = idGenerator()
+        var attempts = 0
+        while tasks[id] != nil {
+            attempts += 1
+            id = attempts < 16 ? idGenerator() : UUID().uuidString.lowercased()
+        }
         let task = TrackedTask(
+            id: id,
             subject: subject,
             description: description,
             activeForm: activeForm ?? subject
         )
-        lock.lock()
         tasks[task.id] = task
         let key = chatID?.uuidString ?? "default"
         var list = chatTasks[key] ?? []
@@ -92,6 +116,22 @@ public final class TaskManager: @unchecked Sendable {
         guard var task = tasks[id] else {
             lock.unlock()
             return nil
+        }
+        // "deleted" is the schema's way to remove a task. Drop it from the
+        // store and from every chat list (the caller's chatID may not be the
+        // one that created it), and return the final snapshot.
+        if status?.lowercased() == "deleted" {
+            task.status = "deleted"
+            task.updatedAt = Date()
+            tasks[id] = nil
+            for key in chatTasks.keys {
+                chatTasks[key]?.removeAll { $0 == id }
+            }
+            let key = chatID?.uuidString ?? "default"
+            let remaining = (chatTasks[key] ?? []).compactMap { tasks[$0] }
+            lock.unlock()
+            onTasksUpdated?(chatID, remaining)
+            return task
         }
         if let subject { task.subject = subject }
         if let description { task.description = description }
@@ -243,7 +283,16 @@ public final class TaskManager: @unchecked Sendable {
         return "Task '\(taskId)' was successfully stopped."
     }
 
-    public static func executeOutput(arguments: [String: String]) throws -> String {
+    /// Upper bound for a blocking wait, so a model-supplied timeout cannot park a tool call forever.
+    static let maxOutputWaitMilliseconds = 600_000
+    static let defaultOutputWaitMilliseconds = 10_000
+
+    /// Reads the recorded `output` of a task from the task list. When `block`
+    /// is true, waits (polling) until the task reaches a terminal status or
+    /// `timeout` ms elapse. This does NOT read a background shell or subagent:
+    /// tasks are not linked to those, so `output` is only what was stored with
+    /// TaskUpdate.
+    public static func executeOutput(arguments: [String: String]) async throws -> String {
         guard let taskId = arguments["taskId"] ?? arguments["task_id"] ?? arguments["id"] else {
             throw NSError(
                 domain: "TurboSparkTool",
@@ -251,13 +300,42 @@ public final class TaskManager: @unchecked Sendable {
                 userInfo: [NSLocalizedDescriptionKey: "Missing 'task_id' argument for TaskOutput."]
             )
         }
-        guard let task = TaskManager.shared.getTask(id: taskId) else {
-            throw NSError(
-                domain: "TurboSparkTool",
-                code: 54,
-                userInfo: [NSLocalizedDescriptionKey: "Task with ID '\(taskId)' not found."]
-            )
+        func lookup() throws -> TrackedTask {
+            guard let task = TaskManager.shared.getTask(id: taskId) else {
+                throw NSError(
+                    domain: "TurboSparkTool",
+                    code: 54,
+                    userInfo: [NSLocalizedDescriptionKey: "Task with ID '\(taskId)' not found."]
+                )
+            }
+            return task
         }
-        return task.output.isEmpty ? "Task '\(taskId)' has no recorded output yet (Status: \(task.status))." : task.output
+
+        let block = ["true", "1", "yes"].contains((arguments["block"] ?? "").lowercased())
+        let requested = arguments["timeout"].flatMap { Int($0) } ?? defaultOutputWaitMilliseconds
+        let timeoutMs = min(max(requested, 0), maxOutputWaitMilliseconds)
+
+        var task = try lookup()
+        var timedOut = false
+        if block {
+            let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000)
+            while !isTerminalStatus(task.status) {
+                if Date() >= deadline {
+                    timedOut = true
+                    break
+                }
+                try await Task.sleep(nanoseconds: 50_000_000)
+                // A deleted task disappears, which ends the wait with a not-found error.
+                task = try lookup()
+            }
+        }
+
+        var res = task.output.isEmpty
+            ? "Task '\(taskId)' has no recorded output yet (Status: \(task.status))."
+            : task.output
+        if timedOut {
+            res += "\n[Timed out after \(timeoutMs) ms waiting for task '\(taskId)' to finish (Status: \(task.status))]"
+        }
+        return res
     }
 }
