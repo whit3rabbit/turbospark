@@ -73,10 +73,9 @@ impl SDEDpmSolver {
         beta_schedule: &str,
         prediction_type: &str,
     ) -> Result<Self> {
-        if beta_schedule != "cosine"
-            && beta_schedule != "scaled_linear"
-            && beta_schedule != "squaredcos_cap_v2"
-        {
+        // Only the cosine betas are built below. "scaled_linear" used to be
+        // accepted here and silently ran cosine, so it is refused.
+        if beta_schedule != "cosine" && beta_schedule != "squaredcos_cap_v2" {
             return Err(SpeechError::Unsupported {
                 why: format!("beta_schedule {beta_schedule}: only the cosine family is ported"),
             });
@@ -328,6 +327,16 @@ impl SDEDpmSolver {
 #[cfg(test)]
 mod tests {
     use super::{python_round, SDEDpmSolver};
+
+    #[test]
+    fn scaled_linear_schedule_is_refused() {
+        match SDEDpmSolver::new(20, "scaled_linear", "v_prediction") {
+            Err(crate::SpeechError::Unsupported { .. }) => {}
+            Err(other) => panic!("expected Unsupported, got {other:?}"),
+            Ok(_) => panic!("scaled_linear was accepted but cosine betas are built"),
+        }
+        assert!(SDEDpmSolver::new(20, "squaredcos_cap_v2", "v_prediction").is_ok());
+    }
 
     #[test]
     fn python_round_is_half_to_even() {
