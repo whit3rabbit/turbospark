@@ -59,4 +59,15 @@ final class ToolEdgeCaseB6Tests: XCTestCase {
         XCTAssertTrue(result.isError)
         XCTAssertTrue(result.output.contains("limit"), result.output)
     }
+
+    // MARK: - ApplyPatchInput
+
+    func testApplyPatchInputDecodesAlternateKeyBesideNonStringValue() throws {
+        let json = #"{"patchText":"*** Begin Patch\n*** End Patch","validate_timeout_ms":5000}"#
+        let input = try JSONDecoder().decode(ApplyPatchInput.self, from: Data(json.utf8))
+        XCTAssertEqual(input.patchText, "*** Begin Patch\n*** End Patch")
+        XCTAssertEqual(input.validateTimeoutMs, 5000)
+        let plain = try JSONDecoder().decode(ApplyPatchInput.self, from: Data(#"{"patch":"p"}"#.utf8))
+        XCTAssertEqual(plain.patchText, "p")
+    }
 }
