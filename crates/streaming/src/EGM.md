@@ -23,7 +23,7 @@ Expert-weight streaming for MoE models: layout of packed experts, mmap and pread
 - The mapped buffer wrapper must not outlive its mapping [mapped_experts.rs:MappedExpertLayer].
 
 ## Side Effects
-- Reads env vars: `TURBOSPARK_EXPERT_CACHE_DECAY` [expert_cache.rs:ExpertCachePolicy], `TURBOSPARK_LINUX_IO` (auto, pread, uring) [linux_uring.rs:Mode] (parse-only seam: `from_env` has no production caller and nothing selects `Mode::Uring` yet), `TURBOSPARK_EXPERT_DISK_IO`, `TURBOSPARK_EXPERT_NOCACHE` [disk_io.rs], `TURBOSPARK_READ_QOS` [read_pool.rs].
+- Reads env vars: `TURBOSPARK_EXPERT_CACHE_DECAY` [expert_cache.rs:ExpertCachePolicy], `TURBOSPARK_LINUX_IO` (auto, pread, uring) [linux_uring.rs:Mode] (parse-only seam, planned but unwired: `from_env` has no production caller and nothing selects `Mode::Uring` yet, so setting the variable has no effect), `TURBOSPARK_EXPERT_DISK_IO`, `TURBOSPARK_EXPERT_NOCACHE` [disk_io.rs], `TURBOSPARK_READ_QOS` [read_pool.rs].
 - Opens and preads model files, sets `F_NOCACHE` only when `TURBOSPARK_EXPERT_NOCACHE=1` and the `fcntl` succeeds [disk_io.rs:nocache_requested], uses `posix_memalign` allocations [aligned_slot.rs:AlignedSlot]. Slot pages are `mlock`ed only when the caller invokes `wire_slots`, never in `open` [pread_streamer.rs:PreadExpertStreamer::wire_slots].
 - Lazily spawns a process-wide read thread pool on the first multi-chunk batch; single-chunk batches run inline on the caller [read_pool.rs:POOL_THREADS], [read_pool.rs:run_batch].
 
