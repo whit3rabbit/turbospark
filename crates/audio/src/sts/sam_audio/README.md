@@ -69,7 +69,8 @@ Swift gates.
   to text memory, adaLN-modulated SwiGLU FFN], final table modulation.
 - Attention: the projection output is read head-dim-major
   ((T, head_dim, heads), so head h takes strided features), QK RMSNorm
-  (eps 1e-5), adjacent-pair RoPE (theta = max(10000, 2 * max_positions),
+  (eps 1e-5), adjacent-pair RoPE (theta = max(10000, 2 * 1024) = 10000: the
+  code uses a fixed 1024 and does not read the config `max_positions`,
   self-attention only), learned per-head sigmoid gates are NOT part of
   this model (that is Mel-Band RoFormer), key padding masks as -inf.
 - ODE: midpoint by default (2 evaluations per step), step_size 2/32

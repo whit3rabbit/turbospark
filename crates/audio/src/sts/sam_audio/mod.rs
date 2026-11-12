@@ -697,6 +697,10 @@ impl DiT {
         let half = self.head_dim / 2;
         let mut cos = vec![0.0f32; seq * half];
         let mut sin = vec![0.0f32; seq * half];
+        // The config `max_positions` is NOT read here: the 1024 is fixed, so
+        // theta is always ROPE_THETA_BASE (10000). Wiring `max_positions`
+        // would change theta for the default 10000 and the numerics, so it
+        // is left unchanged until checked against the reference.
         let theta = ROPE_THETA_BASE.max(2.0 * 1024.0);
         for t in 0..seq {
             for i in 0..half {
