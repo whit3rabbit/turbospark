@@ -133,6 +133,8 @@ The root references are:
   `swift/AGENTS.md` before touching resources or `Package.swift` targets.
 - Credentials are not stored by default. Keychain use is opt-in per credential
   and never happens at launch for an unused feature.
+  The Hugging Face token is the one on-disk exception: written only when the
+  host calls `ts_hf_token_set`, as a 0600 file (`crates/ffi/src/api/EGM.md`).
 - macOS privacy prompts (microphone, screen recording) appear only after the
   user chooses Allow, and a declined permission never blocks features that do
   not need it. Only `RecordingPermissions` asks. Both rules: `swift/AGENTS.md`.
