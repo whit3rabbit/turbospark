@@ -51,13 +51,26 @@ public enum ForgeGuardrailsEngine {
         // uniqueKeysWithValues initializer traps on duplicates (crashes the app).
         let specsByName = Dictionary(availableTools.map { ($0.function.name, $0) }, uniquingKeysWith: { first, _ in first })
         var validationErrors: [String] = []
+        var resolvedCalls: [AppToolCall] = []
 
-        for call in calls {
-            guard let spec = specsByName[call.name] else {
+        for original in calls {
+            // Rescue matches names case-insensitively, so resolve the same way here:
+            // exact match first (two specs may differ only by case), then a
+            // case-insensitive match on the sorted names so the pick is deterministic.
+            // The canonical spec name replaces the model's spelling so dispatch,
+            // category and risk all see the registered tool.
+            guard let spec = resolveSpec(named: original.name, in: specsByName) else {
                 let namesList = toolNames.sorted().joined(separator: ", ")
-                validationErrors.append("Unknown tool `\(call.name)`. Available tools are: \(namesList).")
+                validationErrors.append("Unknown tool `\(original.name)`. Available tools are: \(namesList).")
                 continue
             }
+            var call = original
+            if call.name != spec.function.name {
+                call.name = spec.function.name
+                call.category = AppToolRegistry.category(for: call.name, projectURL: projectURL)
+                call.riskAssessment = ToolRiskClassifier.assessRisk(name: call.name, arguments: call.arguments, projectURL: projectURL)
+            }
+            resolvedCalls.append(call)
 
             let errors = validateArguments(arguments: call.arguments, schema: spec.function.parameters)
             if !errors.isEmpty {
@@ -72,11 +85,20 @@ public enum ForgeGuardrailsEngine {
         }
 
         if wasRescued {
-            let sanitized = sanitizeProse(text: text, rescuedCalls: calls)
-            return .rescued(calls: calls, sanitizedText: sanitized)
+            let sanitized = sanitizeProse(text: text, rescuedCalls: resolvedCalls)
+            return .rescued(calls: resolvedCalls, sanitizedText: sanitized)
         }
 
         return .accept
+    }
+
+    private static func resolveSpec(named name: String, in specsByName: [String: OpenAITool]) -> OpenAITool? {
+        if let exact = specsByName[name] { return exact }
+        guard !name.isEmpty else { return nil }
+        for key in specsByName.keys.sorted() where key.caseInsensitiveCompare(name) == .orderedSame {
+            return specsByName[key]
+        }
+        return nil
     }
 
     /// Rescues tool calls from varied markup dialects (XML, Markdown, Mistral, bare JSON).
