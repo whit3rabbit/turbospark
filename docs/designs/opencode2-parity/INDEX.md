@@ -92,7 +92,7 @@ Small, independent wins first, then the cross-cutting systems:
 
 1. OC-13, OC-05, OC-06 (small, self-contained)
 2. OC-01, OC-09, OC-03 (medium, app-local)
-3. OC-02, OC-11, OC-14 (medium; OC-02 after ZP-02, OC-11 after OC-10's seam)
+3. OC-02, OC-14 (medium; OC-02 after ZP-02)
 4. OC-07 (onboarding; coordinate the import step with the spec)
 5. OC-04 (session tabs; after ZP-21 and ZP-23)
 6. OC-08 (voice call; large integration)

@@ -8,41 +8,55 @@ added after a CNVD finding.
 * Author: whit3rabbit
 * Status: Draft
 * Date: 2026-11-11
+* Depends on: `BrowserOrigin`, the browser log, the per-profile store.
+  Related: ZP-15 (browser recording) also touches `WebKitBrowserEngine`;
+  recording of capture permissions interacts with media capture here
+  (needs author confirmation).
 
 --------------------------------------------------------------------------------
 
 ## Overview
 
-Add default-deny governance for device and sensitive permissions inside
-the embedded browser: camera, microphone, geolocation, notifications,
-clipboard-read, screen share, and device access requests get a
-confirmation UI, persistent per-site records, a settings page, and audit
-log entries. Today the engine's `WKUIDelegate` permission handling is
-explicitly empty, so unhandled WebKit requests fall to default behavior
-with no user consent surface.
+Add default-deny governance for permission classes inside the embedded
+browser (see the enforcement table in Technical Plan): requests the
+delegate can intercept get a confirmation UI, persistent per-site
+records, a settings page, and audit log entries. Today the engine
+implements no `WKUIDelegate` permission method, so unhandled WebKit
+requests fall to default behavior with no user consent surface.
+
+Terms: an agent-owned tab is a tab under agent control
+(`AppBrowserAutomationCoordinator` holds an ownership token); user
+takeover clears the token via `userTookOver(tabID:)`. "Vault" means the
+per-profile store named in the Store section.
 
 ## The Problem
 
-WebKit's default behavior for unhandled permission requests is a silent
-or system-level decision with no app-level record. A page the agent
-navigates could request camera or geolocation and get WebKit's built-in
-prompting (or silence, depending on the request class), with no per-site
-policy, no way to review what was granted, and no audit trail. ZCode
-built this after a real vulnerability report (CNVD); shipping a browser
-without page-permission governance repeats the exposure.
+Baseline, per `scripts/make-app-bundle.sh`: the app bundle declares a
+microphone usage string but no camera or location string, so a page's
+microphone request can reach the system TCC prompt with no app-level
+policy or record, and camera and location requests are expected to fail
+without a prompt. The `WKUIDelegate` extension in
+`WebKitBrowserEngine.swift` implements no permission method. Other
+classes have no delegate hook (see the enforcement table). Per-class
+behavior is to be confirmed with a test page before implementation
+(needs author confirmation). ZCode built its governance after a real
+vulnerability report (CNVD; source citation needs author confirmation).
 
 ## Goals
 
-* All sensitive permission requests (media capture, geolocation,
-  notifications, clipboard-read, screen share, MIDI/HID/USB/serial/
-  bluetooth device classes) default to deny at the WebKit delegate level.
-* Harmless classes (for example simple alerts, basic focus) pass
-  silently.
+* Camera and microphone requests (`WKUIDelegate` media capture) default
+  to deny at the delegate. Geolocation gets the same treatment through
+  the macOS 27 geolocation hook, behind an availability guard
+  (deployment target is macOS 14). Every other permission class is
+  listed in the enforcement table below as not interceptable by the app.
+* Only the classes in the enforcement table are classified. Any class
+  the delegate delivers that is not listed is denied. JavaScript dialogs
+  are not permission classes and keep their existing handling.
 * Sensitive requests raise a four-state confirmation bubble: allow once,
   allow for site, deny once, deny for site, with a per-request timeout
-  defaulting to deny.
-* Screen share shows a source picker; device requests show a device
-  picker where WebKit exposes choices.
+  defaulting to deny. Countdown is 30 seconds (needs author
+  confirmation). Deny once and timeout write an audit entry and no
+  record. Allow for site and deny for site write a record.
 * Persistent per-site allow/deny records power a settings "site
   permissions" page with search and per-record delete.
 * Every decision writes an audit log entry (decision, origin, class,
@@ -50,24 +64,24 @@ without page-permission governance repeats the exposure.
 
 ## Non-Goals
 
-* No governance change for agent-owned tabs' navigation (the existing
-  per-origin navigation policy and egress isolation stay authoritative).
+* No change to agent-tab navigation policy or egress isolation (the
+  existing per-origin navigation policy stays authoritative). Agent tabs
+  do gain a permission deny rule (Decision in Technical Plan); that rule
+  does not affect which origins they may navigate to.
 * No page permission changes for `ArtifactWebView` (already deny-by-
   default with an explicit content network grant).
 * No syncing of records across profiles.
+* No screen-share or device source pickers; WKWebView exposes no hook
+  for them.
+* No change to the system TCC prompt, the file chooser, or downloads. A
+  microphone grant at the OS level still applies; this design adds an
+  app-level deny in front of it.
 
 ## Open Questions
 
-* **Record storage scope**: per profile (records live in the profile
-  vault like other sensitive state) vs app-wide. Lean per profile,
-  consistent with the vault posture.
-* **Agent-owned tabs**: should the agent's tabs be allowed to trigger
-  permission bubbles at all, or should sensitive classes be hard-denied
-  with no bubble when the tab is agent-owned? ZCode's governance is
-  user-centric; the strongest posture for agent tabs is hard deny. Lean
-  hard deny for agent-owned tabs, bubbles for user takeover. Decide at
-  review; the existing "user takeover before direct input" state makes
-  this boundary detectable.
+* **Record storage scope**: per profile. Criterion: a profile is the
+  existing unit of isolation for sensitive state, so a grant in one
+  profile must not apply in another (needs author confirmation).
 
 ## Critical User Journeys
 
@@ -86,29 +100,31 @@ without page-permission governance repeats the exposure.
 * **When**: they open settings, search the site, and delete the record.
 * **Then**: the next visit asks again; the deletion is audited.
 
-### CUJ 3: screen share source picker
-
-* **Given**: a conferencing page requests screen share in a
-  user-taken-over tab.
-* **When**: the user allows once.
-* **Then**: the source picker lists windows and screens; the chosen
-  source is used for this grant only.
-
 ## Technical Plan (Architecture)
 
+Enforcement table (right-hand column wording needs author
+confirmation):
+
+| Class | Enforcement | Default |
+| --- | --- | --- |
+| Camera, microphone | `WKUIDelegate` media capture, macOS 12+ | deny |
+| Geolocation | `WKUIDelegate` geolocation, macOS 27 only | deny; on macOS 14-26 rely on missing `NSLocationUsageDescription` |
+| Notifications, clipboard-read, screen share, MIDI/HID/USB/serial/bluetooth | no WKUIDelegate hook | not governed by this design; behavior to be recorded per the baseline test |
+
 ```text
-WebKitBrowserEngine (WKUIDelegate, filled in)
+WebKitBrowserEngine (WKUIDelegate extension, permission methods added)
   webView(_:requestMediaCapturePermissionFor:initiatingFrame:
           decisionHandler:)      -> SitePermissionPolicy
   webView(_:requestDevicePermissionFor:...) -> policy
-  runJavaScriptAlert/Confirm (harmless: keep current dialogs)
+  JavaScript dialogs are not permission classes (keep current handling)
        |
        v
 SitePermissionPolicy
-  classification table (sensitive vs harmless classes)
-  lookup: per-site persistent record -> cached decision
-  miss: raise PermissionBubble (four states, countdown,
-        default deny on timeout); agent-owned: deny
+  1. ownership check: agent-owned -> deny, no bubble, no lookup
+  2. classification table (enforcement table above)
+  3. lookup: per-site persistent record -> cached decision
+  4. miss: raise PermissionBubble (four states, countdown,
+     default deny on timeout)
        |
        v
 SitePermissionStore
@@ -117,36 +133,109 @@ SitePermissionStore
   browser log store
 ```
 
-Classification: sensitive classes default-deny; harmless pass through.
 The delegate completes decisions synchronously from records and
 asynchronously from bubbles, always calling the WebKit decision handler
 exactly once.
 
+**Decision**: agent-owned tabs hard-deny every sensitive class with no
+bubble and no record lookup. Stored allow records are ignored in
+agent-owned tabs. Ownership is read when the request arrives. If
+ownership changes while a bubble is pending, the bubble is dismissed and
+the request is denied. The decision handler is called exactly once on
+every path.
+
+Edge cases, all resolving to deny: the tab navigates or closes while a
+request is pending; the tab moves to background; the web content
+process terminates (`webViewWebContentProcessDidTerminate`); a second
+request for the same origin and class arrives while one is pending
+(coalesce to the first answer); the countdown fires. The timeout is a
+named constant `sitePermissionPromptTimeout`, value 30 seconds (needs
+author confirmation).
+
+Requirements-to-design mapping:
+
+| Goal | Component |
+| --- | --- |
+| Goal 1 | `WebKitBrowserEngine` delegate plus `SitePermissionPolicy` |
+| Goal 3 | pending-dialog model plus bubble |
+| Goal 4 | `SitePermissionStore` and settings pane |
+| Goal 5 | browser log event |
+
+`SitePermissionStore` is separate from `BrowserPermissionRuleStore`
+(navigation allowlist) and shares only the `BrowserOrigin` type (or the
+opposite, per the Alternative C decision; needs author decision).
+
 ## Alternatives Considered
 
-### Alternative A: rely on WebKit's per-site ITP-style prompts
+Trade-offs below are inferred from the review findings (needs author
+confirmation).
 
-* **Pros**: zero work.
-* **Cons**: no app records, no audit, inconsistent classes, and agent
-  tabs would still reach system prompts; this is the current exposure.
-* **Reason for Rejection**: Rejected by author: governance is the
-  feature.
+### Alternative A: do nothing and rely on WebKit and TCC
 
-### Alternative B: blanket deny all sensitive permissions, no UI
+* **Pros**: no work.
+* **Cons**: no app record, no audit, microphone requests reach the
+  system prompt from agent tabs.
+* **Reason for Rejection**: Rejected: fails the agent-tab requirement.
 
-* **Pros**: smallest surface.
-* **Cons**: breaks legitimate conferencing/capture use in user-driven
-  browsing with no recourse; ZCode chose governance over blanket deny
-  for the same reason.
-* **Reason for Rejection**: Rejected by author: keep user-driven use
-  possible.
+### Alternative B: hard-deny everything now, ship no UI
+
+* **Pros**: smallest surface, closes the agent-tab exposure
+  immediately, no bubble stack.
+* **Cons**: breaks user-driven conferencing and capture.
+* **Reason for Rejection**: Deferred option: ship this first and add the
+  bubble later.
+
+### Alternative C: extend `BrowserPermissionRuleStore` and `BrowserPermissionApprovalCoordinator`
+
+* **Pros**: one origin type, one store, existing approval flow, instead
+  of new `SitePermissionPolicy` and `SitePermissionStore`.
+* **Cons**: the store currently holds only navigation origins; it needs
+  a permission-class dimension.
+
+### Alternative D: session-only grants, no persistence
+
+* **Pros**: no stored records, no retention question.
+* **Cons**: repeated prompts.
+
+### Selected design
+
+State which of the alternatives above is chosen and why. Needs author
+decision.
+
+## Risks and Mitigations
+
+All mitigations are deny-by-default (needs author confirmation).
+
+* **Prompt flood**: one pending bubble per tab, further requests deny.
+* **Spoofed bubble**: the origin line is rendered by the app from
+  `BrowserOrigin.canonicalString`, never from page text.
+* **Redirect mid-prompt**: navigation dismisses the bubble and denies.
+* **Cross-origin iframe**: keyed by the requesting frame origin, both
+  origins shown.
+* **Decision-handler leak on tab close**: a single-shot wrapper calls
+  deny on deinit.
+* **Stale allow records**: deletable in settings, no automatic expiry in
+  v1.
+* **Unreadable or corrupt record store**: treat every request as a miss
+  and deny in agent tabs, prompt in user tabs; quarantine the file per
+  `AppJSONStore` behavior.
 
 ## Non-Functional Requirements
 
-* **Security**: default deny; countdown default deny; records are
-  origin-canonicalized (scheme plus registrable domain per the existing
-  origin rules used by the agent allowlist); the audit log is
-  append-only within the session.
+* **Security**: default deny; countdown default deny; records are keyed
+  by `BrowserOrigin.canonicalString` (exact scheme, host, effective
+  port); no registrable-domain widening, so `www.example.com` and
+  `example.com` are separate records. A request from a subframe is keyed
+  by the requesting frame's origin from `WKFrameInfo.securityOrigin`,
+  not the top-level page, and the bubble shows both when they differ.
+  Audit entries go to the existing browser log through a new event type
+  `BrowserPermissionDiagnosticEvent` carrying class, decision (allow
+  once, allow site, deny, auto-deny), canonical origin, and timestamp.
+  No page content or URL path is logged. The log keeps its existing cap;
+  records in the store are capped at 500 (needs author confirmation).
+  Record deletion writes an audit entry, so "append-only" means entries
+  are never edited, not that records are permanent. The audit viewer is
+  one surface only: the settings pane.
 * **Privacy**: records live in the profile vault; no records leave the
   machine.
 * **Accessibility and localization**: bubble states are announced;
@@ -154,28 +243,33 @@ exactly once.
 
 ## Detailed Implementation Plan
 
-### Target Files to Create/Modify
+### Target Files to Create/Modify (build order: 2, 1, 3, 4, 5, 6)
 
-1. `swift/TurboSparkApp/Sources/TurboSparkApp/Browser/SitePermissionPolicy.swift` (Create)
+1. `swift/TurboSparkApp/Sources/TurboSparkApp/BrowserAutomation/SitePermissionPolicy.swift` (Create; placement next to the rule store needs author confirmation)
    * **Type / Scope**: classification and decision logic.
    * **Proposed Changes**: class table, record lookup, agent-owned hard
      deny branch, countdown bubble orchestration, single decision
      handler call guarantee.
-2. `swift/TurboSparkApp/Sources/TurboSparkApp/Browser/SitePermissionStore.swift` (Create)
+2. `swift/TurboSparkApp/Sources/TurboSparkApp/BrowserAutomation/SitePermissionStore.swift` (Create; placement next to the rule store needs author confirmation)
    * **Type / Scope**: persistence.
-   * **Proposed Changes**: per-profile records in the vault, origin
-     canonicalization, settings bindings, audit entries into the
-     browser log store.
+   * **Proposed Changes**: per-profile records in the vault, keyed by
+     `BrowserOrigin.canonicalString` (exact scheme, host, effective
+     port), settings bindings, audit entries into the browser log
+     through a new `BrowserPermissionDiagnosticEvent` type. Persistence
+     mechanism (profile database vs `AppJSONStore`) needs author
+     decision.
 3. `swift/TurboSparkApp/Sources/TurboSparkApp/BrowserAutomation/WebKitBrowserEngine.swift` (Modify)
    * **Type / Scope**: delegate.
-   * **Proposed Changes**: fill the currently empty WKUIDelegate
-     permission conformances, routing through SitePermissionPolicy;
+   * **Proposed Changes**: add the permission methods to the
+     `WKUIDelegate` extension, routing through SitePermissionPolicy;
      never call decision handlers twice.
 4. `swift/TurboSparkApp/Sources/TurboSparkApp/Browser/SitePermissionBubbleView.swift` (Create)
    * **Type / Scope**: confirmation UI.
-   * **Proposed Changes**: four-state bubble with countdown fill, source
-     and device pickers, Reduce Motion compliant transitions.
-5. `swift/TurboSparkApp/Sources/TurboSparkApp/App/SettingsPanes.swift` (Modify; basename, Browser settings pane owner)
+   * **Proposed Changes**: extend the pending-dialog request model with
+     a permission kind and reuse `BrowserDialogApprovalView`'s resolve
+     path instead of a new bubble stack. Four-state bubble with
+     countdown fill, Reduce Motion compliant transitions.
+5. `swift/TurboSparkApp/Sources/TurboSparkApp/Browser/BrowserSettingsPaneView.swift` (Modify), with bindings in `BrowserSettingsViewModel.swift` (Modify)
    * **Type / Scope**: settings.
    * **Proposed Changes**: site permissions section with search,
      per-record delete, and the audit log viewer entry.
@@ -183,10 +277,18 @@ exactly once.
    * **Type / Scope**: unit tests.
    * **Proposed Changes**: classification table, record lookup hit and
      miss, timeout-default-deny, agent-owned hard deny, single decision
-     call, canonicalization equivalence (www vs apex), record delete.
-   * Mutation checks: swap a sensitive class to harmless and assert the
-     classification test fails; allow double decision-handler calls and
-     assert the guard test fails.
+     call, records for www and apex stay distinct (default-port and
+     trailing-dot hosts canonicalize to one record), record delete.
+     Also: an injected clock for the timeout; store round trip and the
+     corrupt-file path; an audit event emitted on allow, deny, timeout,
+     and record delete; `ArtifactWebView` unchanged. Seam: delegate calls
+     go through a single-shot decision wrapper that tests can drive
+     without WebKit.
+   * **Mutation checks**: swap a sensitive class to harmless and assert
+     the classification test fails; allow double decision-handler calls
+     and assert the guard test fails; remove the agent-tab deny, change
+     the timeout default to allow, and change the unknown-class default
+     to allow, each asserted to fail a test.
 
 ### Verification Plan
 
@@ -198,6 +300,8 @@ exactly once.
 * **Manual**: against local test pages requesting camera, geolocation,
   and notifications, exercise allow-once, allow-site, deny-site, and
   timeout paths in both tab ownership modes.
+* **Exit criterion**: all of the above pass plus the manual run. Local
+  green is not release evidence; follow `.claude/docs/verification.md`.
 
 --------------------------------------------------------------------------------
 
