@@ -26,7 +26,7 @@ The real-checkpoint decode and chunked-prefill flow for the `qwen4_exp` family, 
 - Only two `/ hc_count` divisions: before silu on the down-projection and on the inject weight input; none on the up-projection [hc.rs:encode_hyper_connection]
 - Inject gate row is per token (`inject_row_offset`) inside a prefill micro-batch so a later token cannot overwrite an earlier gate before it is read [hc.rs:encode_hyper_connection]
 - Decode requires `position == kv.position()`; non-sequential positions are refused [produce.rs:produce_real_qwen4_inner]
-- `build` refuses unsupported configs (bad indexer or hyper-connection params, softcap, tied lm_head, layer masks other than 1/2, no linear layers, inactive PLE; the PLE-on-QSA check has an empty body, so that case is not refused) rather than running them [state.rs:RealQwen4State::build]
+- `build` refuses unsupported configs (bad indexer or hyper-connection params, softcap, tied lm_head, layer masks other than 1/2, no linear layers, inactive PLE, a PLE layer that is not linear/GDN) rather than running them [state.rs:RealQwen4State::build] [state.rs:resolve_ple_layer]
 - The wide residual is family-local (`wide_x`), not the shared `DecodeScratch::x` [state.rs:RealQwen4State]
 - The shared expert is added after the routed sum is rounded to FP16; phase 2 seeds from zero rows [moe.rs:encode_moe_layer, moe_batch.rs:encode_qwen4_layer_routed_prefill]
 - MoE host readback requires commit and wait of the router pass before `encode_moe_layer` [moe.rs:encode_moe_router]

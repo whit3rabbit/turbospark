@@ -23,7 +23,7 @@ The real-checkpoint Gemma 4 decode and prefill flow, implemented as `impl RealFo
 - `span_attention_range` [vision_prefill.rs:span_attention_range]: sliding/full key range for a row inside an image span
 
 ## Invariants
-- Acceptance is flag-based, not family-keyed: any install with `ffn_sandwich_norms` and `router_scaled` both set passes, and `ModelFamily` is not checked here [state.rs:build]
+- Acceptance is family-keyed first: any `ModelFamily` other than `Gemma4` is refused, then `ffn_sandwich_norms` and `router_scaled` must both be set [state.rs:check_gemma_flow]
 - Dense vs MoE is keyed on `arch.num_experts == 0`; MoE needs positive `top_k_experts` not above `gpu::MAX_STREAMED_EXPERTS` [state.rs:build]
 - Decode positions must be sequential with the KV cache, and token ids must be below vocab [mod.rs:produce_real_gemma4_inner]
 - Image placeholder positions are refused in single-token decode; they must go through `prefill_chunk` [mod.rs:produce_real_gemma4_inner]

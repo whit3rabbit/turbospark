@@ -125,10 +125,9 @@ pub enum DflashDraftPolicy {
 }
 
 impl DflashDraftPolicy {
-    /// Reads `TURBOSPARK_DFLASH_DRAFT` (or legacy `TURBOSPARK_DFLASH_DRAFT`),
-    /// with unset and unparsable both meaning `Auto` for the same reason
-    /// `MtpDraftPolicy` chose it: a typo should not silently disable a feature
-    /// the install can serve.
+    /// Reads `TURBOSPARK_DFLASH_DRAFT`, with unset and unparsable both
+    /// meaning `Auto` for the same reason `MtpDraftPolicy` chose it: a typo
+    /// should not silently disable a feature the install can serve.
     pub fn from_env() -> Self {
         match std::env::var("TURBOSPARK_DFLASH_DRAFT")
             .ok()

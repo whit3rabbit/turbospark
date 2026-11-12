@@ -694,6 +694,42 @@ impl AttentionIntermediateCapture {
     }
 }
 
+/// Resolves the single PLE layer this flow places and refuses any placement
+/// it does not run. Split out of `RealQwen4State::build` so the refusal is
+/// testable without a Metal device or checkpoint.
+fn resolve_ple_layer(arch: &ArchConfig) -> Result<usize, RealForwardError> {
+    let unsupported = |detail: String| Err(RealForwardError::Unsupported(detail));
+    let ple_layers = arch.ple.layer_indices();
+    let [ple_layer_signed] = ple_layers[..] else {
+        return unsupported(format!(
+            "arch.ple declares {} PLE layers; this flow places exactly one",
+            ple_layers.len()
+        ));
+    };
+    if ple_layer_signed < 0 || ple_layer_signed >= arch.num_layers {
+        return unsupported(format!(
+            "PLE layer index {ple_layer_signed} is outside 0..{}",
+            arch.num_layers
+        ));
+    }
+    let ple_layer = ple_layer_signed as usize;
+    // Confirmed by the checkpoint (`docs/QWEN4_PHASE0.md` section 0 finding
+    // 1: `ple_layer_ids: [2]` resolves to layer index 1, which this
+    // baseline's `full_attention_layer_mask` marks linear/GDN). Stated as an
+    // invariant the flow relies on rather than assumed silently: PLE's own
+    // dataflow runs BEFORE the layer's GDN-or-attention branch either way,
+    // so a PLE layer that happened to be a QSA one would still be
+    // structurally fine, but that path is unexercised. A future config that
+    // moves PLE onto a QSA layer is therefore a loud refusal.
+    if !arch.layer_is_linear(ple_layer) {
+        return unsupported(format!(
+            "PLE layer index {ple_layer} is not a linear/GDN layer; this flow has only \
+             run PLE on a GDN layer (docs/QWEN4_PHASE0.md section 0 finding 1)"
+        ));
+    }
+    Ok(ple_layer)
+}
+
 fn json_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');
@@ -1128,32 +1164,7 @@ impl RealQwen4State {
                 "qwen4_exp with no active PLE table is not one this flow can run".to_string(),
             );
         }
-        let ple_layers = arch.ple.layer_indices();
-        let [ple_layer_signed] = ple_layers[..] else {
-            return unsupported(format!(
-                "arch.ple declares {} PLE layers; this flow places exactly one",
-                ple_layers.len()
-            ));
-        };
-        if ple_layer_signed < 0 || ple_layer_signed >= arch.num_layers {
-            return unsupported(format!(
-                "PLE layer index {ple_layer_signed} is outside 0..{}",
-                arch.num_layers
-            ));
-        }
-        let ple_layer = ple_layer_signed as usize;
-        if arch.layer_is_linear(ple_layer) {
-            // Confirmed by the checkpoint (`docs/QWEN4_PHASE0.md` section
-            // 0 finding 1: `ple_layer_ids: [2]` resolves to layer index 1,
-            // which this baseline's `full_attention_layer_mask` marks
-            // linear/GDN). Stated as an invariant the flow relies on
-            // rather than assumed silently: PLE's own dataflow runs
-            // BEFORE the layer's GDN-or-attention branch either way, so a
-            // PLE layer that happened to be a QSA one would still be
-            // structurally fine -- this check exists so a future config
-            // that moves PLE onto a QSA layer is a loud refusal instead of
-            // an unexercised code path.
-        }
+        let ple_layer = resolve_ple_layer(arch)?;
         if arch.ple.eos_token_id == 0 {
             return unsupported(
                 "arch.ple.eos_token_id is unset; PLE's n-gram context resets at EOS \
@@ -1450,6 +1461,37 @@ impl RealQwen4State {
     pub(crate) fn flush_attention_intermediate_capture(&self) {
         if let Some(capture) = &self.attention_intermediate_capture {
             capture.flush_if_captured();
+        }
+    }
+}
+
+#[cfg(test)]
+mod ple_layer_tests {
+    use super::*;
+
+    fn qwen4_arch() -> ArchConfig {
+        model_io::known_architecture(model_io::ModelFamily::Qwen4Exp)
+    }
+
+    #[test]
+    fn the_baseline_ple_layer_resolves_to_its_gdn_layer() {
+        let arch = qwen4_arch();
+        assert_eq!(arch.ple.layer_indices(), vec![1]);
+        assert_eq!(resolve_ple_layer(&arch).unwrap(), 1);
+    }
+
+    #[test]
+    fn a_ple_layer_on_a_qsa_layer_is_refused() {
+        let mut arch = qwen4_arch();
+        let qsa = (0..arch.num_layers as usize)
+            .find(|&l| arch.full_attention_layer_mask[l] == 1)
+            .expect("baseline has a QSA layer");
+        arch.ple.layer_ids = vec![qsa as i64 + 1];
+        match resolve_ple_layer(&arch) {
+            Err(RealForwardError::Unsupported(detail)) => {
+                assert!(detail.contains("not a linear/GDN layer"), "{detail}")
+            }
+            other => panic!("expected Unsupported, got {other:?}"),
         }
     }
 }

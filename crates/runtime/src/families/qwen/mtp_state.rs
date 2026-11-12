@@ -54,10 +54,14 @@ pub(crate) struct MtpState {
     /// The M-row buffers the batched verify pass runs on (step 4).
     ///
     /// It lives HERE rather than beside `DecodeScratch` for the same reason
-    /// the rest of this state does: `TURBOSPARK_MTP_DRAFT` unset must allocate
-    /// nothing at all, which is what lets `qwen38_memory_oracle`'s frozen row
-    /// keep describing the pre-MTP engine. Sized for `depth + 1` rows,
-    /// because a round verifies the confirmed token plus `depth` proposals.
+    /// the rest of this state does: it exists only when an `MtpState` is
+    /// built, so an install without a head, or a caller passing
+    /// `MtpDraftPolicy::Off` (every measuring harness, which is what keeps
+    /// `qwen38_memory_oracle`'s frozen row describing the pre-MTP engine),
+    /// allocates none of it. `TURBOSPARK_MTP_DRAFT` unset is `Auto`, the
+    /// intended default, and DOES allocate this when the install carries a
+    /// head. Sized for `depth + 1` rows, because a round verifies the
+    /// confirmed token plus `depth` proposals.
     pub(crate) batched: super::batched::BatchedScratch,
     /// Surviving intermediates dump directory from TURBOSPARK_MTP_DUMP,
     /// resolved once at open rather than re-reading the environment on every draft step.
@@ -363,14 +367,32 @@ impl MtpDraftPolicy {
     /// **UNSET is `Auto`, and that one line is what turned this feature from
     /// opt-in into detected.** An explicit 0 is still off, and any other
     /// parsable number is still an explicit depth, so nothing that used to
-    /// work reads differently. An UNPARSABLE value is `Auto` rather than off,
-    /// matching the unset case: a typo should not silently disable a feature
-    /// the install can serve.
+    /// work reads differently. `off`, `false` and `no` (any case) are also
+    /// off, because a user writing `TURBOSPARK_MTP_DRAFT=off` means it and
+    /// used to keep drafting. Any other UNPARSABLE value is `Auto`, matching
+    /// the unset case so a typo does not silently disable a feature the
+    /// install can serve, and prints one warning so the typo is visible.
+    /// An empty value reads as unset, with no warning.
     pub fn from_env_value(raw: Option<&str>) -> Self {
-        match raw.and_then(|v| v.trim().parse::<usize>().ok()) {
-            None => MtpDraftPolicy::Auto,
-            Some(0) => MtpDraftPolicy::Off,
-            Some(n) => MtpDraftPolicy::Fixed(n),
+        let Some(v) = raw.map(str::trim).filter(|v| !v.is_empty()) else {
+            return MtpDraftPolicy::Auto;
+        };
+        if ["off", "false", "no"]
+            .iter()
+            .any(|word| v.eq_ignore_ascii_case(word))
+        {
+            return MtpDraftPolicy::Off;
+        }
+        match v.parse::<usize>() {
+            Ok(0) => MtpDraftPolicy::Off,
+            Ok(n) => MtpDraftPolicy::Fixed(n),
+            Err(_) => {
+                eprintln!(
+                    "warning: TURBOSPARK_MTP_DRAFT={v:?} is not a depth or off/false/no/0; \
+                     using auto"
+                );
+                MtpDraftPolicy::Auto
+            }
         }
     }
 }
@@ -390,6 +412,30 @@ pub fn install_has_mtp_head(index: &ResidentIndex) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn off_words_disable_drafting_in_any_case() {
+        use MtpDraftPolicy as P;
+        for raw in [
+            "off", "OFF", "Off", "false", "FALSE", "no", "No", " off ", "0",
+        ] {
+            assert_eq!(P::from_env_value(Some(raw)), P::Off, "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn depths_unset_and_typos_keep_their_mapping() {
+        use MtpDraftPolicy as P;
+        assert_eq!(P::from_env_value(None), P::Auto);
+        assert_eq!(P::from_env_value(Some("")), P::Auto);
+        assert_eq!(P::from_env_value(Some("  ")), P::Auto);
+        assert_eq!(P::from_env_value(Some("2")), P::Fixed(2));
+        assert_eq!(P::from_env_value(Some(" 4 ")), P::Fixed(4));
+        // Unparsable stays Auto (with a warning), so a typo cannot disable it.
+        assert_eq!(P::from_env_value(Some("yes")), P::Auto);
+        assert_eq!(P::from_env_value(Some("offf")), P::Auto);
+        assert_eq!(P::from_env_value(Some("-1")), P::Auto);
+    }
 
     #[test]
     fn an_install_with_no_full_attention_layer_is_refused_by_name() {
