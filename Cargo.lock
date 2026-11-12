@@ -2339,6 +2339,7 @@ dependencies = [
 name = "turbospark-audio"
 version = "0.8.0"
 dependencies = [
+ "half",
  "rayon",
  "serde",
  "serde_json",

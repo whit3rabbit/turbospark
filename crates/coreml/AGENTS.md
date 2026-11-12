@@ -5,7 +5,8 @@ Generic Apple Core ML runner: load `.mlmodelc` (compiling `.mlpackage` or
 description, marshal dense row-major tensors to and from `MLMultiArray`, and
 run stateless or stateful (`MLState`) predictions.
 
-Model pipelines (Parakeet, EmbeddingGemma2, Unlimited OCR) are NOT here.
+Model pipelines (Parakeet, EmbeddingGemma2, Unlimited OCR, and the eg2demo
+word-CTC experiment) are NOT here.
 They live in `crates/runtime/src/coreml/`, because they need the tokenizer
 (onig_sys), which would drop this crate from the portable cross-target check.
 
