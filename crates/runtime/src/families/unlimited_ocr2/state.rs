@@ -125,11 +125,8 @@ impl RealUnlimitedOcr2State {
         if arch.num_heads != arch.num_kv_heads || arch.head_dim != arch.full_head_dim {
             return unsupported("unlimited_ocr2 needs one attention geometry".into());
         }
-        let lead = arch.num_dense_leading_layers.max(0) as usize;
+        let lead = validate_dense_lead(arch)?;
         let num_layers = arch.num_layers as usize;
-        if lead >= num_layers || arch.dense_lead_intermediate_size <= 0 {
-            return unsupported("unlimited_ocr2 needs a dense lead and MoE layers".into());
-        }
         let top_k = arch.top_k_experts as usize;
         if top_k == 0 || top_k > gpu::MAX_STREAMED_EXPERTS {
             return unsupported(format!(
@@ -332,5 +329,71 @@ impl RealUnlimitedOcr2State {
                 }
             }
         }
+    }
+}
+
+/// Check the dense-lead / MoE split and return the lead count.
+///
+/// The flow needs at least one dense lead layer: the open-time tensor probe
+/// and the forward pass both treat layer 0 as dense (`mlp.gate_proj.weight`),
+/// and the real checkpoint has a lead of 1 (`unlimited_ocr2_12l`). A lead of 0
+/// would otherwise pass the old `lead >= num_layers` test and only fail later
+/// as a `MissingTensor` on layer 0, or worse, mis-slice the expert blobs.
+fn validate_dense_lead(arch: &ArchConfig) -> Result<usize, RealForwardError> {
+    let unsupported = |detail: String| Err(RealForwardError::Unsupported(detail));
+    let lead = arch.num_dense_leading_layers.max(0) as usize;
+    let num_layers = arch.num_layers.max(0) as usize;
+    if lead == 0 {
+        return unsupported(format!(
+            "unlimited_ocr2 needs a dense lead: num_dense_leading_layers is {}, expected 1..{num_layers}",
+            arch.num_dense_leading_layers
+        ));
+    }
+    if lead >= num_layers || arch.dense_lead_intermediate_size <= 0 {
+        return unsupported("unlimited_ocr2 needs a dense lead and MoE layers".into());
+    }
+    Ok(lead)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn arch(lead: i64, layers: i64, dense_inter: i64) -> ArchConfig {
+        let mut a = model_io::unlimited_ocr2_12l();
+        a.num_dense_leading_layers = lead;
+        a.num_layers = layers;
+        a.dense_lead_intermediate_size = dense_inter;
+        a
+    }
+
+    fn err(a: &ArchConfig) -> String {
+        match validate_dense_lead(a) {
+            Err(RealForwardError::Unsupported(m)) => m,
+            other => panic!(
+                "expected Unsupported, got {:?}",
+                other.map_err(|e| e.to_string())
+            ),
+        }
+    }
+
+    #[test]
+    fn real_baseline_lead_is_accepted() {
+        assert_eq!(
+            validate_dense_lead(&model_io::unlimited_ocr2_12l()).unwrap(),
+            1
+        );
+    }
+
+    #[test]
+    fn zero_dense_lead_is_refused_naming_the_field() {
+        let m = err(&arch(0, 12, 6848));
+        assert!(m.contains("num_dense_leading_layers"), "{m}");
+    }
+
+    #[test]
+    fn lead_covering_every_layer_or_zero_width_is_refused() {
+        err(&arch(12, 12, 6848));
+        err(&arch(1, 12, 0));
     }
 }

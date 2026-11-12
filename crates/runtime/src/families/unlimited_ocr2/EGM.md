@@ -13,7 +13,7 @@ Decode flow for the `unlimited_ocr2` family: a DeepSeek-V2-shaped MoE decoder wi
 - Subdirectories: None
 
 ## Invariants
-- `build` refuses another family, sandwich norms, router scaling, embedding scaling, output gate, gated shared expert, K=V, a softcap, any non-full layer mask, mismatched head geometry, no MoE layers (lead count at or above layer count), a non-positive dense lead intermediate size, and `top_k` of zero or above `MAX_STREAMED_EXPERTS` [state.rs:build]
+- `build` refuses another family, sandwich norms, router scaling, embedding scaling, output gate, gated shared expert, K=V, a softcap, any non-full layer mask, mismatched head geometry, a dense lead count of 0 (`num_dense_leading_layers`; layer 0 is read as dense), no MoE layers (lead count at or above layer count), a non-positive dense lead intermediate size, and `top_k` of zero or above `MAX_STREAMED_EXPERTS` [state.rs:build]
 - Required tensors are named at open so a gap fails early [state.rs:build]
 - Router tensor sizes are checked against the expected element counts [state.rs:build]
 - Position must equal `kv.position()` and token must be < vocab [mod.rs:produce_unlimited_ocr2_inner]

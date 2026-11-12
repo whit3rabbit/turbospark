@@ -22,7 +22,7 @@ The `flint` decode flow for `RealForwardRunner`: 49 layers of GQA attention (per
 - Sliding window attends `sliding_window` keys including the current one (`kv_start = seq_len - window`) [attn.rs:encode_attention_block]
 - Expert selection ranks by logit (stable, lower index wins ties), not by saturating sigmoid score; slot order is reduction order [moe.rs:sigmoid_topk_renorm]
 - Shared expert runs before phase 1/2 so its output seeds phase 2's residual input; blob index is `layer - lead` [moe.rs:encode_flint_layer_moe]
-- Router tensors must be INT8 (dtype 5) of `num_experts * hidden` bytes; lead must be in `1..num_layers` [state.rs:RealFlintState::build]
+- Router tensors must be INT8 (dtype 5) of `num_experts * hidden` bytes; lead (`num_dense_leading_layers`) must be in `1..num_layers`; the published checkpoint has 2, but no code path hard-codes two dense layers, so a different arch value changes the dense/MoE split everywhere (`layer < lead`, blob index `layer - lead`) [state.rs:RealFlintState::build]
 - Positions must be sequential with the KV cache, and token ids below vocab [mod.rs:produce_real_flint_inner, prefill.rs:prefill_micro_batch_flint_inner]
 - Producer returns raw logits, no softcap; vocab must match `logits.len()` [mod.rs:produce_real_flint_inner]
 - `TURBOSPARK_BATCHED_GEMV` and `TURBOSPARK_ROUTED_BATCH` are refused by name for flint [prefill.rs:prefill_chunk_real_flint]
