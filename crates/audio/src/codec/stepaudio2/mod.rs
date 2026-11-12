@@ -546,11 +546,12 @@ impl StepAudio2Token2Wav {
         })
     }
 
-    /// Opens a checkpoint directory holding the tiny fixture file
-    /// (`tiny_weights.safetensors` + `tiny_config.json`) or the
-    /// converted checkpoint layout (`flow.safetensors`, `hift.safetensors`,
-    /// `campplus.safetensors`; the flow geometry is read from
-    /// `flow.yaml`-style config.json when present).
+    /// Opens a directory holding the tiny fixture file
+    /// (`tiny_weights.safetensors` + `tiny_config.json`). Only that
+    /// layout is supported here: without the tiny weights this returns
+    /// `BadConfig`. Real converted checkpoints (`flow.safetensors`,
+    /// `hift.safetensors`, `campplus.safetensors`) load only through
+    /// [`Self::load`].
     pub fn open(dir: &Path) -> Result<Self> {
         let tiny = dir.join("tiny_weights.safetensors");
         if tiny.exists() {
