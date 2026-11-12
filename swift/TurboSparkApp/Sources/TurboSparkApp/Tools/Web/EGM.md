@@ -16,6 +16,7 @@ The native web tools exposed to the model: `WebSearch`, `WebFetch`, `HttpRequest
 
 ## Invariants
 - Every outbound hop goes through `HttpRequestDestinationValidator.validate`: network policy decision first, then `getaddrinfo`. A public host must resolve only to public addresses regardless of local-host policy (rebinding guard); a local host the policy allows may resolve only within its own scope via `permitsLocalConnection`. An unresolvable host or one with no usable address is refused. [HttpRequestDestinationValidator.swift:validate]
+- The search providers (Exa, Parallel, Brave, SearXNG, Tavily search and extract) send every request through `HttpRequestExecutor.performRequest` via `WebSearchExecutor.fetchLimited`, so they get the same validation, redirect revalidation, connected-address check and an 8 MiB cap. A user-configured SearXNG base URL is therefore subject to the network policy: metadata and `.internal` hosts are always refused, loopback follows "Allow localhost" (on by default), and LAN hosts need "Allow local network". An explicitly configured local SearXNG works only where the policy allows it. An injected test session has its request URL validated before sending but does not get redirect handling. [WebSearchExecutor.swift:fetchLimited]
 - Redirects are never auto-followed in production: the delegate captures the redirect, cancels it, and `performRequest` revalidates the new URL and replays it, up to 10 hops. [HttpRequestExecutor.swift:performRequest], [HttpRequestExecutor.swift:HttpRequestRedirectDelegate]
 - After each hop the connected remote addresses from task metrics are checked, and a missing address is refused, so a DNS-rebound response is discarded. Known residual risk (stated in code): the check runs after the request was sent, so only the response is withheld. [HttpRequestExecutor.swift:performRequest]
 - A test that injects a destination validator into `WebFetchExecutor.fetch` opts out of the connected-address check unless it injects its own; production (no injection) always checks. Injected sessions only validate the final URL. [WebFetchExecutor.swift:fetch], [HttpRequestExecutor.swift:performRequest]
@@ -34,7 +35,7 @@ The native web tools exposed to the model: `WebSearch`, `WebFetch`, `HttpRequest
 - Reads the `TAVILY_API_KEY` environment variable as a fallback. [WebSearchExecutor.swift:searchTavily]
 - DNS resolution through `getaddrinfo` during validation. [HttpRequestDestinationValidator.swift]
 - Reads `AppNetworkPolicyStore.current` and `AppToolSandbox` host classification. [HttpRequestDestinationValidator.swift], [HttpRequestExecutor.swift]
-- Creates and invalidates an ephemeral `URLSession` per call (unless a test session is injected); the search providers use `URLSession.shared` by default except Tavily. [HttpRequestExecutor.swift:performRequest], [WebSearchExecutor.swift]
+- Creates and invalidates an ephemeral `URLSession` per call (unless a test session is injected); the search providers do the same through `fetchLimited` (no more `URLSession.shared`). [HttpRequestExecutor.swift:performRequest], [WebSearchExecutor.swift]
 - No disk writes.
 
 ## Verification
