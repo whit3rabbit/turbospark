@@ -92,16 +92,19 @@ extension AppHookExecutionEngine {
             return Set(group.optionSpecs.filter(\.isSensitive).map(\.key))
         }()
 
-        for (k, v) in options where !sensitiveKeys.contains(k) {
-            commandText = commandText.replacingOccurrences(of: "${user_config.\(k)}", with: v)
-        }
-        // A sensitive placeholder must not stay literal: every shell rejects
+        // **EVERY OPTION BECOMES AN ENV REFERENCE, NOT A SPLICED VALUE**
+        // (issue S2). A non-sensitive value used to be pasted into the `-c`
+        // string raw, so `x; touch /tmp/m` or `$(cmd)` in an option changed the
+        // command that ran. Every option is already exported below as
+        // `CLAUDE_PLUGIN_OPTION_*`, so the placeholder is rewritten to a
+        // quoted reference to that variable and the value stays data. This
+        // also keeps sensitive values out of argv, where `ps` would show them,
+        // and a placeholder must not stay literal: every shell rejects
         // `${user_config.KEY}` as a bad substitution, the hook exits 1 before
-        // its script starts, and a PreToolUse gate then fails open. Point it
-        // at the environment variable the value is already exported under, so
-        // the secret still stays out of argv.
-        for k in sensitiveKeys {
-            let normalized = k.uppercased().replacingOccurrences(of: "-", with: "_")
+        // its script starts, and a PreToolUse gate then fails open. A key that
+        // cannot name an env variable has its placeholder removed (empty).
+        for k in Set(options.keys).union(sensitiveKeys) {
+            let normalized = Self.optionEnvSuffix(for: k)
             let isIdentifier = !normalized.isEmpty
                 && normalized.unicodeScalars.allSatisfy {
                     ($0.value >= 48 && $0.value <= 57) || ($0.value >= 65 && $0.value <= 90) || $0.value == 95
