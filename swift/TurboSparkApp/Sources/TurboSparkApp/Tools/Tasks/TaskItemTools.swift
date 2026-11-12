@@ -363,7 +363,7 @@ public enum TaskItemToolDefinitions {
                 "taskId": .string(description: "The unique task identifier."),
                 "subject": .string(description: "New title for the task."),
                 "description": .string(description: "Updated description."),
-                "status": .string(description: "New status: 'pending', 'in_progress', 'completed', or 'deleted'."),
+                "status": .string(description: "New status: 'pending', 'in_progress', 'completed', or 'deleted' (removes the task)."),
                 "activeForm": .string(description: "Present continuous activity label.")
             ],
             required: ["taskId"]
@@ -389,14 +389,14 @@ public enum TaskItemToolDefinitions {
 
     public static let taskOutput = OpenAITool.function(
         name: "TaskOutput",
-        description: "Retrieve stdout, stderr, or result output from a background task.",
+        description: "Retrieve the output recorded on a task-list task. This reads the task's stored output only; it does not read a background shell or subagent.",
         parameters: .object(
             properties: [
                 "task_id": .string(description: "The unique task identifier."),
-                "block": .boolean(description: "Whether to wait synchronously for task completion."),
-                "timeout": .integer(description: "Max wait time in milliseconds.")
+                "block": .boolean(description: "Wait until the task status is completed, stopped, failed, or cancelled (default false)."),
+                "timeout": .integer(description: "Max wait time in milliseconds when block is true (default 10000, capped at 600000).")
             ],
-            required: ["task_id", "block", "timeout"]
+            required: ["task_id"]
         )
     )
 
