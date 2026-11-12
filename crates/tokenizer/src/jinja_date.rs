@@ -59,10 +59,7 @@ fn parse_pinned(value: &str) -> Option<i64> {
     );
     // The day must fit the month (leap years included), or 2026-02-31 would
     // silently roll into March.
-    if d.next().is_some()
-        || !(1..=12).contains(&m)
-        || !(1..=days_in_month(y, m)).contains(&day)
-    {
+    if d.next().is_some() || !(1..=12).contains(&m) || !(1..=days_in_month(y, m)).contains(&day) {
         return None;
     }
     let mut t = time.split(':');

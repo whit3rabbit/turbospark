@@ -344,11 +344,21 @@ fn a_model_visual_header_canonicalizes_to_the_same_bytes_as_vision_tower() {
 
     // And the bytes actually written to disk agree too.
     let canon_dir = temp_dir();
-    write_packed_vision(&canon_dir, &canon_read.blocks, canon_read.block_stride, vision.depth as usize)
-        .expect("writing the canonical-prefix blocks");
+    write_packed_vision(
+        &canon_dir,
+        &canon_read.blocks,
+        canon_read.block_stride,
+        vision.depth as usize,
+    )
+    .expect("writing the canonical-prefix blocks");
     let hf_dir = temp_dir();
-    write_packed_vision(&hf_dir, &hf_read.blocks, hf_read.block_stride, vision.depth as usize)
-        .expect("writing the canonicalized-HF blocks");
+    write_packed_vision(
+        &hf_dir,
+        &hf_read.blocks,
+        hf_read.block_stride,
+        vision.depth as usize,
+    )
+    .expect("writing the canonicalized-HF blocks");
     let canon_blob_bytes =
         std::fs::read(canon_dir.join("packed_vision").join("blobs.bin")).unwrap();
     let hf_blob_bytes = std::fs::read(hf_dir.join("packed_vision").join("blobs.bin")).unwrap();

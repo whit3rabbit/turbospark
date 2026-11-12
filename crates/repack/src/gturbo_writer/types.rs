@@ -20,7 +20,10 @@ pub enum WriterError {
         actual: usize,
     },
     /// The packed vision tower does not hold `arch.vision.depth` blocks.
-    WrongVisionBlockCount { expected: usize, actual: usize },
+    WrongVisionBlockCount {
+        expected: usize,
+        actual: usize,
+    },
 }
 
 impl std::fmt::Display for WriterError {
