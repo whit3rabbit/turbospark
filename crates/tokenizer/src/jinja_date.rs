@@ -57,7 +57,12 @@ fn parse_pinned(value: &str) -> Option<i64> {
         d.next()?.parse::<i64>().ok()?,
         d.next()?.parse::<i64>().ok()?,
     );
-    if d.next().is_some() || !(1..=12).contains(&m) || !(1..=31).contains(&day) {
+    // The day must fit the month (leap years included), or 2026-02-31 would
+    // silently roll into March.
+    if d.next().is_some()
+        || !(1..=12).contains(&m)
+        || !(1..=days_in_month(y, m)).contains(&day)
+    {
         return None;
     }
     let mut t = time.split(':');
@@ -79,6 +84,15 @@ fn parse_pinned(value: &str) -> Option<i64> {
         return None;
     }
     Some(days_from_civil(y, m, day) * 86_400 + hh * 3600 + mm * 60 + ss)
+}
+
+fn days_in_month(y: i64, m: i64) -> i64 {
+    match m {
+        2 if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
 }
 
 /// Days since 1970-01-01 for a proleptic Gregorian date (Hinnant).
@@ -178,6 +192,31 @@ mod tests {
             "2026-01-01T9223372036854775807:00:00",
         ] {
             assert_eq!(parse_pinned(bad), None, "{bad}");
+        }
+    }
+
+    // The day was range-checked as 1..=31 only, so impossible calendar dates
+    // rolled into the next month.
+    #[test]
+    fn pinned_clock_validates_day_against_month() {
+        for bad in [
+            "2026-02-31",
+            "2026-02-29",
+            "2026-04-31",
+            "2026-06-31",
+            "1900-02-29",
+            "2026-02-00",
+        ] {
+            assert_eq!(parse_pinned(bad), None, "{bad}");
+        }
+        for ok in [
+            "2024-02-29",
+            "2000-02-29",
+            "2026-02-28",
+            "2026-04-30",
+            "2026-12-31",
+        ] {
+            assert!(parse_pinned(ok).is_some(), "{ok}");
         }
     }
 }
