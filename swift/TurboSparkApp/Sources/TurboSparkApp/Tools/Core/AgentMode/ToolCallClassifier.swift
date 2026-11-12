@@ -51,9 +51,6 @@ public enum ToolCallProjection {
     static let totalArgumentBudget = 16_000
     /// Preview length for file content carried by a write or edit.
     static let contentPreviewCharacters = 300
-    /// Cap for a subagent prompt, which is forwarded in full shape because
-    /// it is the instruction the sub-agent would follow.
-    static let agentPromptCharacters = 4_000
 
     /// Projects `call` for the classifier.
     public static func project(_ call: AppToolCall) -> String {

@@ -10,7 +10,7 @@ The model-facing shell: the Bash, BashOutput, KillShell, and REPL tool schemas, 
 - Cwd persistence: `ShellCwdTracker.shared` (`startDirectory(for:chatID:)`, `record(finalDirectory:root:chatID:)`, `isInside`) [ShellCwdTracker.swift:ShellCwdTracker].
 - Network confinement: `ShellNetworkSandbox.profile(allowLocalhost:)`, `.launch(executable:arguments:policy:)` [ShellNetworkSandbox.swift:ShellNetworkSandbox].
 - Output shaping and environment: `ShellOutputFormatting` (`stripANSI`, `compact`, `compactWithSpill`, `spillRootURL`, `isUnderSpillRoot`, `pruneSpillFiles`, `hasUnquotedCompoundOperator`, `benignExitNote`, `shellEnvironment`) [ShellOutputFormatting.swift:ShellOutputFormatting].
-- Classification (public): `TerminalCommandClassifier` (`isSingleSimpleInvocation`, `headCommand`, `isAutoApprovable`, `isCollapsible`, `interpretExitCode`, and the command sets) [TerminalCommandClassifier.swift:TerminalCommandClassifier].
+- Classification (public): `TerminalCommandClassifier` (`isSingleSimpleInvocation`, `headCommand`, `isAutoApprovable`, `isCollapsible`, and the command sets) [TerminalCommandClassifier.swift:TerminalCommandClassifier].
 - Child directories: none.
 
 ## Invariants
