@@ -555,7 +555,19 @@ fn channels_first(x: &[f32], steps: usize, channels: usize) -> Vec<f32> {
 /// Whisper feature extractor: zero-pad to the 30 s window, centered reflect
 /// STFT (400/160, full Hann frame), power, Slaney 128-band mel, drop the
 /// trailing frame, log10 clamp, peak - 8 floor, `(x + 4) / 4`.
+///
+/// Input longer than the 30 s window is refused rather than truncated: the
+/// model sees exactly one window, and dropping the tail would return a
+/// transcript that silently misses the end of the audio. Callers chunk.
 pub fn compute_features(samples: &[f32]) -> Result<(Vec<f32>, usize)> {
+    if samples.len() > TARGET_SAMPLES {
+        return Err(SpeechError::Input {
+            why: format!(
+                "{} samples exceeds the {TARGET_SAMPLES}-sample (30 s) window; split the audio",
+                samples.len()
+            ),
+        });
+    }
     let mut padded = samples.to_vec();
     padded.resize(TARGET_SAMPLES, 0.0);
     let options = crate::stft::StftOptions {
@@ -921,6 +933,17 @@ mod tests {
             SpeechError::Tensor { name, .. }
                 if name == "audio_tower.embed_positions.weight"
         ));
+    }
+
+    // `Vec::resize` used to truncate anything over 30 s without a word.
+    #[test]
+    fn frontend_refuses_audio_over_the_30s_window() {
+        let too_long = vec![0.0f32; super::TARGET_SAMPLES + 1];
+        let err = compute_features(&too_long).expect_err("over-long audio is refused");
+        assert!(matches!(err, crate::SpeechError::Input { .. }), "{err:?}");
+        let (_, frames) = compute_features(&vec![0.0f32; super::TARGET_SAMPLES])
+            .expect("exactly 30 s is accepted");
+        assert_eq!(frames, 3000);
     }
 
     #[test]
