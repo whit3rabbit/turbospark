@@ -399,10 +399,11 @@ public final class CronScheduler: @unchecked Sendable {
         guard let archive = AppJSONStore.load(
             [AppCronJob].self, from: fileURL, label: "Cron jobs")
         else { return }
+        // Assigned under the lock like every other access to `jobs`.
+        lock.lock()
         jobs = archive
         // A job that fired before the app quit has a stale nextFireAt; a
         // resume computes it fresh rather than firing immediately.
-        lock.lock()
         for index in jobs.indices {
             if let fireAt = jobs[index].fireAt {
                 // A one-shot keeps its absolute time (a past one is due now).
