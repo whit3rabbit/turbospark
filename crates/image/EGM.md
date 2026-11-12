@@ -11,7 +11,7 @@ has no direct source files. Parity and payload tests live in `tests/`.
 
 ## Global Invariants
 - Unsafe code is forbidden in the crate [src/lib.rs:forbid(unsafe_code)].
-- Requests use a fixed 9-step, batch 1, guidance 0.0 envelope [src/runtime.rs:ImageRequest::validate]. Install manifests carry a per-family envelope (Z-Image, Qwen-Image-2.1, Qwen-Image-2.1-Turbo, Krea 2 Turbo) [src/install.rs:ImageFamily::supported], but the request path only admits the Z-Image one, so only Z-Image installs can run `generate`.
+- Requests use a fixed 9-step, batch 1, guidance 0.0 envelope [src/runtime.rs:ImageRequest::validate]. Install manifests carry a per-family envelope (Z-Image, Qwen-Image-2.1, Qwen-Image-2.1-Turbo, Krea 2 Turbo) [src/install.rs:ImageFamily::supported], but the request path has no family check: it compares batch, steps, and guidance with the Z-Image constants (`IMAGE_BATCH`, `IMAGE_STEPS`, `IMAGE_GUIDANCE`), so other families are rejected only because their envelopes differ from those constants.
 
 ## Global Side Effects
 - Reads model installs from disk and writes install trees via staging and rename [src/builder.rs:build_image_install_with_progress].

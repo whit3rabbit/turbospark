@@ -5,13 +5,13 @@ Speaker-conditioned cache-aware streaming RNN-T. It reuses the Nemotron FastConf
 
 ## Interface
 - `MultitalkerProfile`, `MULTITALKER_PARAKEET_STREAMING_V1` pinned checkpoint [mod.rs:MULTITALKER_PARAKEET_STREAMING_V1]
-- `MultitalkerAsr` with `open`, `features`, `live_frontend`, `new_stream`, `pre_encode`, `apply_speaker_kernels`, `step`, `step_encoded`, `stream_weights`, `detokenize`, `chunk_rows`, `shift_frames`, `pre_encode_cache_frames` [mod.rs:MultitalkerAsr]
-- `SpeakerStream`, `Features`, `PreEncoded`, `Token`, `StepOutput` [mod.rs:SpeakerStream]
+- `MultitalkerAsr` with `open`, `features`, `live_frontend`, `new_stream`, `pre_encode`, `apply_speaker_kernels`, `step`, `step_encoded`, `stream_weights`, `detokenize`, `chunk_rows`, `shift_frames`, `pre_encode_cache_frames`, `drop_extra_pre_encoded` [mod.rs:MultitalkerAsr]
+- `SpeakerStream` (`tokens`, `decoded_frames`, `cache_len`), `Features` (`frame_major`, `channel_major`), `PreEncoded`, `Token`, `StepOutput` [mod.rs:SpeakerStream]
 - `SpeakerEncoder` trait (device encoder hook) plus blanket impl for `&mut T` [mod.rs:SpeakerEncoder]
 - `align_mask`, `strip_space_before_punctuation`; re-exports `StreamEncoderWeights`, `StreamLayerWeights` [mod.rs:align_mask] [mod.rs:strip_space_before_punctuation]
 - `LiveFrontend` (`new`, `push`, `finish`, `frames_emitted`, `samples_received`) [frontend.rs:LiveFrontend]
-- `CoupledConfig` (`frozen_e`), `DiarizationSource`, `ReplayedDiarization`, `zero_extra_speakers`, `gate`, `targets`, `StepReport`, `CoupledSession`, `LiveSession` (`append`, `finish`, `with_cancel`, `with_encoder`, `take_segment_updates`) [scheduler.rs:CoupledSession] [scheduler.rs:LiveSession]
-- `SeglstEntry`, `HypothesisView`, `SegmentUpdate`, `SentenceCursor`, `SentenceBuilder` [seglst.rs:SentenceBuilder]
+- `CoupledConfig` (`frozen_e`), `DiarizationSource`, `ReplayedDiarization`, `zero_extra_speakers`, `gate`, `targets`, `StepReport`, `CoupledSession` (`new`, `run`, `seglst`, `diarization`, `with_encoder`), `LiveSession` (`new`, `append`, `finish`, `with_cancel`, `with_encoder`, `take_segment_updates`, `seglst`, `processed_frames`, `samples_received`, `diarization`) [scheduler.rs:CoupledSession] [scheduler.rs:LiveSession]
+- `SeglstEntry`, `HypothesisView`, `SegmentUpdate`, `SentenceCursor`, `SentenceBuilder` (`new`, `update`, `changes`, `entries`) [seglst.rs:SentenceBuilder]
 
 ## Invariants
 - Pinned checkpoint is repo `nvidia/multitalker-parakeet-streaming-0.6b-v1` at revision `8749fc71fd6e2d88ef230159bbf2aea69b524ee1`; `open` requires `model_type == "multitalker_asr"`. [mod.rs:MULTITALKER_PARAKEET_STREAMING_V1] [mod.rs:MultitalkerAsr::open]

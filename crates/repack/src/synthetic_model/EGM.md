@@ -8,7 +8,7 @@ Builds tiny, deterministic Gemma-4-shaped `.gturbo` installs in memory (INT4-aff
 - `HIDDEN_SIZE`, `NUM_HEADS`, `FULL_HEAD_DIM`, `INTERMEDIATE_SIZE` [arch.rs]: fixed toy dims (64, 2, 32, 64)
 - `q_proj_name`, `k_proj_name`, `o_proj_name`, `gate_proj_name`, `up_proj_name`, `down_proj_name`, `router_name`, `embed_lm_head_name` [arch.rs]: resident tensor name helpers
 - `expert_gate_proj_name`, `expert_up_proj_name`, `expert_down_proj_name` [arch.rs]: per-expert tensor names
-- `build_synthetic_gemma4_install` [dense.rs:build_synthetic_gemma4_install]: dense install, returns the `ArchConfig`
+- `build_synthetic_gemma4_install` [dense.rs:build_synthetic_gemma4_install]: dense install, returns `Result<ArchConfig, WriterError>`
 - `build_synthetic_gemma4_swa_install` [dense.rs:build_synthetic_gemma4_swa_install]: alternating sliding (0) and full (1) layers
 - `build_synthetic_gemma4_moe_install` [moe.rs:build_synthetic_gemma4_moe_install]: routed experts in the resident region, no dense FFN branch
 - `build_synthetic_gemma4_moe_streamed_install` [moe.rs:build_synthetic_gemma4_moe_streamed_install]: same weights, experts in `packed_experts/layer_NN.bin`

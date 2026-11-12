@@ -18,11 +18,12 @@ The `extern "C"` entry points of the C ABI, grouped by domain and re-exported fr
 - Strings returned through `char **` must be freed with `ts_string_free` [core.rs:ts_string_free].
 
 ## Side Effects
-- Opens model sessions (Metal on macOS), spawns generation and server work, starts or stops the daemon [session.rs], [server.rs], [daemon.rs].
+- Opens model sessions (Metal on macOS), spawns generation and server work, starts or stops the daemon [session.rs], [server.rs], [daemon.rs]. The daemon child gets `TURBOSPARK_API_KEY` and the process-local store root as `TURBOSPARK_HOME` so it resolves the same store as the app [daemon.rs:apply_child_env].
 - Network and disk through installs and Hugging Face calls [models.rs], [audio.rs].
 - `ts_hf_token_set` stores the Hugging Face token as a plaintext file `hf_token` (mode 0600) in the model store root, not the Keychain [models.rs:ts_hf_token_set].
-- Other public surface not listed above: idle unload and image/embedding attach on the server [server.rs:ts_server_set_idle_unload], install control [models.rs:ts_install_pause], [models.rs:ts_install_resume], HF token get/info/clear/validate (`ts_hf_token_validate_json`), HF endpoint get/set (`ts_hf_endpoint_get`, `ts_hf_endpoint_set`), `ts_audio_job_*`, `ts_ocr_add_page_*`.
+- Other public surface not listed above: idle unload and image/embedding/audio attach, detach and poll on the server [server.rs:ts_server_set_idle_unload], [server.rs:ts_server_attach_image_model], [server.rs:ts_server_attach_embedding_model], shared heavy-work permit [audio.rs:ts_heavy_work_try_acquire], [audio.rs:ts_heavy_work_release], install control [models.rs:ts_install_pause], [models.rs:ts_install_resume], HF token get/info/clear/validate (`ts_hf_token_validate_json`), HF endpoint get/set (`ts_hf_endpoint_get`, `ts_hf_endpoint_set`), `ts_audio_job_*`, `ts_ocr_add_page_*`.
 - Moves or deletes model directories [libraries.rs:ts_model_move], [libraries.rs:ts_model_delete_install].
+- Store location: [models.rs:ts_store_relocate] (retired, refused while any library is listed) and [libraries.rs:ts_store_import_moved_root] (registers a moved store's `models` folder as a library in place and copies its embedding and OCR models into the home).
 
 ## Verification
 - Run: `cargo test -p turbospark-ffi`

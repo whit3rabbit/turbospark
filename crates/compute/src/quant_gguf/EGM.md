@@ -21,7 +21,7 @@ CPU reference dequantizers, a few quantizers, and dequant GEMV routines for GGUF
 - Lengths must be whole blocks and the byte slice must cover them (asserts), e.g. [q4_0.rs:dequantize_q4_0], [q2_k.rs:dequantize_q2_k].
 - GEMV requires non-empty rows and `x.len() == n` [q5_k.rs:dequant_q5_k_gemv], [q6_k.rs:dequant_q6_k_gemv].
 - This crate must not depend on repack, so block-layout helpers are duplicated rather than imported [q8_0.rs], [q4_k.rs], [q3_k.rs] (doc comments).
-- `pearson` requires equal, non-empty inputs [pearson.rs:pearson].
+- `pearson` requires equal, non-empty inputs and returns 0.0 when either side is constant, so an undefined correlation never reads as a match [pearson.rs:pearson].
 
 ## Side Effects
 - None (pure CPU math).

@@ -19,7 +19,7 @@ Portable utility library (not a loadable model) holding the timestamped alignmen
 - `AlignedResult.text` is trimmed while sentence texts keep leading whitespace [alignment.rs:AlignedResult].
 - A period closes a sentence only if the next piece contains a space or none follows; `!`, `?`, and CJK terminators always close [alignment.rs:ends_sentence].
 - Empty inputs pass through, time-ordered chunks concatenate, and fewer than 2 overlap tokens fall back to a midpoint cutoff split [alignment.rs:merge_longest_contiguous] [alignment.rs:merge_longest_common_subsequence].
-- `merge_longest_contiguous` returns `SpeechError::Input` if the best matching run is shorter than half the overlap length [alignment.rs:merge_longest_contiguous].
+- `merge_longest_contiguous` returns `SpeechError::Input` if the best matching run is shorter than half the overlap token count [alignment.rs:merge_longest_contiguous].
 - Merges append the entire remainder of `b` past the last matched index, not only the overlap [alignment.rs:merge_longest_contiguous].
 
 ## Side Effects

@@ -10,7 +10,7 @@ Bounded, batch-local router detail owned by `RouterHistogram` in the parent `rou
 
 ## Invariants
 - Total recorded route entries never exceed `limit`; the overflowing call sets `truncated` and records nothing [batches.rs:record]
-- Empty route slices and records outside a `begin`/`end` scope are dropped [batches.rs:record]
+- Records outside a `begin`/`end` scope are dropped silently. An empty route slice (or one exceeding the limit) is dropped and also sets `truncated` [batches.rs:record]
 - A row is `completed` only when `end(true)` ran and its route count equals `token_count`, so a truncated batch is never marked complete [batches.rs:end]
 - `begin` first closes any open batch as incomplete; `reset` does the same and bumps the request counter [batches.rs:begin, reset]
 - A new row opens only when the batch or layer changes, relying on in-order layer visits [batches.rs:record]

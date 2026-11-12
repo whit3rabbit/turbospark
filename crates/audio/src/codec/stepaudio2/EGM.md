@@ -26,6 +26,7 @@ StepAudio2 token2wav: flow-matching model, CAMPPlus speaker embedding, and HiFT 
 - Inference is CPU f32 over host `Vec<f32>` buffers; no GPU state is held here.
 
 ## Side Effects
+- `load` loads the CAMPPlus encoder only when `campplus.*` tensors exist; without it `prepare_prompt` requires a caller-supplied `speaker_embedding` or returns `Input` [mod.rs:StepAudio2Token2Wav::prepare_prompt]. `decode` takes `&mut self`.
 - `open` reads `tiny_weights.safetensors` and `tiny_config.json` from the directory; without the tiny weights it returns `BadConfig` (converted-checkpoint loading is not implemented there) [mod.rs:StepAudio2Token2Wav::open]; no writes.
 
 ## Verification

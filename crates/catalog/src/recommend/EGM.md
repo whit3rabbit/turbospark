@@ -18,7 +18,7 @@ strong the evidence behind it is. The default arm touches no network.
 - A discovered row is refused for the same reason as the probe, since every candidate passes through the unchanged probe [src/recommend/discover.rs: module docs].
 - The `Tight` threshold is a fraction of the budget [src/recommend/fit.rs:TIGHT_FRACTION].
 - Context ladder windows are fixed [src/recommend/fit.rs:LADDER_WINDOWS].
-- Quantization choice walks `QUANT_LADDER`, picking the largest published file that plausibly fits [src/recommend/discover.rs:QUANT_LADDER].
+- Quantization choice picks the largest `.gguf` at or under the physical budget. `QUANT_LADDER` only filters (a file needs a ladder rank) and breaks size ties. Sharded files (`-of-0`) are excluded. When nothing fits it falls back to the smallest runnable file [src/recommend/discover.rs:choose_quantization].
 
 ## Side Effects
 - `recommend_catalog` performs none. The `_probed` variants and `discover` use `Client` network requests [src/recommend/mod.rs:probe_entry, src/recommend/discover.rs:discover].

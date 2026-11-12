@@ -20,7 +20,7 @@ Tokenizer wrapper, chat-template rendering (checkpoint Jinja first, dialect fall
 - A pinned chat date is YYYY-MM-DD or YYYY-MM-DDTHH:MM[:SS] (seconds default to 0), else rendering errors. Day is range-checked only as 1..=31, so 2026-02-31 is accepted [jinja_date.rs:parse_pinned].
 
 ## Side Effects
-- Reads env var `TURBOSPARK_CHAT_DATE` when rendering `strftime_now` [jinja_date.rs:strftime_now].
+- Reads env var `TURBOSPARK_CHAT_DATE` when rendering `strftime_now`; when unset it reads the system clock in UTC, so output is non-deterministic [jinja_date.rs:strftime_now].
 - Tokenizer loading reads files from the model directory [dialect/mod.rs:MfTokenizer].
 
 ## Verification

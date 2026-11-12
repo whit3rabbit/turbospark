@@ -15,7 +15,8 @@ Measurement harnesses: the frozen community-protocol throughput benchmark (scrip
 - `--model` mode refuses to run when `TURBOSPARK_PREFILL_CHUNK` is set, so no unlabelled arm is inherited [src/main.rs:main].
 - Scripted mode measures loop overhead only, not inference throughput [src/main.rs module doc].
 - Memory, real-model, startup-probe and tree-replay-record modules are gated on `target_os = "macos"` [src/lib.rs].
-- `--model` mode also takes `--case`, `--expert-cache-slots`, `--prefill-chunk`, `--power-profile`, `--max-tokens-per-sec`, `--kv-bits`, `--speculative`, `--speculative-drafter` and `--shaping`. KV quantization, prefill chunking and speculation default off so an unlabelled arm cannot be inherited; a drafter forces greedy shaping [src/main.rs:main, src/real_model.rs:run_protocol_case_speculating].
+- `--model` mode also takes `--case`, `--expert-cache-slots`, `--prefill-chunk`, `--power-profile`, `--max-tokens-per-sec`, `--kv-bits`, `--speculative`, `--speculative-drafter` and `--shaping`. KV quantization, prefill chunking and speculation default off so an unlabelled arm cannot be inherited; `--speculative` is refused unless `--shaping greedy` (acceptance is exact only at temperature 0), and `--speculative-drafter` only selects the drafter [src/model_mode.rs:run_model_mode, src/real_model.rs:run_protocol_case_speculating].
+- `--model` mode echoes `TURBOSPARK_ROUTED_BATCH` and `TURBOSPARK_BATCHED_GEMV` in its banner, marked INERT when prefill is sequential, because the chunked driver alone reads them [src/model_mode.rs:run_model_mode].
 - Startup probe is separate from the frozen protocol [src/lib.rs:startup_probe].
 
 ## Side Effects

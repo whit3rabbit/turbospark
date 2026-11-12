@@ -8,7 +8,7 @@ The `muse_glimmer` decode flow for `RealForwardRunner`: a dense 52-layer GQA sta
 - `produce_real_muse_inner` [mod.rs:produce_real_muse_inner]: embed (or image row), embed norm, per-layer centered norms, attention, post-attn sandwich norm, MLP, steering, capture, plain final norm, lm_head, output multiplier, softcap
 - `layer_tensor` [mod.rs:layer_tensor]: builds `language_model.model.layers.{n}.{suffix}` names
 - `RealMuseState` [state.rs:RealMuseState]: `rotated_pairs` and the full-width `attn_gate` buffer; `build` validates the install
-- `RMS_EPS`, `POST_NORM_EPS`, `QK_SCALE_FACTOR`, `OUTPUT_MULTIPLIER` [state.rs:RMS_EPS]: the four published scalars (1e-5, 1e-8, 3.87, 26^-0.5)
+- `RMS_EPS`, `POST_NORM_EPS`, `QK_SCALE_FACTOR`, `OUTPUT_MULTIPLIER` [state.rs:RMS_EPS]: the four scalars (1e-5, 1e-8, 3.87, 26^-0.5); RECALLED values where config.json is silent, so change them only in lockstep with `crates/repack/tests/museglimmer_config.rs`
 - `encode_attention_block` [attn.rs:encode_attention_block]: q/k/v and gate GEMVs, no-scale per-head q/k norm, Q scale, rope on sliding layers only, windowed attention, sigmoid gate, o_proj
 - `encode_mlp_block` [mlp.rs:encode_mlp_block]: pre-FFN centered norm, gate/up, SiLU multiply, down, post-FFN centered norm, residual add
 - `RealForwardRunner::prefill_chunk_real_muse` [prefill.rs:prefill_chunk_real_muse]: chunked prefill in `MAX_PREFILL_BATCH` micro-batches

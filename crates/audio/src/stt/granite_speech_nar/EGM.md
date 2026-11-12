@@ -6,7 +6,7 @@ Non-autoregressive speech-to-text for the pinned MLX conversion of Granite Speec
 ## Interface
 - `GraniteSpeechNarProfile`, `GRANITE_SPEECH_4_1_2B_NAR` [mod.rs:GraniteSpeechNarProfile] [mod.rs:GRANITE_SPEECH_4_1_2B_NAR]
 - `GraniteSpeechNarConfig`, `EncoderConfig`, `ProjectorConfig`, `TextConfig`, and `GraniteSpeechNarConfig::from_json` [mod.rs:GraniteSpeechNarConfig] [mod.rs:from_json]
-- `compute_features(samples)` returning `[T/2, 160]` features [mod.rs:compute_features]
+- `compute_features(samples)` returning a flat row-major buffer of `T/2` rows of 160 values (consecutive 80-mel frame pairs, no separate stacking step) [mod.rs:compute_features]
 - `GraniteSpeechNar::load(model_dir)`, `profile()`, `config()`, `transcribe(samples)` [mod.rs:GraniteSpeechNar]
 
 ## Invariants

@@ -4,7 +4,7 @@
 Test-fixture generators that build tiny Qwen-family (and Fish Drama 3 and vision sidecar) checkpoints in memory as safetensors blobs, then write `.gturbo` installs through the real repack writers (`write_qwen_gdn_dense_install`, `write_qwen_gdn_moe_install`, `write_gemma4_install[_streamed]`, the Drama intake). Weights are deterministic and untrained, so tests can verify layout, wiring and finite flow but not output quality. Covers dense GDN (qwen3_5, 1/2/4-bit, MTP, DFlash, vision), MoE (affine and mxfp4), qwen4_exp (n-gram PLE and a decode-capable variant), Drama 3, and a vision tower sidecar.
 
 ## Interface
-- `build_synthetic_qwen_gdn_dense_install` and variants `_at_bits`, `_with_mtp[_streamed]`, `_with_dflash[_streamed|_wide_heads]`, `_with_both_drafters`, `_with_vision[_streamed]` [dense.rs]: write a dense GDN install to a dir, return `ArchConfig`
+- `build_synthetic_qwen_gdn_dense_install` and variants `_at_bits`, `_with_mtp[_streamed]`, `_with_dflash[_streamed|_wide_heads]`, `_with_both_drafters`, `_with_vision[_streamed]` [dense.rs]: write a dense GDN install to a dir, return `Result<ArchConfig, Box<dyn Error>>`
 - `tiny_qwen_gdn_dense_arch` [dense_arch.rs:tiny_qwen_gdn_dense_arch]: arch for the dense fixture (shared shape consts, `group_for`, `companion_dtype`)
 - `build_synthetic_qwen_gdn_moe_install`, `_with_mtp`, `tiny_qwen_gdn_moe_arch` [moe.rs]: Qwen 3.6 MoE install and arch
 - `build_synthetic_qwen_gdn_moe_mxfp4_install` [moe_mxfp4.rs:build_synthetic_qwen_gdn_moe_mxfp4_install]: MoE laid out like the MiniCPM-V mxfp4 checkpoint, with decoy vision tensors
