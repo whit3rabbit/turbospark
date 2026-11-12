@@ -541,6 +541,7 @@ public enum ToolRiskClassifier {
         }
 
         // 5. Inspect arguments for SQL mutation or sensitive paths
+        var sensitivePathHit = false
         for (k, v) in arguments {
             let lowerVal = v.lowercased()
             if lowerVal.contains("delete from") || lowerVal.contains("drop table") || lowerVal.contains("truncate table") {
@@ -548,11 +549,18 @@ public enum ToolRiskClassifier {
             }
             if isSensitivePath(v) {
                 reasons.append("MCP argument '\(k)' references sensitive path '\(v)'")
+                sensitivePathHit = true
             }
         }
 
         if !reasons.isEmpty {
-            return ToolRiskAssessment(level: .high, category: .mcp, reasons: reasons)
+            // A sensitive path is a deterministic guard, like the file tools'
+            // own sensitive-path check, so it keeps its human in Agent mode.
+            // The name and annotation heuristics above stay soft: a server's
+            // verb is exactly what the classifier is there to weigh.
+            return ToolRiskAssessment(
+                level: .high, category: .mcp, reasons: reasons,
+                hardGated: sensitivePathHit ? true : nil)
         }
 
         return ToolRiskAssessment(level: .low, category: .mcp, reasons: ["MCP tool call '\(name)'"])
