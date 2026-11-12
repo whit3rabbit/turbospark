@@ -19,6 +19,8 @@ pub enum WriterError {
         expected: usize,
         actual: usize,
     },
+    /// The packed vision tower does not hold `arch.vision.depth` blocks.
+    WrongVisionBlockCount { expected: usize, actual: usize },
 }
 
 impl std::fmt::Display for WriterError {
@@ -41,6 +43,10 @@ impl std::fmt::Display for WriterError {
             } => {
                 write!(f, "layer {layer} has {actual} experts, expected {expected}")
             }
+            WriterError::WrongVisionBlockCount { expected, actual } => write!(
+                f,
+                "vision tower has {actual} blocks, expected arch.vision.depth = {expected}"
+            ),
         }
     }
 }
