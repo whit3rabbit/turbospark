@@ -777,6 +777,11 @@ impl Model {
     /// the first step of a window prefills and the rest decode one
     /// cached token; the reference function default, and the pipeline
     /// path, is `false`: every step re-forwards the full growing window.
+    ///
+    /// `semantic_history` and `coarse_history` are accepted for signature
+    /// parity with the reference but are NOT used: this port runs only the
+    /// reference's empty-history path, so a voice prompt has no effect on
+    /// the coarse stage.
     pub fn generate_coarse(
         &mut self,
         semantic_tokens: &[i32],
