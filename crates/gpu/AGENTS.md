@@ -64,9 +64,12 @@ threadgroup shape, or normalization convention on the device.
 - GDN snapshots are GPU blits into pooled private buffers. `snapshot` does
   not wait, so no host write to the live state may land before a later
   command buffer on the same queue has completed.
-- `ane_split.rs` (`GpuAneSplit`) bridges shared ANE output planes to Metal
-  resident buffers. A non-finite value or NaN/Inf conversion flag signals a
-  fallback to the Steel path for that micro-batch.
+- `ane_split.rs` (free functions `encode_ane_dequant_rows`,
+  `encode_ane_scale_rows`, `encode_ane_convert_out`, plus `HostEvent`; no
+  wrapper type) bridges shared ANE output planes to Metal resident buffers.
+  `ane_convert_out` sets its `nonfinite` flag on any non-finite result, and
+  the runtime then redoes that micro-batch on Steel
+  (`runtime/src/families/qwen/ane_split.rs`, `AneSplitState`).
 - Multi-row RMSNorm (`rmsnorm_bf16w_perhead`) and multi-row RoPE encode
   contiguous rows as head groups or unified dispatches; each row must compute
   the identical bits to the sequential single-row execution.
@@ -82,7 +85,7 @@ threadgroup shape, or normalization convention on the device.
   the INT4 phase-1 kernel's `RoutedBlobs` reflection
   (`tests/moe_decode_int3.rs` pins that the two agree).
 - Fused INT4 FFN kernels (`dequant_int4_fused.metal`):
-  `dequant_int4_gemv_fused_gate_up_act` and `dequant_int4_gemv_fused_down_epilogue`
+  `dequant_int4_gate_up_act_gemv_simd` and `dequant_int4_down_epi_gemv_simd`
   must remain bit-exact to separate GEMV and activation dispatches.
 - The small-M INT4 matrix-unit GEMM (`dequant_int4_mma8.rs`) serves 1..=8
   token rows and is opt-in end to end (`TURBOSPARK_INT4_MMA8`, read by the
