@@ -104,7 +104,16 @@ public struct CustomToolDefinition: Identifiable, Codable, Sendable, Equatable {
         case .command, .script:
             return .terminal
         case .http:
-            return category == .terminal ? .terminal : .web
+            // Raise only: a declared category gated at least as strictly as
+            // web is kept, so an http tool declared fileWrite, mcp or
+            // automation is not lowered to web. The trust fingerprint hashes
+            // this value, so such tools re-prompt once after this change.
+            switch category {
+            case .terminal, .fileWrite, .mcp, .automation:
+                return category
+            case .fileRead, .web, .browser, .computerUse:
+                return .web
+            }
         }
     }
 
