@@ -648,6 +648,15 @@ public actor McpClientEngine {
         for (key, value) in declared {
             environment[key] = value
         }
+        // Relative entries are dropped from whichever PATH won (inherited,
+        // passthrough or declared), not only the one built above: the child's
+        // cwd is the project root, so `.`, an empty entry or `node_modules/.bin`
+        // would let a cloned repository's own binary shadow a real one.
+        if let path = environment["PATH"] {
+            environment["PATH"] = path.components(separatedBy: ":")
+                .filter { $0.hasPrefix("/") }
+                .joined(separator: ":")
+        }
         return environment
     }
 
