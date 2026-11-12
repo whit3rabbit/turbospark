@@ -19,7 +19,7 @@ Metal device, command queue and pipeline-cache context, the pass encoder wrapper
 
 ## Side Effects
 - Reads env vars `TURBOSPARK_METAL_PRECISE_MATH` (presence-only: any value, including "0", enables it), `TURBOSPARK_METAL_PRECOMPILED` (enabled only by exactly "1") [device.rs:MetalContext], `TURBOSPARK_METAL_PIPELINE_CACHE`, `TURBOSPARK_METAL_CACHE_DIR` [pipeline_cache.rs], and `TURBOSPARK_DISPATCH_PROFILE` [dispatch_profile.rs:enabled] (read outside this module; [pass.rs:PassEncoder] only rebinds per dispatch when it is on).
-- Compiles MSL libraries and may write/read pipeline archives on disk only when `TURBOSPARK_METAL_PIPELINE_CACHE=1` and macOS is 15 or later [pipeline_cache.rs:supports_specialized_archives]. Archives load without content verification, so `TURBOSPARK_METAL_CACHE_DIR` must not be writable by other users [pipeline_cache.rs:PipelineDiskCache].
+- Compiles MSL libraries and may write/read pipeline archives on disk only when `TURBOSPARK_METAL_PIPELINE_CACHE=1` and macOS is 15 or later [pipeline_cache.rs:supports_specialized_archives]. The directory defaults to `$HOME/Library/Caches/TurboSpark/metal` [pipeline_cache.rs:PipelineDiskCache]. Archives load without content verification, so `TURBOSPARK_METAL_CACHE_DIR` must not be writable by other users [pipeline_cache.rs:PipelineDiskCache].
 - Creates GPU buffers and command buffers, commits work to the queue [device.rs:MetalContext], [pass.rs:PassEncoder].
 
 ## Verification

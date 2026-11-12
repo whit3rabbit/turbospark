@@ -6,7 +6,7 @@ Rust port of mlx-audio `zonos2` (Zyphra ZONOS2) at a pinned mlx-audio commit. A 
 ## Interface
 - `Model` with `open`, `load`, `load_config`, `compute_logits`, `build_prompt_rows`, `generate`, `decode_audio` [mod.rs:Model]
 - `ModelConfig` with `from_json`, `is_moe_layer`, `num_experts_per_tok`, `frame_width`, `audio_vocab_size` [mod.rs:ModelConfig]
-- `TtsSamplingParams` (defaults: temp 1.15, top_k 106, min_p 0.18, max_tokens 1024, rep penalty 1.2) [mod.rs:TtsSamplingParams]
+- `TtsSamplingParams` (defaults: temp 1.15, top_k 106, top_p 0.0, min_p 0.18, max_tokens 1024, rep penalty 1.2 over window 50 and 8 codebooks) [mod.rs:TtsSamplingParams]
 - `GenerationState` with `new`, `finished`, `append` [mod.rs:GenerationState]
 - `sample_frame` [mod.rs:sample_frame]
 - `text_to_byte_ids` [mod.rs:text_to_byte_ids]

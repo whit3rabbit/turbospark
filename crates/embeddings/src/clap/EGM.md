@@ -12,7 +12,7 @@ CLAP dual tower (laion/clap-htsat-unfused): HTSAT audio encoder, RoBERTa text en
 - `ClapConfig`, `AudioConfig`, `TextConfig`, `FeatureConfig`, `HtsatGeometry` [clap/config.rs:ClapConfig]
 
 ## Invariants
-- Audio input rate is 48 kHz; longer clips are cropped via `LongAudioCrop` (default `Head`), shorter ones tiled then zero-padded [clap/features.rs:LongAudioCrop]
+- Audio input rate is 48 kHz; longer clips are cropped via `LongAudioCrop` (default `Head`), shorter ones tiled then zero-padded [clap/features.rs:ClapFeatureExtractor]
 - Spectrum is computed in f64 and rounded through complex64 to match the reference [clap/features.rs:ClapFeatureExtractor]
 - Config and feature config are validated before use [clap/config.rs:validate]
 

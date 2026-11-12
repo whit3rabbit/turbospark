@@ -30,7 +30,7 @@ Library root of `turbospark-audio`: portable DSP primitives (waveform, WAV I/O, 
 
 ## Side Effects
 - `read_wav_f32` reads a file from disk [wav.rs:read_wav_f32]; `load_tensor`, `open_shards` and `load_quantized` read safetensors files [nn.rs, quant.rs].
-- `RealFftPlan::cached` [fft.rs], `mel_projector_cached` [mel.rs] and the sinc resampler [resample.rs] keep process-wide `TableCache` tables (`PLANS`, `BANKS`, `KERNELS`) that persist for the life of the process.
+- `RealFftPlan::cached` [fft.rs], `mel_projector_cached` [mel.rs] and the sinc resampler [resample.rs] keep process-wide `TableCache` tables (`PLANS`, `BANKS`, `KERNELS`) that live in process-wide statics, so they outlive any one call. Each cache is bounded: oversized tables are marked not cacheable and a full cache is cleared [dsp.rs:TableCache::get_or_build].
 - `ops::in_pool` runs work on a rayon worker pool [ops.rs:in_pool].
 
 ## Verification

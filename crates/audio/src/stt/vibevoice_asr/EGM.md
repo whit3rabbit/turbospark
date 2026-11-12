@@ -1,7 +1,7 @@
 # VibeVoice-ASR
 
 ## Overview
-Offline single-window speech-to-text for the pinned VibeVoice-ASR-Streaming 1.5B checkpoint. Two causal convolutional tokenizer encoders (acoustic and semantic) feed per-side connectors whose summed output is spliced into a Qwen2 chat prompt, then a CPU f32 greedy decode runs until an EOS token. Weights are read from raw safetensors tensors with shape checks rather than an MLX module tree. Streaming, diarization controls, and hotwords are refused.
+Offline single-window speech-to-text for the pinned VibeVoice-ASR-Streaming 1.5B checkpoint. Two causal convolutional tokenizer encoders (acoustic and semantic) feed per-side connectors whose summed output is spliced into a Qwen2 chat prompt, then a CPU f32 greedy decode runs until an EOS token. Weights are read from raw safetensors tensors with shape checks rather than an MLX module tree. Streaming, diarization controls, and hotwords are not implemented (absent from the API, not refused at runtime).
 
 ## Interface
 - `VibeVoiceAsr` with `load`, `profile`, `config`, `resample_input`, `encode_speech`, `build_prompt`, `transcribe` [mod.rs:VibeVoiceAsr]

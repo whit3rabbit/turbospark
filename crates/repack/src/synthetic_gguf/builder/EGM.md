@@ -19,7 +19,7 @@ A fluent builder that serializes a spec-conformant GGUF v3 file in memory for te
 - `general.alignment` is emitted only when `with_alignment` was called, covering the absent-key default path [mod.rs:GgufBuilder]
 - `with_alignment` panics on zero or non-power-of-two [mod.rs:with_alignment]
 - Arrays must be homogeneous (assert_eq on element type id); empty arrays encode as U8 [mod.rs:write_value]
-- Row length `dims[0]` must tile the block size (32 for Q8_0/MXFP4/IQ4_NL, 256 for K-quants/IQ3_XXS/IQ4_XS), else panic [tensors.rs:q8_0_tensor, q4_k_tensor, iq_tensor, mxfp4_tensor]
+- Row length `dims[0]` must tile the block size (32 for MXFP4/IQ4_NL, 256 for K-quants/IQ3_XXS/IQ4_XS), else panic; Q8_0 only requires the total element count (product of dims) to be a multiple of 32 [tensors.rs:q8_0_tensor, q4_k_tensor, iq_tensor, mxfp4_tensor]
 - `iq_tensor` panics on a ggml type other than 18, 20, 23 [tensors.rs:iq_tensor]
 - Weights are kept small (Q8_0 quants in [-8, 7], K-quants in [-0.5, 0.5), small IQ/MXFP4 scales) so fixture forward passes stay inside FP16 [tensors.rs]
 - Payloads are seed-deterministic; different seeds give different bytes [tensors.rs]

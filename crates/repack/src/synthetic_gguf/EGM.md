@@ -15,7 +15,7 @@ In-memory generators of tiny, structurally real GGUF v3 files for testing the GG
 - Subdirectories: [builder](./builder/EGM.md)
 
 ## Invariants
-- Dimensions must tile the block size of every tensor's quant type (32 for Q8_0/MXFP4, 256 for K-quants), per expert as well as in total [gemma4_shape.rs:SyntheticGgufShape]
+- Dimensions must tile the block size of every tensor's quant type (32 for Q8_0/MXFP4, 256 for K-quants), per expert as well as in total; enforced by panicking asserts in the tensor helpers, not by the shape type [builder/tensors.rs:q8_0_tensor, builder/tensors.rs:q4_k_tensor, builder/tensors.rs:mxfp4_tensor]
 - Gemma fixture: gate and up fused as `ffn_gate_up_exps`, no `output.weight` (tied), no `attn_v` on global layers [gemma4.rs:build_synthetic_gemma4_gguf]
 - gpt-oss gate/up and down bias lengths differ on purpose so a wrong-role read is a size mismatch [gptoss.rs:SyntheticGptOssShape]
 - gpt-oss default has two layers with even layers sliding, to pin the window-mask phase [gptoss.rs:SyntheticGptOssShape]

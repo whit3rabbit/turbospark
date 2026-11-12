@@ -18,7 +18,7 @@ Portable FP32 CPU reference kernels that serve as the numerical ground truth for
 ## Invariants
 - `#![forbid(unsafe_code)]` [lib.rs].
 - Reference kernels are FP32 ground truth for GPU parity; GPU kernels are checked against them, not the other way round [lib.rs] (module doc).
-- Affine quantization uses 64-element groups with scales/biases carried as raw bit patterns; `n` must equal `packed.len() * 2` for int4 [quant.rs:GROUP_SIZE], [quant.rs:dequantize_int4_affine].
+- INT4/INT8 affine quantization uses 64-element groups with scales/biases carried as raw bit patterns; `n` must equal `packed.len() * 2` for int4 [quant.rs:GROUP_SIZE], [quant.rs:dequantize_int4_affine]. The 1-bit and 2-bit formats use 128-element groups [quant_1bit.rs:BONSAI_GROUP_SIZE], [quant_2bit.rs:TERNARY_GROUP_SIZE].
 - IQ codebook tables are generated from the repo-root `scripts/ggml_tables.c` (not under crates/compute); do not hand-edit [quant_gguf_iq_lowbit_tables.rs], [quant_gguf_iq_tables.rs].
 - `quant_2bit` shares `quant_1bit`'s f16 conversion pair instead of re-exporting a second copy [lib.rs] (comment above `quant_2bit` re-export).
 - `turbospark-core` is imported under the alias `foundation` [lib.rs] (module doc).

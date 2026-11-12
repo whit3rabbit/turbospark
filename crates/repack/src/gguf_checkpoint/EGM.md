@@ -21,7 +21,7 @@ The GGUF repack walk: takes a parsed `GgufHeader` plus a `RangeSource` and produ
 ## Invariants
 - `DeepseekV4Flash` is refused for GGUF repack [mod.rs:write_gguf_install_streamed_resumable]
 - Blobs are numbered by position: routed layer must equal `seq + num_dense_leading_layers`, else refused [mod.rs:write_gguf_install_streamed_resumable]
-- Leftover `layer_NN.bin` is adopted only if provenance matches the stored record AND the file size equals the header-derived expected size; otherwise leftovers are deleted [resume.rs:prepare] [plan.rs:layer_file_bytes]
+- Leftover `layer_NN.bin` is adopted only if provenance matches the stored record AND the file size equals the header-derived expected size [mod.rs:write_gguf_install_streamed_resumable] [plan.rs:layer_file_bytes]. On a provenance mismatch leftovers are deleted [resume.rs:prepare]; on a size mismatch with matching provenance the layer is rewritten, not deleted
 - Only a full 40-hex commit counts as a source identity; a branch name yields `None` and no resume [resume.rs:ResumeProvenance::new]
 - Blocks at or above `num_layers` (multi-token-prediction head) are ignored, not mapped into the trunk [plan.rs:head_block_index]
 - Routed weight shapes must exactly match arch hidden/expert dims; rank-2 only for F32 bias roles [plan.rs:routed_body_dims]

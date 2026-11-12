@@ -12,7 +12,7 @@ Word-level forced alignment of a known transcript against 16 kHz mono audio, por
 
 ## Invariants
 - Pinned checkpoint is `mlx-community/Qwen3-ForcedAligner-0.6B-8bit` at revision 0e1a68e9... [mod.rs:QWEN3_FORCED_ALIGNER_06B_8BIT]
-- Config requires `model_type == "qwen3_forced_aligner"` (in `thinker_config` or root), a nonnegative i32 `timestamp_token_id`, classify_num 5000 and timestamp_segment_time 80 ms, else `Unsupported` [mod.rs:Qwen3ForcedAlignerConfig::from_json]
+- Config requires `model_type == "qwen3_forced_aligner"` (in `thinker_config` or root), a nonnegative i32 `timestamp_token_id`, classify_num 5000 and timestamp_segment_time 80 ms. Missing or invalid fields return `BadConfig`; only a classify_num or segment-time value other than the pinned one returns `Unsupported` [mod.rs:Qwen3ForcedAlignerConfig::from_json]
 - Timestamp id is a signed 32-bit value, token ids above i32 range are rejected [mod.rs:Qwen3ForcedAlignerConfig, mod.rs:Qwen3ForcedAligner::align_with_language]
 - `load` checks that tokenizer ids for `<|audio_pad|>`, `<|audio_start|>`, `<|audio_end|>`, `<timestamp>` match config.json [mod.rs:Qwen3ForcedAligner::load]
 - The head is loaded from `lm_head` with `classify_num` outputs and the base config's quant scheme [mod.rs:Qwen3ForcedAligner::load]

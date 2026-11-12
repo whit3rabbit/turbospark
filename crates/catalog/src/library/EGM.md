@@ -15,7 +15,7 @@ remounting. Drive contents are treated as untrusted.
 - Mounts: `LocationEnv`, `MountEntry`, `MountSource`, `LocationRefusal`, `parse_mount_table`, `validate_location` [src/library/mount_table.rs:validate_location, src/library/mount_table.rs:LocationEnv].
 - Transfer: `move_install`, `MoveError`, `MoveOutcome` [src/library/transfer.rs:move_install].
 - Delete: `Store::delete_install`, `Store::delete_image_install` [src/library/delete.rs:Store::delete_install].
-- Import: `ImportedStore`, `import_moved_root` [src/library/import.rs:import_moved_root].
+- Import: `ImportedStore`, and the `LibraryRegistry::import_moved_root` method [src/library/import.rs:import_moved_root].
 
 ## Invariants
 - The internal library is never written into the `libraries` array, only its default flag [src/library/registry.rs: module docs].

@@ -34,7 +34,7 @@ The fifth runtime decode flow, serving the `gpt-oss` MoE family (MXFP4 experts, 
 - Expert streaming `pread` through `PreadExpertStreamer` and expert cache state [moe.rs:encode_gpt_oss_layer_moe]
 - Mutates KV cache position via `kv.advance()` [mod.rs:produce_real_gpt_oss_inner]
 - Updates phase counters, router histogram and residual capture [moe.rs:encode_gpt_oss_layer_moe]
-- Reads env-driven seams `TURBOSPARK_ROUTED_BATCH`, `TURBOSPARK_ROUTED_PIPELINE`, `TURBOSPARK_EXPERT_RESIDENCY` indirectly through runner flags [prefill.rs:prefill_micro_batch_gpt_oss_inner]
+- Reads env-driven seams `TURBOSPARK_ROUTED_BATCH`, `TURBOSPARK_ROUTED_PIPELINE`, `TURBOSPARK_EXPERT_RESIDENCY` indirectly through runner flags [prefill.rs:prefill_micro_batch_gpt_oss_inner]; the batched routed path also refuses `TURBOSPARK_PILOT_PROBE` by name [moe_batch.rs:encode_gpt_oss_layer_routed_moe_batched]
 
 ## Verification
 - Run: `cargo test -p turbospark-runtime`

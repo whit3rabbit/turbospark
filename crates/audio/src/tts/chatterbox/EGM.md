@@ -21,7 +21,7 @@ Voice-clone TTS over the S3 speech-token space, ported from mlx-audio `chatterbo
 - Text prompt is `[start_text_token] ids [stop_text_token]` [mod.rs:Model::prepare_text_tokens].
 - `prepare_conditionals` requires the S3 tokenizer, else Input error [mod.rs:Model::prepare_conditionals].
 - Prompt mel frames are kept at twice the prompt token count, the longer side is truncated [mod.rs:Model::prepare_conditionals].
-- Speech tokens are the span between the first 6561 and first 6562, ids at or above 6561 are dropped, an empty result is an Input error [mod.rs:drop_invalid_tokens] [mod.rs:Model::generate].
+- Speech tokens are the span between the first 6561 and first 6562, ids at or above 6561 are dropped by the caller filter, an empty result is an Input error [mod.rs:drop_invalid_tokens] [mod.rs:Model::sanitize_speech_tokens].
 - T3 requires `encoder_type == "voice_encoder"` and a non-empty text prompt [t3.rs:T3CondEnc::load] [t3.rs:T3::inference].
 - Flow rejects a speaker embedding whose length differs from `spk_embed_dim`, and a `prompt_feat` whose length is not a multiple of the mel width [flow.rs:ChatterboxFlow::infer].
 - HiFT requires phase length 9 and noise length `9 * t_wav` when draws are given, `None` means zero phase [hift.rs:Hift::infer].

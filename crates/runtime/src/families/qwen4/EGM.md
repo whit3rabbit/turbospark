@@ -26,7 +26,7 @@ The real-checkpoint decode and chunked-prefill flow for the `qwen4_exp` family, 
 - Only two `/ hc_count` divisions: before silu on the down-projection and on the inject weight input; none on the up-projection [hc.rs:encode_hyper_connection]
 - Inject gate row is per token (`inject_row_offset`) inside a prefill micro-batch so a later token cannot overwrite an earlier gate before it is read [hc.rs:encode_hyper_connection]
 - Decode requires `position == kv.position()`; non-sequential positions are refused [produce.rs:produce_real_qwen4_inner]
-- `build` refuses unsupported configs (bad indexer or hyper-connection params, softcap, tied lm_head, layer masks other than 1/2, no linear layers, inactive PLE, PLE on a QSA layer) rather than running them [state.rs:RealQwen4State::build]
+- `build` refuses unsupported configs (bad indexer or hyper-connection params, softcap, tied lm_head, layer masks other than 1/2, no linear layers, inactive PLE; the PLE-on-QSA check has an empty body, so that case is not refused) rather than running them [state.rs:RealQwen4State::build]
 - The wide residual is family-local (`wide_x`), not the shared `DecodeScratch::x` [state.rs:RealQwen4State]
 - The shared expert is added after the routed sum is rounded to FP16; phase 2 seeds from zero rows [moe.rs:encode_moe_layer, moe_batch.rs:encode_qwen4_layer_routed_prefill]
 - MoE host readback requires commit and wait of the router pass before `encode_moe_layer` [moe.rs:encode_moe_router]
@@ -35,9 +35,9 @@ The real-checkpoint decode and chunked-prefill flow for the `qwen4_exp` family, 
 - Speculative decoding is unsupported: no rollback for recurrent state [mod.rs]
 
 ## Side Effects
-- Env reads: `TURBOSPARK_QWEN4_PREFILL` (off/wide/bank, invalid value is an error) [prefill_bank.rs:PrefillExperiment::from_env], `TURBOSPARK_QSA_FORCE_DENSE` [state.rs:RealQwen4State::build]
+- Env reads: `TURBOSPARK_QWEN4_PREFILL` (off/wide/bank, invalid value is an error) [prefill_bank.rs:PrefillExperiment::from_env], `TURBOSPARK_QSA_FORCE_DENSE=1` (also `RealForwardRunner::set_qsa_force_dense`; keeps the dense kernel to measure KL against the indexed path) [state.rs:RealQwen4State::build]
 - Env-gated diagnostics: `TURBOSPARK_QWEN4_GDN_NORM_CAPTURE`, `TURBOSPARK_QWEN4_TAP_FILE`, `TURBOSPARK_QWEN4_LAYER_CAPTURE`, `TURBOSPARK_QWEN4_ATTENTION_CAPTURE` and their `_POSITION`/`_LAYERS`/`_LAYER` companions [state.rs:GdnNormCapture]
-- `TURBOSPARK_QWEN4_TAP_LAYERS` selects tap layers [state.rs:GdnNormCapture]; `TURBOSPARK_ROUTED_BATCH_OVERLAP` [moe_batch.rs:encode_qwen4_layer_routed_prefill]; `TURBOSPARK_INT4_MMA8` switches the fused in-proj arithmetic [attn.rs:encode_linear_block]
+- `TURBOSPARK_QWEN4_TAP_FILE` enables QTAP capture and `TURBOSPARK_QWEN4_TAP_LAYERS` selects tap layers (default `5,15,25,35,45`) [state.rs:TapCapture::from_env]; `TURBOSPARK_ROUTED_BATCH_OVERLAP` [moe_batch.rs:encode_qwen4_layer_routed_prefill]; `TURBOSPARK_INT4_MMA8` switches the fused in-proj arithmetic [attn.rs:encode_linear_block]
 - Capture writers create files (header plus f16/binary data) and log to stderr [state.rs:GdnNormCapture::flush_if_captured, state.rs:TapCapture::append]
 - `TURBOSPARK_CB1_TRACE=<path>` opens a process-global TSV sink behind a `OnceLock<Mutex<File>>` [cb1_trace.rs:sink]
 - Metal: allocates shared buffers and encodes command buffers; prefill bank uses an anonymous mmap wrapped as a no-copy Metal buffer [prefill_bank.rs:PrefillExperiment::allocate]

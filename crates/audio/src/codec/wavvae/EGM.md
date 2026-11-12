@@ -19,7 +19,7 @@ MegaTTS3 WavVAE: waveform encoder (optional) producing a latent posterior and a 
 ## Invariants
 - Encoder weights are optional: callers must check `has_encoder` before `encode` [mod.rs:WavVae::has_encoder]. Community encoder provenance is unverified, so voice-clone callers must gate on consent (project safety invariant).
 - Bad config or tensor shapes surface as `SpeechError` (BadConfig, Input, Unsupported) at load or call time, not as panics [mod.rs:load].
-- Inference is CPU f32 over host `Vec<f32>` buffers; no GPU state is held here.
+- Inference defaults to CPU f32 over host `Vec<f32>` buffers. With an injected `ComputeBackend` ([mod.rs:WavVae::with_backend]) the decoder convolutions run on it and device weights are cached in a `RefCell` map [mod.rs:ConvExec], so a backend-bearing `WavVae` is single-threaded (`Rc`).
 
 ## Side Effects
 - `open` reads only `model.safetensors` from the model directory and uses the fixed `WavVaeConfig::megatts3()` geometry; no config file is read [mod.rs:WavVae::open]; no writes, network, or env access.

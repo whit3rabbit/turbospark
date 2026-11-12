@@ -15,7 +15,7 @@ Portable CPU f32 implementation of OpenAI Whisper and Distil-Whisper: conv audio
 - `decode_step` rejects empty or over-`max_target_positions` sequences and token ids at or above `vocab_size`; returns logits for the last position only [mod.rs:WhisperModel::decode_step].
 - `proj_out: None` means logits tie to `decoder_embed_tokens` [mod.rs:WhisperModel::decode_step].
 - Default special token ids (eot 50257, sot 50258, transcribe 50359, no_timestamps 50363) assume the multilingual tokenizer layout [mod.rs:WhisperSpecialTokens].
-- `transcribe` pads or truncates audio to `WHISPER_WINDOW_SAMPLES` (480000, defined in [whisper.rs:WHISPER_WINDOW_SAMPLES]), hardcodes language token 50259 (English), and stops at `eot` or `max_tokens`; the prompt tokens are excluded from the result [mod.rs:WhisperModel::transcribe].
+- `transcribe` pads or truncates audio to `WHISPER_WINDOW_SAMPLES` (480000, defined in [crates/audio/src/whisper.rs:WHISPER_WINDOW_SAMPLES]), hardcodes language token 50259 (English), and stops at `eot` or `max_tokens`; the prompt tokens are excluded from the result [mod.rs:WhisperModel::transcribe].
 - Decode recomputes the full sequence and cross-attention K/V each step (no KV cache) [mod.rs:WhisperModel::decode_step].
 - All LayerNorm calls use eps 1e-5 [mod.rs:run_layernorm].
 
