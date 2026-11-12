@@ -645,11 +645,13 @@ final class SkillSystemTests: XCTestCase {
         _ = try ProposeSkillsExecutor.execute(arguments: args, projectRootURL: tempDirURL)
         var injected = args
         injected["skillMd"] = "INJECTED"
-        let result = try ProposeSkillsExecutor.execute(arguments: injected, projectRootURL: tempDirURL)
+        // Nothing was saved, so this is an error rather than "saved 0".
+        XCTAssertThrowsError(try ProposeSkillsExecutor.execute(arguments: injected, projectRootURL: tempDirURL)) { error in
+            XCTAssertTrue((error as NSError).localizedDescription.contains("already exists"), "\(error)")
+        }
 
         let file = tempDirURL.appendingPathComponent(".turbospark/skills/keep-me/SKILL.md")
         XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "ORIGINAL")
-        XCTAssertTrue(result.contains("already exists"), result)
     }
 
     func testUserScopeProposeSkillsIsHardGated() {

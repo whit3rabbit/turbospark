@@ -99,4 +99,63 @@ final class ToolEdgeCaseB6Tests: XCTestCase {
         XCTAssertNil(backupA)
         XCTAssertNil(backupB)
     }
+
+    // MARK: - Planning
+
+    func testCancelBeforeWaitForAnswerDismissesTheQuestion() async throws {
+        let chatID = UUID()
+        let previous = AskUserQuestionExecutor.answerWaiter
+        defer { AskUserQuestionExecutor.answerWaiter = previous }
+        // The waiter registers its continuation only after the cancel landed.
+        AskUserQuestionExecutor.answerWaiter = { chat, _, _ in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            return await withCheckedContinuation { continuation in
+                AskUserQuestionExecutor.waitForAnswer(chatID: chat, continuation: continuation)
+            }
+        }
+        let done = expectation(description: "execution returns after cancel")
+        let task = Task { () -> String in
+            let out = (try? await AskUserQuestionExecutor.executeAwaitingAnswer(
+                arguments: ["question": "Proceed?"], chatID: chatID)) ?? "threw"
+            done.fulfill()
+            return out
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        task.cancel()
+        let result = await XCTWaiter.fulfillment(of: [done], timeout: 5)
+        // On failure the parked task never resumes, so do not await it.
+        guard result == .completed else {
+            return XCTFail("cancel before waitForAnswer left the question parked")
+        }
+        let out = await task.value
+        XCTAssertTrue(out.contains("dismissed"), out)
+    }
+
+    func testProposeSkillsReportsFailureWhenNothingSaved() throws {
+        let (_, dir) = try makeProject()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        XCTAssertThrowsError(try ProposeSkillsExecutor.execute(
+            arguments: ["name": "empty-one", "description": "d", "skillMd": "  \n"], projectRootURL: dir)
+        ) { error in
+            XCTAssertEqual((error as NSError).code, 120)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: dir.appendingPathComponent(".turbospark/skills/empty-one/SKILL.md").path))
+    }
+
+    // MARK: - MCP
+
+    func testChildEnvironmentDropsRelativePathEntriesWithoutExecutableDirectory() {
+        let inherited = McpClientEngine.childEnvironment(
+            parent: ["PATH": ".:/usr/bin::bin"], passthrough: [], declared: [:])
+        XCTAssertEqual(inherited["PATH"], "/usr/bin")
+        let declared = McpClientEngine.childEnvironment(
+            parent: ["PATH": "/usr/bin"], passthrough: [],
+            declared: ["PATH": "node_modules/.bin:/opt/tool/bin"])
+        XCTAssertEqual(declared["PATH"], "/opt/tool/bin")
+        let withDir = McpClientEngine.childEnvironment(
+            parent: ["PATH": "/usr/bin"], passthrough: [],
+            declared: ["PATH": "./x:/opt/y"], executableDirectory: "/opt/exe")
+        XCTAssertEqual(withDir["PATH"], "/opt/y")
+    }
 }
