@@ -134,6 +134,9 @@ public final class CustomToolManager: @unchecked Sendable {
 
     /// Persists a custom tool definition to disk.
     public func saveTool(_ tool: CustomToolDefinition, projectURL: URL? = nil) throws {
+        guard CustomToolDefinition.isSafeName(tool.name) else {
+            throw NSError(domain: "TurboSparkCustomTool", code: 4, userInfo: [NSLocalizedDescriptionKey: "Tool name '\(tool.name)' may only use letters, digits, '_' and '-' (max 64)."])
+        }
         let targetDir: URL
         switch tool.scope {
         case .userGlobal, .bundled:
