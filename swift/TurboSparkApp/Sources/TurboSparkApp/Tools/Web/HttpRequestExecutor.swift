@@ -165,12 +165,14 @@ public enum HttpRequestExecutor {
         customSession: URLSession?,
         validate: (URL) throws -> Void = { try HttpRequestDestinationValidator.validate($0) },
         validateConnectedAddress: ((String) throws -> Void)? = HttpRequestExecutor.refuseConnectedPrivateAddress,
-        networkPolicy: AppNetworkPolicy = AppNetworkPolicyStore.current
+        networkPolicy: AppNetworkPolicy = AppNetworkPolicyStore.current,
+        maxBytes: Int = HttpRequestExecutor.maxResponseBytes
     ) async throws -> (Data, URLResponse) {
         // Injected sessions are test transports. Production redirects are
         // stopped and replayed only after validating the new destination.
         if let customSession {
-            let result = try await boundedData(for: request, session: customSession, delegate: nil)
+            let result = try await boundedData(
+                for: request, session: customSession, delegate: nil, maxBytes: maxBytes)
             if let finalURL = result.1.url {
                 try validate(finalURL)
             }
@@ -189,7 +191,8 @@ public enum HttpRequestExecutor {
             try validate(currentURL)
 
             let redirect = HttpRequestRedirectDelegate()
-            let result = try await boundedData(for: currentRequest, session: session, delegate: redirect)
+            let result = try await boundedData(
+                for: currentRequest, session: session, delegate: redirect, maxBytes: maxBytes)
             // **THE REBINDING CHECK.** `validate` resolved the host once and
             // URLSession resolved it again to connect, so a DNS answer that
             // changed between the two (rebinding) reaches here connected to

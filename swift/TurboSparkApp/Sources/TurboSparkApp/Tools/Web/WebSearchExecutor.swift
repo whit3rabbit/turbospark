@@ -30,22 +30,40 @@ public enum WebSearchExecutor {
         }
     }
 
-    private static func fetchLimited(
+    /// Every provider request (Exa, Parallel, Brave, SearXNG, Tavily) goes
+    /// through the same hop-by-hop destination validation as WebFetch and
+    /// HttpRequest: network policy, DNS resolution, redirect revalidation and
+    /// the connected-address (rebinding) check. SearXNG takes a user-supplied
+    /// base URL, so it must not become a way to reach metadata or LAN hosts
+    /// the policy refuses. An injected test session skips redirect handling
+    /// but its request URL is still validated before anything is sent.
+    static func fetchLimited(
         request: URLRequest,
-        session: URLSession
+        session customSession: URLSession?,
+        validate: @escaping (URL) throws -> Void = { try HttpRequestDestinationValidator.validate($0) },
+        validateConnectedAddress: ((String) throws -> Void)? = HttpRequestExecutor.refuseConnectedPrivateAddress
     ) async throws -> (Data, URLResponse) {
-        let (bytes, response) = try await session.bytes(for: request)
-        if response.expectedContentLength >= 0 {
-            try validateResponseSize(Int(response.expectedContentLength))
+        if customSession != nil, let url = request.url {
+            try validate(url)
         }
-
-        var data = Data()
-        data.reserveCapacity(min(max(0, Int(response.expectedContentLength)), maxResponseBytes))
-        for try await byte in bytes {
-            try validateResponseSize(data.count + 1)
-            data.append(byte)
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = TimeInterval(defaultTimeoutSeconds)
+        config.timeoutIntervalForResource = TimeInterval(defaultTimeoutSeconds)
+        do {
+            return try await HttpRequestExecutor.performRequest(
+                request,
+                configuration: config,
+                customSession: customSession,
+                validate: validate,
+                validateConnectedAddress: validateConnectedAddress,
+                maxBytes: maxResponseBytes
+            )
+        } catch let error as NSError where error.domain == "TurboSparkHttpRequest" && error.code == 8
+            && error.localizedDescription.hasPrefix("Response too large") {
+            // Keep the search tool's own message for an oversize body.
+            try validateResponseSize(maxResponseBytes + 1)
+            throw error // unreachable: the line above always throws
         }
-        return (data, response)
     }
 
     // MARK: - Primary Search Entrypoint
@@ -244,8 +262,7 @@ public enum WebSearchExecutor {
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = TimeInterval(defaultTimeoutSeconds)
 
-        let session = customSession ?? URLSession.shared
-        let (data, response) = try await fetchLimited(request: request, session: session)
+        let (data, response) = try await fetchLimited(request: request, session: customSession)
 
         guard let http = response as? HTTPURLResponse else {
             throw NSError(domain: "TurboSparkWebSearch", code: 3, userInfo: [NSLocalizedDescriptionKey: "Non-HTTP response from Exa."])
@@ -451,8 +468,7 @@ public enum WebSearchExecutor {
         }
         request.timeoutInterval = TimeInterval(defaultTimeoutSeconds)
 
-        let session = customSession ?? URLSession.shared
-        let (data, response) = try await fetchLimited(request: request, session: session)
+        let (data, response) = try await fetchLimited(request: request, session: customSession)
 
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
@@ -545,8 +561,7 @@ public enum WebSearchExecutor {
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = TimeInterval(defaultTimeoutSeconds)
 
-        let session = customSession ?? URLSession.shared
-        let (data, response) = try await fetchLimited(request: request, session: session)
+        let (data, response) = try await fetchLimited(request: request, session: customSession)
 
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
@@ -604,8 +619,7 @@ public enum WebSearchExecutor {
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
         request.timeoutInterval = TimeInterval(defaultTimeoutSeconds)
 
-        let session = customSession ?? URLSession.shared
-        let (data, response) = try await fetchLimited(request: request, session: session)
+        let (data, response) = try await fetchLimited(request: request, session: customSession)
 
         guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
@@ -725,11 +739,8 @@ public enum WebSearchExecutor {
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
 
-        let sessionConfig = URLSessionConfiguration.ephemeral
-        sessionConfig.timeoutIntervalForRequest = TimeInterval(defaultTimeoutSeconds)
-        let session = customSession ?? URLSession(configuration: sessionConfig)
 
-        let (data, response) = try await fetchLimited(request: req, session: session)
+        let (data, response) = try await fetchLimited(request: req, session: customSession)
         guard let httpResp = response as? HTTPURLResponse, (200...299).contains(httpResp.statusCode) else {
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             throw NSError(domain: "TurboSparkWebSearch", code: 32, userInfo: [NSLocalizedDescriptionKey: "Tavily search failed with HTTP \(status)."])
@@ -791,11 +802,8 @@ public enum WebSearchExecutor {
         ]
         req.httpBody = try JSONSerialization.data(withJSONObject: payload, options: [])
 
-        let sessionConfig = URLSessionConfiguration.ephemeral
-        sessionConfig.timeoutIntervalForRequest = TimeInterval(defaultTimeoutSeconds)
-        let session = customSession ?? URLSession(configuration: sessionConfig)
 
-        let (data, response) = try await fetchLimited(request: req, session: session)
+        let (data, response) = try await fetchLimited(request: req, session: customSession)
         guard let httpResp = response as? HTTPURLResponse, (200...299).contains(httpResp.statusCode) else {
             let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             throw NSError(domain: "TurboSparkWebSearch", code: 35, userInfo: [NSLocalizedDescriptionKey: "Tavily extract failed with HTTP \(status)."])
