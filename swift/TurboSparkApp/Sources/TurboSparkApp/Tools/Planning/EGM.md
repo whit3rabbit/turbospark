@@ -22,7 +22,7 @@ Model-facing tools for interacting with the user and shaping a session: AskUserQ
 - Static state (`pendingQuestions`, `answerContinuations`, `activePlanModes`, `savedPlans`) is guarded by `NSLock`. Plan mode and pending questions are in-memory only and keyed by chat id string.
 - `ProposeSkills` must never overwrite an existing `SKILL.md` (a prompt-injected proposal named after a trusted skill would otherwise replace its instructions); it skips and reports them. Names are trimmed, lowercased, and `/` and `\` replaced, and `.` or `..` or empty names are skipped. Scope is user when `scope == "user"`, there is no project root, or the root is `/` [PlanningInteractiveExecutors.swift:ProposeSkillsExecutor].
 - `ProposeGoal` and `SendFeedback` throw "not implemented" (codes 34, 35) on purpose: no goal wiring or feedback receiver exists, and a success reply would mislead the model. Do not turn them into success stubs unless the backing feature exists.
-- Error codes under domain `TurboSparkTool`: 30 questions, 31 findings, 32 skills, 33 goal parse, 34 goal not implemented, 35 feedback not implemented. Code 35 is also used by `BatchToolExecutor` for a different error (domain code collision).
+- Error codes under domain `TurboSparkTool`: 30 questions, 31 findings, 32 skills, 33 goal parse, 34 goal not implemented, 100 feedback not implemented. Code 35 belongs to `BatchToolExecutor`; `SendFeedback` moved off it so the two stay distinguishable.
 - `skillTool(projectURL:contextTokens:)` is dynamic; `skill` in `all` is the static fallback without a skill listing.
 
 ## Side Effects
