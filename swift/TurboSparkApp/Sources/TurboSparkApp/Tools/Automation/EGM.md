@@ -27,7 +27,7 @@ Tools that let the model act over time or reach the user outside the turn: a per
 - `Config` is read-only: `set` throws and changes nothing. Do not make it report success for a no-op [AutomationExecutors.swift:ConfigToolExecutor].
 - `Sleep` clamps to 0.1...300 s; `PushNotification` reports the true delivery outcome (system notification only when running from an `.app` bundle with a bundle id and permission granted, else in-app only) [AutomationExecutors.swift].
 - `CronCreateInput.durable`, `CronJobItem.durable`, and `MonitorInput` fields are schema-level only; the scheduler always persists jobs.
-- Error code 60 is shared by PushNotification (missing message) and the cron executors (invalid expression); codes 61-64 are cron/config. Codes are domain `TurboSparkTool`.
+- Error codes under domain `TurboSparkTool`: 60-64 cron (60 invalid or missing cron, 61 missing prompt, 62 no active chat, 63 CronDelete, 64 ScheduleWakeup); 65 PushNotification missing message, 66 Config unknown action, 67 Config set unsupported. `ToolErrorCodeUniquenessTests` fails if two source files reuse a code.
 
 ## Side Effects
 - Disk: `cron_jobs.json` under `AppStorageRoot.directory` (or an injected directory), loaded in `init` and written after every mutation via `AppJSONStore.load/save` [CronScheduler.swift:init, save].

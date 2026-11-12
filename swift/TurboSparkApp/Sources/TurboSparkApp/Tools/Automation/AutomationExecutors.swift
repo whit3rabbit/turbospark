@@ -32,7 +32,7 @@ public enum PushNotificationExecutor {
         guard let message = arguments["message"] ?? arguments["body"] ?? arguments["text"] else {
             throw NSError(
                 domain: "TurboSparkTool",
-                code: 60,
+                code: 65,
                 userInfo: [NSLocalizedDescriptionKey: "Missing 'message' argument for PushNotification."]
             )
         }
@@ -90,7 +90,7 @@ public enum ConfigToolExecutor {
             // turned off when nothing changed.
             throw NSError(
                 domain: "TurboSparkTool",
-                code: 62,
+                code: 67,
                 userInfo: [NSLocalizedDescriptionKey:
                     "Config set is not supported and nothing was changed; the user changes settings in Settings."]
             )
@@ -99,7 +99,7 @@ public enum ConfigToolExecutor {
         default:
             throw NSError(
                 domain: "TurboSparkTool",
-                code: 61,
+                code: 66,
                 userInfo: [NSLocalizedDescriptionKey: "Unknown config action: '\(action)'. Valid: get, list."]
             )
         }
