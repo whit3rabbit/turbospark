@@ -37,6 +37,7 @@ pub mod sesame;
 pub mod soprano;
 pub mod spark;
 pub mod tada;
+pub mod underdog_woof;
 pub mod vibevoice;
 pub mod voxcpm;
 pub mod voxcpm2;
