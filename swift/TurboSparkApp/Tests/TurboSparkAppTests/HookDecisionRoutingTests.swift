@@ -54,6 +54,29 @@ final class HookDecisionRoutingTests: XCTestCase {
         XCTAssertTrue(engine.matchesCondition(hook: hook3, toolName: "bash", toolArguments: nil))
     }
 
+    /// S3: `if` fails closed. Malformed conditions and loose tool-name
+    /// substrings must not fire the hook.
+    func testIfConditionFailsClosed() {
+        let engine = AppHookExecutionEngine.shared
+        func fires(_ cond: String, tool: String = "run_command", args: [String: String]? = ["command": "git push"]) -> Bool {
+            let hook = AppHookCommand(name: "h", event: .preToolUse, type: .command, command: "true", ifCondition: cond)
+            return engine.matchesCondition(hook: hook, toolName: tool, toolArguments: args)
+        }
+        XCTAssertTrue(fires("Bash(git *)"))
+        XCTAssertTrue(fires("Bash"))
+        XCTAssertFalse(fires("Read"))
+        XCTAssertFalse(fires("Bsh(git *)"), "typo in tool name")
+        XCTAssertFalse(fires("Bash(git *"), "missing close paren")
+        XCTAssertFalse(fires("Bash)"), "close paren without open")
+        XCTAssertFalse(fires("(git *)"), "empty tool name")
+        XCTAssertFalse(fires("Bash()"), "empty pattern")
+        XCTAssertFalse(fires("Bash(git *) extra"), "trailing text")
+        XCTAssertFalse(fires("Bash(npm *)"))
+        // Substring of the tool name must not match.
+        XCTAssertFalse(fires("Bas(git *)"))
+        XCTAssertFalse(fires("Bash(git *)", tool: "BashExecutorTool"))
+    }
+
     func testCommandGlobIsAnchoredAndWhitespaceNormalized() {
         let engine = AppHookExecutionEngine.shared
         // Under-match fixed: irregular whitespace still matches a prefix pattern.

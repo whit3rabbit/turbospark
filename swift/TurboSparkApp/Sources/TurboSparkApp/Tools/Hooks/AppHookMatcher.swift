@@ -14,22 +14,32 @@ extension AppHookExecutionEngine {
             guard AppHookMatcherEvaluator.matches(pattern: matcher, toolName: toolName) else { return false }
         }
 
-        // If 'ifCondition' is set (e.g. "Bash(git *)")
+        // `if` uses Claude Code's permission-rule syntax: `Tool` (the whole
+        // tool) or `Tool(pattern)`. Fails closed: a malformed condition, or a
+        // tool name that is not an alias of the called tool, never fires the
+        // hook (a typo must not turn a scoped hook into a catch-all).
         if let ifCond = hook.ifCondition, !ifCond.isEmpty, let toolName {
-            if ifCond.contains("(") && ifCond.hasSuffix(")") {
-                let toolPrefix = ifCond.prefix(while: { $0 != "(" })
-                let aliases = AppHookToolNameAliases.equivalentNames(for: toolName)
-                let prefixMatches = aliases.contains(String(toolPrefix).lowercased())
-                    || toolName.localizedCaseInsensitiveContains(toolPrefix)
-                if !prefixMatches {
+            let cond = ifCond.trimmingCharacters(in: .whitespaces)
+            let toolPart: String
+            var pattern: String?
+            if let open = cond.firstIndex(of: "(") {
+                guard cond.hasSuffix(")"), let close = cond.lastIndex(of: ")"), open < close else { return false }
+                toolPart = String(cond[..<open])
+                let inner = String(cond[cond.index(after: open)..<close]).trimmingCharacters(in: .whitespaces)
+                guard !inner.isEmpty else { return false }
+                pattern = inner
+            } else {
+                guard !cond.contains(")") else { return false }
+                toolPart = cond
+            }
+            let name = toolPart.trimmingCharacters(in: .whitespaces).lowercased()
+            guard !name.isEmpty,
+                  AppHookToolNameAliases.equivalentNames(for: toolName).contains(name)
+            else { return false }
+            if let pattern {
+                let cmdArg = toolArguments?["command"] ?? toolArguments?["cmd"] ?? toolArguments?["path"] ?? ""
+                if pattern != "*" && !matchesCommandGlob(pattern, against: cmdArg) {
                     return false
-                }
-                if let innerStart = ifCond.firstIndex(of: "("), let innerEnd = ifCond.lastIndex(of: ")") {
-                    let pattern = String(ifCond[ifCond.index(after: innerStart)..<innerEnd]).trimmingCharacters(in: .whitespaces)
-                    let cmdArg = toolArguments?["command"] ?? toolArguments?["cmd"] ?? toolArguments?["path"] ?? ""
-                    if pattern != "*" && !matchesCommandGlob(pattern, against: cmdArg) {
-                        return false
-                    }
                 }
             }
         }
