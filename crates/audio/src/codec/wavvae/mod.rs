@@ -765,7 +765,9 @@ pub struct WavVae {
 }
 
 impl WavVae {
-    /// Opens `dir/model.safetensors` for the shipped MegaTTS3 geometry.
+    /// Opens `dir/model.safetensors` for the shipped MegaTTS3 geometry. Any
+    /// `config.json` in `dir` is ignored; use [`Self::load`] with an explicit
+    /// `WavVaeConfig` for another geometry.
     pub fn open(dir: &Path) -> Result<Self> {
         let file = SafetensorsFile::open(&dir.join("model.safetensors"))?;
         Self::load(WavVaeConfig::megatts3(), &file)
