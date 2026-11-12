@@ -561,8 +561,14 @@ public final class CronScheduler: @unchecked Sendable {
         if let index = jobs.firstIndex(where: { $0.id == jobID }) {
             if jobs[index].recurring {
                 jobs[index].nextFireAt = CronSchedule(jobs[index].cron)?.nextFire(after: now)
-            } else {
+            } else if delivered {
                 remove = true
+            } else {
+                // A missed one-shot stays, paused, so the user sees the
+                // "missed" run instead of the job silently vanishing.
+                // Disabled jobs are skipped by takeDueJobs and load.
+                jobs[index].enabled = false
+                jobs[index].nextFireAt = nil
             }
         }
         lock.unlock()
