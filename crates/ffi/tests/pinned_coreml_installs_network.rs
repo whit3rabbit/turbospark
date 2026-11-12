@@ -18,7 +18,7 @@ use turbospark_ffi::{
     abi, ts_audio_catalog_json, ts_audio_install_with_options, ts_audio_job_append,
     ts_audio_job_close, ts_audio_job_open, ts_audio_job_run, ts_audio_session_close,
     ts_audio_session_open, ts_embedding_catalog_json, ts_embedding_encode_request_json,
-    ts_embedding_install, ts_last_error, ts_string_free,
+    ts_embedding_install, ts_embedding_probe_json, ts_last_error, ts_string_free,
 };
 
 fn c(s: &str) -> CString {
@@ -98,20 +98,46 @@ fn pinned_parakeet_and_embeddinggemma2_install_and_run() {
             .expect("pinned embedding profile");
         assert!(row["installed_path"].is_null());
         assert_eq!(row["can_run"], true);
+        assert_eq!(row["status"], "verified");
 
         let alias = c("embeddinggemma-2-coreml");
+        let revision = c(row["revision"].as_str().unwrap());
         let mut out: *mut c_char = ptr::null_mut();
-        let code =
-            ts_embedding_install(alias.as_ptr(), Some(no_progress), ptr::null_mut(), &mut out);
+        let code = ts_embedding_install(
+            alias.as_ptr(),
+            revision.as_ptr(),
+            Some(no_progress),
+            ptr::null_mut(),
+            &mut out,
+        );
         assert_eq!(code, abi::TS_OK, "{}", last_error());
         let installed = take(out);
         eprintln!("embedding installed at {}", installed["path"]);
-        // A second install of the same alias is refused.
+        // A second install of the same alias at the same pin is refused.
         let mut again: *mut c_char = ptr::null_mut();
         assert_ne!(
-            ts_embedding_install(alias.as_ptr(), None, ptr::null_mut(), &mut again),
+            ts_embedding_install(
+                alias.as_ptr(),
+                revision.as_ptr(),
+                None,
+                ptr::null_mut(),
+                &mut again
+            ),
             abi::TS_OK
         );
+        // The alias now probes as the verified install.
+        let mut out: *mut c_char = ptr::null_mut();
+        assert_eq!(
+            ts_embedding_probe_json(alias.as_ptr(), &mut out),
+            abi::TS_OK,
+            "{}",
+            last_error()
+        );
+        let verdict = take(out);
+        assert_eq!(verdict["runnable"], true, "{verdict}");
+        assert_eq!(verdict["verified"], true, "{verdict}");
+        assert_eq!(verdict["family"], "embeddinggemma2");
+        assert_eq!(verdict["profile_alias"], "embeddinggemma-2-coreml");
         let mut out: *mut c_char = ptr::null_mut();
         assert_eq!(ts_embedding_catalog_json(&mut out), abi::TS_OK);
         let rows = take(out);

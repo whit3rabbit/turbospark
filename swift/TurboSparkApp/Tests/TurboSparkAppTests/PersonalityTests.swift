@@ -43,7 +43,7 @@ final class PersonalityTests: XCTestCase {
             id: UUID(uuidString: "F5C6F07A-AEF1-4551-A2B2-4F4D5D8E74B7")!,
             name: "Custom",
             instructions: "PERSONALITY-TEXT")
-        let model = AppModel()
+        let model = AppModel.withoutChatTools()
         model.defaultSystemPrompt = ""
         model.personalities = [personality]
         model.selectedPersonalityID = personality.id
@@ -60,7 +60,7 @@ final class PersonalityTests: XCTestCase {
 
     @MainActor
     func testAStaleSelectionAddsNoPersonalityPrompt() {
-        let model = AppModel()
+        let model = AppModel.withoutChatTools()
         model.defaultSystemPrompt = ""
         model.personalities = []
         model.selectedPersonalityID = UUID()

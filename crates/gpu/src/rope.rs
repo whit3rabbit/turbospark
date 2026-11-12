@@ -107,6 +107,48 @@ pub fn encode_rope_proportional_neox(
     Ok(())
 }
 
+/// [`encode_rope_proportional_neox`] over `rows` contiguous
+/// `[num_heads, head_dim]` rows at positions
+/// `start_position..start_position + rows`, in one dispatch. Each row is
+/// bit-identical to the single-row dispatch at its position.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_rope_proportional_neox_rows(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    data: (&metal::Buffer, u64),
+    start_position: u32,
+    rows: u32,
+    num_heads: u32,
+    head_dim: u32,
+    rotated_pairs: u32,
+    theta: f32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        "rope_proportional_neox_rows",
+        &unused_function_constants(),
+        b"",
+    )?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(data.0, 0, data.1)],
+        &[
+            (u32_bytes(&start_position), 1),
+            (u32_bytes(&head_dim), 2),
+            (u32_bytes(&num_heads), 3),
+            (f32_bytes(&theta), 4),
+            (u32_bytes(&rotated_pairs), 5),
+        ],
+        (
+            rotated_pairs.max(1) as u64,
+            num_heads.max(1) as u64,
+            rows.max(1) as u64,
+        ),
+        (1, 1, 1),
+    );
+    Ok(())
+}
+
 /// Encoder-level `rope_neox_subdim`: Qwen 3.6's partial RoPE. Rotates only
 /// the first `rotary_dim` elements of each head, pairing
 /// `(i, rotary_dim/2 + i)` inside that window with frequency divisor
@@ -155,6 +197,110 @@ pub fn encode_rope_neox_subdim(
             (u32_bytes(&rotary_dim), 5),
         ],
         ((rotary_dim / 2).max(1) as u64, num_heads.max(1) as u64, 1),
+        (1, 1, 1),
+    );
+    Ok(())
+}
+
+/// [`encode_rope_neox_subdim`] over `rows` contiguous `[num_heads, head_dim]`
+/// rows at positions `start_position..start_position + rows`, in one
+/// dispatch. Each row is bit-identical to the single-row dispatch at its
+/// position (same `apply_neox_pair`, same `float(position)`).
+#[allow(clippy::too_many_arguments)]
+pub fn encode_rope_neox_subdim_rows(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    data: (&metal::Buffer, u64),
+    start_position: u32,
+    rows: u32,
+    num_heads: u32,
+    head_dim: u32,
+    rotary_dim: u32,
+    theta: f32,
+) -> Result<(), GpuError> {
+    if rotary_dim % 2 != 0 || rotary_dim > head_dim {
+        return Err(GpuError::PipelineCreate(format!(
+            "rope_neox_subdim_rows rotary_dim {rotary_dim} must be even and at most head_dim {head_dim}"
+        )));
+    }
+    let pipeline = context.pipeline(
+        SOURCE,
+        "rope_neox_subdim_rows",
+        &unused_function_constants(),
+        b"",
+    )?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(data.0, 0, data.1)],
+        &[
+            (u32_bytes(&start_position), 1),
+            (u32_bytes(&head_dim), 2),
+            (u32_bytes(&num_heads), 3),
+            (f32_bytes(&theta), 4),
+            (u32_bytes(&rotary_dim), 5),
+        ],
+        (
+            (rotary_dim / 2).max(1) as u64,
+            num_heads.max(1) as u64,
+            rows.max(1) as u64,
+        ),
+        (1, 1, 1),
+    );
+    Ok(())
+}
+
+/// Most rows one [`encode_rope_neox_subdim_rows_positions`] call takes.
+pub const ROPE_POSITION_ROWS_MAX: usize = 64;
+
+/// [`encode_rope_neox_subdim_rows`] with row `r` rotated at `positions[r]`
+/// instead of `start_position + r`: a tree verify rotates each node at its
+/// depth. Each row is bit-identical to the single-row dispatch at its
+/// position.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_rope_neox_subdim_rows_positions(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    data: (&metal::Buffer, u64),
+    positions: &[u32],
+    num_heads: u32,
+    head_dim: u32,
+    rotary_dim: u32,
+    theta: f32,
+) -> Result<(), GpuError> {
+    if rotary_dim % 2 != 0 || rotary_dim > head_dim {
+        return Err(GpuError::PipelineCreate(format!(
+            "rope_neox_subdim_rows_positions rotary_dim {rotary_dim} must be even and at most \
+             head_dim {head_dim}"
+        )));
+    }
+    if positions.is_empty() || positions.len() > ROPE_POSITION_ROWS_MAX {
+        return Err(GpuError::PipelineCreate(format!(
+            "rope_neox_subdim_rows_positions takes 1..={ROPE_POSITION_ROWS_MAX} rows, got {}",
+            positions.len()
+        )));
+    }
+    let pipeline = context.pipeline(
+        SOURCE,
+        "rope_neox_subdim_rows_positions",
+        &unused_function_constants(),
+        b"",
+    )?;
+    let table: Vec<u8> = positions.iter().flat_map(|p| p.to_le_bytes()).collect();
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(data.0, 0, data.1)],
+        &[
+            (&table[..], 1),
+            (u32_bytes(&head_dim), 2),
+            (u32_bytes(&num_heads), 3),
+            (f32_bytes(&theta), 4),
+            (u32_bytes(&rotary_dim), 5),
+        ],
+        (
+            (rotary_dim / 2).max(1) as u64,
+            num_heads.max(1) as u64,
+            positions.len() as u64,
+        ),
         (1, 1, 1),
     );
     Ok(())
@@ -219,6 +365,72 @@ pub fn encode_rope_mrope_interleaved(
             (u32_bytes(&pos_w), 7),
             (u32_bytes(&section_h), 8),
             (u32_bytes(&section_w), 9),
+        ],
+        ((rotary_dim / 2).max(1) as u64, num_heads.max(1) as u64, 1),
+        (1, 1, 1),
+    );
+    Ok(())
+}
+
+/// Encoder-level `rope_mrope_chunked`: Qwen2-VL and Qwen2.5-VL's mRoPE, where
+/// `section` splits the rotary pairs into three contiguous runs (t, then h,
+/// then w) instead of interleaving them. At `t == h == w` this is
+/// bit-identical to [`encode_rope_neox_subdim`] for the same reason the
+/// interleaved dispatch is: both end in `apply_neox_pair`.
+///
+/// `section` is `rope_scaling.mrope_section` and must sum to `rotary_dim / 2`
+/// (16 + 24 + 24 = 64 at head_dim 128), which is checked here: a mismatched
+/// split leaves pairs on the w stream that the checkpoint assigned elsewhere.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_rope_mrope_chunked(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    data: (&metal::Buffer, u64),
+    positions: (u32, u32, u32),
+    num_heads: u32,
+    head_dim: u32,
+    rotary_dim: u32,
+    section: (u32, u32, u32),
+    theta: f32,
+) -> Result<(), GpuError> {
+    if rotary_dim % 2 != 0 {
+        return Err(GpuError::PipelineCreate(format!(
+            "rope_mrope_chunked rotary_dim {rotary_dim} must be even"
+        )));
+    }
+    if rotary_dim > head_dim {
+        return Err(GpuError::PipelineCreate(format!(
+            "rope_mrope_chunked rotary_dim {rotary_dim} cannot exceed head_dim {head_dim}"
+        )));
+    }
+    let (section_t, section_h, section_w) = section;
+    if section_t + section_h + section_w != rotary_dim / 2 {
+        return Err(GpuError::PipelineCreate(format!(
+            "rope_mrope_chunked sections {section_t}+{section_h}+{section_w} must sum to \
+             rotary_dim / 2 = {}",
+            rotary_dim / 2
+        )));
+    }
+    let pipeline = context.pipeline(
+        SOURCE,
+        "rope_mrope_chunked",
+        &unused_function_constants(),
+        b"",
+    )?;
+    let (pos_t, pos_h, pos_w) = positions;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(data.0, 0, data.1)],
+        &[
+            (u32_bytes(&pos_t), 1),
+            (u32_bytes(&head_dim), 2),
+            (u32_bytes(&num_heads), 3),
+            (f32_bytes(&theta), 4),
+            (u32_bytes(&rotary_dim), 5),
+            (u32_bytes(&pos_h), 6),
+            (u32_bytes(&pos_w), 7),
+            (u32_bytes(&section_t), 8),
+            (u32_bytes(&section_h), 9),
         ],
         ((rotary_dim / 2).max(1) as u64, num_heads.max(1) as u64, 1),
         (1, 1, 1),

@@ -111,7 +111,7 @@ public struct SkillsSettingsPaneView: View {
                         VStack(spacing: 12) {
                             Image(systemName: "wand.and.stars")
                                 .themedFont(.display)
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.appSecondary)
                                 .accessibilityHidden(true)
                             Text("Select a skill to inspect instructions and parameters.", bundle: .module)
                                 .themedFont(.base)
@@ -225,13 +225,13 @@ public struct SkillsSettingsPaneView: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Image(systemName: "wand.and.stars")
-                    .foregroundStyle(skill.isEnabled ? TurboSparkTheme.accentColor : Color.secondary)
+                    .foregroundStyle(skill.isEnabled ? AnyShapeStyle(.appAccent) : AnyShapeStyle(.appSecondary))
                     .themedFont(.small)
                     .accessibilityHidden(true)
 
                 Text(skill.name)
                     .themedFont(.base, weight: .semibold)
-                    .foregroundStyle(skill.isEnabled ? Color.primary : Color.secondary)
+                    .foregroundStyle(skill.isEnabled ? AnyShapeStyle(.appText) : AnyShapeStyle(.appSecondary))
 
                 Spacer()
 
@@ -254,7 +254,7 @@ public struct SkillsSettingsPaneView: View {
             HStack(spacing: 8) {
                 Label(skill.agentOrigin.displayName, systemImage: "cpu")
                     .themedFont(.tiny)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
 
                 // **NO "N tools" CHIP** (state#48). `allowed-tools` is parsed
                 // into `SkillManifest` and read by NOTHING:
@@ -299,8 +299,8 @@ public struct SkillsSettingsPaneView: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 2)
-        .background(Color.purple.opacity(0.15))
-        .foregroundStyle(Color.purple)
+        .background(.appAccent.opacity(0.15))
+        .foregroundStyle(.appAccent)
         .clipShape(Capsule())
         .help(Text("A project skill with this name takes precedence while that project is open.", bundle: .module))
     }

@@ -21,6 +21,8 @@ struct ProfileEncryptedBackupSheet: View {
     @State private var authenticationPassphrase = ""
     @State private var error: String?
 
+    @FocusState private var isFieldFocused: Bool
+
     private var isExport: Bool {
         if case .export = request { return true }
         return false
@@ -34,6 +36,7 @@ struct ProfileEncryptedBackupSheet: View {
                 TextField(text: $restoreName, prompt: Text("Profile name", bundle: .module)) {
                     Text("Profile name", bundle: .module)
                 }
+                .focused($isFieldFocused)
                 .textFieldStyle(.roundedBorder)
             }
             ProfileSheetParts.passphraseField(
@@ -52,7 +55,7 @@ struct ProfileEncryptedBackupSheet: View {
             if let error {
                 Text(error)
                     .themedFont(.small)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(AppAttention.color)
             }
             ProfileSheetParts.buttons(
                 confirm: isExport
@@ -64,6 +67,11 @@ struct ProfileEncryptedBackupSheet: View {
         }
         .padding(20)
         .frame(minWidth: 430, idealWidth: 430)
+        .onAppear {
+            if !isExport {
+                isFieldFocused = true
+            }
+        }
     }
 
     private var title: Text {
@@ -120,6 +128,8 @@ struct ProfileBackupImportSheet: View {
     let offer: AppModel.ProfileBackupImportOffer
     @State private var name: String
 
+    @FocusState private var isFieldFocused: Bool
+
     init(model: AppModel, offer: AppModel.ProfileBackupImportOffer) {
         self.model = model
         self.offer = offer
@@ -142,10 +152,14 @@ struct ProfileBackupImportSheet: View {
             TextField(text: $name, prompt: Text("Profile name", bundle: .module)) {
                 Text("Profile name", bundle: .module)
             }
+            .focused($isFieldFocused)
             .textFieldStyle(.roundedBorder)
             ProfileSheetParts.buttons(
                 confirm: Text("Import", bundle: .module),
                 disabled: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                help: name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? Text("A profile name is required to import.", bundle: .module)
+                    : Text("Import", bundle: .module),
                 cancel: { dismiss() },
                 action: {
                     if model.importProfileBackup(offer, named: name) {
@@ -155,6 +169,9 @@ struct ProfileBackupImportSheet: View {
         }
         .padding(20)
         .frame(minWidth: 380, idealWidth: 380)
+        .onAppear {
+            isFieldFocused = true
+        }
     }
 
     // Formatted to Strings first: the catalog key takes them as %@.

@@ -54,6 +54,12 @@ pub struct PrefillChunkSpan {
 /// Splits `token_count` tokens starting at `start_position` into spans of at
 /// most `chunk_tokens` tokens each, in order. Returns an empty plan for zero
 /// tokens. `chunk_tokens` is clamped to `[1, MAX_CHUNK_TOKENS]`.
+///
+/// # Panics
+///
+/// Panics if a span's `start_position + token_offset` overflows `usize`. Callers pass
+/// KV positions bounded by the context window, so this is a caller bug, and
+/// release builds (no overflow checks) would otherwise wrap it silently.
 pub fn prefill_chunk_spans(
     token_count: usize,
     start_position: usize,
@@ -72,7 +78,9 @@ pub fn prefill_chunk_spans(
         spans.push(PrefillChunkSpan {
             token_offset: offset,
             token_count: count,
-            start_position: start_position + offset,
+            start_position: start_position
+                .checked_add(offset)
+                .expect("prefill span start_position overflows usize"),
             completed_count: completed,
         });
         offset = completed;
@@ -112,6 +120,12 @@ impl PrefillChunkCommitState {
             token_count > 0,
             "prefill dirty token_count must be positive"
         );
+        // Checked here so in_flight_end_position cannot wrap: release builds
+        // run without overflow checks.
+        assert!(
+            start_position.checked_add(token_count).is_some(),
+            "prefill dirty range end overflows usize"
+        );
         self.is_dirty = true;
         self.in_flight_start_position = Some(start_position);
         self.in_flight_token_count = Some(token_count);
@@ -131,7 +145,8 @@ impl PrefillChunkCommitState {
 
     /// Errors with [`PrefillError::ChunkedRunnerDirty`] if a previous chunk
     /// was left uncommitted, naming `operation` and the in-flight range in
-    /// the message.
+    /// the message. `operation` is embedded unescaped, so pass a fixed
+    /// literal, never request or model-supplied text.
     pub fn require_clean(&self, operation: &str) -> Result<(), PrefillError> {
         if !self.is_dirty {
             return Ok(());
@@ -201,6 +216,23 @@ mod tests {
         let spans = prefill_chunk_spans(8, 0, 4);
         assert_eq!(spans.len(), 2);
         assert_eq!(spans[1].token_count, 4);
+    }
+
+    // Release builds run without overflow checks, so an unchecked add would
+    // silently wrap the second span's position to 0 instead of failing.
+    #[test]
+    #[should_panic(expected = "prefill span start_position overflows usize")]
+    fn spans_refuse_a_start_position_that_overflows() {
+        let _ = prefill_chunk_spans(2, usize::MAX, 1);
+    }
+
+    // mark_dirty must refuse a range whose end overflows; otherwise
+    // in_flight_end_position wraps silently in release builds.
+    #[test]
+    #[should_panic(expected = "prefill dirty range end overflows usize")]
+    fn mark_dirty_refuses_a_range_whose_end_overflows() {
+        let mut state = PrefillChunkCommitState::new();
+        state.mark_dirty(usize::MAX, 1);
     }
 
     #[test]

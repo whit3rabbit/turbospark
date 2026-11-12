@@ -384,6 +384,18 @@ impl LiveRegistry {
             .map(|entry| entry.model.model_id().to_string())
             .collect()
     }
+
+    /// The subset of [`Self::ids`] that serves `/v1/embeddings`, in
+    /// attachment order, so a host can show them apart from chat models.
+    pub(crate) fn embedding_ids(&self) -> Vec<String> {
+        self.models
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .filter(|entry| entry.model.supports_embeddings())
+            .map(|entry| entry.model.model_id().to_string())
+            .collect()
+    }
 }
 
 impl ModelRegistry for LiveRegistry {
@@ -711,6 +723,9 @@ mod tests {
             _ => panic!("the only embedding model should resolve by default name"),
         };
         assert_eq!(resolved.model.model_id(), embedding_id);
+        // `ids` lists both; `embedding_ids` only the one serving embeddings.
+        assert_eq!(registry.ids().len(), 2);
+        assert_eq!(registry.embedding_ids(), vec![embedding_id.clone()]);
         assert!(resolved.request_lease.is_some());
         assert!(!registry.detach(&embedding_id));
         assert!(registry.detach("live-chat"));

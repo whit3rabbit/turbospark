@@ -1,27 +1,35 @@
-# Syntext: Indexed Code Search and Project Indexing
+# Syntext: Indexed Code Search
 
-Syntext is a high-performance indexed code search engine and project indexer
-built in Rust with Swift bindings (v2.5.0). In TurboSparkApp, it provides
-sub-millisecond regex and literal code search (`grep_search`) across project
-workspaces, returning ripgrep-formatted output with line numbers and context lines.
+Syntext is an indexed code search engine and context engine built in Rust
+with Swift bindings. This page covers code indexing: indexed regex and literal
+search (`grep_search`) across a project workspace, returning ripgrep-formatted
+output with line numbers and context lines. It also owns the package pin and
+the link setup that both products share.
+
+The same library's context engine (`SyntextContext`) powers conversation
+recall, documented separately in [SYNTEXT_CONTEXT.md](SYNTEXT_CONTEXT.md). The
+two share a dependency and nothing else: recall never reads a code index, and
+code search never reads chat turns.
 
 All code, comments, and documentation must remain ASCII: no emojis and no em
 dashes (project rule).
 
 ## 1. Scope: Projects and User-Level Enablement
 
-Indexing is strictly scoped to **projects** and requires both gates:
-- Chats without an attached project workspace root directory do not run Syntext
-  indexing.
-- Projectless chats calling code search fall back to the existing filesystem
-  scanner (`searchCode`).
-- Indexing is controlled globally at the **user level** via `MacAppSettings.syntextIndexingEnabled`
-  (App Settings > General), and per project via `AppProject.syntextIndexEnabled`.
-  New and previously saved projects default to off. When either gate is off,
-  search falls back to unindexed scanning.
-- Selecting an opted-in project opens or builds its index in the background.
-  Selecting another project unloads the prior mmap-backed handle while keeping
-  its on-disk cache for fast reuse.
+Code indexing is scoped to **projects** and requires both gates:
+- Indexing is controlled globally at the **user level** via
+  `MacAppSettings.syntextIndexingEnabled` (App Settings > General, default on),
+  and per project via `AppProject.syntextIndexEnabled` (default off for new and
+  previously saved projects). When either gate is off, search uses the
+  unindexed scan (`searchCode`).
+- Search tools are workspace-rooted (`workspaceRootedToolNames`), so a chat
+  with no project is refused before dispatch and never reaches either path.
+- Selecting an opted-in project, or launching with one selected, opens or
+  builds its index in the background. Activations carry an ordered token, so
+  rapid switches cannot land out of order. Selecting another project releases
+  the prior mmap-backed handle while keeping its on-disk cache.
+- The search re-reads the project's opt-in at call time (as the MCP path
+  does), so turning it off during a turn holds for that turn's next search.
 
 ## 2. Architecture and Actors
 
@@ -30,184 +38,181 @@ Indexing is strictly scoped to **projects** and requires both gates:
 Each instance manages the on-disk index for a single project root.
 
 - **Index Directory**:
-  Default cache path: `~/Library/Caches/com.turbospark.app/syntext/<repoId>.syntext`,
-  where `repoId` is a sanitized base64 representation of the standardized root path.
-- **`ensureIndex()`**:
-  Attempts to open an existing on-disk index instantly using `SyntextIndex(indexDir:repoRoot:)`.
-  If no index exists (error code 2, `IndexNotFound`), it triggers an asynchronous
-  build on a utility task. Concurrent callers share one in-flight open/build;
-  project selection and the first search cannot start duplicate builds.
-- **`buildIndex()`**:
-  Releases the existing shared-lock handle before forcing a fresh on-disk build
-  off the main thread. Syntext builds in 256 MB batches and can peak around
-  1.5 GB, which is why builds are opt-in and single-flight.
-- **`deleteIndex()`**:
-  Cancels pending debounced commits, unloads in-memory handles, and removes the
-  on-disk `.syntext` cache directory.
-- **`grep(query:pathFilter:fileTypes:caseSensitive:literalSearch:wordMatch:contextLines:maxResults:)`**:
-  Configures `SyntextSearchOptions` and searches using `index.grepAsync(...)`.
-  If a `.git` repository is present at the root, it queries via `index.searchFreshAsync(...)`
-  to automatically pick up uncommitted git working-tree changes.
-  Output is formatted in standard ripgrep format (`path:line:content` and `-` for context lines).
-- **`fileDidChange(at:)` and Debounced Commit**:
-  Buffers file modifications through `index.notifyChange(...)` and sets a 1.5-second
-  quiet timer before committing batch changes (`index.commitBatch()`). Rapid edits
-  reset the timer so disk writes happen only when the workspace is quiet.
-- **`syncQuietly()`**:
-  Commits pending in-app edit notifications. It does not run a second git
-  freshness pass at the end of every generation turn.
+  `~/Library/Caches/TurboSpark/syntext/<digest>.syntext`, where `<digest>` is
+  the first 32 hex characters of SHA-256 over the standardized, symlink-resolved
+  root path. A fixed-length name: the earlier base64-of-path name passed
+  APFS's 255-byte limit for long roots (every build failed) and decoded back
+  to the project path. The legacy `com.turbospark.app/syntext` folder is
+  removed on first use. Tests get `AppStorageRoot.machineRoot/Caches/syntext`.
+- **`ensureIndex()`**: opens an existing index, or builds one when the open
+  reports `IndexNotFound` (code 2), and waits. Background activation uses it.
+  Concurrent callers share one in-flight open/build.
+- **`grep(...)`**: never waits for a build. With no index on disk it starts
+  one in the background and throws `SyntextIndexNotReady`, and the registry
+  answers that call with the unindexed scan. A failed open or build is not
+  retried for 60 seconds.
+- **Builds**: one at a time across every project (`SyntextBuildQueue`). A
+  build can peak around 1.5 GB. Opens and builds retry a lock conflict up to
+  three times (`isRetryableLockConflict`), since the app spawns `git`.
+- **`buildIndex()`**: waits for any in-flight open of the same root, then
+  forces a fresh build.
+- **`deleteIndex()`**: cancels pending commits, waits for an in-flight build to
+  release its handles, and removes the on-disk directory.
 
 ### SyntextIndexManager
-`SyntextIndexManager` is a global shared actor (`SyntextIndexManager.shared`) that
-routes `SyntextCodeSearchTool` instances by repository root URL. It retains at
-most one active project tool and unloads the previous index handle on a project
-switch or when global indexing is disabled.
-It exposes:
-- `tool(for: rootURL) -> SyntextCodeSearchTool`
-- `isIndexed(for: rootURL) async -> Bool`
-- `buildIndex(for: rootURL) async throws -> SyntextStats`
-- `deleteIndex(for: rootURL) async throws`
-- `stats(for: rootURL) async throws -> SyntextStats`
-- `notifyChange(at: fileURL, rootURL: rootURL) async`
-- `syncQuietly(for: rootURL) async`
-- `ensureActiveProjectIndexed(for: rootURL) async`
-- `deactivateAll() async`
+`SyntextIndexManager.shared` routes tools by repository root. It keeps one
+instance per root for the life of the process. Only the **active** root keeps
+a resident handle. A root switched away from keeps its in-flight build and
+buffered changes, so switching back joins that build instead of starting a
+second one. `buildIndex(for:)` (Reindex) does not change which project is
+active. It exposes `tool(for:)` (activates), `activate(_:token:)`,
+`isIndexed`, `buildIndex`, `deleteIndex`, `stats`, `notifyChange`,
+`notifyDelete`, `syncQuietly`, `ensureActiveProjectIndexed`, and
+`deactivateAll`.
 
 ## 3. LLM Tool Schema and Execution
 
 ### Tool Definition
-The tool is defined in `Tools/File/FileSearchTools.swift` as `FileSearchToolDefinitions.grepSearch`:
-- **Tool name**: `grep_search`
-- **Parameters**:
-  - `query` (String, required): Search pattern (regular expression or literal string).
-  - `literal_search` (Bool, optional): Exact string search without regex metacharacters (`-F`).
-  - `path_filter` (String, optional): Glob filter (e.g. `*.swift`, `Sources/**`).
-  - `file_types` ([String], optional): File extension list (e.g. `["swift", "rs"]`).
-  - `case_sensitive` (Bool, optional): Case-sensitive matching (default `false`).
-  - `context_lines` (Int, optional): Lines of context before/after matches (default `2`).
-  - `max_results` (Int, optional): Maximum matches returned (default `50`).
+`FileSearchToolDefinitions.grepSearch` in `Tools/File/FileSearchTools.swift`:
+`grep_search` with `query`, `literal_search`, `path_filter`, `file_types`,
+`case_sensitive`, `context_lines` (default 2), and `max_results` (default 50).
 
-### Execution and Aliases
-In `Tools/Registry/AppToolRegistry.swift`, both the ordinary model-visible
-`Grep` tool and the explicit indexed-search tool are handled under:
-```swift
-case "search_code", "grep", "search", "grep_search":
-```
-- If global `AppToolRegistry.syntextIndexingEnabled` and the selected project's
-  `syntextIndexEnabled` are both true, execution dispatches to
-  `SyntextIndexManager.shared.tool(for: rootURL).grep(...)`.
-- If indexing is disabled, unavailable, or throws an error, execution transparently
-  falls back to standard unindexed file scanning (`searchCode`).
-- Tool names `grep_search`, `grep`, and `search_code` are registered in `supportedToolNames`
-  and `workspaceRootedToolNames` in `Tools/Registry/AppToolRegistry+Vocabulary.swift`.
-- The built-in `explore` subagent (`AgentManager+BuiltIns.swift`) and project-level
-  `explore.md` definitions designate `grep_search` as their primary code-discovery tool,
-  using Syntext indexed search by default rather than shelling out to grep/find via Bash.
+### Execution
+`AppToolRegistry.swift` handles `search_code`, `grep`, `search`, and
+`grep_search` in one case:
+- `max_results` is clamped to 1...500 and `context_lines` to 0...10 on both
+  paths, and indexed output goes through `compactOutput`.
+- `path` becomes a scope (`syntextPathScope`: a `dir/` prefix or a file). A
+  path that `resolveSecurePath` refuses is an error on both paths. It used to
+  become a whole-repository search. The scope is enforced in Swift even when
+  `path_filter` is also given (the library takes one filter).
+- Results pass `GrepPathPolicy` (`Tools/File/GrepPathPolicy.swift`) on both
+  paths: no hidden path components below the scope, no `.git`,
+  `node_modules`, `target`, or `.build`, and nothing
+  `ToolRiskClassifier.isSensitivePath` matches (`.env*`, `credentials`,
+  `*.pem`, `*.key`, `.npmrc`, `.netrc`). Syntext's own walker indexes hidden
+  files and `.git/`, and search is auto-allowed, so this filter is the only
+  thing standing between the model and those files.
+- `grep_search` is in the classifier's always-safe list, which means its path
+  arguments get the sensitive-path check (a sensitive `path` is high risk).
+- The built-in `explore` subagent designates `grep_search` as its primary
+  search tool.
 
-### Incremental Live Updates and Quiet Sync
-When agent tools modify workspace files (`write_file`, `edit_file`, `apply_patch`),
-`AppToolRegistry.execute` notifies the index:
-```swift
-Task { await SyntextIndexManager.shared.notifyChange(at: targetURL, rootURL: rootURL) }
-```
-When generation turns complete and the agent goes idle, `AppModel.generating.didSet`
-commits any pending notifications for the active opted-in project.
+### Freshness
 
-Git repositories use `searchFreshAsync` before an indexed search. Syntext performs
-one bounded `git status` detection (the default cap is 200 files / 150 ms), applies
-the delta in memory, then searches. This is not a full rebuild. TurboSparkApp does
-not install repository hooks or enable `core.fsmonitor` behind the user's back.
+Measured against syntext 2.7.0 (2026-10-16): an edit to a file the index
+already holds shows up in search without any notification, because syntext
+re-reads changed files at query time, and a deleted file drops out the same
+way. A file created after the build is invisible until a notification for it
+is committed.
 
-Plain directories and machines without a usable `git` binary remain supported.
-The initial walk builds the same index, TurboSparkApp tool writes stay fresh through
-`notifyChange` plus a debounced commit, and searches use the index normally. Changes
-made outside TurboSparkApp in a non-git directory require the explicit Reindex action;
-the app deliberately does not run a permanent filesystem polling loop.
+- Agent writes notify the index inline (awaited, not fire-and-forget):
+  `write_file`, `edit_file`, `multiedit`, `notebook_edit`, and `apply_patch`
+  (deletes call `notifyDelete`). A search commits pending notifications before
+  it runs, so a file written and then searched in the same batch is found.
+  Idle commits still debounce for 1.5 seconds.
+- **Overlay full.** Syntext refuses a commit once the overlay outgrows the
+  base index (code 9), and keeps refusing. The commit used to be `try?`, so
+  every file created after that point stayed invisible until a manual Reindex.
+  Now the handle is dropped and the index rebuilds in the background, and
+  searches use the unindexed scan until it lands.
+- Changes that arrive while no handle is loaded (a build in flight, an
+  inactive project with an index on disk) are buffered, up to 512 paths, and
+  replayed into the next handle. Past that, the next load rebuilds.
+- Git repositories (`<root>/.git` present) use `searchFreshAsync`: one bounded
+  `git status` detection (200 files / 150 ms by default) applied in memory.
+  When it cannot apply the delta (`budgetExceeded`, `tooManyFiles`,
+  `overlayFull`), the output says the results may be stale. A project root
+  nested inside a larger repository has no `.git` of its own and gets no git
+  detection.
+- In a non-git directory, a file created outside the app needs the explicit
+  Reindex action. The app runs no polling loop and installs no repository
+  hooks.
 
-## 4. UI: Settings & Project Index Management
+## 4. UI: Settings and Project Index Management
 
-- **App Settings > General ("Code Search & Project Indexing")**:
-  Provides a global user-level toggle for Syntext indexing. Toggling it off disables
-  indexing across all projects simultaneously.
-- **Project Settings Sheet ("Code Search Index (Syntext)")**:
-  - If indexing is disabled globally, displays an informational callout pointing
-    the user to Settings > General.
-  - Provides the per-project opt-in toggle. New and legacy projects default off.
-  - When enabled, displays live index stats (document count and disk footprint in megabytes).
-  - Offers **"Reindex"** (or **"Index Now"**) to rebuild the index on demand.
-  - Offers **"Remove Index"** to purge the `.syntext` cache directory from disk
-    and reset memory handles.
+- **App Settings > General ("Code Search & Project Indexing")**: the global
+  toggle.
+- **Project Settings Sheet ("Code Search Index (Syntext)")**: the per-project
+  opt-in, live stats, Reindex / Index Now, and Remove Index. Removing the
+  index while the project stays opted in rebuilds it at the next search.
 
 ## 5. Dual-Staticlib Symbol Isolation
 
 `TurboSparkApp` links two Rust static libraries:
 1. `libturbospark_ffi.a` (from `crates/ffi`)
-2. `libsyntext.a` / `SyntextFFI.xcframework` (from `Syntext`)
+2. `libsyntext.a` / `SyntextFFI.xcframework` (from syntext, which since 2.6.0
+   also carries the context engine's C ABI)
 
-Both static libraries are compiled by `rustc` with standard library support, and both
-export `_rust_eh_personality`. On macOS, linking multiple static libraries exporting
-the same global symbol causes Apple's linker (`ld64`) to fail with:
-```
-duplicate symbol '_rust_eh_personality' in libsyntext.a and libturbospark_ffi.a
-```
+Both export `_rust_eh_personality`, and ld64 fails on the duplicate. The app
+build sets `TURBOSPARK_LOCALIZE_RUST_SYMBOLS=1`, and `scripts/swift-lib.sh`
+then makes the symbol local in `libturbospark_ffi.a` with `nmedit -R`. Moving
+to 2.7.0, 2.7.1, and 2.7.2 added no new duplicate (checked with clean links,
+2026-10-16 and 2026-10-17). 2.7.0's blake3 C objects were built for macOS 14.5 against the
+app's 14.0 floor and drew ld warnings. From 2.7.1 every member targets macOS
+12 or lower, and syntext's build fails if one does not.
 
-### The Fix
-When staging the archive for `TurboSparkApp`, the app build sets
-`TURBOSPARK_LOCALIZE_RUST_SYMBOLS=1`; `scripts/swift-lib.sh` then runs:
-```bash
-if [ "${TURBOSPARK_LOCALIZE_RUST_SYMBOLS:-0}" = 1 ]; then
-  printf "_rust_eh_personality\n" > "$dest/.hide_symbols"
-  nmedit -R "$dest/.hide_symbols" "$dest/libturbospark_ffi.a"
-  rm -f "$dest/.hide_symbols"
-fi
-```
-`nmedit -R` changes `_rust_eh_personality` in `libturbospark_ffi.a` into a static (local)
-symbol. The symbol remains fully functional for exception handling within `turbospark_ffi`
-while eliminating the duplicate symbol collision during executable linking.
-
-## 6. Package Dependency and CI Configuration
+## 6. Package Dependency
 
 In `swift/TurboSparkApp/Package.swift`:
 ```swift
-dependencies: [
-    .package(path: "../TurboSpark"),
-    .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0"),
-    .package(url: "https://github.com/whit3rabbit/syntext", exact: "2.5.0")
-],
+.package(url: "https://github.com/whit3rabbit/syntext", exact: "2.7.2"),
 ```
+with products `Syntext` and `SyntextContext`. 2.7.2 resolves to
+`syntext-swift-2.7.2.xcframework.zip` (checksum `8bb9c662...d416`). It
+carries syntext's `write.lock` fix: the lock is now unlocked explicitly on
+drop. Before, a child process forked by another thread kept it held until its
+`exec`, and a committed change could silently become a full rebuild. The app
+is exposed to that: it runs the index in-process while spawning `git` and
+shell processes on other threads.
 
-### Why a Remote Release Dependency?
-- **CI Independence**: CI runners and contributors do not need a Rust toolchain to build
-  or test `Syntext`. SwiftPM downloads the official release zip (`syntext-swift-2.5.0.xcframework.zip`)
-  and verifies its SHA-256 checksum automatically.
-- **Build Speed**: Avoids compiling Syntext's Rust crates on every clean build.
+**Exact pins are safe from 2.7.1 on, and only from 2.7.1 on.** Through
+2.7.0, syntext's release built the xcframework from the tag push and pinned
+it on `main` afterwards (tagged `swift-vX.Y.Z`), so each `vX.Y.Z` tag pinned
+the PREVIOUS release's binary. `exact: "2.5.0"` linked the 2.4.0 xcframework,
+which silently ignored `fixedStrings`, `wordRegexp`, and context lines, and
+the app then pinned the `swift-v2.7.0` commit by revision. Since 2.7.1,
+syntext stages the zip and pins it before tagging, so each `vX.Y.Z` tag
+resolves to its own `syntext-swift-X.Y.Z.xcframework.zip`. For any release
+up to 2.7.0, pin its `swift-vX.Y.Z`
+commit by revision instead (syntext `docs/SWIFT.md`). To upgrade: change the
+version, `swift package resolve`, and confirm `.build/workspace-state.json`
+names the matching `syntext-swift-X.Y.Z.xcframework.zip`.
+
+CI and contributors need no Rust toolchain for syntext: SwiftPM downloads
+the release zip and verifies its checksum.
 
 ### Local Development Override
-To iterate on `syntext` locally without changing `Package.swift`:
 ```bash
 cd swift/TurboSparkApp
-swift package edit Syntext --path ../../../syntext
+swift package edit syntext --path ../../../syntext
 ```
-To revert back to the remote package:
+syntext's root `Package.swift` prefers `swift/build/SyntextFFI.xcframework`
+when it exists, so rebuild it (`swift/Scripts/build-xcframework.sh`) before
+editing against a local checkout. Revert with `swift package unedit syntext`.
+
+## 7. Conversation Recall
+
+Conversation recall (`SyntextContext`) has its own page:
+[SYNTEXT_CONTEXT.md](SYNTEXT_CONTEXT.md). It covers how recall works, how it
+differs from memory ([SWIFT_MEMORY.md](SWIFT_MEMORY.md)), where it is wired in,
+the plaintext store and its gates, and its limitations.
+
+## 8. Verification
+
+Code search, in `swift/TurboSparkApp/Tests/TurboSparkAppTests/`:
+- `SyntextCodeSearchToolTests.swift`: build and search, single-flight opens,
+  handle release on project switch, live modification, registry execution,
+  opt-out fallback, removal, and settings persistence.
+- `SyntextGrepSafetyTests.swift`: literal metacharacters, context lines,
+  sensitive/hidden/vendor exclusion on both paths, scope with `path_filter`,
+  escaping paths, result caps, a new file found right after its write, the
+  overlay-full rebuild, deletes, the
+  non-blocking first search, the fixed-length cache name, risk
+  classification, and that the registry answered from the index.
+
+Recall tests are listed in [SYNTEXT_CONTEXT.md](SYNTEXT_CONTEXT.md).
+
 ```bash
-cd swift/TurboSparkApp
-swift package unedit Syntext
-```
-
-## 7. Verification
-
-Unit tests are located in `swift/TurboSparkApp/Tests/TurboSparkAppTests/SyntextCodeSearchToolTests.swift`:
-- `testAppProjectSyntextIndexEnabledCoding`: Codable roundtrip and backward compatibility.
-- `testSyntextToolBuildAndSearch`: Index creation, document counts, and filtered grep searches.
-- `testConcurrentEnsureIndexUsesSingleBuild`: Concurrent first use starts one build, not one per caller.
-- `testManagerUnloadsInactiveProjectHandle`: Project switches release the previous mmap-backed handle.
-- `testSyntextToolFileModification`: Live file modification and incremental commit verification.
-- `testAppToolRegistryGrepSearchExecution`: End-to-end `grep_search` execution via `AppToolRegistry`.
-- `testGrepSearchFallsBackWithoutProjectOptIn`: An opted-out project searches without creating an index.
-- `testDeleteIndexRemovesDirectoryAndResetsState`: Removal clears both live and on-disk state.
-- `testMacAppSettingsSyntextIndexingEnabledPersistence`: Global settings persist and legacy values decode.
-
-Run tests with:
-```bash
-cd swift/TurboSparkApp && swift test --filter SyntextCodeSearchToolTests
+cd swift/TurboSparkApp && swift test --filter Syntext
 ```

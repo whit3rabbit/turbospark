@@ -157,7 +157,7 @@ mod tests {
     #[test]
     fn features_match_the_pinned_mlx_reference_fixture() {
         let samples: Vec<f32> = (0..1280)
-            .map(|i| ((i * 7 % 31) as i32 - 15) as f32 / 32.0)
+            .map(|i| ((i * 7 % 31) - 15) as f32 / 32.0)
             .collect();
         let golden: Vec<Vec<f32>> =
             serde_json::from_str(include_str!("../../../testdata/granite5_features.json"))
@@ -191,7 +191,7 @@ mod tests {
         assert!(filters
             .iter()
             .all(|value| value.is_finite() && *value >= 0.0));
-        assert!(filters.iter().any(|&value| value == 0.0));
+        assert!(filters.contains(&0.0));
         assert!(filters.iter().any(|&value| value > 0.0));
     }
 }

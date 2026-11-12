@@ -648,10 +648,13 @@ extension AppToolRegistry {
         static let maxBytesRead = 64 * 1024 * 1024
     }
 
-    /// A Syntext directory-prefix filter equivalent to `relPath`, or nil for
-    /// the project root (nothing to scope).
-    static func syntextPathScope(relPath: String, rootURL: URL) -> String? {
-        guard let target = try? resolveSecurePath(relPath: relPath, rootURL: rootURL) else { return nil }
+    /// The project-relative scope for `relPath`: a directory prefix ending in
+    /// `/`, a file path, or nil for the project root (nothing to scope).
+    /// Throws for a path `resolveSecurePath` refuses, exactly as the unindexed
+    /// scan does; a refused path used to become nil, which searched the
+    /// whole repository.
+    static func syntextPathScope(relPath: String, rootURL: URL) throws -> String? {
+        let target = try resolveSecurePath(relPath: relPath, rootURL: rootURL)
         let rootPath = rootURL.standardizedFileURL.resolvingSymlinksInPath().path
         let targetPath = target.standardizedFileURL.resolvingSymlinksInPath().path
         guard targetPath != rootPath, targetPath.hasPrefix(rootPath + "/") else { return nil }
@@ -721,6 +724,13 @@ extension AppToolRegistry {
                 continue
             }
             let relForFilter = path.hasPrefix(rootPrefix) ? String(path.dropFirst(rootPrefix.count)) : path
+            // Same credential rules as the indexed search (`GrepPathPolicy`):
+            // skipping hidden entries still left `server.pem`,
+            // `credentials` and `secrets.json` readable through search.
+            if ToolRiskClassifier.isSensitivePath(relForFilter)
+                || ToolRiskClassifier.isSensitivePath("/" + relForFilter) {
+                continue
+            }
             if !extensions.isEmpty, !extensions.contains(fileURL.pathExtension.lowercased()) { continue }
             if let globMatcher,
                globMatcher.firstMatch(

@@ -166,6 +166,7 @@ pub fn tiny_qwen4_exp_decode_arch_with_indexer_budget(
         swiglu_limit: 0.0,
         rope_scaling: model_io::RopeScalingConfig::NONE,
         vision: model_io::VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: PleConfig {
             ngram_size: 3,
             heads_per_ngram: 2,

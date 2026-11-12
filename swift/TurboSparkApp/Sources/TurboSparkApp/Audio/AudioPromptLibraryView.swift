@@ -10,7 +10,10 @@ struct AudioPromptLibraryView: View {
     @State private var editing: AudioPreset?
     @State private var deleting: AudioPreset?
 
+    @Environment(\.appTheme) private var theme
+
     var body: some View {
+        let scale = AppMetrics.textScale(theme)
         VStack(alignment: .leading, spacing: 18) {
             HStack {
                 Text("Prompt library", bundle: .module).themedFont(.title2, weight: .semibold)
@@ -29,8 +32,8 @@ struct AudioPromptLibraryView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     if controller.prompts(matching: search).isEmpty {
-                        Text("No saved prompts", bundle: .module)
-                            .foregroundStyle(.appSecondary).padding(.vertical, 24)
+                        AppEmptyState(systemImage: "books.vertical", title: Text("No saved prompts", bundle: .module),
+                                      message: Text("Choose a prompt, edit it, or write your own.", bundle: .module))
                     }
                     ForEach(controller.prompts(matching: search)) { prompt in
                         VStack(alignment: .leading, spacing: 10) {
@@ -55,8 +58,7 @@ struct AudioPromptLibraryView: View {
                                 .appAction(.secondary, size: .small)
                                 .disabled(controller.isBusy)
                         }
-                        .padding(14).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
+                        .appCardSurface(padding: 14)
                     }
                 }
             }
@@ -69,7 +71,10 @@ struct AudioPromptLibraryView: View {
                     .keyboardShortcut(.cancelAction)
             }
         }
-        .padding(24).frame(width: 600, height: 540).themedFont(.base).background(.appPage)
+        .padding(24)
+        .frame(minWidth: (520 * scale).rounded(), idealWidth: (600 * scale).rounded(), minHeight: (440 * scale).rounded(), idealHeight: (540 * scale).rounded())
+        .themedFont(.base)
+        .background(.appPage)
         .sheet(isPresented: $showingName) {
             AudioNameSheet(title: editing == nil ? "Save Prompt" : "Rename", value: $name) {
                 let saved = editing.map { controller.renamePrompt($0, name: name) } ?? controller.savePrompt(name: name)

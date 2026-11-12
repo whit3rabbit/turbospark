@@ -134,4 +134,14 @@ final class UIAuditFixesTests: XCTestCase {
         // keeps the launch language (ProcessLocalizationTests).
         XCTAssertEqual(AppStrings.bundle(for: .system), AppStrings.bundle(for: AppLanguage.systemResolved))
     }
+
+    /// Small and mini actions take a label font that fits their bezel;
+    /// inheriting the window's base font overflowed it. Regular and larger
+    /// keep inheriting, so header actions match the text beside them.
+    func testReducedControlSizesGetAFittingLabelFont() {
+        XCTAssertEqual(AppMetrics.labelFontStep(for: .mini), .tiny)
+        XCTAssertEqual(AppMetrics.labelFontStep(for: .small), .small)
+        XCTAssertNil(AppMetrics.labelFontStep(for: .regular))
+        XCTAssertNil(AppMetrics.labelFontStep(for: .large))
+    }
 }

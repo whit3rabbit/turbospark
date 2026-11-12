@@ -5,6 +5,9 @@ use crate::producer::{ChunkedPrefillRunner, LogitProducer, SpeculativeProducer};
 
 impl LogitProducer for RealForwardRunner {
     fn reset(&mut self) {
+        if let Some(hist) = &mut self.router_hist {
+            hist.reset_request();
+        }
         // PARK the live session rather than clobbering it, whenever there is
         // a pool to park it IN and something worth parking. This is the path
         // that actually fixes multi-conversation stomping
@@ -39,14 +42,31 @@ impl LogitProducer for RealForwardRunner {
         if self.prompt_vision.is_some() {
             self.kv_prefix.taint();
         }
+        self.wait_pending_gdn_fold();
         self.batched_tape = None;
         self.batched_tape_row0 = None;
+        // Zeroed state IS the committed boundary of an empty context.
+        self.gdn_state_clean = true;
+        self.unsnapshotted_checkpoint_alive = false;
+        self.unsnapshotted_checkpoint_tainted = false;
+        self.deferred_gdn_snapshot = None;
+        self.turn_snapshot = None;
         self.kv.reset();
         if let Some(qwen) = self.real_qwen.as_mut() {
             qwen.reset();
         }
         if let Some(qwen4) = self.real_qwen4.as_mut() {
             qwen4.reset();
+        }
+        if let Some(lfm3) = self.real_lfm3.as_mut() {
+            lfm3.reset();
+        }
+        // The router's block summaries are per-generation context, and an
+        // image row's key is not a function of its token id, so nothing this
+        // family produces is eligible for token-prefix reuse.
+        if let Some(uocr2) = self.real_unlimited_ocr2.as_mut() {
+            uocr2.reset();
+            self.kv_prefix.taint();
         }
         // The head keeps its OWN KV, so the trunk's reset leaves it holding
         // the previous generation's context -- the same shape of leak
@@ -93,11 +113,31 @@ impl LogitProducer for RealForwardRunner {
     ) -> Result<(), String> {
         // A per-token pass overwrites the scratch the tape's row inputs sit
         // in and advances the state they describe, so whatever a previous
-        // verify recorded describes nothing after it.
+        // verify recorded describes nothing after it. Under the LAZY tape a
+        // surviving record also means the state never got its commit: the
+        // eager path could silently discard the tape because the state was
+        // already advanced, but discarding a lazy tape would leave the state
+        // at the block start while the KV moves on -- fluent wrong output on
+        // every later token. Refuse by name instead.
+        self.refuse_uncommitted_lazy_tape()?;
+        // An eager advance: any outstanding snapshot-less round checkpoint
+        // gets its deferred snapshot, and the state is no longer a committed
+        // boundary a later round checkpoint could skip snapshotting.
+        self.note_eager_advance();
         self.batched_tape = None;
         self.batched_tape_row0 = None;
+        if let Some(hist) = &mut self.router_hist {
+            hist.begin_batch(
+                if self.skip_head { "prefill" } else { "decode" },
+                position,
+                1,
+            );
+        }
         let result = gpu::autorelease_pool(|| self.produce_inner(token, position, logits))
             .map_err(|e| e.to_string());
+        if let Some(hist) = &mut self.router_hist {
+            hist.end_batch(result.is_ok());
+        }
         // Recorded only on SUCCESS, and after the call: a failed forward may
         // have left the KV half-written, and a record naming a position the
         // pass did not complete is the one lie this whole mechanism exists to
@@ -169,6 +209,20 @@ impl LogitProducer for RealForwardRunner {
         // must still be unconsumed for this to be safe. A bigger lag (a
         // run that ended on plain steps, whose produce-captures cover one
         // row) refuses: the hole would draft over rows nobody wrote.
+        // A GDN model cannot rewind on its own, but a turn snapshot at or
+        // below the match can stand in for the state there
+        // (`crate::turn_snapshot`, off by default). Never after a swap: the
+        // swap dropped this session's point, and the incoming slot has none.
+        // The session-pool guard below still applies first, in its own terms.
+        if back > 0
+            && !swapped
+            && self.real_qwen.is_some()
+            && !(self.session_pool.capacity() > 0 && back > keep)
+        {
+            if let Some(at) = self.try_restore_turn_snapshot(keep) {
+                return at;
+            }
+        }
         if self.real_dflash.is_some() || self.real_mtp.is_some() {
             if back != 0 || swapped {
                 return 0;
@@ -250,6 +304,14 @@ impl LogitProducer for RealForwardRunner {
     fn session_slot_evicted(&self) -> bool {
         self.session_slot_evicted
     }
+
+    fn turn_snapshot_position(&self, prompt_ids: &[TokenId], reused: usize) -> Option<usize> {
+        self.turn_snapshot_cut(prompt_ids, reused)
+    }
+
+    fn take_turn_snapshot(&mut self, position: usize) {
+        self.take_turn_snapshot_at(position);
+    }
 }
 
 /// The MTP head as a drafter and the M-row pass as the verify
@@ -271,17 +333,34 @@ impl SpeculativeProducer for RealForwardRunner {
     // one is ever open in practice: the CLI refuses a request that names
     // both. If both somehow are, the BLOCK drafter wins here, which keeps
     // `drafts_block_passes` and the priming/rewind pair in one branch.
-    // The MTP head on the dense qwen flow only. DFlash2's context write reads
-    // per-layer aux captures the chunked driver does not encode, and an image
-    // prompt already keeps the speculative loop off (the verify is
-    // vision-blind). `TURBOSPARK_MTP_CHUNKED_PREFILL=0` keeps the
-    // token-at-a-time walk, for A/B runs and as a kill switch.
+    // Exactly one drafter open, on the dense qwen flow only: the MTP head
+    // primes per row, the DFlash2 drafter from the per-layer aux captures the
+    // driver encodes beside the trunk. An image prompt already keeps the
+    // speculative loop off (the verify is vision-blind).
+    // `TURBOSPARK_MTP_CHUNKED_PREFILL=0` / `TURBOSPARK_DFLASH_CHUNKED_PREFILL=0`
+    // keep the token-at-a-time walk, for A/B runs and as kill switches.
     fn supports_chunked_drafter_prefill(&self) -> bool {
-        std::env::var("TURBOSPARK_MTP_CHUNKED_PREFILL").as_deref() != Ok("0")
+        let mtp = std::env::var("TURBOSPARK_MTP_CHUNKED_PREFILL").as_deref() != Ok("0")
             && self.real_mtp.is_some()
-            && self.real_dflash.is_none()
+            && self.real_dflash.is_none();
+        let dflash = crate::families::qwen::dflash_chunked_prefill()
+            && self.real_dflash.is_some()
+            && self.real_mtp.is_none();
+        (mtp || dflash)
             && self.real_qwen.as_ref().is_some_and(|q| q.dense)
             && self.prompt_vision.is_none()
+    }
+
+    // The ANE prefill split engages only on micro-batches of 512 rows or
+    // more, and the default 128-token span would keep a DFlash2 prompt on
+    // Steel. Its width while the split is on and can take the drafter (no
+    // MTP head; `ane_prefill_steel_rows`), the default otherwise.
+    fn drafter_prefill_chunk(&self) -> usize {
+        #[cfg(feature = "ane-prefill")]
+        if let Some(width) = self.ane_prefill_drafter_chunk() {
+            return width;
+        }
+        foundation::DEFAULT_CHUNK_SIZE as usize
     }
 
     fn prefill_chunk_priming_drafter(
@@ -292,16 +371,28 @@ impl SpeculativeProducer for RealForwardRunner {
         next_token: Option<i32>,
     ) -> Result<(), String> {
         // As `prefill_chunk`: a chunk pass overwrites the scratch the verify
-        // tape lives in, and the KV it writes is a reusable prefix.
+        // tape lives in, advances the state eagerly, and the KV it writes is
+        // a reusable prefix.
+        self.refuse_uncommitted_lazy_tape()?;
+        self.note_eager_advance();
         self.batched_tape = None;
         self.batched_tape_row0 = None;
         let result = gpu::autorelease_pool(|| {
-            self.prefill_chunk_real_qwen_dense_priming_mtp(
-                tokens,
-                start_position,
-                logits,
-                next_token,
-            )
+            if self.real_dflash.is_some() {
+                self.prefill_chunk_real_qwen_dense_priming_dflash(
+                    tokens,
+                    start_position,
+                    logits,
+                    next_token.is_none(),
+                )
+            } else {
+                self.prefill_chunk_real_qwen_dense_priming_mtp(
+                    tokens,
+                    start_position,
+                    logits,
+                    next_token,
+                )
+            }
             .map_err(|e| e.to_string())
         });
         if result.is_ok() {
@@ -373,6 +464,47 @@ impl SpeculativeProducer for RealForwardRunner {
         Ok(())
     }
 
+    fn tree_nodes(&self) -> Option<usize> {
+        self.dflash_tree_nodes()
+    }
+
+    fn draft_tree(
+        &mut self,
+        anchor: i32,
+        base: usize,
+        nodes: usize,
+        tree: &mut Vec<crate::DflashTreeNode>,
+        tokens: &mut Vec<i32>,
+    ) -> Result<(), String> {
+        let (t, k) = gpu::autorelease_pool(|| {
+            self.dflash_draft_tree(anchor, base, nodes)
+                .map_err(|e| e.to_string())
+        })?;
+        *tree = t;
+        *tokens = k;
+        Ok(())
+    }
+
+    fn verify_tree(
+        &mut self,
+        feed: &[i32],
+        parent: &[i32],
+        base: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), String> {
+        gpu::autorelease_pool(|| {
+            self.dflash_verify_tree(feed, base, parent, logits)
+                .map_err(|e| e.to_string())
+        })
+    }
+
+    fn compact_tree(&mut self, base: usize, path: &[u32]) -> Result<(), String> {
+        gpu::autorelease_pool(|| {
+            self.dflash_tree_compact(base, path)
+                .map_err(|e| e.to_string())
+        })
+    }
+
     fn rewind_drafter(&mut self, position: usize) -> Result<(), String> {
         if self.real_dflash.is_some() {
             self.dflash_rewind_to(position).map_err(|e| e.to_string())
@@ -381,8 +513,11 @@ impl SpeculativeProducer for RealForwardRunner {
         }
     }
 
+    // The speculative loop's checkpoint is the ROUND checkpoint: it may skip
+    // the GDN snapshot (see `RealForwardRunner::checkpoint_round`). The
+    // inherent `checkpoint` stays always-snapshotting for every other caller.
     fn checkpoint(&mut self) -> RollbackPoint {
-        RealForwardRunner::checkpoint(self)
+        RealForwardRunner::checkpoint_round(self)
     }
 
     fn rollback(&mut self, point: &RollbackPoint) {
@@ -433,6 +568,14 @@ impl SpeculativeProducer for RealForwardRunner {
         self.kv_prefix.record(tokens, pos0);
     }
 
+    fn commit_pending(&mut self, keep_rows: usize) -> Result<(), String> {
+        RealForwardRunner::commit_pending(self, keep_rows)
+    }
+
+    fn discard_pending(&mut self) {
+        RealForwardRunner::discard_pending(self);
+    }
+
     fn supports_headless_prefill(&self) -> bool {
         // DFlash2 only: its aux taps are raw layer outputs, which the
         // head-skip early return never touches. The MTP head reads the
@@ -459,7 +602,10 @@ impl ChunkedPrefillRunner for RealForwardRunner {
         logits: &mut [LogitValue],
     ) -> Result<(), String> {
         // Same invalidation as `produce`: a chunk pass overwrites the
-        // scratch the tape lives in.
+        // scratch the tape lives in, advances the state eagerly, and settles
+        // any outstanding snapshot-less round checkpoint.
+        self.refuse_uncommitted_lazy_tape()?;
+        self.note_eager_advance();
         self.batched_tape = None;
         self.batched_tape_row0 = None;
         let result = self.prefill_chunk_inner(tokens, start_position, logits);
@@ -542,6 +688,23 @@ impl RealForwardRunner {
         &mut self,
         mut incoming: crate::session_pool::SessionSlot,
     ) -> crate::session_pool::SessionSlot {
+        // The tape describes THIS session's last verify; after the swap its
+        // rows belong to a conversation that is being parked. Never fold a
+        // pending tape across a swap (the updates would land in the incoming
+        // session's state), and do not carry the record either -- the same
+        // bookkeeping rule every trunk pass's clear site follows. Production
+        // never gets here with a pending tape (the speculative loop commits
+        // at every round end); this is the same defensive clear the eager
+        // mode has always done.
+        self.batched_tape = None;
+        self.batched_tape_row0 = None;
+        self.gdn_state_clean = true;
+        self.unsnapshotted_checkpoint_alive = false;
+        self.unsnapshotted_checkpoint_tainted = false;
+        self.deferred_gdn_snapshot = None;
+        // The point describes the outgoing conversation's state, and the
+        // incoming one carries none: v1 does not park snapshots.
+        self.turn_snapshot = None;
         let kv = std::mem::replace(&mut self.kv, incoming.kv);
         let gdn = self.real_qwen.as_mut().and_then(|qwen| {
             incoming
@@ -623,11 +786,32 @@ impl RealForwardRunner {
             })
             .map_err(|e| e.to_string());
         }
+        if self.real_lfm3.is_some() {
+            // INT4 installs only; the driver refuses any other by name.
+            return gpu::autorelease_pool(|| {
+                self.prefill_chunk_real_lfm3(tokens, start_position, logits)
+            })
+            .map_err(|e| e.to_string());
+        }
+        if self.real_unlimited_ocr2.is_some() {
+            return Err(
+                "unlimited_ocr2 does not support chunked prefill; the sequential path serves it"
+                    .to_string(),
+            );
+        }
         if self.real_deepseek2.is_some() {
             return Err(
                 "deepseek2 does not support chunked prefill; the sequential path serves it"
                     .to_string(),
             );
+        }
+        if self.real_flint.is_some() {
+            // Always a chunk driver; the layer-batched one is the default and
+            // `TURBOSPARK_FLINT_CHUNKED_PREFILL=0` restores the per-token loop.
+            return gpu::autorelease_pool(|| {
+                self.prefill_chunk_real_flint(tokens, start_position, logits)
+            })
+            .map_err(|e| e.to_string());
         }
         Err(format!(
             "chunked prefill is wired for the real Gemma 4 flow, both halves of the \

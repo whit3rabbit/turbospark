@@ -49,6 +49,9 @@ struct HfMirrorEndpointRowView: View {
                 } label: { Text("Save Mirror", bundle: .module) }
                 .appAction(.secondary, size: .small)
                 .disabled(mirrorEndpointInput.trimmingCharacters(in: .whitespacesAndNewlines) == savedMirrorEndpoint)
+                .help(mirrorEndpointInput.trimmingCharacters(in: .whitespacesAndNewlines) == savedMirrorEndpoint
+                    ? Text("The mirror endpoint is unchanged.", bundle: .module)
+                    : Text("Save Mirror", bundle: .module))
                 .appPointerCursor()
             }
             Text("Useful for regions with restricted Hugging Face access, e.g. https://hf-mirror.com", bundle: .module)

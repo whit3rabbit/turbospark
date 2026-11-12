@@ -8,6 +8,50 @@ use model_io::ArchConfig;
 use crate::real_forward_types::RealForwardError;
 use model_io::ExpertCacheSlots;
 
+/// Upper bounds on the manifest dimensions that size buffers at open.
+///
+/// `DecodeScratch`, `AttentionScratch` and the KV cache are allocated from
+/// these BEFORE any tensor is bound and checked against its bytes on disk, so
+/// a manifest's numbers alone decide those allocations. Each bound sits far
+/// past every family this port runs (largest shipped baselines: hidden 6656,
+/// FFN 19968, 64 heads, head dim 512, vocab 262144, 64 layers, 512 experts)
+/// and past the largest public checkpoints (hidden 18432, FFN 73728, 128
+/// heads), so only a hand-made manifest reaches them. With every factor
+/// bounded, the scratch products stay far inside u64 and a few GiB at most.
+const ARCH_DIM_CEILINGS: [(&str, i64); 13] = [
+    ("hidden_size", 1 << 16),
+    ("intermediate_size", 1 << 18),
+    ("moe_intermediate_size", 1 << 18),
+    ("dense_lead_intermediate_size", 1 << 18),
+    ("num_heads", 1 << 10),
+    ("num_kv_heads", 1 << 10),
+    ("num_full_kv_heads", 1 << 10),
+    ("head_dim", 1 << 10),
+    ("full_head_dim", 1 << 10),
+    ("vocab_size", 1 << 22),
+    ("num_layers", 1 << 10),
+    ("num_experts", 1 << 14),
+    ("top_k_experts", 1 << 14),
+];
+
+fn arch_dims(a: &ArchConfig) -> [i64; 13] {
+    [
+        a.hidden_size,
+        a.intermediate_size,
+        a.moe_intermediate_size,
+        a.dense_lead_intermediate_size,
+        a.num_heads,
+        a.num_kv_heads,
+        a.num_full_kv_heads,
+        a.head_dim,
+        a.full_head_dim,
+        a.vocab_size,
+        a.num_layers,
+        a.num_experts,
+        a.top_k_experts,
+    ]
+}
+
 pub(crate) fn validate_arch_config(expecting: &ArchConfig) -> Result<(), RealForwardError> {
     for (name, value) in [
         ("num_kv_heads", expecting.num_kv_heads),
@@ -18,6 +62,20 @@ pub(crate) fn validate_arch_config(expecting: &ArchConfig) -> Result<(), RealFor
         if value <= 0 {
             return Err(RealForwardError::Unsupported(format!(
                 "{name} must be positive, got {value}"
+            )));
+        }
+    }
+    for ((name, ceiling), value) in ARCH_DIM_CEILINGS.iter().zip(arch_dims(expecting)) {
+        if value < 0 {
+            return Err(RealForwardError::Unsupported(format!(
+                "manifest {name} is negative ({value})"
+            )));
+        }
+        if value > *ceiling {
+            return Err(RealForwardError::Unsupported(format!(
+                "manifest {name} {value} is past {ceiling}; no supported checkpoint has a \
+                 dimension that large, so the install is refused before buffers are sized \
+                 from it"
             )));
         }
     }
@@ -38,28 +96,39 @@ pub(crate) fn validate_arch_config(expecting: &ArchConfig) -> Result<(), RealFor
             expecting.full_head_dim
         )));
     }
-    let max_kind = expecting
-        .full_attention_layer_mask
-        .iter()
-        .copied()
-        .max()
-        .unwrap_or(0);
+    let mask = &expecting.full_attention_layer_mask;
+    let max_kind = mask.iter().copied().max().unwrap_or(0);
+    // Each kind is checked by membership rather than by the maximum, because
+    // mask 6 (`lfm3`'s short convolution) sits above the MLA code and a
+    // max-based test would read it as one of the compressed kinds.
+    //
     // Mask 5 is multi-head latent attention (`deepseek2`), whose compressed
     // cache and absorbed kernels live in `families/deepseek2/`; masks 3 and
     // 4 remain the DeepSeek V4 compressed-attention kinds nothing runs yet.
     // Gated BY FAMILY rather than by kind alone so a future family declaring
     // mask 5 without an MLA flow is refused here instead of reaching for a
-    // neighbour's kernel.
-    if max_kind == 5 && expecting.family != model_io::ModelFamily::Deepseek2 {
+    // neighbour's kernel. Mask 6 is gated the same way.
+    if mask.contains(&5) && expecting.family != model_io::ModelFamily::Deepseek2 {
         return Err(RealForwardError::Unsupported(format!(
             "MLA (mask 5) layers need the deepseek2 family, not {}",
             expecting.family.as_str()
         )));
     }
-    if max_kind > 2 && max_kind != 5 {
+    if mask.contains(&6) && expecting.family != model_io::ModelFamily::Lfm3 {
+        return Err(RealForwardError::Unsupported(format!(
+            "short-conv (mask 6) layers need the lfm3 family, not {}",
+            expecting.family.as_str()
+        )));
+    }
+    if mask.iter().any(|&k| k == 3 || k == 4) {
         return Err(RealForwardError::Unsupported(
             "compressed (DeepSeek CSA/HCA) attention layers are not supported yet".to_string(),
         ));
+    }
+    if max_kind > 6 {
+        return Err(RealForwardError::Unsupported(format!(
+            "layer mask kind {max_kind} is not a kind this port knows"
+        )));
     }
     // A mask-2 layer is gated DeltaNet, and the three families whose flow can
     // encode one are the two `families/qwen/` serves (`qwen36` and, ROADMAP's
@@ -143,6 +212,8 @@ pub(crate) type ExpertStreamersResult = (
     // Metal buffers FIRST so they drop before the mappings they alias, the
     // same declaration-order contract `slot_buffers` has against `streamers`.
     MappedResidency,
+    // What became of the wiring request.
+    ExpertSlotWiringOutcome,
 );
 
 /// The routed experts read in place out of an `mmap` rather than `pread`-copied
@@ -174,6 +245,71 @@ pub(crate) fn mapped_residency_requested() -> bool {
     std::env::var("TURBOSPARK_EXPERT_RESIDENCY")
         .map(|v| v.eq_ignore_ascii_case("mapped"))
         .unwrap_or(false)
+}
+
+/// The process-wide wiring request (`model_io::ExpertSlotWiring`), set by a
+/// front end before it opens. Process-wide rather than an open argument
+/// because the one front end that exposes it (the app, through `crates/ffi`)
+/// applies one setting to every session it loads, and threading it through
+/// every `RealForwardRunner::open_*` would touch each caller for no
+/// difference in behavior. 0 = auto, 1 = on, 2 = off.
+static EXPERT_SLOT_WIRING: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Sets the wiring request for later opens in this process.
+pub fn set_expert_slot_wiring(mode: model_io::ExpertSlotWiring) {
+    let v = match mode {
+        model_io::ExpertSlotWiring::Auto => 0,
+        model_io::ExpertSlotWiring::On => 1,
+        model_io::ExpertSlotWiring::Off => 2,
+    };
+    EXPERT_SLOT_WIRING.store(v, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The wiring request an open uses: `TURBOSPARK_EXPERT_SLOTS_WIRED` (`1` on,
+/// `0` off, read once) wins over [`set_expert_slot_wiring`], so a measuring
+/// arm is never overridden by a front end's setting.
+pub fn effective_expert_slot_wiring() -> model_io::ExpertSlotWiring {
+    static ENV: std::sync::OnceLock<Option<model_io::ExpertSlotWiring>> =
+        std::sync::OnceLock::new();
+    let env =
+        *ENV.get_or_init(
+            || match std::env::var("TURBOSPARK_EXPERT_SLOTS_WIRED").as_deref() {
+                Ok("1") => Some(model_io::ExpertSlotWiring::On),
+                Ok("0") => Some(model_io::ExpertSlotWiring::Off),
+                _ => None,
+            },
+        );
+    env.unwrap_or(
+        match EXPERT_SLOT_WIRING.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => model_io::ExpertSlotWiring::On,
+            2 => model_io::ExpertSlotWiring::Off,
+            _ => model_io::ExpertSlotWiring::Auto,
+        },
+    )
+}
+
+/// What became of one open's wiring request, for the runner to report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpertSlotWiringOutcome {
+    /// The request as [`effective_expert_slot_wiring`] read it.
+    pub requested: model_io::ExpertSlotWiring,
+    /// Whether the slot cache is wired.
+    pub active: bool,
+    /// Bytes wired; 0 when inactive.
+    pub wired_bytes: u64,
+    /// Why it is not active, `None` when it is.
+    pub reason: Option<String>,
+}
+
+impl ExpertSlotWiringOutcome {
+    fn inactive(requested: model_io::ExpertSlotWiring, reason: impl Into<String>) -> Self {
+        Self {
+            requested,
+            active: false,
+            wired_bytes: 0,
+            reason: Some(reason.into()),
+        }
+    }
 }
 
 /// Resolves the residency REQUEST (flag or default) to the mode this open
@@ -232,22 +368,119 @@ pub fn resolve_expert_residency_for_install(
     let resident_bytes = std::fs::metadata(dir.join("model_weights.bin"))
         .map(|m| m.len())
         .unwrap_or(0);
-    let bytes_per_slot = model_io::load_packed_experts_layout(
+    let (bytes_per_slot, table_bytes) = model_io::load_packed_experts_layout(
         dir,
         model_io::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
     )
-    .map(|layout| layout.layers.iter().map(|layer| layer.expert_stride).sum())
-    .unwrap_or(0);
-    Ok(resolve_expert_residency(
+    .map(|layout| expert_table_bytes(&layout))
+    .unwrap_or((0, 0));
+    let resolved = resolve_expert_residency(
         requested,
         physical_bytes,
         resident_bytes,
         bytes_per_slot,
         mapped_residency_supported(family),
+    );
+    guard_mapped_residency(
+        mapped_explicitly(requested),
+        resolved,
+        mapped_working_set(resolved),
+        resident_bytes,
+        table_bytes,
+    )
+}
+
+/// One slot's bytes across every layer, and the whole expert table's.
+fn expert_table_bytes(layout: &model_io::PackedExpertsLayout) -> (u64, u64) {
+    let per_slot = layout.layers.iter().map(|l| l.expert_stride).sum::<u64>();
+    (
+        per_slot,
+        per_slot.saturating_mul(layout.experts_per_layer as u64),
+    )
+}
+
+/// One token's routing must fit the slot cache outright, or
+/// `streaming::ExpertCache::plan` aborts the process on the first routed
+/// layer instead of failing the open. The router selects at most
+/// `experts_per_layer` distinct experts and the open caps slots there, so
+/// the demand is `min(top_k, experts_per_layer)`. `Auto` never resolves
+/// below 16 and every streamed family caps top_k at 16 or less, so only an
+/// explicit smaller slot count reaches this (qwen4 has its own copy).
+fn check_routing_fits_slots(
+    slots: usize,
+    top_k: i64,
+    experts_per_layer: usize,
+) -> Result<(), RealForwardError> {
+    let needed = usize::try_from(top_k.max(0))
+        .unwrap_or(usize::MAX)
+        .min(experts_per_layer);
+    if slots < needed {
+        return Err(RealForwardError::Unsupported(format!(
+            "this install routes {needed} experts per token, which does not fit a {slots}-slot \
+             cache; raise --expert-cache-slots to at least {needed}"
+        )));
+    }
+    Ok(())
+}
+
+/// Whether mapped residency was asked for by name (the flag or the
+/// `TURBOSPARK_EXPERT_RESIDENCY=mapped` seam) rather than picked by `Auto`.
+fn mapped_explicitly(requested: model_io::ExpertResidency) -> bool {
+    match requested {
+        model_io::ExpertResidency::Mapped => true,
+        model_io::ExpertResidency::Auto => mapped_residency_requested(),
+        model_io::ExpertResidency::Streamed => false,
+    }
+}
+
+/// Metal's recommended working set, asked only when mapped residency is on
+/// the table. Zero when there is no device, which the guard reads as unknown.
+#[cfg(target_os = "macos")]
+fn mapped_working_set(resolved: model_io::ResolvedExpertResidency) -> u64 {
+    if resolved != model_io::ResolvedExpertResidency::Mapped {
+        return 0;
+    }
+    gpu::recommended_max_working_set().map_or(0, |(bytes, _)| bytes)
+}
+
+/// Mapped residency only where its mappings fit what the GPU keeps wired
+/// (`model_io::mapped_residency_fits`; `docs/EXPERT_RESIDENCY.md` has the
+/// measurement). Past that, mapped asked for by name is refused with the
+/// reason, and `Auto` resolves down to the streamer, as it does everywhere.
+pub(crate) fn guard_mapped_residency(
+    explicit: bool,
+    resolved: model_io::ResolvedExpertResidency,
+    working_set_bytes: u64,
+    resident_bytes: u64,
+    table_bytes: u64,
+) -> Result<model_io::ResolvedExpertResidency, String> {
+    use model_io::ResolvedExpertResidency;
+    if resolved != ResolvedExpertResidency::Mapped
+        || model_io::mapped_residency_fits(working_set_bytes, resident_bytes, table_bytes)
+    {
+        return Ok(resolved);
+    }
+    if !explicit {
+        return Ok(ResolvedExpertResidency::Streamed);
+    }
+    let gib = |b: u64| b as f64 / (1u64 << 30) as f64;
+    Err(format!(
+        "mapped expert residency refused: the GPU wires the whole {:.2} GiB expert table and \
+         the {:.2} GiB resident weights, and with {:.0} GiB kept for the rest of the process \
+         and the machine that exceeds Metal's {:.2} GiB recommended working set. Past it the \
+         driver unwires layers and every routed pass re-reads a whole layer (measured 70 to \
+         180 times slower, docs/EXPERT_RESIDENCY.md). Use streamed residency",
+        gib(table_bytes),
+        gib(resident_bytes),
+        gib(model_io::MAPPED_WIRED_RESERVE_BYTES),
+        gib(working_set_bytes)
     ))
 }
 
-fn mapped_residency_supported(family: model_io::ModelFamily) -> bool {
+/// Whether `family` has a mapped expert dispatch arm. Public so a host can
+/// offer mapped residency only where an open would take it; the refusal
+/// below names the same families.
+pub fn mapped_residency_supported(family: model_io::ModelFamily) -> bool {
     matches!(
         family,
         model_io::ModelFamily::Gemma4
@@ -274,9 +507,7 @@ fn mapped_residency_supported(family: model_io::ModelFamily) -> bool {
 /// testable without an env var, a GPU or an install -- and so WIDENING it is
 /// one edit here plus the family's own dispatch arm, with the test that names
 /// every unwired family reddening until both are done.
-pub(crate) fn mapped_residency_refusal(
-    family: model_io::ModelFamily,
-) -> Result<(), RealForwardError> {
+pub fn mapped_residency_refusal(family: model_io::ModelFamily) -> Result<(), RealForwardError> {
     if matches!(
         family,
         model_io::ModelFamily::Gemma4
@@ -288,8 +519,9 @@ pub(crate) fn mapped_residency_refusal(
         return Ok(());
     }
     Err(RealForwardError::Unsupported(format!(
-        "TURBOSPARK_EXPERT_RESIDENCY=mapped is not wired for {}; \
-         unset it to use the pread expert streamer. Widening it is ROADMAP item 9, and \
+        "mapped expert residency is not wired for {}; ask for streamed or auto \
+         (--expert-residency, the expertResidency open option, or \
+         TURBOSPARK_EXPERT_RESIDENCY) to use the pread expert streamer. Widening it is ROADMAP item 9, and \
          each family REPLACES this refusal rather than adding a branch to a silent path",
         family.as_str()
     )))
@@ -304,6 +536,34 @@ pub(crate) fn open_expert_streamers(
     max_bytes: u64,
     context: &mut gpu::MetalContext,
 ) -> Result<ExpertStreamersResult, RealForwardError> {
+    open_expert_streamers_with(
+        dir,
+        expecting,
+        expert_cache_slots,
+        residency,
+        resident_bytes,
+        max_bytes,
+        context,
+        None,
+    )
+}
+
+const GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+
+/// [`open_expert_streamers`]; `force_unwired` carries the outcome of a failed
+/// `Auto` lock into the second, unwired open.
+#[allow(clippy::too_many_arguments)]
+fn open_expert_streamers_with(
+    dir: &Path,
+    expecting: &ArchConfig,
+    expert_cache_slots: ExpertCacheSlots,
+    residency: model_io::ExpertResidency,
+    resident_bytes: u64,
+    max_bytes: u64,
+    context: &mut gpu::MetalContext,
+    force_unwired: Option<ExpertSlotWiringOutcome>,
+) -> Result<ExpertStreamersResult, RealForwardError> {
+    let requested_slots = expert_cache_slots;
     let layout =
         model_io::load_packed_experts_layout(dir, max_bytes).map_err(RealForwardError::Model)?;
     let num_layers = expecting.num_layers as usize;
@@ -313,7 +573,7 @@ pub(crate) fn open_expert_streamers(
             layout.experts_per_layer, expecting.num_experts
         )));
     }
-    let bytes_per_slot = layout.layers.iter().map(|l| l.expert_stride).sum::<u64>();
+    let (bytes_per_slot, table_bytes) = expert_table_bytes(&layout);
     let resolved_residency = resolve_expert_residency(
         residency,
         gpu::physical_memory(),
@@ -321,6 +581,16 @@ pub(crate) fn open_expert_streamers(
         bytes_per_slot,
         mapped_residency_supported(expecting.family),
     );
+    // The admission resolver above runs this same guard on the same inputs,
+    // so admission and the open cannot disagree about the mode.
+    let resolved_residency = guard_mapped_residency(
+        mapped_explicitly(residency),
+        resolved_residency,
+        mapped_working_set(resolved_residency),
+        resident_bytes,
+        table_bytes,
+    )
+    .map_err(RealForwardError::Unsupported)?;
 
     // THE SLOT CACHE IS SIZED `slots x layers x expert_stride`, AND THAT
     // PRODUCT IS A PROPERTY OF THE MODEL'S EXPERT GRANULARITY, NOT OF ITS
@@ -416,6 +686,10 @@ pub(crate) fn open_expert_streamers(
             resolved,
             resolved_residency,
             mapped,
+            ExpertSlotWiringOutcome::inactive(
+                effective_expert_slot_wiring(),
+                "mapped residency has no slot cache",
+            ),
         ));
     }
 
@@ -426,9 +700,69 @@ pub(crate) fn open_expert_streamers(
     // ROADMAP Phase S's candidate has a layer 29 at 1.6x its siblings and
     // the model-wide maximum over-states the cost by 35% there.
     let bytes_per_slot = layout.layers.iter().map(|l| l.expert_stride).sum::<u64>();
-    let expert_cache_slots = expert_cache_slots
-        .resolve(gpu::physical_memory(), resident_bytes, bytes_per_slot)
-        .min(experts_per_layer);
+    let requested_wiring = force_unwired
+        .as_ref()
+        .map(|o| o.requested)
+        .unwrap_or_else(effective_expert_slot_wiring);
+    let resolve = |wired: bool| {
+        expert_cache_slots
+            .resolve_wired(
+                gpu::physical_memory(),
+                resident_bytes,
+                bytes_per_slot,
+                wired,
+            )
+            .min(experts_per_layer)
+    };
+    // Detection before allocation: a wired cache the OS limit cannot hold is
+    // never allocated at the wired budget. Only `Auto` degrades; `On` goes on
+    // to `mlock` and is refused there, so a measuring arm cannot run unwired.
+    let mut wiring = match &force_unwired {
+        Some(outcome) => outcome.clone(),
+        None if layout.num_layers == 0 => {
+            ExpertSlotWiringOutcome::inactive(requested_wiring, "no streamed experts")
+        }
+        None if !requested_wiring.wants_wired(expecting.family) => {
+            ExpertSlotWiringOutcome::inactive(
+                requested_wiring,
+                match requested_wiring {
+                    model_io::ExpertSlotWiring::Off => "off",
+                    _ => "not measured to pay on this family",
+                },
+            )
+        }
+        None => {
+            let wanted = bytes_per_slot.saturating_mul(resolve(true) as u64);
+            match streaming::wire_limit_bytes() {
+                Some(limit)
+                    if wanted > limit && requested_wiring == model_io::ExpertSlotWiring::Auto =>
+                {
+                    ExpertSlotWiringOutcome::inactive(
+                        requested_wiring,
+                        format!(
+                            "wired cache {:.1} GiB exceeds the wire limit {:.1} GiB",
+                            wanted as f64 / GIB,
+                            limit as f64 / GIB
+                        ),
+                    )
+                }
+                _ => ExpertSlotWiringOutcome {
+                    requested: requested_wiring,
+                    active: true,
+                    wired_bytes: 0,
+                    reason: None,
+                },
+            }
+        }
+    };
+    let expert_cache_slots = resolve(wiring.active);
+    if layout.num_layers > 0 {
+        check_routing_fits_slots(
+            expert_cache_slots,
+            expecting.top_k_experts,
+            experts_per_layer,
+        )?;
+    }
     let working_set = bytes_per_slot * expert_cache_slots as u64;
     let mut streamers: Vec<Option<streaming::PreadExpertStreamer>> = Vec::new();
     // Read once per open, like the other streamer seams: every layer's
@@ -481,6 +815,43 @@ pub(crate) fn open_expert_streamers(
         None
     };
 
+    if wiring.active {
+        // Before the no-copy wrap, so every pass reads pages the kernel cannot
+        // compress (docs/QWEN4_EXP.md, "Why larger expert caches lose").
+        let mut wired = 0u64;
+        for streamer in streamers.iter_mut().flatten() {
+            match streamer.wire_slots() {
+                Ok(bytes) => wired += bytes,
+                Err(e) if wiring.requested == model_io::ExpertSlotWiring::Auto => {
+                    // Drop the larger cache (unwiring it) and open again at
+                    // the unwired budget: an unwired cache above that budget
+                    // is the configuration that measured slower.
+                    let reason = format!("mlock failed after {:.1} GiB: {e}", wired as f64 / GIB);
+                    drop(streamers);
+                    return open_expert_streamers_with(
+                        dir,
+                        expecting,
+                        requested_slots,
+                        residency,
+                        resident_bytes,
+                        max_bytes,
+                        context,
+                        Some(ExpertSlotWiringOutcome::inactive(wiring.requested, reason)),
+                    );
+                }
+                Err(e) => {
+                    return Err(RealForwardError::Unsupported(format!(
+                        "expert slot wiring is on: {e} after {:.1} GiB (check `ulimit -l` and \
+                         `sysctl vm.user_wire_limit`, lower the slot count, or set wiring to auto)",
+                        wired as f64 / GIB
+                    )));
+                }
+            }
+        }
+        wiring.wired_bytes = wired;
+        foundation::engaged!("expert_slots_wired");
+    }
+
     let mut slot_buffers: Vec<Vec<gpu::MetalBuffer>> = Vec::with_capacity(streamers.len());
     for streamer in &streamers {
         match streamer {
@@ -506,12 +877,17 @@ pub(crate) fn open_expert_streamers(
         expert_cache_slots,
         resolved_residency,
         MappedResidency::default(),
+        wiring,
     ))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{mapped_residency_refusal, resolve_expert_residency, validate_arch_config};
+    use super::{
+        arch_dims, check_routing_fits_slots, guard_mapped_residency, mapped_residency_refusal,
+        mapped_residency_supported, resolve_expert_residency, validate_arch_config,
+        ARCH_DIM_CEILINGS,
+    };
     use model_io::ModelFamily;
 
     /// EVERY family is listed, not a sample, so adding a `ModelFamily`
@@ -535,11 +911,68 @@ mod tests {
         ModelFamily::MiniMaxM2,
         ModelFamily::Qwen2Dense,
         ModelFamily::Qwen3Vl,
+        // Refused deliberately: no mapped arm in the flint dispatch's
+        // mapped residency yet (it is wired, untested, in `moe.rs`).
+        ModelFamily::Flint,
         // Refused deliberately: mapped residency over the compressed MLA
         // cache has no mapped arm in the deepseek2 dispatch, and the family
         // opens fine on the streamed path.
         ModelFamily::Deepseek2,
+        // Refused deliberately: DENSE, no routed experts to map.
+        ModelFamily::Lfm3,
+        // Admitted by the flow's mapped arm, but no gate has run it yet.
+        ModelFamily::UnlimitedOcr2,
     ];
+
+    /// A manifest dimension past its ceiling is refused at open,
+    /// before `DecodeScratch` or the KV cache is sized from it, and every
+    /// shipped baseline stays inside the ceilings.
+    #[test]
+    fn manifest_dims_past_the_ceiling_are_refused_and_baselines_pass() {
+        let baselines = [
+            model_io::deepseek_v2_lite_16b(),
+            model_io::deepseek_vl2_tiny(),
+            model_io::minimax_m2(),
+            model_io::gemma4_26b_a4b(),
+            model_io::gemma4_12b_dense(),
+            model_io::unlimited_ocr2_12l(),
+            model_io::muse_glimmer_30b(),
+            model_io::deepseek_v4_flash_284b_a13b(),
+            model_io::flint_40b_a2_5b(),
+            model_io::gpt_oss_20b(),
+            model_io::mixtral_8x7b(),
+            model_io::spark_x25_4b(),
+            model_io::qwen_gdn_dense_27b(),
+            model_io::qwen_gdn_moe_35b_a3b(),
+            model_io::qwen3_30b_a3b(),
+            model_io::qwen3_4b(),
+            model_io::qwen2_5_7b(),
+            model_io::qwen4_exp_125b_a6b(),
+            model_io::qwen3_vl_4b(),
+            model_io::lfm3_1_7b(),
+        ];
+        for arch in &baselines {
+            for ((name, ceiling), value) in ARCH_DIM_CEILINGS.iter().zip(arch_dims(arch)) {
+                assert!(
+                    (0..=*ceiling).contains(&value),
+                    "{} {name} {value} is past its ceiling {ceiling}",
+                    arch.family.as_str()
+                );
+            }
+        }
+
+        let mut arch = model_io::gemma4_26b_a4b();
+        arch.vocab_size = 1 << 40;
+        let error = validate_arch_config(&arch).expect_err("a 2^40 vocabulary");
+        assert!(error.to_string().contains("vocab_size"), "{error}");
+        let mut arch = model_io::gemma4_26b_a4b();
+        arch.num_heads = 1 << 20;
+        let error = validate_arch_config(&arch).expect_err("a million heads");
+        assert!(error.to_string().contains("num_heads"), "{error}");
+        let mut arch = model_io::gemma4_26b_a4b();
+        arch.hidden_size = -1;
+        assert!(validate_arch_config(&arch).is_err(), "a negative width");
+    }
 
     fn assert_invalid_kv_dimension(name: &str, value: i64, mutate: fn(&mut model_io::ArchConfig)) {
         let mut arch = model_io::gemma4_26b_a4b();
@@ -583,6 +1016,14 @@ mod tests {
              site, or leave it refused deliberately"
         );
         for &family in EVERY_FAMILY {
+            // The public predicate hosts gate on must name the same families
+            // the open refuses, or a host offers mapped where it then fails.
+            assert_eq!(
+                mapped_residency_supported(family),
+                mapped_residency_refusal(family).is_ok(),
+                "{}",
+                family.as_str()
+            );
             match mapped_residency_refusal(family) {
                 Ok(()) => assert!(
                     matches!(
@@ -651,5 +1092,58 @@ mod tests {
             ),
             model_io::ResolvedExpertResidency::Streamed
         );
+    }
+
+    /// Fish Audio Drama 3's trunk (resident, expert table) against the
+    /// 36 GiB M4 Max's 28.08 GiB working set: decoded 180 times slower mapped.
+    const DRAMA3: (u64, u64) = (2_558_993_664, 18_124_701_696);
+    const WORKING_SET: u64 = 30_150_000_000;
+
+    #[test]
+    fn mapped_residency_past_the_wired_budget_is_refused_by_name_or_resolved_down() {
+        use model_io::ResolvedExpertResidency::{Mapped, Streamed};
+        let (resident, table) = DRAMA3;
+        let err = guard_mapped_residency(true, Mapped, WORKING_SET, resident, table)
+            .expect_err("asked for by name, a table past the budget is refused");
+        assert!(
+            err.contains("16.88 GiB expert table")
+                && err.contains("EXPERT_RESIDENCY.md")
+                && err.contains("streamed"),
+            "{err}"
+        );
+        assert_eq!(
+            guard_mapped_residency(false, Mapped, WORKING_SET, resident, table),
+            Ok(Streamed),
+            "Auto resolves down to the streamer"
+        );
+        assert_eq!(
+            guard_mapped_residency(true, Streamed, WORKING_SET, resident, table),
+            Ok(Streamed),
+            "a streamed open is never touched"
+        );
+        // A table that fits, and the same table with no working set known.
+        assert_eq!(
+            guard_mapped_residency(true, Mapped, WORKING_SET, resident, table / 2),
+            Ok(Mapped)
+        );
+        assert!(guard_mapped_residency(true, Mapped, 0, resident, table / 2).is_err());
+    }
+
+    /// A slot count below one token's routing makes `ExpertCache::plan`
+    /// abort on the first routed layer, so the open must refuse it instead.
+    #[test]
+    fn slot_cache_smaller_than_one_tokens_routing_is_refused_at_open() {
+        // `--expert-cache-slots 8` (the smallest allowed value) against a
+        // checkpoint routing 16 of 128 experts.
+        let err = check_routing_fits_slots(8, 16, 128).expect_err("8 slots cannot hold top-16");
+        assert!(err.to_string().contains("--expert-cache-slots"), "{err}");
+        // Exactly top_k fits, and the real Gemma 4 install (top-8 of 128)
+        // at the smallest allowed slot count still opens.
+        assert!(check_routing_fits_slots(16, 16, 128).is_ok());
+        assert!(check_routing_fits_slots(8, 8, 128).is_ok());
+        // The router never selects more than `experts_per_layer` distinct
+        // experts, and the open caps slots there too, so a top_k past the
+        // expert count is not refused by this check.
+        assert!(check_routing_fits_slots(4, 8, 4).is_ok());
     }
 }

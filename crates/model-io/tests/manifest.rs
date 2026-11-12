@@ -5,7 +5,8 @@
 use std::io::Write;
 
 use turbospark_model_io::{
-    load_manifest, peek_family, LinearAttentionConfig, ModelError, ModelFamily,
+    load_manifest, peek_family, LinearAttentionConfig, ManifestProducer, ModelError, ModelFamily,
+    MANIFEST_VERSION_MAJOR, MANIFEST_VERSION_MINOR,
 };
 
 fn toy_arch() -> turbospark_model_io::ArchConfig {
@@ -51,6 +52,7 @@ fn toy_arch() -> turbospark_model_io::ArchConfig {
         swiglu_limit: 0.0,
         rope_scaling: turbospark_model_io::RopeScalingConfig::NONE,
         vision: turbospark_model_io::VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: turbospark_model_io::PleConfig::NONE,
     }
 }
@@ -219,11 +221,115 @@ fn hadamard_signs_are_unique_bounded_architecture_ranges() {
 
 #[test]
 fn load_succeeds_for_a_matching_toy_manifest() {
+    // The toy manifest is 1.0, the version every install written before the
+    // index trailer carries, so this is also the legacy-acceptance case.
     let dir = tempfile_dir();
     write_manifest(dir.path(), &toy_manifest_json());
     let manifest = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap();
     assert_eq!(manifest.magic, "GTURBO");
+    assert_eq!(manifest.version_minor, 0);
     assert_eq!(manifest.num_layers, 2);
+}
+
+/// `producer` is optional provenance: a 1.0 install written before the
+/// field existed loads with `None`, and a manifest carrying it reads the
+/// block back verbatim, including an absent `gitRev`.
+#[test]
+fn the_producer_block_is_optional_and_round_trips() {
+    let dir = tempfile_dir();
+    write_manifest(dir.path(), &toy_manifest_json());
+    let manifest = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap();
+    assert_eq!(
+        manifest.producer, None,
+        "an install without the block loads"
+    );
+
+    let producer = serde_json::json!({
+        "tool": "turbospark-repack",
+        "version": "0.7.1",
+        "gitRev": "e278ad96",
+    });
+    let json = toy_manifest_json().replace(
+        "\"expertStride\": 4096",
+        &format!("\"expertStride\": 4096, \"producer\": {producer}"),
+    );
+    write_manifest(dir.path(), &json);
+    let manifest = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap();
+    let got = manifest.producer.expect("the block is read");
+    assert_eq!(
+        got,
+        ManifestProducer {
+            tool: "turbospark-repack".into(),
+            version: "0.7.1".into(),
+            git_rev: Some("e278ad96".into()),
+        }
+    );
+    assert_eq!(serde_json::to_value(&got).unwrap(), producer);
+
+    // Without `gitRev` the field is `None` and is not written back as null.
+    let json = toy_manifest_json().replace(
+        "\"expertStride\": 4096",
+        "\"expertStride\": 4096, \"producer\": {\"tool\": \"other\", \"version\": \"1\"}",
+    );
+    write_manifest(dir.path(), &json);
+    let got = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024)
+        .unwrap()
+        .producer
+        .unwrap();
+    assert_eq!(got.git_rev, None);
+    assert_eq!(
+        serde_json::to_value(&got).unwrap(),
+        serde_json::json!({"tool": "other", "version": "1"})
+    );
+}
+
+#[test]
+fn the_current_minor_version_loads() {
+    let dir = tempfile_dir();
+    let json = toy_manifest_json().replace(
+        "\"versionMinor\": 0",
+        &format!("\"versionMinor\": {MANIFEST_VERSION_MINOR}"),
+    );
+    assert_ne!(json, toy_manifest_json(), "the replace did not apply");
+    write_manifest(dir.path(), &json);
+    let manifest = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap();
+    assert_eq!(manifest.version_minor, MANIFEST_VERSION_MINOR);
+}
+
+#[test]
+fn a_newer_minor_version_is_refused_by_name() {
+    let dir = tempfile_dir();
+    let newer = MANIFEST_VERSION_MINOR + 1;
+    let json =
+        toy_manifest_json().replace("\"versionMinor\": 0", &format!("\"versionMinor\": {newer}"));
+    assert_ne!(json, toy_manifest_json(), "the replace did not apply");
+    write_manifest(dir.path(), &json);
+    let err = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap_err();
+    assert_eq!(
+        err,
+        ModelError::UnsupportedVersion {
+            major: MANIFEST_VERSION_MAJOR,
+            minor: newer,
+        }
+    );
+    assert!(
+        err.to_string().contains(&format!(
+            "this build reads 1.0 through 1.{MANIFEST_VERSION_MINOR}"
+        )),
+        "{err}"
+    );
+}
+
+#[test]
+fn a_different_major_version_is_refused() {
+    let dir = tempfile_dir();
+    let json = toy_manifest_json().replace("\"versionMajor\": 1", "\"versionMajor\": 2");
+    assert_ne!(json, toy_manifest_json(), "the replace did not apply");
+    write_manifest(dir.path(), &json);
+    assert_eq!(
+        load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap_err(),
+        ModelError::UnsupportedVersion { major: 2, minor: 0 }
+    );
 }
 
 #[test]
@@ -291,6 +397,42 @@ fn load_rejects_a_layer_mask_shorter_than_num_layers_even_when_expected_matches(
         }
         other => panic!("expected ArchMismatch, got {other:?}"),
     }
+}
+
+/// An unknown `visionTower` spelling is refused by name. The reader maps it
+/// to the default tower, so this check is the only thing between a manifest
+/// from a newer writer and a tower this build would run with the wrong code.
+#[test]
+fn load_rejects_an_unknown_vision_tower() {
+    let dir = tempfile_dir();
+    let json = toy_manifest_json().replace(
+        "\"fullAttentionLayerMask\": [1, 1]",
+        "\"fullAttentionLayerMask\": [1, 1], \"visionTower\": \"gemma5\"",
+    );
+    assert!(json.contains("gemma5"), "the replacement must apply");
+    write_manifest(dir.path(), &json);
+    let err = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap_err();
+    match err {
+        ModelError::ArchMismatch { field, .. } => assert_eq!(field, "visionTower"),
+        other => panic!("expected ArchMismatch, got {other:?}"),
+    }
+}
+
+/// A Gemma tower in the manifest does not validate against an expected qwen
+/// tower, and does validate against an expected Gemma one.
+#[test]
+fn the_vision_tower_kind_must_match_the_expected_arch() {
+    let dir = tempfile_dir();
+    let json = toy_manifest_json().replace(
+        "\"fullAttentionLayerMask\": [1, 1]",
+        "\"fullAttentionLayerMask\": [1, 1], \"visionTower\": \"gemma4\"",
+    );
+    write_manifest(dir.path(), &json);
+    let err = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap_err();
+    assert!(matches!(err, ModelError::ArchMismatch { ref field, .. } if field == "visionTower"));
+    let mut arch = toy_arch();
+    arch.vision.tower = turbospark_model_io::VisionTowerKind::Gemma4;
+    load_manifest(dir.path(), &arch, 4 * 1024 * 1024).expect("a matching tower kind loads");
 }
 
 #[test]
@@ -460,6 +602,43 @@ fn the_cross_products_of_the_two_bit_shape_are_refused() {
         assert!(
             detail.contains("unsupported quantization"),
             "{what} was accepted: {detail}"
+        );
+    }
+}
+
+/// `mlx-community/flint-mixed-3-4bit`'s widths: an 8-bit embedding, 4-bit
+/// attention and shared expert, the INT8 router the writer forces, and 3-bit
+/// routed experts, all BF16 at group 64.
+const FLINT_MIXED_BITS: [i64; 5] = [8, 4, 8, 4, 3];
+
+#[test]
+fn three_bit_routed_experts_are_accepted() {
+    let dir = tempfile_dir();
+    write_manifest(
+        dir.path(),
+        &manifest_with_quant(FLINT_MIXED_BITS, "bf16", 64),
+    );
+    let manifest = load_manifest(dir.path(), &toy_arch(), 4 * 1024 * 1024).unwrap();
+    let quant = manifest.quant.expect("the quant block decoded");
+    assert_eq!(quant.routed_expert.weight_bits, 3);
+}
+
+/// 3-bit has a routed kernel pair and nothing else: no resident GEMV, no
+/// embedding lookup. So it is refused on every other slot, and each case
+/// must be refused AT that slot, not at an earlier one.
+#[test]
+fn three_bits_anywhere_but_the_routed_slot_is_refused() {
+    let cases = [
+        ([3, 4, 8, 4, 3], "embedding"),
+        ([8, 3, 8, 4, 3], "attention"),
+        ([8, 4, 3, 4, 3], "router"),
+        ([8, 4, 8, 3, 3], "sharedExpert"),
+    ];
+    for (bits, slot) in cases {
+        let detail = quant_error(bits, "bf16", 64);
+        assert!(
+            detail.contains(&format!("unsupported quantization for {slot}")),
+            "3-bit {slot}: {detail}"
         );
     }
 }

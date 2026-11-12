@@ -2,7 +2,9 @@
 
 use std::io::Write;
 
-use turbospark_model_io::{load_packed_experts_layout, ModelError};
+use turbospark_model_io::{
+    load_packed_experts_layout, load_packed_layout_from, ModelError, PACKED_VISION_DIR,
+};
 
 fn write_layout(dir: &std::path::Path, json: &str) {
     let sub = dir.join("packed_experts");
@@ -151,6 +153,58 @@ fn bias_layout_requires_aligned_companion_bytes_matching_its_shape() {
         let err = load_packed_experts_layout(&dir, 1024).unwrap_err();
         assert!(err.to_string().contains(expected), "{err}");
     }
+}
+
+/// The vision tower's blocks are not routed experts: LFM3-VL alternates conv
+/// and attention blocks with different role sets. The SAME layout that the
+/// expert loader refuses loads from `packed_vision/`, while its blob sizes
+/// are still held equal.
+#[test]
+fn vision_blocks_may_differ_in_role_set_but_not_in_blob_size() {
+    let differing = valid_layout_json().replacen(
+        r#""offset": 4096,
+                        "size": 4096,
+                        "tensors": {
+                            "gate": {"offset": 0"#,
+        r#""offset": 4096,
+                        "size": 4096,
+                        "tensors": {
+                            "gate": {"offset": 4"#,
+        1,
+    );
+    assert_ne!(
+        differing,
+        valid_layout_json(),
+        "fixture mutation must apply"
+    );
+    let write_at = |dir: &std::path::Path, sub: &str, json: &str| {
+        let sub = dir.join(sub);
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("layout.json"), json).unwrap();
+    };
+    let dir = tempdir();
+    write_at(&dir, PACKED_VISION_DIR, &differing);
+    let layout = load_packed_layout_from(&dir, PACKED_VISION_DIR, 1024 * 1024).unwrap();
+    assert_eq!(layout.layers[0].experts.len(), 2);
+    // The same JSON under the expert directory is still refused.
+    let dir = tempdir();
+    write_at(&dir, "packed_experts", &differing);
+    assert!(load_packed_experts_layout(&dir, 1024 * 1024).is_err());
+    // Unequal blob sizes stay refused for the vision directory too.
+    let ragged = valid_layout_json().replacen(
+        r#""offset": 4096,
+                        "size": 4096,"#,
+        r#""offset": 4096,
+                        "size": 2048,"#,
+        1,
+    );
+    assert_ne!(ragged, valid_layout_json(), "fixture mutation must apply");
+    let dir = tempdir();
+    write_at(&dir, PACKED_VISION_DIR, &ragged);
+    let err = load_packed_layout_from(&dir, PACKED_VISION_DIR, 1024 * 1024).unwrap_err();
+    // Refused by the stricter per-blob check (each must equal the layer
+    // stride) before the equal-size comparison is reached.
+    assert!(err.to_string().contains("declares size 2048"), "{err}");
 }
 
 #[test]
@@ -402,6 +456,94 @@ fn load_rejects_a_duplicate_expert_id() {
         panic!("expected IndexCorrupt, got {err:?}");
     };
     assert!(detail.contains("more than once"), "{detail}");
+}
+
+/// `file` is joined onto the layout's directory and then opened as expert
+/// weights. `Path::join` replaces the base on an absolute path and `..` walks
+/// out of it, so a checkpoint could otherwise name any file the user can read.
+/// Each spelling below gets past a naive "no slash" or "no .." check on its
+/// own, which is why the whole table runs, through both subdirectories.
+#[test]
+fn load_rejects_a_layer_file_that_is_not_a_plain_basename() {
+    for subdir in ["packed_experts", PACKED_VISION_DIR] {
+        for file in [
+            "/etc/passwd",
+            "../model_weights.bin",
+            "../../outside.bin",
+            "nested/layer_00.bin",
+            "./layer_00.bin",
+            "layer_00.bin/",
+            "layer_00.bin/.",
+            "..",
+            ".",
+            "",
+        ] {
+            let dir = tempdir();
+            let sub = dir.join(subdir);
+            std::fs::create_dir_all(&sub).unwrap();
+            let json = serde_json::json!({
+                "expertStride": 4096,
+                "numLayers": 1,
+                "expertsPerLayer": 1,
+                "layers": [{"layer": 0, "file": file, "experts": [
+                    {"expert": 0, "offset": 0, "size": 4096, "tensors": {}}
+                ]}],
+            });
+            std::fs::write(sub.join("layout.json"), json.to_string()).unwrap();
+            let err = load_packed_layout_from(&dir, subdir, 64 * 1024 * 1024)
+                .expect_err(&format!("{subdir}: file {file:?} must be refused"));
+            let ModelError::IndexCorrupt { detail } = err else {
+                panic!("expected IndexCorrupt for {file:?}, got {err:?}");
+            };
+            assert!(detail.contains("plain file name"), "{file:?}: {detail}");
+        }
+    }
+}
+
+/// Every name a writer in this repo emits, and every name found in the real
+/// installs on the development machine, must keep loading.
+#[test]
+fn load_accepts_the_basenames_the_writers_emit() {
+    for file in ["layer_00.bin", "layer_100.bin", "blobs.bin"] {
+        let dir = tempdir();
+        let json = serde_json::json!({
+            "expertStride": 4096,
+            "numLayers": 1,
+            "expertsPerLayer": 1,
+            "layers": [{"layer": 0, "file": file, "experts": [
+                {"expert": 0, "offset": 0, "size": 4096, "tensors": {}}
+            ]}],
+        });
+        write_layout(&dir, &json.to_string());
+        let layout = load_packed_experts_layout(&dir, 64 * 1024 * 1024).unwrap();
+        assert_eq!(layout.layers[0].file, file);
+    }
+}
+
+/// `expertsPerLayer` sizes a per-layer slot vector before any entry is read.
+/// A crafted value with a one-byte stride passes the file-size overflow check,
+/// so without a bound tied to the entries actually present the allocation
+/// panics (capacity overflow) or aborts the process instead of refusing.
+#[test]
+fn load_rejects_experts_per_layer_beyond_the_entries_present() {
+    let dir = tempdir();
+    let json = r#"{
+        "expertStride": 1,
+        "numLayers": 1,
+        "expertsPerLayer": 18446744073709551615,
+        "layers": [
+            {
+                "layer": 0,
+                "file": "layer_00.bin",
+                "experts": [
+                    {"expert": 0, "offset": 0, "size": 1, "tensors": {}}
+                ]
+            }
+        ]
+    }"#;
+    write_layout(&dir, json);
+    let err = load_packed_experts_layout(&dir, 64 * 1024 * 1024).unwrap_err();
+    assert!(matches!(err, ModelError::IndexCorrupt { .. }), "{err:?}");
 }
 
 #[test]

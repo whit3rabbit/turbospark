@@ -31,7 +31,8 @@ use tokenizer::MfTokenizer;
 
 use crate::session::{Engine, Session, SessionCore};
 use crate::wire::{
-    expert_residency, kv_bits, load_guard, sized, OpenOptions, SessionInfo, SpeculationInfo,
+    expert_residency, expert_slots_wiring, kv_bits, load_guard, sized, OpenOptions, SessionInfo,
+    SpeculationInfo,
 };
 
 /// Maps the wire spelling of a power profile.
@@ -74,6 +75,23 @@ fn speculation(value: &Option<serde_json::Value>) -> Result<runtime::Speculation
         }
         Some(serde_json::Value::String(s)) if s.eq_ignore_ascii_case("off") => {
             Ok(runtime::Speculation::Off)
+        }
+        // Experimental and step-drafter only; the same spellings the CLI
+        // takes. The cap bounds are read from `foundation` like the block's.
+        Some(serde_json::Value::String(s)) if s.eq_ignore_ascii_case("adaptive") => Ok(
+            runtime::Speculation::Adaptive(foundation::runtime_config::DEFAULT_ADAPTIVE_CAP),
+        ),
+        Some(serde_json::Value::String(s))
+            if s.len() > "adaptive:".len() && s[..9].eq_ignore_ascii_case("adaptive:") =>
+        {
+            let min = foundation::runtime_config::MIN_ADAPTIVE_CAP;
+            match s["adaptive:".len()..].parse::<u32>() {
+                Ok(n) if allowed.contains(&n) && n >= min => Ok(runtime::Speculation::Adaptive(n)),
+                _ => Err(format!(
+                    "speculation \"adaptive:N\" needs N in {min}..={}, got {s:?}",
+                    allowed.end()
+                )),
+            }
         }
         Some(serde_json::Value::String(s)) => match s.parse::<u64>() {
             Ok(n) => block(n),
@@ -165,6 +183,15 @@ fn steering_gate(gate: Option<f64>) -> Result<f32, String> {
     }
 }
 
+/// Maps the wire spelling of `anePrefill`: `auto`, `split`, `off`, `break`.
+pub(crate) fn ane_prefill_mode(value: Option<&str>) -> Result<runtime::AnePrefillMode, String> {
+    match value {
+        None | Some("auto") => Ok(runtime::AnePrefillMode::Auto),
+        Some(s) => runtime::AnePrefillMode::parse(s)
+            .ok_or_else(|| format!("anePrefill must be auto, split, off or break, got {s:?}")),
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum OpenFailure {
     ContextRefused(runtime::ContextRefused),
@@ -230,6 +257,7 @@ pub(crate) fn open_with_failure(
     // allowed set is the thing that goes stale.
     let expert_cache_slots = crate::wire::expert_cache_slots(&options.expert_cache_slots)?;
     let requested_expert_residency = expert_residency(&options.expert_residency)?;
+    let requested_wiring = expert_slots_wiring(&options.expert_slots_wiring)?;
     // Mapped here with the rest, BEFORE anything is read from disk, so a
     // misspelled tier outranks a bad path in the error -- the rule this file
     // already follows, and what lets the SwiftPM target reach these spellings
@@ -261,6 +289,7 @@ pub(crate) fn open_with_failure(
         .map(power_profile)
         .transpose()?;
     let kv_quant = kv_bits(&options.kv_bits)?;
+    let requested_ane_mode = ane_prefill_mode(options.ane_prefill.as_deref())?;
 
     if options.steering.is_none()
         && (requested_steering_mode.is_some()
@@ -311,11 +340,15 @@ pub(crate) fn open_with_failure(
         requested_expert_residency,
         runtime::physical_memory(),
     )?;
-    let committed = model_io::committed_breakdown_with_residency(
+    // Set before the sizing below and the open, so both see the same
+    // request (the environment override included).
+    runtime::set_expert_slot_wiring(requested_wiring);
+    let committed = model_io::committed_breakdown_with_wiring(
         dir,
         runtime::physical_memory(),
         expert_cache_slots,
         resolved_expert_residency,
+        runtime::effective_expert_slot_wiring(),
     );
     let plan = runtime::resolve_max_context_with(
         match max_context {
@@ -408,6 +441,19 @@ pub(crate) fn open_with_failure(
     // into a faster one.
     let prefix_reuse = options.prefix_reuse.unwrap_or(true);
     runner.set_prefix_reuse(prefix_reuse);
+    let temporary_limit = load_policy
+        .guard
+        .budget()
+        .hard_cap
+        .map(|cap| cap.saturating_sub(committed.slot_cache.saturating_add(plan.kv_bytes)));
+    runner.configure_moe_prefill_bank(options.moe_prefill_bank, load_policy.guard, temporary_limit);
+    runner.set_ane_prefill(
+        requested_ane_mode,
+        options
+            .ane_prefill_dir
+            .as_deref()
+            .map(std::path::PathBuf::from),
+    );
 
     // Vision memory sidecar (Part A4): attach BEFORE any image is ever
     // processed and before `vision_info` below reads `has_vision_tower` /
@@ -455,12 +501,22 @@ pub(crate) fn open_with_failure(
                 .attach_vision_sidecar(&dir)
                 .map_err(|e| format!("visionSidecar {}: {e}", dir.display()))?;
             let vision = runner.vision_config();
-            tokenizer
-                .verify_image_markers(
+            // A CLIP tower (LLaVA) has no start token to pair with the marker; a
+            // tower whose template renders a bare placeholder (Muse-Glimmer) wraps it.
+            let verified = if runner.clip_image_ids().is_some()
+                || runner.siglip_image_ids().is_some()
+                || runner.deepseek_ocr_image_ids().is_some()
+            {
+                tokenizer.verify_bare_image_marker(vision.image_token_id as i32)
+            } else if let Some((start, end)) = runner.image_wrap_ids() {
+                tokenizer.verify_bare_image_placeholder(start, vision.image_token_id as i32, end)
+            } else {
+                tokenizer.verify_image_markers(
                     vision.vision_start_token_id as i32,
                     vision.image_token_id as i32,
                 )
-                .map_err(|e| format!("visionSidecar {}: {e}", dir.display()))?;
+            };
+            verified.map_err(|e| format!("visionSidecar {}: {e}", dir.display()))?;
             Some(dir)
         }
         None => None,
@@ -494,6 +550,10 @@ pub(crate) fn open_with_failure(
         runtime::SpeculationPlan::Enabled { block } => Some(*block),
         runtime::SpeculationPlan::Disabled { .. } => None,
     };
+    // Only meaningful with a block: a plan that resolved to Disabled has no
+    // cap to adapt under, and `info` must not report one.
+    let speculation_adaptive =
+        speculation_block.is_some() && matches!(asked, runtime::Speculation::Adaptive(_));
 
     let profile = runtime::resolve_profile(requested_profile);
     let rate = runtime::rate_control_for(profile, options.max_tokens_per_sec);
@@ -553,6 +613,7 @@ pub(crate) fn open_with_failure(
         },
         speculation: SpeculationInfo {
             block: speculation_block,
+            adaptive: speculation_adaptive,
             drafter: speculation_block.map(|_| drafter_name(choice.drafter).to_string()),
             reason: match speculation_plan {
                 runtime::SpeculationPlan::Disabled { reason } => reason,
@@ -568,6 +629,27 @@ pub(crate) fn open_with_failure(
         ),
         kv_bits: kv_quant.label(),
         prefix_reuse,
+        moe_prefill_bank_supported: runner.supports_moe_prefill_bank(),
+        moe_prefill_bank_enabled: runner.moe_prefill_bank_enabled(),
+        expert_slots_wiring: {
+            let outcome = runner.expert_slot_wiring();
+            crate::wire::ExpertSlotsWiringInfo {
+                requested: outcome.requested.as_str().to_string(),
+                active: outcome.active,
+                wired_bytes: outcome.wired_bytes,
+                reason: outcome.reason.clone(),
+            }
+        },
+        ane_prefill: ane_prefill_info(
+            requested_ane_mode,
+            runner.ane_prefill_mode(),
+            trunk_family == model_io::ModelFamily::QwenGdnDense,
+            runtime::hardware_supports_ane_prefill(),
+            runtime::ANE_PREFILL_BUILT,
+            runner
+                .ane_prefill_programs()
+                .map(|p| p.display().to_string()),
+        ),
         special_tokens: crate::wire::SpecialTokensInfo {
             bos_id: (tokenizer.bos_id >= 0).then_some(tokenizer.bos_id),
             eos_id: (tokenizer.eos_id >= 0).then_some(tokenizer.eos_id),
@@ -586,6 +668,7 @@ pub(crate) fn open_with_failure(
         max_context: plan.resolved,
         rate,
         speculation_block,
+        speculation_adaptive,
         info,
         load_policy,
         committed_bytes: committed.total(),
@@ -623,6 +706,141 @@ fn vision_info(
         Some(dir) => (Some("sidecar".to_string()), Some(dir.display().to_string())),
         None => (Some("install".to_string()), None),
     };
+    // The Gemma 4 tower has no pixel-budget config: it serves the default
+    // soft-token budget its install's KV ring is sized for, and reports the
+    // resized-image ceiling that budget implies.
+    if runner.gemma4_image_ids().is_some() {
+        let soft = turbospark_vision_io::GEMMA4_DEFAULT_SOFT_TOKENS;
+        let side = turbospark_vision_io::GEMMA4_PATCH;
+        let pool = turbospark_vision_io::GEMMA4_POOL;
+        return if sidecar_dir.is_some() {
+            crate::wire::VisionInfo {
+                active: false,
+                image_token_id: None,
+                reason: Some("a Gemma 4 vision tower cannot run from a sidecar yet".to_string()),
+                source,
+                sidecar_path,
+                max_pixels: None,
+            }
+        } else {
+            crate::wire::VisionInfo {
+                active: true,
+                image_token_id: Some(image_token_id),
+                reason: None,
+                source,
+                sidecar_path,
+                max_pixels: Some(soft * pool * pool * side * side),
+            }
+        };
+    }
+    // A CLIP tower (LLaVA) crops every image to one fixed square, so it has no
+    // pixel budget to clamp: the answer is whether its processor config reads,
+    // and the ceiling is the crop's own area.
+    if runner.clip_image_ids().is_some() {
+        return match crate::vision::clip_params(runner) {
+            Ok(params) => crate::wire::VisionInfo {
+                active: true,
+                image_token_id: Some(image_token_id),
+                reason: None,
+                source,
+                sidecar_path,
+                max_pixels: Some(params.size * params.size),
+            },
+            Err(reason) => crate::wire::VisionInfo {
+                active: false,
+                image_token_id: None,
+                reason: Some(reason),
+                source,
+                sidecar_path,
+                max_pixels: None,
+            },
+        };
+    }
+    // MiniCPM-V has no pixel budget: its best-fit resize holds every image to
+    // about 448 squared, so the ceiling reported is that area. A sidecar is
+    // refused by name (its pairing cannot tell its trunk from a Qwen3.6 one).
+    if runner.is_minicpm_vision() {
+        let path = runner.vision_dir().join("preprocessor_config.json");
+        let readable = std::fs::read_to_string(&path)
+            .map_err(|e| format!("{}: {e}", path.display()))
+            .and_then(|json| {
+                turbospark_vision_io::MiniCpmParams::from_preprocessor_config_json(&json)
+                    .map_err(|e| format!("{}: {e}", path.display()))
+            });
+        return match (sidecar_dir.is_some(), readable) {
+            (true, _) => crate::wire::VisionInfo {
+                active: false,
+                image_token_id: None,
+                reason: Some("a MiniCPM-V vision tower cannot run from a sidecar".to_string()),
+                source,
+                sidecar_path,
+                max_pixels: None,
+            },
+            (false, Ok(params)) => crate::wire::VisionInfo {
+                active: true,
+                image_token_id: Some(image_token_id),
+                reason: None,
+                source,
+                sidecar_path,
+                max_pixels: Some(params.scale_resolution * params.scale_resolution),
+            },
+            (false, Err(reason)) => crate::wire::VisionInfo {
+                active: false,
+                image_token_id: None,
+                reason: Some(reason),
+                source,
+                sidecar_path,
+                max_pixels: None,
+            },
+        };
+    }
+    // A SigLIP tower (DeepSeek-VL2) pads and tiles at fixed sizes, so it has no
+    // pixel budget to clamp either: the ceiling is the largest candidate
+    // resolution's area.
+    if runner.siglip_image_ids().is_some() {
+        return match crate::vision::siglip_params(runner) {
+            Ok(params) => crate::wire::VisionInfo {
+                active: true,
+                image_token_id: Some(image_token_id),
+                reason: None,
+                source,
+                sidecar_path,
+                max_pixels: params.candidates.iter().map(|(w, h)| w * h).max(),
+            },
+            Err(reason) => crate::wire::VisionInfo {
+                active: false,
+                image_token_id: None,
+                reason: Some(reason),
+                source,
+                sidecar_path,
+                max_pixels: None,
+            },
+        };
+    }
+    // A DeepSeek-OCR tower pads every image to one 1024 px base view, so its
+    // ceiling is that view's area and there is no pixel budget to clamp.
+    if runner.deepseek_ocr_image_ids().is_some() {
+        return match crate::vision::deepseek_ocr_params(runner) {
+            Ok(_) => crate::wire::VisionInfo {
+                active: true,
+                image_token_id: Some(image_token_id),
+                reason: None,
+                source,
+                sidecar_path,
+                max_pixels: Some(
+                    turbospark_vision_io::OCR_BASE_SIZE * turbospark_vision_io::OCR_BASE_SIZE,
+                ),
+            },
+            Err(reason) => crate::wire::VisionInfo {
+                active: false,
+                image_token_id: None,
+                reason: Some(reason),
+                source,
+                sidecar_path,
+                max_pixels: None,
+            },
+        };
+    }
     match crate::vision::preprocess_params(
         runner,
         guard,
@@ -646,6 +864,55 @@ fn vision_info(
             sidecar_path,
             max_pixels: None,
         },
+    }
+}
+
+pub(crate) const ANE_NOT_BUILT: &str = "this build does not include the ANE prefill split";
+pub(crate) const ANE_DENSE_QWEN_ONLY: &str = "only supported for dense Qwen models";
+pub(crate) const ANE_AUTO_NEEDS_M4: &str = "Auto enables it only on Apple Silicon M4 or newer";
+pub(crate) const ANE_BREAK_DIAGNOSTIC: &str = "break diagnostic: every row runs on Steel";
+
+/// The session's ANE split report, from what was asked (`requested`), what
+/// the runner stored (`resolved`: `set_ane_prefill` keeps an explicit mode
+/// as-is on every family and resolves `Auto`), and the facts that decide it.
+///
+/// `active` means the dense qwen prefill will try the split. Only that
+/// family's prefill consults the mode, so an explicit `split` stored on any
+/// other family is a no-op and must not read as active: the app's global
+/// "On" sends `split` to every model it opens. An explicit `split` runs on
+/// any chip (`docs/ENV.md`); M4+ is only `Auto`'s threshold, so `supported`
+/// keeps meaning "Auto would turn it on". Programs that fail to load turn the
+/// split off at the first chunk, after this report, so `active` cannot see
+/// that.
+pub(crate) fn ane_prefill_info(
+    requested: runtime::AnePrefillMode,
+    resolved: runtime::AnePrefillMode,
+    dense_qwen: bool,
+    chip_m4_or_newer: bool,
+    built: bool,
+    programs_dir: Option<String>,
+) -> crate::wire::AnePrefillInfo {
+    let runs = built && dense_qwen;
+    let active = runs && resolved.is_split();
+    let reason = if !built {
+        Some(ANE_NOT_BUILT)
+    } else if !dense_qwen {
+        Some(ANE_DENSE_QWEN_ONLY)
+    } else if active || requested == runtime::AnePrefillMode::Off {
+        None
+    } else if resolved == runtime::AnePrefillMode::Break {
+        Some(ANE_BREAK_DIAGNOSTIC)
+    } else if requested == runtime::AnePrefillMode::Auto && !chip_m4_or_newer {
+        Some(ANE_AUTO_NEEDS_M4)
+    } else {
+        Some("prefill programs not found or inactive")
+    };
+    crate::wire::AnePrefillInfo {
+        active,
+        mode: resolved.as_str().to_string(),
+        supported: runs && chip_m4_or_newer,
+        reason: reason.map(str::to_string),
+        programs_dir,
     }
 }
 

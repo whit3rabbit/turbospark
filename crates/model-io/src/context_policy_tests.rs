@@ -632,6 +632,36 @@ fn a_non_gdn_family_has_no_recurrent_state_cost() {
     assert_eq!(gdn_state_bytes(&dense_7b()), 0);
 }
 
+/// `lfm3`'s 13 short-conv layers keep NO KV: the sized KV is exactly the
+/// 6 full layers at the whole context plus the 5 sliding ones at the ring,
+/// computed here from the baseline's shapes rather than restated.
+#[test]
+fn short_conv_layers_carry_no_kv() {
+    let arch = known_architecture(ModelFamily::Lfm3);
+    let row = 2 * arch.num_kv_heads as u64 * arch.head_dim as u64 * 2; // K + V, FP16
+    let ring = (arch.sliding_window as u64 + MAX_PREFILL_CHUNK_TOKENS).min(4096);
+    assert_eq!(
+        kv_bytes_for_context(&arch, 4096),
+        6 * 4096 * row + 5 * ring * row
+    );
+    for layer in [0, 1, 3, 23] {
+        assert_eq!(crate::kv_layer_strides(&arch, layer, KvQuant::Off), (0, 0));
+    }
+}
+
+/// Six FP16 rows of 2048 per conv layer, 13 layers: 312 KiB, the
+/// `docs/LFM3_PHASE0.md` static accounting. Zero on every other family.
+#[test]
+fn the_short_conv_state_is_the_fixed_tail() {
+    let arch = known_architecture(ModelFamily::Lfm3);
+    assert_eq!(short_conv_state_bytes(&arch), 13 * 6 * 2048 * 2);
+    assert_eq!(short_conv_state_bytes(&gemma4()), 0);
+    assert_eq!(
+        session_pool_bytes(&arch, 4096, 2),
+        kv_bytes_for_context(&arch, 4096) + short_conv_state_bytes(&arch)
+    );
+}
+
 /// The `qwen_gdn_moe_35b_a3b` baseline's own numbers, cross-checked against
 /// `crates/gpu/src/gdn_state.rs`'s doc comment ("2 MiB per linear layer and
 /// 60 MiB over its 30" on Qwen 3.6): 30 of 40 layers are linear, so this

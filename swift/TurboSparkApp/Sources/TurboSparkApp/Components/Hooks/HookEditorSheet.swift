@@ -16,6 +16,7 @@ public struct HookEditorSheet: View {
     @State private var timeoutSeconds: Double = 30.0
     @State private var statusMessage: String = ""
     @State private var isAsync: Bool = false
+    @FocusState private var isNameFocused: Bool
 
     public init(
         existingHook: AppHookCommand? = nil,
@@ -52,16 +53,9 @@ public struct HookEditorSheet: View {
                         .foregroundStyle(.appSecondary)
                 }
                 Spacer()
-                Button {
+                AppIconButton("xmark", label: Text("Close", bundle: .module)) {
                     onDismiss()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .themedFont(.title3)
-                        .foregroundStyle(.appSecondary)
                 }
-                .buttonStyle(.plain)
-                .help(Text("Close", bundle: .module))
-                .accessibilityLabel(Text("Close", bundle: .module))
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
@@ -78,6 +72,7 @@ public struct HookEditorSheet: View {
                         TextField(text: $name, prompt: Text("e.g. Lint before tool use, Auto-format on edit...", bundle: .module)) {
                             Text("Hook Name", bundle: .module)
                         }
+                        .focused($isNameFocused)
                         .labelsHidden()
                         .textFieldStyle(.roundedBorder)
                     }
@@ -195,13 +190,16 @@ public struct HookEditorSheet: View {
 
                     // Async Toggle
                     Toggle(isOn: $isAsync) {
-                Text("Run in background asynchronously (non-blocking)", bundle: .module)
-            }
-                        .themedFont(.small)
-                        .padding(.top, 4)
-                        // The engine ignores async for these events (the result gates the
-                        // action), so the switch would promise something it cannot deliver.
-                        .disabled(AppHookExecutionEngine.blockingEvents.contains(event))
+                        Text("Run in background asynchronously (non-blocking)", bundle: .module)
+                    }
+                    .themedFont(.small)
+                    .padding(.top, 4)
+                    // The engine ignores async for these events (the result gates the
+                    // action), so the switch would promise something it cannot deliver.
+                    .disabled(AppHookExecutionEngine.blockingEvents.contains(event))
+                    .help(AppHookExecutionEngine.blockingEvents.contains(event)
+                        ? Text("Blocking events cannot be run asynchronously.", bundle: .module)
+                        : Text("Run in background asynchronously (non-blocking)", bundle: .module))
                 }
                 .padding(20)
             }
@@ -222,9 +220,13 @@ public struct HookEditorSheet: View {
                     save()
                 } label: { Text("Save Hook", bundle: .module) }
                 .appAction(.primary)
+                .keyboardShortcut(.defaultAction)
                 .disabled(
                     command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         || (type == .prompt && existingHook?.type != .prompt))
+                .help(command.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? Text("Enter a command script to save this hook.", bundle: .module)
+                    : Text("Save Hook", bundle: .module))
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
@@ -244,6 +246,7 @@ public struct HookEditorSheet: View {
                 statusMessage = hook.statusMessage ?? ""
                 isAsync = hook.isAsync
             }
+            isNameFocused = true
         }
     }
 

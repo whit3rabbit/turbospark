@@ -17,8 +17,13 @@
 #      the CI host and fail on the oldest Mac the cask admits.
 #   2. the resource bundle is under Contents/Resources (codesign refuses it
 #      anywhere else).
-#   3. the app stays alive for a few seconds. It is run with an empty HOME so
-#      it cannot touch real user data.
+#      MLX's kernel bundle is among them: without it the app starts and
+#      then exits on the first MLX image generation.
+#   3. every peer binary the `turbospark` front end execs is in the bundle.
+#      0.6.0 shipped without turbospark-image because the packaging lists
+#      were hand-kept and nothing compared them to the dispatch table.
+#   4. the bundled openkindd can run MLX and the app stays alive for a few
+#      seconds. Both run with an empty HOME to isolate user data.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -59,11 +64,62 @@ ls -d "$contents"/Resources/*.bundle >/dev/null 2>&1 \
 if ls -d "$app"/*.bundle >/dev/null 2>&1; then
   fail "a .bundle sits at the app root; codesign rejects unsealed root contents"
 fi
+# MLX's GPU kernels. Without them MLX calls exit(-1) on its first GPU op,
+# which the launch smoke below never reaches: v0.6.0 started fine and quit
+# on the first Z-Image generation.
+mlx_metallib="$contents/Resources/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib"
+[ -s "$mlx_metallib" ] || fail "no MLX kernels at $mlx_metallib"
+echo "==> MLX kernels: $(du -h "$mlx_metallib" | cut -f1) in mlx-swift_Cmlx.bundle"
 
-# 3. Launch smoke -----------------------------------------------------------
+# 3. CLI peers -----------------------------------------------------------------
+# turbospark-bench is a dev harness from crates/bench, deliberately not shipped.
+front_end="$root/crates/cli/src/bin/turbospark.rs"
+[ -f "$front_end" ] || fail "$front_end not found; run from a source checkout"
+# `peer("turbospark-x", ...)` can wrap its name onto the next line, so match
+# the name literal itself rather than the call.
+peers="$(grep -oE '"turbospark-[a-z0-9-]+"' "$front_end" | tr -d '"' | sort -u | grep -vx turbospark-bench || true)"
+[ -n "$peers" ] || fail "found no turbospark-* peer names in $front_end (dispatch changed?)"
+for bin in turbospark $peers; do
+  [ -x "$contents/MacOS/$bin" ] || fail "CLI binary $bin is dispatched by turbospark but missing from $contents/MacOS"
+done
+echo "==> CLI peers present: $(echo $peers | tr '\n' ' ')"
+
+# 3b. Computer-use helper ----------------------------------------------------
+# A separate app so its macOS grants survive updates (docs/COMPUTER_USE.md).
+helper="$contents/Helpers/TurboSpark Computer Use.app"
+helper_exe="$helper/Contents/MacOS/TurboSparkComputerUse"
+[ -x "$helper_exe" ] || fail "computer-use helper missing at $helper"
+codesign --verify --strict "$helper" 2>/dev/null || fail "computer-use helper signature does not verify"
+helper_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$helper/Contents/Info.plist")"
+[ "$helper_id" = "com.whit3rabbit.turbospark.computeruse" ] || fail "computer-use helper bundle id is $helper_id"
+for minos in $(otool -l "$helper_exe" | awk '/LC_BUILD_VERSION/{b=1} b&&$1=="minos"{print $2; b=0}'); do
+  version_le "$minos" "$plist_min" || fail "computer-use helper targets macOS $minos, newer than $plist_min"
+done
+"$helper_exe" --self-test | grep -q '"commandSurfaceVersion"' \
+  || fail "computer-use helper --self-test printed no manifest"
+echo "==> computer-use helper: $(codesign -dv "$helper" 2>&1 | sed -n 's/^CDHash=//p')"
+
+# 4. Daemon and app smoke ---------------------------------------------------
 home="$(mktemp -d)"
 log="$(mktemp)"
 trap 'rm -rf "$home" "$log"; [ -n "${pid:-}" ] && kill "$pid" 2>/dev/null || true' EXIT
+
+openkind_dir="$(cd "$contents/MacOS" && pwd)"
+[ -x "$openkind_dir/openkindd" ] || fail "openkindd missing from the bundle"
+[ -s "$openkind_dir/mlx.metallib" ] || fail "openkindd Metal library missing from the bundle"
+report="$(cd "$home" && HOME="$home" "$openkind_dir/openkindd" --diagnose-backends --json)" \
+  || fail "openkindd backend diagnostics failed"
+if ! printf '%s\n' "$report" | python3 -c '
+import json
+import sys
+
+backends = json.load(sys.stdin)["backends"]
+sys.exit(not any(entry["backend"] == "mlx-fp32" and entry["ready"] for entry in backends))
+'; then
+  printf '%s\n' "$report" >&2
+  fail "openkindd could not run MLX with its bundled Metal library"
+fi
+echo "==> openkindd MLX probe passed"
 
 echo "==> launching for ${smoke_seconds}s with an empty HOME"
 HOME="$home" "$exe" >"$log" 2>&1 &

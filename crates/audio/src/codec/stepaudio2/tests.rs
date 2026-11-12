@@ -358,3 +358,29 @@ fn real_checkpoint_smoke() {
     assert!(wav.iter().all(|v| v.abs() <= 0.99));
     let _ = &mut config;
 }
+
+/// Empty speech tokens yield an empty mel. HiFT must refuse it with an
+/// error instead of panicking (chunks of zero length, `frames - 1`
+/// underflow in istft, division by zero frames).
+#[test]
+fn empty_mel_is_refused_not_panicking() {
+    let Some(mut model) = load_model() else {
+        return;
+    };
+    let err = model.hift.infer(&[], None).unwrap_err();
+    assert!(err.to_string().contains("mel"), "{err}");
+    // One frame is the smallest valid input and still renders.
+    let wav = model.hift.infer(&[0.0; 80], None).unwrap();
+    assert_eq!(wav.len(), 480);
+
+    let prompt_tokens = read_i32_npy("prompt_tokens.npy");
+    let (_, prompt_feat) = read_npy("prompt_feat.npy");
+    let (_, embedding) = read_npy("embedding.npy");
+    let prompt = super::Prompt {
+        prompt_token: prompt_tokens,
+        prompt_feat,
+        embedding,
+    };
+    let err = model.decode(&[], &prompt, 2, None).unwrap_err();
+    assert!(err.to_string().contains("mel"), "{err}");
+}

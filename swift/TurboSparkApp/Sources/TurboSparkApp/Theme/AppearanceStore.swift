@@ -38,8 +38,8 @@ public struct AppearanceArchive: Codable, Equatable, Sendable {
         usePointerCursors: Bool = false,
         dockIcon: String = AppDockIcon.emeraldSpark.rawValue,
         reduceMotion: String = ReduceMotionPreference.system.rawValue,
-        uiFontSize: Double = 16.0,
-        codeFontSize: Double = 12.0,
+        uiFontSize: Double = AppFontCatalog.factoryUISize,
+        codeFontSize: Double = AppFontCatalog.factoryCodeSize,
         diffMarkers: String = DiffMarkerPreference.color.rawValue,
         savedThemes: [SavedTheme] = [], selectedThemeID: String? = "sparkblue"
     ) {
@@ -68,8 +68,8 @@ public struct AppearanceArchive: Codable, Equatable, Sendable {
         self.usePointerCursors = try container.decodeIfPresent(Bool.self, forKey: .usePointerCursors) ?? false
         self.dockIcon = try container.decodeIfPresent(String.self, forKey: .dockIcon) ?? AppDockIcon.emeraldSpark.rawValue
         self.reduceMotion = try container.decodeIfPresent(String.self, forKey: .reduceMotion) ?? ReduceMotionPreference.system.rawValue
-        self.uiFontSize = try container.decodeIfPresent(Double.self, forKey: .uiFontSize) ?? 16.0
-        self.codeFontSize = try container.decodeIfPresent(Double.self, forKey: .codeFontSize) ?? 12.0
+        self.uiFontSize = try container.decodeIfPresent(Double.self, forKey: .uiFontSize) ?? AppFontCatalog.factoryUISize
+        self.codeFontSize = try container.decodeIfPresent(Double.self, forKey: .codeFontSize) ?? AppFontCatalog.factoryCodeSize
         self.diffMarkers = try container.decodeIfPresent(String.self, forKey: .diffMarkers) ?? DiffMarkerPreference.color.rawValue
         self.savedThemes = (try container.decodeIfPresent([SavedTheme].self, forKey: .savedThemes) ?? []).compactMap { try? $0.validated() }
         if container.contains(.selectedThemeID) {
@@ -151,8 +151,8 @@ public enum AppearanceFileStore {
             dockIcon: defaults.string(forKey: "TurboSpark.prefs.dockIcon") ?? AppDockIcon.emeraldSpark.rawValue,
             reduceMotion: defaults.string(forKey: "TurboSpark.prefs.reduceMotion")
                 ?? ReduceMotionPreference.system.rawValue,
-            uiFontSize: defaults.object(forKey: "TurboSpark.prefs.uiFontSize") as? Double ?? 16.0,
-            codeFontSize: defaults.object(forKey: "TurboSpark.prefs.codeFontSize") as? Double ?? 12.0,
+            uiFontSize: defaults.object(forKey: "TurboSpark.prefs.uiFontSize") as? Double ?? AppFontCatalog.factoryUISize,
+            codeFontSize: defaults.object(forKey: "TurboSpark.prefs.codeFontSize") as? Double ?? AppFontCatalog.factoryCodeSize,
             diffMarkers: defaults.string(forKey: "TurboSpark.prefs.diffMarkers")
                 ?? DiffMarkerPreference.color.rawValue
         )

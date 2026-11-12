@@ -1,0 +1,19 @@
+{
+  "name": "kernel-candidate",
+  "description": "a kernel change on this build: hashed kernel curves diffed against a base-build run (--var against=EXP), then a null and a paired A/B of the candidate's switch (--var candidate=KEY=V)",
+  "requires": ["against", "candidate"],
+  "vars": {"prompt": "protocol:long-synthesis", "decode": "64", "bench": "all"},
+  "steps": [
+    {"id": "kernels", "command": "kernel",
+     "args": {"model": "{model}", "experiment": "{experiment}", "bench": "{bench}", "hash": true}},
+    {"id": "hash_diff", "command": "hash-diff", "needs": ["kernels"], "continue_on_error": true,
+     "args": {"experiment": "{against}", "against": "{experiment}"}},
+    {"id": "null", "command": "ab", "when": ["runs"],
+     "args": {"model": "{model}", "experiment": "{experiment}", "prompt": "{prompt}", "decode": "{decode}", "null": true}},
+    {"id": "ab", "command": "ab", "when": ["runs"], "needs": ["null"],
+     "args": {"model": "{model}", "experiment": "{experiment}", "prompt": "{prompt}", "decode": "{decode}",
+              "baseline": "base", "candidate": "cand:{candidate}"}},
+    {"id": "report", "command": "report",
+     "args": {"experiment": "{experiment}", "html": "{lab}/{experiment}/report.html", "force": true}}
+  ]
+}

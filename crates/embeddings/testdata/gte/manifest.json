@@ -1,0 +1,53 @@
+{
+  "generator": "crates/embeddings/tools/gen_gte_fixtures.py",
+  "packages": {
+    "torch": "2.14.1",
+    "numpy": "2.5.4",
+    "safetensors": "0.8.0",
+    "transformers": "4.57.1",
+    "sentence-transformers": "5.1.2",
+    "tokenizers": "0.22.2"
+  },
+  "reference": "remote GteModel (pinned .py, transformers 4.57.1, f32, CPU) + sentence-transformers",
+  "pins": {
+    "real": {
+      "repo": "Snowflake/snowflake-arctic-embed-m-v2.0",
+      "revision": "95c2741480856aa9666782eb4afe11959938017f"
+    },
+    "tiny": "seeded random init (numpy default_rng(0)) of the remote classes, no download"
+  },
+  "remote_code_sha256": {
+    "modeling_hf_alibaba_nlp_gte.py": "f8dff057e7c91790771f24ac8b8c172ab5c863835194872539c74fa5f538ed4c",
+    "configuration_hf_alibaba_nlp_gte.py": "d31622918ecf738d1bb082bb27fe8141c3189238cef51d464c7f68e32bbe3d54"
+  },
+  "config_kwargs": {
+    "use_memory_efficient_attention": false,
+    "unpad_inputs": false
+  },
+  "files": {
+    "real_cases.json": "f851a631d43071e4633f52d9254f7d8c6b6df244cbb4c46bbe5d1c13f29e37db",
+    "real_embed.npy": "d6609e3934f5a4043b557ae5d29a10e03c2e521251a6ee1078425644660127f4",
+    "real_embed_mrl256.npy": "360c7bfaefc653f90a9f1667a4e0f2db9d27521b7e309866fb52664e979910c5",
+    "real_rotary_cos_rows.npy": "b0660d419a747ea25e11b80b9f2cbe5d1470f4aadd3420d77566b137e9348e58",
+    "real_rotary_inv_freq.npy": "885e5c5096a9dcf7b09175b8dc22146cac5c4f89cae19b2bcf344c68decda5a3",
+    "real_rotary_sin_rows.npy": "4dcefa607e8a22936c784f7c24ce4fd65df6d46cd8138a0f37c070f492ed0214",
+    "real_trace_case0.npy": "fa3da03f827aa40e7fc841e264455bec5a01770a1532aa3f21aae8504884faab",
+    "tiny/1_Pooling/config.json": "37fd2d13c45b0ff2d846ee5b66c3f33c9e6b3b72a6adca6d617bf014bde6c70e",
+    "tiny/config.json": "cf5868fec008e988e21d71be7fdd636fcdde1b9b50f82bdbc6190188cd36f456",
+    "tiny/config_sentence_transformers.json": "f9f5f553d2491ffa71f6a751de23e7cce6531b0d68db243fdd4e95aa872ef543",
+    "tiny/model.safetensors": "78b07d26d8c166094fd204e53a0d06f141e45ae14bb8f651ec7e2b53ecb44b60",
+    "tiny/modules.json": "21ddb3037a55ebf4549eb5c1dc44c3f28f10b56ec7f1335c92fd90e5b30d88ac",
+    "tiny_cases.json": "d1324376fca89eeba826b3af946d86172f6333103bc2cedad702b767e7f330f6",
+    "tiny_embed_0.npy": "e0c16da598a393c8e08e46b32563f066d80fd5bfcc5b474472cdbbf0e90ba363",
+    "tiny_embed_1.npy": "8a6368d05369923709cf97e7de5fab6144e2bfc42316415ed055c5c3ba262e0c",
+    "tiny_embed_2.npy": "e433cf8fa02fb2b0764ea4a262677f9d04edf3d7f821b084149fdf8ac3fe6e0e",
+    "tiny_embed_3.npy": "d6cf017e0d99603cb20262d4ab5a3664eaeab023747d106e21941d4d9e6307a1",
+    "tiny_embed_4.npy": "85d5371a4c88c8e16f193affa1839436d215ad049ee317cafbf6c3baccd2a3e5",
+    "tiny_hidden_0.npy": "e87ff38dd9c93a193068a41baf06698f83c7e8a3ee2b363f9f8e39653a78d049",
+    "tiny_hidden_1.npy": "fefcd3b21a2a8e2991d7df09fbdb4da5f191de6e345f38176127ff5024eacce7",
+    "tiny_hidden_2.npy": "15337caef2b0605c14f754af49e3dc6ebf486f3368e2466e16faba5b0d63d6a4",
+    "tiny_hidden_3.npy": "0040ec5422beb9a917b45134b64931b820108b19c209f9060304a3c875e23877",
+    "tiny_hidden_4.npy": "000f2ba2087631ce0a8d575de05f9068615059fa014110d31f759ea025e27793",
+    "tiny_rotary_inv_freq.npy": "8e9ef5c626e6548f0adc5e8c970fa5036c4ef27d00f22c434a21a6ffaf8dc75c"
+  }
+}

@@ -1,0 +1,695 @@
+{
+  "schema": "turbospark.lab.pinned/1",
+  "id": "kapitsa.qmv",
+  "kernel": "the dense quantized GEMV/GEMM ladder: qmv/qmv2/qmv3 one-row decode matvecs, qmvf shared-input matvecs with the RMSNorm folded, the qmvh/qmvht half inner-product 3-row verify GEMVs, qmms register-streaming short-prefill GEMMs, and the prefill GEMM tiles (qmr register-MMA default, qmm threadgroup-dequant fallback)",
+  "kernel_class": "gemv",
+  "repo": "kapitsa",
+  "summary": "One dispatch ladder serves every dense MLX-affine matmul by row count: one-row decode runs qmv2 (or qmv3 above K 4096) with shift-free in-register dequant, shared-input projection groups run qmvf with the norm folded, the 3-row speculative draft pass runs qmvh half inner products (qmvhts shifted-nibble build on M5 after NaN rows under its fast-math compiler), short prefills up to 128 rows run qmms (weights streamed straight into simdgroup A operands, no staging) or qmr short row tiles, and M >= 64 prefill runs the qmr register-MMA tiles with qmm's threadgroup-dequant tiles as the NI_QMM=0 fallback. The prefill GEMM tiles are a large distinct group inside this entry (their own shape gates and tile table below). mm.metal holds no matmul at this rev: it is image embed rows and M-RoPE attention prep (see notes).",
+  "source": {
+    "url": "https://github.com/nace-ai/kapitsa",
+    "rev": "14d1b03f306032f20426375651c8181a9105857d",
+    "rev_date": "2026-10-25",
+    "license": "Apache-2.0",
+    "files": [
+      "src/kernels/qmv.metal",
+      "src/kernels/qmvf.metal",
+      "src/kernels/qmms.metal",
+      "src/kernels/qmm.metal",
+      "src/kernels/qmm3.metal",
+      "src/kernels/mm.metal",
+      "src/kernels/verify.metal",
+      "src/model/qwen35.cpp",
+      "src/model/qwen35_spec.cpp",
+      "src/model/qwen35.h",
+      "src/model/qwen4_exp.cpp",
+      "README.md"
+    ],
+    "symbols": [
+      "qmv_b4_g64_v16_r4_t1",
+      "qmv_b4_g64_v16_r4_t1_add",
+      "qmv_b4_g64_v16_r4_t1_norm",
+      "qmv_b4_g64_v16_r4_t4",
+      "qmv_multi_g64_v16_r4_norm",
+      "qmv2_b4_g64_r4",
+      "qmv2_b4_g64_r4_norm",
+      "qmv2_multi_r2",
+      "qmv3_b4_r2",
+      "qmv3_b8_r2",
+      "qmv3_multi_r2",
+      "mlp_gate_up",
+      "qmvf_b4_t1_r4",
+      "qmvf_b4_t1_r4_norm",
+      "qmvf_gu_b4_t1_r4_norm",
+      "qmvf_b4g32_t1_r4_norm",
+      "qmvf_b6_t1_r4_norm",
+      "qmvh_t3_r4",
+      "qmvht_t3_r4",
+      "qmvhts_t3_r4",
+      "qmms_b4_t8",
+      "qmms_gu_b4_t8",
+      "qmms_moe_gu_b4",
+      "qmms_moe_dn_b4",
+      "qmms_moe2_gu_b4",
+      "qmms_moe3_gu_b4",
+      "qmms_moe3_dn_b4",
+      "qmm_b4_m32_n32",
+      "qmm_b4_m64_n64",
+      "qmm_b8_m32_n32",
+      "qmm_moe_b4_m64_n64",
+      "qmmk64_b4_m64_n64",
+      "qmr_k32_w14_m32_n128",
+      "qmr_k64_w14_m16_n64",
+      "qmr_k64_w12_m8_n64",
+      "qmrs_k64_w14_m48_n64",
+      "qmr_gu_k64_w14_m32_n64",
+      "qmr8_k32_w14_m32_n128",
+      "qmr8_k32_w14_m16_n64",
+      "embed_rows_bf16",
+      "attn_prep_m"
+    ]
+  },
+  "models": [
+    {
+      "name": "Qwen3.8-27B",
+      "quant": "MLX affine 4-bit, group 64, bf16 scales and biases (20.2 GB pack); hidden 5120, DeltaNet value 6144, MLP 17408 per qmv.metal:319-320",
+      "family": "qwen3_8 dense",
+      "machine": "tuned and benched on M4 Pro 48 GB in the source comments; README tables add M5 Max 128 GB, M5 Pro 48 GB, M3 Pro 36 GB, M1 Pro 16 GB",
+      "role": "primary"
+    },
+    {
+      "name": "Qwen3.6-35B-A3B",
+      "quant": "MLX affine 4-bit group 64 MoE, 3B active; GGUF imports run 6-bit (Q5_K) projections and 4-bit group 32 (Q4_K) LM heads on the M1",
+      "family": "qwen3_6_moe",
+      "machine": "M4 Pro 48 GB and M1 Pro 16 GB in the source comments; README tables through M5 Max 128 GB",
+      "role": "secondary"
+    },
+    {
+      "name": "Qwen3.5-4B and Qwen3.5-9B",
+      "quant": "MLX affine 4-bit, group 64, dense",
+      "family": "qwen3_5",
+      "machine": "M4 Pro 48 GB (bench_qmvf 4B shapes) and M1 Pro 16 GB (bench_qmm tile A/B)",
+      "role": "secondary"
+    }
+  ],
+  "settings": [
+    {
+      "name": "gemv_threads_per_simdgroup",
+      "value": 32,
+      "unit": "threads",
+      "condition": "always (one simdgroup per Metal spec; the lane K stride is 32 * VPL)",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmv.metal:44"
+    },
+    {
+      "name": "decode_rows_per_simdgroup",
+      "value": 2,
+      "unit": "rows",
+      "condition": "enc_qmv one-row matvec with N < 65536; huge LM-head-like matrices take 4",
+      "kind": "measured",
+      "source": "src/model/qwen35.cpp:1882",
+      "note": "Tuned on M4 Pro per the comment at src/model/qwen35.cpp:1880: huge matrices (lm_head) 4 rows x 4 simdgroups, the rest 2 x 8"
+    },
+    {
+      "name": "decode_simdgroups_per_threadgroup",
+      "value": 8,
+      "unit": "simdgroups",
+      "condition": "N < 65536 (256 threads); 4 when N >= 65536 (128 threads)",
+      "kind": "measured",
+      "source": "src/model/qwen35.cpp:1882"
+    },
+    {
+      "name": "decode_gemv_grid",
+      "value": "(N + rows * nsg - 1) / (rows * nsg) threadgroups of 32 * nsg threads, one row",
+      "unit": null,
+      "condition": "always for enc_qmv",
+      "kind": "derived",
+      "source": "src/model/qwen35.cpp:1912"
+    },
+    {
+      "name": "decode_gemv_values_per_lane",
+      "value": 16,
+      "unit": "values",
+      "condition": "the v16 instantiations; v32 forms are compiled for A/B",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmv.metal:81"
+    },
+    {
+      "name": "decode_gemv_group_size",
+      "value": 64,
+      "unit": "inputs",
+      "condition": "every qmv instantiation (GS 64)",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmv.metal:81"
+    },
+    {
+      "name": "decode_dequant_form",
+      "value": "shift-free in-register: masked nibble (w & (mask << BITS*j)) == q * 2^(BITS*j) times x pre-scaled by 2^-(BITS*j), one AND + convert + FMA per value; no materialized fp16 weights",
+      "unit": null,
+      "condition": "always for the qmv family",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmv.metal:10"
+    },
+    {
+      "name": "decode_rows_clamped",
+      "value": true,
+      "unit": null,
+      "condition": "rows past N are computed redundantly on clamped rows and never stored, so lanes never diverge",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmv.metal:42"
+    },
+    {
+      "name": "gemv_rmsnorm_fused",
+      "value": true,
+      "unit": null,
+      "condition": "the *_norm builds fold the RMSNorm into the x load (weight nw, bf16)",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmv.metal:12"
+    },
+    {
+      "name": "wide_k_gemv_x_tile",
+      "value": 4096,
+      "unit": "floats",
+      "condition": "qmv2 stages the whole K <= 4096 vector once per threadgroup; qmv3 walks any K in 4096-wide tiles (the 27B's hidden 5120, DeltaNet 6144, MLP 17408)",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmv.metal:393"
+    },
+    {
+      "name": "wide_k_gemv_rows_per_simdgroup",
+      "value": 2,
+      "unit": "rows",
+      "condition": "qmv3_b4_r2 / qmv3_b8_r2 picks when K > 4096 (rows forced to 2 for 8-bit or residual)",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:1887"
+    },
+    {
+      "name": "multi_segment_max_matrices",
+      "value": 4,
+      "unit": "matrices",
+      "condition": "qmv_multi / qmv2_multi / qmv3_multi shared-input groups (attention q/k/v, GDN qkv|z|b|a), threadgroups partitioned by tg_begin",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmv.metal:98"
+    },
+    {
+      "name": "fused_gate_up_rows",
+      "value": 2,
+      "unit": "rows",
+      "condition": "mlp_gate_up: fused RMSNorm + gate/up SwiGLU decode GEMV, any K",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmv.metal:498"
+    },
+    {
+      "name": "qmvf_token_rows",
+      "value": 1,
+      "unit": "rows",
+      "condition": "the only shipped instantiation; the host gate admits R in 1..2",
+      "kind": "measured",
+      "source": "src/kernels/qmvf.metal:204",
+      "note": "bench_qmvf, 4B shapes, M4 Pro: token rows sharing a thread's dequantization (t2-t4) cost 1.06-1.12x the t1 grids at 2 rows; next-step prefetch spilled at 96 GPRs; the interchanged loop 2-6% slower (src/kernels/qmvf.metal:194-197)"
+    },
+    {
+      "name": "qmvf_rows_per_simdgroup",
+      "value": 4,
+      "unit": "rows",
+      "condition": "qmvf_*_t1_r4: 2 simdgroups x 4 rows = 64-thread threadgroups, one threadgroup per token row",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:2035"
+    },
+    {
+      "name": "qmvf_max_shared_matrices",
+      "value": 4,
+      "unit": "matrices",
+      "condition": "enc_qmvf gate (the gate/up form takes exactly 2)",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:2012"
+    },
+    {
+      "name": "qmvf_norm_fold",
+      "value": "RMSNorm folded: inv = rsqrt(mean(x^2) + eps) scales the finished dot product, each simdgroup gets sum(x^2) from the x it loads anyway; x read once, no staging or barrier, reassociation against the staged kernels is rounding only",
+      "unit": null,
+      "condition": "the *_norm builds",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmvf.metal:10"
+    },
+    {
+      "name": "qmvh_token_rows",
+      "value": 3,
+      "unit": "rows",
+      "condition": "R == 3 verify rows (the 3-row draft pass); t2 and t4 forms are compiled",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35_spec.cpp:556"
+    },
+    {
+      "name": "qmvh_rows_per_simdgroup",
+      "value": 4,
+      "unit": "rows",
+      "condition": "the qmvht(_s)_t3_r4 dispatch: 4 rows x 8 simdgroups",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35_spec.cpp:561"
+    },
+    {
+      "name": "qmvh_reduction_dtype",
+      "value": "half inner products: dequant shared across rows, 16-value partial sums accumulate in half, promoted to fp32 with the group scale and bias",
+      "unit": null,
+      "condition": "always for qmvh/qmvht (the fp32 kernels are the fallback)",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:2032"
+    },
+    {
+      "name": "qmvht_k_tile",
+      "value": 4096,
+      "unit": "halfs",
+      "condition": "qmvht_t3_r4 (NT <= 3); the NT = 4 builds stage 2048-half tiles",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:2120"
+    },
+    {
+      "name": "apple10_qmvh_variant",
+      "value": "qmvhts_t3_r4 (each nibble shifted down to 0..15, x unscaled)",
+      "unit": null,
+      "condition": "Apple10 (M5) GPUs; the masked qmvht_t3_r4 build NaNs under their fast-math compiler",
+      "kind": "measured",
+      "source": "src/model/qwen35_spec.cpp:555",
+      "note": "src/kernels/verify.metal:2110-2115: Apple10 fast-math reassociates the 3- and 4-row builds so the 2^-4j pre-scales land after the masked-weight sums; those sums (up to 61440|x| per term) overflow half once |x| passes ~0.4 and inf - inf gives NaN rows; finite under NI_MATH_SAFE=1, with explicit fmas, or x pre-scaled in threadgroup memory; the shifts cost nothing measurable"
+    },
+    {
+      "name": "qmms_rows_per_simdgroup",
+      "value": 8,
+      "unit": "rows",
+      "condition": "qmms short prefill: a simdgroup owns 8 weight rows, each lane loads 16 contiguous codes per 64-group",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmms.metal:8"
+    },
+    {
+      "name": "qmms_token_block_rows",
+      "value": 8,
+      "unit": "rows",
+      "condition": "qmms_b*_t1..t8 hold T <= 8 * TB with TB <= 8, so 64 rows per dispatch and up to 128 via NI_SHORTPF_EXACT row groups",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmms.metal:23"
+    },
+    {
+      "name": "qmms_dequant_form",
+      "value": "in-register half2 A operands: (nibble | 0x64006400) as exact half 1024 + code, minus 1024, one fma with (scale, bias); exactly qmm's half(s*q + b) up to the fma's single rounding",
+      "unit": null,
+      "condition": "always for qmms (4- and 8-bit)",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmms.metal:47"
+    },
+    {
+      "name": "qmms_no_threadgroup_staging",
+      "value": true,
+      "unit": null,
+      "condition": "main path has no threadgroup memory and no barriers; K may split over the threadgroup's simdgroups (ks > 1) with a fixed-order sum",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmms.metal:16"
+    },
+    {
+      "name": "qmms_simdgroups_per_threadgroup",
+      "value": 8,
+      "unit": "simdgroups",
+      "condition": "enc_qmms dispatches 32 * nsg = 256 threads",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:2437"
+    },
+    {
+      "name": "qmms_k_split_simdgroups",
+      "value": [4, 8],
+      "unit": "simdgroups",
+      "condition": "K < 4096 -> 4, K >= 4096 -> 8 (halved until it divides the 8 simdgroups and leaves >= 2 groups per slice); NI_QMMS_KS overrides",
+      "kind": "measured",
+      "source": "src/model/qwen35.cpp:2459",
+      "note": "bench_qmms on M4 Pro per the comment at src/model/qwen35.cpp:2438"
+    },
+    {
+      "name": "qmms_row_group_thresholds",
+      "value": [24, 32],
+      "unit": "threadgroups per 5 GPU cores",
+      "condition": "NI_QMMS_TY=1 splits 8-row token blocks over grid.y when a dispatch has fewer than 24 * cores / 5 threadgroups, targeting 32 * cores / 5 (96 and 128 on the 20-core M4 Pro); bitwise equal per output",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:2430"
+    },
+    {
+      "name": "qmr_dequant_location",
+      "value": "MMA registers: weights go device -> registers and never touch threadgroup memory; X is staged in threadgroup memory in the permuted K order the A fragments consume",
+      "unit": null,
+      "condition": "always for qmr/qmrs/qmr8 (the qmm tiles materialize instead)",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmm3.metal:3"
+    },
+    {
+      "name": "qmr_default_tile",
+      "value": [32, 128],
+      "unit": "outputs (BM x BN)",
+      "condition": "M >= 64 and N > 64, 4-bit g64: qmr_k32_w14_m32_n128, BK 32",
+      "kind": "measured",
+      "source": "src/model/qwen35.cpp:169",
+      "note": "NI_QMM adoption comment, src/model/qwen35.cpp:153-154: 27B prefill 4k +19-21%, 35B +6-8%, greedy output identical; the tile runs 128 threads, 80 GPRs, no stack (src/kernels/qmm3.metal:462)"
+    },
+    {
+      "name": "qmr_threads",
+      "value": 128,
+      "unit": "threads",
+      "condition": "w14 layouts (WM 1 x WN 4); the M1 tile and the M <= 8 tiles run 64; max_total_threads_per_threadgroup(WM * WN * 32)",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmm3.metal:165"
+    },
+    {
+      "name": "qmr_m1_tile",
+      "value": "qmr_k64_w12_m32_n64, BK 64, 64 threads, BN 64",
+      "unit": null,
+      "condition": "Apple7 (M1) family",
+      "kind": "measured",
+      "source": "src/model/qwen35.cpp:174",
+      "note": "bench_qmm on the M1 Pro, 2048-row chunks of the 4B/9B projections: 3.07-3.17 TFLOP/s against 2.53-2.69 for qmr_k32_w14_m32_n128 on all 9 shapes (src/model/qwen35.cpp:170-173)"
+    },
+    {
+      "name": "qmr_small_m_tiles",
+      "value": "M <= 8: qmr_k64_w12_m8_n64 (BM 8, BN 64, 64 threads); M < 64 or N <= 64: qmr_k64_w14_m16_n64 (BM 16, BN 64, 128 threads)",
+      "unit": null,
+      "condition": "large-prefill qmr path",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:2384"
+    },
+    {
+      "name": "qmr_short_prefill_row_tiles",
+      "value": "one BM row tile holds all rows up to 48 (m24/m40/m48/m56 forms; two tiles to 128; gate/up tiles at most 32), so each weight is read and dequantized once (twice) per pass instead of once per 16-row tile",
+      "unit": null,
+      "condition": "NI_SHORTPF tile mode: R = 1 up to 48 rows, 2 above; BM = 8 * ceil(ceil(M / R) / 8), BN 64 (32-wide measured slower on every 35B/27B shape)",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmm3.metal:473"
+    },
+    {
+      "name": "qmr_dequant_encode",
+      "value": "(nibble | 0x34003400) as exact half 0.25 + q/4096, minus 0.25, one half2 fma with (4096 * scale, bias); both factors stay normal halfs only for scales in [1.5e-8, 16]",
+      "unit": null,
+      "condition": "always for the 4-bit qmr forms (a plain half scale would go subnormal for 2162 scales of the 27B, 14818 of the 35B's dense projections)",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmm3.metal:31"
+    },
+    {
+      "name": "qmr_no_double_buffer",
+      "value": true,
+      "unit": null,
+      "condition": "one X buffer, two barriers per K step; a two-buffer one-barrier variant and a register-prefetch variant measured no faster (prefetch costs registers and spills)",
+      "kind": "measured",
+      "source": "src/kernels/qmm3.metal:15"
+    },
+    {
+      "name": "qmr8_tiles",
+      "value": "M >= 64 and N > 64: qmr8_k32_w14_m32_n128 (MFAST grid variant on the M1); M < 64 or N <= 64: qmr8_k32_w14_m16_n64; fused gate/up qmr8_gu_k32_w14_m(32|16)_n64",
+      "unit": null,
+      "condition": "8-bit g64, K % 64 == 0, NI_QMM8 = 1 and not the MoE router/shared-expert gate (mode 2 serves those too)",
+      "kind": "measured",
+      "source": "src/model/qwen35.cpp:2354",
+      "note": "1.4-1.5x qmm_b8_m32_n32 per the NI_QMM8 comment, src/model/qwen35.cpp:2312-2313"
+    },
+    {
+      "name": "qmm_tile_bk",
+      "value": 32,
+      "unit": "inputs",
+      "condition": "the qmm_b4/qmm_b8 fallback tiles: one BK step is half a 64-group, PAD 8",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmm.metal:25"
+    },
+    {
+      "name": "qmm_dequant_location",
+      "value": "threadgroup memory: W tiles dequantized to half in shared memory behind two barriers per BK step, then simdgroup MMA from staging",
+      "unit": null,
+      "condition": "the qmm_* fallback (and the original default before NI_QMM)",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmm.metal:7"
+    },
+    {
+      "name": "qmm_threads",
+      "value": 128,
+      "unit": "threads",
+      "condition": "4 simdgroups in a 2x2 layout, each computing (BM/2) x (BN/2) with 8x8 simdgroup matrices",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmm.metal:50"
+    },
+    {
+      "name": "qmmk64_status",
+      "value": "A/B only: BK 64 variant with half the barriers, no faster than qmm_b4",
+      "unit": null,
+      "condition": "not dispatched by the host at this rev",
+      "kind": "hardcoded",
+      "source": "src/kernels/qmm.metal:164"
+    },
+    {
+      "name": "short_prefill_max_rows",
+      "value": 128,
+      "unit": "rows",
+      "condition": "NI_SHORTPF_MAX default and cap; small_t gate for the short-prefill families (qmms/qmr short tiles)",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:213"
+    }
+  ],
+  "gates": [
+    {
+      "condition": "enc_qmv huge matrices: N >= 65536 -> 4 rows x 4 simdgroups, else 2 rows x 8",
+      "source": "src/model/qwen35.cpp:1881"
+    },
+    {
+      "condition": "enc_qmv kernel pick: q4, or q8 with a norm and K <= 4096 -> qmv2_b{bits}_g64_r{rows}; K > 4096 -> qmv3_b{bits}_r{rows}; q8 any K -> qmv3_b8_r2; other formats -> wfmt qmvg_{fmt}_r{rows}",
+      "source": "src/model/qwen35.cpp:1884"
+    },
+    {
+      "condition": "enc_qmvf (shared-input, norm folded) fires when R in 1..=2, 1..4 segments, one common bits value in {4, 8} (or the b6/g32 cases), shared K, K % 64 == 0; else qmv2_multi_r2 / qmv3_multi_r2",
+      "source": "src/model/qwen35.cpp:2012"
+    },
+    {
+      "condition": "multi-segment kernel pick: K > 4096 -> qmv3_multi_r2, else qmv2_multi_r2",
+      "source": "src/model/qwen35.cpp:1971"
+    },
+    {
+      "condition": "qmvf 6-bit (GGUF Q5_K projections): R == 1, IQ model, Apple7 (M1) only; NI_QMVF6=0 off",
+      "source": "src/model/qwen35.cpp:2022"
+    },
+    {
+      "condition": "qmvf 4-bit group 32 (GGUF Q4_K LM heads): one matrix, non-IQ, Apple7 only",
+      "source": "src/model/qwen35.cpp:2027"
+    },
+    {
+      "condition": "verify ladder, R == 1 (a chained MTP draft pass): the decode qmv kernels (NI_MTP_V8=0 restores qmvr)",
+      "source": "src/model/qwen35_spec.cpp:526"
+    },
+    {
+      "condition": "verify ladder: R >= v8_rows_min or bits not 4/8 -> the 8-row MMA GEMM (X8 tables + enc_qmm8)",
+      "source": "src/model/qwen35_spec.cpp:532"
+    },
+    {
+      "condition": "v8_rows_min: 3 on dense models, 5 on MoE models; NI_V8=1 -> 2, NI_V8=0 -> 5",
+      "source": "src/model/qwen35_spec.cpp:504"
+    },
+    {
+      "condition": "verify ladder, R == 2 -> qmvrc1: one single-row threadgroup per (row, 8-row weight block), 64 threads, so the pair shares each weight block through the cache",
+      "source": "src/model/qwen35_spec.cpp:542"
+    },
+    {
+      "condition": "verify ladder, R == 3 and bits == 4 and not NI_NO_QMVH and not no_qmvh_ -> qmvht_t3_r4 (qmvhts_t3_r4 on Apple10)",
+      "source": "src/model/qwen35_spec.cpp:556"
+    },
+    {
+      "condition": "verify ladder, K > 4096 -> qmvr4_b{bits}_t{R} tiled staging (plus _v8 for 4-bit R >= 3)",
+      "source": "src/model/qwen35_spec.cpp:579"
+    },
+    {
+      "condition": "verify rows above 8 do not exist: kMaxVerify = 8",
+      "source": "src/model/qwen35.h:294"
+    },
+    {
+      "condition": "Qwen4Exp sets no_qmvh_ = true: 3-row verify GEMVs run the fp32 kernels instead of qmvht_t3_r4's half products (accuracy first)",
+      "source": "src/model/qwen4_exp.cpp:215"
+    },
+    {
+      "condition": "short prefill: small_t = NI_SHORTPF on and 1 <= T <= NI_SHORTPF_MAX (default and cap 128)",
+      "source": "src/model/qwen35.cpp:2407"
+    },
+    {
+      "condition": "short prefill, qmms form: at most 64 rows per dispatch (8 blocks of 8 rows) unless NI_SHORTPF_EXACT row groups extend it; the kernels hold 8 token blocks at most",
+      "source": "src/model/qwen35.cpp:353"
+    },
+    {
+      "condition": "NI_SHORTPF_GEMM=auto family rule (short_qmms): qmms when M <= 8, or M <= 16, or (weight bytes < 24e6 and M <= 56; gate/up: bytes < 24e6 or M <= 56); single-matrix K >= 12288 goes to the qmr tiles from 9 rows",
+      "source": "src/model/qwen35.cpp:279"
+    },
+    {
+      "condition": "NI_SHORTPF_EXACT family rule (exact_qmms): qmms for every row count when weight bytes < 32e6 and (multi-segment or K < 12288), else the qmr k64 tiles",
+      "source": "src/model/qwen35.cpp:294"
+    },
+    {
+      "condition": "large prefill 4-bit g64 (qmr): M <= 8 -> qmr_k64_w12_m8_n64; M < 64 or N <= 64 -> qmr_k64_w14_m16_n64; M >= 64 -> qmr_sel().name (default qmr_k32_w14_m32_n128, Apple7 qmr_k64_w12_m32_n64); gated behind NI_QMM != 0",
+      "source": "src/model/qwen35.cpp:2380"
+    },
+    {
+      "condition": "large prefill 8-bit g64: qmr8_k32_w14_m16_n64 when M < 64 or N <= 64, else qmr8_k32_w14_m32_n128 (MFAST variant on the M1); NI_QMM8 mode 1 keeps the trunk's MoE router and shared-expert gate off it (8-bit there changes routing near-ties)",
+      "source": "src/model/qwen35.cpp:2352"
+    },
+    {
+      "condition": "M >= 64 where the tensor units are usable (M5 family on macOS 26): 4-bit g64 goes to qmt_m64_n64 ahead of qmr; 6-bit g64 to qmt6_m64_n64",
+      "source": "src/model/qwen35.cpp:2364"
+    },
+    {
+      "condition": "fallback when NI_QMM=0 or the format has no qmr form: M >= 64 and 4-bit -> qmm_b4_m64_n64, else qmm_b{bits}_m32_n32 (128 threads)",
+      "source": "src/model/qwen35.cpp:2397"
+    },
+    {
+      "condition": "qmr host requirements: bits 4, gs 64, K % 64 == 0, X rows 16-byte aligned (x_ld % 8 == 0)",
+      "source": "src/kernels/qmm3.metal:17"
+    },
+    {
+      "condition": "qmms host requirements (qmms_ok): q4 or q8 or a wfmt-supported format, K % 64 == 0, N > 0",
+      "source": "src/model/qwen35.cpp:2411"
+    },
+    {
+      "condition": "qmms MoE small-T hybrid (qmms_moe2): an expert's first tile with 1 or 2 rows takes the FMA matvec form, larger experts the 8-row MMA (later tiles of a large expert take MMA so pair arithmetic depends on routing alone); qmms_moe3 (NI_SHORTPF_EXACT) runs FMA-equivalent arithmetic for every row count",
+      "source": "src/kernels/qmms.metal:527"
+    },
+    {
+      "condition": "qmms MoE tiles: N % 8 == 0 (checked on the host)",
+      "source": "src/kernels/qmms.metal:337"
+    }
+  ],
+  "measured": [
+    {
+      "metric": "qmvf_token_rows_per_thread_time_ratio",
+      "value": 1.12,
+      "model": "Qwen3.5-4B shapes",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "bench_qmvf: token rows sharing a thread's dequantization (t2-t4) against t1 grids at 2 rows; range 1.06-1.12x, so t1 shipped",
+      "provenance": "upstream_reported",
+      "source": "src/kernels/qmvf.metal:195"
+    },
+    {
+      "metric": "qmvh_three_row_time_ratio",
+      "value": 1.17,
+      "model": "dense qwen matvec shapes",
+      "machine": "unspecified",
+      "conditions": "3-row matvec against a single row; range 1.17-1.32x; the fp32 version is ALU-bound at 1.5x a single row",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35_spec.cpp:552"
+    },
+    {
+      "metric": "qmvrc1_two_row_time_us",
+      "value": 208,
+      "model": "17408 x 5120 weight (the 27B MLP down-projection shape)",
+      "machine": "unspecified",
+      "conditions": "bench_qmvr: 208 us for 1 or 2 rows against 240 us for the 2-rows-in-registers kernel",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35_spec.cpp:540"
+    },
+    {
+      "metric": "qmvf_b6_decode_us",
+      "value": 144,
+      "model": "Qwen3.6-35B-A3B UD-IQ2_XXS (12352 x 2048 qkv|z projection)",
+      "machine": "M1 Pro 16 GB",
+      "conditions": "6-bit g64 with the norm folded vs qmvg_multi_f6g64 at 172 us; 8192 x 2048: 100 vs 118 us",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35.cpp:2017"
+    },
+    {
+      "metric": "qmvf_b4g32_lm_head_ms",
+      "value": 2.6,
+      "model": "Qwen3.6-35B-A3B 248K-row LM head (4-bit group 32 GGUF import)",
+      "machine": "M1 Pro 16 GB",
+      "conditions": "qmvf_b4g32 against qmvg_f4g32_r4_norm at 3.1 ms",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35.cpp:2025"
+    },
+    {
+      "metric": "qmr_prefill_gain_pct",
+      "value": 19,
+      "model": "Qwen3.8-27B 4-bit",
+      "machine": "unspecified",
+      "conditions": "prefill 4k, qmr vs qmm_b4: +19-21% on the 27B, +6-8% on the 35B, on macOS 27, greedy output identical",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35.cpp:153"
+    },
+    {
+      "metric": "qmr_m1_tile_tflops",
+      "value": 3.07,
+      "model": "Qwen3.5-4B and Qwen3.5-9B projections",
+      "machine": "M1 Pro 16 GB",
+      "conditions": "bench_qmm, 2048-row chunks: qmr_k64_w12_m32_n64 3.07-3.17 TFLOP/s against 2.53-2.69 for qmr_k32_w14_m32_n128 on all 9 shapes (4B: 8192x2560 28.7 vs 33.9 ms; 9B: 8192x4096 43.4 vs 51.5 ms)",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35.cpp:171"
+    },
+    {
+      "metric": "qmms_short_prefill_gbps",
+      "value": 40,
+      "model": "35B/27B shapes",
+      "machine": "unspecified",
+      "conditions": "the qmm_tile prefill streams weights at ~40-70 GB/s at 4-32 rows (the number qmms' register streaming removes the staging against)",
+      "provenance": "upstream_reported",
+      "source": "src/kernels/qmms.metal:7"
+    },
+    {
+      "metric": "qmms_vs_qmr_small_m_ratio",
+      "value": 1.2,
+      "model": "35B/27B shapes",
+      "machine": "M4 Pro 48 GB (bench_qmms)",
+      "conditions": "qmms against the qmr tiles at <= 8 rows: 1.2-2.5x (bandwidth/latency bound); every 35B shape up to 56 rows",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35.cpp:275"
+    },
+    {
+      "metric": "qmr8_vs_qmm_b8_ratio",
+      "value": 1.4,
+      "model": "8-bit g64 prefill (the MTP head's projections, an 8-bit trunk)",
+      "machine": "unspecified",
+      "conditions": "qmr8 against qmm_b8_m32_n32: 1.4-1.5x",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35.cpp:2313"
+    },
+    {
+      "metric": "qmt_vs_short_prefill_ms",
+      "value": 399,
+      "model": "Qwen3.8-27B 4-bit",
+      "machine": "M5 Pro 48 GB",
+      "conditions": "16K cached prefix, one chunk of new rows, short-prefill vs tensor_ops GEMM: 73 rows 679 -> 399 ms, 124 rows 1005 -> 483 ms",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35.cpp:301"
+    },
+    {
+      "metric": "qrf_mfast_prefill_ms",
+      "value": 21.4,
+      "model": "2048 x 8192 x 2048 GEMM (4-bit group 32; a 40-layer stand-in of Qwen3.6-35B-A3B reads 4096 tokens in 8.15 vs 9.07 s)",
+      "machine": "M1 Pro 16 GB",
+      "conditions": "M tiles on grid.x (threadgroups share the weight tile through the cache) vs N-fast order: 4-bit g32 59.5 -> 21.4 ms, 6-bit g64 25.3 -> 23.8, 8-bit 26.6 -> 24.9",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35.cpp:67"
+    }
+  ],
+  "lab_mapping": [
+    {
+      "setting": "decode_rows_per_simdgroup",
+      "maps_to": "tslab kernel --bench gemv row axis, and tslab kernel --bench int4_matmul --rows 1,2,4,8 for the same small-M curve kapitsa's ladder gates on (our GEMV is one code path, no per-N row-count switch)",
+      "env": null,
+      "note": "kapitsa picked 2x8 vs 4x4 by an M4 Pro tune; the tslab axis can reproduce that A/B"
+    },
+    {
+      "setting": "qmr_default_tile",
+      "maps_to": "tslab kernel --bench prefill_gemm tile axis (BM/BN/threads); kapitsa's M >= 64 default is 32x128 at 128 threads, BK 32, in-register dequant",
+      "env": null,
+      "note": "our Steel prefill GEMM is the comparison surface"
+    },
+    {
+      "setting": "qmvh_token_rows",
+      "maps_to": "our batched decode GEMV arm (multi-row GEMV serving); kapitsa instead ladders 1 row -> qmv, 2 rows -> qmvrc1, 3 rows -> qmvht half inner products, 4+ rows -> the 8-row MMA GEMM",
+      "env": "TURBOSPARK_BATCHED_GEMV",
+      "note": "the knob is KL-bounded, not bit-exact, matching kapitsa's half-sum reassociation caveat"
+    },
+    {
+      "setting": "qmvh_reduction_dtype",
+      "maps_to": "none yet: our GEMV accumulates fp32 and our doc lists qmvh under 'already ahead' (NaN under fast-math); tslab has no half-reduction axis",
+      "env": null,
+      "note": "kapitsa's own fix is the shifted-nibble qmvhts build on Apple10, not a dtype change"
+    }
+  ],
+  "docs": [
+    "docs/KAPITSA_KERNELS.md#where-we-were-already-ahead-not-adopted-do-not-re-propose",
+    "docs/KAPITSA_KERNELS.md#decision-table",
+    "docs/KAPITSA_KERNELS.md#what-makes-the-headline-numbers-fast-and-what-applies-here"
+  ],
+  "notes": "Doc-vs-source and caveats. (1) mm.metal: the work order placed it in this family, but at rev 14d1b03 it holds embed_rows_bf16 and attn_prep_m (image embedding rows and multimodal M-RoPE attention prep) and no matmul; sided with the source. (2) The qmvh half-precision form lives in verify.metal here, not qmv.metal. Our doc's line that qmvh 'can NaN under fast-math per its own comment' is confirmed and narrower than it reads: only the 3- and 4-row builds, only Apple10 (M5) fast-math reassociation, 2-row builds keep the 2^-4j pre-scales, the output is finite under NI_MATH_SAFE=1 or explicit fmas, and the shipped fix is the shifted-nibble qmvhts_t3_r4 on Apple10 (shifts cost nothing measurable). (3) qmvf.metal's header says R <= 4 token rows, but only t1 instantiations ship and the host gate admits R in 1..2; t2-t4 were dropped on bench_qmvf evidence (1.06-1.12x t1). (4) Our doc's 'no materialized FP16 buffer' claim holds for kapitsa's decode GEMVs, but its qmm prefill materializes dequantized half weight tiles in threadgroup memory; the qmr family (the default since NI_QMM) removed that, which is where their +19-21% 27B prefill claim comes from. (5) Kapitsa's decode dequant is exactly the shift-free masked form our decision-table item 6 prototyped (x pre-scaled by 2^-(BITS*j)); its qmvhts Apple10 variant is the shifted-nibble counterpart. (6) No function constants or shape baking anywhere in these kernels: shapes enter through the grid and a params struct, matching our doc's 'shape baking via function constants; kapitsa has none'. (7) NI_QMM8=1 keeps the trunk's MoE router and shared-expert gate on qmm_b8 because 8-bit there changes routing near-ties (p4000 logits KL 2e-4 for ~0.3%), an upstream-accepted trade on the M5 Pro for the qmt path. (8) The qmt/qmt6 tensor-unit prefill and the ANE-split qmm_b4_m64_n64_ld view belong to other entries' territory; they appear here only as the gates that divert shapes away from qmr."
+}

@@ -115,7 +115,7 @@ struct TypeSafePlaygroundView: View {
             if mode == .form { formEditor } else { rawEditor }
 
             if let errorMessage {
-                Text(verbatim: errorMessage).foregroundStyle(.red).textSelection(.enabled)
+                Text(verbatim: errorMessage).foregroundStyle(.appDanger).textSelection(.enabled)
                     .accessibilityAddTraits(.isStaticText)
             }
             HStack(spacing: AppMetrics.actionSpacing) {
@@ -235,7 +235,7 @@ struct TypeSafePlaygroundView: View {
                     APICodeBlock(code: responseJSON)
                 } label: { Text("Raw JSON", bundle: .module) }
             } else if let errorMessage {
-                Text(verbatim: errorMessage).foregroundStyle(.red).textSelection(.enabled)
+                Text(verbatim: errorMessage).foregroundStyle(.appDanger).textSelection(.enabled)
             }
         }
         .apiCard()

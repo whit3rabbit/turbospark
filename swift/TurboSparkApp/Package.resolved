@@ -10,6 +10,15 @@
       }
     },
     {
+      "identity" : "fluidaudio",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/FluidInference/FluidAudio.git",
+      "state" : {
+        "revision" : "19600a485baa4998812e4654b70d2bab8f2c9949",
+        "version" : "0.15.5"
+      }
+    },
+    {
       "identity" : "mlx-swift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/ml-explore/mlx-swift",
@@ -149,8 +158,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/whit3rabbit/syntext",
       "state" : {
-        "revision" : "68e83c18e4af13610bcc84569a7582cd7d6a7181",
-        "version" : "2.5.0"
+        "revision" : "153235fb73fc5532c56335e287c347c4e589fb20",
+        "version" : "2.7.2"
       }
     },
     {

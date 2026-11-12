@@ -1,0 +1,15 @@
+{
+  "compute_units": "CPU_ONLY",
+  "coremltools": "9.0",
+  "files": {
+    "chirp.wav": "87a7d8f895f84338cc3b094475916c4c5607c718485ba739113b9bec87f4404f",
+    "pattern.png": "e342ea470b0a7f9bde582049cdfc3ff3f0eb5edad3806375d1a2400322766450",
+    "reference.json": "a03fe421d0f581de84e4b97640a5a2c8ad315f4f02052d088924b263be04d31c"
+  },
+  "generator": "crates/runtime/tools/ref_embeddinggemma2_coreml.py",
+  "model": "FluidInference/embeddinggemma-2-coreml@3f978ddf92cac9aa07eb2dcf6eb36cf450f3dba4",
+  "numpy": "2.2.6",
+  "python": "3.12.11",
+  "tokenizers": "0.23.3",
+  "transformers": "5.18.0"
+}

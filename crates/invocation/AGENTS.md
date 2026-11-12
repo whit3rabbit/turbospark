@@ -1,6 +1,6 @@
 # turbospark-invocation
 
-Pure command-line and server invocation parsing.
+Pure command-line invocation parsing; the server surface restates these rules rather than importing them.
 
 ## Read first
 

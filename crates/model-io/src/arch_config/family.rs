@@ -275,11 +275,56 @@ pub enum ModelFamily {
     /// Every layer is mask 5, a kind no earlier family carries. Facts:
     /// `docs/DEEPSEEK2_PHASE0.md`.
     Deepseek2,
+    /// Recursive Flint (`model_type: "flint"`, `FlintForCausalLM`): a
+    /// 40B-A2.5B MoE with two dense leading layers, 47 MoE layers (256
+    /// routed experts, top-6 SIGMOID router renormalised over the selected,
+    /// one ungated shared expert), a 35-sliding (window 513) / 14-full
+    /// attention pattern, per-head QK RMSNorm, one learned attention sink
+    /// per head, and NoPE on exactly the full-attention layers. The two
+    /// dense lead layers are also full-attention layers. Facts:
+    /// `docs/FLINT_PHASE0.md`.
+    Flint,
+    /// LiquidAI LFM3 (`model_type: "lfm3"`, GGUF `general.architecture =
+    /// "lfm3"`; the two agree), witnessed on `LFM3-1.7B`: a DENSE 24-layer
+    /// hybrid of 13 gated short-convolution layers, 6 full-attention and 5
+    /// sliding-window (256) layers, the first family here with a mixer that
+    /// is neither attention nor gated DeltaNet. Its own flow
+    /// (`crates/runtime/src/families/lfm3/`), for three firsts:
+    ///
+    /// 1. THE SHORT CONVOLUTION (mask 6): `B, C, x = split3(in_proj(h))`,
+    ///    `y = C * causal_depthwise_conv7(B * x)`, then `out_proj`. No
+    ///    activation, no KV; the state is a fixed `[6, hidden]` tail.
+    /// 2. ZERO-TAIL PARTIAL RoPE on the full layers: `rope_proportional_neox`
+    ///    over 32 of 64 pairs at theta 1e6 (head_dim divisor, NOT spark's
+    ///    `rope_neox_subdim`); the SWA layers rotate the whole head at 1e4.
+    ///    The GGUF encodes the zero tail as a `rope_freqs.weight` vector,
+    ///    which repack checks by VALUE and drops.
+    /// 3. SANDWICH NORMS ON A DENSE TRUNK, per-head q/k RMSNorm, and spark's
+    ///    headwise scalar sigmoid output gate on separate q/k/v projections.
+    ///
+    /// Silu SwiGLU, tied head, no softcap, no embedding scaling, attention
+    /// scale `128^-0.5`. Facts: `docs/LFM3_PHASE0.md`.
+    Lfm3,
+    /// Baidu's Unlimited-OCR-2 (`model_type: "unlimited-ocr"` carrying a
+    /// `sparse_attention_config` whose `training_stage` is `dash`): a
+    /// DeepSeek-V2-shaped MoE decoder over SAM and CLIP towers.
+    ///
+    /// NOT `deepseek2`, though the FFN half is. The attention is plain q/k/v
+    /// rather than MLA, over a full KV cache read through a per-layer router
+    /// (DASH: a 128-token local window plus 12 routed 32-token blocks, each
+    /// with a learned log-prior bias), and positions are page2d rather than
+    /// absolute. Selection and page state live in `compute::dash`.
+    ///
+    /// v1 shares the `model_type` and has no DASH: its R-SWA ring is a
+    /// different cache, and it runs through Core ML here
+    /// (`runtime::coreml::unlimited_ocr`), so the config parser refuses it.
+    /// Facts: `docs/UNLIMITED_OCR2_PHASE0.md`.
+    UnlimitedOcr2,
 }
 
 impl ModelFamily {
-    /// Exhaustive list of all 15 model families.
-    pub const ALL: [ModelFamily; 15] = [
+    /// Exhaustive list of all 18 model families.
+    pub const ALL: [ModelFamily; 18] = [
         ModelFamily::Gemma4,
         ModelFamily::QwenGdnMoe,
         ModelFamily::DeepseekV4Flash,
@@ -295,6 +340,9 @@ impl ModelFamily {
         ModelFamily::Qwen2Dense,
         ModelFamily::Deepseek2,
         ModelFamily::Qwen3Vl,
+        ModelFamily::Flint,
+        ModelFamily::Lfm3,
+        ModelFamily::UnlimitedOcr2,
     ];
 
     /// Returns static string identifier for the model family.
@@ -345,6 +393,12 @@ impl ModelFamily {
             // spelling won; there is no GGUF `general.architecture` row for
             // this family (its `gguf_names` arm is `None`).
             ModelFamily::Qwen3Vl => "qwen3_vl",
+            // New, and it matches the HF `model_type` ("flint").
+            ModelFamily::Flint => "flint",
+            // New, and it matches the HF `model_type` AND the GGUF
+            // `general.architecture` string, which agree ("lfm3").
+            ModelFamily::Lfm3 => "lfm3",
+            ModelFamily::UnlimitedOcr2 => "unlimited_ocr2",
         }
     }
 
@@ -366,6 +420,9 @@ impl ModelFamily {
             "qwen2" => Some(ModelFamily::Qwen2Dense),
             "deepseek2" => Some(ModelFamily::Deepseek2),
             "qwen3_vl" => Some(ModelFamily::Qwen3Vl),
+            "flint" => Some(ModelFamily::Flint),
+            "lfm3" => Some(ModelFamily::Lfm3),
+            "unlimited_ocr2" => Some(ModelFamily::UnlimitedOcr2),
             _ => None,
         }
     }
@@ -394,9 +451,12 @@ mod tests {
                 ModelFamily::Qwen2Dense => 12,
                 ModelFamily::Deepseek2 => 13,
                 ModelFamily::Qwen3Vl => 14,
+                ModelFamily::Flint => 15,
+                ModelFamily::Lfm3 => 16,
+                ModelFamily::UnlimitedOcr2 => 17,
             };
             assert_eq!(idx, expected_idx);
         }
-        assert_eq!(ModelFamily::ALL.len(), 15);
+        assert_eq!(ModelFamily::ALL.len(), 18);
     }
 }

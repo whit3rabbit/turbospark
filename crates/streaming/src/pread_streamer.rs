@@ -68,7 +68,13 @@ impl PreadExpertStreamer {
             path: layout.path.clone(),
             detail: e.to_string(),
         })?;
-        let required = layout.stream_offset + layout.stream_size;
+        // Checked: every per-expert bound below relies on this window not
+        // wrapping, and `StreamLayout`'s fields are public.
+        let required = layout.stream_offset.checked_add(layout.stream_size).ok_or(
+            StreamerError::OffsetOutOfRange {
+                offset: layout.stream_offset,
+            },
+        )?;
         if meta.len() < required {
             return Err(StreamerError::SizeMismatch {
                 expected: required,
@@ -188,6 +194,22 @@ impl PreadExpertStreamer {
         (self.slots[slot].as_ptr(), self.slots[slot].len())
     }
 
+    /// Wires every slot's pages (`mlock`), returning the bytes wired. Stops
+    /// at the first failure; the slots wired before it stay wired until the
+    /// streamer drops.
+    pub fn wire_slots(&mut self) -> Result<u64, StreamerError> {
+        let mut bytes = 0u64;
+        for (slot, aligned) in self.slots.iter_mut().enumerate() {
+            aligned
+                .wire()
+                .map_err(|e| StreamerError::AllocationFailed {
+                    detail: format!("mlock of slot {slot} ({} bytes): {e}", aligned.len()),
+                })?;
+            bytes += aligned.len() as u64;
+        }
+        Ok(bytes)
+    }
+
     /// Loads an expert into the next slot index in round-robin fashion.
     pub fn load_expert(&mut self, layer: usize, expert: usize) -> Result<usize, StreamerError> {
         let slot = self.next_slot;
@@ -217,19 +239,32 @@ impl PreadExpertStreamer {
             return Err(StreamerError::SlotOutOfRange { slot });
         }
         self.cache.invalidate_slot(slot);
-        let region_offset = self.layout.expert_offset(layer, expert);
-        if region_offset + self.layout.expert_stride > self.layout.stream_size {
-            return Err(StreamerError::OffsetOutOfRange {
-                offset: region_offset,
-            });
-        }
-        let file_offset = self.layout.stream_offset + region_offset;
+        let file_offset = self.expert_file_offset(layer, expert)?;
         let stride = self.layout.expert_stride as usize;
         read_full(
             &self.file,
             &mut self.slots[slot].as_mut_slice()[..stride],
             file_offset,
         )
+    }
+
+    /// File offset of `expert`'s blob, refusing one whose whole stride does
+    /// not fit the stream window. Checked rather than plain adds: release
+    /// builds do not trap overflow, and a wrapped `offset + stride` passes
+    /// the window bound and preads valid-but-wrong bytes into a slot. Once
+    /// `end <= stream_size`, `stream_offset + offset` cannot wrap because
+    /// `open` checked `stream_offset + stream_size`.
+    fn expert_file_offset(&self, layer: usize, expert: usize) -> Result<u64, StreamerError> {
+        let region_offset = self.layout.expert_offset(layer, expert);
+        let out_of_range = StreamerError::OffsetOutOfRange {
+            offset: region_offset,
+        };
+        match region_offset.checked_add(self.layout.expert_stride) {
+            Some(end) if end <= self.layout.stream_size => {
+                Ok(self.layout.stream_offset + region_offset)
+            }
+            _ => Err(out_of_range),
+        }
     }
 
     /// Generates an expert cache plan for requested expert indices.
@@ -293,12 +328,7 @@ impl PreadExpertStreamer {
             if slot >= self.slot_count {
                 return Err(StreamerError::SlotOutOfRange { slot });
             }
-            let region_offset = self.layout.expert_offset(0, plan.experts[index]);
-            if region_offset + self.layout.expert_stride > self.layout.stream_size {
-                return Err(StreamerError::OffsetOutOfRange {
-                    offset: region_offset,
-                });
-            }
+            self.expert_file_offset(0, plan.experts[index])?;
         }
 
         let stride = self.layout.expert_stride as usize;
@@ -308,8 +338,9 @@ impl PreadExpertStreamer {
         let chunks_per_miss = stride.div_ceil(MISS_READ_CHUNK_BYTES).max(1);
         let mut chunks: Vec<ReadChunk> = Vec::with_capacity(plan.misses.len() * chunks_per_miss);
         for &index in &plan.misses {
-            let file_offset =
-                self.layout.stream_offset + self.layout.expert_offset(0, plan.experts[index]);
+            // Validated above, and `file_offset + stride` cannot wrap: it is at
+            // most the window end `open` checked.
+            let file_offset = self.expert_file_offset(0, plan.experts[index])?;
             let base = self.slots[plan.assigned_slots[index]].as_ptr() as *mut u8;
             let mut start = 0usize;
             while start < stride {
@@ -326,16 +357,66 @@ impl PreadExpertStreamer {
             }
         }
 
+        self.read_expert_chunks(&chunks, (plan.misses.len() * stride) as u64)?;
+        self.cache.commit_plan(plan);
+        Ok(plan.assigned_slots.clone())
+    }
+
+    /// Reads sorted, distinct expert IDs into an expert-indexed bank. The
+    /// caller retires GPU reads of the bank before overwriting it.
+    pub fn read_experts_into_bank(
+        &mut self,
+        experts: &[usize],
+        bank: &mut [u8],
+    ) -> Result<(), StreamerError> {
+        let stride = self.layout.expert_stride as usize;
+        if stride == 0 {
+            return Err(StreamerError::SizeMismatch {
+                expected: 1,
+                actual: 0,
+            });
+        }
+        if experts.is_empty() {
+            return Ok(());
+        }
+        let mut slots = bank.chunks_exact_mut(stride);
+        let mut next = 0;
+        let mut chunks = Vec::new();
+        for &expert in experts {
+            if expert < next || expert >= self.layout.experts_per_layer {
+                return Err(StreamerError::SlotOutOfRange { slot: expert });
+            }
+            let target = slots
+                .nth(expert - next)
+                .ok_or(StreamerError::SlotOutOfRange { slot: expert })?;
+            let offset = self.expert_file_offset(0, expert)?;
+            for (index, chunk) in target.chunks_mut(MISS_READ_CHUNK_BYTES).enumerate() {
+                chunks.push(ReadChunk {
+                    dest: chunk.as_mut_ptr(),
+                    len: chunk.len(),
+                    file_offset: offset + (index * MISS_READ_CHUNK_BYTES) as u64,
+                });
+            }
+            next = expert + 1;
+        }
+        self.read_expert_chunks(&chunks, (experts.len() * stride) as u64)
+    }
+
+    fn read_expert_chunks(
+        &mut self,
+        chunks: &[ReadChunk],
+        bytes: u64,
+    ) -> Result<(), StreamerError> {
         // Requested bytes are free to count and always counted: misses
         // only, since a hit reads nothing. Physical bytes cost a syscall
         // pair per batch, so they are sampled only under the seam.
-        self.io_stats.bytes_requested += (plan.misses.len() * stride) as u64;
+        self.io_stats.bytes_requested += bytes;
         self.io_stats.batches += 1;
         let physical_before = disk_io::measure_physical_io()
             .then(disk_io::process_disk_bytes_read)
             .flatten();
 
-        let result = read_pool::run_batch(&self.file, &chunks);
+        let result = read_pool::run_batch(&self.file, chunks);
 
         // Sampled even when the batch FAILED: the bytes a partial read
         // pulled off the device were still pulled, and a probe that only
@@ -345,10 +426,7 @@ impl PreadExpertStreamer {
             self.io_stats.bytes_physical += after.saturating_sub(before);
             self.io_stats.samples += 1;
         }
-        result?;
-
-        self.cache.commit_plan(plan);
-        Ok(plan.assigned_slots.clone())
+        result
     }
 
     /// Plans and executes expert caching for requested expert indices.
@@ -416,14 +494,8 @@ impl PreadExpertStreamer {
         experts
             .iter()
             .filter_map(|&expert| {
-                let region_offset = self.layout.expert_offset(0, expert);
-                if region_offset + self.layout.expert_stride > self.layout.stream_size {
-                    return None;
-                }
-                Some((
-                    self.layout.stream_offset + region_offset,
-                    self.layout.expert_stride,
-                ))
+                let file_offset = self.expert_file_offset(0, expert).ok()?;
+                Some((file_offset, self.layout.expert_stride))
             })
             .collect()
     }
@@ -496,6 +568,32 @@ pub(crate) fn read_full(
 #[cfg(test)]
 mod prefetch_tests {
     use super::*;
+
+    #[test]
+    fn prefill_bank_reads_rank_independent_offsets_without_warming_decode() {
+        let path =
+            std::env::temp_dir().join(format!("turbospark-bank-read-{}", std::process::id()));
+        let stride = 64;
+        std::fs::write(&path, [[1u8; 64], [2u8; 64], [3u8; 64]].concat()).unwrap();
+        let layout = StreamLayout {
+            path: path.display().to_string(),
+            stream_offset: 0,
+            stream_size: 3 * stride,
+            experts_per_layer: 3,
+            expert_stride: stride,
+            expert_offsets: None,
+        };
+        let mut streamer = PreadExpertStreamer::open(layout, 1, ExpertCachePolicy::Lfu).unwrap();
+        let mut bank = [0; 192];
+        streamer.read_experts_into_bank(&[0, 2], &mut bank).unwrap();
+        assert_eq!(bank.as_slice(), [[1u8; 64], [0u8; 64], [3u8; 64]].concat());
+        assert_eq!(streamer.resident_experts_snapshot(), vec![None]);
+        assert_eq!(streamer.io_stats().bytes_requested, 2 * stride);
+        assert!(streamer.read_experts_into_bank(&[2, 2], &mut bank).is_err());
+        assert_eq!(streamer.io_stats().bytes_requested, 2 * stride);
+        drop(streamer);
+        std::fs::remove_file(path).unwrap();
+    }
 
     #[test]
     fn prefetch_refuses_cache_bypass_without_reading_or_changing_slots() {

@@ -15,7 +15,7 @@ use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::Response;
 use serde::Deserialize;
 
@@ -46,9 +46,27 @@ enum Encoding {
     F32le,
 }
 
+/// A browser WebSocket is not bound by CORS, and on a keyless loopback
+/// server its `Host` is the real loopback address, so `host_check` lets it
+/// through. `Origin` is the only header naming the page that opened it.
+/// Non-browser clients send none and are let through; a browser always sends
+/// one, and only a page served from loopback is the user's own. An opaque
+/// `null` origin (sandboxed frame, `file:`) has no host and is refused.
+fn origin_allowed(headers: &HeaderMap) -> bool {
+    let Some(origin) = headers.get(header::ORIGIN) else {
+        return true;
+    };
+    origin
+        .to_str()
+        .ok()
+        .and_then(|o| o.split_once("://"))
+        .is_some_and(|(_, host)| crate::host_check::is_loopback_host(host))
+}
+
 pub(crate) async fn realtime(
     State(state): State<ServerState>,
     query: Result<Query<RealtimeQuery>, axum::extract::rejection::QueryRejection>,
+    headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
     let Some(audio) = state.audio else {
@@ -56,6 +74,13 @@ pub(crate) async fn realtime(
     };
     let handle = audio.clone();
     timed(&handle, "realtime", async move {
+        if !origin_allowed(&headers) {
+            return error(
+                StatusCode::FORBIDDEN,
+                "WebSocket upgrades from a page not served from loopback are refused",
+                None,
+            );
+        }
         let Query(query) = match query {
             Ok(q) => q,
             Err(e) => return error(StatusCode::BAD_REQUEST, e.body_text(), None),

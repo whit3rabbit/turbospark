@@ -17,7 +17,6 @@ public struct ModelsSettingsPaneView: View {
     /// evaluation this view received for any reason
     /// (`swift/docs/SWIFT_SETTINGS_AUDIT.md`).
     @State private var lmStudioModelCount: Int = 0
-    @State private var showingStoreMigration = false
     @State private var showingProviderDiscovery = false
 
     public init(model: AppModel) {
@@ -39,11 +38,25 @@ public struct ModelsSettingsPaneView: View {
     public var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                // The pane's one-line purpose (DESIGN.md section 3); the
+                // shell already renders the title. Same treatment as the
+                // Files & Permissions pane's opening line.
+                Text("Choose where models are stored, which folders are scanned, and how models load.", bundle: .module)
+                    .themedFont(.small)
+                    .foregroundStyle(.appSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
                 // The canonical home of Hugging Face authentication: General
                 // used to carry a second copy, and two surfaces for one token
                 // let them disagree about which token was in effect.
                 HfAuthTokenCardView(model: model)
                     .settingsControl("Hugging Face Authentication", pane: .models, timing: .immediate)
+
+                // Section 0: model libraries (drives that hold models). Above
+                // the storage section on purpose: a library is where models
+                // can live besides the home that section describes.
+                ModelLibrariesSectionView(model: model)
 
                 // Section 1: TurboSpark Primary Storage
                 turboSparkStorageSection
@@ -65,9 +78,6 @@ public struct ModelsSettingsPaneView: View {
             }
             .padding(SettingsLayout.contentInsets)
         }
-        .sheet(isPresented: $showingStoreMigration) {
-            ModelStoreMigrationSheet(model: model)
-        }
         .sheet(isPresented: $showingProviderDiscovery) {
             ModelProviderDiscoverySheet(model: model)
         }
@@ -76,18 +86,12 @@ public struct ModelsSettingsPaneView: View {
     // MARK: - TurboSpark Primary Storage
     private var turboSparkStorageSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            AppAdaptiveHeader {
-                Label { Text("TurboSpark Models Storage", bundle: .module) } icon: { Image(systemName: "cylinder.split.1x2") }
-                    .themedFont(.base, weight: .semibold)
-            } actions: {
-                Button {
-                    showingStoreMigration = true
-                } label: {
-                    Label { Text("Move Store...", bundle: .module) } icon: { Image(systemName: "externaldrive") }
-                }
-                .appAction(.secondary, size: .small)
-                .settingsControl("Move Model Store", pane: .models, timing: .immediate)
-            }
+            // A plain heading: the section had no action once the store move
+            // was retired (requirement 9.1), and an adaptive header with an
+            // empty actions slot still lays out a spacer and a second row.
+            Label { Text("TurboSpark Models Storage", bundle: .module) } icon: { Image(systemName: "cylinder.split.1x2") }
+                .themedFont(.base, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
 
             VStack(alignment: .leading, spacing: 10) {
                 SettingsPathText(turboSparkStoreRoot)
@@ -128,7 +132,6 @@ public struct ModelsSettingsPaneView: View {
             label
                 .themedFont(.small, weight: .medium)
                 .frame(minWidth: 52, alignment: .leading)
-                .fixedSize()
             SettingsPathText(path, size: .tiny)
             Spacer()
         }
@@ -140,11 +143,14 @@ public struct ModelsSettingsPaneView: View {
     // MARK: - LM Studio Integration
     private var lmStudioIntegrationSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            // AppAdaptiveHeader, like the other sections: a bare HStack
+            // truncated the title under long translations and Extra Large text.
+            AppAdaptiveHeader {
                 Label { Text("LM Studio Library Integration", bundle: .module) } icon: { Image(systemName: "arrow.triangle.2.circlepath") }
                     .settingsControl("LM Studio Library Integration", pane: .models, timing: .immediate)
                     .themedFont(.base, weight: .semibold)
-                Spacer()
+                    .accessibilityAddTraits(.isHeader)
+            } actions: {
                 Toggle(isOn: Binding(
                     get: { model.enableLMStudioDetection },
                     set: { val in
@@ -166,7 +172,7 @@ public struct ModelsSettingsPaneView: View {
 
                 HStack(spacing: 8) {
                     Image(systemName: isLmStudioPresent ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                        .foregroundStyle(isLmStudioPresent ? Color.green : Color.orange)
+                        .foregroundStyle(isLmStudioPresent ? AnyShapeStyle(.appAccent) : AnyShapeStyle(AppAttention.color))
                         .accessibilityHidden(true)
                     Group {
                         if isLmStudioPresent {
@@ -186,7 +192,8 @@ public struct ModelsSettingsPaneView: View {
                     Image(systemName: "bolt.shield")
                         .themedFont(.title3)
                         .foregroundStyle(.appAccent)
-                        .frame(width: 24)
+                        // minWidth, not width: the glyph scales with Text Size.
+                        .frame(minWidth: 24)
                         .accessibilityHidden(true)
 
                     VStack(alignment: .leading, spacing: 3) {
@@ -303,13 +310,18 @@ public struct ModelsSettingsPaneView: View {
 extension View {
     /// The bordered page card every Models & Storage section sits in, so the
     /// sections (several in their own files) cannot drift apart.
+    ///
+    /// Page fill rather than `.appCardSurface`'s surface fill, because the
+    /// rows inside draw `.appSurface`. The border is the theme's own: a
+    /// hard-coded lower opacity defeated Increase Contrast (DESIGN.md
+    /// "Surfaces and effects").
     func modelsSettingsCard() -> some View {
         padding(14)
             .background(.appPage)
             .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
-                    .stroke(.appBorder.opacity(0.4), lineWidth: 1)
+                    .stroke(.appBorder, lineWidth: 1)
             )
     }
 }

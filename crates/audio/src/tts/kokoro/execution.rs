@@ -6,10 +6,13 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+/// Device weights uploaded once, keyed by source address and shape.
+type WeightCache = HashMap<(usize, Vec<usize>), Rc<dyn DeviceWeight>>;
+
 #[derive(Default)]
 pub(super) struct Execution {
     backend: Option<Rc<dyn ComputeBackend>>,
-    weights: RefCell<HashMap<(usize, Vec<usize>), Rc<dyn DeviceWeight>>>,
+    weights: RefCell<WeightCache>,
 }
 impl Execution {
     pub(super) fn new(backend: Option<Rc<dyn ComputeBackend>>) -> Self {
@@ -40,6 +43,8 @@ impl Execution {
                 scales: &[],
                 offsets: &[],
                 block_scales: &[],
+                planned_rows: None,
+                tiled_f32: false,
             })?;
         self.weights.borrow_mut().insert(key, weight.clone());
         Ok(weight)

@@ -17,6 +17,7 @@ enum FixtureResponse {
     ObservedBody(Vec<u8>, std::sync::mpsc::Sender<()>),
     Retry(u16, u64, std::sync::mpsc::Sender<()>),
     NotFound,
+    Files(Vec<(&'static str, FixtureResponse)>),
     Raw(Vec<u8>),
     Head(String),
     SlowBody(
@@ -47,7 +48,8 @@ fn fixture_server_with_idle_timeout(
     let handle = thread::spawn(move || {
         let mut requests = Vec::new();
         let mut head_files = std::collections::HashMap::<String, (u64, String)>::new();
-        for response in responses {
+        let mut responses = std::collections::VecDeque::from(responses);
+        while let Some(response) = responses.pop_front() {
             let (mut stream, request) = loop {
                 let started = Instant::now();
                 let (mut stream, _) = loop {
@@ -94,6 +96,20 @@ fn fixture_server_with_idle_timeout(
                     continue;
                 }
                 break (stream, request);
+            };
+            let response = if let FixtureResponse::Files(mut files) = response {
+                let path = request.split_whitespace().nth(1).unwrap();
+                let index = files
+                    .iter()
+                    .position(|(name, _)| path.ends_with(name))
+                    .unwrap_or_else(|| panic!("unexpected fixture file request {path}"));
+                let (_, response) = files.swap_remove(index);
+                if !files.is_empty() {
+                    responses.push_front(FixtureResponse::Files(files));
+                }
+                response
+            } else {
+                response
             };
             let metadata_body = match &response {
                 FixtureResponse::Json(body) => Some(body.as_str()),
@@ -176,7 +192,8 @@ fn fixture_server_with_idle_timeout(
                     ready.send(()).unwrap();
                     Vec::new()
                 }
-                FixtureResponse::Raw(body) => body,
+                FixtureResponse::Files(_) => unreachable!(),
+                    FixtureResponse::Raw(body) => body,
                     FixtureResponse::NotFound => {
                         b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec()
                     }
@@ -192,6 +209,41 @@ fn fixture_server_with_idle_timeout(
         requests
     });
     (format!("http://{address}"), handle)
+}
+
+fn receive_request(
+    listener: &TcpListener,
+    timeout: Duration,
+) -> Option<(std::net::TcpStream, String)> {
+    let started = Instant::now();
+    let (stream, _) = loop {
+        match listener.accept() {
+            Ok(accepted) => break accepted,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                if started.elapsed() >= timeout {
+                    return None;
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+            Err(error) => panic!("accept missing-size fixture: {error}"),
+        }
+    };
+    stream.set_nonblocking(false).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
+    let mut reader = BufReader::new(stream.try_clone().unwrap());
+    let mut request = String::new();
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let done = line.is_empty() || line == "\r\n";
+        request.push_str(&line);
+        if done {
+            break;
+        }
+    }
+    Some((stream, request))
 }
 
 struct TempRoot(std::path::PathBuf);
@@ -297,6 +349,142 @@ fn assert_staging_parent_empty(path: &std::path::Path) {
         0,
         "failed transfer left a staging root behind"
     );
+}
+
+#[test]
+fn a_snapshot_shares_eight_range_workers_between_files() {
+    let _endpoint_lock = ENDPOINT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    const CHUNK: u64 = 16 * 1024 * 1024;
+    let files = [
+        ("weights.bin", CHUNK + 1),
+        ("a.bin", 1),
+        ("b.bin", 1),
+        ("c.bin", 1),
+        ("d.bin", 1),
+        ("e.bin", 1),
+        ("f.bin", 1),
+        ("g.bin", 1),
+        ("next.bin", 1),
+    ];
+    let body = metadata(
+        "owner/batched",
+        files
+            .iter()
+            .map(|&(path, size)| listed_file(path, size, None))
+            .collect(),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let _reset = set_endpoint(format!("http://{}", listener.local_addr().unwrap()));
+    let cancel = CancelFlag::new();
+    let server_cancel = cancel.clone();
+    let fixture = thread::spawn(move || {
+        let receive = || {
+            receive_request(&listener, Duration::from_secs(3)).unwrap_or_else(|| {
+                server_cancel.cancel();
+                panic!("expected another concurrent snapshot request");
+            })
+        };
+        let (mut stream, request) = receive();
+        assert!(request.starts_with("GET /api/"));
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+        drop(stream);
+        let respond = |mut stream: std::net::TcpStream, request: &str| {
+            let path = request
+                .split_whitespace()
+                .nth(1)
+                .unwrap()
+                .rsplit('/')
+                .next()
+                .unwrap();
+            let total = files.iter().find(|(file, _)| *file == path).unwrap().1;
+            let (start, end) = request
+                .lines()
+                .find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("range: bytes=")
+                        .map(str::to_owned)
+                })
+                .unwrap()
+                .split_once('-')
+                .map(|(start, end)| (start.parse::<u64>().unwrap(), end.parse::<u64>().unwrap()))
+                .unwrap();
+            let count = end - start + 1;
+            write!(stream, "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {start}-{end}/{total}\r\nContent-Length: {count}\r\nConnection: close\r\n\r\n").unwrap();
+            let bytes = [if start == 0 { b'a' } else { b'b' }; 16 * 1024];
+            let mut remaining = count as usize;
+            while remaining > 0 {
+                let len = remaining.min(bytes.len());
+                stream.write_all(&bytes[..len]).unwrap();
+                remaining -= len;
+            }
+        };
+        let mut active = (0..8).map(|_| receive()).collect::<Vec<_>>();
+        for (path, _) in &files[..8] {
+            assert!(active.iter().any(|(_, request)| request
+                .lines()
+                .next()
+                .unwrap()
+                .contains(path)));
+        }
+        if receive_request(&listener, Duration::from_millis(100)).is_some() {
+            server_cancel.cancel();
+            panic!("a ninth request exceeded the shared limit");
+        }
+        // One freed slot can advance the large shard while the other files wait.
+        let small = active
+            .iter()
+            .position(|(_, request)| request.lines().next().unwrap().contains("/a.bin"))
+            .unwrap();
+        let (stream, request) = active.swap_remove(small);
+        respond(stream, &request);
+        let (stream, request) = receive();
+        assert!(request.lines().next().unwrap().contains("/weights.bin"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains(&format!("range: bytes={CHUNK}-{CHUNK}")));
+        respond(stream, &request);
+        for (stream, request) in active {
+            respond(stream, &request);
+        }
+        let (stream, request) = receive();
+        assert!(request.lines().next().unwrap().contains("/next.bin"));
+        respond(stream, &request);
+    });
+    let client = Client::with_token(Some("hf_batch_fixture".into()));
+    let root = TempRoot::new("batch");
+    let plan = plan(
+        "batch",
+        vec![source_group(
+            "owner/batched",
+            "weights",
+            files
+                .iter()
+                .map(|&(path, size)| source_file(path, Some(size), None))
+                .collect(),
+        )],
+    );
+    let mut updates = Vec::new();
+    let receipt = hub_for(&client)
+        .download_pinned_artifacts(&plan, &root.0, &mut |update| updates.push(update), &cancel)
+        .unwrap();
+    fixture.join().unwrap();
+    assert_progress(&updates, CHUNK + 9, 9);
+    let files = &receipt.sources[0].files;
+    assert_eq!(files[0].path, "weights.bin");
+    let bytes = std::fs::read(&files[0].staged_path).unwrap();
+    assert!(bytes[..CHUNK as usize].iter().all(|byte| *byte == b'a'));
+    assert_eq!(&bytes[CHUNK as usize..], b"b");
+    for file in &files[1..] {
+        assert_eq!(std::fs::read(&file.staged_path).unwrap(), b"a");
+    }
 }
 
 #[test]
@@ -530,6 +718,13 @@ fn transfer_keeps_one_hub_endpoint_snapshot_for_preflight_and_all_files() {
                 listed_file("second.bin", 4, None),
             ],
         )),
+        FixtureResponse::Json(metadata(
+            "owner/endpoint-snapshot",
+            vec![
+                listed_file("first.bin", 3, None),
+                listed_file("second.bin", 4, None),
+            ],
+        )),
         FixtureResponse::Body(b"one".to_vec()),
         FixtureResponse::Body(b"two2".to_vec()),
     ]);
@@ -539,14 +734,18 @@ fn transfer_keeps_one_hub_endpoint_snapshot_for_preflight_and_all_files() {
     let root = TempRoot::new("endpoint-snapshot");
     let plan = plan(
         "owner",
-        vec![source_group(
-            "owner/endpoint-snapshot",
-            "snapshot-role",
-            vec![
-                source_file("first.bin", Some(3), None),
-                source_file("second.bin", Some(4), None),
-            ],
-        )],
+        vec![
+            source_group(
+                "owner/endpoint-snapshot",
+                "snapshot-role",
+                vec![source_file("first.bin", Some(3), None)],
+            ),
+            source_group(
+                "owner/endpoint-snapshot",
+                "snapshot-role-next",
+                vec![source_file("second.bin", Some(4), None)],
+            ),
+        ],
     );
 
     let receipt = hub
@@ -564,12 +763,12 @@ fn transfer_keeps_one_hub_endpoint_snapshot_for_preflight_and_all_files() {
         )
         .expect("all files use the endpoint that supplied the pinned metadata");
 
-    assert_eq!(receipt.sources[0].files.len(), 2);
+    assert_eq!(receipt.sources.len(), 2);
     assert_eq!(
-        std::fs::read(&receipt.sources[0].files[1].staged_path).unwrap(),
+        std::fs::read(&receipt.sources[1].files[0].staged_path).unwrap(),
         b"two2"
     );
-    assert_eq!(fixture.join().unwrap().len(), 3);
+    assert_eq!(fixture.join().unwrap().len(), 4);
 }
 
 #[test]
@@ -585,8 +784,10 @@ fn partial_transfer_failure_removes_the_entire_staging_set() {
                 listed_file("second.bin", 6, None),
             ],
         )),
-        FixtureResponse::Body(b"done".to_vec()),
-        FixtureResponse::NotFound,
+        FixtureResponse::Files(vec![
+            ("/first.bin", FixtureResponse::Body(b"done".to_vec())),
+            ("/second.bin", FixtureResponse::NotFound),
+        ]),
     ]);
     let _reset = set_endpoint(endpoint);
     let client = Client::with_token(Some("hf_transfer_partial".to_string()));
@@ -740,6 +941,13 @@ fn cancellation_between_files_skips_the_next_request_and_removes_staging_root() 
                 listed_file("second.bin", 6, None),
             ],
         )),
+        FixtureResponse::Json(metadata(
+            "owner/cancel-between",
+            vec![
+                listed_file("first.bin", 4, None),
+                listed_file("second.bin", 6, None),
+            ],
+        )),
         FixtureResponse::Body(b"done".to_vec()),
         FixtureResponse::NotFound,
     ]);
@@ -749,14 +957,18 @@ fn cancellation_between_files_skips_the_next_request_and_removes_staging_root() 
     let root = TempRoot::new("cancel-between");
     let plan = plan(
         "owner",
-        vec![source_group(
-            "owner/cancel-between",
-            "cancel-between-role",
-            vec![
-                source_file("first.bin", Some(4), None),
-                source_file("second.bin", Some(6), None),
-            ],
-        )],
+        vec![
+            source_group(
+                "owner/cancel-between",
+                "cancel-between-role",
+                vec![source_file("first.bin", Some(4), None)],
+            ),
+            source_group(
+                "owner/cancel-between",
+                "cancel-between-role-next",
+                vec![source_file("second.bin", Some(6), None)],
+            ),
+        ],
     );
     let cancel = CancelFlag::new();
     let cancel_on_progress = cancel.clone();
@@ -780,7 +992,7 @@ fn cancellation_between_files_skips_the_next_request_and_removes_staging_root() 
     let requests = fixture.join().unwrap();
     assert_eq!(
         requests.len(),
-        2,
+        3,
         "the second file request must not be issued"
     );
 }
@@ -845,6 +1057,17 @@ fn retry_plan() -> PinnedArtifactPlan {
     )
 }
 
+// The second source starts after the first has been verified, so the test
+// can pause or cancel between batches without racing an in-flight request.
+fn split_retry_plan() -> PinnedArtifactPlan {
+    let mut plan = retry_plan();
+    let mut next = plan.sources[0].clone();
+    next.files = plan.sources[0].files.split_off(1);
+    next.role = "next-weights".into();
+    plan.sources.push(next);
+    plan
+}
+
 fn retry_metadata() -> String {
     metadata(
         "owner/retry",
@@ -905,7 +1128,7 @@ fn pinned_retry_process_worker() {
     let hub = hub_for(&client);
     let mut updates = Vec::new();
     let result = hub.download_pinned_artifacts(
-        &retry_plan(),
+        &split_retry_plan(),
         std::path::Path::new(&root),
         &mut |update| {
             if first_process && update.completed_files == 1 {
@@ -930,7 +1153,7 @@ fn pinned_retry_process_worker() {
             b"done"
         );
         assert_eq!(
-            std::fs::read(&receipt.sources[0].files[1].staged_path).unwrap(),
+            std::fs::read(&receipt.sources[1].files[0].staged_path).unwrap(),
             b"next"
         );
     }
@@ -944,7 +1167,9 @@ fn verified_ranges_survive_interruption_and_a_real_process_restart() {
     let (endpoint, fixture) = fixture_server_with_idle_timeout(
         vec![
             FixtureResponse::Json(retry_metadata()),
+            FixtureResponse::Json(retry_metadata()),
             FixtureResponse::Body(b"done".to_vec()),
+            FixtureResponse::Json(retry_metadata()),
             FixtureResponse::Json(retry_metadata()),
             FixtureResponse::Body(b"next".to_vec()),
         ],
@@ -967,7 +1192,7 @@ fn verified_ranges_survive_interruption_and_a_real_process_restart() {
         );
     }
     let requests = fixture.join().unwrap();
-    assert_eq!(requests.len(), 4);
+    assert_eq!(requests.len(), 6);
     assert_eq!(
         requests
             .iter()
@@ -982,8 +1207,8 @@ fn verified_ranges_survive_interruption_and_a_real_process_restart() {
             .iter()
             .filter(|request| request.starts_with("GET /api/"))
             .count(),
-        2,
-        "each process must revalidate live exact source"
+        4,
+        "each process must revalidate both sources"
     );
 }
 
@@ -993,6 +1218,7 @@ fn pause_between_ranges_waits_and_cancel_wakes_paused_transfer() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (endpoint, fixture) = fixture_server(vec![
+        FixtureResponse::Json(retry_metadata()),
         FixtureResponse::Json(retry_metadata()),
         FixtureResponse::Body(b"done".to_vec()),
         FixtureResponse::Body(b"next".to_vec()),
@@ -1008,7 +1234,7 @@ fn pause_between_ranges_waits_and_cancel_wakes_paused_transfer() {
         let mut updates = Vec::new();
         let receipt = hub_for(&client)
             .download_pinned_artifacts(
-                &retry_plan(),
+                &split_retry_plan(),
                 &destination,
                 &mut |update| {
                     if update.completed_files == 1 && update.current_path.is_none() {
@@ -1036,9 +1262,10 @@ fn pause_between_ranges_waits_and_cancel_wakes_paused_transfer() {
     assert!(flag.resume());
     let (_, updates) = worker.join().unwrap();
     assert_progress(&updates, 8, 2);
-    assert_eq!(fixture.join().unwrap().len(), 3);
+    assert_eq!(fixture.join().unwrap().len(), 4);
 
     let (endpoint, fixture) = fixture_server(vec![
+        FixtureResponse::Json(retry_metadata()),
         FixtureResponse::Json(retry_metadata()),
         FixtureResponse::Body(b"done".to_vec()),
     ]);
@@ -1051,7 +1278,7 @@ fn pause_between_ranges_waits_and_cancel_wakes_paused_transfer() {
     let worker = thread::spawn(move || {
         let client = Client::with_token(Some("hf_pause_fixture".into()));
         hub_for(&client).download_pinned_artifacts(
-            &retry_plan(),
+            &split_retry_plan(),
             &destination,
             &mut |update| {
                 if update.completed_files == 1 {
@@ -1070,7 +1297,7 @@ fn pause_between_ranges_waits_and_cancel_wakes_paused_transfer() {
     ));
     assert_staging_parent_empty(&root.0);
     assert_eq!(cached_ranges(&root.0).len(), 1);
-    assert_eq!(fixture.join().unwrap().len(), 2);
+    assert_eq!(fixture.join().unwrap().len(), 3);
 }
 
 #[test]
@@ -1080,8 +1307,10 @@ fn corrupted_range_refetches_and_whole_file_sha_failure_invalidates_only_poisone
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let (endpoint, fixture) = fixture_server(vec![
         FixtureResponse::Json(retry_metadata()),
-        FixtureResponse::Body(b"done".to_vec()),
-        FixtureResponse::Body(b"evil".to_vec()),
+        FixtureResponse::Files(vec![
+            ("/first.bin", FixtureResponse::Body(b"done".to_vec())),
+            ("/second.bin", FixtureResponse::Body(b"evil".to_vec())),
+        ]),
         FixtureResponse::Json(retry_metadata()),
         FixtureResponse::Body(b"next".to_vec()),
         FixtureResponse::Json(retry_metadata()),
@@ -1141,6 +1370,110 @@ fn corrupted_range_refetches_and_whole_file_sha_failure_invalidates_only_poisone
     );
     assert_eq!(std::fs::read(&installed).unwrap(), b"published bytes");
     assert_eq!(fixture.join().unwrap().len(), 7);
+}
+
+/// The receipt names the range cache trees it used, and they survive a
+/// successful transfer so a failed publish can still resume. Once the caller
+/// publishes, discarding them frees exactly those trees: before this, every
+/// pinned install left a full copy of its bytes under `.download-cache`.
+#[test]
+fn a_published_receipt_discards_only_its_own_range_cache() {
+    let _endpoint_lock = ENDPOINT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (endpoint, fixture) = fixture_server(vec![
+        FixtureResponse::Json(retry_metadata()),
+        FixtureResponse::Files(vec![
+            ("/first.bin", FixtureResponse::Body(b"done".to_vec())),
+            ("/second.bin", FixtureResponse::Body(b"next".to_vec())),
+        ]),
+    ]);
+    let _reset = set_endpoint(endpoint);
+    let client = Client::with_token(Some("hf_discard_fixture".into()));
+    let hub = hub_for(&client);
+    let root = TempRoot::new("discard-cache");
+    let pinned = root.0.join(".download-cache").join("pinned");
+    let other_owner = pinned.join("another-owner-source");
+    std::fs::create_dir_all(&other_owner).unwrap();
+    std::fs::write(other_owner.join("0-4.range"), b"keep").unwrap();
+
+    let receipt = hub
+        .download_pinned_artifacts(&retry_plan(), &root.0, &mut |_| {}, &CancelFlag::new())
+        .expect("both pinned files transfer");
+    assert_eq!(receipt.download_cache.len(), 2, "one tree per cached file");
+    for dir in &receipt.download_cache {
+        assert!(dir.starts_with(&pinned), "{}", dir.display());
+        assert!(dir.is_dir(), "a transfer keeps its cache until publish");
+    }
+    assert_eq!(cached_ranges(&root.0).len(), 3);
+
+    receipt.discard_download_cache().unwrap();
+    for dir in &receipt.download_cache {
+        assert!(!dir.exists(), "{} survived the discard", dir.display());
+    }
+    assert_eq!(
+        cached_ranges(&root.0),
+        vec![other_owner.join("0-4.range")],
+        "another owner's cache is not this receipt's to remove"
+    );
+    receipt
+        .discard_download_cache()
+        .expect("a second discard finds nothing and succeeds");
+    assert_eq!(fixture.join().unwrap().len(), 3);
+}
+
+/// An install into a library stages on the library's drive, so publication
+/// is a same-volume rename, while the range cache stays in the home. Staging
+/// and cache parents can therefore differ, and nothing of the cache may land
+/// under staging.
+#[test]
+fn a_separate_cache_parent_keeps_the_range_cache_out_of_staging() {
+    let _endpoint_lock = ENDPOINT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (endpoint, fixture) = fixture_server(vec![
+        FixtureResponse::Json(retry_metadata()),
+        FixtureResponse::Files(vec![
+            ("/first.bin", FixtureResponse::Body(b"done".to_vec())),
+            ("/second.bin", FixtureResponse::Body(b"next".to_vec())),
+        ]),
+    ]);
+    let _reset = set_endpoint(endpoint);
+    let client = Client::with_token(Some("hf_split_cache_fixture".into()));
+    let hub = hub_for(&client);
+    let staging = TempRoot::new("split-staging");
+    let home = TempRoot::new("split-home");
+
+    let receipt = hub
+        .download_pinned_artifacts_into(
+            &retry_plan(),
+            &staging.0,
+            &home.0,
+            &mut |_| {},
+            &CancelFlag::new(),
+        )
+        .expect("both pinned files transfer");
+
+    assert_eq!(
+        receipt.staging_root.parent(),
+        Some(std::fs::canonicalize(&staging.0).unwrap().as_path())
+    );
+    assert_eq!(
+        std::fs::read(&receipt.sources[0].files[0].staged_path).unwrap(),
+        b"done"
+    );
+    let pinned = home.0.join(".download-cache").join("pinned");
+    assert_eq!(receipt.download_cache.len(), 2, "one tree per cached file");
+    for dir in &receipt.download_cache {
+        assert!(dir.starts_with(&pinned), "{}", dir.display());
+        assert!(dir.is_dir());
+    }
+    assert_eq!(cached_ranges(&home.0).len(), 2);
+    assert!(
+        !staging.0.join(".download-cache").exists(),
+        "the range cache landed beside staging"
+    );
+    assert_eq!(fixture.join().unwrap().len(), 3);
 }
 
 #[test]
@@ -1894,37 +2227,6 @@ fn assert_missing_size_head_control(pause: bool) {
     let _endpoint_lock = ENDPOINT_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    fn receive(listener: &TcpListener, timeout: Duration) -> Option<(std::net::TcpStream, String)> {
-        let started = Instant::now();
-        let (stream, _) = loop {
-            match listener.accept() {
-                Ok(accepted) => break accepted,
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    if started.elapsed() >= timeout {
-                        return None;
-                    }
-                    thread::sleep(Duration::from_millis(5));
-                }
-                Err(error) => panic!("accept missing-size fixture: {error}"),
-            }
-        };
-        stream.set_nonblocking(false).unwrap();
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .unwrap();
-        let mut reader = BufReader::new(stream.try_clone().unwrap());
-        let mut request = String::new();
-        loop {
-            let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
-            let done = line.is_empty() || line == "\r\n";
-            request.push_str(&line);
-            if done {
-                break;
-            }
-        }
-        Some((stream, request))
-    }
     fn head(stream: &mut std::net::TcpStream) {
         stream
             .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\n")
@@ -1937,7 +2239,7 @@ fn assert_missing_size_head_control(pause: bool) {
     let server_flag = flag.clone();
     let (observed, next_head) = std::sync::mpsc::channel();
     let server = thread::spawn(move || {
-        let (mut stream, request) = receive(&listener, Duration::from_secs(5)).unwrap();
+        let (mut stream, request) = receive_request(&listener, Duration::from_secs(5)).unwrap();
         assert!(request.starts_with("GET /api/"));
         let metadata = metadata(
             "owner/fallback",
@@ -1953,7 +2255,7 @@ fn assert_missing_size_head_control(pause: bool) {
         )
         .unwrap();
         drop(stream);
-        let (mut stream, request) = receive(&listener, Duration::from_secs(5)).unwrap();
+        let (mut stream, request) = receive_request(&listener, Duration::from_secs(5)).unwrap();
         assert!(request.starts_with("HEAD ") && request.contains("one.bin"));
         // Change control while the first HEAD is active, before its response.
         // The second file has no listing size and must require another HEAD.
@@ -1964,7 +2266,7 @@ fn assert_missing_size_head_control(pause: bool) {
         }
         head(&mut stream);
         drop(stream);
-        let premature = receive(&listener, Duration::from_millis(400));
+        let premature = receive_request(&listener, Duration::from_millis(400));
         observed.send(premature.is_some()).unwrap();
         if let Some((mut stream, request)) = premature {
             assert!(request.starts_with("HEAD ") && request.contains("two.bin"));
@@ -1975,14 +2277,22 @@ fn assert_missing_size_head_control(pause: bool) {
         if !pause {
             return false;
         }
-        let (mut stream, request) = receive(&listener, Duration::from_secs(5)).unwrap();
+        let (mut stream, request) = receive_request(&listener, Duration::from_secs(5)).unwrap();
         assert!(request.starts_with("HEAD ") && request.contains("two.bin"));
         assert!(!server_flag.is_paused());
         head(&mut stream);
         drop(stream);
-        for path in ["one.bin", "two.bin"] {
-            let (mut stream, request) = receive(&listener, Duration::from_secs(5)).unwrap();
-            assert!(request.starts_with("GET ") && request.contains(path));
+        let mut paths = std::collections::HashSet::from(["one.bin", "two.bin"]);
+        for _ in 0..2 {
+            let (mut stream, request) = receive_request(&listener, Duration::from_secs(5)).unwrap();
+            let path = request
+                .split_whitespace()
+                .nth(1)
+                .unwrap()
+                .rsplit('/')
+                .next()
+                .unwrap();
+            assert!(request.starts_with("GET ") && paths.remove(path));
             assert!(request.to_ascii_lowercase().contains("range: bytes=0-3"));
             stream.write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-3/4\r\nContent-Length: 4\r\nConnection: close\r\n\r\ngood").unwrap();
         }

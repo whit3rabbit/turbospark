@@ -239,6 +239,7 @@ fn the_shim_handles_one_conditional_among_several_kwargs() {
 /// changing four shipped families' prompts to fix a fifth.
 #[test]
 fn the_shim_is_a_no_op_on_templates_that_do_not_need_it() {
+    // (The generation-tag rewrite's own no-op case is below.)
     assert_eq!(render_with("plain", "{{ 'ok' }}"), "ok");
     assert_eq!(
         render_with("comment", "{# k=v if x else y #}{{ 'ok' }}"),
@@ -257,6 +258,50 @@ fn the_shim_is_a_no_op_on_templates_that_do_not_need_it() {
     );
 }
 
+/// HF's `{% generation %}` block (transformers' assistant-mask marker,
+/// `LiquidAI/LFM3-1.7B`'s template) renders its body exactly once.
+#[test]
+fn a_generation_block_renders_its_body() {
+    assert_eq!(
+        render_with(
+            "generation",
+            "[{%- generation -%}{{ messages[0].content }}{%- endgeneration -%}]"
+        ),
+        "[hi]"
+    );
+}
+
+/// The rewrite keeps each tag's whitespace control, so the output is
+/// byte-identical to the same template with the tags removed AND their
+/// trimming kept. Deleting the tags instead would leave the newline and
+/// indentation between them in the output.
+#[test]
+fn a_generation_block_keeps_its_whitespace_control() {
+    let with_tags = render_with(
+        "gen-ws",
+        "<a>\n    {%- generation -%}\n    {{ messages[0].content }}\n    {%- endgeneration -%}\n    <b>",
+    );
+    let without = render_with(
+        "no-gen-ws",
+        "<a>\n    {%- if true -%}\n    {{ messages[0].content }}\n    {%- endif -%}\n    <b>",
+    );
+    assert_eq!(with_tags, without);
+    assert_eq!(with_tags, "<a>hi<b>");
+}
+
+/// Only a block whose whole body is the bare keyword is rewritten: a variable
+/// that happens to be called `generation` is left alone.
+#[test]
+fn a_variable_named_generation_is_untouched() {
+    assert_eq!(
+        render_with(
+            "gen-var",
+            "{%- set generation = 'g' -%}{{ generation }}{# generation #}generation"
+        ),
+        "ggeneration"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Multimodal content parts (ROADMAP M-V6)
 //
@@ -264,6 +309,28 @@ fn the_shim_is_a_no_op_on_templates_that_do_not_need_it() {
 // `render_content` macro, image branch and all -- so these exercise the
 // checkpoint's own arm rather than a stub written to agree with this port.
 // ---------------------------------------------------------------------------
+
+/// Pixtral's template (`mistral-community/pixtral-12b`) reads a text chunk's
+/// string from `chunk["content"]` where the OpenAI and Qwen spelling is
+/// `chunk["text"]`. An undefined key renders empty, so without both keys an
+/// image turn would drop the user's question.
+#[test]
+fn a_text_part_is_readable_under_both_spellings() {
+    let template = "{%- for message in messages -%}{%- for chunk in message['content'] -%}\
+        {%- if chunk['type'] == 'text' -%}T[{{ chunk['content'] }}|{{ chunk['text'] }}]\
+        {%- elif chunk['type'] == 'image' -%}[IMG]{%- endif -%}{%- endfor -%}{%- endfor -%}";
+    let tok = tokenizer_with_template("pixtral-chunks", template);
+    let messages = vec![Message::with_parts(
+        Role::User,
+        vec![
+            ContentPart::Image,
+            ContentPart::Text("what shapes?".to_string()),
+        ],
+    )];
+    let out =
+        render_generic_chat_template(&tok, &messages, &[], false, ReasoningEffort::Off).unwrap();
+    assert_eq!(out, "[IMG]T[what shapes?|what shapes?]");
+}
 
 #[test]
 fn an_image_part_renders_the_checkpoints_marker_run() {

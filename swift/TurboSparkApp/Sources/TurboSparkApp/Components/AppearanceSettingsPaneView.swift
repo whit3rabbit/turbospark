@@ -57,7 +57,7 @@ public struct AppearanceSettingsPaneView: View {
             }
             .padding(SettingsLayout.contentInsets)
         }
-        .background(.appPage.opacity(0.6))
+        .background(.appPage)
         .onChange(of: settingsTarget, initial: true) { _, target in
             let colorTargets = ["Customize colors", "Accent", "Background", "Foreground", "Contrast", "Translucent sidebar"]
             if colorTargets.contains(where: { target == "appearance:" + $0 }) { showsCustomization = true }
@@ -95,11 +95,11 @@ public struct AppearanceSettingsPaneView: View {
             .fixedSize()
         }
         .padding(16)
-        .background(.appSurface.opacity(0.7))
+        .background(.appSurface)
         .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
-                .stroke(.appBorder.opacity(0.4), lineWidth: 1)
+                .stroke(.appBorder, lineWidth: 1)
         )
         .confirmationDialog(
             Text("Reset Appearance", bundle: .module),
@@ -118,10 +118,16 @@ public struct AppearanceSettingsPaneView: View {
     // MARK: - Theme Mode Selector
     private var themeSelectionSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Appearance mode", bundle: .module)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Appearance mode", bundle: .module)
                     .settingsControl("Appearance mode", pane: .appearance, timing: .immediate)
-                .font(theme.ui(.large, weight: .semibold))
-                .foregroundStyle(.appText)
+                    .font(theme.ui(.large, weight: .semibold))
+                    .foregroundStyle(.appText)
+                    .accessibilityAddTraits(.isHeader)
+                Text("Theme mode, custom palette colors, font styles, and window preferences.", bundle: .module)
+                    .themedFont(.small)
+                    .foregroundStyle(.appSecondary)
+            }
 
             HStack(spacing: 16) {
                 themeCard(mode: .system) {
@@ -157,24 +163,23 @@ public struct AppearanceSettingsPaneView: View {
         } label: {
             VStack(spacing: 8) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                         .fill(.appSurface)
 
                     preview()
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
 
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                         .stroke(
                             isSelected ? manager.activeAccentColor(isDark: isCurrentlyDark) : theme.border,
                             lineWidth: isSelected ? 2.5 : 1
                         )
                 }
                 .frame(height: 80)
-                .shadow(color: isSelected ? manager.activeAccentColor(isDark: isCurrentlyDark).opacity(0.2) : Color.black.opacity(0.04), radius: 4, y: 2)
 
                 title
                     .font(theme.ui(.small, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? .primary : .secondary)
+                    .foregroundStyle(isSelected ? AnyShapeStyle(.appText) : AnyShapeStyle(.appSecondary))
             }
             .frame(maxWidth: .infinity)
         }

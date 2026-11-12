@@ -9,7 +9,19 @@
 
 #[cfg(target_os = "macos")]
 fn main() {
+    let mode = std::env::args().nth(1).unwrap_or_else(|| "hashes".into());
+    run(&mode, &mut |line| println!("{line}"));
+}
+
+/// Run one mode, handing every output line to `emit`. `tests/music3_oracle.rs`
+/// includes this file and compares `hashes` and `dit_hashes` with the golden
+/// files, so a kernel change cannot skip the oracle.
+#[cfg(target_os = "macos")]
+pub fn run(mode: &str, emit: &mut dyn FnMut(String)) {
     use std::time::Instant;
+    macro_rules! out {
+        ($($t:tt)*) => { emit(format!($($t)*)) };
+    }
     use turbospark_gpu::{Music3DType, Music3Device, Music3Encoding};
 
     struct Rng(u64);
@@ -107,9 +119,54 @@ fn main() {
             .collect()
     }
 
-    let mode = std::env::args().nth(1).unwrap_or_else(|| "hashes".into());
     let device = Music3Device::new().unwrap();
-    match mode.as_str() {
+    match mode {
+        // Production DiT projection shapes at the real 691-row chunk, 4-bit and
+        // 8-bit, both group sizes, with ragged output widths. A separate mode
+        // so the documented `hashes` output (and its line count) stays fixed.
+        "dit_hashes" => {
+            for bits in [4u32, 8] {
+                for group in [32usize, 64] {
+                    for (input_dim, output_dim) in [
+                        (2048usize, 2048usize),
+                        (2048, 2200),
+                        (2048, 16384),
+                        (8192, 2048),
+                    ] {
+                        let case = build(
+                            &device,
+                            bits,
+                            group,
+                            input_dim,
+                            output_dim,
+                            101 + u64::from(bits),
+                        );
+                        for dtype in [Music3DType::F16, Music3DType::Bf16] {
+                            for rows in [691usize, 690, 129] {
+                                for with_bias in [false, true] {
+                                    let x = input(&case, rows);
+                                    let out = case
+                                        .weight
+                                        .linear_typed(
+                                            &x,
+                                            with_bias.then_some(case.bias.as_slice()),
+                                            rows,
+                                            input_dim,
+                                            output_dim,
+                                            dtype,
+                                        )
+                                        .unwrap();
+                                    out!(
+                                        "dit bits={bits} group={group} {input_dim}x{output_dim} {dtype:?} rows={rows} bias={with_bias} {:016x}",
+                                        fnv(&out)
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         "hashes" => {
             for bits in [2u32, 3, 4, 5, 6, 8] {
                 for group in [32usize, 64] {
@@ -130,7 +187,7 @@ fn main() {
                                         dtype,
                                     )
                                     .unwrap();
-                                println!(
+                                out!(
                                     "bits={bits} group={group} {dtype:?} rows={rows} bias={with_bias} {:016x}",
                                     fnv(&out)
                                 );
@@ -165,7 +222,7 @@ fn main() {
                                     dtype,
                                 )
                                 .unwrap();
-                            println!(
+                            out!(
                                 "tall bits={bits} {input_dim}x{output_dim} {dtype:?} rows={rows} {:016x}",
                                 fnv(&out)
                             );
@@ -202,7 +259,7 @@ fn main() {
                     )
                     .unwrap();
                 let ids: Vec<i32> = (0..rows as i32).rev().collect();
-                println!(
+                out!(
                     "embedding {label} {:016x} resident={}",
                     fnv(&weight.embedding(&ids, cols).unwrap()),
                     device.resident_weight_bytes() - before
@@ -213,7 +270,7 @@ fn main() {
                 let out = weight
                     .linear_typed(&x, None, 9, cols, rows, Music3DType::Bf16)
                     .unwrap();
-                println!("scales {label} {:016x}", fnv(&out));
+                out!("scales {label} {:016x}", fnv(&out));
             }
             // A decode-sized shape at the real width, hashed for the 4-bit case.
             let case = build(&device, 4, 64, 4096, 1024, 99);
@@ -223,7 +280,7 @@ fn main() {
                     .weight
                     .linear_typed(&x, None, rows, 4096, 1024, Music3DType::Bf16)
                     .unwrap();
-                println!("wide bits=4 rows={rows} {:016x}", fnv(&out));
+                out!("wide bits=4 rows={rows} {:016x}", fnv(&out));
             }
             // Every row count below the M-series split-K limits on the
             // packed wide kernel: a ragged output tail (100 is not a
@@ -237,7 +294,7 @@ fn main() {
                         .weight
                         .linear_typed(&x, Some(&case.bias), rows, 512, 100, Music3DType::Bf16)
                         .unwrap();
-                    println!("wide ragged bits={bits} rows={rows} {:016x}", fnv(&out));
+                    out!("wide ragged bits={bits} rows={rows} {:016x}", fnv(&out));
                 }
             }
             for (input_dim, output_dim) in [(4096usize, 4096usize), (4096, 6144), (6144, 4096)] {
@@ -248,7 +305,7 @@ fn main() {
                         .weight
                         .linear_typed(&x, None, rows, input_dim, output_dim, Music3DType::Bf16)
                         .unwrap();
-                    println!(
+                    out!(
                         "wide depth {input_dim}x{output_dim} rows={rows} {:016x}",
                         fnv(&out)
                     );
@@ -312,7 +369,7 @@ fn main() {
                                     dtype,
                                 )
                                 .unwrap();
-                            println!(
+                            out!(
                                 "fp {label} {input_dim}x{output_dim} {dtype:?} rows={rows} {:016x}",
                                 fnv(&out)
                             );
@@ -360,7 +417,7 @@ fn main() {
                     run();
                 }
                 let per_call = started.elapsed().as_secs_f64() * 1e3 / 30.0;
-                println!("sequence rows={rows} in={input_dim} out={output_dim} per_call_ms={per_call:.3}");
+                out!("sequence rows={rows} in={input_dim} out={output_dim} per_call_ms={per_call:.3}");
             }
         }
         "timing" => {
@@ -398,7 +455,7 @@ fn main() {
                 let mean_ms = started.elapsed().as_secs_f64() * 1e3 / f64::from(iterations);
                 // Packed 4-bit weight bytes the kernel must read at minimum.
                 let gigabytes = (input_dim * output_dim / 2) as f64 / 1e9;
-                println!(
+                out!(
                     "rows={rows} in={input_dim} out={output_dim} mean_ms={mean_ms:.3} \
                      weight_GBps={:.1} hash={:016x}",
                     gigabytes / (mean_ms / 1e3),
@@ -421,12 +478,28 @@ fn main() {
                 (96, 50, 4, 2, 1, 1, true, 101),
                 (64, 100, 16, 8, 4, 1, true, 29),
                 (130, 70, 8, 4, 2, 1, true, 55),
+                // Long enough that MLX does not split K (the polyphase kernel's cases),
+                // with channels that are and are not multiples of 8.
+                (192, 96, 16, 8, 4, 1, true, 600),
+                (96, 50, 4, 2, 1, 1, true, 2000),
+                (64, 100, 16, 8, 4, 1, true, 500),
+                (48, 24, 8, 4, 2, 1, true, 900),
+                (130, 70, 8, 4, 2, 1, true, 400),
             ];
+            // The vocoder's real 8 s shapes (latent length 689, four upsampling blocks).
             let timing_cases: Vec<ConvCase> = vec![
+                (1536, 768, 16, 8, 4, 1, true, 689),
+                (768, 768, 7, 1, 3, 1, false, 5512),
+                (768, 768, 1, 1, 0, 1, false, 5512),
+                (768, 384, 16, 8, 4, 1, true, 5512),
+                (384, 384, 7, 1, 3, 1, false, 44096),
+                (384, 384, 1, 1, 0, 1, false, 44096),
+                (384, 192, 8, 4, 2, 1, true, 44096),
                 (192, 192, 7, 1, 3, 1, false, 176384),
                 (192, 192, 1, 1, 0, 1, false, 176384),
-                (384, 192, 8, 4, 2, 1, true, 44096),
-                (1536, 768, 16, 8, 4, 1, true, 689),
+                (192, 96, 4, 2, 1, 1, true, 176384),
+                (96, 96, 7, 1, 3, 1, false, 352768),
+                (96, 96, 1, 1, 0, 1, false, 352768),
             ];
             let cases = if mode == "conv_hashes" {
                 hash_cases
@@ -485,7 +558,7 @@ fn main() {
                         }
                         mean_ms = started.elapsed().as_secs_f64() * 1e3 / f64::from(iterations);
                     }
-                    println!(
+                    out!(
                         "conv ic={ic} oc={oc} k={kernel} s={stride} p={pad} d={dilation} t={transpose} len={len} {dtype:?} mean_ms={mean_ms:.2} {:016x}",
                         fnv(&last)
                     );

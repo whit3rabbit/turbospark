@@ -93,6 +93,11 @@ pub struct SessionCore {
     /// macOS-only and this struct is not; the human-readable half of the
     /// plan is already carried in `info.speculation`.
     pub(crate) speculation_block: Option<usize>,
+    /// Whether `speculation_block` is a CAP the adaptive depth controller
+    /// moves under rather than a fixed round size. Meaningful only when the
+    /// block is `Some`; kept beside it as a plain `bool` for the same reason
+    /// the block is a plain `usize`.
+    pub(crate) speculation_adaptive: bool,
     /// The guard tier this session actually opened under (vision memory
     /// sidecar Part B3). Carried so a later image's pixel-budget clamp
     /// resolves against the SAME tier `maxContext` did, never a second,
@@ -123,6 +128,32 @@ impl SessionCore {
     /// while a Stop pressed WHILE this call is queued still sticks.
     pub(crate) fn arm(&self) {
         self.cancel.store(false, Ordering::Release);
+    }
+
+    /// Overrides the prefix-reuse decision this session opened with, on the
+    /// terms `ts_server_start` resolved.
+    ///
+    /// **WHY THIS EXISTS.** `ts_session_open` resolves prefix reuse to `true`
+    /// by default, because a bare session is one owner's and is multi-turn by
+    /// construction. That is the wrong default for the same session once a
+    /// server is attached to it: from that moment the KV cache is reachable
+    /// by every client of that server, it is not partitioned by API key, and
+    /// a match against ANOTHER client's prompt becomes observable through
+    /// response timing. `turbospark-server` therefore defaults the same
+    /// setting OFF, and a host that starts an in-process server had no way to
+    /// reach that posture -- the session was already open and already on.
+    ///
+    /// Takes the engine lock, so it is ordered against a generation like any
+    /// other mutation. Called at attach, where no turn is in flight.
+    pub(crate) fn set_prefix_reuse_for_server(&self, enabled: bool) {
+        #[cfg(target_os = "macos")]
+        if let Ok(mut engine) = self.engine.lock() {
+            if let Engine::Real(runner) = &mut *engine {
+                runner.set_prefix_reuse(enabled);
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = enabled;
     }
 
     /// The flag the decode loop polls, without clearing it. Re-arming here

@@ -74,6 +74,12 @@ pub fn evaluate_config(
         warnings: Vec::new(),
     };
 
+    // Before the registry lookup, so the refusal names what the model is
+    // rather than calling a known checkpoint unknown.
+    if let Some(owner) = repack::headless_tts_trunk_owner(&config) {
+        report.refuse(repack::describe_headless_tts_trunk(owner));
+        return Ok(report);
+    }
     let Some(family) = repack::config_json_family(&config) else {
         report.refuse(format!(
             "config.json declares model_type {:?}, which is not in this port's registry \
@@ -105,6 +111,14 @@ pub fn evaluate_config(
         }
         ModelFamily::Qwen3Vl => {
             repack::parse_qwen3_vl_config(config_text).map_err(|e| e.to_string())
+        }
+        ModelFamily::Flint => repack::parse_flint_config(config_text).map_err(|e| e.to_string()),
+        ModelFamily::UnlimitedOcr2 => {
+            repack::parse_unlimited_ocr2_config(config_text).map_err(|e| e.to_string())
+        }
+        ModelFamily::Lfm3 => repack::parse_lfm3_config(config_text).map_err(|e| e.to_string()),
+        ModelFamily::Deepseek2 => {
+            repack::parse_deepseek_vl2_config(config_text).map_err(|e| e.to_string())
         }
         other => Err(format!(
             "model_type resolves to {}, whose safetensors intake is not wired here; \
@@ -147,7 +161,18 @@ pub fn evaluate_config(
         );
         return Ok(report);
     }
-    match repack::parse_gemma4_quantization(config_text) {
+    // Flint parses through its own reader, as the install walk does
+    // (`stream.rs`): it renames MLX per-tensor keys and admits 3-bit routed
+    // experts, which the generic reader refuses.
+    let flint = family == ModelFamily::Flint;
+    let parsed_quant = if flint {
+        repack::parse_flint_quantization(config_text)
+    } else {
+        repack::parse_gemma4_quantization(config_text)
+    };
+    let family_admits =
+        |name: &str, bits: u32, gs: u32| flint && repack::flint_admits_affine_shape(name, bits, gs);
+    match parsed_quant {
         Ok(quant) => {
             // An mxfp4 checkpoint has one legal default shape, which the
             // parser enforced; only its affine overrides are affine, each at
@@ -163,7 +188,10 @@ pub fn evaluate_config(
             }
             for (name, bits) in &quant.bits_overrides {
                 let shape = (*bits, quant.group_for(name));
-                if !repack::is_supported_affine_shape(shape.0, shape.1) && !bad.contains(&shape) {
+                if !repack::is_supported_affine_shape(shape.0, shape.1)
+                    && !family_admits(name, shape.0, shape.1)
+                    && !bad.contains(&shape)
+                {
                     bad.push(shape);
                 }
             }

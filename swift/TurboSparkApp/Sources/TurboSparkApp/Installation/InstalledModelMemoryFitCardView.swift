@@ -81,8 +81,8 @@ struct InstalledModelMemoryFitCardView: View {
                         .themedFont(.tiny, weight: .semibold)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1)
-                        .background(Color.green.opacity(0.16), in: Capsule())
-                        .foregroundStyle(.green)
+                        .background(.appSuccessTint, in: Capsule())
+                        .foregroundStyle(.appSuccess)
                         .help(Text("A frozen benchmark row taken on this chip at this context and slot count.", bundle: .module))
                 }
                 Spacer()

@@ -98,6 +98,13 @@ pub fn encoder_embeddings_lookup(
             "position {pos} (offset {pos_start}) exceeds position_embeddings len {}",
             position_embeddings.len()
         );
+        if let Some(type_table) = token_type_embeddings {
+            assert!(
+                type_start + hidden <= type_table.len(),
+                "type_id {type_id} (offset {type_start}) exceeds token_type_embeddings len {}",
+                type_table.len()
+            );
+        }
 
         let row_start = pos * hidden;
         for i in 0..hidden {

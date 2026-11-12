@@ -548,32 +548,180 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
     // Everything above produced `prompt_ids` for a prompt whose placeholders
     // are single tokens; the model sees `merged_tokens` copies of each.
     let images = match (&vision_info, encoded.is_empty()) {
-        (Some(info), false) => {
+        (
+            Some(crate::vision::VisionInfo::Qwen {
+                params,
+                specials,
+                wrap_end,
+            }),
+            false,
+        ) => {
             // Header-only preflight computes the exact grid and expanded
             // allocation budget before decoding any attacker-controlled image.
-            let grids = crate::vision::preflight_all(&encoded, info)?;
+            let grids = crate::vision::preflight_all(&encoded, params)?;
+            // A template that renders a bare placeholder gets the start and
+            // end markers added here, as its processor does.
+            if let Some(end) = wrap_end {
+                prompt_ids = turbospark_vision_io::wrap_bare_image_placeholders(
+                    &prompt_ids,
+                    specials.image_pad,
+                    specials.vision_start,
+                    *end,
+                );
+            }
             let spliced = turbospark_vision_io::splice_and_walk(
                 &prompt_ids,
                 &grids,
-                info.specials,
-                info.params.merge_size,
+                *specials,
+                params.merge_size,
             )
             .map_err(|e| format!("cannot place {} image(s): {e}", grids.len()))?;
             prompt_ids = spliced.ids;
-            let required = prompt_ids.len() as u64 + config.max_new_tokens as u64;
-            if required > model.max_context() as u64 {
-                return Err(format!(
-                    "prompt needs {} tokens plus {} new tokens, exceeding the {}-token context",
-                    prompt_ids.len(),
-                    config.max_new_tokens,
-                    model.max_context()
-                ));
-            }
-            let preprocessed = crate::vision::preprocess_all(&encoded, info)?;
-            Some(crate::vision::RequestImages {
+            check_context(&prompt_ids, &config, model.max_context())?;
+            let preprocessed = crate::vision::preprocess_all(&encoded, params)?;
+            Some(crate::vision::RequestImages::Qwen {
                 images: preprocessed,
                 positions: spliced.positions,
             })
+        }
+        // MiniCPM-V: the best-fit resize bounds every image to about 448
+        // squared, so decoding is bounded without a pixel budget; each
+        // rendered `<|image_pad|>` becomes `<image_id>N</image_id><image>`,
+        // the fill run, `</image>`, with canvas positions.
+        (Some(crate::vision::VisionInfo::MiniCpm { params, ids }), false) => {
+            let mut preprocessed = Vec::with_capacity(encoded.len());
+            for (i, bytes) in encoded.iter().enumerate() {
+                let decoded = turbospark_vision_io::decode_image_bytes(bytes)
+                    .map_err(|e| format!("image {}: {e}", i + 1))?;
+                preprocessed.push(
+                    turbospark_vision_io::minicpm_preprocess(&decoded, params)
+                        .map_err(|e| format!("image {}: {e}", i + 1))?,
+                );
+            }
+            let grids: Vec<_> = preprocessed.iter().map(|p| p.grid).collect();
+            let tokenizer = model.tokenizer();
+            let index_ids = |k: usize| tokenizer.encode(&k.to_string(), false);
+            let spliced = turbospark_vision_io::minicpm_splice_and_positions(
+                &prompt_ids,
+                &grids,
+                ids,
+                &index_ids,
+            )
+            .map_err(|e| format!("cannot place {} image(s): {e}", grids.len()))?;
+            prompt_ids = spliced.ids;
+            check_context(&prompt_ids, &config, model.max_context())?;
+            Some(crate::vision::RequestImages::MiniCpm {
+                images: preprocessed,
+                positions: spliced.positions,
+            })
+        }
+        // Gemma 4: each rendered `<|image|>` becomes `boi`, one placeholder
+        // per soft token, `eoi`; the soft-token counts come from the headers
+        // before any pixel is decoded, as above.
+        (
+            Some(crate::vision::VisionInfo::Gemma4 {
+                max_soft_tokens,
+                ids,
+            }),
+            false,
+        ) => {
+            let soft = crate::vision::gemma4_preflight_all(&encoded, *max_soft_tokens)?;
+            let (expanded, spans) =
+                turbospark_vision_io::gemma4_expand_image_placeholders(&prompt_ids, *ids, &soft)
+                    .map_err(|e| format!("cannot place {} image(s): {e}", soft.len()))?;
+            prompt_ids = expanded;
+            check_context(&prompt_ids, &config, model.max_context())?;
+            let images = crate::vision::gemma4_preprocess_all(&encoded, *max_soft_tokens)?;
+            Some(crate::vision::RequestImages::Gemma4 { images, spans })
+        }
+        (Some(crate::vision::VisionInfo::UnlimitedOcr2 { ids }), false) => {
+            let pages = crate::vision::uocr2_pages_all(&encoded)?;
+            prompt_ids = turbospark_vision_io::uocr2_expand_prompt(&prompt_ids, &pages, *ids)
+                .map_err(|e| format!("cannot place {} image(s): {e}", pages.len()))?;
+            check_context(&prompt_ids, &config, model.max_context())?;
+            Some(crate::vision::RequestImages::UnlimitedOcr2 { pages })
+        }
+        // CLIP (LLaVA): each rendered `<image>` becomes one placeholder per
+        // patch of the fixed crop, no start or end token. The count is a
+        // property of the processor config, so only the byte budget needs a
+        // header pass before any pixel is decoded.
+        (
+            Some(crate::vision::VisionInfo::Clip {
+                params,
+                marker,
+                fill,
+                break_end,
+            }),
+            false,
+        ) => {
+            crate::vision::clip_preflight_all(&encoded, params)?;
+            let grids = crate::vision::clip_grids(&encoded, params)?;
+            // The llava-hf template emits no `<s>`; the reference's
+            // processor adds it, and the `add_bos = false` encode above
+            // follows the convention that the template carries it.
+            let with_bos = turbospark_vision_io::clip_prepend_bos(
+                &prompt_ids,
+                model.tokenizer().encode("", true).first().copied(),
+            );
+            let (expanded, spans) = turbospark_vision_io::flat_expand_image_placeholders(
+                &with_bos, *marker, *fill, *break_end, &grids,
+            )
+            .map_err(|e| format!("cannot place {} image(s): {e}", grids.len()))?;
+            prompt_ids = expanded;
+            check_context(&prompt_ids, &config, model.max_context())?;
+            let images = crate::vision::clip_preprocess_all(&encoded, params)?;
+            Some(crate::vision::RequestImages::Clip { images, spans })
+        }
+        // SigLIP (DeepSeek-VL2): the run length is per image, set by the tile
+        // grid the image's size picks, so the preflight reads headers first.
+        (
+            Some(crate::vision::VisionInfo::SigLip {
+                params,
+                marker,
+                fill,
+            }),
+            false,
+        ) => {
+            let counts = crate::vision::siglip_preflight_all(&encoded, params)?;
+            // The V2 template is rendered with the BOS literal at the front
+            // (`MfTokenizer::apply_chat_template`), so no prefix is added.
+            let (expanded, spans) = turbospark_vision_io::clip_expand_image_placeholders(
+                &prompt_ids,
+                *marker,
+                *fill,
+                &counts,
+            )
+            .map_err(|e| format!("cannot place {} image(s): {e}", counts.len()))?;
+            prompt_ids = expanded;
+            check_context(&prompt_ids, &config, model.max_context())?;
+            let images = crate::vision::siglip_preprocess_all(&encoded, params)?;
+            Some(crate::vision::RequestImages::SigLip { images, spans })
+        }
+        // DeepSeek-OCR: every image is one padded base view and a 273-position
+        // run, so the counts need only the headers.
+        (
+            Some(crate::vision::VisionInfo::DeepseekOcr {
+                params,
+                marker,
+                fill,
+            }),
+            false,
+        ) => {
+            let counts = crate::vision::deepseek_ocr_preflight_all(&encoded)?;
+            // The OCR template is rendered with the BOS literal at the front
+            // (`MfTokenizer::apply_chat_template`, the V2 dialect), so no
+            // prefix is added.
+            let (expanded, spans) = turbospark_vision_io::clip_expand_image_placeholders(
+                &prompt_ids,
+                *marker,
+                *fill,
+                &counts,
+            )
+            .map_err(|e| format!("cannot place {} image(s): {e}", counts.len()))?;
+            prompt_ids = expanded;
+            check_context(&prompt_ids, &config, model.max_context())?;
+            let images = crate::vision::deepseek_ocr_preprocess_all(&encoded, params)?;
+            Some(crate::vision::RequestImages::DeepseekOcr { images, spans })
         }
         _ => None,
     };
@@ -584,4 +732,22 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
         images,
         dropped_images,
     })
+}
+
+/// The expanded prompt plus the requested new tokens must fit the context.
+fn check_context(
+    prompt_ids: &[foundation::TokenId],
+    config: &GenerationConfig,
+    max_context: u32,
+) -> Result<(), String> {
+    let required = prompt_ids.len() as u64 + config.max_new_tokens as u64;
+    if required > max_context as u64 {
+        return Err(format!(
+            "prompt needs {} tokens plus {} new tokens, exceeding the {}-token context",
+            prompt_ids.len(),
+            config.max_new_tokens,
+            max_context
+        ));
+    }
+    Ok(())
 }

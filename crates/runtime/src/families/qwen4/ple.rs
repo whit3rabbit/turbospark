@@ -152,7 +152,8 @@ pub(crate) fn encode_ple_layer(
         (&qwen4.ple_key, 0),
     )?;
     let norm_key_w = norm_view(weights, index, &name("norm_key.weight"), wide_dim)?;
-    gpu::encode_rms_norm_bf16w_grouped(
+    super::rms_norm_grouped(
+        qwen4.norms_centered,
         context,
         pass,
         (&qwen4.ple_key, 0),
@@ -181,7 +182,8 @@ pub(crate) fn encode_ple_layer(
     // directly; there is no query projection (the checkpoint's own tensor
     // list has key_proj and value_proj only).
     let norm_query_w = norm_view(weights, index, &name("norm_query.weight"), wide_dim)?;
-    gpu::encode_rms_norm_bf16w_grouped(
+    super::rms_norm_grouped(
+        qwen4.norms_centered,
         context,
         pass,
         wide,
@@ -211,7 +213,8 @@ pub(crate) fn encode_ple_layer(
     // it again here. The conv reads the NORMED gated value, then joins the
     // UN-normed `ple_gv` (`docs/QWEN4_PHASE0.md` item 4).
     let norm_conv_w = norm_view(weights, index, &name("norm_conv.weight"), wide_dim)?;
-    gpu::encode_rms_norm_bf16w_grouped(
+    super::rms_norm_grouped(
+        qwen4.norms_centered,
         context,
         pass,
         (&qwen4.ple_gv, 0),

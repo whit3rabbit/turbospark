@@ -24,7 +24,9 @@ use metal::MTLResourceOptions;
 
 use crate::bytes::u32_bytes;
 use crate::context::{GpuError, MetalContext, PassEncoder};
-use crate::moe_decode::{constants_key, moe_function_constants, MoeExpertOffsets};
+use crate::moe_decode::{
+    constants_key, moe_function_constants, MoeExpertOffsets, MAX_STREAMED_EXPERTS,
+};
 
 const SOURCE: &str = concat!(
     include_str!("shaders/moe.metal"),
@@ -200,9 +202,77 @@ pub fn encode_moe_prefill_phase1(
     route_count: u32,
     use_silu: bool,
 ) -> Result<(), GpuError> {
+    // Phase 1 has no rank width of its own; the bound is the eight-wide
+    // phase 2 it is paired with, which would truncate past it.
+    assert!(top_k as usize <= crate::moe_gguf::PHASE2_FIXED_SLOTS);
+    encode_phase1_routes(
+        context,
+        pass,
+        routed,
+        offsets,
+        x,
+        acts,
+        routes,
+        d_dim,
+        f_dim,
+        top_k,
+        route_count,
+        use_silu,
+    )
+}
+
+/// [`encode_moe_prefill_phase1`] for a caller pairing it with
+/// [`encode_moe_prefill_phase2_fused_wide`]: the same kernel, bounded by
+/// that phase 2's [`MAX_STREAMED_EXPERTS`] width instead of eight.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_moe_prefill_phase1_wide(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    routed: &RoutedBlobsWideBuffer,
+    offsets: &MoeExpertOffsets,
+    x: (&metal::Buffer, u64),
+    acts: (&metal::Buffer, u64),
+    routes: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+    route_count: u32,
+    use_silu: bool,
+) -> Result<(), GpuError> {
+    assert!(top_k >= 1 && top_k as usize <= MAX_STREAMED_EXPERTS);
+    encode_phase1_routes(
+        context,
+        pass,
+        routed,
+        offsets,
+        x,
+        acts,
+        routes,
+        d_dim,
+        f_dim,
+        top_k,
+        route_count,
+        use_silu,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_phase1_routes(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    routed: &RoutedBlobsWideBuffer,
+    offsets: &MoeExpertOffsets,
+    x: (&metal::Buffer, u64),
+    acts: (&metal::Buffer, u64),
+    routes: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+    route_count: u32,
+    use_silu: bool,
+) -> Result<(), GpuError> {
     assert_eq!(d_dim % 64, 0);
     assert_eq!(f_dim % 64, 0);
-    assert!(top_k as usize <= crate::moe_gguf::PHASE2_FIXED_SLOTS);
     let pipeline = context.pipeline(
         SOURCE,
         "moe_prefill_phase1_routes_int4",
@@ -300,6 +370,62 @@ pub fn encode_moe_prefill_phase2_fused(
         ],
         (d_dim as u64, tokens as u64, 1),
         (THREADS_PER_GROUP, 1, 1),
+    );
+    Ok(())
+}
+
+/// [`encode_moe_prefill_phase2_fused`] for `top_k` up to
+/// [`MAX_STREAMED_EXPERTS`] (`moe_prefill_phase2_fused_int4_wide`):
+/// `qwen4_exp` routes top-10, past the eight-wide kernel's fixed reduce.
+/// It dispatches exactly `top_k` SIMD groups per `(d, token)` and reduces
+/// `partial[0..top_k)` after the seed in rank order, which is
+/// `moe_phase2_down_reduce_k8`'s loop at that kernel's width, so each
+/// token's output is bit-identical to its decode pass
+/// (`crates/gpu/tests/moe_prefill_batch_parity.rs`).
+#[allow(clippy::too_many_arguments)]
+pub fn encode_moe_prefill_phase2_fused_wide(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    routed: &RoutedBlobsWideBuffer,
+    offsets: &MoeExpertOffsets,
+    acts: (&metal::Buffer, u64),
+    routing_w: (&metal::Buffer, u64),
+    routes: (&metal::Buffer, u64),
+    residual: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+    tokens: u32,
+    use_silu: bool,
+) -> Result<(), GpuError> {
+    assert_eq!(f_dim % 64, 0);
+    assert!(top_k >= 1 && top_k as usize <= MAX_STREAMED_EXPERTS);
+    let pipeline = context.pipeline(
+        SOURCE,
+        "moe_prefill_phase2_fused_int4_wide",
+        &moe_function_constants(use_silu),
+        &constants_key(use_silu),
+    )?;
+    pass.encode_threadgroups_3d(
+        &pipeline,
+        &[
+            (routed.buffer(), 0, 0),
+            (acts.0, 2, acts.1),
+            (routing_w.0, 3, routing_w.1),
+            (routes.0, 4, routes.1),
+            (y.0, 5, y.1),
+            (residual.0, 10, residual.1),
+        ],
+        &[
+            (&offsets.bytes(), 1),
+            (u32_bytes(&d_dim), 6),
+            (u32_bytes(&f_dim), 7),
+            (u32_bytes(&top_k), 8),
+            (u32_bytes(&tokens), 9),
+        ],
+        (d_dim as u64, tokens as u64, 1),
+        (32 * top_k as u64, 1, 1),
     );
     Ok(())
 }

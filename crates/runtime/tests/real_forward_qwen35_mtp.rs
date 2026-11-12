@@ -854,6 +854,10 @@ fn the_draft_after_a_retaining_rollback_matches_the_reverify_shape() {
                 .verify(&feed[..keep], base, &mut replay)
                 .expect("the shortened replay verify runs");
         }
+        // The round-end commit the speculative loop performs every round: a
+        // no-op on the eager path and after the retain arm's fold, and on the
+        // re-verify arm it folds the shortened verify's kept rows.
+        runner.commit_pending(keep).expect("the round-end commit");
         // The bonus comes from the last kept row. The head is untouched by
         // either rollback shape, so it still sits at its prefill cursor
         // covering `[0, base - 1)` -- draft there, where the step is legal,
@@ -984,6 +988,10 @@ fn a_batched_pass_is_bit_identical_to_the_same_tokens_run_sequentially() {
     runner
         .produce_batched(&tokens[..BATCH], 0, &mut batched)
         .expect("batched pass");
+    // The full-acceptance round-end commit the speculative loop performs:
+    // under the lazy tape the batched pass left the recurrent state at the
+    // block start with a rank-1 record, and EVERY row here was kept.
+    runner.commit_pending(BATCH).expect("the round-end commit");
     for (offset, &token) in tokens[BATCH..].iter().enumerate() {
         runner
             .produce(token, BATCH + offset, &mut row)

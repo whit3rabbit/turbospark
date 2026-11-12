@@ -132,6 +132,10 @@ public final class ProfileVaultCoordinator: ObservableObject {
         if FileManager.default.fileExists(atPath: legacyImages.path) {
             try FileManager.default.removeItem(at: legacyImages)
         }
+        // Conversation recall keeps a plaintext copy of transcripts, which a
+        // protected profile must not have. From here on its gate reads
+        // protected and nothing is recorded again.
+        await ChatRecallStore.shared.purge()
         model?.loadProfiles()
         lastAuthenticationAt = Date()
         objectWillChange.send()

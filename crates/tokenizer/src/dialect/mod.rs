@@ -28,20 +28,55 @@ pub(crate) use self::resolve::{
 use crate::error::TokenizerError;
 
 const MAX_GENERATION_CONFIG_BYTES: u64 = 1 << 20;
+/// Bound for the other checkpoint sidecars (`tokenizer_config.json`, both
+/// chat-template files). They come from an untrusted model directory and are
+/// read whole, so an unbounded read lets a hostile checkpoint exhaust memory.
+/// Higher than the generation-config cap because real `tokenizer_config.json`
+/// files with a large `added_tokens_decoder` exceed 1 MiB (about 1.2 MB is the
+/// largest known); installed templates are under 20 KB.
+const MAX_SIDECAR_BYTES: u64 = 16 << 20;
 
-fn read_generation_config(path: &Path) -> Option<GenerationConfig> {
+/// Read at most `cap` bytes of `path`; `None` if absent, unreadable, or over
+/// the cap, so an oversized sidecar is treated as if it were not shipped.
+/// The `take` bound covers a file that grows after the metadata check.
+fn read_capped(path: &Path, cap: u64) -> Option<Vec<u8>> {
     let file = std::fs::File::open(path).ok()?;
-    if file.metadata().ok()?.len() > MAX_GENERATION_CONFIG_BYTES {
+    if file.metadata().ok()?.len() > cap {
         return None;
     }
     let mut bytes = Vec::new();
-    file.take(MAX_GENERATION_CONFIG_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .ok()?;
-    if bytes.len() as u64 > MAX_GENERATION_CONFIG_BYTES {
+    file.take(cap + 1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() as u64 > cap {
         return None;
     }
-    serde_json::from_slice(&bytes).ok()
+    Some(bytes)
+}
+
+fn read_sidecar_string(path: &Path) -> Option<String> {
+    String::from_utf8(read_capped(path, MAX_SIDECAR_BYTES)?).ok()
+}
+
+/// The template out of an HF `chat_template.json`: a bare string under
+/// `chat_template`, or the list-of-named-templates form (`default` if present,
+/// else the first).
+fn read_chat_template_json(path: &Path) -> Option<String> {
+    let value: serde_json::Value =
+        serde_json::from_slice(&read_capped(path, MAX_SIDECAR_BYTES)?).ok()?;
+    match value.get("chat_template")? {
+        serde_json::Value::String(template) => Some(template.clone()),
+        serde_json::Value::Array(named) => {
+            let pick = named
+                .iter()
+                .find(|t| t.get("name").and_then(|n| n.as_str()) == Some("default"))
+                .or_else(|| named.first())?;
+            pick.get("template")?.as_str().map(str::to_string)
+        }
+        _ => None,
+    }
+}
+
+fn read_generation_config(path: &Path) -> Option<GenerationConfig> {
+    serde_json::from_slice(&read_capped(path, MAX_GENERATION_CONFIG_BYTES)?).ok()
 }
 
 /// Chat framing dialect, resolved from the loaded tokenizer's special
@@ -148,6 +183,29 @@ pub enum ChatDialect {
     /// JSON-encoded -- exactly what the checkpoint's own template renders and
     /// parses with `tojson`.
     Glm,
+    /// Recursive Flint: turns frame as the special tokens `<|system|>` /
+    /// `<|user|>` / `<|assistant|>` / `<|observation|>` / `<|developer|>`,
+    /// with NO closing marker on a turn and a generation prompt that is just
+    /// `<|assistant|>`. The model ends its own turn by emitting `<|end_of_text|>`
+    /// (150001) or the next role marker, so the stop set is
+    /// `generation_config.json`'s four ids: `<|end_of_text|>`, `<|user|>`,
+    /// `<|observation|>` and `<|developer|>`.
+    ///
+    /// **SHARES THREE ROLE MARKERS WITH [`ChatDialect::Glm`] AND IS NOT IT.**
+    /// GLM spells its end of text `<|endoftext|>` and opens with `<sop>`;
+    /// Flint spells it `<|end_of_text|>`, opens with `<|begin_of_text|>` and
+    /// writes neither itself. This table resolved as GLM and then died on the
+    /// missing `<|endoftext|>` before this variant existed (AGENTS.md Gotcha
+    /// 52), so the probe is tested BEFORE GLM and requires exactly what
+    /// `resolve_flint` does.
+    ///
+    /// The think pair and the tool markup (`<think>`, `<tool_call>`,
+    /// `<arg_key>`, ...) are added but NOT special, so they survive
+    /// detokenization as literal text. The decoder still splits the think
+    /// pair by id into the reasoning stream, as GLM's is. No tool parser is
+    /// wired: the dialect is `Prompted` and the tool markup flows as content. Like Harmony and GLM it has no fallback renderer; the
+    /// checkpoint's own template decides things a hand-rolled one would guess.
+    Flint,
     /// Moonshot's Kimi K2 line (`KimiK25ForConditionalGeneration` / the
     /// DeepSeek-V3-line MLA MoE behind it): turns frame as the special tokens
     /// `<|im_user|>` / `<|im_assistant|>` / `<|im_system|>` with a Kimi-owned
@@ -293,6 +351,11 @@ impl ChatDialect {
             // decoder passes plain content through, where a rescue layer can
             // reach a call the model attempts in prose.
             ChatDialect::DeepseekV2 => ToolCallSupport::Prompted,
+            // The `<tool_call>NAME<arg_key>K</arg_key><arg_value>V</arg_value>`
+            // markup EXISTS (plain text, not special) and no parser has been
+            // checked against Flint's real output, so it flows as content
+            // where a rescue layer can reach it.
+            ChatDialect::Flint => ToolCallSupport::Prompted,
         }
     }
 
@@ -383,8 +446,7 @@ impl MfTokenizer {
         let tokenizer = Tokenizer::from_file(&tokenizer_path)
             .map_err(|e| TokenizerError::InvalidChatTemplate(e.to_string()))?;
         let config_path = dir.join("tokenizer_config.json");
-        let config: TokenizerConfig = std::fs::read_to_string(&config_path)
-            .ok()
+        let config: TokenizerConfig = read_sidecar_string(&config_path)
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
         // Two conventions, and which one a checkpoint uses is a matter of
@@ -395,8 +457,14 @@ impl MfTokenizer {
         // file made every pre-move checkpoint look template-less and fall
         // through to the dialect renderer, which is how TinyLlama-1.1B-Chat
         // (Zephyr framing) came to be fed Mistral's `[INST]`.
-        let chat_template_source = std::fs::read_to_string(dir.join("chat_template.jinja"))
-            .ok()
+        // HF's precedence is `chat_template.jinja`, then `chat_template.json`,
+        // then the config key. The middle one matters for Qwen2.5-VL: its
+        // `tokenizer_config.json` keeps the text-only Qwen2.5 template, which
+        // concatenates `message.content` as a string and fails on an image
+        // part, while `chat_template.json` carries the one that renders
+        // `<|vision_start|><|image_pad|><|vision_end|>`.
+        let chat_template_source = read_sidecar_string(&dir.join("chat_template.jinja"))
+            .or_else(|| read_chat_template_json(&dir.join("chat_template.json")))
             .or_else(|| config.chat_template_source());
         // `generation_config.json` is the authority for the checkpoint's
         // FULL end-of-sequence set: `tokenizer_config.json` only ever

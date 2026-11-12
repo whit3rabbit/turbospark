@@ -226,10 +226,56 @@ run-to-run variation.
 | **Qwen3.8-27B, MLX INT4** | 14 GB | 4,096 | **660.0 - 660.3 MiB** | 750 | 18.6 - 21.1 | **no, dense** |
 | Qwen3.8-27B, MLX INT4, with vision tower | 15 GB | 4,096 | 854.8 - 872.5 MiB | 950 | 12.355 - 15.997 | no, dense + a 2-slot vision tower |
 | Mistral 7B, Q4_K_M | 4.1 GB | 8,192 | 1,201 - 1,203 MiB | 1,300 | 16.3 - 30.4 | no, dense |
+| LFM3-1.7B, MLX INT4 (`lfm3`) | 0.97 GB | 8,192 | 342 - 351 MiB | 420 | 67.8 - 198.1 | no, dense hybrid |
+| LFM3-1.7B, Q8_0 (`lfm3`) | 1.8 GB | 8,192 | 344 - 350 MiB | 420 | 84.1 - 94.7 | no, dense hybrid |
 | **Ternary-Bonsai-27B, MLX 2-bit** | 7.6 GB | 4,096 | **657.8 - 661.6 MiB** | 750 | 12.5 - 13.9 | **no, dense** |
 | Bonsai-27B, MLX 1-bit | 3.9 GB | -- | not measured | -- | ~18.3 | no, dense |
 | Qwen3.8-Flash-Next REAP-288, MLX INT4 (`qwen4_exp`) | 68 GB | **2,048** | 2,503 - 2,509 MiB | 3,000 | 6.870 - 7.530 | yes, 288 experts (top-10) |
 | Swift-1.5 Qwen3.8-Flash-Next, GGUF IQ2_XS (`qwen4exp-swift-iq2-xs`) | 64.3 GiB (69 GB install budget) | **2,048** | 1,633.7 - 1,633.8 MiB (frozen pass: 1,472) | 2,000 | 12.23 - 12.77 | yes, 512 experts (top-10) |
+| Fish Audio Drama 3 (`fish_drama3`), 4-bit routed experts, headless 35B-A3B trunk + Metal tower and codec | 22 GB | 8,192 trunk rows | 6,106 / 6,296 MiB (plain request only: 5,391 / 5,554) | 6,411 | -- (audio; see below) | yes, 256 experts (top-8) |
+
+**The Drama 3 row is a different workload from every other row**
+(`fish_drama3_memory_oracle`, `crates/bench/tests/`). It runs requests, not
+the text protocol, so it has no decode tok/s column: timings live in
+[`FISH_DRAMA3_PHASE0.md`](FISH_DRAMA3_PHASE0.md). Two fresh-process readings,
+2026-10-16, Apple M4 Max 36 GB, AC, release, 16 streamed expert slots,
+`~/models/fish-drama3-4bit`, seed 0. Each reading is the session peak over a
+discarded warm-up and a measured run of a 618-byte text (three chunks, 44.3 s
+of audio, so the system-block snapshot is restored twice), then a
+cloned-voice request, then warm replays. The host was NOT quiet (load average
+20 to 50 during the first reading, 20 to 23 during the second); footprint does
+not depend on that, and no timing is quoted. The ceiling is the first
+reading plus 5 percent. The second reading landed 115 MiB under it, and a
+third (6,282 MiB, taken while a second oracle process ran on the same host)
+landed 129 MiB under, so run-to-run spread is about 3 percent against a 5
+percent margin: the ceiling is not generous.
+
+| Phase | Reading 1 | Reading 2 |
+| --- | ---: | ---: |
+| Open (16 slots, 8,192 rows) | 4,271 MiB | 4,391 MiB |
+| After warm-up and measured run (44.3 s) | 5,391 MiB | 5,554 MiB |
+| After the cloned request (74.5 s of audio) | 6,106 MiB | 6,296 MiB |
+| Warm replay growth (limit 8 MiB, up to 4 rounds) | +14.7, +3.4 MiB | +21.9, +0.7 MiB |
+
+- **The cloned request sets the peak.** Its reference is the model's own
+  first 6 seconds, so it measures memory and says nothing about voice
+  quality. In both readings its first chunk ran to the 1,024-frame cap
+  without EOS (74.5 s of audio), which grows the next chunk's history; that is
+  the cap's worst case, not the typical request. The plain request peaks
+  about 700 MiB lower.
+- **Replay growth passes on its second round** in both readings (the first
+  round still warms expert slots), the same rule `oracle_common` uses.
+- **`fish_drama3::open_bytes` over-estimates by 2.1 to 2.3 GiB** against the
+  session peak (8,435 MiB estimated, 6,106 / 6,296 measured), and by about
+  3 GiB against the plain-request peak. The two 64 MiB recurrent-state
+  snapshots it budgets are not the gap; `phys_footprint` does not count the
+  mapped resident file or the codec weights it budgets whole. Admission is
+  therefore conservative by that much. This is a footprint reading on a
+  36 GB machine, not a minimum-RAM claim.
+- The leak gate (`fish_drama3_leak_gate`) holds the trunk context at 34
+  Metal buffers across 5,000 trunk steps and three warm multi-chunk
+  requests. The tower allocates only at load, and the codec allocates per
+  call by design, so neither has a flat count to assert.
 
 **Read the `Streams?` column before comparing any two rows**, because the
 two groups are measuring different things and only one of them is a result
@@ -288,8 +334,9 @@ separate resource baseline. The row therefore covers only
 a partial case list). Its 6.870-7.530 tok/s is also this repo's slowest MoE
 reading by a wide margin -- 288 experts at top-10 against a 16-slot cache
 means most tokens miss and stream 2.6 GiB of resident core plus 36 GiB of
-packed experts, and nothing has tuned `ALLOWED_CACHE_SLOTS` for this
-routing profile yet.
+packed experts. The row pins 16 slots by design. The default cache since
+2026-10-31 is 96 wired slots on this machine (see "Qwen4Exp at default
+settings" below).
 
 **The frozen-protocol binary (`turbospark-bench --model`) confirms the
 oracle's reading and widens the known range.** Two interleaved runs
@@ -305,8 +352,55 @@ when a case starts (left over from whatever ran before it) swings that
 case's own hit rate more than it does for a family whose experts mostly
 fit the cache regardless of history. Treat any single tok/s reading for
 this family as a sample from a wide distribution rather than a
-reproducible number, until `ALLOWED_CACHE_SLOTS` is tuned for this routing
-profile.
+reproducible number at 16 slots.
+
+**Qwen4Exp at default settings (2026-10-31).** Not a frozen row: the
+oracle and `turbospark-bench` still pin 16 slots. This is what the CLI,
+server and app open by default since wired expert slots became the
+`qwen4_exp` default (`docs/QWEN4_EXP.md`, "Wired expert slots"). One
+interleaved `tslab sweep` (experiment `qwen4-wired-default-bench`), REAP-288
+MLX INT4 (`qwen4-reap288`), Apple M4 Max 36 GB, AC, release build of
+`86bff0ad`, protocol `medium-review` (426 prompt tokens), 64 decode, 2,048
+context, fresh process per run, 3 clean pairs per candidate. Null floor
+1.12% (record 1793483940210-95735-24), so the 2% default floor applied.
+Swap held at 11.5-12.2 GB from other sessions throughout.
+
+| Arm | Decode tok/s, median of clean runs | Paired against the default | 95% CI | Prefill tok/s | Peak footprint | Compressions per run |
+| --- | ---: | --- | --- | ---: | ---: | ---: |
+| Default: auto, 96 wired slots | 16.59 (15.12-17.62, n=15) | baseline | | 22.9 | 12.45-12.47 GiB | 0.01-0.97M |
+| Previous default: auto, 48 unwired | 15.23 (n=4) | loss, -7.4% | [-10.4%, -6.5%] | 20.8 | 6.47-6.48 GiB | 0 |
+| 16 slots (the frozen rows' setting) | 14.63 (n=3) | loss, -12.6% | [-14.0%, -11.6%] | 16.7 | 2.48-2.49 GiB | 0 |
+| 96 slots unwired | 11.80 (n=3) | loss, -23.4% | [-27.6%, -22.5%] | 17.2 | 12.46-12.47 GiB | 4.7-5.1M |
+| 128 slots wired | 18.06 (n=3) | win, +9.8% | [+7.0%, +14.0%] | 24.7 | 16.45-16.46 GiB | 0.9-1.3M |
+
+Verdict records: 1793485347180-40732-82 (48 unwired),
+1793485347184-40732-83 (16), 1793485347191-40732-84 (96 unwired),
+1793485347196-40732-85 (128 wired). Every wired arm's run record lists
+`expert_slots_wired` as engaged and every unwired arm's does not.
+
+- The default is about 8% faster than the previous one on decode, at about
+  6 GiB more peak footprint, and the wired pages are held for the life of
+  the process.
+- 128 wired slots won again (+9.8%) at 16.5 GiB, but only on a quiet host.
+  Beside a 3 GiB process re-touching its memory, 128 was noise against 96
+  (-7.5%, 95% CI [-23.6%, +2.0%], record 1793488871593-92750-20) and that
+  process's pass over its own pages took about 9x longer. The default stays
+  at 96 (`docs/QWEN4_EXP.md`, "128 wired under a competing workload").
+- The unwired 96-slot loss (-23%) is larger here than in the first wired
+  sweep (-2.7%, swap 6.7-7.5 GB) and close to the earlier -18%. It tracks
+  host memory pressure, which is why wiring is the default.
+- The 16-slot arm reads about twice the frozen rows' 6.870-7.530 tok/s. Those
+  rows predate the RMSNorm fix (`docs/QWEN4_EXP.md`, 2026-10-31) and later
+  kernel work and were not re-measured, so do not read the difference as one
+  change's effect.
+- Not measured: the Swift-1.5 IQ2_XS install (not installed on this host),
+  `short-explanation`, and any machine other than this one. The wired slot
+  count scales with free memory, so a smaller machine opens fewer slots or
+  falls back to the unwired budget.
+- From a Samsung T7 over USB instead of the internal SSD, the same
+  defaults decode at 4.32 tok/s against 17.48, about 75% slower, because the
+  expert reads that miss the cache are bound by the drive's speed
+  (`docs/QWEN4_EXP.md`, "Running from an external drive").
 
 **This family's quality-gate row is fixed and frozen (2026-09-04).** It used
 to have none: two back-to-back warm greedy generations of the identical
@@ -1789,6 +1883,52 @@ bit-exact, so the two arms decode from slightly different states. Neither
 the token count nor the text compares speculation against no speculation.
 `mtp_generation_gate` is the lossless evidence.
 
+**The same install re-measured on the shipped defaults, 2026-10-25.** HEAD
+`762e8f65`, release `turbospark-bench`, `--shaping greedy`, AC, M4 Max 36 GB.
+Defaults only: lazy GDN tape, fused FFN, batched row ops and the GQA-shared
+attention are on, and the Kapitsa small-M INT4 tile (`TURBOSPARK_INT4_MMA8`)
+is OFF, so this is what a user gets without setting anything. Quiet host: the
+1-minute load was 1.4-2.4 at all 12 run starts (the bar is under 2.5), 12 of
+12 runs completed, swap sat at 7.8 GB used (a standing condition of this
+host). One process per run, two rounds with the arm order reversed in round
+2. `spec` is `--speculative auto` (MTP, block 2) and `off` is the same
+install without it. Not a frozen row: greedy shaping, and the bench does not
+hash output (`mtp_generation_gate` is the lossless evidence).
+
+| case | prompt | spec prefill s | spec tok/s, round 1 / 2 | off tok/s, round 1 / 2 | spec over off | committed per round | draft / verify ms |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| short-explanation | 62 | 0.43 / 0.43 | 33.466 / 32.657 | 21.740 / 21.561 | 1.53x | 2.15 | 8.5-8.6 / 54.2-55.8 |
+| medium-review | 426 | 2.85 / 2.90 | 35.692 / 35.322 | 21.370 / 21.511 | 1.66x | 2.30 | 8.5-8.6 / 54.5-55.1 |
+| long-synthesis | 2,940 | 19.35 / 19.31 | 34.963 / 34.264 | 21.376 / 21.497 | 1.61x | 2.30 | 8.6 / 55.6-56.9 |
+| peak `phys_footprint` | | | 867-869 MiB | 658-659 MiB (692 MiB chunked) | | | |
+
+The ratio is the mean of the two rounds on each side. The `off` arm prefills
+sequentially on short-explanation (2.7 s) and medium-review (18.7-18.9 s) and
+with the chunked driver on long-synthesis (`--prefill-chunk auto`, 18.9-19.1
+s), so the `off` prefill column is not comparable with the `spec` one. Decode
+tok/s is a rate, so the ratio holds across the driver difference. Generated
+token counts are 561 (spec) against 505 (off) on short-explanation, the known
+speculative-start difference, and equal on the other two (846, 639).
+
+Against the 2026-10-11 table above, which was taken under load on a build
+from before the Kapitsa adoption of 2026-10-20, so a direction and not a
+paired A/B: `spec` is +15% on short-explanation, +52% on medium-review and
++58% on long-synthesis (33.1, 35.5 and 34.6 against 28.7, 23.4 and 21.9
+tok/s). `off` is +47%, +28% and +20% (21.7, 21.4 and 21.4 against 14.7, 16.8
+and 17.9). The speculative prefill of the 2,940-token prompt fell from
+35.91 s to 19.3 s (152 tok/s). The paired A/B for the lazy tape and fused FFN
+is in [`KAPITSA_KERNELS.md`](KAPITSA_KERNELS.md). These rows agree with the
+quiet-host HEAD sweep of 2026-10-23 in that file (spec 33.1 / 32.9 and 34.2 /
+34.8, off 22.1 / 21.8 and 21.8 / 21.7) to within 3%, so the defaults have not
+moved since, and the long-synthesis row is new.
+
+An earlier run of the same script on 2026-10-24 started while the host was
+loaded (load 2.1-7.8, swap 8.1 GB). Its `spec` arms landed within 7% of the
+rows above, but its `off` arms read 19.4-20.0 tok/s on short-explanation and
+16.5 on medium-review round 1, and one chunked long-synthesis run read 1.13
+tok/s with a 258 s prefill. Those were load artifacts, and this rerun
+replaces them.
+
 ### The eighth checkpoint, and the ternary operating point: `prism-ml/Ternary-Bonsai-27B-mlx-2bit`
 
 Not a parity claim. Swift has no `qwen3_5` support at all, so every number
@@ -2455,3 +2595,88 @@ same file-backed-weight accounting every other family's row shows; the
 ceiling is the highest reading plus 5%. One loaded session attributed a
 one-off +16 GiB to the warm replay and never again; the instrumented
 rerun measured 0.0 MiB. See the oracle file for the full account.
+
+## LFM3-1.7B (`lfm3`, MLX INT4), first rows
+
+The seventeenth family, a dense hybrid of 13 gated short-conv layers, 6 full
+and 5 sliding-window (256) attention layers. Install
+`LiquidAI/LFM3-1.7B-MLX-4bit` @ `d0ca73dc`, Apple M4 Max, AC, release,
+8,192 context, 2026-10-27. Facts in [`LFM3_PHASE0.md`](LFM3_PHASE0.md).
+
+```sh
+TURBOSPARK_LFM3_INSTALL_DIR=~/models/lfm3-1.7b-mlx-4bit \
+  cargo test -p turbospark-bench --test lfm3_memory_oracle --release -- --ignored --nocapture
+TURBOSPARK_LFM3_INSTALL_DIR=~/models/lfm3-1.7b-mlx-4bit \
+  cargo test -p turbospark-bench --test lfm3_quality_gate --release -- --ignored --nocapture
+```
+
+| Gate | Reading |
+| --- | --- |
+| Reference perplexity | 14.7455 |
+| Greedy digest | `16cc1e9c` |
+| Sampled digest | `58d4c54f` |
+| Session peak (4 runs) | 342 - 351 MiB, ceiling 420 |
+| Warm replay growth | +0.00 to +0.02 MiB |
+| Decode, short-explanation | 198.1, 67.8, 71.0, 180.2 tok/s |
+| Decode, long-synthesis | 171.6, 166.0, 163.9, 166.9 tok/s |
+
+- **The peak matches the accounting.** About 100 MiB of KV and conv state
+  (96 MiB of full-attention KV at 8,192, 3.75 MiB of sliding ring, 0.3 MiB
+  of conv tails) plus a ~250 MiB dense-install residual. Resident weights
+  are not charged (AGENTS.md Gotcha 40).
+- **Two protocol cases, not three.** `medium-review` reasons past the
+  4,096-token budget while coherent and stops `endOfTurn` at 7,490 tokens
+  sampled when given room, so the oracle drives the other two (the
+  `qwen3_vl` precedent).
+- **The short case's decode has two states.** Two of four runs read about
+  70 tok/s, the others about 190, on a quiet host for the last three. The
+  long case holds near 166. The working hypothesis is the GPU's clock
+  state on small per-token passes, and it is not measured. The floor (50) sits
+  under the slow state, so it catches regressions rather than clock states.
+- **Two quality runs in separate processes agreed on every digit and hex
+  character.** The perplexity does not rank against other families'
+  numbers: each row is a sentinel against its own past.
+
+**Quality row re-frozen 2026-10-28** for the GQA-shared decode attention
+partial (`attention_decode_gqa_partial`, this family's default since then).
+Perplexity 14.7455 -> 14.7434, greedy `16cc1e9c` unchanged, sampled
+`58d4c54f` -> `532998a6`; two fresh processes agreed. The table above keeps
+the 2026-10-27 values, and they still reproduce exactly under
+`TURBOSPARK_ATTN_DECODE_KERNEL=barrier`. The sampled text's first divergence
+is recorded in `crates/bench/tests/lfm3_quality_gate.rs`.
+
+### LFM3-1.7B Q8_0, and llama.cpp on the same bytes
+
+Install `LiquidAI/LFM3-1.7B-GGUF` @ `b3f2ae5d`, `LFM3-1.7B-Q8_0.gguf`,
+tokenizer from `LiquidAI/LFM3-1.7B` @ `40ebe0aa`. Same machine and settings,
+2026-10-28.
+
+| Gate | Reading |
+| --- | --- |
+| Reference perplexity | 15.8615 |
+| Greedy digest | `eb350865` |
+| Sampled digest | `6e5a9eb1` |
+| Session peak (3 runs) | 344 - 350 MiB, ceiling 420 |
+| Decode, short-explanation | 94.7, 91.0, 92.6 tok/s |
+| Decode, long-synthesis | 84.1, 84.4, 85.7 tok/s |
+
+- **llama.cpp agrees token for token.** Homebrew llama.cpp 0.8.0 (build
+  11960) ran the same file on the same 42 prompt ids (checked id by id with
+  `--verbose-prompt`), greedy. 600 tokens on the TCP prompt are identical,
+  and a 226-token answer to a second prompt is identical and ends at the
+  same end of turn. The GGUF declares `general.sampling.penalty_repeat 1.1`,
+  which llama.cpp applies by default even at temperature 0 and which moves
+  the argmax: the comparison needs `--repeat-penalty 1.0`.
+- **The peak equals the MLX row's.** Twice the weight bytes cost nothing in
+  `phys_footprint`, which is AGENTS.md Gotcha 40 again.
+- **Its perplexity is higher than the 4-bit row's**, 15.86 against 14.75,
+  on the same reference answer. The two files come from different
+  converters. The gap is recorded, not explained.
+- **No external reference for the MLX bytes.** mlx-lm has no `lfm3` model.
+
+**Quality row re-frozen 2026-10-28** with the 4-bit row, for the same
+attention default. Perplexity 15.8615 -> 15.8614, greedy `eb350865`
+unchanged (so the llama.cpp match above stands), sampled `6e5a9eb1` ->
+`e458a1a3`; two fresh processes agreed, and the old values reproduce under
+`TURBOSPARK_ATTN_DECODE_KERNEL=barrier`. Details in
+`crates/bench/tests/lfm3_q8_quality_gate.rs`.

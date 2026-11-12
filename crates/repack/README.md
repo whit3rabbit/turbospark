@@ -1,8 +1,8 @@
 # turbospark-repack
 
-Safetensors header parsing, ranged HTTP downloads (`RangeSource`), INT4/INT8 quantization repack pipelines, `.gturbo` directory installation builder (`gturbo_writer/`), synthetic test model generators (`synthetic_model/`), directional steering vector repacker (`control_vector.rs`), Hugging Face checkpoint converters (`hf_checkpoint.rs`, `gemma4_checkpoint/`), and GGUF repackers (`gguf_checkpoint/`).
+Safetensors header parsing, ranged HTTP downloads (`RangeSource`), INT4/INT8 quantization repack pipelines, `.gturbo` directory installation builder (`gturbo_writer/`), synthetic test model generators (`synthetic_model/`), llama.cpp-layout control vector loader and writer (`control_vector.rs`), Hugging Face checkpoint converters (`hf_checkpoint.rs`, `gemma4_checkpoint/`), and GGUF repackers (`gguf_checkpoint/`).
 
-Downstream workspace crates import this package via the `repack` alias:
+Some downstream workspace crates import this package via the `repack` alias:
 
 ```toml
 [dependencies]
@@ -11,7 +11,7 @@ repack = { package = "turbospark-repack", path = "../repack" }
 
 ## Purpose & Role
 
-`turbospark-repack` transforms raw Hugging Face Safetensors or GGUF model checkpoints into the engine's optimized `.gturbo` on-disk format. It downloads weights via byte-range requests without downloading entire multi-gigabyte files upfront, quantizes float weights into INT4/INT8 affine formats, separates resident trunk weights from streamable MoE expert blobs, and writes cryptographic manifests and install receipts.
+`turbospark-repack` transforms raw Hugging Face Safetensors or GGUF model checkpoints into the engine's optimized `.gturbo` on-disk format. It downloads weights via byte-range requests without downloading entire multi-gigabyte files upfront, quantizes float weights into INT4/INT8 affine formats, separates resident trunk weights from streamable MoE expert blobs, and writes SHA-256 checksummed manifests.
 
 ## Safety
 
@@ -22,19 +22,23 @@ repack = { package = "turbospark-repack", path = "../repack" }
 
 - `safetensors_header.rs`: Pure JSON parser for Safetensors file headers without loading weight payloads into memory.
 - `ranged_download/`: High-performance HTTP range-request client (`RangeSource`) for streaming weight chunks directly into repack pipelines.
-- `repack.rs`: Quantization repack kernels converting FP32 and BF16 tensors into INT4 and INT8 affine blocks with group scaling.
+- `repack.rs`: Quantization repack kernels converting FP32 matrices into INT4 and INT8 affine blocks with group scaling.
 - `gturbo_writer/`: Constructs the `.gturbo` directory hierarchy and serializes `manifest.json` and layout files.
-- `resident_writer.rs` & `resident_reader.rs`: Serializes and verifies `model_weights.bin` resident tensor blobs and their binary index.
+- `resident_writer.rs` & `resident_reader.rs`: Serializes and reads back `model_weights.bin` resident tensor blobs and their binary index.
 - `arch_registry.rs`: Multi-family architecture registry mapping raw checkpoint metadata to supported internal families.
-- `control_vector.rs`: Repacks directional steering vectors and obliteration matrices into `.gturbo` format.
-- `gemma4_checkpoint/`: Checkpoint pipeline for Gemma 4 and Qwen 3.6 Safetensors checkpoints.
+- `control_vector.rs`: Reads and writes llama.cpp-layout GGUF control vectors (`direction.N` F32 tensors) and resolves them into model-io `SteeringSet`s.
+- `gemma4_checkpoint/`: Checkpoint pipeline for Gemma 4, Qwen 3.6, and Flint Safetensors checkpoints. Flint enters through `canonicalize_flint_header` (namespace rename, U8-to-U32 relabel of the packed affine weights) and `write_flint_install_streamed` (the raw BF16 router is force-quantized to INT8).
+- `flint_config.rs` & `flint_rebalance.rs`: Flint `config.json` parsing, and the fixed 2^6 up/down SwiGLU rebalance every flint install carries so `silu(gate) * up` stays inside FP16.
+- `fish_drama3.rs`: Fish Audio Drama 3 intake: a headless Qwen 3.6 GDN-MoE trunk plus the TTS audio tower and semantic head copied verbatim into `tts_side.safetensors`.
 - `gguf_checkpoint/`: GGUF repacker handling GGUF tensor walks, F32 transcoding, and V-head conventions.
 - `gguf_config/`, `gguf_header/`, `gguf_names/`, `gguf_set.rs`: GGUF metadata extraction, tensor name mapping, and split multi-file GGUF sets.
-- `qwen2_config.rs`, `qwen36_config.rs`, `museglimmer_config.rs`: Architecture-specific JSON config parsers.
+- `qwen2_config.rs`, `qwen36_config.rs`, `qwen3vl_config.rs`, `museglimmer_config.rs`: Architecture-specific JSON config parsers.
+- `unlimited_ocr2_config.rs`, `unlimited_ocr2_tower.rs` & `synthetic_unlimited_ocr2.rs`: Unlimited-OCR-2 intake: `config.json` parsing and header canonicalization, the FP16 SAM/CLIP tower file (`uocr2_tower.bin` indexed by `uocr2_tower.json`), and a tiny tower-less install in the checkpoint's own tensor names for CI.
+- `gemma4_checkpoint/vision_gemma4.rs`: Gemma 4 vision tower config and ingest, a sibling of the qwen tower ingest (different tensor names, roles, and projector).
 - `manifest_peek.rs`: Inspects install metadata without full directory traversals.
 - `trained_context.rs`: Extracts and bounds trained context lengths from config keys.
-- `synthetic_model/`, `synthetic_real.rs`, `synthetic_qwen/`, `synthetic_spark.rs`, `synthetic_llama.rs`, `synthetic_muse.rs`, `synthetic_gguf/`: Deterministic synthetic test model generators for offline integration testing.
-- `install_verifier.rs`: Validates repacked install directories against checksums and receipts.
+- `synthetic_model/`, `synthetic_real.rs`, `synthetic_qwen/`, `synthetic_spark.rs`, `synthetic_llama.rs`, `synthetic_muse.rs`, `synthetic_flint.rs`, `synthetic_deepseek2.rs`, `synthetic_gguf/`: Deterministic synthetic test model generators for offline integration testing. The flint fixture is built in the checkpoint's own source form (U8-packed weights, raw BF16 router, INT8 embedding) so the canonicalization passes stay on the tested path.
+- `install_verifier.rs`: Validates repacked install directories by re-hashing every file against its declared SHA-256 checksum.
 
 ## Development & Test Commands
 
@@ -49,8 +53,9 @@ cargo test -p turbospark-repack --test hf_checkpoint_network --release -- --igno
 
 ## Tests
 
-This crate contains 70 integration test files in `tests/`:
+This crate contains 83 integration test files in `tests/`:
 - Checkpoint conversion: `gemma4_checkpoint.rs`, `gguf_checkpoint.rs`, `hf_checkpoint.rs`, `mtp_graft.rs`.
+- Flint intake: `flint_config.rs`, `flint_header.rs`, `synthetic_flint.rs`.
 - GGUF parsing and normalization: `gguf_header.rs`, `gguf_config.rs`, `gguf_names.rs`, `gguf_set.rs`, `gguf_llama_rope_patch.rs`, `gguf_qwen_convention_patch.rs`.
 - Architecture config tests: `arch_registry.rs`, `qwen35_config.rs`, `qwen36_config.rs`, `qwen4_config.rs`, `museglimmer_config.rs`, `ornith_config.rs`.
 - Steering and control vectors: `control_vector_file.rs`.
@@ -62,3 +67,4 @@ This crate contains 70 integration test files in `tests/`:
 1. **Deterministic Synthetic Weights**: Synthetic models generated by `build_synthetic_gemma4_install` and siblings use deterministic pseudorandom generators rather than trained weights. Generated outputs are structurally and numerically valid for pipeline execution, but produce random text.
 2. **Tokenizer Sidecar Preservation**: When repacking and writing `.gturbo` installations, tokenizer files (`tokenizer.json`, `tokenizer_config.json`, `chat_template.jinja`, `preprocessor_config.json`) must be copied intact; stripping or renaming sidecars prevents dialect resolution at runtime.
 3. **Unconditional Manifest Fields**: `build_manifest_json` writes all family-extension fields unconditionally so that downstream `model-io` parsers can structurally validate manifests across all supported architectures.
+4. **Flint SwiGLU Rebalance**: Every flint install carries a fixed 2^6 up/down rebalance (`flint_rebalance.rs`) that keeps `silu(gate) * up` inside FP16; without it the stream NaNs on ordinary English prompts. `flint_rebalance.json` in the install records the net shift. An install built before the fix migrates in place with `cargo run --release -p turbospark-repack --example flint_rebalance -- <install dir>`, which refuses a second application.

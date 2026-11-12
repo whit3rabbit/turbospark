@@ -159,6 +159,11 @@ extension AppModel {
         var call = call
         if let updated = hookDecision.updatedInput {
             for (key, value) in updated { call.arguments[key] = value }
+            // The parser rated the ORIGINAL arguments, and `evaluate` prefers
+            // a stored rating over its own. Re-rate, or a rewrite to a
+            // destructive command is judged as the safe one it replaced.
+            call.riskAssessment = ToolRiskClassifier.assessRisk(
+                name: call.name, arguments: call.arguments, projectURL: project?.rootDirectoryURL)
         }
         let cmd = call.shellCommand
 
@@ -214,6 +219,9 @@ extension AppModel {
                 chatID: chatID, project: project)
             if let updated = validationHook.updatedInput {
                 for (key, value) in updated { validationCall.arguments[key] = value }
+                validationCall.riskAssessment = ToolRiskClassifier.assessRisk(
+                    name: validationCall.name, arguments: validationCall.arguments,
+                    projectURL: project?.rootDirectoryURL)
                 if let command = updated["command"] ?? updated["cmd"] {
                     call.arguments["validate_command"] = command
                 }
@@ -280,11 +288,14 @@ extension AppModel {
         // policy the call executes under even if the selection moves while
         // the card is up.
         let decisionProject = project
+        let networkHostApproved = await SessionApprovalStore.shared.isHostApproved(
+            sessionID: sessionID, host: AppNetworkPolicy.host(forWebCall: call))
         let baseDecision = AppToolPermissionEngine.evaluate(
             call: call, project: decisionProject, sessionApproved: sessionApproved,
             fallbackMode: self.activePermissionMode,
             globalServers: self.globalMcpServers,
-            browserContext: browserPermissionContext(for: call, project: decisionProject))
+            browserContext: browserPermissionContext(for: call, project: decisionProject),
+            networkHostApproved: networkHostApproved)
         let decision: ToolPermissionDecision
         if case .deny = baseDecision {
             // A mutation policy refusal remains absolute. Validation cannot
@@ -335,7 +346,8 @@ extension AppModel {
             pending.riskAssessment = ToolRiskAssessment(
                 level: baseAssessment.level,
                 category: baseAssessment.category,
-                reasons: baseAssessment.reasons + [hookReason]
+                reasons: baseAssessment.reasons + [hookReason],
+                hardGated: baseAssessment.hardGated
             )
             self.pendingToolCall = pending
             self.pendingToolCallChatID = chatID
@@ -650,6 +662,11 @@ extension AppModel {
             var updated = call
             if let newInput = hookDecision.updatedInput {
                 for (key, value) in newInput { updated.arguments[key] = value }
+                // Same re-rating as the single-call path: the stored rating
+                // describes the arguments the hook replaced.
+                updated.riskAssessment = ToolRiskClassifier.assessRisk(
+                    name: updated.name, arguments: updated.arguments,
+                    projectURL: project?.rootDirectoryURL)
             }
             updatedCalls.append(updated)
             if hookDecision.behavior == .deny {
@@ -659,10 +676,13 @@ extension AppModel {
             let sessionApproved = await SessionApprovalStore.shared.isApproved(
                 sessionID: chatID.uuidString, toolName: updated.name,
                 command: updated.shellCommand)
+            let networkHostApproved = await SessionApprovalStore.shared.isHostApproved(
+                sessionID: chatID.uuidString, host: AppNetworkPolicy.host(forWebCall: updated))
             let decision = AppToolPermissionEngine.evaluate(
                 call: updated, project: project, sessionApproved: sessionApproved,
                 fallbackMode: activePermissionMode, globalServers: globalMcpServers,
-                browserContext: browserPermissionContext(for: updated, project: project))
+                browserContext: browserPermissionContext(for: updated, project: project),
+                networkHostApproved: networkHostApproved)
             // A PreToolUse `ask` is a request for confirmation that the engine's
             // `.allow` (Auto preset, "always allow") must not erase: the single
             // path parks a card for it, so the batch does too. The engine's

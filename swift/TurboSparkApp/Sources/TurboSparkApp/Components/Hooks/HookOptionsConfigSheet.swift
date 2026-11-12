@@ -6,6 +6,7 @@ public struct HookOptionsConfigSheet: View {
     @ObservedObject var hookStore: AppHookStore = .shared
 
     @State private var values: [String: String] = [:]
+    @FocusState private var focusedField: String?
     @Environment(\.dismiss) private var dismiss
 
     public init(group: AppHookSourceGroup) {
@@ -24,16 +25,10 @@ public struct HookOptionsConfigSheet: View {
                         .foregroundStyle(.appSecondary)
                 }
                 Spacer()
-                Button {
+                AppIconButton("xmark", label: Text("Close", bundle: .module)) {
                     dismiss()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .themedFont(.title3)
-                        .foregroundStyle(.appSecondary)
                 }
-                .buttonStyle(.plain)
-                .help(Text("Close", bundle: .module))
-                .accessibilityLabel(Text("Close", bundle: .module))
+                .keyboardShortcut(.cancelAction)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
@@ -42,16 +37,10 @@ public struct HookOptionsConfigSheet: View {
             Divider()
 
             if group.optionSpecs.isEmpty {
-                VStack(spacing: 12) {
-                    Image(systemName: "slider.horizontal.3")
-                        .themedFont(.hero)
-                        .foregroundStyle(.appSecondary)
-                    Text("No configurable options declared for this source.", bundle: .module)
-                        .themedFont(.small)
-                        .foregroundStyle(.appSecondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(40)
+                AppEmptyState(
+                    systemImage: "slider.horizontal.3",
+                    title: Text("No configurable options declared for this source.", bundle: .module)
+                )
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
@@ -72,6 +61,7 @@ public struct HookOptionsConfigSheet: View {
                     dismiss()
                 } label: { Text("Done", bundle: .module) }
                 .appAction(.primary)
+                .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
@@ -80,6 +70,9 @@ public struct HookOptionsConfigSheet: View {
         .frame(minWidth: 460, minHeight: 340)
         .onAppear {
             loadValues()
+            if let first = group.optionSpecs.first {
+                focusedField = first.key
+            }
         }
     }
 
@@ -91,7 +84,7 @@ public struct HookOptionsConfigSheet: View {
                     .themedFont(.small, weight: .semibold)
                 if spec.isRequired {
                     Text(verbatim: "*")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(AppAttention.color)
                 }
                 Spacer()
                 Text(verbatim: "$CLAUDE_PLUGIN_OPTION_\(AppHookExecutionEngine.optionEnvSuffix(for: spec.key))")
@@ -140,6 +133,7 @@ public struct HookOptionsConfigSheet: View {
                     ) {
                         Text(spec.title)
                     }
+                    .focused($focusedField, equals: spec.key)
                     .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                 } else {
@@ -155,6 +149,7 @@ public struct HookOptionsConfigSheet: View {
                     ) {
                         Text(spec.title)
                     }
+                    .focused($focusedField, equals: spec.key)
                     .labelsHidden()
                     .textFieldStyle(.roundedBorder)
                 }
@@ -173,6 +168,7 @@ public struct HookOptionsConfigSheet: View {
                     ) {
                         Text(spec.title)
                     }
+                    .focused($focusedField, equals: spec.key)
                     .labelsHidden()
                     .textFieldStyle(.roundedBorder)
 
@@ -184,16 +180,16 @@ public struct HookOptionsConfigSheet: View {
                             }
                         }
                     } label: { Text("Browse...", bundle: .module) }
-                    .controlSize(.small)
+                    .appAction(.secondary, size: .small)
                 }
             }
         }
         .padding(12)
-        .background(.appSurface.opacity(0.6))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .background(.appSurface)
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(.appBorder.opacity(0.3), lineWidth: 1)
+            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                .stroke(.appBorder, lineWidth: 1)
         )
     }
 

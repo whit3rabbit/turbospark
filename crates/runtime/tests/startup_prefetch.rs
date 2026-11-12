@@ -4,10 +4,11 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use half::f16;
+use model_io::mapped_residency_fits;
 use turbospark_repack::build_synthetic_llama_real_install;
 use turbospark_runtime::{
-    DraftPolicies, ExpertCacheSlots, ExpertResidency, KvQuant, LogitProducer, RealForwardRunner,
-    SteeringPolicy,
+    recommended_max_working_set, DraftPolicies, ExpertCacheSlots, ExpertResidency, KvQuant,
+    LogitProducer, RealForwardRunner, SteeringPolicy,
 };
 
 #[test]
@@ -20,7 +21,15 @@ fn prefetch_is_bounded_and_preserves_logits_in_both_residency_modes() {
     ));
     std::fs::create_dir_all(&dir).unwrap();
     let arch = build_synthetic_llama_real_install(&dir, 128, 2, 4, "startup-prefetch").unwrap();
+    let working_set_bytes = recommended_max_working_set().map_or(0, |(bytes, _)| bytes);
     for residency in [ExpertResidency::Streamed, ExpertResidency::Mapped] {
+        if residency == ExpertResidency::Mapped && !mapped_residency_fits(working_set_bytes, 0, 0) {
+            eprintln!(
+                "host Metal working set ({:.2} GiB) does not fit mapped residency reserve (>= 10 GiB); skipping mapped arm",
+                working_set_bytes as f64 / (1u64 << 30) as f64
+            );
+            continue;
+        }
         let open = || {
             RealForwardRunner::open_with_residency(
                 &dir,

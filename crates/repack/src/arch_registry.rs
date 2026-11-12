@@ -90,6 +90,12 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // Gotcha 36). Shares the `llama` decode flow; see `ModelFamily::Qwen3Moe`
     // for the two places they differ.
     ("qwen3moe", ModelFamily::Qwen3Moe),
+    // Qwen3-VL-30B-A3B's text GGUF (llama.cpp `LLM_ARCH_QWEN3VLMOE`): the same
+    // trunk tensors and metadata keys as `qwen3moe` under a different prefix,
+    // plus interleaved-mRoPE metadata this port takes from the tower sidecar's
+    // config. The tower is NOT in this file (llama.cpp keeps it in a separate
+    // mmproj GGUF); it arrives as a `pull-vision` sidecar from the MLX repo.
+    ("qwen3vlmoe", ModelFamily::Qwen3Moe),
     // Qwen3.8-Flash-Next's `qwen4exp` GGUFs share the existing Qwen4Exp
     // baseline and decode flow. Q2_0 gate/up/down, the IQ2_S/IQ2_XXS/IQ1_M
     // gate/up variants, and top-10 reduction are covered by Metal parity;
@@ -143,6 +149,13 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // and Mistral-Large-3 -- the roadmap's multi-model unlock. Facts:
     // `docs/DEEPSEEK2_PHASE0.md`.
     ("deepseek2", ModelFamily::Deepseek2),
+    // Read off `LiquidAI/LFM3-1.7B-GGUF`'s Q8_0 and Q4_K_M headers,
+    // 2026-10-27 (docs/LFM3_PHASE0.md): `block_count 24`, per-layer
+    // `head_count_kv` with 0 on the 13 short-conv layers, `shortconv.*`
+    // tensors, and a `rope_freqs.weight` that encodes the zero-tail partial
+    // rotary and is verified by value at repack. Agrees with the HF
+    // `model_type` below.
+    ("lfm3", ModelFamily::Lfm3),
 ];
 
 /// HF `config.json -> model_type` -> family, for the architectures that run.
@@ -207,6 +220,29 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // c8e9187488f846965507bfc2b3957d59fd0d5a27. The root config is the
     // plain `qwen2` form used by this parser.
     ("qwen2", ModelFamily::Qwen2Dense),
+    // The Qwen2.5-VL wrapper (`mlx-community/Qwen2.5-VL-7B-Instruct-4bit`):
+    // its trunk is a plain Qwen2 dense model whose config sits flat at the
+    // root beside `vision_config`, so it resolves to the same family and the
+    // tower is carried by `VisionConfig` (`VisionTowerKind::Qwen25Vl`).
+    ("qwen2_5_vl", ModelFamily::Qwen2Dense),
+    // DeepSeek-VL2 (`mlx-community/deepseek-vl2-tiny-4bit`): the wrapper's
+    // text model is a DeepSeekMoE trunk with plain attention, run by the
+    // `deepseek2` flow's MHA arm (`ArchConfig::mla` inactive).
+    ("deepseek_vl_v2", ModelFamily::Deepseek2),
+    // DeepSeek-OCR (`mlx-community/DeepSeek-OCR-4bit`, `baidu/Unlimited-OCR-2`):
+    // the same non-MLA DeepSeekMoE trunk as DeepSeek-VL2-tiny (12 layers,
+    // hidden 1280, 64 routed experts) under a SAM + CLIP-L encoder. The root
+    // `model_type` is `deepseekocr` on the MLX conversion and `unlimited-ocr`
+    // on the Baidu one (`docs/DEEPSEEK_OCR_VISION_PHASE0.md`).
+    ("deepseekocr", ModelFamily::Deepseek2),
+    ("unlimited-ocr", ModelFamily::Deepseek2),
+    // Qwen3-VL-30B-A3B (`mlx-community/Qwen3-VL-30B-A3B-Instruct-4bit`): the
+    // wrapper and its text config. Recognition only for the trunk, which has
+    // no safetensors writer on the llama MoE flow (its routed experts are
+    // GGUF K-quant blobs); the root string is what lets `pull-vision` read the
+    // checkpoint's tower and pair it with the `qwen3moe` GGUF trunk.
+    ("qwen3_vl_moe", ModelFamily::Qwen3Moe),
+    ("qwen3_vl_moe_text", ModelFamily::Qwen3Moe),
     // The FIFTEENTH family. Read off
     // `mlx-community/Qwen3-VL-4B-Instruct-4bit` @
     // 2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b, whose root `model_type` is
@@ -219,6 +255,24 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // equality, so the two never collapse.
     ("qwen3_vl", ModelFamily::Qwen3Vl),
     ("qwen3_vl_text", ModelFamily::Qwen3Vl),
+    // The SIXTEENTH family. Read off `RecursiveSI/flint-int4` @
+    // 3b93f9053b530488405ae9fca51d4900d6ce21f0, whose root `model_type` is
+    // `flint` (`architectures: ["FlintForCausalLM"]`). The checkpoint ships
+    // no modeling code, so the layer flow is cross-checked against the open
+    // llama.cpp port instead (`docs/FLINT_PHASE0.md`). No `_text` row: the
+    // config is flat, with no `text_config` wrapper to carry one.
+    ("flint", ModelFamily::Flint),
+    // `mlx-community/Unlimited-OCR-2-4bit` spells `model_type` `unlimited-ocr`
+    // like the row above, and is told apart by its `sparse_attention_config`
+    // key. A bare model_type cannot see that key, so the split lives in
+    // `config_json_resolution`, which has the whole config. This lookup is by
+    // exact equality, so the Deepseek2 row above is the one a bare string gets.
+    // Read off `LiquidAI/LFM3-1.7B` @ 40ebe0aa and
+    // `LiquidAI/LFM3-1.7B-MLX-4bit` @ d0ca73dc, both `model_type: "lfm3"`
+    // with no `text_config` wrapper. NOT `lfm2`: that is a different layer
+    // graph (no sliding window, no sandwich norms, no output gate) and stays
+    // unregistered.
+    ("lfm3", ModelFamily::Lfm3),
 ];
 
 /// GGUF architectures this port recognizes and cannot run.
@@ -307,7 +361,21 @@ fn config_json_resolution(root: &serde_json::Value) -> Option<(&str, ModelFamily
                 .and_then(|v| v.as_str()),
         )
         .find_map(|model_type| {
-            hf_family_for_model_type(model_type).map(|family| (model_type, family))
+            hf_family_for_model_type(model_type).map(|family| {
+                // Unlimited-OCR-2 (DASH block-sparse attention) shares the
+                // `unlimited-ocr` spelling with the checkpoint the DeepSeek-OCR
+                // arm recognizes; its `sparse_attention_config` is what
+                // separates them, and `parse_unlimited_ocr2_config` still
+                // refuses a file that lacks it.
+                let family = if model_type == "unlimited-ocr"
+                    && root.get("sparse_attention_config").is_some()
+                {
+                    ModelFamily::UnlimitedOcr2
+                } else {
+                    family
+                };
+                (model_type, family)
+            })
         })
 }
 
@@ -321,11 +389,14 @@ fn config_json_resolution(root: &serde_json::Value) -> Option<(&str, ModelFamily
 /// with the SigLIP tower `classify_for_family` buckets as `VisionTower`, and
 /// under these wrappers the `vision_tower.` prefix names a different tower.
 ///
-/// - `minicpmv4_7`: read off `mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4`
-///   @ 810419dd09762d63aad6da5b6a418c4af8946e60 (`text_config.model_type`
-///   `qwen3_5_moe_text`; a 27-layer MiniCPM SigLIP under `vision_tower.`,
-///   plus `vit_merger.` and `merger.`).
-const FOREIGN_VISION_WRAPPERS: &[&str] = &["minicpmv4_7"];
+/// Empty since 2026-11-01. `minicpmv4_7` was its only member (read off
+/// `mlx-community/MiniCPM-V-4.7-35B-A3B-mxfp4` @
+/// 810419dd09762d63aad6da5b6a418c4af8946e60: a 27-layer MiniCPM SigLIP under
+/// `vision_tower.`, plus `vit_merger.` and `merger.`); it left when that tower
+/// got its own reader (`VisionTowerKind::MiniCpmV`,
+/// `docs/MINICPMV_VISION_PHASE0.md`). The mechanism stays for the next wrapper
+/// whose tower this port cannot run.
+const FOREIGN_VISION_WRAPPERS: &[&str] = &[];
 
 /// True when `config.json`'s root `model_type` is a wrapper in
 /// [`FOREIGN_VISION_WRAPPERS`], whose tower must be dropped rather than
@@ -334,6 +405,41 @@ pub fn has_foreign_vision_tower(root: &serde_json::Value) -> bool {
     root.get("model_type")
         .and_then(|v| v.as_str())
         .is_some_and(|m| FOREIGN_VISION_WRAPPERS.contains(&m))
+}
+
+/// Root `model_type`s whose checkpoint carries a language-model trunk that
+/// another model drives, with no LM head of its own.
+///
+/// Recognition only, and kept OUT of [`SUPPORTED_HF`] on purpose: a row
+/// there would let the generic text intake build a chat install from the
+/// trunk, which has no head and must never be offered as a chat model. Each
+/// owner has its own intake (`fish_drama3`: `crate::fish_drama3`), and the
+/// generic intake refuses these by name through
+/// [`headless_tts_trunk_owner`].
+///
+/// - `fish_drama3`: read off `mlx-community/fish-audio-drama-3-4bit`
+///   @ cc639e27aba7edb73429d3e3806f471dcd79d316 (`text_config.model_type`
+///   `fish_omni_text`, a `QwenGdnMoe` trunk under `backbone.model.`).
+const HEADLESS_TTS_TRUNKS: &[(&str, ModelFamily)] = &[("fish_drama3", ModelFamily::QwenGdnMoe)];
+
+/// The root `model_type` when `config.json` names a model in
+/// [`HEADLESS_TTS_TRUNKS`], for a refusal that names it.
+pub fn headless_tts_trunk_owner(root: &serde_json::Value) -> Option<&'static str> {
+    let model_type = root.get("model_type").and_then(|v| v.as_str())?;
+    HEADLESS_TTS_TRUNKS
+        .iter()
+        .find(|(owner, _)| *owner == model_type)
+        .map(|(owner, _)| *owner)
+}
+
+/// The refusal the generic text intake gives a [`HEADLESS_TTS_TRUNKS`]
+/// checkpoint: what it is, and where it installs instead.
+pub fn describe_headless_tts_trunk(owner: &str) -> String {
+    format!(
+        "config.json model_type {owner:?} is a text-to-speech model whose language trunk has \
+         no head of its own; it installs through the audio catalog, not as a chat model \
+         (docs/FISH_DRAMA3_PHASE0.md)"
+    )
 }
 
 /// Guards a family-specific `config.json` parser against being handed

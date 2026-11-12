@@ -229,7 +229,10 @@ impl<'a> StructuredAssistantDecoder<'a> {
         }
         match self.tokenizer.dialect {
             ChatDialect::ChatMl => return self.consume_chatml(token_id, delta),
-            ChatDialect::MiniMax => {
+            // Flint shares this arm: its think pair is the only markup it
+            // splits, keyed on the ids. Its GLM-style tool markup has no
+            // parser and flows through as content (`Prompted`).
+            ChatDialect::MiniMax | ChatDialect::Flint => {
                 if Some(token_id) == self.tokenizer.think_start_id {
                     self.channel = Channel::Thought;
                 } else if Some(token_id) == self.tokenizer.think_end_id {

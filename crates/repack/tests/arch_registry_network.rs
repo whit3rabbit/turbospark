@@ -170,7 +170,7 @@ fn swift_qwen38_q2_0_shards_derive_the_supported_qwen4exp_architecture() {
         let role = match map_gguf_name(name, ModelFamily::Qwen4Exp).expect("map tensor") {
             GgufMapping::Resident(_) => "resident",
             GgufMapping::Routed { .. } | GgufMapping::RoutedFusedGateUp { .. } => "routed",
-            GgufMapping::Ignored { .. } => "ignored",
+            GgufMapping::Ignored { .. } | GgufMapping::ZeroTailRopeFreqs => "ignored",
         };
         *by_role.entry((role, kind)).or_insert(0usize) += 1;
     }

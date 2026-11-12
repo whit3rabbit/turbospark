@@ -1,0 +1,24 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "fish_drama3",
+  "kind": "audio",
+  "title": "Fish Drama 3 text to speech",
+  "flow": "speak",
+  "installs": [],
+  "recommended": [],
+  "sweeps": [],
+  "findings": [
+    {"id": "fish_drama3.peak-footprint-2026-10-11", "date": "2026-10-11",
+     "install": "fish-drama3", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "v0.5 era",
+     "workload": "the benchmarks page's memory row",
+     "arms": {"default": {}},
+     "metric": "peak_bytes", "values": {"peak_mib": [6106, 6296]},
+     "verdict": "reading",
+     "provenance": {"kind": "doc", "path": "docs/BENCHMARKS.md", "heading": "Memory"},
+     "conditions": "no timing quoted on the page",
+     "note": ""}
+  ],
+  "open_questions": ["no worker path in tslab: kernel benches only", "no timing recorded"],
+  "traps": [],
+  "docs": ["docs/BENCHMARKS.md", "docs/FISH_DRAMA3_PHASE0.md"]
+}

@@ -79,7 +79,7 @@ fn batch_partial_pipeline_fits_supported_device_resources() {
     // The batch partial kernel declares all threadgroup arrays statically and
     // does not request dynamic threadgroup memory from a compute encoder.
     let dynamic_threadgroup_bytes = 0u64;
-    let device_threadgroup_limit = context.device().max_threadgroup_memory_length() as u64;
+    let device_threadgroup_limit = context.device().max_threadgroup_memory_length();
     let device_name = context.device().name();
 
     println!(

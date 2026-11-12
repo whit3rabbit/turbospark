@@ -66,6 +66,30 @@ pub struct ValidationReport<T> {
     pub rejected: Vec<RejectedHubEntry>,
 }
 
+/// Optional, advisory metadata a search row carries.
+///
+/// Every field is a HINT for ranking and badges and never a compatibility
+/// claim: only a probe reads the checkpoint. Parsing is lenient on purpose. A
+/// row with an odd `tags` array or an oversized token loses that one field
+/// instead of being rejected, because dropping a result the user searched for
+/// is worse than showing it with a blank badge.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LiveMeta {
+    /// True for `gated: true` and for the `"auto"` and `"manual"` strings.
+    pub gated: bool,
+    /// The row advertises GGUF files (a `gguf` object or the `gguf` tag).
+    pub gguf: bool,
+    /// The row advertises MLX weights (the `mlx` tag or `library_name`).
+    pub mlx: bool,
+    /// `gguf.architecture`, the `general.architecture` the Hub already read.
+    pub gguf_architecture: Option<String>,
+    /// `config.model_type` for safetensors repositories.
+    pub model_type: Option<String>,
+    /// First `cardData.base_model` that is a valid repository id.
+    pub base_model: Option<String>,
+    pub pipeline_tag: Option<String>,
+}
+
 /// One validated row from a Hugging Face model search or feed response.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HubSearchEntry {
@@ -74,6 +98,7 @@ pub struct HubSearchEntry {
     pub revision: String,
     pub downloads: Option<u64>,
     pub likes: Option<u64>,
+    pub meta: LiveMeta,
 }
 
 /// A validated file from a repository's `siblings` listing.
@@ -235,6 +260,7 @@ impl HubMetadataValidator {
                 revision: revision.to_ascii_lowercase(),
                 downloads,
                 likes,
+                meta: live_meta(object),
             });
         }
 
@@ -439,6 +465,71 @@ fn optional_u64(value: Option<&Value>) -> Result<Option<u64>, &'static str> {
         None | Some(Value::Null) => Ok(None),
         Some(Value::Number(number)) => number.as_u64().map(Some).ok_or("nonnegative_count"),
         Some(_) => Err("nonnegative_count"),
+    }
+}
+
+/// Longest `tags` array scanned per row. The Hub sends a few dozen; the cap
+/// only bounds work on a hostile or cached-and-edited payload.
+const MAX_META_TAGS: usize = 256;
+const MAX_META_TOKEN_BYTES: usize = 64;
+
+/// A short identifier-shaped string (`qwen35moe`, `text-generation`) or `None`.
+/// Anything else is dropped rather than echoed into a UI or an FFI payload.
+fn meta_token(value: Option<&Value>) -> Option<String> {
+    let text = value?.as_str()?;
+    let clean = !text.is_empty()
+        && text.len() <= MAX_META_TOKEN_BYTES
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'));
+    clean.then(|| text.to_owned())
+}
+
+/// Reads the advisory fields of one search row. Never fails: see [`LiveMeta`].
+fn live_meta(object: &serde_json::Map<String, Value>) -> LiveMeta {
+    let tags: Vec<&str> = object
+        .get("tags")
+        .and_then(Value::as_array)
+        .map(|tags| {
+            tags.iter()
+                .take(MAX_META_TAGS)
+                .filter_map(Value::as_str)
+                .collect()
+        })
+        .unwrap_or_default();
+    let has_tag = |wanted: &str| tags.iter().any(|tag| tag.eq_ignore_ascii_case(wanted));
+    let gguf_object = object.get("gguf").and_then(Value::as_object);
+
+    let gated = match object.get("gated") {
+        Some(Value::Bool(flag)) => *flag,
+        Some(Value::String(mode)) => !mode.is_empty(),
+        _ => false,
+    };
+    let library = meta_token(object.get("library_name"));
+    // `cardData.base_model` is a string or a list of strings.
+    let base_model = match object
+        .get("cardData")
+        .and_then(|card| card.get("base_model"))
+    {
+        Some(Value::String(id)) => Some(id.as_str()),
+        Some(Value::Array(ids)) => ids.iter().find_map(Value::as_str),
+        _ => None,
+    }
+    .filter(|id| valid_repo_id(id))
+    .map(str::to_owned);
+
+    LiveMeta {
+        gated,
+        gguf: gguf_object.is_some() || has_tag("gguf"),
+        mlx: has_tag("mlx") || library.as_deref() == Some("mlx"),
+        gguf_architecture: meta_token(gguf_object.and_then(|gguf| gguf.get("architecture"))),
+        model_type: meta_token(
+            object
+                .get("config")
+                .and_then(|config| config.get("model_type")),
+        ),
+        base_model,
+        pipeline_tag: meta_token(object.get("pipeline_tag")),
     }
 }
 

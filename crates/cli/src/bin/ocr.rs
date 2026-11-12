@@ -1,23 +1,29 @@
-//! Document OCR with the Core ML Unlimited OCR export (macOS 15+).
+//! Document OCR: Unlimited-OCR-2 on Metal, or the Core ML Unlimited OCR export
+//! (macOS 15+). The model directory says which.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 const USAGE: &str = "\
-usage: turbospark-ocr --model DIR [OPTIONS] PAGE [PAGE ...]
+usage: turbospark-ocr --model DIR|ALIAS [OPTIONS] PAGE [PAGE ...]
 
-Reads page images (PNG or JPEG) as one document with the Core ML parts of
-FluidInference unlimited-ocr-mlx-coreml and prints the text. One page uses
-the single-page prompt; several pages use the multi-page prompt. Needs
-macOS 15 or newer. The first run compiles the decoder for this machine.
+Reads page images (PNG or JPEG) as one document and prints the text. One page
+uses the single-page layout; several pages use the multi-page layout. MODEL is
+one of:
+
+  an Unlimited-OCR-2 install (mlx-community/Unlimited-OCR-2-4bit), which runs
+  on Metal; or
+
+  the Core ML parts of FluidInference unlimited-ocr-mlx-coreml
+  (UnlimitedOcrPageEncoder.mlpackage, UnlimitedOcrDecoder.mlpackage,
+  embeddings.f16, tokenizer.json, config.json), which need macOS 15 or newer
+  and compile the decoder for this machine on the first run.
 
 Required:
-    --model DIR               directory with UnlimitedOcrPageEncoder.mlpackage,
-                              UnlimitedOcrDecoder.mlpackage, embeddings.f16,
-                              tokenizer.json and config.json
+    --model DIR|ALIAS         the model directory, or an installed alias
 
 Options:
-    --raw                     keep the layout markup (<PAGE>, <|det|> boxes)
+    --raw                     keep the layout markup (<PAGE>, <BLOCK>, <|det|>)
     --max-new-tokens N        cap the generated tokens
     -h, --help                show this help
 ";
@@ -64,8 +70,56 @@ fn parse(args: &[String]) -> Result<Option<Args>, String> {
 }
 
 #[cfg(target_os = "macos")]
+fn print_result(result: &runtime::coreml::OcrResult, plain: String, raw: bool) {
+    if !result.stats.stopped_at_eos {
+        eprintln!(
+            "warning: stopped at the token limit after {} tokens; the text may be cut off",
+            result.stats.output_tokens
+        );
+    }
+    if raw {
+        println!("{}", result.text);
+    } else {
+        println!("{plain}");
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn run_metal(a: &Args) -> Result<(), String> {
+    use runtime::coreml::OcrEvent;
+    use runtime::unlimited_ocr2_reader::{uocr2_plain_text, UnlimitedOcr2Reader};
+    let arch = repack::peek_manifest_arch(&a.model)?;
+    let mut reader = UnlimitedOcr2Reader::open(&a.model, arch)?;
+    let images = a
+        .pages
+        .iter()
+        .map(|p| {
+            turbospark_vision_io::decode_image_file(p).map_err(|e| format!("{}: {e}", p.display()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let result = reader.read(&images, a.max_new_tokens, |e| {
+        match e {
+            OcrEvent::PageEncoded { index } => eprintln!("encoded page {}", index + 1),
+            OcrEvent::Prefilled { tokens, .. } => eprintln!("reading ({tokens} prompt tokens)"),
+            OcrEvent::Token { .. } => {}
+        }
+        true
+    })?;
+    let plain = uocr2_plain_text(&result.text);
+    print_result(&result, plain, a.raw);
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
 fn run(a: Args) -> Result<(), String> {
     use runtime::coreml::{OcrEvent, OcrOptions, OcrPage, UnlimitedOcrCoreMl};
+    let mut a = a;
+    if let Some(name) = a.model.to_str() {
+        a.model = catalog::resolve_ocr_arg(name);
+    }
+    if a.model.join(model_io::DASH_SIDECAR).exists() {
+        return run_metal(&a);
+    }
     let opts = OcrOptions {
         max_new_tokens: a.max_new_tokens,
         ..OcrOptions::default()
@@ -85,23 +139,14 @@ fn run(a: Args) -> Result<(), String> {
         }
         true
     })?;
-    if !result.stats.stopped_at_eos {
-        eprintln!(
-            "warning: stopped at the token limit after {} tokens; the text may be cut off",
-            result.stats.output_tokens
-        );
-    }
-    if a.raw {
-        println!("{}", result.text);
-    } else {
-        println!("{}", result.plain_text());
-    }
+    let plain = result.plain_text();
+    print_result(&result, plain, a.raw);
     Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
 fn run(_a: Args) -> Result<(), String> {
-    Err("OCR runs on Core ML and needs macOS 15 or newer".into())
+    Err("OCR needs macOS".into())
 }
 
 fn main() -> ExitCode {

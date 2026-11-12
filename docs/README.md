@@ -20,6 +20,7 @@ the evidence that supports the claim.
 | Understand the text install format | [`GTURBO.md`](GTURBO.md) |
 | Build a release artifact | [`RELEASE.md`](RELEASE.md) |
 | Compare desktop feature parity (ZCode, Unsloth Desktop) | [`DESKTOP_FEATURE_PARITY.md`](DESKTOP_FEATURE_PARITY.md) |
+| Read the detailed ZCode and OpenCode desktop comparisons | [`ZCODE_COMPARISON.md`](ZCODE_COMPARISON.md), [`OPENCODE2_COMPARISON.md`](OPENCODE2_COMPARISON.md) |
 
 ## Runtime and integration references
 
@@ -34,14 +35,18 @@ the evidence that supports the claim.
   [`BATCHED_PREFILL.md`](BATCHED_PREFILL.md), and
   [`ACTIVATION_SPARSITY.md`](ACTIVATION_SPARSITY.md).
 - Metal, power, and quantization: [`KERNELS.md`](KERNELS.md),
+  [`KAPITSA_KERNELS.md`](KAPITSA_KERNELS.md),
+  [`INT4_SMALL_M_MMA.md`](INT4_SMALL_M_MMA.md),
   [`POWER_BASELINE.md`](POWER_BASELINE.md),
-  [`TRUBOQUANT.md`](TRUBOQUANT.md), and
-  [`OBLITERATION.md`](OBLITERATION.md).
+  [`TRUBOQUANT.md`](TRUBOQUANT.md),
+  [`OBLITERATION.md`](OBLITERATION.md), and
+  [`STEERING_TRAITS.md`](STEERING_TRAITS.md).
 - Interfaces and safety: [`SWIFT_BINDINGS.md`](SWIFT_BINDINGS.md),
   [`TOOL_CALLING.md`](TOOL_CALLING.md), and
   [`FORGE_GUARDRAILS.md`](FORGE_GUARDRAILS.md),
-  [`PERMISSION_GATE.md`](PERMISSION_GATE.md), and
-  [`SKILL_STATE.md`](SKILL_STATE.md).
+  [`PERMISSION_GATE.md`](PERMISSION_GATE.md),
+  [`SKILL_STATE.md`](SKILL_STATE.md), and
+  [`COMPUTER_USE.md`](COMPUTER_USE.md).
 - Vision and image generation: [`VISION.md`](VISION.md),
   [`IMAGE_GENERATION.md`](IMAGE_GENERATION.md), and
   [`ZIMAGE_TURBO.md`](ZIMAGE_TURBO.md).
@@ -55,12 +60,23 @@ reproduction commands when you need to verify a claim.
 
 - [`DEEPSEEK2_PHASE0.md`](DEEPSEEK2_PHASE0.md)
 - [`BONSAI2.md`](BONSAI2.md)
+- [`GEMMA4_VISION_PHASE0.md`](GEMMA4_VISION_PHASE0.md)
 - [`IMAGE_GENERATION_PHASE0.md`](IMAGE_GENERATION_PHASE0.md)
 - [`MINICPM.md`](MINICPM.md)
 - [`MINIMAX_M2_PHASE0.md`](MINIMAX_M2_PHASE0.md)
 - [`QWEN3VL_PHASE0.md`](QWEN3VL_PHASE0.md)
 - [`QWEN4_EXP.md`](QWEN4_EXP.md)
 - [`QWEN4_PHASE0.md`](QWEN4_PHASE0.md)
+- [`QWEN4EXP_VISION_PHASE0.md`](QWEN4EXP_VISION_PHASE0.md)
+- [`QWEN25_VL_VISION_PHASE0.md`](QWEN25_VL_VISION_PHASE0.md)
+- [`LFM3_VL_VISION_PHASE0.md`](LFM3_VL_VISION_PHASE0.md)
+- [`LLAVA_VISION_PHASE0.md`](LLAVA_VISION_PHASE0.md)
+- [`MUSEGLIMMER_VISION_PHASE0.md`](MUSEGLIMMER_VISION_PHASE0.md)
+- [`MINICPMV_VISION_PHASE0.md`](MINICPMV_VISION_PHASE0.md)
+- [`PIXTRAL_VISION_PHASE0.md`](PIXTRAL_VISION_PHASE0.md)
+- [`DEEPSEEK_VL2_VISION_PHASE0.md`](DEEPSEEK_VL2_VISION_PHASE0.md)
+- [`DEEPSEEK_OCR_VISION_PHASE0.md`](DEEPSEEK_OCR_VISION_PHASE0.md)
+- [`LLAVA_ONEVISION_VISION_PHASE0.md`](LLAVA_ONEVISION_VISION_PHASE0.md)
 - [`SPARK_PHASE0.md`](SPARK_PHASE0.md)
 - [`VISION_PHASE0.md`](VISION_PHASE0.md)
 

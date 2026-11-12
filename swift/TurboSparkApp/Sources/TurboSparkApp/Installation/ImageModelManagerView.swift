@@ -6,12 +6,23 @@ import TurboSpark
 @MainActor
 struct ImageModelManagerView: View {
     @ObservedObject var model: AppModel
+    @Environment(\.appTheme) private var theme
 
     @State private var imageToDelete: ImageInstalledModel?
+    /// The library the user picked for the downloads on this page. Nil follows
+    /// the default (requirement 2.2). Per install: not remembered across launches.
+    @State private var destination: String?
+
+    /// The `library:` the installs take for the menu's choice: nil for This Mac.
+    private var chosenLibrary: String? {
+        model.installDestinations.libraryForInstall(selection: destination)
+    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
+                // Where a download goes: only when there is a choice (2.1).
+                InstallDestinationPicker(model: model, selection: $destination)
                 recommendationCard
                 installedSection
                 curatedSection
@@ -99,7 +110,7 @@ struct ImageModelManagerView: View {
                 }
                 .themedFont(.tiny)
                 .foregroundStyle(
-                    model.hasInstalledMLXImageModel ? Color.green : Color.secondary)
+                    model.hasInstalledMLXImageModel ? AnyShapeStyle(.appAccent) : AnyShapeStyle(.appSecondary))
                 Spacer()
                 Button {
                     model.activeSection = .images
@@ -114,10 +125,10 @@ struct ImageModelManagerView: View {
             }
         }
         .padding(16)
-        .background(.appAccent.opacity(0.08), in: RoundedRectangle(cornerRadius: 12))
+        .background(.appAccent.opacity(0.08), in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(.appAccent.opacity(0.2), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                .stroke(theme.border, lineWidth: 0.5)
         }
     }
 
@@ -125,6 +136,7 @@ struct ImageModelManagerView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Installed image models", bundle: .module)
                 .themedFont(.base, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
             if model.imageModels.isEmpty {
                 Text("Nothing is installed. Choose a curated variant above to get started.", bundle: .module)
                     .themedFont(.small)
@@ -141,6 +153,7 @@ struct ImageModelManagerView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("All curated variants", bundle: .module)
                 .themedFont(.base, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
             ForEach(model.imageDownloadChoices) { source in
                 curatedRow(source, recommended: false)
             }
@@ -167,7 +180,7 @@ struct ImageModelManagerView: View {
             } else if model.imageModelPath == image.path {
                 Label { Text("Selected", bundle: .module) } icon: { Image(systemName: "checkmark.circle.fill") }
                     .themedFont(.tiny, weight: .medium)
-                    .foregroundStyle(.green)
+                    .foregroundStyle(.appSuccess)
             } else {
                 Button {
                     model.selectImageModel(image)
@@ -180,7 +193,19 @@ struct ImageModelManagerView: View {
             // additional model folder is dropped from the list and its files
             // stay where they are, the same rule the text models follow.
             let managed = model.isManagedImageModel(image)
-            Button(role: .destructive) {
+            // Only an install the engine lists can be moved (task 6.11); the sheet
+            // is hosted by the Installed Models list around this page.
+            if let subject = MoveSubject.make(image: image, isManaged: managed) {
+                Button {
+                    model.presentMoveSheet(for: subject)
+                } label: {
+                    Label { Text("Move to...", bundle: .module) } icon: { Image(systemName: "arrow.left.arrow.right.circle") }
+                }
+                .appAction(.secondary, size: .small)
+                .disabled(model.modelsBeingChanged.contains(subject.installId))
+                .accessibilityValue(Text(verbatim: UntrustedText.display(image.alias)))
+            }
+            Button(role: managed ? .destructive : nil) {
                 imageToDelete = image
             } label: {
                 Label {
@@ -193,16 +218,16 @@ struct ImageModelManagerView: View {
                     Image(systemName: managed ? "trash" : "eye.slash")
                 }
             }
-            .appAction(.destructive, size: .small)
+            .appAction(managed ? .destructive : .secondary, size: .small)
             .accessibilityHint(
                 managed
                     ? Text("Removes this image model from the shared image store", bundle: .module)
                     : Text("Hides this image model without deleting its files", bundle: .module))
         }
         .padding(10)
-        .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+        .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8).stroke(.appBorder, lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous).stroke(.appBorder, lineWidth: 0.5)
         }
     }
 
@@ -211,8 +236,8 @@ struct ImageModelManagerView: View {
         let isTested = AppModel.testedImageModelAliases.contains(source.alias)
         return HStack(spacing: 10) {
             Image(systemName: installed == nil ? "arrow.down.circle" : "checkmark.circle.fill")
-                .foregroundStyle(installed == nil ? Color.accentColor : Color.green)
-                .frame(width: 22)
+                .foregroundStyle(.appAccent)
+                .frame(minWidth: 22)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(verbatim: source.alias)
@@ -228,7 +253,7 @@ struct ImageModelManagerView: View {
                     if isTested {
                         Text("Install-tested", bundle: .module)
                             .themedFont(.micro, weight: .medium)
-                            .foregroundStyle(.green)
+                            .foregroundStyle(.appAccent)
                     }
                 }
                 Text(verbatim: "\(source.quantization)  |  \(source.modelID)")
@@ -238,10 +263,9 @@ struct ImageModelManagerView: View {
                 // only and asks derivative products to say they are built with
                 // Qwen. Show it before the download, in the license's words.
                 if source.resolvedFamily.hasPrefix("qwen-image-2.1") {
-                    Text(
-                        verbatim: "Qwen Research License: research and evaluation use only, no commercial use. Built with Qwen.")
+                    Text("Qwen Research License: research and evaluation use only, no commercial use. Built with Qwen.", bundle: .module)
                         .themedFont(.tiny)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppAttention.color)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -260,7 +284,7 @@ struct ImageModelManagerView: View {
                 .disabled(true)
             } else {
                 Button {
-                    model.installImageModel(source)
+                    model.installImageModel(source, library: chosenLibrary)
                 } label: {
                     Label {
                         Text("Download", bundle: .module)
@@ -270,12 +294,13 @@ struct ImageModelManagerView: View {
                 }
                 .appAction(.secondary, size: .small)
                 .disabled(!isTested || !model.canInstallImageModel(alias: source.alias))
+                .help(!isTested || !model.canInstallImageModel(alias: source.alias) ? Text("Only supported MLX image models can be installed in the app.", bundle: .module) : Text("Download", bundle: .module))
             }
         }
         .padding(10)
-        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+        .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8).stroke(.appBorder, lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous).stroke(.appBorder, lineWidth: 0.5)
         }
     }
 }
@@ -285,6 +310,9 @@ struct ImageModelManagerView: View {
 struct ImageModelRecommendationSheet: View {
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
+    /// The library the user picked for the download. Nil follows the default
+    /// (requirement 2.2). Per install: not remembered across launches.
+    @State private var destination: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -310,6 +338,9 @@ struct ImageModelRecommendationSheet: View {
             .foregroundStyle(.appSecondary)
             .fixedSize(horizontal: false, vertical: true)
 
+            // Where the download goes: only when there is a choice (2.1).
+            InstallDestinationPicker(model: model, selection: $destination)
+
             ForEach(model.recommendedImageModelSources) { source in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack {
@@ -317,7 +348,9 @@ struct ImageModelRecommendationSheet: View {
                             .themedFont(.base, weight: .medium)
                         Spacer()
                         Button {
-                            model.installImageModel(source)
+                            model.installImageModel(
+                                source,
+                                library: model.installDestinations.libraryForInstall(selection: destination))
                         } label: {
                             Text("Download", bundle: .module)
                         }
@@ -333,7 +366,7 @@ struct ImageModelRecommendationSheet: View {
                         .foregroundStyle(.appSecondary)
                 }
                 .padding(10)
-                .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 8))
+                .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             }
 
             HStack {
@@ -348,7 +381,7 @@ struct ImageModelRecommendationSheet: View {
             }
         }
         .padding(24)
-        .frame(width: 560)
+        .frame(minWidth: 480, idealWidth: 560, maxWidth: 640)
         .task {
             model.refreshTelemetry()
         }

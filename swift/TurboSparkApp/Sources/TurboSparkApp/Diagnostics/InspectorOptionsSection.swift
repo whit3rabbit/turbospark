@@ -8,14 +8,19 @@ extension InspectorView {
             Picker(selection: Binding(
                 get: { model.selected?.alias ?? "" },
                 set: { alias in
-                    guard let m = model.installed.first(where: { $0.alias == alias }) else { return }
+                    guard let m = model.loadableModels.first(where: { $0.alias == alias }) else { return }
                     model.selectModel(m)
                 }
             )) {
-                if model.installed.isEmpty {
-                    Text("No models installed", bundle: .module).tag("")
+                // The loadable list only (requirement 3.3).
+                if model.loadableModels.isEmpty {
+                    if let statement = model.notConnectedStatement {
+                        Text(verbatim: statement).tag("")
+                    } else {
+                        Text("No models installed", bundle: .module).tag("")
+                    }
                 }
-                ForEach(model.installed) { m in
+                ForEach(model.loadableModels) { m in
                     let visuals = ModelFamilyVisuals.resolve(alias: m.alias, family: m.family, name: m.alias)
                     Label {
                         Text(verbatim: "\(m.alias) (\(visuals.family))")
@@ -25,15 +30,18 @@ extension InspectorView {
                     .tag(m.alias)
                 }
             } label: { Text("Model", bundle: .module) }
+            // The section header already reads "Model". The label stays as
+            // the VoiceOver name; hidden, the picker takes the row's full
+            // width instead of floating right of an empty label column.
+            .labelsHidden()
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             LabeledContent {
                 HStack(spacing: 6) {
-                    Text(model.modelPathText)
-                        .themedFont(.small)
-                        .truncationMode(.middle)
-                        .lineLimit(1)
+                    // Selectable, middle-truncated, full path in the tooltip
+                    // (DESIGN.md "Text in layouts").
+                    SettingsPathText(model.modelPathText)
                         .foregroundStyle(.appSecondary)
-                        .help(model.modelPathText)
                     AppIconButton("doc.on.doc", label: Text("Copy model path", bundle: .module)) {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(model.modelPathText, forType: .string)
@@ -43,7 +51,6 @@ extension InspectorView {
                 }
             } label: {
                 Text("Path", bundle: .module)
-                    .themedFont(.small)
             }
 
             Button {
@@ -74,7 +81,6 @@ extension InspectorView {
                         .foregroundStyle(.appSecondary)
                 } label: {
                     Text("Installed size", bundle: .module)
-                        .themedFont(.small)
                 }
                 LabeledContent {
                     HStack(spacing: 4) {
@@ -89,7 +95,6 @@ extension InspectorView {
                     .help(Text("Architecture: \(visuals.family)", bundle: .module))
                 } label: {
                     Text("Family", bundle: .module)
-                        .themedFont(.small)
                 }
             }
         }
@@ -228,7 +233,7 @@ extension InspectorView {
                     Image(systemName: "exclamationmark.triangle")
                 }
                 .themedFont(.small)
-                .foregroundStyle(Color.secondary)
+                .foregroundStyle(.appSecondary)
             }
 
             // **STEERING RESOLVES ONCE, AT OPEN.** Editing a field here does
@@ -239,7 +244,7 @@ extension InspectorView {
                 HStack {
                     Label { Text("Not applied to the loaded model", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
                         .themedFont(.small)
-                        .foregroundStyle(Color.orange)
+                        .foregroundStyle(.appWarning)
                     Spacer()
                     Button { model.reloadForSteering() } label: { Text("Reload", bundle: .module) }
                         .appAction(.secondary, size: .small)

@@ -28,7 +28,7 @@ struct MessageVariantSwitcherView: View {
             } label: {
                 Image(systemName: "chevron.left")
                     .themedFont(.tiny, weight: .semibold)
-                    .frame(width: 18, height: 18)
+                    .frame(minWidth: 18, minHeight: 18)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -47,7 +47,7 @@ struct MessageVariantSwitcherView: View {
             } label: {
                 Image(systemName: "chevron.right")
                     .themedFont(.tiny, weight: .semibold)
-                    .frame(width: 18, height: 18)
+                    .frame(minWidth: 18, minHeight: 18)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -94,16 +94,8 @@ struct MessageEditComposerView: View {
         VStack(alignment: .trailing, spacing: 8) {
             TextEditor(text: $text)
                 .font(theme.uiFont)
-                .scrollContentBackground(.hidden)
-                .frame(minWidth: 320, maxWidth: 640, minHeight: 56, maxHeight: 240, alignment: .leading)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(.appSurface.opacity(0.85))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .stroke(.appAccent.opacity(0.45), lineWidth: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .frame(minWidth: 320, maxWidth: 640, maxHeight: 240, alignment: .leading)
+                .appEditorSurface(minHeight: 56)
                 .focused($isFocused)
                 .accessibilityLabel(Text("Edit message text", bundle: .module))
 
@@ -115,6 +107,9 @@ struct MessageEditComposerView: View {
                     .appAction(.primary)
                     .keyboardShortcut(.defaultAction)
                     .disabled(trimmedText.isEmpty)
+                    .help(trimmedText.isEmpty
+                        ? Text("Enter text to save", bundle: .module)
+                        : Text("Save and rerun prompt", bundle: .module))
             }
         }
         .onAppear {
@@ -171,10 +166,13 @@ struct BranchEditSheet: View {
                     .appAction(.primary)
                     .keyboardShortcut(.defaultAction)
                     .disabled(trimmedText.isEmpty)
+                    .help(trimmedText.isEmpty
+                        ? Text("Enter text to create branch", bundle: .module)
+                        : Text("Create branch and rerun prompt", bundle: .module))
             }
         }
         .padding(20)
-        .frame(width: 520)
+        .frame(minWidth: 460, idealWidth: 520, maxWidth: 640)
         .onAppear {
             text = originalText
         }

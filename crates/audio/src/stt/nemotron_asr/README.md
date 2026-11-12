@@ -10,9 +10,16 @@ Pinned checkpoint:
 
 The library loads a local Hugging Face snapshot and transcribes mono PCM with
 the reflect-padded NeMo frontend, causal FastConformer, language prompt, and
-greedy RNN-T decoder. The current path encodes a complete recording with its
-trained chunk-limited attention mask. It does not implement cache-aware online
-streaming.
+greedy RNN-T decoder. The transcription path encodes a complete recording with
+its trained chunk-limited attention mask.
+
+The encoder also has cache-aware streaming layers (`stream_geometry`,
+`pre_encode`, `stream_layers`) and the decoder a resumable greedy loop
+(`greedy_resume`), ported from NeMo Speech 218d0b4 for
+[Multitalker ASR](../multitalker_asr/README.md), which shares this graph. On
+synthetic weights the streamed layers equal the offline chunk-limited forward,
+and the offline encode digest is unchanged. Nemotron 3.5 streaming
+transcription itself is not wired or qualified.
 
 Example:
 

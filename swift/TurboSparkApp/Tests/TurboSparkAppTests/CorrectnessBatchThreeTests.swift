@@ -105,6 +105,42 @@ final class CorrectnessBatchThreeTests: XCTestCase {
         XCTAssertFalse(expanded.contains("user_config"))
     }
 
+    /// Issue S2: a non-sensitive option value was spliced raw into the `-c`
+    /// string, so metacharacters in it changed the command that ran.
+    func testNonSensitiveOptionValueStaysOneLiteralArgument() async throws {
+        let root = try makeRoot()
+        let marker = root.appendingPathComponent("marker").path
+        let marker2 = root.appendingPathComponent("marker2").path
+        let values = [
+            "x; touch \(marker)",
+            "$(touch \(marker2)) `touch \(marker2)` \"q\" 'r' && touch \(marker2)",
+        ]
+        for value in values {
+            // Unquoted, double-quoted and single-quoted placeholder contexts.
+            for template in [
+                "printf '%s' ${user_config.msg}",
+                "printf '%s' \"${user_config.msg}\"",
+                "printf '%s' '${user_config.msg}'",
+            ] {
+                let hook = AppHookCommand(
+                    name: "s2", event: .preToolUse, command: template, shell: .bash)
+                let snapshot = AppHookDispatchSnapshot(
+                    hooks: [hook], trustedHashes: [],
+                    optionValues: ["user_config": ["msg": value]],
+                    sensitiveOptionKeys: [:])
+                let result = await AppHookExecutionEngine().executeCommandHook(
+                    hook: hook, event: .preToolUse, sessionID: "s", toolName: nil,
+                    toolArguments: nil, toolOutput: nil, toolDurationSeconds: nil,
+                    isError: nil, workingDirectory: root.path, prompt: nil, source: nil,
+                    reason: nil, stopHookActive: nil, agentID: nil, agentType: nil,
+                    hookSnapshot: snapshot, startTime: Date())
+                XCTAssertEqual(result.stdout, value, template)
+            }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker), "option value ran as a command")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker2), "option value ran as a command")
+    }
+
     @MainActor
     func testDisabledPluginHookStaysDisabledAcrossRefreshAndRelaunch() throws {
         let root = try makeRoot()
@@ -284,8 +320,8 @@ final class CorrectnessBatchThreeTests: XCTestCase {
         let root = try makeRoot()
         try FileManager.default.createDirectory(
             at: root.appendingPathComponent("crates/ffi"), withIntermediateDirectories: true)
-        XCTAssertEqual(AppToolRegistry.syntextPathScope(relPath: "crates/ffi", rootURL: root), "crates/ffi/")
-        XCTAssertNil(AppToolRegistry.syntextPathScope(relPath: ".", rootURL: root))
+        XCTAssertEqual(try AppToolRegistry.syntextPathScope(relPath: "crates/ffi", rootURL: root), "crates/ffi/")
+        XCTAssertNil(try AppToolRegistry.syntextPathScope(relPath: ".", rootURL: root))
     }
 
     // MARK: - Batch

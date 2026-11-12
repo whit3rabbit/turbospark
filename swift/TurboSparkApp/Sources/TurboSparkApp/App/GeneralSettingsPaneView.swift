@@ -8,6 +8,7 @@ struct GeneralSettingsPaneView: View {
     @ObservedObject private var appearanceManager = AppearanceManager.shared
     @ObservedObject private var updateController = SparkleUpdateController.shared
     @ObservedObject var model: AppModel
+    @ObservedObject private var vaultCoordinator = ProfileVaultCoordinator.shared
 
     @AppStorage(AppLanguage.storageKey)
     private var languageRawValue = AppLanguage.system.rawValue
@@ -248,13 +249,46 @@ struct GeneralSettingsPaneView: View {
             } label: { Text("Keep recent messages verbatim", bundle: .module) }
             .settingsControl("Keep recent messages verbatim", pane: .general, timing: .nextTurn)
             .pickerStyle(.menu)
+
+            conversationRecallControls
         }
             .settingsControl("Context Compaction", pane: .general, timing: .immediate)
+    }
+
+    /// Split out of `compactionSection` for the macOS 14 type checker.
+    /// A protected profile never keeps the recall store, so the toggle reads
+    /// off there and the caption below says why.
+    @ViewBuilder
+    private var conversationRecallControls: some View {
+        Toggle(isOn: Binding(
+            get: { model.conversationRecallEnabled && !vaultCoordinator.isProtected },
+            set: { newValue in
+                model.conversationRecallEnabled = newValue
+                model.persistSettingsDebounced()
+            })) {
+            Text("Recall earlier messages in long chats", bundle: .module)
+        }
+        .settingsControl("Recall earlier messages in long chats", pane: .general, timing: .nextTurn)
+        .disabled(vaultCoordinator.isProtected)
+        Text("When older messages no longer fit in the context window, the relevant ones are brought back for the model. This keeps a searchable, unencrypted copy of each chat on this Mac. Temporary chats and protected profiles never keep one, and turning this off deletes it.", bundle: .module)
+            .font(theme.ui(.small))
+            .foregroundStyle(.appSecondary)
     }
 
     private var chatRuntimeSection: some View {
         let controls = ChatRuntimeSettingsBindings(model: model)
         return Section(header: Text("Chat Runtime", bundle: .module)) {
+            Toggle(isOn: controls.chatToolsEnabled) {
+                Text("Enable tools in Chat by default", bundle: .module)
+            }
+            .settingsControl("Enable tools in Chat by default", pane: .general, timing: .nextTurn)
+            Text(
+                "Allows the assistant to use web search, browser automation, interactive questions, and global integrations during conversational chats. Codebase file edits and terminal commands remain scoped to Projects.",
+                bundle: .module
+            )
+            .font(theme.ui(.small))
+            .foregroundStyle(.appSecondary)
+
             Toggle(isOn: controls.microcompactEnabled) {
                 Text("Compact older tool results", bundle: .module)
             }

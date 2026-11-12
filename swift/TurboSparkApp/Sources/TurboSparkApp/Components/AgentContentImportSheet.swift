@@ -154,6 +154,7 @@ public struct AgentContentImportSheet: View {
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 320)
                 .disabled(project == nil && !importToProjectScope)
+                .help(project == nil && !importToProjectScope ? Text("Open a project to install into one.", bundle: .module) : Text("Scope", bundle: .module))
             }
         }
         .padding(.horizontal, 20)
@@ -167,25 +168,23 @@ public struct AgentContentImportSheet: View {
     private var content: some View {
         if isLoading {
             VStack(spacing: 12) {
-                ProgressView()
+                AppProgressBar(value: nil, label: Text("Scanning other agents' folders...", bundle: .module))
+                    .frame(maxWidth: 240)
                 Text("Scanning other agents' folders...", bundle: .module)
                     .themedFont(.base)
                     .foregroundStyle(.appSecondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if groups.isEmpty {
-            VStack(spacing: 16) {
-                Image(systemName: "folder.badge.questionmark")
-                    .themedFont(.display)
-                    .foregroundStyle(.appSecondary)
-                Text("No importable content found in other agent locations.", bundle: .module)
-                    .themedFont(.base)
-                    .foregroundStyle(.appSecondary)
+            AppEmptyState(
+                systemImage: "folder.badge.questionmark",
+                title: Text("No importable content found in other agent locations.", bundle: .module)
+            ) {
                 if category != .mcpServers {
                     Button {
                         selectCustomFolder()
                     } label: { Text("Choose Custom Folder...", bundle: .module) }
-                        .buttonStyle(.bordered)
+                    .appAction(.secondary)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -214,7 +213,7 @@ public struct AgentContentImportSheet: View {
                             .themedFont(.small, weight: .semibold)
                         Text(verbatim: "\(group.items.count)")
                             .themedFont(.tiny)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.appSecondary)
                         Spacer()
                         Button {
                             for i in group.items.indices {
@@ -247,7 +246,7 @@ public struct AgentContentImportSheet: View {
                             .themedFont(.tiny)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 1)
-                            .background(Color.secondary.opacity(0.15))
+                            .background(.appSecondary.opacity(0.15))
                             .clipShape(Capsule())
                     }
                 }
@@ -255,9 +254,7 @@ public struct AgentContentImportSheet: View {
                     .themedCode(.tiny)
                     .foregroundStyle(.appSecondary)
                     .lineLimit(1)
-                Text(verbatim: candidate.wrappedValue.sourceLocation)
-                    .themedFont(.tiny)
-                    .foregroundStyle(.tertiary)
+                SettingsPathText(candidate.wrappedValue.sourceLocation, size: .tiny)
             }
             Spacer()
         }
@@ -277,10 +274,10 @@ public struct AgentContentImportSheet: View {
                 .themedFont(.small)
 
             if category == .mcpServers {
-                Text(verbatim: "|").foregroundStyle(.tertiary)
+                Text(verbatim: "|").foregroundStyle(.appSecondary)
                 Text("Servers are added disabled.", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
             }
 
             Spacer()
@@ -291,6 +288,7 @@ public struct AgentContentImportSheet: View {
                 Text("Import Selected (\(selectedCount))", bundle: .module)
             }
             .appAction(.primary)
+            .keyboardShortcut(.defaultAction)
             .disabled(selectedCount == 0)
         }
         .padding(.horizontal, 20)

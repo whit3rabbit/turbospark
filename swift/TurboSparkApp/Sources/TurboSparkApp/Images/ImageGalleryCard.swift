@@ -13,6 +13,7 @@ struct ImageGalleryCard: View {
     let open: () -> Void
     let reuse: () -> Void
     @State private var thumbnail: NSImage?
+    @State private var confirmingTrash = false
 
     private var openLabel: Text {
         selecting ? Text("Select", bundle: .module) : Text("Open image", bundle: .module)
@@ -36,10 +37,10 @@ struct ImageGalleryCard: View {
                             }
                         }
                         .background(.appSurface)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
                         .overlay {
                             if selected {
-                                RoundedRectangle(cornerRadius: 12).stroke(.appAccent, lineWidth: 3)
+                                RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous).stroke(.appAccent, lineWidth: 3)
                             }
                         }
                         .contentShape(Rectangle())
@@ -58,7 +59,7 @@ struct ImageGalleryCard: View {
                         .accessibilityHidden(true)
                 } else {
                     Menu {
-                        ImageGalleryActions(model: model, artifact: artifact, reuse: reuse)
+                        ImageGalleryActions(model: model, artifact: artifact, reuse: reuse, requestTrash: { confirmingTrash = true })
                     } label: { Image(systemName: "ellipsis").themedFont(.small, weight: .bold) }
                     .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                     .padding(9).background(.appPage, in: Circle()).padding(8)
@@ -69,12 +70,27 @@ struct ImageGalleryCard: View {
             Text(artifact.imageRequest?.prompt ?? artifact.title)
                 .themedFont(.small).lineLimit(compact ? 1 : 2)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .help(Text(verbatim: artifact.imageRequest?.prompt ?? artifact.title))
             if !compact, let request = artifact.imageRequest {
                 Text(verbatim: "\(request.width) x \(request.height)")
                     .themedFont(.tiny).foregroundStyle(.appSecondary)
             }
         }
-        .contextMenu { ImageGalleryActions(model: model, artifact: artifact, reuse: reuse) }
+        .contextMenu { ImageGalleryActions(model: model, artifact: artifact, reuse: reuse, requestTrash: { confirmingTrash = true }) }
+        .confirmationDialog(Text("Move to Trash", bundle: .module), isPresented: $confirmingTrash) {
+            Button(role: .destructive) {
+                model.trashGeneratedImages(ids: [artifact.id])
+            } label: {
+                Text("Move to Trash", bundle: .module)
+            }
+            Button(role: .cancel) {
+                confirmingTrash = false
+            } label: {
+                Text("Cancel", bundle: .module)
+            }
+        } message: {
+            Text("Are you sure you want to move this image to the Trash?", bundle: .module)
+        }
         .task(id: artifact.contentKey) {
             // Decode a thumbnail once per revision, not the full PNG on each progress tick.
             thumbnail = nil
@@ -95,6 +111,7 @@ struct ImageGalleryActions: View {
     @ObservedObject var model: AppModel
     let artifact: AppArtifact
     let reuse: () -> Void
+    var requestTrash: (() -> Void)? = nil
 
     var body: some View {
         Button(action: reuse) {
@@ -122,7 +139,13 @@ struct ImageGalleryActions: View {
         }
         .disabled(!artifact.existsOnDisk)
         Divider()
-        Button(role: .destructive) { model.trashGeneratedImages(ids: [artifact.id]) } label: {
+        Button(role: .destructive) {
+            if let requestTrash {
+                requestTrash()
+            } else {
+                model.trashGeneratedImages(ids: [artifact.id])
+            }
+        } label: {
             Label { Text("Move to Trash", bundle: .module) } icon: { Image(systemName: "trash") }
         }
     }

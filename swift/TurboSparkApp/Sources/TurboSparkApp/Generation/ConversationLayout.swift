@@ -6,14 +6,23 @@ enum ConversationLayout {
     static let horizontalInset: CGFloat = 24
     static let activityHeight: CGFloat = 36
     static let activityIconWidth: CGFloat = 20
-    static let cardRadius: CGFloat = 10
+    static var cardRadius: CGFloat { AppMetrics.cardRadius }
+}
+
+private struct ConversationColumnModifier: ViewModifier {
+    @Environment(\.appTheme) private var theme
+
+    func body(content: Content) -> some View {
+        content
+            .frame(maxWidth: (ConversationLayout.readingWidth * AppMetrics.textScale(theme)).rounded())
+            .padding(.horizontal, ConversationLayout.horizontalInset)
+            .frame(maxWidth: .infinity)
+    }
 }
 
 extension View {
     func conversationColumn() -> some View {
-        frame(maxWidth: ConversationLayout.readingWidth)
-            .padding(.horizontal, ConversationLayout.horizontalInset)
-            .frame(maxWidth: .infinity)
+        modifier(ConversationColumnModifier())
     }
 }
 

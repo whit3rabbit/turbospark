@@ -122,6 +122,16 @@ launch, and nothing in CI started the app.
   `scripts/verify-app-bundle.sh`. Your Xcode may be newer than CI's (a beta
   has been seen), so a local pass is not evidence for the pinned toolchain.
   The `package-macos` matrix is.
+- [ ] If `swift/TurboSparkApp/Package.swift` or `Package.resolved` changed,
+  confirm each binary dependency resolved to the build you meant.
+  `.build/workspace-state.json` lists every downloaded artifact URL. syntext
+  tags through 2.7.0 pin the previous release's xcframework: `exact: "2.5.0"`
+  shipped the 2.4.0 binary with no error. From 2.7.1 an exact pin is safe
+  (`swift/docs/SYNTEXT.md` section 6). A new static library is also a link
+  change: read the link log for duplicate-symbol and "built for newer
+  'macOS' version" lines. `verify-app-bundle.sh` checks each Mach-O's
+  deployment target, but an archive member built above the floor shows up
+  only as an ld warning (syntext 2.7.0's blake3 objects were 14.5).
 
 **Before you tag**
 
@@ -169,27 +179,29 @@ Publish order matters: `cargo publish` refuses a crate until every internal
 path dependency it declares (`path = "../x", version = "..."`) is already
 live on the registry at that exact version.
 
-The topological dependency order across the 17 publishable crates is below.
+The topological dependency order across the 19 publishable crates is below.
 Dev-dependencies are ordered too, because a dev-dep declared with a
 `version` stays in the published manifest:
 
 1. `turbospark-core`: no internal deps
 2. `turbospark-window-fit`: no internal deps
 3. `turbospark-vision-io`: needs core
-4. `turbospark-compute`: needs core
-5. `turbospark-invocation`: needs core
-6. `turbospark-model-io`: needs core
-7. `turbospark-selection`: needs core
-8. `turbospark-tokenizer`: needs core
-9. `turbospark-audio`: needs core, model-io, tokenizer
-10. `turbospark-repack`: needs core, compute, model-io
-11. `turbospark-catalog`: needs audio, core, model-io, repack, tokenizer
-12. `turbospark-streaming`: needs core, model-io
-13. `turbospark-gpu`: needs core, compute; macOS target-deps on model-io; macOS dev-deps on audio, repack
-14. `turbospark-image`: needs core, compute, model-io, tokenizer; macOS target-deps on gpu
-15. `turbospark-runtime`: needs core, selection, tokenizer; macOS target-deps on audio, gpu, model-io, compute, streaming, vision-io
-16. `turbospark-cli`: needs audio, catalog, core, image, invocation, runtime, selection, tokenizer, repack, model-io, window-fit, vision-io
-17. `turbospark-server`: needs audio, core, runtime, selection, tokenizer, vision-io; macOS target-deps on catalog, repack
+4. `turbospark-coreml`: no internal deps (the Core ML runner; a stub off macOS)
+5. `turbospark-compute`: needs core
+6. `turbospark-invocation`: needs core
+7. `turbospark-model-io`: needs core
+8. `turbospark-selection`: needs core
+9. `turbospark-tokenizer`: needs core
+10. `turbospark-audio`: needs core, model-io, tokenizer
+11. `turbospark-embeddings`: needs audio, model-io, vision-io
+12. `turbospark-repack`: needs core, compute, model-io
+13. `turbospark-catalog`: needs audio, coreml, core, model-io, repack, tokenizer
+14. `turbospark-streaming`: needs core, model-io
+15. `turbospark-gpu`: needs core, compute; macOS target-deps on model-io; macOS dev-deps on audio, repack
+16. `turbospark-image`: needs core, compute, model-io, tokenizer; macOS target-deps on gpu
+17. `turbospark-runtime`: needs core, selection, tokenizer; macOS target-deps on audio, coreml, embeddings, gpu, model-io, compute, streaming, vision-io
+18. `turbospark-cli`: needs audio, catalog, core, image, invocation, runtime, selection, tokenizer, repack, model-io, window-fit, vision-io
+19. `turbospark-server`: needs audio, core, runtime, selection, tokenizer, vision-io; macOS target-deps on catalog, repack
 
 The job runs on `macos-15` because `cargo publish` verifies each crate by
 building it for the host, and `turbospark-server` does not compile on Linux.
@@ -232,19 +244,21 @@ close that gap, and CI calls exactly these, so a local `make dmg` and a
 release build the same thing:
 
 ```sh
-OPENKIND_RELEASE_REVISION=2dba87572c028aeaf34b27220a3bbd3d8d8dbc76 OPENKIND_SERVER_VERSION=0.3.0 make app-bundle
-OPENKIND_RELEASE_REVISION=2dba87572c028aeaf34b27220a3bbd3d8d8dbc76 OPENKIND_SERVER_VERSION=0.3.0 make dmg
+OPENKIND_RELEASE_REVISION=d601b670a9ef9be2f16cc40ae55a9ccaadb73df1 OPENKIND_SERVER_VERSION=0.5.1 make app-bundle
+OPENKIND_RELEASE_REVISION=d601b670a9ef9be2f16cc40ae55a9ccaadb73df1 OPENKIND_SERVER_VERSION=0.5.1 make dmg
 ```
 
 `OPENKIND_RELEASE_REVISION` pins the OpenKind Swift package. The bundled
 `openkindd` is installed from the `openkind-server` crates.io package at the
-exact `OPENKIND_SERVER_VERSION`; version `0.3.0` was published from the commit
-shown above (the `v0.3.0` tag; the crate's `.cargo_vcs_info.json` names the
+exact `OPENKIND_SERVER_VERSION`; version `0.5.1` was published from the commit
+shown above (the `v0.5.1` tag; the crate's `.cargo_vcs_info.json` names the
 same commit, which is the check to repeat when bumping). The app bundle records both pins, and the DMG check compares them
 to the build environment. Set both GitHub Actions variables together when
 upgrading OpenKind.
 Development builds use the sibling `../openkind` Swift package and can set
 `OPENKINDD_BINARY` to a locally built daemon for the TypeSafe pane.
+When assembling with `--skip-build`, place the daemon's matching
+`mlx.metallib` next to `OPENKINDD_BINARY`.
 
 `make-app-bundle.sh` builds the FFI staticlib via `scripts/swift-lib.sh`,
 the TurboSpark CLI and server via cargo, the app via SwiftPM, and OpenKind
@@ -261,9 +275,11 @@ TurboSpark.app/Contents/
 |   +-- turbospark-check       # the CLI, where the cask links it from
 |   +-- turbospark-model
 |   +-- turbospark-server
-|   \-- openkindd              # TypeSafe loopback daemon
+|   +-- openkindd              # TypeSafe loopback daemon
+|   \-- mlx.metallib           # link to the daemon's library under Resources
 \-- Resources/
     +-- TurboSparkApp_TurboSparkApp.bundle   # Bundle.module's resources
+    +-- mlx.metallib           # OpenKind daemon's Metal library
     +-- OpenKindRevision.txt   # exact Swift package commit
     \-- OpenKindServerVersion.txt # crates.io daemon version
 ```
@@ -291,8 +307,8 @@ Three facts about that layout that are decisions rather than defaults:
 
 `make-dmg.sh` wraps the bundle with an `/Applications` symlink, then
 **mounts the image it just built and checks it**: main executable present,
-all three TurboSpark CLI binaries and `openkindd` present, the OpenKind revision
-record and a resource `.bundle` in `Contents/Resources`,
+the TurboSpark CLI binaries, `openkindd` and its Metal library, the OpenKind
+revision record, and a resource `.bundle` in `Contents/Resources`,
 and `codesign --verify --deep --strict` on the mounted copy. That check is the
 reason the script exists rather than a one-line `hdiutil` call in the
 workflow -- `hdiutil create` exits 0 over a staging directory missing the
@@ -452,8 +468,8 @@ into `whit3rabbit/homebrew-tap` in one commit:
 
 | Cask | Asset | Installs |
 |---|---|---|
-| `turbospark` | the DMG | `/Applications/TurboSpark.app` plus the three CLI commands on `PATH` |
-| `turbospark-cli` | the zip | the three CLI commands, nothing else |
+| `turbospark` | the DMG | `/Applications/TurboSpark.app` plus every CLI command on `PATH` |
+| `turbospark-cli` | the zip | every CLI command, nothing else |
 
 ```sh
 brew install --cask whit3rabbit/tap/turbospark        # app + CLI

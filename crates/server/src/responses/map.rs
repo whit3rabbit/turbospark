@@ -306,6 +306,8 @@ pub(crate) fn responses_to_chat_request(
 pub(crate) fn may_produce_reasoning(model: &AppState, effort: ReasoningEffort) -> bool {
     let dialect = model.tokenizer().dialect;
     matches!(dialect, ChatDialect::Harmony | ChatDialect::MuseGlimmer)
+        // Flint thinks on every turn: its template has no off switch.
+        || matches!(dialect, ChatDialect::Flint)
         || (effort != ReasoningEffort::Off
             && matches!(
                 dialect,

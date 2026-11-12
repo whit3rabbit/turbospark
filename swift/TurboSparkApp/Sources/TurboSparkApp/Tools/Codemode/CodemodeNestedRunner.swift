@@ -20,6 +20,10 @@ enum CodemodeNestedRunner {
         let byName = Dictionary(
             descriptors.map { ($0.name.lowercased(), $0) },
             uniquingKeysWith: { first, _ in first })
+        // Captured here, in the registry's task: the worker calls this
+        // handler from detached tasks, where the task-local reads nil and a
+        // projectless Ask chat's inner calls would be judged as Auto.
+        let fallbackMode = ToolPermissionContext.fallbackMode
         return { name, argumentsJSON in
             func reject(_ message: String) -> Result<String, CodemodeCallError> {
                 .failure(CodemodeCallError(message: message))
@@ -45,11 +49,13 @@ enum CodemodeNestedRunner {
                 arguments = [:]
             }
             do {
-                let output = try await AppToolRegistry.executeDeferredMcpCall(
-                    name: descriptor.name,
-                    arguments: arguments,
-                    project: project,
-                    chatID: chatID)
+                let output = try await ToolPermissionContext.$fallbackMode.withValue(fallbackMode) {
+                    try await AppToolRegistry.executeDeferredMcpCall(
+                        name: descriptor.name,
+                        arguments: arguments,
+                        project: project,
+                        chatID: chatID)
+                }
                 return .success(output)
             } catch {
                 return reject(error.localizedDescription)

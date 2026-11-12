@@ -1,0 +1,441 @@
+{
+  "schema": "turbospark.lab.pinned/1",
+  "id": "kapitsa.gdn",
+  "kernel": "the gated-DeltaNet kernels: fused prep (conv1d + SiLU + q/k L2 norm + decay/beta), the recurrence with gated RMSNorm (decode gdn_step, token-parallel prefill gdn_prep_par / gdn_step_parr* / gdn_gnorm), and the verify forms (verify.metal gdn_prep_verify / gdn_step_verify, verify8.metal gdn_step_verify8s + gdn_gnorm_x8) that tape pending rows and fold them in the next pass",
+  "kernel_class": "gdn",
+  "repo": "kapitsa",
+  "summary": "Kapitsa's gated-DeltaNet path for the Qwen linear-attention families (dense qwen3_5, qwen3_5_moe, and Qwen3.8-Flash-Next). Decode dispatches gdn_prep over 128-channel chunks and then one threadgroup of 1024 threads per value head; token-parallel prefill (default on) uses gdn_step_parr4_l16 with 4 interleaved value rows per lane. Verify tapes k, g and the scalar delta of each row and folds the previous cycle's accepted rows into the state at the start of the next verify pass or encode_flush; the 8-row verify splits each head over value-row blocks with a per-head arrival counter.",
+  "source": {
+    "url": "https://github.com/nace-ai/kapitsa",
+    "rev": "14d1b03f306032f20426375651c8181a9105857d",
+    "rev_date": "2026-10-25",
+    "license": "Apache-2.0",
+    "files": [
+      "src/kernels/gdn.metal",
+      "src/kernels/verify.metal",
+      "src/kernels/verify8.metal",
+      "src/model/qwen35.cpp",
+      "src/model/qwen35.h",
+      "src/model/qwen35_spec.cpp",
+      "src/model/qwen35_v8.cpp",
+      "src/model/qwen4_exp.cpp",
+      "src/model/nemotron_h.cpp",
+      "tools/bench_gdn.cpp",
+      "README.md",
+      "LICENSE"
+    ],
+    "symbols": [
+      "embed_q4",
+      "gdn_prep",
+      "gdn_step",
+      "gdn_step_sg",
+      "gdn_prep_par",
+      "gdn_prep_par_snap",
+      "gdn_step_par_l4",
+      "gdn_step_par_l8",
+      "gdn_step_par_l16",
+      "gdn_step_par_l32",
+      "gdn_step_parr2_l16",
+      "gdn_step_parr4_l16",
+      "gdn_step_parr4_l32",
+      "gdn_step_parr8_l32",
+      "gdn_step_parr4_snap_l16",
+      "gdn_step_parr4_snap_l32",
+      "gdn_gnorm",
+      "gdn_gnorm_sg",
+      "rows_to_half",
+      "gdn_prep_verify",
+      "gdn_prep_verify_tree",
+      "gdn_step_verify",
+      "gdn_step_verify_sg",
+      "gdn_step_verify_pidx",
+      "gdn_step_verify8",
+      "gdn_step_verify8s",
+      "gdn_step_verify8s_tree",
+      "gdn_gnorm_x8",
+      "gdn_gnorm_x8t",
+      "gdn_update"
+    ]
+  },
+  "models": [
+    {
+      "name": "Qwen3.8-27B",
+      "quant": "MLX affine 4-bit, 20.2 GB",
+      "family": "qwen3_5",
+      "machine": "M4 Pro 48 GB (README table; also M5 Max 128 GB)",
+      "role": "primary"
+    },
+    {
+      "name": "Qwen3.6-35B-A3B",
+      "quant": "MLX affine 4-bit, 22.1 GB",
+      "family": "qwen3_5_moe",
+      "machine": "M4 Pro 48 GB (README table; also M5 Max 128 GB)",
+      "role": "primary"
+    },
+    {
+      "name": "Qwen3.5-4B",
+      "quant": "MLX affine 4-bit, 4.6 GB",
+      "family": "qwen3_5",
+      "machine": "M4 Pro 48 GB (README table)",
+      "role": "secondary"
+    },
+    {
+      "name": "Qwen3.8-Flash-Next 180B-A7B",
+      "quant": "MLX affine 4-bit, 105.9 GB",
+      "family": "qwen4_exp",
+      "machine": "M5 Max 128 GB (README table)",
+      "role": "secondary"
+    }
+  ],
+  "settings": [
+    {
+      "name": "gdn_head_dim",
+      "value": 128,
+      "unit": "elements",
+      "condition": "always (constexpr D in prep, step, par and gnorm forms)",
+      "kind": "hardcoded",
+      "source": "src/kernels/gdn.metal:46"
+    },
+    {
+      "name": "head_dim_gate",
+      "value": "lin_dk == 128 and lin_dv == 128, else fatal (GDN head dims must be 128)",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:892"
+    },
+    {
+      "name": "decode_prep_grid",
+      "value": "C/128 threadgroups x 128 threads, C = 2*Hk*Dk + Hv*Dv; one threadgroup per 128-channel head chunk",
+      "unit": null,
+      "condition": "always",
+      "kind": "derived",
+      "source": "src/model/qwen35.cpp:2087"
+    },
+    {
+      "name": "decode_step_grid",
+      "value": "one threadgroup per value head: grid x = Hv",
+      "unit": null,
+      "condition": "always",
+      "kind": "derived",
+      "source": "src/model/qwen35.cpp:2093"
+    },
+    {
+      "name": "decode_step_threadgroup_size",
+      "value": 1024,
+      "unit": "threads",
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:2093"
+    },
+    {
+      "name": "state_dtype",
+      "value": "fp32",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/gdn.metal:91"
+    },
+    {
+      "name": "state_layout",
+      "value": "[Hv, Dv=128, Dk=128] per layer; simdgroup sg owns rows dv = sg*4..sg*4+3 and lane owns dk = lane*4..lane*4+3 as float4",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/gdn.metal:91"
+    },
+    {
+      "name": "state_bytes_per_head",
+      "value": 65536,
+      "unit": "bytes",
+      "condition": "always (Hv * Dv * Dk * 4 allocated per linear layer)",
+      "kind": "derived",
+      "source": "src/model/qwen35.cpp:1230"
+    },
+    {
+      "name": "conv_window_taps",
+      "value": 4,
+      "unit": "taps",
+      "condition": "always (conv_w[c*4 + 0..3])",
+      "kind": "hardcoded",
+      "source": "src/kernels/gdn.metal:51"
+    },
+    {
+      "name": "conv_state_rows",
+      "value": 3,
+      "unit": "rows",
+      "condition": "always (previous 3 raw qkv inputs per channel)",
+      "kind": "hardcoded",
+      "source": "src/kernels/gdn.metal:29"
+    },
+    {
+      "name": "conv_state_layout",
+      "value": "[3, C] fp32 raw inputs; concat = [state rows 0..2, qkv rows]; after the pass rolled to concat[T..T+2] reading rows in ascending order",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/gdn.metal:74"
+    },
+    {
+      "name": "qk_norm_eps",
+      "value": 1e-06,
+      "unit": null,
+      "condition": "always (rsqrt of sum of squares over the 128-channel chunk plus eps)",
+      "kind": "hardcoded",
+      "source": "src/kernels/gdn.metal:62"
+    },
+    {
+      "name": "q_post_norm_scale",
+      "value": "1/sqrt(128)",
+      "unit": null,
+      "condition": "always (q only; applied after the L2 norm)",
+      "kind": "hardcoded",
+      "source": "src/kernels/gdn.metal:64"
+    },
+    {
+      "name": "fused_prep_stages",
+      "value": "conv1d + SiLU + q/k L2 norm + decay g (exp(-A*softplus(a + dt_bias))) + beta (sigmoid(b)) in one kernel",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/gdn.metal:27"
+    },
+    {
+      "name": "gated_norm_eps",
+      "value": "model config eps, passed via GdnStepParams.eps",
+      "unit": null,
+      "condition": "always",
+      "kind": "derived",
+      "source": "src/model/qwen35.cpp:2088"
+    },
+    {
+      "name": "gate_activation",
+      "value": "silu for the qwen3_5 families; sigmoid for Qwen3.8-Flash-Next (output_gate_type)",
+      "unit": null,
+      "condition": "always",
+      "kind": "derived",
+      "source": "src/model/qwen4_exp.cpp:213"
+    },
+    {
+      "name": "prefill_step_kernel",
+      "value": "gdn_step_parr4_l16 (NI_GDN_STEP default: 16 lanes per row, 4 interleaved value rows per lane)",
+      "unit": null,
+      "condition": "always (NI_GDN_PAR=0 falls back to per-channel gdn_prep/gdn_step)",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:2996"
+    },
+    {
+      "name": "prefill_step_rows_per_lane",
+      "value": 4,
+      "unit": "rows",
+      "condition": "always (default kernel gdn_step_parr4_l16)",
+      "kind": "hardcoded",
+      "source": "src/kernels/gdn.metal:473"
+    },
+    {
+      "name": "prefill_step_lanes_per_row",
+      "value": 16,
+      "unit": "lanes",
+      "condition": "always (default kernel gdn_step_parr4_l16)",
+      "kind": "hardcoded",
+      "source": "src/kernels/gdn.metal:473"
+    },
+    {
+      "name": "prefill_step_simdgroups_per_threadgroup",
+      "value": 2,
+      "unit": "simdgroups",
+      "condition": "always (NI_GDN_SGS default)",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:2997"
+    },
+    {
+      "name": "prefill_step_rows_per_threadgroup",
+      "value": 16,
+      "unit": "rows",
+      "condition": "always (rows_tg = sgs * (32/lanes) * R = 2 * 2 * 4)",
+      "kind": "derived",
+      "source": "src/model/qwen35.cpp:3004"
+    },
+    {
+      "name": "prefill_prep_grid",
+      "value": "((T+31)/32, C/128 + 1) threadgroups x 128 threads; one simdgroup per 8 tokens x 128 channels, the extra y row computes g/beta",
+      "unit": null,
+      "condition": "always",
+      "kind": "derived",
+      "source": "src/model/qwen35.cpp:3018"
+    },
+    {
+      "name": "prefill_prep_tokens_per_simdgroup",
+      "value": 8,
+      "unit": "tokens",
+      "condition": "always (TB = 8; 4 simdgroups per threadgroup give 32 tokens)",
+      "kind": "hardcoded",
+      "source": "src/kernels/gdn.metal:186"
+    },
+    {
+      "name": "prefill_step_grid",
+      "value": "Hv * (128/rows_tg) threadgroups x 32*sgs threads",
+      "unit": null,
+      "condition": "always",
+      "kind": "derived",
+      "source": "src/model/qwen35.cpp:3035"
+    },
+    {
+      "name": "prefill_gnorm_grid",
+      "value": "ceil(T*Hv/8) threadgroups x 256 threads; one simdgroup per (token, head)",
+      "unit": null,
+      "condition": "always",
+      "kind": "derived",
+      "source": "src/model/qwen35.cpp:3039"
+    },
+    {
+      "name": "gnorm_output_dtype",
+      "value": "half in the par-prefill (gdn_gnorm) and verify8 (gdn_gnorm_x8) epilogues; decode gdn_step keeps fp32 into out_proj",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/gdn.metal:502"
+    },
+    {
+      "name": "verify_prep_grid",
+      "value": "C/128 threadgroups x 128 threads (as gdn_prep)",
+      "unit": null,
+      "condition": "always",
+      "kind": "derived",
+      "source": "src/model/qwen35_spec.cpp:1001"
+    },
+    {
+      "name": "verify_step_grid",
+      "value": "Hv threadgroups x 1024 threads (as gdn_step)",
+      "unit": null,
+      "condition": "always",
+      "kind": "derived",
+      "source": "src/model/qwen35_spec.cpp:1007"
+    },
+    {
+      "name": "verify_tape_layout",
+      "value": "pend_k [Rmax, Hv, 128] fp32; pend_g [Rmax, Hv] fp32; pend_d [Rmax, Hv, 128] fp32, one scalar delta per value row (also pend_qkv [Rmax, C] fp32)",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:1235"
+    },
+    {
+      "name": "verify_fold_mode",
+      "value": "the previous cycle's accepted rows are folded from the tape into the state at the start of the next verify pass (or encode_flush), then a mem_device barrier before the tape is overwritten",
+      "unit": null,
+      "condition": "always (n_pend rows; tree cycles fold via path indices)",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:528"
+    },
+    {
+      "name": "verify8_split_threadgroup_size",
+      "value": 256,
+      "unit": "threads",
+      "condition": "always (V8Knobs gdnsplit default; 0 would mean one threadgroup per head)",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.h:144"
+    },
+    {
+      "name": "verify8_split_grid",
+      "value": "(Hv, 128/(split_thr/8)) x split_thr threads, i.e. (Hv, 16) x 256 at the default",
+      "unit": null,
+      "condition": "always",
+      "kind": "derived",
+      "source": "src/model/qwen35_v8.cpp:1152"
+    },
+    {
+      "name": "verify8_counter_sync",
+      "value": "per-head atomic arrival counter cnt[h]; the last block of a head writes the next k/g tape rows and resets the counter",
+      "unit": null,
+      "condition": "always (gdn_step_verify8s and its tree form)",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify8.metal:2209"
+    },
+    {
+      "name": "verify8_update_form",
+      "value": "fma(k, delta, st*g) as one explicit gdn_update so step, fold and tree replay round identically",
+      "unit": null,
+      "condition": "tree verifies with NI_V8_TREE_PIN (default on)",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify8.metal:2168"
+    }
+  ],
+  "gates": [
+    {
+      "condition": "lin_dk == 128 and lin_dv == 128, else fatal",
+      "source": "src/model/qwen35.cpp:892"
+    },
+    {
+      "condition": "prefill par layout: rows_tg != 0, 32 % lanes == 0, 128 % rows_tg == 0, sgs <= 32, else fatal",
+      "source": "src/model/qwen35.cpp:3005"
+    },
+    {
+      "condition": "verify8 split: NI_V8_GDN != 0 and lin_dv == 128 and lin_dk == 128 and 32 <= split_thr <= 1024 and split_thr % 32 == 0 and 128 % (split_thr/8) == 0; else the unsplit gdn_step_verify8/gdn_step_verify at Hv x 1024",
+      "source": "src/model/qwen35_v8.cpp:1136"
+    },
+    {
+      "condition": "KFlash tree verify requires the split form (fatal otherwise)",
+      "source": "src/model/qwen35_v8.cpp:1139"
+    },
+    {
+      "condition": "R >= v8_rows_min() routes verify to the 8-row path: NI_V8=1 gives 2, NI_V8=0 or MoE gives 5, dense default 3",
+      "source": "src/model/qwen35_spec.cpp:979"
+    }
+  ],
+  "measured": [
+    {
+      "metric": "prefill_gdn_recurrence_ms",
+      "value": 2.75,
+      "model": "Qwen3.6-35B-A3B shape (32 value heads, 16 key heads)",
+      "machine": "unspecified",
+      "conditions": "bench_gdn, 2048 tokens x 32 heads, gdn_step_parr4_l16 (the shipped default); the same comment lists gdn_step_par_l16 4.5 ms, parr2_l16 2.9, parr4_l32 3.1, parr8_l32 3.1",
+      "provenance": "upstream_reported",
+      "source": "src/kernels/gdn.metal:389"
+    },
+    {
+      "metric": "prefill_gdn_recurrence_speedup",
+      "value": 1.6,
+      "model": "Qwen3.6-35B-A3B shape",
+      "machine": "unspecified",
+      "conditions": "gdn_step_parr4_l16 vs gdn_step_par_l16, same shape as the ms A/B; outputs and state bitwise equal (bench_gdn under NI_MATH_SAFE=1)",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35.cpp:2994"
+    },
+    {
+      "metric": "prefill_speedup_ratio",
+      "value": 1.055,
+      "model": "Qwen3.6-35B-A3B 4-bit",
+      "machine": "unspecified",
+      "conditions": "4k-token prompt, token-parallel GDN prefill path on (default, NI_GDN_PAR) vs the per-channel path",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35.cpp:2987"
+    }
+  ],
+  "lab_mapping": [
+    {
+      "setting": "decode_step_grid",
+      "maps_to": "tslab kernel --bench gdn decode grid axis: ours splits grid (Hv, Dv/4), kapitsa runs one threadgroup of 1024 per head",
+      "env": null,
+      "note": "our KAPITSA_KERNELS.md 'already ahead' row"
+    },
+    {
+      "setting": "verify_fold_mode",
+      "maps_to": "our lazy rank-1 tape defers the fold behind a clean-state check instead of folding inside the next verify pass",
+      "env": "TURBOSPARK_GDN_LAZY_TAPE",
+      "note": "docs/KAPITSA_KERNELS.md item 1"
+    },
+    {
+      "setting": "prefill_step_rows_per_lane",
+      "maps_to": "tslab kernel --bench gdn prefill axis (gdn_delta_step_prefill; no rows-per-lane interleaving axis yet)",
+      "env": null,
+      "note": "kapitsa's parr form is its largest prefill win"
+    }
+  ],
+  "docs": [
+    "docs/KAPITSA_KERNELS.md#where-we-were-already-ahead-not-adopted-do-not-re-propose",
+    "docs/KAPITSA_KERNELS.md#decision-table",
+    "docs/KAPITSA_KERNELS.md#item-1-the-lazy-rank-1-gdn-verify-tape"
+  ],
+  "notes": "Doc-vs-source: (1) our KAPITSA_KERNELS.md groups Nemotron with the GDN families, but kapitsa's gdn.metal serves only the Qwen linear-attention family; kapitsa's Nemotron hybrid models run their own Mamba2-style SSD kernels (nh_ssd.metal, head_dim 64, d_state 128). (2) Item 9's '(32,4) delta layout contract' that the fused prep would break is our contract; kapitsa's source shows no such constraint, its fused prep (gdn_prep) is exactly the declined fusion, and its verify delta tape is one fp32 scalar per value row, not a (32,4) float4 layout. (3) The 'one threadgroup per head' decode claim is confirmed (src/model/qwen35.cpp:2093). (4) Item 1's alternative is confirmed: the small-batch verify folds the previous cycle's accepted rows at the start of the next verify pass (src/kernels/verify.metal:528) or in encode_flush, i.e. the state fold lives in the next kernel. Caveats the repo records: the fast-math reassociation makes the par prefill path agree with the per-channel path only to rounding by default, bit-identical only under NI_MATH_SAFE=1 (src/kernels/gdn.metal:164); the 35B router top-k can flip on a last-bit state difference between trees, which is why gdn_update pins the update as one FMA (src/kernels/verify8.metal:2165); the kernels take runtime param structs with no function-constant shape baking, matching our doc's shape-baking advantage row. Kapitsa's decode gated norm stays fused in gdn_step with fp32 output; the half output only appears in the par-prefill and verify8 epilogues. The prefill recurrence A/B in gdn.metal names no machine or date."
+}

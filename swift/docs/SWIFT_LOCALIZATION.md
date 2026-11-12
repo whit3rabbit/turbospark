@@ -291,12 +291,12 @@ rule that a language or key cannot silently half-ship.
 ## Editing the catalog by script
 
 A new string needs all 21 languages, so it is often added by script. The
-catalog is written with escaped non-ASCII and no trailing space, and only
+catalog is written with literal non-ASCII and no trailing newline, and only
 this dump reproduces the file byte for byte (anything else rewrites about 3 MB
 and buries the real change):
 
 ```python
-json.dumps(catalog, indent=2, ensure_ascii=True, separators=(",", ": ")) + "\n"
+json.dumps(catalog, indent=2, ensure_ascii=False)
 ```
 
 Check that a load and dump of the untouched file equals the file before

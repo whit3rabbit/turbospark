@@ -135,6 +135,12 @@ WAV: the driver fails the run if it does not, and `--expect-wav-sha256
 SCENARIO=HEX` pins the hash to a recorded baseline. Performance work on this
 family is bit-preserving, so an optimization that changes the hash is a
 numerics change that needs the parity gates, not a speedup.
+The experimental Turbo profile is the one exception: it has no MLX or float32
+reference, and its F32-stage kernels change its WAV bits by float32 rounding.
+Compare Turbo runs by waveform statistics against the previous build, not by
+hash, and keep its numbers apart from the 4-bit rows. The
+[family README](../crates/audio/src/music/minimax_music3/README.md) records
+the measurements and their limits.
 
 The driver refuses a host that is not on AC power with a low 1-minute load
 average. `--allow-busy` records the load and runs anyway; such numbers are
@@ -629,6 +635,48 @@ Four things about it are load-bearing:
   whose thermal pressure leaves Nominal, and any window integrated from
   under 3 samples, prints a warning. On battery this fires often: the
   long-context case saturates thermally on both installs.
+
+## tslab: profiles, A/B verdicts and kernel curves
+
+`crates/lab` (`tslab`) runs the procedures on this page as one tool instead
+of a script per experiment: per-family prefill and decode phase breakdowns
+(`tslab profile`), interleaved fresh-process A/B with a fixed verdict rule
+and quality and memory gates (`tslab ab`, `tslab gate`), kernel curves at
+the install's own shapes (`tslab kernel`), Core ML placement
+(`tslab ane-plan`), the autoresearch loop's evaluator
+(`tslab run-experiment`, instructions in `crates/lab/program.md`), and the
+pinned kernel settings from the compared engines (`tslab pinned`; the
+`crates/lab/pinned/` reference, whose schema and sweep workflow are
+documented in `crates/lab/pinned/README.md`). Every run lands in an
+append-only ledger under `$TURBOSPARK_LAB_DIR`, dirty runs included with
+their reasons.
+
+It also covers audio installs (`--audio-job`, the `music3_grid` and
+`whisper_linear` benches), Metal System Traces (`tslab trace`), the
+dispatch probe and block stand-ins, and resumable sequences of all of these
+(`tslab workflow`, with `new-family` running this page's checks for a family
+not yet measured). `tslab capabilities` says what an install supports.
+
+MoE and energy questions have their own instruments. `tslab expert-census`
+reduces one router capture run to how experts repeat within batches and the
+union per batch against slot counts. `tslab profile` classifies each MoE
+stretch `io_bound`, `loop_bound` or `compute_bound` (`moe_bound`), and an
+IOReport energy meter (`crates/lab/src/energy.rs`) adds modeled whole-machine
+joules to A/B and kernel records (`energy_model: ioreport_whole_machine`).
+Those joules compare arms within one experiment only; they never go beside
+`docs/POWER_BASELINE.md`'s powermetrics rows or into `docs/BENCHMARKS.md`.
+
+Every ledger line, and the one object `--json` prints, carries schema
+`tslab/1` (`tslab schema` prints the JSON Schema). `tslab export` writes
+ledgers as plottable series and `tslab report --html` draws them offline,
+so a new kernel bench is visible without new reader code. The agent-facing
+summary is `crates/lab/skill/SKILL.md`. `scripts/package-tslab-skill.sh`
+builds a binary-only skill zip for Macs without a checkout.
+
+It holds a machine-wide lock, `$TURBOSPARK_LAB_DIR/.machine.lock`, for the
+whole measuring session. A Python driver that takes `fcntl.flock` on the
+same file shares the lock, so two measuring sessions on one host wait for
+each other instead of timing each other.
 
 ## Measurement hygiene
 

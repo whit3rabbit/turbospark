@@ -154,6 +154,13 @@ against malware, administrators, screenshots, an unlocked process, or files
 the user keeps outside the vault. FileVault is still recommended for full-disk
 protection. TurboSpark does not promise secure erasure of SSD remnants.
 
+Conversation recall ([SYNTEXT_CONTEXT.md](SYNTEXT_CONTEXT.md)) keeps a
+plaintext copy of chat turns in `context-recall/` under the profile root.
+A protected profile never has one: `protect` purges the folder, the store
+re-checks protection on every call, and launch removes a folder left by a
+crash in between. A local-key profile keeps it, since that profile's key
+already sits beside the database.
+
 Touch ID availability, login-password fallback, session-lock behavior,
 accessibility, save panels, codesigning, and notarization remain real-device
 or release gates. Automated tests use injectable stores and do not prove those

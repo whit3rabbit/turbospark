@@ -1,0 +1,65 @@
+{
+  "reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9",
+  "mlx_version": "0.32.3",
+  "generator": "crates/audio/tools/gen_arktts_fixtures.py",
+  "seeds": {
+    "codec": 7,
+    "eos": 519,
+    "falcon_eos": 601
+  },
+  "summary": [
+    {
+      "name": "pure_attention",
+      "seed": 102,
+      "frames": 10,
+      "min_score_gap": 0.011342048645019531,
+      "min_race_gap": null
+    },
+    {
+      "name": "sampled",
+      "seed": 1211,
+      "frames": 10,
+      "min_score_gap": 0.12795305252075195,
+      "min_race_gap": 0.0003597438335418701
+    },
+    {
+      "name": "voice",
+      "seed": 2307,
+      "frames": 10,
+      "reference_frames": 2
+    },
+    {
+      "name": "falcon",
+      "seed": 402,
+      "frames": 10,
+      "min_score_gap": 0.02765798568725586,
+      "min_race_gap": null
+    }
+  ],
+  "files": {
+    "codec/config.json": "8fd37957f9f3aef4eb37782bf4f225911c56335e5df11e3c325e541a23dea0fe",
+    "codec/model.safetensors": "3809e13deb5173e475bfd1e6c2d3ecf0a1ad49b6882476f302c7ace738d3a146",
+    "codec/traces.json": "53ac87612da330685935d878c1634b65b73d20b8092cd2d692040f59c7932438",
+    "eos/config.json": "4c0bb66c9eed46623aba790ee8f18e0433b2c02d0d3efe66801c51acd8c26ea9",
+    "eos/model.safetensors": "811a904845caed8410ad6d15acfb92722a967451d4cd631b425289053dad8a50",
+    "eos/traces.json": "e4837a767709d5f31e545cd68ea46ffe9ba4890fa24bd4832f76172cdcfc2462",
+    "falcon/config.json": "a9238c8c8b1a0f7c5c98c5348902460fb3961b679f46f1a07e09bfbc5d0e5485",
+    "falcon/model.safetensors": "9f88c45dfe8d475979efa8f889da265e601f8ad43badeafbf4d97064da082185",
+    "falcon/traces.json": "b53dfa2802d662136908cc204b067fc72f142e430dfd871fa34edd8e15d6caa7",
+    "falcon_eos/config.json": "a9238c8c8b1a0f7c5c98c5348902460fb3961b679f46f1a07e09bfbc5d0e5485",
+    "falcon_eos/model.safetensors": "16b30418db759a50104d2a0114d6125435c4841b0fe86c9437ce627b39d8b450",
+    "falcon_eos/traces.json": "7a503b9ddcf938ffed78286305a7859096e1b0792b90d51d3ab3e5184f031c00",
+    "manifest.json": "b87e82b47f8a8ef886eb00e2804dc1e2dc4e3497b88be5c47de9e16156d8b925",
+    "prompt/traces.json": "fa0934cb9aac1d6cba6140412ea6cd70fe2f6331a56dbd14d3ef3a266fda9a95",
+    "pure_attention/config.json": "4c0bb66c9eed46623aba790ee8f18e0433b2c02d0d3efe66801c51acd8c26ea9",
+    "pure_attention/model.safetensors": "9b18d36559b64fe35fb5ebb01921cb7478a1e6570a2f1968ea51b4dca329aa4e",
+    "pure_attention/traces.json": "457af809cbcff274808c29a9fb7585e416a2ea458f12ce3edd46be9c873ce8c1",
+    "sampled/config.json": "4c0bb66c9eed46623aba790ee8f18e0433b2c02d0d3efe66801c51acd8c26ea9",
+    "sampled/model.safetensors": "4cb8295be278c5d8b98809f22ad425db20fcd31e083f2b0dc74b567e7aa34479",
+    "sampled/traces.json": "88f55a456cc02486fb7434e5d286e6fbdcc96f0b17cf757eb180572c7e9a748c",
+    "sampling/traces.json": "0fdb8029383deec54076ed5e08a7a9a0e1593280c4edcc24feb9d16af5aead66",
+    "voice/config.json": "4c0bb66c9eed46623aba790ee8f18e0433b2c02d0d3efe66801c51acd8c26ea9",
+    "voice/model.safetensors": "8d4757cebd8faf7915857093cbda67fdb2d4be336ec06a52e43e051bf48883ba",
+    "voice/traces.json": "e250ded022ee2755bc58ec2b5d9b7b1a54f70be918081d18783e4ff1fd039bcd"
+  }
+}

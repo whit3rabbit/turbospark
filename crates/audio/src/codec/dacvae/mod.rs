@@ -194,7 +194,7 @@ fn load_dacvae_convt(
         out_ch,
         kernel,
         stride,
-        padding: (stride + 1) / 2,
+        padding: stride.div_ceil(2),
         output_padding: 0,
         groups: 1,
         weight,

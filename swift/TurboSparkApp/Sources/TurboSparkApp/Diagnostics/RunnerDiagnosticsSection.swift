@@ -43,7 +43,7 @@ struct RunnerDiagnosticsSection: View {
             } else {
                 Text("No runs yet", bundle: .module)
                     .themedFont(.small)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
             }
 
             if !recoveryEvents.isEmpty {
@@ -59,7 +59,7 @@ struct RunnerDiagnosticsSection: View {
         Text(title, bundle: .module)
             .themedFont(.small)
             .textCase(.uppercase)
-            .foregroundStyle(.tertiary)
+            .foregroundStyle(.appSecondary)
             .accessibilityHeading(.h3)
     }
 

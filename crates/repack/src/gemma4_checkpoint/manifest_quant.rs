@@ -121,18 +121,28 @@ pub fn manifest_quant_for(
         | ModelFamily::Qwen3Moe
         | ModelFamily::Qwen3Dense
         | ModelFamily::Qwen2Dense
-        // `deepseek2` has no safetensors path (GGUF-only), so this arm is
-        // unreachable; its canonical names match this shape (self_attn.q_proj,
-        // mlp.gate router) if one is ever written. Its shared-expert probe
-        // would find nothing here and take the default, which is the same
-        // behavior the llama arm gives its shared-expert-less families.
-        | ModelFamily::Deepseek2
         | ModelFamily::MiniMaxM2 => (
             format!("{l0}.self_attn.q_proj"),
             format!("{l0}.mlp.gate"),
             format!("{l0}.mlp.gate_proj"),
             format!("{l0}.experts.switch_glu.gate_proj"),
         ),
+        // `deepseek2` reaches this probe through the DeepSeek-VL2 MLX
+        // conversion (its GGUF walk states its quant elsewhere). Layer 0 is
+        // the dense lead, so the router, shared-expert and routed probes name
+        // layer 1, the first MoE layer, with the canonical singular
+        // `shared_expert` the header rename wrote
+        // (`canonicalize_deepseek_vl2_header`). The attention probe stays on
+        // layer 0.
+        ModelFamily::Deepseek2 => {
+            let l1 = "language_model.model.layers.1";
+            (
+                format!("{l0}.self_attn.q_proj"),
+                format!("{l1}.mlp.gate"),
+                format!("{l1}.mlp.shared_expert.gate_proj"),
+                format!("{l1}.mlp.switch_mlp.gate_proj"),
+            )
+        }
         // `muse_glimmer`'s layer 0 IS a plain attention layer, unlike both
         // Qwen halves, so the attention probe is the ordinary
         // `self_attn.q_proj`. It is DENSE, so the router and routed probes
@@ -157,6 +167,48 @@ pub fn manifest_quant_for(
             format!("{l0}.self_attn.q_proj"),
             format!("{l0}.mlp.gate"),
             format!("{l0}.mlp.gate_proj"),
+            format!("{l0}.experts.switch_glu.gate_proj"),
+        ),
+        // `flint`'s layers 0 and 1 are DENSE (`mlp_only_layers`), so the
+        // router, shared-expert and routed probes must name layer 2, the
+        // first MoE layer; every other arm probes layer 0. The attention
+        // probe stays on layer 0, which is a plain `self_attn.q_proj`.
+        // Names carry the canonical `language_model.` prefix because
+        // `canonicalize_flint_header` has already renamed the header.
+        // Layer 0 is the dense lead, as `flint`'s first two are, so the MoE
+        // probes name layer 1. The names are canonical by now: the header
+        // was renamed from `shared_experts`. The router's probe reports the
+        // model's default for a BF16 tensor with no companions, which equals
+        // the attention slot and so reads as defaulted (`validate_quant`):
+        // the truth, since no router kernel runs for this family.
+        ModelFamily::UnlimitedOcr2 => {
+            let l1 = "language_model.model.layers.1";
+            (
+                format!("{l0}.self_attn.q_proj"),
+                format!("{l1}.mlp.gate"),
+                format!("{l1}.mlp.shared_expert.gate_proj"),
+                format!("{l1}.mlp.switch_mlp.gate_proj"),
+            )
+        }
+        ModelFamily::Flint => {
+            let l2 = "language_model.model.layers.2";
+            (
+                format!("{l0}.self_attn.q_proj"),
+                format!("{l2}.mlp.gate"),
+                format!("{l2}.mlp.shared_expert.gate_proj"),
+                format!("{l2}.mlp.switch_mlp.gate_proj"),
+            )
+        }
+        // `lfm3`'s layer 0 is a SHORT-CONV layer with no `self_attn` at all,
+        // so the attention probe names layer 2, the first attention layer
+        // (`config.layer_types`). The shared-expert probe measures the dense
+        // FFN's gate, `feed_forward.w1`, which exists on every layer; the
+        // router and routed probes find nothing and take the default, the
+        // muse/spark rule for a dense family (`crates/repack` Gotcha 8).
+        ModelFamily::Lfm3 => (
+            "language_model.model.layers.2.self_attn.q_proj".to_string(),
+            format!("{l0}.mlp.gate"),
+            format!("{l0}.feed_forward.w1"),
             format!("{l0}.experts.switch_glu.gate_proj"),
         ),
         // gpt-oss has no safetensors path at all (it is GGUF-only here), so
@@ -195,7 +247,15 @@ pub fn manifest_quant_for(
     // than a probe (`crates/repack` CLAUDE.md Gotcha 6).
     let router_slot = if !has_experts {
         slot(attention_bits)
-    } else if family == ModelFamily::Qwen4Exp {
+    } else if matches!(
+        family,
+        ModelFamily::Qwen4Exp | ModelFamily::Flint | ModelFamily::Deepseek2
+    ) {
+        // `flint` ships its router as an unquantized BF16 gate that the
+        // writer force-quantizes to INT8 (`int8_force_targets`), so the
+        // probe would report the model's 4-bit default for a tensor that
+        // carries no companions and `validate_quant` would refuse the
+        // install. State the width of the bytes written, as `qwen4_exp` does.
         slot(8)
     } else {
         slot(quant.bits_for(&router))

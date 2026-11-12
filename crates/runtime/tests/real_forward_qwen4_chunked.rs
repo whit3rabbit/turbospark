@@ -254,59 +254,154 @@ fn a_cache_too_small_to_pipeline_still_reproduces_the_sequential_logits() {
     );
 }
 
-/// `TURBOSPARK_ROUTED_BATCH` must be REFUSED BY NAME on this family, never
-/// ignored. The seam asks for the routed half as one route-list dispatch
-/// pair, and the batched pair is wired in the gemma4 (INT4-affine) and
-/// gpt-oss (MXFP4) chunked drivers alone.
+/// `TURBOSPARK_ROUTED_BATCH` replaces the per-token routed loop with the
+/// top-k-wide route-list pair (`families/qwen4/moe_batch.rs`). The bar is
+/// byte-identity with the SEQUENTIAL path at every chunk span, the same bar
+/// the per-token loop meets above.
 ///
-/// The request is MEANINGFUL here, which is why the refusal is owed at all:
-/// `qwen4_exp` HAS a routed half, unlike the dense drivers that may ignore
-/// this flag legitimately because there is nothing for it to refer to
-/// (`crates/runtime/CLAUDE.md` Gotcha 22). Serving the per-token routed loop
-/// anyway would report the unbatched engine under the batched arm's label,
-/// which is the exact failure that went unnoticed on the MoE `llama` family
-/// until 2026-08-27 and was found by checking a doc claim against the binary
-/// rather than by a test.
+/// It also proves the batched pass RAN: the per-token loop asks the cache
+/// for `top_k` experts per token per layer, while the batched pass asks
+/// once per distinct expert of each sub-batch, so a whole-prompt chunk must
+/// ask for fewer. Without that this case could pass on the per-token loop,
+/// whose bytes it reproduces.
 #[test]
-fn the_batched_routed_seam_is_refused_by_name_on_this_family() {
-    let mut runner = open_runner("routed-batch-refused");
-    runner.set_routed_batch_prefill(true);
+fn the_routed_batch_reproduces_the_sequential_logits() {
+    let mut runner = open_runner("routed-batch");
+    let prompt = make_prompt(11, VOCAB);
+    let vocab = VOCAB as usize;
+    let expected = sequential_prefill(&mut runner, &prompt, vocab);
 
-    let prompt = make_prompt(4, VOCAB);
-    let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
-    let err = runner
-        .prefill_chunk(&prompt, 0, &mut logits)
-        .expect_err("the batched routed seam must be refused on this family");
-    let text = err.to_string();
-    assert!(
-        text.contains("TURBOSPARK_ROUTED_BATCH"),
-        "the refusal must name the seam the caller set; got {text}"
+    runner.set_routed_batch_prefill(true);
+    for chunk in [1usize, 2, 3, 7, 11] {
+        let before = runner.phase_counters().expert_requests;
+        let actual = chunked_prefill(&mut runner, &prompt, chunk, vocab);
+        let requests = runner.phase_counters().expert_requests - before;
+        assert_eq!(
+            actual, expected,
+            "chunk span {chunk}: the batched routed half changed the logits"
+        );
+        if chunk == prompt.len() {
+            let per_token = (prompt.len()
+                * turbospark_repack::TOP_K
+                * turbospark_repack::QWEN4_DECODE_NUM_LAYERS) as u64;
+            assert!(
+                requests < per_token,
+                "{requests} expert requests is not below the per-token loop's {per_token}, \
+                 so the batched routed pass did not run"
+            );
+        }
+    }
+}
+
+/// The batched routed half across the QSA sparsity boundary, and at the
+/// smallest cache it can run on: `top_k` slots caps every sub-batch's union
+/// at one token's routes, so each layer is many one-token sub-batches.
+#[test]
+fn the_routed_batch_survives_the_qsa_boundary_and_a_minimal_cache() {
+    let mut runner = open_tiny_budget_runner("routed-batch-qsa");
+    let prompt = make_prompt(QSA_PROMPT_LEN, VOCAB);
+    let vocab = VOCAB as usize;
+    let expected = sequential_prefill(&mut runner, &prompt, vocab);
+    runner.set_routed_batch_prefill(true);
+    for chunk in [5usize, 16, QSA_PROMPT_LEN] {
+        let actual = chunked_prefill(&mut runner, &prompt, chunk, vocab);
+        assert_eq!(
+            actual, expected,
+            "chunk span {chunk}: the batched routed half changed the logits across the QSA \
+             sparsity boundary"
+        );
+    }
+
+    let mut small = open_runner_with_slots("routed-batch-small", turbospark_repack::TOP_K);
+    let prompt = make_prompt(11, VOCAB);
+    let expected = sequential_prefill(&mut small, &prompt, vocab);
+    small.set_routed_batch_prefill(true);
+    let actual = chunked_prefill(&mut small, &prompt, prompt.len(), vocab);
+    assert_eq!(
+        actual, expected,
+        "top_k slots: one-token sub-batches changed the logits"
     );
 }
 
-/// The resident-GEMV seam (`TURBOSPARK_BATCHED_GEMV`) must be refused by name
-/// too, and unlike the routed seam above it is meaningful on EVERY chunked
-/// driver: this family has resident GEMVs whatever its routed layout, and the
-/// M-row GEMM is wired in the gemma4 and dense-qwen drivers alone (step 6).
-///
-/// The test NAME is shared verbatim with the six sibling chunked-prefill
-/// targets on purpose, so one grep across `crates/runtime/tests/` enumerates
-/// every driver that carries the refusal and, by absence, any that does not.
+/// The read-ahead (`TURBOSPARK_ROUTED_BATCH_OVERLAP`) moves which slot an
+/// expert lands in and nothing else, so the bar is the same bytes. This
+/// fixture has 4 experts, so most layers are one sub-batch and the flag
+/// pins only that it moves no bytes; a read-ahead actually running is
+/// covered on the 128-expert qwen fixture (`real_forward_qwen_moe_chunked.rs`).
 #[test]
-fn the_batched_gemv_seam_is_refused_by_name_on_this_family() {
-    let mut runner = open_runner("batched-gemv-refused");
-    runner.set_batched_gemv_prefill(true);
+fn the_routed_read_ahead_reproduces_the_sequential_logits() {
+    let mut runner = open_runner_with_slots("routed-overlap", 2 * turbospark_repack::TOP_K);
+    let prompt = make_prompt(11, VOCAB);
+    let vocab = VOCAB as usize;
+    let expected = sequential_prefill(&mut runner, &prompt, vocab);
+    runner.set_routed_batch_prefill(true);
+    runner.set_routed_batch_overlap(true);
+    let actual = chunked_prefill(&mut runner, &prompt, prompt.len(), vocab);
+    assert_eq!(actual, expected, "the read-ahead changed the logits");
+}
 
-    let prompt = make_prompt(4, VOCAB);
-    let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
-    let err = runner
-        .prefill_chunk(&prompt, 0, &mut logits)
-        .expect_err("the batched resident-GEMV seam must be refused on this family");
-    let text = err.to_string();
-    assert!(
-        text.contains("TURBOSPARK_BATCHED_GEMV"),
-        "the refusal must name the seam the caller set; got {text}"
-    );
+/// `TURBOSPARK_BATCHED_GEMV` runs each layer's input and output
+/// projections as M-row GEMMs around the per-token recurrent middle
+/// (`families/qwen4/batched.rs`). The bar is byte-identity with the
+/// SEQUENTIAL path at every chunk span, on its own and with the batched
+/// routed half, across both GDN and QSA layers and the QSA sparsity
+/// boundary.
+#[test]
+fn the_batched_gemv_reproduces_the_sequential_logits() {
+    let prompt = make_prompt(QSA_PROMPT_LEN, VOCAB);
+    let vocab = VOCAB as usize;
+    for routed in [false, true] {
+        let mut runner = open_tiny_budget_runner("batched-gemv");
+        let expected = sequential_prefill(&mut runner, &prompt, vocab);
+        runner.set_batched_gemv_prefill(true);
+        runner.set_routed_batch_prefill(routed);
+        for chunk in [1usize, 2, 5, 16, 19, QSA_PROMPT_LEN] {
+            let actual = chunked_prefill(&mut runner, &prompt, chunk, vocab);
+            assert_eq!(
+                actual, expected,
+                "routed batch {routed}, chunk span {chunk}: the batched projections changed \
+                 the logits"
+            );
+        }
+    }
+}
+
+/// Decode after a batched prefill: the KV rows, GDN state and QSA pooled
+/// blocks the batched layer wrote must be the ones decode would have.
+#[test]
+fn decode_after_a_batched_prefill_matches_decode_after_a_sequential_one() {
+    let prompt = make_prompt(QSA_PROMPT_LEN, VOCAB);
+    let vocab = VOCAB as usize;
+    let mut runner = open_tiny_budget_runner("batched-gemv-decode");
+    let decode = |runner: &mut RealForwardRunner, first: &[f32]| -> Vec<i32> {
+        let mut logits = vec![f16::from_f32(0.0); vocab];
+        let mut next = argmax(first);
+        let mut out = vec![next];
+        for step in 0..6 {
+            runner
+                .produce(next, prompt.len() + step, &mut logits)
+                .expect("decode succeeds");
+            let row: Vec<f32> = logits.iter().map(|v| v.to_f32()).collect();
+            next = argmax(&row);
+            out.push(next);
+        }
+        out
+    };
+    let expected_prefill = sequential_prefill(&mut runner, &prompt, vocab);
+    let expected = decode(&mut runner, &expected_prefill);
+    runner.set_batched_gemv_prefill(true);
+    runner.set_routed_batch_prefill(true);
+    let actual_prefill = chunked_prefill(&mut runner, &prompt, 16, vocab);
+    let actual = decode(&mut runner, &actual_prefill);
+    assert_eq!(actual, expected, "decode after the batched prefill differs");
+}
+
+fn argmax(row: &[f32]) -> i32 {
+    row.iter()
+        .enumerate()
+        .max_by(|a, b| a.1.total_cmp(b.1))
+        .map(|(i, _)| i as i32)
+        .expect("non-empty logits")
 }
 
 /// The `banks == 1` fallback, which is what a REAL install of this family

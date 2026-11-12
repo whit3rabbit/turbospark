@@ -1,0 +1,437 @@
+{
+  "schema": "turbospark.lab.pinned/1",
+  "id": "kapitsa.verify8",
+  "kernel": "the 8-row verify GEMM (qmm8*), its X8 table prep (x8_prep, x8_prep2), SwiGLU (swiglu_x8), fused gate/up (qmm8_gu*), and the MoE 8-row tile and small-expert kernels",
+  "kernel_class": "verify_matmul",
+  "repo": "kapitsa",
+  "summary": "Kapitsa's trunk verify GEMM family: every projection of a speculative verify pass (R <= 8 token rows; 16/32-row wide tree verifies as tiles of 8) runs as 8x8x8 half simdgroup MMAs over the integer codes of MLX affine 4-bit weights read in place, with the activation permutation precomputed into X8 tables (half inputs in fragment lane order plus fp32 group sums) and one fp32 epilogue per 64-group. verify8_fuse.metal merges adjacent small passes bitwise into single dispatches.",
+  "source": {
+    "url": "https://github.com/nace-ai/kapitsa",
+    "rev": "14d1b03f306032f20426375651c8181a9105857d",
+    "rev_date": "2026-10-25",
+    "license": "Apache-2.0",
+    "files": [
+      "src/kernels/verify8.metal",
+      "src/kernels/verify8_fuse.metal",
+      "src/kernels/common.h",
+      "src/model/qwen35_v8.cpp",
+      "src/model/qwen35.h",
+      "src/model/qwen35_spec.cpp",
+      "docs/kflash.md"
+    ],
+    "symbols": [
+      "qmm8_b4_nf1",
+      "qmm8pf_b4_nf2",
+      "qmm8sn_b4_nf2",
+      "qmm8b_b4_nf2",
+      "qmm8snb_b4_nf1",
+      "qmm8snb_b4_nf2",
+      "qmm8snb16_b4_nf1",
+      "qmm8snb16_b4_nf2",
+      "qmm8x2_b4_nf1",
+      "x8_prep",
+      "x8_prep2",
+      "swiglu_x8",
+      "qmm8_gu_b4",
+      "qmm8_gu1k2_b4",
+      "qmm8_gu1k2snb_b4",
+      "moe8_plan",
+      "moe8_down_nf2",
+      "moe8s2_gu",
+      "moe8e_gu_r2",
+      "moe8e_down_r2",
+      "mma_chain_check",
+      "moe8_combine_x8",
+      "gdn_prep_verify8",
+      "gdn_prep_verify8w_tree"
+    ]
+  },
+  "models": [
+    {
+      "name": "Qwen3.8-27B",
+      "quant": "MLX affine 4-bit, group 64, bf16 scales and biases (20.2 GB pack)",
+      "family": "qwen3_8 dense",
+      "machine": "M4 Pro 48 GB in docs/kflash.md; README tables also M5 Max 128 GB, M5 Pro 48 GB, M3 Pro 36 GB, M1 Pro 16 GB",
+      "role": "primary"
+    },
+    {
+      "name": "Qwen3.6-35B-A3B",
+      "quant": "MLX affine 4-bit, group 64, MoE 3B active (expert D 2048, I 512)",
+      "family": "qwen3_6_moe",
+      "machine": "M4 Pro 48 GB for the rows figure; unspecified in the per-verify A/B source comments",
+      "role": "secondary"
+    },
+    {
+      "name": "Qwen3.5-4B and Qwen3.5-9B",
+      "quant": "MLX affine 4-bit, group 64, dense",
+      "family": "qwen3_5",
+      "machine": "M1 Pro 16 GB (kplan 3 tiling); M4 Pro (4B MTP figure)",
+      "role": "secondary"
+    }
+  ],
+  "settings": [
+    {
+      "name": "rows_per_tile",
+      "value": 8,
+      "unit": "rows",
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify8.metal:30"
+    },
+    {
+      "name": "wide_verify_max_rows",
+      "value": 32,
+      "unit": "rows",
+      "condition": "dense Qwen35 tree verify where verify_wide_ok holds; 16/32 rows run as 2/4 row tiles of 8",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.h:296"
+    },
+    {
+      "name": "weight_group_size",
+      "value": 64,
+      "unit": "inputs",
+      "condition": "always for qmm8 (another group size is fatal)",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35_v8.cpp:582"
+    },
+    {
+      "name": "weight_layout",
+      "value": "MLX affine in place: uint32-packed nibbles low nibble first, bf16 scale and bias per 64-group, no repacked weight image",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify8.metal:14",
+      "note": "common.h:6 states the shared convention (uint32-packed, bf16 scales/biases per group); the lane reads 16 contiguous codes of its weight row as one uint2 (verify8.metal:300)"
+    },
+    {
+      "name": "mma_shape",
+      "value": "8x8x8 simdgroup half MMA with fp32 accumulate; A and B written through thread_elements() in registers, no simdgroup_load",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify8.metal:49"
+    },
+    {
+      "name": "code_operand_modes",
+      "value": "CM 0: (codes & 0x000F000F) | 0x64006400 = exact half 1024 + q; CM 1: bare code bits = half subnormal q * 2^-24",
+      "unit": null,
+      "condition": "cm knob 0 or 1",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify8.metal:67"
+    },
+    {
+      "name": "subnormal_scale",
+      "value": 16777216,
+      "unit": "2^24",
+      "condition": "cm = 1 (default): the fp32 epilogue scales the subnormal MMA chain by s * 2^24",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify8.metal:89"
+    },
+    {
+      "name": "operand_mode",
+      "value": 1,
+      "unit": "mode",
+      "condition": "default (NI_V8_CM unset); 0 = codes as 1024 + q",
+      "kind": "measured",
+      "source": "src/model/qwen35.h:139",
+      "note": "bench_v8: error 2-5e-7 (subnormal) vs 2-3e-5 (1024 + q); teacher-forced 27B verify max |logit diff| vs plain decode 0.025 vs 0.051"
+    },
+    {
+      "name": "two_groups_per_step",
+      "value": true,
+      "unit": "bool",
+      "condition": "pair knob 1 (default) and (K / 64) % 2 == 0, so the scale/bias pair of two groups loads in one 4-byte read",
+      "kind": "measured",
+      "source": "src/model/qwen35.h:140",
+      "note": "27B, 8-row verify, CM 1: -0.7 to -0.9 ms per DFlash2 cycle; a prefetching version took 96 registers and was no faster (verify8.metal:409-411)"
+    },
+    {
+      "name": "group_epilogue",
+      "value": "fp32 per 64-group after each MMA chain: CM 0 y += dot*s + sum(x)*(b - 1024*s); CM 1 y += dot*s*2^24 + sum(x)*b",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify8.metal:320"
+    },
+    {
+      "name": "input_table",
+      "value": "X8 table per 64-group: the 8 rows' inputs as halfs in B-fragment lane order, table[(g*32+lane)*16+...], plus precomputed fp32 group sums per row",
+      "unit": null,
+      "condition": "always; rows t >= R are zero",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify8.metal:19",
+      "note": "sums written by x8_prep (verify8.metal:145) and x8_prep2 (verify8.metal:234-243), read per group in the GEMM (verify8.metal:287)"
+    },
+    {
+      "name": "lane_operand_loads",
+      "value": "one uint2 (16 codes, 8 bytes) per fragment-group of weights; two 16-byte uint4 table reads per lane-group of activations",
+      "unit": null,
+      "condition": "always (4-bit)",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify8.metal:300"
+    },
+    {
+      "name": "fragments_per_simdgroup",
+      "value": 2,
+      "unit": "fragments",
+      "condition": "4-bit dense GEMMs; NI_V8_NF overrides",
+      "kind": "derived",
+      "source": "src/model/qwen35_v8.cpp:583",
+      "note": "formula: nf_def = bits == 8 ? 1 : 2, and qmm8x2 forces 1"
+    },
+    {
+      "name": "threadgroup_threads",
+      "value": "32 * cs * ks (8 simdgroups default, 16 only for the qmm8snb16 variants)",
+      "unit": "threads",
+      "condition": "always; cs and ks come from v8_plan",
+      "kind": "derived",
+      "source": "src/model/qwen35_v8.cpp:628",
+      "note": "column blocks of 8 * nf rows per threadgroup step (verify8.metal:592); cap cs = min(cs, (ks > 8 ? 16 : 8) / ks) (qwen35_v8.cpp:468)"
+    },
+    {
+      "name": "k_slice_plan",
+      "value": "kplan 2 (default): K >= 4096: ks 8 with cs 1; K >= 16384: ks 16; below: ks = groups>=16 ? 4 : groups>=8 ? 2 : 1 with cs 8; kplan 3 (default on M1): k-slices of >= 16 groups, at most 16384 simdgroups",
+      "unit": null,
+      "condition": "v8_plan with NI_V8_PLAN=2 and the kplan knob",
+      "kind": "derived",
+      "source": "src/model/qwen35_v8.cpp:443",
+      "note": "gpr = K / 64; grid grows until about 64 simdgroups per GPU core (full = 64 * core count) but never below 4 groups per slice (qwen35_v8.cpp:435-437)"
+    },
+    {
+      "name": "k_slice_reduction",
+      "value": "the ks k-slices of each column block are summed in a fixed order through threadgroup memory; the kslice-0 simdgroup holds the total",
+      "unit": null,
+      "condition": "always when ks > 1",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify8.metal:531"
+    },
+    {
+      "name": "x8_prep_grid",
+      "value": "x8_prep2: K/256 threadgroups x 256 threads when K % 256 == 0 (default); else x8_prep: 8 threadgroups x 256 threads",
+      "unit": null,
+      "condition": "NI_V8_PREP=2 default; wide tree verifies require x8_prep2",
+      "kind": "derived",
+      "source": "src/model/qwen35_v8.cpp:417",
+      "note": "selection at qwen35_v8.cpp:398-400; x8_prep2 stages the table through threadgroup memory for coalesced 16-byte stores (verify8.metal:156-160)"
+    },
+    {
+      "name": "gate_up_path",
+      "value": "gate and up as two segments of one qmm8 GEMM (fp32 rows) plus swiglu_x8 when gusplit=1 (default) and I % 256 == 0 and I <= dense_I; else the fused qmm8_gu kernels at 512 threads (default variant qmm8_gu1k2snb_b4 with cm 1 + pair)",
+      "unit": null,
+      "condition": "gusplit knob and shape",
+      "kind": "measured",
+      "source": "src/model/qwen35_v8.cpp:740",
+      "note": "the fused qmm8_gu1k2 kernel (8 column slices x 2 k-slices) streamed ~10% slower; default NI_V8_GU=1k2 'measured best on both models' (qwen35_v8.cpp:56)"
+    },
+    {
+      "name": "swiglu_grid",
+      "value": "I/256 threadgroups x 256 threads",
+      "unit": null,
+      "condition": "split gate/up path",
+      "kind": "derived",
+      "source": "src/model/qwen35_v8.cpp:753"
+    },
+    {
+      "name": "moe_small_expert_rows",
+      "value": 2,
+      "unit": "rows",
+      "condition": "MoE: experts used by <= 2 rows leave the 8-row MMA tiles (NI_V8_MOE_SMALL, max 2)",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35_v8.cpp:840"
+    },
+    {
+      "name": "moe_split_expert_rows",
+      "value": 8,
+      "unit": "rows",
+      "condition": "MoE sampled verify: experts used by 3..8 rows run ceil(rows/2) 2-row MMA-exact tiles (NI_V8_MOE_SPLIT)",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35_v8.cpp:854"
+    },
+    {
+      "name": "moe_small_tile_rows",
+      "value": 2,
+      "unit": "rows",
+      "condition": "moe8e MMA-exact passes (sampled verifies need row-independent expert numerics)",
+      "kind": "measured",
+      "source": "src/kernels/verify8.metal:1204",
+      "note": "4-row tiles ran slower than two 2-row tiles each: 11.98 vs 10.81 ms per verify (35B, 64 tokens teacher-forced, sampled-verify numerics)"
+    },
+    {
+      "name": "fused_passes_mask",
+      "value": 5,
+      "unit": "bitmask",
+      "condition": "default fuse knob: bit 1 = moe8_combine_x8 (MoE combine + the next norm's X8 table), bit 4 = gdn_prep_verify8 (rows' q/k norms reduced together); both bitwise the passes they replace",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.h:158"
+    },
+    {
+      "name": "verify_rows_min",
+      "value": "3 dense, 5 MoE (NI_V8=1: 2, NI_V8=0: 5)",
+      "unit": "rows",
+      "condition": "default knobs; verify dispatches take the 8-row MMA GEMMs from this row count up",
+      "kind": "derived",
+      "source": "src/model/qwen35_spec.cpp:508",
+      "note": "formula: NI_V8=1 gives 2, else MoE or NI_V8=0 gives 5, else 3; MoE keeps small-batch kernels below 5 rows because its verify unions the rows' experts"
+    }
+  ],
+  "gates": [
+    {
+      "condition": "verify uses the 8-row MMA path when R >= v8_rows_min() (3 dense, 5 MoE; NI_V8=1: 2) or the v8 flag forces it; below that the small-batch FMA kernels run",
+      "source": "src/model/qwen35_spec.cpp:979"
+    },
+    {
+      "condition": "1 <= R <= 8 rows per dispatch (wider tree verifies encode as 2/4 row tiles of 8; fatal otherwise)",
+      "source": "src/model/qwen35_v8.cpp:496"
+    },
+    {
+      "condition": "weight group size must be 64, else the dispatch is fatal",
+      "source": "src/model/qwen35_v8.cpp:582"
+    },
+    {
+      "condition": "dense 4-bit group-64 GEMMs with a T table and v8_tw() (Apple10/M5 and macOS 26) run the qmm8t tensor-op kernels instead of these qmm8 MMA kernels",
+      "source": "src/model/qwen35_v8.cpp:547"
+    },
+    {
+      "condition": "cs * ks > 8 only survives on the CM 1 + pair loop (qmm8snb16 variants); every other loop clamps to ks 8, cs 1",
+      "source": "src/model/qwen35_v8.cpp:593"
+    },
+    {
+      "condition": "gate/up split path requires I % 256 == 0 and I <= dense_I; a 4-bit gate/up outside it is fatal",
+      "source": "src/model/qwen35_v8.cpp:740"
+    },
+    {
+      "condition": "wide (16/32-row) tree verify config gate: dense model, dense_I % 256 == 0, hidden % 256 == 0, qk % 256 == 0, gusplit on; the tree gate beneath it also needs GDN lin_dv == lin_dk == 128, head_dim == 256 and hq/hkv <= 16",
+      "source": "src/model/qwen35_v8.cpp:193"
+    },
+    {
+      "condition": "MoE MMA-exact small-tile passes (moe8e) only when 4-bit, D == 2048, I == 512, the default down kernel and gate/up qmm8_gu1k2snb_b4",
+      "source": "src/model/qwen35_v8.cpp:851"
+    },
+    {
+      "condition": "fused GDN prep (gdn_prep_verify8) requires R <= 8 and lin_dk == 128",
+      "source": "src/model/qwen35_v8.cpp:1118"
+    },
+    {
+      "condition": "moe8_combine_x8 requires D % 256 == 0, D <= 2048 and x8_prep2 (not NI_V8_PREP=1)",
+      "source": "src/model/qwen35_v8.cpp:969"
+    }
+  ],
+  "measured": [
+    {
+      "metric": "verify_gpu_ms",
+      "value": [74.4, 70.6, 71.6, 74.3],
+      "model": "Qwen3.8-27B dense 4-bit",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "GPU time of a verify pass of 1, 2, 4, 8 rows via tools/batch_cost on an earlier build, after an 85-token prompt; a plain one-row decode step costs 67.3 ms",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash.md:81"
+    },
+    {
+      "metric": "moe_cycle_gpu_ms",
+      "value": [14.8, 16.4, 18.0, 19.1, 19.5, 21.2, 22.3, 23.1],
+      "model": "Qwen3.6-35B-A3B 4-bit",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "whole cycle (drafting and verify) with 1 to 8 live rows, from the budget's measured cost table",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash.md:81"
+    },
+    {
+      "metric": "wide_verify_tok_per_gpu_s",
+      "value": [64.9, 42.3, 22.7],
+      "model": "Qwen3.8-27B dense 4-bit",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "experimental 16- and 32-row tree verifies on the coding answer at 8, 16, 32 rows; an experiment not in the release",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash.md:81"
+    },
+    {
+      "metric": "wide_verify_cycle_ms",
+      "value": [79.5, 137, 264],
+      "model": "Qwen3.8-27B dense 4-bit",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "same wide-verify experiment: 5.16, 5.81 and 6.01 tokens per cycle at 8, 16, 32 rows",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash.md:87"
+    },
+    {
+      "metric": "decode_tok_s",
+      "value": "default 8-row pass 70.6/70.5/68.8 vs NI_KFLASH_ROWS=8,16,32 at 69.3/74.7/72.9 (median 72.9 vs 70.5)",
+      "model": "Qwen3.8-27B dense 4-bit",
+      "machine": "M5 Pro 48 GB (Mac17,8, macOS 26.5.2, code of #245/#246 at ac82451)",
+      "conditions": "256-token coding prompt, greedy, three interleaved runs per arm under the GPU lock; 16-row verify cycles 74.4 ms, 32-row 115.4 ms; the ranges overlap, so +3% at +12% tokens per cycle is suggestive, not settled",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash.md:240"
+    },
+    {
+      "metric": "moe_verify_gpu_ms",
+      "value": "11.78 with every expert on MMA tiles; 11.05 with 1-2-row experts on moe8e; 10.81 with split 4; 10.15 with split 8 + shs",
+      "model": "Qwen3.6-35B-A3B 4-bit",
+      "machine": "unspecified",
+      "conditions": "64 tokens teacher-forced, sampled-verify numerics, tools/bench_verify8 interleaved",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35_v8.cpp:845"
+    },
+    {
+      "metric": "verify_logit_max_diff",
+      "value": "0.025 (cm 1) vs 0.051 (cm 0)",
+      "model": "Qwen3.8-27B dense 4-bit",
+      "machine": "unspecified",
+      "conditions": "teacher-forced verify vs plain decode, max |logit diff|; bench_v8 output error 2-5e-7 vs 2-3e-5 alongside",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35_v8.cpp:120"
+    },
+    {
+      "metric": "dflash_cycle_gpu_ms",
+      "value": "-0.7 to -0.9 with two groups per inner step",
+      "model": "Qwen3.8-27B dense 4-bit",
+      "machine": "unspecified",
+      "conditions": "8-row verify with CM 1, pairs vs no pairs",
+      "provenance": "upstream_reported",
+      "source": "src/kernels/verify8.metal:410"
+    },
+    {
+      "metric": "gemm_gpu_us",
+      "value": "default-plan sweep, 27B shapes: gate+up 34816x5120 457 vs 504 at cs 4 / ks 1, LM head 3141-3199 vs 3354-3380; kplan 2: gate+up 427 vs 446, GDN in_proj 209 vs 223, o 84 vs 88, LM head 3038 vs 3103, down 240 (ks 8) / 232 (ks 16) vs 256",
+      "model": "Qwen3.8-27B dense 4-bit shapes",
+      "machine": "unspecified (plan rule tuned on a 20-core M4 Pro)",
+      "conditions": "bench_v8 cmp, CM 1 + pairs, min of 12 interleaved runs (cs 1 / ks 8 vs cs 2 / ks 4)",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35_v8.cpp:428"
+    },
+    {
+      "metric": "mtp_depth2_tok_s",
+      "value": "117.7 -> 138.3",
+      "model": "Qwen3.5-4B dense 4-bit",
+      "machine": "unspecified",
+      "conditions": "MTP depth 2 with verifies from 3 rows on the 8-row MMA path instead of the FMA kernels (which cost 1.2-1.9x from 3 rows)",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35_spec.cpp:976"
+    }
+  ],
+  "lab_mapping": [
+    {
+      "setting": "rows_per_tile",
+      "maps_to": "tslab kernel --bench int4_matmul --rows N shape axis",
+      "env": null,
+      "note": "our int4_mma8 tile is also an 8-row tile; the lab bench sweeps the same row axis at the qwen38 shapes with 1 row as the GEMV baseline"
+    },
+    {
+      "setting": "verify_rows_min",
+      "maps_to": "workload speculation.block field (a block of B drafts verifies B + 1 rows)",
+      "env": null,
+      "note": "our counterpart switch is TURBOSPARK_INT4_MMA8, read in crates/runtime/src/real_forward_dispatch.rs (not a lab knobs.rs entry); tslab depth_replay drives depths 2+ over the flat verify"
+    },
+    {
+      "setting": "k_slice_plan",
+      "maps_to": "none yet",
+      "env": null,
+      "note": "no column-block or k-slice axis in our lab bench; our tile pins one tiling"
+    }
+  ],
+  "docs": [
+    "docs/KAPITSA_KERNELS.md#items-6-7-8-bench-prototypes",
+    "docs/KAPITSA_KERNELS.md#measured-kapitsa-on-this-machine-2026-10-22",
+    "docs/KAPITSA_KERNELS.md#measured-where-the-8-row-verify-goes-and-the-small-projections-2026-10-23"
+  ],
+  "notes": "Doc checks: every mechanism our KAPITSA_KERNELS.md Item 7 claims is in the source. Two wording gaps. (1) Our doc's epilogue 's * dot + b * sum(x)' is the subnormal CM 1 form, which is the shipped default; the 1024 + q form (CM 0) also carries a -1024*s cancellation term, y += dot*s + sum(x)*(b - 1024*s) (verify8.metal:11). The '8 rows' group sums precomputed' claim holds: the preps write sums of the half-rounded inputs per group and row. (2) 'No threadgroup dequant and no simdgroup_load' holds for every shipped GEMM variant, but the file also contains threadgroup-staged table variants (v8_run_tg, V 6/7) that are explicitly 'experiments measured and dropped' and not instantiated (verify8.metal:691-694), and the MoE small-expert passes (moe8s2, moe8e) stage operands in threadgroup memory by design. Our doc's 'their own timings are not in the repo (tools/bench_qmm8.cpp prints them, none are recorded)' is true of the bench tools, but the repo does record kernel timings in docs/kflash.md and in host-source comments, cited under measured. Scope caveat: on M5 (Apple10) with macOS 26 the dense 4-bit verify GEMMs leave these MMA kernels for the qmm8t tensor-op kernels (gate qwen35_v8.cpp:547, knob tw default 1), so this pinned set is the pre-M5 path; qmm8t lives in src/kernels/tensor/verify8t.metal and is not covered here. Exactness caveats the repo itself records: the MMA chain sums in another order than a scalar dot and the activations are half (11-bit mantissa), so it is not bit-equal to our GEMV; 0x6400 gives exactly 1024 + q because half has 11 bits of mantissa and q <= 15, and the bare-code form is exact because half subnormals step by 2^-24; the moe8e passes rely on a per-step fp32 rounding property of simdgroup_multiply_accumulate that mma_chain_check re-checks on each GPU before use (verify8.metal:1502-1533). verify8_fuse.metal is bitwise pass fusion, not a different GEMM: moe8_combine_x8 (grid 8 x D/4, D <= 2048) and gdn_prep_verify8 (grid C/128 x 128, plus a wide-tree variant for 16/32 rows). The moe8e passes hardcode the 35B expert shape (gate/up K 2048, down K 512). Timing numbers in source comments rarely name a machine or run count; treat them as indicative and re-run their bench tools (tools/bench_v8, tools/bench_qmm8, tools/bench_verify8) for anything load-bearing."
+}

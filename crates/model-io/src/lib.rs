@@ -4,15 +4,19 @@
 //! buffer wrapping, which belongs to the `gpu` crate in a later phase).
 //!
 //! Unlike the earlier phases, this crate is allowed a narrow amount of
-//! `unsafe` (confined to the `mmap` call in `resident_buffer`) and platform
-//! assumptions (4 KiB pages), per the workspace's cross-cutting rule that
-//! model I/O and streaming are where that trade-off is made.
+//! `unsafe` (the `mmap` call in `resident_buffer` and the `statvfs` call in
+//! `disk_space`) and platform assumptions (4 KiB pages), per the workspace's
+//! cross-cutting rule that model I/O and streaming are where that trade-off
+//! is made.
 
 mod arch_baselines;
 mod arch_config;
 mod arch_validation;
+mod bounded_read;
 mod cgroup;
 mod context_policy;
+mod dash_config;
+mod disk_space;
 pub mod encoder_config;
 mod error;
 mod expert_cache_policy;
@@ -30,35 +34,42 @@ mod sha256;
 pub mod speech_family;
 pub mod speech_receipt;
 mod steering_set;
+pub mod trunk_role;
 mod vision_sidecar;
 pub mod whisper_config;
 
 pub use arch_baselines::{
-    all_known_architectures, deepseek_v2_lite_16b, deepseek_v4_flash_284b_a13b, gemma4_12b_dense,
-    gemma4_26b_a4b, gpt_oss_20b, known_architecture, minimax_m2, mixtral_8x7b, muse_glimmer_30b,
+    all_known_architectures, deepseek_v2_lite_16b, deepseek_v4_flash_284b_a13b, deepseek_vl2_tiny,
+    flint_40b_a2_5b, flint_layer_mask, gemma4_12b_dense, gemma4_26b_a4b, gpt_oss_20b,
+    known_architecture, lfm3_1_7b, lfm3_layer_mask, minimax_m2, mixtral_8x7b, muse_glimmer_30b,
     muse_glimmer_layer_mask, qwen2_5_7b, qwen3_30b_a3b, qwen3_4b, qwen3_vl_4b, qwen4_exp_125b_a6b,
-    qwen_gdn_dense_27b, qwen_gdn_moe_35b_a3b, spark_layer_mask, spark_x25_4b,
+    qwen_gdn_dense_27b, qwen_gdn_moe_35b_a3b, spark_layer_mask, spark_x25_4b, unlimited_ocr2_12l,
 };
 pub use arch_config::{
     ArchConfig, CompressedAttentionConfig, HyperConnectionConfig, LinearAttentionConfig, MlaConfig,
-    ModelFamily, PleConfig, RopeScalingConfig, VisionConfig, MAX_VISION_DEEPSTACK_MERGERS,
+    ModelFamily, PleConfig, RopeScalingConfig, VisionConfig, VisionTowerKind,
+    MAX_VISION_DEEPSTACK_MERGERS,
 };
 pub use cgroup::{
     parse_limit as parse_cgroup_limit, probe_self as probe_cgroup_memory, CgroupMemoryLimit,
 };
 pub use context_policy::{
-    committed_breakdown, committed_breakdown_with_residency, committed_bytes, gdn_state_bytes,
-    kv_bytes_for_context, kv_bytes_for_context_with, largest_context_within,
-    largest_context_within_with, resolve_max_context, resolve_max_context_with, session_pool_bytes,
-    session_pool_bytes_with, CommittedBytes, ContextCap, ContextFloorUnmet, ContextOverCap,
-    ContextPlan, ContextRefused, ContextTooLarge, MaxContext, CONTEXT_BUDGET_FRACTION,
-    CONTEXT_GRANULARITY, CONTEXT_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
+    committed_breakdown, committed_breakdown_with_residency, committed_breakdown_with_wiring,
+    committed_bytes, gdn_state_bytes, kv_bytes_for_context, kv_bytes_for_context_with,
+    largest_context_within, largest_context_within_with, resolve_max_context,
+    resolve_max_context_with, session_pool_bytes, session_pool_bytes_with, short_conv_state_bytes,
+    CommittedBytes, ContextCap, ContextFloorUnmet, ContextOverCap, ContextPlan, ContextRefused,
+    ContextTooLarge, MaxContext, CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY,
+    CONTEXT_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
 };
+pub use dash_config::{DashConfig, DASH_INFER_TOPM, DASH_SIDECAR};
+pub use disk_space::available_bytes;
 pub use encoder_config::{EncoderConfig, EncoderQuantization};
 pub use error::ModelError;
 pub use expert_cache_policy::{
-    auto_residency_prefers_mapped, ExpertCacheSlots, ExpertResidency, ResolvedExpertResidency,
-    HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES,
+    auto_residency_prefers_mapped, mapped_residency_fits, wiring_default_for, ExpertCacheSlots,
+    ExpertResidency, ExpertSlotWiring, ResolvedExpertResidency, HEADROOM_FRACTION,
+    HEADROOM_RESERVE_BYTES, MAPPED_WIRED_RESERVE_BYTES, WIRED_HEADROOM_FRACTION,
 };
 pub use install_receipt::{
     load as load_install_receipt, validate as validate_install_receipt,
@@ -72,8 +83,9 @@ pub use kv_quant::{
 pub use load_guard::{GuardBudget, LoadGuard, LoadPolicy};
 pub use manifest::{
     known_flags, load as load_manifest, peek_family, validate as validate_manifest, Manifest,
-    ManifestArch, ManifestFileEntry, ManifestHadamard, ManifestHadamardSigns, ManifestQuant,
-    ManifestQuantSlot, DEFAULT_MAX_BYTES, EXECUTABLE_GGUF_TYPES, REQUIRED_FILES,
+    ManifestArch, ManifestFileEntry, ManifestHadamard, ManifestHadamardSigns, ManifestProducer,
+    ManifestQuant, ManifestQuantSlot, DEFAULT_MAX_BYTES, EXECUTABLE_GGUF_TYPES,
+    MANIFEST_VERSION_MAJOR, MANIFEST_VERSION_MINOR, REQUIRED_FILES,
 };
 pub use ngram_hash::{
     build_layer_multipliers, derive_head_vocab_and_offsets, find_nth_prime_after, ple_ngram_rows,
@@ -92,7 +104,7 @@ pub use packed_experts_layout::{
 pub use resident_buffer::ResidentBuffer;
 pub use resident_index::{
     load as load_resident_index, ResidentIndex, ResidentIndexEntry, ResidentIndexHeader,
-    ENTRY_BYTES, HEADER_BYTES,
+    ENTRY_BYTES, HEADER_BYTES, INDEX_FORMAT_VERSION, INDEX_MAGIC, TRAILER_BYTES,
 };
 pub use safetensors::SafetensorsFile;
 pub use sha256::{hash_data, hash_file, hash_file_observed, verify_file};

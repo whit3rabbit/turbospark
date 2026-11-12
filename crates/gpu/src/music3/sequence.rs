@@ -311,6 +311,97 @@ impl Music3Sequence {
         })
     }
 
+    /// A single-group convolution with the synchronous call's plan, so its bits
+    /// equal `Music3Weight::convolution_batched_typed`. `bias` is added in the
+    /// kernel.
+    #[allow(clippy::too_many_arguments)]
+    pub fn convolution(
+        &mut self,
+        x: Music3Slot,
+        weight: &Music3Weight,
+        bias: Option<&[f32]>,
+        ic: usize,
+        oc: usize,
+        kernel: usize,
+        stride: usize,
+        pad: usize,
+        dilation: usize,
+        transpose: bool,
+        dtype: Music3DType,
+        batch: usize,
+    ) -> Result<Music3Slot, GpuError> {
+        if !Rc::ptr_eq(&weight.state, &self.state) {
+            return Err(bad("Music 3 weight belongs to another device"));
+        }
+        let plan = weight.conv_plan(
+            self.len(x)?,
+            bias.map(<[f32]>::len),
+            ic,
+            oc,
+            kernel,
+            stride,
+            pad,
+            dilation,
+            transpose,
+            dtype,
+            1,
+            false,
+            batch,
+        )?;
+        autorelease_pool(|| {
+            let bias = bias.map(|b| self.upload(b)).transpose()?;
+            let out = self.output(plan.count);
+            let mut c = self.state.context.borrow_mut();
+            let (xb, xo) = self.binding(x)?;
+            let (ob, _) = self.binding(out)?;
+            let bb = match bias {
+                Some(slot) => self.binding(slot)?.0,
+                None => &self.buffers[self.zero],
+            };
+            weight.encode_conv(&mut c, self.pass()?, &plan, (xb, xo), bb, ob)?;
+            Ok(out)
+        })
+    }
+
+    /// The vocoder's Snake activation with the synchronous call's kernel and
+    /// parameters, over channel-major `[channels, frames]`.
+    pub fn snake(
+        &mut self,
+        x: Music3Slot,
+        alpha: &[f32],
+        channels: usize,
+        frames: usize,
+        dtype: Music3DType,
+    ) -> Result<Music3Slot, GpuError> {
+        let count = product(&[channels, frames])?;
+        if count == 0 || self.len(x)? != count || alpha.len() != channels {
+            return Err(bad("Music 3 Snake geometry mismatch"));
+        }
+        let params = bytes(&[frames as u32, dtype as u32, count as u32, 2.0f32.to_bits()]);
+        autorelease_pool(|| {
+            let alpha = self.upload(alpha)?;
+            let out = self.output(count);
+            let mut c = self.state.context.borrow_mut();
+            let pipeline = c.pipeline(
+                super::source(dtype),
+                "music3_snake",
+                &crate::rms_norm::unused_function_constants(),
+                b"",
+            )?;
+            let (xb, xo) = self.binding(x)?;
+            let (ab, ao) = self.binding(alpha)?;
+            let (ob, _) = self.binding(out)?;
+            self.pass()?.encode_threads_3d(
+                &pipeline,
+                &[(xb, 0, xo), (ab, 1, ao), (ob, 2, 0)],
+                &[(&params, 3)],
+                (count as u64, 1, 1),
+                (128, 1, 1),
+            );
+            Ok(out)
+        })
+    }
+
     pub fn rms_norm(
         &mut self,
         x: Music3Slot,
@@ -522,6 +613,62 @@ impl Music3Sequence {
             rows * half,
             &[half as u32],
         )
+    }
+
+    /// `a + b` in F32, the host residual add of an F32 stage.
+    pub fn add_f32(&mut self, a: Music3Slot, b: Music3Slot) -> Result<Music3Slot, GpuError> {
+        let len = self.len(a)?;
+        if self.len(b)? != len {
+            return Err(bad("Music 3 sequence add operands differ in length"));
+        }
+        self.elementwise("music3_add_f32", &[a, b], len, &[])
+    }
+
+    /// The host F32 partial NeoX rotary of the DiT, with the geometry of
+    /// [`Self::partial_rope_bf16`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn partial_rope_f32(
+        &mut self,
+        x: Music3Slot,
+        cos: Music3Slot,
+        sin: Music3Slot,
+        len: usize,
+        heads: usize,
+        head_dim: usize,
+        rotary: usize,
+    ) -> Result<Music3Slot, GpuError> {
+        let inner = product(&[heads, head_dim])?;
+        let half = rotary / 2;
+        if self.len(x)? != product(&[len, inner])?
+            || rotary % 2 != 0
+            || rotary > head_dim
+            || self.len(cos)? != product(&[len, half])?
+            || self.len(sin)? != len * half
+        {
+            return Err(bad("Music 3 partial rotary geometry mismatch"));
+        }
+        let extra = [inner as u32, head_dim as u32, half as u32];
+        self.elementwise(
+            "music3_partial_rope_f32",
+            &[x, cos, sin],
+            len * inner,
+            &extra,
+        )
+    }
+
+    /// `state * silu(gate)` in F32 over rows of `[state | gate]`. The device
+    /// `exp` can differ from the host's in the last bit, so this matches the
+    /// host only to float32 rounding, not bit for bit.
+    pub fn gated_silu_f32(
+        &mut self,
+        x: Music3Slot,
+        rows: usize,
+        half: usize,
+    ) -> Result<Music3Slot, GpuError> {
+        if self.len(x)? != product(&[rows, half, 2])? {
+            return Err(bad("Music 3 gated activation geometry mismatch"));
+        }
+        self.elementwise("music3_gated_silu_f32", &[x], rows * half, &[half as u32])
     }
 
     /// One thread per element: inputs at 0.., then the output, then the

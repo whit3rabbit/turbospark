@@ -135,6 +135,20 @@ fn test_decoded_rgb_and_png_contract() {
     assert_eq!(&buffer[..info.buffer_size()], rgb.as_slice());
 }
 
+// encode_rgb8_png is pub, so a direct caller can pass u32-sized dims whose
+// width * height * 3 exceeds usize. That must be an error, not an overflow
+// panic (debug) or a wrapped length check (release).
+#[test]
+fn test_png_rejects_overflowing_dimensions() {
+    let max = u32::MAX as usize;
+    let result = std::panic::catch_unwind(|| encode_rgb8_png(&[0u8; 3], max, max));
+    match result {
+        Ok(Err(_)) => {}
+        Ok(Ok(_)) => panic!("overflowing PNG dimensions were accepted"),
+        Err(_) => panic!("overflowing PNG dimensions panicked instead of returning an error"),
+    }
+}
+
 #[test]
 fn test_decoded_rgb_rejects_nonfinite_values() {
     let err = decoded_to_rgb8(&[f32::NAN, 0.0, 0.0], 1, 1).expect_err("non-finite decoded tensor");

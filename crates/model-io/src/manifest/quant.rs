@@ -127,8 +127,11 @@ pub(crate) fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
         ("router", &quant.router, &[8]),
         ("sharedExpert", &quant.shared_expert, &[4, 8]),
         // Routed experts additionally allow 2-bit: the DeepSeek-V4-Flash
-        // dynamic-quant checkpoint ships Q2 experts under a Q4 core.
-        ("routedExpert", &quant.routed_expert, &[2, 4]),
+        // dynamic-quant checkpoint ships Q2 experts under a Q4 core. And
+        // 3-bit, on this slot only: `mlx-community/flint-mixed-3-4bit`
+        // requantizes Flint's routed experts to MLX INT3 (the
+        // `moe_*_int3` pair) and keeps everything else at 4 or 8.
+        ("routedExpert", &quant.routed_expert, &[2, 3, 4]),
     ];
     // A slot that is byte-for-byte the ATTENTION slot is a DEFAULTED
     // statement about a component the model does not have, not a claim about

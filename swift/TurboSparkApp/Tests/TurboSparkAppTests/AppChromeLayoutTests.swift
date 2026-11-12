@@ -106,9 +106,9 @@ final class AppChromeLayoutTests: XCTestCase {
 
     func testTheMinimumWidthGrowsByExactlyTheArtifactPanelWhenItIsTheClaimant() {
         let bare = AppChromeLayout.minimumWindowWidth(
-            isSidebarExpanded: true, rightColumn: .none)
+            isPanelVisible: true, rightColumn: .none)
         let withPanel = AppChromeLayout.minimumWindowWidth(
-            isSidebarExpanded: true, rightColumn: .artifact(artifactID))
+            isPanelVisible: true, rightColumn: .artifact(artifactID))
 
         // EQUALS, not "is larger": a wrong arm reusing `inspectorWidth` is
         // also larger, and the whole reason the panel is 420 rather than 320
@@ -118,51 +118,50 @@ final class AppChromeLayoutTests: XCTestCase {
             AppChromeLayout.artifactPanelWidth + AppChromeLayout.dividerWidth)
     }
 
-    func testExpandingTheSidebarReplacesTheRailRatherThanStackingOnIt() {
-        // The two left columns merged, so the expanded sidebar's width takes
-        // the place of the rail's instead of adding to it. Before the merge
-        // this delta was `chatSidebarWidth + dividerWidth` (a whole second
-        // column); it is now the difference between the two presentations of
-        // ONE column, with the divider counted once either way.
-        let collapsed = AppChromeLayout.minimumWindowWidth(
-            isSidebarExpanded: false, rightColumn: .none)
-        let expanded = AppChromeLayout.minimumWindowWidth(
-            isSidebarExpanded: true, rightColumn: .none)
-
+    func testTheRailIsCountedInEveryStateAndThePanelOnlyWhenShown() {
+        // ABSOLUTE, not a delta between two `minimumWindowWidth` calls: a
+        // constant added to or dropped from both arms of a subtraction
+        // cancels, so a relative test cannot see the rail's width going
+        // missing. The rail is on screen in every section and state, so both
+        // floors carry it; only the panel comes and goes.
         XCTAssertEqual(
-            expanded - collapsed,
-            AppChromeLayout.chatSidebarWidth - AppChromeLayout.navigationRailWidth)
-    }
-
-    func testTheWindowMinimumCountsTheLeftColumnExactlyOnce() {
-        // ABSOLUTE, not a delta between two `minimumWindowWidth` calls.
-        // Found by mutation: re-adding `navigationRailWidth` to the sum
-        // SURVIVES the delta assertion above, because a constant added to
-        // both arms of a subtraction cancels. The regression this whole
-        // change is about -- a rail's width still being reserved on top of
-        // the sidebar -- is therefore invisible to any relative test.
-        XCTAssertEqual(
-            AppChromeLayout.minimumWindowWidth(isSidebarExpanded: true, rightColumn: .none),
-            AppChromeLayout.chatSidebarWidth
+            AppChromeLayout.minimumWindowWidth(isPanelVisible: true, rightColumn: .none),
+            AppChromeLayout.navigationRailWidth
+                + AppChromeLayout.sidebarPanelWidth
                 + AppChromeLayout.dividerWidth
                 + AppChromeLayout.primaryMinimumWidth)
 
         XCTAssertEqual(
-            AppChromeLayout.minimumWindowWidth(isSidebarExpanded: false, rightColumn: .none),
+            AppChromeLayout.minimumWindowWidth(isPanelVisible: false, rightColumn: .none),
             AppChromeLayout.navigationRailWidth
                 + AppChromeLayout.dividerWidth
                 + AppChromeLayout.primaryMinimumWidth)
     }
 
-    func testTheSidebarColumnIsTheRailWhenCollapsedAndTheChatWidthWhenExpanded() {
-        // Named so a future reader cannot read the rail width as belonging to
-        // a separate band: it is one of this column's two sizes.
+    func testLeftChromeIsTheRailPlusThePanelWhenShown() {
         XCTAssertEqual(
-            AppChromeLayout.sidebarColumnWidth(isExpanded: false),
+            AppChromeLayout.leftChromeWidth(isPanelVisible: false),
             AppChromeLayout.navigationRailWidth)
         XCTAssertEqual(
-            AppChromeLayout.sidebarColumnWidth(isExpanded: true),
-            AppChromeLayout.chatSidebarWidth)
+            AppChromeLayout.leftChromeWidth(isPanelVisible: true),
+            AppChromeLayout.navigationRailWidth + AppChromeLayout.sidebarPanelWidth)
+    }
+
+    func testExactlyTheSectionsWithPanelContentHaveASidebarPanel() {
+        // The window floor and the sidebar both follow this, so a section
+        // listed here wrongly reserves (or drops) 260pt of width. Files,
+        // Discover and Humanize have nothing to list beside the rail.
+        let withPanel = AppModel.AppNavigationSection.allCases.filter(\.hasSidebarPanel)
+        XCTAssertEqual(Set(withPanel), [.chat, .audio, .images, .modelManager, .server])
+    }
+
+    func testEveryPanelButChatsHasARailMenuForWhenItIsHidden() {
+        // Hiding the panel must not strand a section's modes (Gotcha 17,
+        // "navigation never hides"): each mode-listing panel has a rail menu.
+        // Chat's panel is its conversation list, which the pane does not need.
+        let withMenu = AppModel.AppNavigationSection.allCases
+            .filter(NavigationRailView.hasDestinationMenu)
+        XCTAssertEqual(Set(withMenu), [.audio, .images, .modelManager, .server])
     }
 
     func testTheArtifactPanelIsWiderThanTheInspector() {

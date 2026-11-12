@@ -95,8 +95,7 @@ fn sane(raw: u64) -> Option<u32> {
 /// atomic, so a reader never observes a partially written file.
 pub fn record(model_dir: &Path, trained_context: u32) -> Result<(), String> {
     let path = model_dir.join("manifest.json");
-    let bytes =
-        std::fs::read(&path).map_err(|e| format!("no manifest.json at {}: {e}", path.display()))?;
+    let bytes = crate::manifest_peek::read_manifest_capped(&path)?;
     let mut value: serde_json::Value =
         serde_json::from_slice(&bytes).map_err(|e| format!("manifest.json: {e}"))?;
     let arch = value
@@ -120,7 +119,8 @@ pub fn record(model_dir: &Path, trained_context: u32) -> Result<(), String> {
 /// A sibling of [`crate::peek_manifest_arch`] rather than part of it: that
 /// one returns an `ArchConfig` and this value is deliberately not in it.
 pub fn peek(model_dir: &Path) -> Option<u32> {
-    let bytes = std::fs::read(model_dir.join("manifest.json")).ok()?;
+    let bytes =
+        crate::manifest_peek::read_manifest_capped(&model_dir.join("manifest.json")).ok()?;
     let value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     value
         .get("arch")?
@@ -187,6 +187,7 @@ mod tests {
             "modelID": "fixture",
             "arch": { "hiddenSize": 64, "numLayers": 2 },
             "quant": { "attention": "q8_0" },
+            "producer": { "tool": "turbospark-repack", "version": "0.0.0" },
         });
         std::fs::write(
             dir.join("manifest.json"),
@@ -203,6 +204,10 @@ mod tests {
         assert_eq!(after["magic"], original["magic"]);
         assert_eq!(after["modelID"], original["modelID"]);
         assert_eq!(after["quant"], original["quant"]);
+        assert_eq!(
+            after["producer"], original["producer"],
+            "the producer block is another writer's and must survive the rewrite"
+        );
         assert_eq!(after["arch"]["hiddenSize"], 64);
         assert_eq!(after["arch"]["numLayers"], 2);
 
@@ -219,6 +224,26 @@ mod tests {
         let dir = std::env::temp_dir().join("turbospark-no-such-install");
         assert!(record(&dir, 4096).is_err());
         assert_eq!(peek(&dir), None);
+    }
+
+    /// An oversized manifest is neither read back nor rewritten: both paths
+    /// share model-io's metadata cap. Valid JSON padded past the cap, so an
+    /// uncapped read would accept it.
+    #[test]
+    fn an_oversized_manifest_is_refused_by_peek_and_record() {
+        let dir = std::env::temp_dir().join(format!(
+            "turbospark-trained-context-cap-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut bytes = br#"{"arch":{"trainedContext":8192}}"#.to_vec();
+        bytes.resize(model_io::DEFAULT_MAX_BYTES as usize + 1, b' ');
+        std::fs::write(dir.join("manifest.json"), &bytes).unwrap();
+
+        assert_eq!(peek(&dir), None);
+        let err = record(&dir, 4096).unwrap_err();
+        assert!(err.contains("exceeds metadata cap"), "got: {err}");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// A `record` that fails partway must leave `manifest.json` exactly as

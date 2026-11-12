@@ -24,6 +24,7 @@ struct BrowserDialogApprovalView: View {
     let request: BrowserDialogRequest
     let actions: BrowserDialogApprovalActions
     @State private var promptResponse: String
+    @FocusState private var isFieldFocused: Bool
 
     init(
         request: BrowserDialogRequest,
@@ -60,6 +61,7 @@ struct BrowserDialogApprovalView: View {
                     }
                     .labelsHidden()
                     .textFieldStyle(.roundedBorder)
+                    .focused($isFieldFocused)
                 }
 
                 HStack {
@@ -68,6 +70,7 @@ struct BrowserDialogApprovalView: View {
                     } label: {
                         Text("Dismiss", bundle: .module)
                     }
+                    .appAction(.secondary)
                     .keyboardShortcut(.cancelAction)
 
                     Spacer()
@@ -77,18 +80,24 @@ struct BrowserDialogApprovalView: View {
                     } label: {
                         Text("Accept", bundle: .module)
                     }
+                    .appAction(.primary)
                     .keyboardShortcut(.defaultAction)
                 }
             }
             .padding(20)
             .frame(maxWidth: 440, alignment: .leading)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius))
             .shadow(radius: 24)
             .padding(24)
             .accessibilityAddTraits(.isModal)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityIdentifier("browser-dialog-approval")
+        .onAppear {
+            if request.kind == .prompt {
+                isFieldFocused = true
+            }
+        }
     }
 
     /// The origin shown in the dialog; `?` when the engine could not name

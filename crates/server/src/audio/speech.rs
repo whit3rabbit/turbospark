@@ -4,11 +4,17 @@
 //! shape and applies the rules that depend only on the family. Voice cloning
 //! (`reference_audio`, a base64 WAV) is refused for a family that cannot
 //! clone, and MegaTTS3 requires both the reference and `consent: true`, the
-//! caller's statement that it has the right to use the voice.
+//! caller's statement that it has the right to use the voice. OmniVoice and
+//! Drama 3 clone only when a reference is sent; Drama 3 also needs the
+//! reference's transcript (`reference_text`) and takes the four sampler
+//! fields, which every other family refuses.
 //! `wav` is the default (OpenAI defaults to mp3, which this server cannot
 //! encode, and refuses by name). `stream=true` is `pcm` only: a chunked body
 //! with one chunk per synthesized segment, so the first audio leaves before
 //! the last segment is generated.
+//! A Drama 3 request without `seed` draws a fresh one, and every Drama 3
+//! response names the seed it used in `x-turbospark-seed`, as image
+//! generation does.
 
 use axum::body::Body;
 use axum::extract::State;
@@ -27,6 +33,22 @@ const MIN_SPEED: f32 = 0.5;
 const MAX_SPEED: f32 = 2.0;
 /// Base64 of a 30 s reference: 48 kHz stereo f32 WAV is about 15.4 MB.
 const MAX_REFERENCE_BASE64: usize = 24 << 20;
+
+/// The seed a Drama 3 request runs with: the caller's, or a fresh one. The
+/// runtime takes every seed literally, so a default of 0 gave one take for
+/// every request, and some seeds go silent after the first sentence.
+fn drama3_seed(requested: Option<u64>) -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    // Two requests in the same clock tick still draw different seeds.
+    static DRAWN: AtomicU64 = AtomicU64::new(0);
+    requested.unwrap_or_else(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+        nanos ^ DRAWN.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed)
+    })
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -47,6 +69,29 @@ struct SpeechInput {
     seed: Option<u64>,
     p_w: Option<f32>,
     t_w: Option<f32>,
+    temperature: Option<f32>,
+    top_p: Option<f32>,
+    top_k: Option<usize>,
+    max_frames: Option<usize>,
+}
+
+/// The Drama 3 sampler fields a request set, by name.
+fn first_sampler_field(input: &SpeechInput) -> Option<&'static str> {
+    if input.temperature.is_some() {
+        Some("temperature")
+    } else if input.top_p.is_some() {
+        Some("top_p")
+    } else if input.top_k.is_some() {
+        Some("top_k")
+    } else if input.max_frames.is_some() {
+        Some("max_frames")
+    } else {
+        None
+    }
+}
+
+fn bad_param(message: &str, param: &'static str) -> Response {
+    error(StatusCode::BAD_REQUEST, message, Some(param))
 }
 
 pub(crate) async fn speech(
@@ -144,6 +189,76 @@ pub(crate) async fn speech(
                 );
             }
         }
+        // OmniVoice speaks without a reference too; a reference makes the
+        // request a clone, which needs consent.
+        if family == Some("omnivoice") && input.reference_audio.is_some() && input.consent != Some(true)
+        {
+            return error(
+                StatusCode::BAD_REQUEST,
+                "voice cloning needs consent: true, stating you have the right to use the reference voice",
+                Some("consent"),
+            );
+        }
+        // Sampler settings are Drama 3's. Another family would ignore them, and
+        // a setting that does nothing looks like it worked.
+        if family.is_some_and(|f| f != "fish_drama3") {
+            if let Some(param) = first_sampler_field(&input) {
+                return bad_param(
+                    &format!("{param} is a Drama 3 sampler setting; this model does not take it"),
+                    param,
+                );
+            }
+        }
+        // Drama 3 speaks without a reference too; a reference makes the
+        // request a clone, which needs consent and the reference's transcript.
+        // The engine has no steps, speed, instruction or guidance weights, so
+        // each is refused by name rather than ignored.
+        if family == Some("fish_drama3") {
+            if input.steps.is_some() {
+                return bad_param("Drama 3 has no steps setting; omit steps", "steps");
+            }
+            if input.speed.is_some_and(|s| s != 1.0) {
+                return bad_param("Drama 3 has no speed control; leave speed at 1.0", "speed");
+            }
+            if input.instruction.as_deref().is_some_and(|s| !s.trim().is_empty()) {
+                return bad_param(
+                    "Drama 3 takes delivery cues inline, such as [whispers], not an instruction",
+                    "instruction",
+                );
+            }
+            if input.p_w.is_some() {
+                return bad_param("p_w is a MegaTTS3 setting; Drama 3 does not take it", "p_w");
+            }
+            if input.t_w.is_some() {
+                return bad_param("t_w is a MegaTTS3 setting; Drama 3 does not take it", "t_w");
+            }
+            if input.reference_audio.is_some() {
+                if input.consent != Some(true) {
+                    return bad_param(
+                        "voice cloning needs consent: true, stating you have the right to use the reference voice",
+                        "consent",
+                    );
+                }
+                if input
+                    .reference_text
+                    .as_deref()
+                    .is_none_or(|t| t.trim().is_empty())
+                {
+                    return bad_param(
+                        "Drama 3 voice cloning needs reference_text, the reference audio's transcript",
+                        "reference_text",
+                    );
+                }
+            }
+        }
+        let seed = if family == Some("fish_drama3") {
+            Some(drama3_seed(input.seed))
+        } else {
+            input.seed
+        };
+        let seed_header = seed
+            .filter(|_| family == Some("fish_drama3"))
+            .map(|s| HeaderValue::from_str(&s.to_string()).expect("digits are a valid header"));
         let request = SpeechRequest {
             model: input.model,
             text: input.input,
@@ -155,9 +270,13 @@ pub(crate) async fn speech(
             instruction: input.instruction,
             consent: input.consent.unwrap_or(false),
             steps: input.steps,
-            seed: input.seed,
+            seed,
             p_w: input.p_w,
             t_w: input.t_w,
+            temperature: input.temperature,
+            top_p: input.top_p,
+            top_k: input.top_k,
+            max_frames: input.max_frames,
         };
         let mut synthesized = match audio.provider.speak(request).await {
             Ok(s) => s,
@@ -199,6 +318,9 @@ pub(crate) async fn speech(
                 "x-audio-sample-rate",
                 HeaderValue::from_str(&rate.to_string()).expect("digits are a valid header"),
             );
+            if let Some(seed) = seed_header {
+                headers.insert("x-turbospark-seed", seed);
+            }
             return response;
         }
 
@@ -227,6 +349,9 @@ pub(crate) async fn speech(
             "x-audio-sample-rate",
             HeaderValue::from_str(&rate.to_string()).expect("digits are a valid header"),
         );
+        if let Some(seed) = seed_header {
+            headers.insert("x-turbospark-seed", seed);
+        }
         response
     })
     .await

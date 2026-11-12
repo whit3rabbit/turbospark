@@ -97,6 +97,36 @@ pub(crate) fn attach_images<'a>(
                 session.info.model_path
             ));
         }
+        if runner.unlimited_ocr2_image_ids().is_some() {
+            let spliced = crate::vision::attach_unlimited_ocr2(runner.as_mut(), rendered, parts)?;
+            return Ok((spliced, VisionScope::armed(engine)));
+        }
+        if runner.gemma4_image_ids().is_some() {
+            let spliced = crate::vision::attach_gemma4(runner.as_mut(), rendered, parts)?;
+            return Ok((spliced, VisionScope::armed(engine)));
+        }
+        if runner.clip_image_ids().is_some() {
+            let bos = session.tokenizer.encode("", true).first().copied();
+            let spliced = crate::vision::attach_clip(runner.as_mut(), rendered, bos, parts)?;
+            return Ok((spliced, VisionScope::armed(engine)));
+        }
+        if runner.is_minicpm_vision() {
+            let spliced = crate::vision::attach_minicpm(
+                runner.as_mut(),
+                &session.tokenizer,
+                rendered,
+                parts,
+            )?;
+            return Ok((spliced, VisionScope::armed(engine)));
+        }
+        if runner.siglip_image_ids().is_some() {
+            let spliced = crate::vision::attach_siglip(runner.as_mut(), rendered, parts)?;
+            return Ok((spliced, VisionScope::armed(engine)));
+        }
+        if runner.deepseek_ocr_image_ids().is_some() {
+            let spliced = crate::vision::attach_deepseek_ocr(runner.as_mut(), rendered, parts)?;
+            return Ok((spliced, VisionScope::armed(engine)));
+        }
         let params = crate::vision::preprocess_params(
             runner,
             session.load_policy.guard,

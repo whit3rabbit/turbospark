@@ -97,11 +97,15 @@ impl Rgb8Image {
 pub fn decode_image_bytes(bytes: &[u8]) -> Result<Rgb8Image, VisionIoError> {
     // Probe first so a dimension bomb is rejected from its header before the
     // decoder can allocate its output buffer.
-    let (width, height) = image_dimensions(bytes)?;
+    image_dimensions(bytes)?;
     let decoded = reader(bytes)?.decode().map_err(|e| VisionIoError::Decode {
         detail: e.to_string(),
     })?;
     let rgb = decoded.to_rgb8();
+    // Shape the buffer by the decoder's own dims, not the header probe: a
+    // probe that disagreed with the decode (same pixel count, swapped sides)
+    // would pass the length check and silently mis-stride every row.
+    let (width, height) = rgb.dimensions();
     Rgb8Image::new(width as usize, height as usize, rgb.into_raw())
 }
 

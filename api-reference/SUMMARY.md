@@ -1,13 +1,12 @@
 # Table of contents
 
 * [API reference](README.md)
-
-## HTTP
-
-* [HTTP REST API](http.md)
-
-## Rust
-
+* [HTTP REST API Overview](http.md)
+  * [Text and Chat API](http/text.md)
+  * [Audio API](http/audio.md)
+  * [Images API](http/images.md)
+  * [Embeddings API](http/embeddings.md)
+  * [OpenAPI Schemas](http/schemas.md)
 * [Rust library](rust.md)
   * [Catalog and installs](rust/catalog/README.md)
     * [Probe and recommend](rust/catalog/probe-and-recommend.md)
@@ -61,7 +60,4 @@
     * [Running the harness](rust/bench/running-the-harness.md)
     * [Reading the output](rust/bench/reading-the-output.md)
     * [Startup probe](rust/bench/startup-probe.md)
-
-## Swift
-
 * [Swift bindings](swift.md)

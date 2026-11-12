@@ -21,8 +21,8 @@ struct HardwareScanCard: View {
                     .themedFont(.tiny, weight: .bold)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(Color.green.opacity(0.18), in: Capsule())
-                    .foregroundStyle(.green)
+                    .background(.appSuccessTint, in: Capsule())
+                    .foregroundStyle(.appSuccess)
                     .accessibilityHidden(true)
             }
 
@@ -183,10 +183,8 @@ struct ActiveInstallCard: View {
             }
 
             if let fraction = model.installProgressFraction {
-                ProgressView(value: fraction)
-                    .tint(TurboSparkTheme.accentColor)
-                    .accessibilityLabel(Text("Download progress", bundle: .module))
-                    .accessibilityValue(Text(verbatim: MetricFormat.percent(fraction * 100)))
+                AppProgressBar(value: fraction, label: Text("Download progress", bundle: .module),
+                               animated: !model.isInstallPaused)
 
                 HStack {
                     if let downloaded = model.installDownloadedBytes, let total = model.installTotalBytes {

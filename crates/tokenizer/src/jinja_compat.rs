@@ -99,6 +99,66 @@ pub(crate) fn parenthesize_conditional_kwargs(source: &str) -> std::borrow::Cow<
     }
 }
 
+/// Rewrites HF's `{% generation %}` / `{% endgeneration %}` block tags as
+/// `{% if true %}` / `{% endif %}`, so minijinja can parse the template.
+///
+/// **A COMPATIBILITY SHIM, LIKE [`parenthesize_conditional_kwargs`].**
+/// `generation` is a transformers extension to Jinja2: it marks the assistant
+/// span so `apply_chat_template(return_assistant_tokens_mask=True)` can build
+/// a training mask, and it renders its body unchanged. minijinja 2.x rejects
+/// it with `unknown statement generation`, which stops `LiquidAI/LFM3-1.7B`'s
+/// template from rendering at all.
+///
+/// **WHY A REWRITE AND NOT A DELETION.** The tags carry whitespace control
+/// (`{%- generation -%}`), and deleting a tag drops its trimming, which
+/// changes the rendered bytes. Replacing only the keyword keeps the original
+/// delimiters and markers, and `if true` renders its body exactly once, as
+/// `generation` does. Only `{% ... %}` blocks whose whole body is the bare
+/// keyword are touched; text, expressions and comments are copied verbatim.
+pub(crate) fn rewrite_generation_tags(source: &str) -> std::borrow::Cow<'_, str> {
+    if !source.contains("generation") {
+        return std::borrow::Cow::Borrowed(source);
+    }
+    let bytes = source.as_bytes();
+    let mut out = String::new();
+    let mut rewrote = false;
+    let mut last_copied = 0usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let Some((open_len, close, is_comment)) = block_at(bytes, i) else {
+            i += 1;
+            continue;
+        };
+        let body_start = i + open_len;
+        let Some(body_end) = find_close(bytes, body_start, close.as_bytes(), is_comment) else {
+            break;
+        };
+        let close_end = body_end + close.len();
+        if close == "%}" {
+            let body = &source[body_start..body_end];
+            let keyword = body.trim_matches(|c: char| c == '-' || c == '+' || c.is_whitespace());
+            let replacement = match keyword {
+                "generation" => Some(body.replacen("generation", "if true", 1)),
+                "endgeneration" => Some(body.replacen("endgeneration", "endif", 1)),
+                _ => None,
+            };
+            if let Some(body) = replacement {
+                rewrote = true;
+                out.push_str(&source[last_copied..body_start]);
+                out.push_str(&body);
+                last_copied = body_end;
+            }
+        }
+        i = close_end;
+    }
+    if rewrote {
+        out.push_str(&source[last_copied..]);
+        std::borrow::Cow::Owned(out)
+    } else {
+        std::borrow::Cow::Borrowed(source)
+    }
+}
+
 /// `(opening delimiter length, closing delimiter, is a comment)` if a Jinja
 /// block starts at `i`.
 fn block_at(bytes: &[u8], i: usize) -> Option<(usize, &'static str, bool)> {

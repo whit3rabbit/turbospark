@@ -1,0 +1,20 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "kokoro",
+  "kind": "audio",
+  "title": "Kokoro-82M text to speech (recognized by its istftnet and plbert layout; config has no model_type)",
+  "flow": "speak",
+  "installs": [],
+  "recommended": [],
+  "sweeps": [
+    {"id": "speak_short", "description": "a short sentence, seed fixed, run against itself as the null floor of a speak arm",
+     "when": ["audio:speak"], "metric": "audio_run_s", "exactness": "bit_exact",
+     "workload": {"prompts": [], "audio": {"task": "speak", "text": "The quick brown fox jumps over the lazy dog.", "seed": 7}},
+     "baseline": "base", "candidates": ["again"],
+     "note": "two identical arms: the sweep's verdict is the floor; replace the candidate with a knob once one exists for this pipeline"}
+  ],
+  "findings": [],
+  "open_questions": ["no numbers recorded for this pipeline yet", "en-US only in the portable frontend"],
+  "traps": ["the worker refuses a Kokoro whose device backend was not selected"],
+  "docs": ["docs/AUDIO.md"]
+}

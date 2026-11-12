@@ -1,3 +1,8 @@
+// SCOPE NOTE, 2026-10-21: the "dead end" below is THIS tile's (dequant into
+// threadgroup memory, then simdgroup_load). A register-operand tile that
+// reads the same packed weights in place does 8 rows for about 1.25x a
+// 1-row GEMV: `dequant_int4_mma8.metal` and docs/INT4_SMALL_M_MMA.md.
+//
 // PORT-LOCAL, AND A MEASURED DEAD END. Kept, with its bench, because
 // `simdgroup_matrix` is the lever every reader reaches for next and
 // `docs/SPECULATIVE_DECODING.md` named it as "the one remaining lever".

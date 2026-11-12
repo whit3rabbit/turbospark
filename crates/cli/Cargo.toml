@@ -36,29 +36,60 @@ path = "src/bin/music.rs"
 name = "turbospark-clone"
 path = "src/bin/clone.rs"
 
+# Speech with Fish Audio Drama 3 (44.1 kHz), optionally in a cloned voice.
+[[bin]]
+name = "turbospark-speak"
+path = "src/bin/speak.rs"
+
+# Trait steering: extract a directional control vector from a model's own
+# activations against a built-in prompt contrast, then check the result.
+[[bin]]
+name = "turbospark-steer"
+path = "src/bin/steer.rs"
+
 [[bin]]
 name = "turbospark-ocr"
 path = "src/bin/ocr.rs"
 
+# The opt-in ANE+Steel prefill split (`turbospark-runtime`'s `ane-prefill`,
+# docs/SPEEDUP_PLAYBOOK.md). Off by default.
+[features]
+ane-prefill = ["runtime/ane-prefill"]
+
 [dependencies]
 libc = "0.2"
-invocation = { package = "turbospark-invocation", path = "../invocation", version = "0.3.2" }
-foundation = { package = "turbospark-core", path = "../core", version = "0.3.2" }
-catalog = { package = "turbospark-catalog", path = "../catalog", version = "0.3.2" }
-runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.3.2" }
-selection = { package = "turbospark-selection", path = "../selection", version = "0.3.2" }
-tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.3.2" }
-repack = { package = "turbospark-repack", path = "../repack", version = "0.3.2" }
-model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.3.2" }
-image = { package = "turbospark-image", path = "../image", version = "0.3.2" }
-audio = { package = "turbospark-audio", path = "../audio", version = "0.3.2" }
-window_fit = { package = "turbospark-window-fit", path = "../window-fit", version = "0.3.2" }
+invocation = { package = "turbospark-invocation", path = "../invocation", version = "0.8.0" }
+foundation = { package = "turbospark-core", path = "../core", version = "0.8.0" }
+catalog = { package = "turbospark-catalog", path = "../catalog", version = "0.8.0" }
+runtime = { package = "turbospark-runtime", path = "../runtime", version = "0.8.0" }
+selection = { package = "turbospark-selection", path = "../selection", version = "0.8.0" }
+tokenizer = { package = "turbospark-tokenizer", path = "../tokenizer", version = "0.8.0" }
+repack = { package = "turbospark-repack", path = "../repack", version = "0.8.0" }
+# The difference-of-means extraction math and its diagnostics
+# (`steer_cmd`'s reduction half; `turbospark-steer` is the driver).
+compute = { package = "turbospark-compute", path = "../compute", version = "0.8.0" }
+model_io = { package = "turbospark-model-io", path = "../model-io", version = "0.8.0" }
+image = { package = "turbospark-image", path = "../image", version = "0.8.0" }
+audio = { package = "turbospark-audio", path = "../audio", version = "0.8.0" }
+window_fit = { package = "turbospark-window-fit", path = "../window-fit", version = "0.8.0" }
 # `--image` (ROADMAP M-V7): decode, preprocess, the splice and the mRoPE
 # walk. UNALIASED, matching `crates/runtime`'s and `crates/bench`'s spelling
 # for the same crate (AGENTS.md Gotcha 1's per-crate alias rule).
-turbospark-vision-io = { path = "../vision-io", version = "0.3.2" }
+turbospark-vision-io = { path = "../vision-io", version = "0.8.0" }
+# Trait-pack files (`steer_data/`) parse with derive on `steer_cmd::packs`.
+serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 indicatif = "0.18"
+# The `turbospark` front door's command tree, help and shell completions.
+# Held to 4.5: 4.6 moved to edition 2024 and rust-version 1.85, past this
+# workspace's MSRV of 1.82. For the same reason Cargo.lock pins clap_lex to
+# 1.0.0 (1.1 needs 1.85); `cargo update` will lift it, so re-pin with
+# `cargo update -p clap_lex --precise 1.0.0`.
+clap = { version = ">=4.5, <4.6", features = ["derive"] }
+clap_complete = ">=4.5, <4.6"
+# Styles for `src/ui`. Both already arrive with clap and indicatif.
+anstyle = "1"
+console = { version = "0.16", default-features = false }
 
 [dev-dependencies]
 sha2 = "0.10"

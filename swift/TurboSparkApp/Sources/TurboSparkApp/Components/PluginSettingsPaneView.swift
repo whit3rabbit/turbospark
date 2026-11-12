@@ -183,7 +183,7 @@ public struct PluginSettingsPaneView: View {
                     ForEach(model.pluginLoadDiagnostics, id: \.self) { line in
                         Label(line, systemImage: "exclamationmark.triangle")
                             .themedFont(.small)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(AppAttention.color)
                     }
                 }
                 .padding(10)

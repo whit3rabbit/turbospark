@@ -336,6 +336,31 @@ fn sinks_go_through_the_shared_combine() {
     );
 }
 
+/// Flint's shape: 32 Q over 4 KV heads at head_dim 128, learned sinks on
+/// every layer, full layers linear and sliding layers a 513-position window
+/// over the 641-row ring (513 + one 128-token chunk). The cases above cover
+/// sinks and a wrapped ring only separately, and never at group 8. (8, 8, 4)
+/// is `gqa_launch`'s production config for 4 KV heads below 16K positions.
+#[test]
+fn flint_shape_sinks_with_window_and_ring() {
+    let flint = |seq_len, kv_start, ring| Case {
+        head_dim: 128,
+        num_q_heads: 32,
+        num_kv_heads: 4,
+        seq_len,
+        kv_start,
+        ring,
+        sinks: true,
+    };
+    let configs = [(8, 8, 4), (8, 16, 4), (16, 16, 2)];
+    // Full attention, linear layout.
+    check(flint(3000, 0, 0), &configs);
+    // Sliding layer before the window fills: the whole prefix, unwrapped.
+    check(flint(300, 0, 641), &configs);
+    // Sliding layer after the ring has wrapped twice.
+    check(flint(1500, 1500 - 513, 641), &configs);
+}
+
 /// `encode_attention_decode` honours the scratch's kernel choice: a
 /// `GqaShared` scratch produces exactly the GQA kernel's output at the
 /// production launch (8 simdgroups, 8 chunks for 4 KV heads below 16K, 4

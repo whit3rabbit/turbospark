@@ -1,0 +1,6 @@
+{
+  "prompts": {
+    "query": "Represent this sentence for searching relevant passages: "
+  },
+  "default_prompt_name": null
+}

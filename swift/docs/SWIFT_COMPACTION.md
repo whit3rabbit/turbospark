@@ -10,6 +10,11 @@ rows are never deleted -- the app, the archive and a ghost vault keep the
 full conversation; only the PROMPT disagrees, by exactly the summarized
 prefix. Default on.
 
+A summary loses detail. Conversation recall
+([SYNTEXT_CONTEXT.md](SYNTEXT_CONTEXT.md)) brings the exact compacted turns
+back as evidence when the newest message needs them. It reads the boundary
+from `compactionState(chatID:)` and never moves it.
+
 Read this before touching `AppChatCompaction`, the boundary arithmetic, or
 quoting an auto-compact threshold. Mirrors Claude Code's
 `services/compact/` in shape (a threshold, a structured summary prompt, a

@@ -25,13 +25,13 @@ public struct WorktreeFileChange: Identifiable, Hashable, Sendable {
             }
         }
 
-        public var color: Color {
+        func color(in theme: ResolvedAppTheme) -> Color {
             switch self {
-            case .modified: return .orange
-            case .added, .untracked: return .green
-            case .deleted: return .red
+            case .modified: return theme.warning
+            case .added, .untracked: return theme.success
+            case .deleted: return theme.danger
             case .renamed: return .blue
-            case .ignored, .unknown: return .secondary
+            case .ignored, .unknown: return theme.secondaryText
             }
         }
 

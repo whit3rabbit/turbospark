@@ -104,8 +104,12 @@ pub fn orchestrate_gemma4_checkpoint_sharded(
     // sharing one resident region, and its names keep to their own `vision.`
     // group rather than interleaving with any trunk layer's.
     let vision = if super::vision::vision_should_ingest(arch, &plan.vision_bases) {
-        let mut tower =
-            super::vision::read_vision_entries(shards, &plan.vision_bases, &arch.vision)?;
+        let mut tower = super::vision::read_vision_entries_quantized(
+            shards,
+            &plan.vision_bases,
+            &arch.vision,
+            Some(quant),
+        )?;
         resident.entries.extend(std::mem::take(&mut tower.entries));
         Some(tower)
     } else {
@@ -114,7 +118,8 @@ pub fn orchestrate_gemma4_checkpoint_sharded(
     let expert_stride = expert_stride_from_headers(shards, arch, quant, &plan.routed)?;
     let mut layers = Vec::new();
     if !plan.routed.is_empty() {
-        for layer in 0..arch.num_layers as usize {
+        // From the first MoE layer: see `expert_stride_from_headers`.
+        for layer in arch.num_dense_leading_layers as usize..arch.num_layers as usize {
             let (blobs, _used) = plan_one_expert_layer(shards, arch, quant, &plan.routed, layer)?;
             layers.push(blobs);
         }
@@ -127,11 +132,19 @@ pub fn orchestrate_gemma4_checkpoint_sharded(
             &plan.ngram_meta,
         ))
     };
+    // A tower that was classified but not ingested (a text-only request) is
+    // still dropped tensors, and reported as such. Gemma 4's tower moved from
+    // `ExcludedMultimodal` to `VisionTower` when it gained an ingest, and a
+    // text-only Gemma install must keep saying what it left out.
+    let mut excluded_multimodal = plan.excluded;
+    if vision.is_none() {
+        excluded_multimodal.extend(plan.vision_bases.iter().map(|n| n.to_string()));
+    }
     Ok(Gemma4RepackOutput {
         resident: resident.entries,
         layers,
         expert_stride,
-        excluded_multimodal: plan.excluded,
+        excluded_multimodal,
         lossy_narrowing: resident.lossy_narrowing,
         vision,
         ngram,
@@ -335,6 +348,26 @@ pub struct ResidentRead {
 fn int8_force_targets(family: ModelFamily) -> &'static [&'static str] {
     match family {
         ModelFamily::Qwen4Exp => &[".mlp.gate.weight", ".mlp.shared_expert_gate.weight"],
+        // The router only. The qwen flow's router kernel is INT8-only
+        // (`encode_qwen_router` refuses any other dtype), while the shared
+        // gate goes through the any-dtype GEMV. A U32-prepacked router never
+        // reaches this arm (the branch above takes it), so the published
+        // INT4 conversions are unchanged. A raw router (Fish Drama 3's
+        // trunk ships BF16) used to be written raw and refused at open.
+        ModelFamily::QwenGdnMoe => &[".mlp.gate.weight"],
+        // `flint`'s router is an unquantized BF16 [256, 2048] gate, where
+        // every published MLX conversion before it packed the router. The
+        // runtime's router GEMV reads INT8 affine, so it is force-quantized
+        // here exactly as the Qwen 3.6 raw router is. The ranking it
+        // produces is a property to MEASURE against the BF16 original
+        // before any quality claim (docs/FLINT_PHASE0.md).
+        ModelFamily::Flint => &[".mlp.gate.weight"],
+        // DeepSeek-VL2's router is an unquantized F16 `[64, 1280]` gate (the
+        // MLX conversion leaves `mlp.gate.weight` raw while quantizing every
+        // other linear), so it is force-quantized to the INT8-affine layout
+        // the router GEMV reads, exactly as Flint's BF16 one is. The ranking
+        // this produces is a property to measure against the F16 original.
+        ModelFamily::Deepseek2 => &[".mlp.gate.weight"],
         _ => &[],
     }
 }
@@ -356,7 +389,12 @@ pub fn read_resident_entries_from_shards(
             // BF16 it decodes to, which is exact (`mlx_mxfp4`'s header).
             entries.push(read_mxfp4_as_bf16(shards, name, base, &t.shape)?);
         } else if t.dtype == "U32" && name.ends_with(".weight") {
-            let (entry, companion_loss) = if arch.family == ModelFamily::Qwen2Dense {
+            // F16 companions are narrowed to BF16 (Qwen2's MLX planes and the
+            // DeepSeek-VL2 conversion both ship them that way).
+            let (entry, companion_loss) = if matches!(
+                arch.family,
+                ModelFamily::Qwen2Dense | ModelFamily::Deepseek2
+            ) {
                 super::narrow::pass_through_packed_qwen2_with_loss(shards, name, quant)?
             } else {
                 (
@@ -364,6 +402,22 @@ pub fn read_resident_entries_from_shards(
                     Vec::new(),
                 )
             };
+            let mut entry = entry;
+            // Flint's dense lead and shared expert get the same `up`/`down`
+            // rebalance as its routed experts (`crate::flint_rebalance`).
+            if arch.family == ModelFamily::Flint {
+                if let Some(role) = crate::flint_rebalance::SwigluRole::of_resident(name) {
+                    let delta = role.delta(crate::flint_rebalance::FLINT_SWIGLU_SHIFT);
+                    if let ResidentEntrySpec::Int1(spec)
+                    | ResidentEntrySpec::Int2(spec)
+                    | ResidentEntrySpec::Int4(spec)
+                    | ResidentEntrySpec::Int8(spec) = &mut entry
+                    {
+                        crate::flint_rebalance::shift_bf16_plane(&mut spec.scales, delta);
+                        crate::flint_rebalance::shift_bf16_plane(&mut spec.biases, delta);
+                    }
+                }
+            }
             entries.push(entry);
             lossy_narrowing.extend(companion_loss);
         } else if int8_force_targets(arch.family)

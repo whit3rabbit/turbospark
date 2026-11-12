@@ -1,7 +1,11 @@
 //! Catalog and local store model management.
 
-use catalog::{Catalog, ModelModality, Store};
+use catalog::library::{
+    Availability, LibraryRecord, LibraryRegistry, LocationEnv, INTERNAL_LIBRARY_ID,
+};
+use catalog::{Catalog, InstalledEntry, ModelModality, Store, StoreError};
 use serde::Serialize;
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Serialize)]
@@ -47,20 +51,142 @@ pub(crate) fn catalog_json() -> Result<String, String> {
     serde_json::to_string(&rows).map_err(|e| e.to_string())
 }
 
+/// The text installs, with where each is and whether it can be opened now
+/// (3.1). A row in a library that is not connected, or whose folder is gone,
+/// stays listed and says so, because an unplugged drive is a state and not a
+/// fault (3.4): the app filters its pickers, and this list does not.
 pub(crate) fn installed_json() -> Result<String, String> {
     let store = Store::default_store()?;
-    let rows: Vec<_> = store.installed().into_values().collect();
+    let env = LocationEnv::system(store.root())?;
+    installed_json_in(&store, &env)
+}
+
+/// Every key a row had before libraries is kept. The additions are
+/// `library` (the library's id, `"internal"` for This Mac, null for a custom
+/// location), `library_name`, `install_id`, `availability` (`available`,
+/// `not_connected` or `missing`), `location_kind` (`internal`, `library`,
+/// `custom` or `unknown`) and `connect_name` (the library or volume to
+/// connect, else null). They are snake_case like the keys beside them.
+/// Names come from a drive anyone could have written, so they are raw here
+/// and the app truncates them for display.
+fn installed_json_in(store: &Store, env: &LocationEnv) -> Result<String, String> {
+    // Only text rows, as before: image and audio rows have their own lists.
+    let mut entries: Vec<InstalledEntry> = store
+        .installed_with_availability(env)
+        .into_iter()
+        .filter(|entry| entry.row.effective_modality() == ModelModality::Text)
+        .collect();
+    entries.sort_by(|a, b| a.row.alias.cmp(&b.row.alias));
+    let listed: Vec<String> = LibraryRegistry::load(store.root())
+        .libraries()
+        .into_iter()
+        .map(|record| record.id)
+        .collect();
+    let models = store.models_root();
+    let rows = entries
+        .iter()
+        .map(|entry| installed_row(entry, &listed, &models))
+        .collect::<Result<Vec<_>, _>>()?;
     serde_json::to_string(&rows).map_err(|e| e.to_string())
 }
 
+fn installed_row(
+    entry: &InstalledEntry,
+    listed: &[String],
+    models: &Path,
+) -> Result<Value, String> {
+    let row = &entry.row;
+    // The place is told from the row's ids and path, as the catalog does, and
+    // never from `library_name`: a drive's marker can name its library "This
+    // Mac" or "custom location".
+    let external = row
+        .library
+        .as_deref()
+        .filter(|id| *id != INTERNAL_LIBRARY_ID);
+    let (location_kind, library) = match external {
+        Some(id) if listed.iter().any(|known| known == id) => ("library", Some(id)),
+        Some(id) => ("unknown", Some(id)),
+        None if row.path.starts_with(models) => ("internal", Some(INTERNAL_LIBRARY_ID)),
+        None => ("custom", None),
+    };
+    let (availability, connect_name) = match &entry.availability {
+        Availability::Available => ("available", None),
+        Availability::NotConnected { library } => ("not_connected", Some(library.as_str())),
+        Availability::Missing => ("missing", None),
+    };
+    let mut value = serde_json::to_value(row).map_err(|e| e.to_string())?;
+    let object = value
+        .as_object_mut()
+        .ok_or_else(|| "an installed row is not an object".to_string())?;
+    object.insert("library".to_string(), json!(library));
+    object.insert("library_name".to_string(), json!(entry.library_name));
+    object.insert("install_id".to_string(), json!(entry.install_id));
+    object.insert("availability".to_string(), json!(availability));
+    object.insert("location_kind".to_string(), json!(location_kind));
+    object.insert("connect_name".to_string(), json!(connect_name));
+    Ok(value)
+}
+
+/// An image install and the library holding it, as the app lists it. The row
+/// keeps the keys it had before libraries, and its library is camelCase like
+/// they are.
+#[derive(Debug, Serialize)]
+struct LibraryImageRow {
+    #[serde(flatten)]
+    row: ImageInstalledRow,
+    /// The library's id, `"internal"` for This Mac.
+    library: String,
+    #[serde(rename = "libraryName")]
+    library_name: String,
+    /// `<library>:image/<alias>`, the identity a move or a forget takes.
+    #[serde(rename = "installId")]
+    install_id: String,
+}
+
+impl LibraryImageRow {
+    fn new(row: ImageInstalledRow, library: &str, library_name: &str) -> Self {
+        Self {
+            install_id: format!("{library}:image/{}", row.alias),
+            library: library.to_string(),
+            library_name: library_name.to_string(),
+            row,
+        }
+    }
+}
+
 /// Image installs are deliberately not recorded in the text model index.
-/// Discover only valid image manifests under the shared machine store so the
-/// app can offer compatible rows without making image artifacts text models.
+/// Discover only valid image manifests under the shared machine store, and in
+/// every library that is connected, so the app can offer compatible rows
+/// without making image artifacts text models. A library that is not
+/// connected is skipped without a word: it has nothing to say until its drive
+/// is back (3.4).
 pub(crate) fn image_installed_json() -> Result<String, String> {
     let store = Store::default_store()?;
-    let mut rows = image_installed_rows(&store.modality_root(ModelModality::Image));
-    rows.extend(image_installed_rows(&store.models_root()));
-    rows.sort_by(|a, b| a.alias.cmp(&b.alias).then_with(|| a.path.cmp(&b.path)));
+    let env = LocationEnv::system(store.root())?;
+    image_installed_json_in(&store, &env)
+}
+
+fn image_installed_json_in(store: &Store, env: &LocationEnv) -> Result<String, String> {
+    let this_mac = LibraryRecord::internal(store.root()).name;
+    let mut rows: Vec<LibraryImageRow> =
+        image_installed_rows(&store.modality_root(ModelModality::Image))
+            .into_iter()
+            .chain(image_installed_rows(&store.models_root()))
+            .map(|row| LibraryImageRow::new(row, INTERNAL_LIBRARY_ID, &this_mac))
+            .collect();
+    for (record, root) in store.connected_libraries(env) {
+        rows.extend(
+            library_image_rows(&root)
+                .into_iter()
+                .map(|row| LibraryImageRow::new(row, &record.id, &record.name)),
+        );
+    }
+    rows.sort_by(|a, b| {
+        a.row
+            .alias
+            .cmp(&b.row.alias)
+            .then_with(|| a.row.path.cmp(&b.row.path))
+    });
     serde_json::to_string(&rows).map_err(|e| e.to_string())
 }
 
@@ -173,39 +299,99 @@ fn image_installed_rows(models: &Path) -> Vec<ImageInstalledRow> {
             if !path.is_dir() {
                 return None;
             }
-            let name = path.file_name()?.to_str()?;
-            let alias = name
-                .strip_suffix(".image.gturbo")
-                .or_else(|| name.strip_suffix(".gturbo"))?;
-            if alias.is_empty() {
-                return None;
-            }
-            let manifest = image::ImageManifest::load(&path).ok()?;
-            manifest.validate().ok()?;
-            let source = manifest.source.as_object()?;
-            let model_id = source.get("model_id")?.as_str()?.to_string();
-            let revision = source.get("model_revision")?.as_str()?.to_string();
-            let source_path = if super::image_install::retains_mlx_source_tree(&model_id) {
-                path.parent()
-                    .map(|parent| parent.join(format!(".{alias}.{revision}.image-source")))
-                    .filter(|source| source.is_dir())
-            } else {
-                None
-            };
-            Some(ImageInstalledRow {
-                alias: alias.to_string(),
-                family: catalog::image_family_for_model_id(&model_id).to_string(),
-                model_id,
-                revision,
-                path,
-                width: manifest.supported.width,
-                height: manifest.supported.height,
-                scheduler_steps: manifest.supported.scheduler_steps,
-                quantization: image::image_quantization_label(&manifest).ok()?,
-                source_path,
-            })
+            image_row(path, false)
         })
         .collect()
+}
+
+/// The valid image installs in the `image` folder of the library whose
+/// canonical root is `root`.
+///
+/// The library is a drive anyone could have written, so nothing is followed:
+/// the `image` folder, each install, its manifest and a kept source folder
+/// must be plain folders and files, never links. Otherwise a link planted on
+/// the drive would list, and later open, a folder that is not in the library
+/// (2.2 SECURITY). The same walk `catalog` makes before it reads or deletes
+/// anything in a library.
+fn library_image_rows(root: &Path) -> Vec<ImageInstalledRow> {
+    let images = root.join("image");
+    if !is_plain_dir(&images) {
+        return Vec::new();
+    }
+    let Ok(entries) = std::fs::read_dir(&images) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(Result::ok)
+        // `DirEntry::file_type` reports a link as a link.
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter_map(|entry| image_row(entry.path(), true))
+        .collect()
+}
+
+/// Whether `path` is a folder itself, not a link to one.
+fn is_plain_dir(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|found| found.file_type().is_dir())
+}
+
+/// Whether `path` is a file itself, not a link to one.
+fn is_plain_file(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|found| found.file_type().is_file())
+}
+
+/// The image install at `path`, when its name and manifest are valid. With
+/// `plain`, its manifest and the kept source folder beside it must not be
+/// links either (see [`library_image_rows`]).
+fn image_row(path: PathBuf, plain: bool) -> Option<ImageInstalledRow> {
+    let name = path.file_name()?.to_str()?;
+    let alias = name
+        .strip_suffix(".image.gturbo")
+        .or_else(|| name.strip_suffix(".gturbo"))?;
+    if alias.is_empty() {
+        return None;
+    }
+    if plain && !is_plain_file(&path.join(image::install::IMAGE_MANIFEST_NAME)) {
+        return None;
+    }
+    let manifest = image::ImageManifest::load(&path).ok()?;
+    manifest.validate().ok()?;
+    let source = manifest.source.as_object()?;
+    let model_id = source.get("model_id")?.as_str()?.to_string();
+    let revision = source.get("model_revision")?.as_str()?.to_string();
+    let source_path = if super::image_install::retains_mlx_source_tree(&model_id) {
+        // The revision comes from the manifest, which on a drive anyone could
+        // have written. A `/` or `..` in it would walk this name out of the
+        // folder, so it counts only as one plain path component.
+        let kept = format!(".{alias}.{revision}.image-source");
+        let one_component = matches!(
+            Path::new(&kept).components().collect::<Vec<_>>().as_slice(),
+            [std::path::Component::Normal(_)]
+        );
+        path.parent()
+            .filter(|_| one_component && !kept.contains('\0'))
+            .map(|parent| parent.join(&kept))
+            .filter(|source| {
+                if plain {
+                    is_plain_dir(source)
+                } else {
+                    source.is_dir()
+                }
+            })
+    } else {
+        None
+    };
+    Some(ImageInstalledRow {
+        alias: alias.to_string(),
+        family: catalog::image_family_for_model_id(&model_id).to_string(),
+        model_id,
+        revision,
+        path,
+        width: manifest.supported.width,
+        height: manifest.supported.height,
+        scheduler_steps: manifest.supported.scheduler_steps,
+        quantization: image::image_quantization_label(&manifest).ok()?,
+        source_path,
+    })
 }
 
 /// The bytes an install of `alias` will read off the network, so a GUI can
@@ -219,27 +405,59 @@ pub(crate) fn install_bytes(alias: &str) -> Result<(u64, u64), String> {
     Ok((entry.download_bytes, entry.install_bytes))
 }
 
-/// Deletes an installed model from the store and drops its directory.
-pub(crate) fn delete(alias: &str) -> Result<(), String> {
-    let store = Store::default_store()?;
-    delete_from_store(&store, alias)
+/// Why [`delete`] did not delete.
+#[derive(Debug)]
+pub(crate) enum DeleteError {
+    /// The store refused, with its own error.
+    Store(StoreError),
+    /// The alias is held by an install in a library. The old entry point
+    /// takes an alias, which says nothing of where the install is, so it
+    /// deletes only what is on This Mac; a library's install is deleted by
+    /// its install id, which `Store::delete_install` places where the
+    /// library is now.
+    InLibrary { alias: String, library: String },
 }
 
-fn delete_from_store(store: &Store, alias: &str) -> Result<(), String> {
-    let path = store
-        .installed()
-        .get(alias)
-        .map(|model| model.path.clone())
-        .ok_or_else(|| format!("model {alias:?} is not installed"))?;
-    if path.exists() {
-        std::fs::remove_dir_all(&path)
-            .map_err(|e| format!("failed to remove {}: {e}", path.display()))?;
+/// Deletes an installed model of This Mac, by alias, and drops its row. A
+/// library's install is refused ([`DeleteError::InLibrary`]), because what
+/// its row records is not where the library is now.
+pub(crate) fn delete(alias: &str) -> Result<(), DeleteError> {
+    let store = Store::default_store().map_err(|e| DeleteError::Store(StoreError::Io(e)))?;
+    let env =
+        LocationEnv::system(store.root()).map_err(|e| DeleteError::Store(StoreError::Io(e)))?;
+    delete_from_store(&store, &env, alias)
+}
+
+fn delete_from_store(store: &Store, env: &LocationEnv, alias: &str) -> Result<(), DeleteError> {
+    let entry = store
+        .installed_with_availability(env)
+        .into_iter()
+        .find(|entry| {
+            entry.row.alias == alias && entry.row.effective_modality() == ModelModality::Text
+        })
+        .ok_or_else(|| {
+            DeleteError::Store(StoreError::UnknownInstall {
+                install_id: alias.to_string(),
+            })
+        })?;
+    if entry
+        .row
+        .library
+        .as_deref()
+        .is_some_and(|id| id != INTERNAL_LIBRARY_ID)
+    {
+        return Err(DeleteError::InLibrary {
+            alias: alias.to_string(),
+            library: entry.library_name,
+        });
     }
-    store.forget(alias)
+    store
+        .delete_install(&entry.install_id, env)
+        .map_err(DeleteError::Store)
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use catalog::InstalledModel;
 
@@ -271,8 +489,9 @@ mod tests {
     }
 
     /// A minimal valid source tree: the production builder packs it, so the
-    /// scan below runs against a manifest the engine itself wrote.
-    fn write_synthetic_source(source: &Path) {
+    /// scan below runs against a manifest the engine itself wrote. The image
+    /// installer's tests materialize it as a downloaded source.
+    pub(in crate::models) fn write_synthetic_source(source: &Path) {
         use std::fs;
         fs::create_dir_all(source.join("tokenizer")).unwrap();
         fs::create_dir_all(source.join("scheduler")).unwrap();
@@ -491,6 +710,8 @@ mod tests {
                 kind: None,
                 modality: ModelModality::Text,
                 variant: None,
+                library: None,
+                relative_path: None,
             })
             .unwrap();
     }
@@ -502,8 +723,9 @@ mod tests {
         let install = root.join("models/model.gturbo");
         std::fs::create_dir_all(&install).unwrap();
         record(&store, "model", &install);
+        let env = LocationEnv::system(store.root()).unwrap();
 
-        delete_from_store(&store, "model").unwrap();
+        delete_from_store(&store, &env, "model").unwrap();
 
         assert!(!install.exists());
         assert!(store.installed().is_empty());
@@ -518,9 +740,17 @@ mod tests {
         let sentinel = victim.join("valuable.txt");
         std::fs::write(&sentinel, "keep").unwrap();
 
-        let error = delete_from_store(&store, victim.to_str().unwrap()).unwrap_err();
+        let env = LocationEnv::system(store.root()).unwrap();
 
-        assert!(error.contains("not installed"), "got {error:?}");
+        let error = delete_from_store(&store, &env, victim.to_str().unwrap()).unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                DeleteError::Store(StoreError::UnknownInstall { .. })
+            ),
+            "got {error:?}"
+        );
         assert!(sentinel.is_file(), "unrecorded directory was modified");
     }
 }

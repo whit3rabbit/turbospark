@@ -45,6 +45,13 @@ public enum HttpRequestExecutor {
                 userInfo: [NSLocalizedDescriptionKey: "Unsupported HTTP method: '\(method)'. Supported methods: \(validMethods.joined(separator: ", "))"]
             )
         }
+        // Custom mode's read-only restriction. Redirect hops keep the method
+        // URLSession chose, which for a refused write is never reached.
+        if let host = url.host,
+           case .deny(let reason) = AppNetworkPolicyStore.current.decision(host: host, method: resolvedMethod)
+        {
+            throw NSError(domain: "TurboSparkHttpRequest", code: 3, userInfo: [NSLocalizedDescriptionKey: reason])
+        }
 
         let resolvedTimeout = min(maxTimeoutSeconds, max(1, timeout ?? defaultTimeoutSeconds))
         var req = URLRequest(url: url)
@@ -156,13 +163,16 @@ public enum HttpRequestExecutor {
         _ request: URLRequest,
         configuration: URLSessionConfiguration,
         customSession: URLSession?,
-        validate: (URL) throws -> Void = HttpRequestDestinationValidator.validate,
-        validateConnectedAddress: ((String) throws -> Void)? = HttpRequestExecutor.refuseConnectedPrivateAddress
+        validate: (URL) throws -> Void = { try HttpRequestDestinationValidator.validate($0) },
+        validateConnectedAddress: ((String) throws -> Void)? = HttpRequestExecutor.refuseConnectedPrivateAddress,
+        networkPolicy: AppNetworkPolicy = AppNetworkPolicyStore.current,
+        maxBytes: Int = HttpRequestExecutor.maxResponseBytes
     ) async throws -> (Data, URLResponse) {
         // Injected sessions are test transports. Production redirects are
         // stopped and replayed only after validating the new destination.
         if let customSession {
-            let result = try await boundedData(for: request, session: customSession, delegate: nil)
+            let result = try await boundedData(
+                for: request, session: customSession, delegate: nil, maxBytes: maxBytes)
             if let finalURL = result.1.url {
                 try validate(finalURL)
             }
@@ -181,7 +191,8 @@ public enum HttpRequestExecutor {
             try validate(currentURL)
 
             let redirect = HttpRequestRedirectDelegate()
-            let result = try await boundedData(for: currentRequest, session: session, delegate: redirect)
+            let result = try await boundedData(
+                for: currentRequest, session: session, delegate: redirect, maxBytes: maxBytes)
             // **THE REBINDING CHECK.** `validate` resolved the host once and
             // URLSession resolved it again to connect, so a DNS answer that
             // changed between the two (rebinding) reaches here connected to
@@ -196,7 +207,14 @@ public enum HttpRequestExecutor {
             // already received it; only the response is withheld. Closing
             // the send needs a pinned Network.framework client.
             if let validateConnectedAddress {
-                try redirect.checkConnectedAddresses(validateConnectedAddress)
+                // A URL whose own host is local and allowed by the policy
+                // (`localhost:3000`) may land on a local address. A public
+                // name never earns this, so rebinding is still refused.
+                let urlHost = currentURL.host ?? ""
+                try redirect.checkConnectedAddresses { address in
+                    if networkPolicy.permitsLocalConnection(urlHost: urlHost, address: address) { return }
+                    try validateConnectedAddress(address)
+                }
             }
             if let redirectedRequest = redirect.takeRedirect() {
                 nextRequest = redirectedRequest

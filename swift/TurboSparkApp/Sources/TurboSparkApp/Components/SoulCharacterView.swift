@@ -26,6 +26,7 @@ public final class SoulCharacterAssetCache {
 @MainActor
 public struct TSIdlingSoulSparkView: View {
     public let size: CGFloat
+    @Environment(\.appTheme) private var theme
     @ObservedObject private var appearanceManager = AppearanceManager.shared
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
 
@@ -49,7 +50,7 @@ public struct TSIdlingSoulSparkView: View {
     @ViewBuilder
     private var glow: some View {
         let base = RadialGradient(
-            colors: [TurboSparkTheme.accentColor.opacity(0.28), .clear],
+            colors: [theme.accent.opacity(0.28), .clear],
             center: .center,
             startRadius: 0,
             endRadius: size * 0.62)
@@ -62,7 +63,7 @@ public struct TSIdlingSoulSparkView: View {
                 .phaseAnimator([0.40, 0.82]) { circle, opacity in
                     circle.opacity(opacity)
                 } animation: { _ in
-                    .easeInOut(duration: 1.8)
+                    TSMotion.idleGlow
                 }
         }
     }
@@ -78,7 +79,7 @@ public struct TSIdlingSoulSparkView: View {
             } else {
                 Image(systemName: "sparkles")
                     .themedFont(fitting: size * 0.5)
-                    .foregroundStyle(TurboSparkTheme.accentColor)
+                    .foregroundStyle(theme.accent)
             }
         }
         .frame(width: size, height: size)
@@ -92,7 +93,7 @@ public struct TSIdlingSoulSparkView: View {
                     .offset(y: phase == 0 ? 0 : -size * 0.065)
                     .rotationEffect(.degrees(phase == 0 ? -1.2 : 1.2))
             } animation: { _ in
-                .easeInOut(duration: 2.4)
+                TSMotion.idleBob
             }
         }
     }

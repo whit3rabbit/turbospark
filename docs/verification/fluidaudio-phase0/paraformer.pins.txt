@@ -1,0 +1,18 @@
+# FluidInference/paraformer-large-zh-coreml@9b4faaa06e476f38ab4a6e011a4467629df09059  files=17  bytes=222136057
+eab07ffe1555c52bf453304c7440181d05cb813c507f7d2b9dc690f893daee7f           243  ParaformerCifAlphas.mlmodelc/analytics/coremldata.bin
+1fdc3a31784fdd4ce76d8f6662cc1d5266a4bcb9f8ebff1f7364e4af9b9bfb1b           358  ParaformerCifAlphas.mlmodelc/coremldata.bin
+7d1b26300097a8e9d227528395ecceb789478f89fee98be5679c7c5f8714c673          5291  ParaformerCifAlphas.mlmodelc/model.mil
+ca67890e3fd418ca1f3a227001ba4f1300d5523b8a49470bf3791eaba836bbee       1575168  ParaformerCifAlphas.mlmodelc/weights/weight.bin
+544bf35b7e52b54f0a84b9ece9ad6b0416a07a4cc707f5dd67e1f6027b3e1697           243  ParaformerDecoder_int8.mlmodelc/analytics/coremldata.bin
+744496100b6309842b94410d0ddd1dce65b3da773e308f86da010f86967161d8           370  ParaformerDecoder_int8.mlmodelc/coremldata.bin
+2c2dea30cc84c5669d4baf547eafa2f40274a22fdc1e6732a3cdb2b192389bab        309868  ParaformerDecoder_int8.mlmodelc/model.mil
+1794d31522563f29357c6fdb5eb61bdb0cfe1cb9c1734265ae0cc5b154f702f6      57440104  ParaformerDecoder_int8.mlmodelc/weights/weight.bin
+2ccb1ebd14f683926c047f44c52097b17ab7264f0d3be7f624a8e321e3770f5d           243  ParaformerEncoder_int8.mlmodelc/analytics/coremldata.bin
+09cc778f64866a7c25d454816c7da566d96fb7d0a9ea13d070276c9828150e0b           387  ParaformerEncoder_int8.mlmodelc/coremldata.bin
+219bc0334ca64d84b232f7320c900794149b612152b1594739a2e9e9cbccd9a3        806287  ParaformerEncoder_int8.mlmodelc/model.mil
+e5a808ac41b0beade91c443ad13ee7aa8be85f94318bddc0d515f2334e147bef     158884352  ParaformerEncoder_int8.mlmodelc/weights/weight.bin
+5ab78c2dbf08223650a6ebbd3d501e34700b86ddf6e099a4c7a9fe947c1d3412           243  ParaformerPreprocessor.mlmodelc/analytics/coremldata.bin
+998336618c499cb44a66c39dcee7b37eff07a67e351de07beaf5563c11c7122d           330  ParaformerPreprocessor.mlmodelc/coremldata.bin
+1b9b18be0a35b11165269b1ca071a30af736deb314d8bd82d9540c769137a70e         15008  ParaformerPreprocessor.mlmodelc/model.mil
+69c630a115da5e4db36ec41662f0b776c0ef33ec6776d86f8cdaaba022518396       3037504  ParaformerPreprocessor.mlmodelc/weights/weight.bin
+14fcd6164b074459896831d6845b1c45d8832dc50c754c8cf4375481125f8ea2         60058  vocab.json

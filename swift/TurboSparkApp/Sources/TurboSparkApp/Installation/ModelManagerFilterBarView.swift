@@ -12,6 +12,9 @@ struct ModelManagerFilterBarView: View {
     @Binding var groupOption: ModelManagerView.GroupOption
     @Binding var selectedTag: String?
     @Binding var showFavoritesOnly: Bool
+    /// Hide models whose drive is not connected and models whose files are
+    /// missing (requirement 3.6).
+    @Binding var availableOnly: Bool
 
     @ObservedObject private var orgStore = ModelOrganizationStore.shared
 
@@ -34,6 +37,18 @@ struct ModelManagerFilterBarView: View {
                 .toggleStyle(.button)
                 .controlSize(.small)
                 .help(Text("Show Favorites Only", bundle: .module))
+
+                // The word stays visible: a bare icon would leave the drive
+                // glyph as the only thing saying what the switch does, and the
+                // state is carried by the glyph and the pressed look, not color.
+                Toggle(isOn: $availableOnly) {
+                    Label { Text("Available now", bundle: .module) } icon: {
+                        Image(systemName: availableOnly ? "externaldrive.badge.checkmark" : "externaldrive")
+                    }
+                }
+                .toggleStyle(.button)
+                .controlSize(.small)
+                .help(Text("Hide models whose drive is not connected or whose files are missing", bundle: .module))
 
                 ModelFilterMenu(
                     name: Text("Filter by architecture", bundle: .module),

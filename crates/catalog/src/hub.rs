@@ -11,7 +11,7 @@ use crate::entry::CatalogEntry;
 use crate::hf::{hf_endpoint, Client, HubRequestError, RepoRef};
 use crate::hub_validation::{
     normalize_sha256, valid_relative_path, valid_repo_id, valid_revision, HubFileMetadata,
-    HubMetadataValidator, HubSearchEntry, HubValidationError, RejectedHubEntry,
+    HubMetadataValidator, HubSearchEntry, HubValidationError, LiveMeta, RejectedHubEntry,
 };
 use crate::probe::{ProbeReport, Verdict};
 use crate::quant::{group_variants, quant_label, QuantLabel, ShardSetIssue, ShardSetStatus};
@@ -132,12 +132,35 @@ impl HubSort {
     }
 }
 
+/// Which published weight format a search is restricted to.
+///
+/// The Hub's `filter` parameter takes a tag, so this is exactly one tag or
+/// none. `Mlx` and `Gguf` are the two formats this engine installs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum HubFormat {
+    #[default]
+    Any,
+    Gguf,
+    Mlx,
+}
+
+impl HubFormat {
+    fn filter_tag(self) -> Option<&'static str> {
+        match self {
+            Self::Any => None,
+            Self::Gguf => Some("gguf"),
+            Self::Mlx => Some("mlx"),
+        }
+    }
+}
+
 /// A user-submitted search phrase and bounded result-page options.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HubQuery {
     pub text: String,
     pub limit: u32,
     pub sort: HubSort,
+    pub format: HubFormat,
 }
 
 impl HubQuery {
@@ -146,7 +169,13 @@ impl HubQuery {
             text: text.into(),
             limit: DEFAULT_TRENDING_LIMIT,
             sort: HubSort::Trending,
+            format: HubFormat::Any,
         }
+    }
+
+    pub fn with_format(mut self, format: HubFormat) -> Self {
+        self.format = format;
+        self
     }
 
     pub fn with_limit(mut self, limit: u32) -> Self {
@@ -212,6 +241,10 @@ pub struct LiveTarget {
     pub fit: FitSummary,
     /// Populated by the explicit repository-detail or probe flow.
     pub variants: Option<Vec<HubGgufVariant>>,
+    /// Advisory list metadata (format tags, architecture string, gating).
+    /// A hint for a badge; `fit` and a probe stay the only compatibility
+    /// evidence.
+    pub meta: LiveMeta,
 }
 
 /// Display projection of the existing recommendation fit and evidence source.
@@ -279,6 +312,32 @@ pub struct DownloadReceipt {
     pub sources: Vec<VerifiedSourceGroup>,
     /// The unique child staging directory created and owned by this transfer.
     pub staging_root: PathBuf,
+    /// Per-file range cache trees under `<cache parent>/.download-cache/pinned`
+    /// that this transfer used. They stay so a failed install can resume;
+    /// the caller removes them with [`Self::discard_download_cache`] once
+    /// the install is published.
+    pub download_cache: Vec<PathBuf>,
+}
+
+impl DownloadReceipt {
+    /// Remove this transfer's range cache trees. Call only after the staged
+    /// bytes are published: until then the cache is what lets a retry
+    /// resume. Other owners' trees are untouched, and a missing tree is fine.
+    pub fn discard_download_cache(&self) -> Result<(), String> {
+        for dir in &self.download_cache {
+            match std::fs::remove_dir_all(dir) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(format!(
+                        "removing download cache {}: {error}",
+                        dir.display()
+                    ))
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Progress for one explicit pinned-source transfer.
@@ -481,7 +540,7 @@ impl<'a> HubClient<'a> {
             });
         }
 
-        let url = models_url(Some(&query.text), query.sort, query.limit)?;
+        let url = models_url(Some(&query.text), query.sort, query.limit, query.format)?;
         let fetched = self.fetch_list(&url, CacheKind::Search, refresh)?;
         let local_matches = self.catalog.find(&query.text);
         Ok(self.compose(fetched, local_matches))
@@ -489,7 +548,12 @@ impl<'a> HubClient<'a> {
 
     /// Fetches the current trending page and appends bundled recommendations.
     pub fn trending(&self, refresh: Refresh) -> Result<HubPage, HubError> {
-        let url = models_url(None, HubSort::Trending, DEFAULT_TRENDING_LIMIT)?;
+        let url = models_url(
+            None,
+            HubSort::Trending,
+            DEFAULT_TRENDING_LIMIT,
+            HubFormat::Any,
+        )?;
         let fetched = self.fetch_list(&url, CacheKind::Trending, refresh)?;
         let local_recommendations = self.catalog.entries().collect();
         Ok(self.compose(fetched, local_recommendations))
@@ -741,7 +805,31 @@ impl<'a> HubClient<'a> {
         progress: &mut dyn FnMut(HubDownloadProgress),
         cancel: &crate::install::CancelFlag,
     ) -> Result<DownloadReceipt, HubError> {
-        crate::hub_transfer::download_pinned_artifacts(self, plan, staging_parent, progress, cancel)
+        self.download_pinned_artifacts_into(plan, staging_parent, staging_parent, progress, cancel)
+    }
+
+    /// [`Self::download_pinned_artifacts`] with the range cache under
+    /// `<cache_parent>/.download-cache/pinned` rather than beside staging.
+    /// An install into a library stages on the library's drive, so that
+    /// publication is a same-volume rename, while the cache stays in the
+    /// home: `cache_parent` is the home and `staging_parent` the library's
+    /// staging folder.
+    pub fn download_pinned_artifacts_into(
+        &self,
+        plan: &PinnedArtifactPlan,
+        staging_parent: &Path,
+        cache_parent: &Path,
+        progress: &mut dyn FnMut(HubDownloadProgress),
+        cancel: &crate::install::CancelFlag,
+    ) -> Result<DownloadReceipt, HubError> {
+        crate::hub_transfer::download_pinned_artifacts(
+            self,
+            plan,
+            staging_parent,
+            cache_parent,
+            progress,
+            cancel,
+        )
     }
 
     pub(crate) fn client(&self) -> &Client {
@@ -1003,9 +1091,10 @@ impl<'a> HubClient<'a> {
         let Some(path) = self.cache_path(url) else {
             return;
         };
-        let Ok(payload) = serde_json::from_slice::<Value>(body) else {
+        let Ok(mut payload) = serde_json::from_slice::<Value>(body) else {
             return;
         };
+        trim_search_payload(&mut payload);
         let Some(fetched_at) = system_time_to_unix_seconds(fetched_at) else {
             return;
         };
@@ -1125,6 +1214,7 @@ impl<'a> HubClient<'a> {
                     evidence: Evidence::Discovered.as_str().to_string(),
                     fit: unknown_live_fit(),
                     variants: None,
+                    meta: live.meta,
                 }),
                 downloads: live.downloads,
                 likes: live.likes,
@@ -1456,7 +1546,31 @@ fn truncate_to_seconds(time: SystemTime) -> SystemTime {
         .unwrap_or(time)
 }
 
-fn models_url(search: Option<&str>, sort: HubSort, limit: u32) -> Result<String, HubError> {
+/// Fields requested beyond the Hub's default list columns. Naming any
+/// `expand[]` makes the Hub return ONLY the named fields, so `id`, `sha`,
+/// `downloads` and `likes` (which the validator requires) are listed too.
+const LIST_EXPAND_FIELDS: &[&str] = &[
+    "sha",
+    "downloads",
+    "likes",
+    "gated",
+    "tags",
+    "library_name",
+    "pipeline_tag",
+    "cardData",
+    // `gguf.architecture` is the file's `general.architecture`, read by the
+    // Hub, so a GGUF row needs no header fetch to say what it is.
+    "gguf",
+    // `config.model_type` is the same hint for safetensors and MLX rows.
+    "config",
+];
+
+fn models_url(
+    search: Option<&str>,
+    sort: HubSort,
+    limit: u32,
+    format: HubFormat,
+) -> Result<String, HubError> {
     let base = hf_endpoint();
     let mut url = reqwest::Url::parse(&format!("{}/api/models", base.trim_end_matches('/')))
         .map_err(|error| HubError::Network(format!("invalid HF endpoint {base:?}: {error}")))?;
@@ -1465,12 +1579,58 @@ fn models_url(search: Option<&str>, sort: HubSort, limit: u32) -> Result<String,
         if let Some(search) = search {
             query.append_pair("search", search);
         }
+        // Text models only: image, audio and embedding repositories have their
+        // own pinned catalogs and no arbitrary-repository probe.
+        query.append_pair("pipeline_tag", "text-generation");
+        if let Some(tag) = format.filter_tag() {
+            query.append_pair("filter", tag);
+        }
+        for field in LIST_EXPAND_FIELDS {
+            query.append_pair("expand[]", field);
+        }
         query
             .append_pair("sort", sort.api_value())
             .append_pair("direction", "-1")
             .append_pair("limit", &limit.to_string());
     }
     Ok(url.into())
+}
+
+/// Reduces a list payload to the fields the validator reads, before it is
+/// cached. The Hub sends each GGUF row's full chat template (and the config's
+/// `chat_template_jinja`), several KiB per row that nothing here uses, so an
+/// untrimmed 30-row page would put hundreds of KiB on disk per query.
+fn trim_search_payload(payload: &mut Value) {
+    const TOP: &[&str] = &[
+        "id",
+        "sha",
+        "downloads",
+        "likes",
+        "gated",
+        "tags",
+        "library_name",
+        "pipeline_tag",
+        "gguf",
+        "config",
+        "cardData",
+    ];
+    fn keep_only(value: Option<&mut Value>, key: &str) {
+        if let Some(Value::Object(object)) = value {
+            object.retain(|name, _| name == key);
+        }
+    }
+    let Some(rows) = payload.as_array_mut() else {
+        return;
+    };
+    for row in rows {
+        let Some(object) = row.as_object_mut() else {
+            continue;
+        };
+        object.retain(|name, _| TOP.contains(&name.as_str()));
+        keep_only(object.get_mut("gguf"), "architecture");
+        keep_only(object.get_mut("config"), "model_type");
+        keep_only(object.get_mut("cardData"), "base_model");
+    }
 }
 
 fn canonical_repo_id(repo_id: &str) -> String {
@@ -1695,7 +1855,13 @@ mod tests {
 
     #[test]
     fn url_encodes_search_as_one_query_value() {
-        let url = models_url(Some("org/model & sort=likes"), HubSort::Downloads, 17).unwrap();
+        let url = models_url(
+            Some("org/model & sort=likes"),
+            HubSort::Downloads,
+            17,
+            HubFormat::Any,
+        )
+        .unwrap();
         let parsed = reqwest::Url::parse(&url).unwrap();
         let pairs: Vec<_> = parsed.query_pairs().collect();
         assert_eq!(
@@ -1711,7 +1877,13 @@ mod tests {
 
     #[test]
     fn trending_sort_uses_hub_wire_value() {
-        let url = models_url(None, HubSort::Trending, DEFAULT_TRENDING_LIMIT).unwrap();
+        let url = models_url(
+            None,
+            HubSort::Trending,
+            DEFAULT_TRENDING_LIMIT,
+            HubFormat::Any,
+        )
+        .unwrap();
         let parsed = reqwest::Url::parse(&url).unwrap();
         let sort = parsed
             .query_pairs()
@@ -1719,6 +1891,74 @@ mod tests {
             .unwrap()
             .1;
         assert_eq!(sort, "trendingScore");
+    }
+
+    #[test]
+    fn url_restricts_to_text_models_and_one_format_tag() {
+        let pairs_of = |format| {
+            let url = models_url(Some("qwen"), HubSort::Downloads, 5, format).unwrap();
+            reqwest::Url::parse(&url)
+                .unwrap()
+                .query_pairs()
+                .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                .collect::<Vec<_>>()
+        };
+        let any = pairs_of(HubFormat::Any);
+        assert!(any.contains(&("pipeline_tag".into(), "text-generation".into())));
+        assert!(!any.iter().any(|(key, _)| key == "filter"));
+
+        let gguf = pairs_of(HubFormat::Gguf);
+        assert_eq!(
+            gguf.iter().filter(|(key, _)| key == "filter").count(),
+            1,
+            "exactly one filter tag"
+        );
+        assert!(gguf.contains(&("filter".into(), "gguf".into())));
+        assert!(pairs_of(HubFormat::Mlx).contains(&("filter".into(), "mlx".into())));
+
+        // The validator requires these; naming any expand[] drops the rest.
+        for needed in ["sha", "downloads", "likes", "gguf", "config"] {
+            assert!(
+                gguf.contains(&("expand[]".into(), needed.into())),
+                "expand[] must request {needed}"
+            );
+        }
+    }
+
+    #[test]
+    fn cache_trim_keeps_validator_fields_and_drops_chat_templates() {
+        let mut payload = serde_json::json!([{
+            "id": "o/n", "sha": "a".repeat(40), "downloads": 1, "likes": 2,
+            "tags": ["gguf"], "gated": false,
+            "gguf": {"architecture": "qwen35", "chat_template": "x".repeat(10_000), "total": 9},
+            "config": {"model_type": "qwen3", "chat_template_jinja": "y".repeat(10_000)},
+            "cardData": {"base_model": "q/w", "license": "mit"},
+            "_id": "internal", "modelId": "o/n"
+        }]);
+        trim_search_payload(&mut payload);
+        let row = &payload[0];
+        assert!(row.get("_id").is_none() && row.get("modelId").is_none());
+        assert_eq!(row["gguf"], serde_json::json!({"architecture": "qwen35"}));
+        assert_eq!(row["config"], serde_json::json!({"model_type": "qwen3"}));
+        assert_eq!(row["cardData"], serde_json::json!({"base_model": "q/w"}));
+        // Trimming must not change what the validator reads.
+        let validator = HubMetadataValidator::default();
+        let before = validator
+            .validate_search_payload(
+                &serde_json::to_vec(&serde_json::json!([{
+                    "id": "o/n", "sha": "a".repeat(40), "downloads": 1, "likes": 2,
+                    "tags": ["gguf"], "gated": false,
+                    "gguf": {"architecture": "qwen35", "chat_template": "x"},
+                    "config": {"model_type": "qwen3"},
+                    "cardData": {"base_model": "q/w"}
+                }]))
+                .unwrap(),
+            )
+            .unwrap();
+        let after = validator
+            .validate_search_payload(&serde_json::to_vec(&payload).unwrap())
+            .unwrap();
+        assert_eq!(before.valid, after.valid);
     }
 
     #[test]

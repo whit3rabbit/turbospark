@@ -458,6 +458,14 @@ printf '[{"role":"user","content":"Explain how coastal wetlands reduce flood dam
 
 A bare `--prompt` on an instruction-tuned model babbles: that is the chat
 template missing, not a decode bug. `--messages-file` applies it for you.
+`turbospark run <model> "text"` is the same verbatim mode, not a chat turn.
+Check the banner before judging output: `--messages-file` prints
+`generating (real forward pass, chat template applied):`, `--chat` opens with
+`Interactive chat.`, and the verbatim mode prints
+`generating (real forward pass):`. On 2026-10-25 a Flint session spent
+a bisect and a forward-pass review on a "regression" that was this: every
+commit gave identical raw-completion output, and the model was fine through
+its template.
 
 `--reasoning off|low|medium|high|xhigh` (default `off`) asks the checkpoint's
 own template to think first; on a dialect whose reasoning is separable the

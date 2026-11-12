@@ -21,20 +21,19 @@ public struct WorktreeCommitListView: View {
                 commitList
             }
         }
-        .background(.appSurface.opacity(0.4))
+        .background(.appSurface)
     }
 
     private var header: some View {
         Button {
-            withAnimation(.easeInOut(duration: 0.15)) {
+            TSMotion.animate(TSMotion.select) {
                 isExpanded.toggle()
             }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
                     .themedFont(.tiny)
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 12)
+                    .foregroundStyle(.appSecondary)
 
                 Text("All changes", bundle: .module)
                     .font(theme.ui(.small, weight: .semibold))
@@ -45,10 +44,10 @@ public struct WorktreeCommitListView: View {
                 if !worktree.recentCommits.isEmpty {
                     Text(verbatim: "\(worktree.recentCommits.count)")
                         .themedFont(.tiny).monospacedDigit()
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 1)
-                        .background(Color.primary.opacity(0.04), in: Capsule())
+                        .background(.appElevated, in: Capsule())
                 }
             }
             .padding(.horizontal, 10)
@@ -63,7 +62,7 @@ public struct WorktreeCommitListView: View {
             if worktree.recentCommits.isEmpty {
                 Text("No recent commits found.", bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
             } else {
@@ -94,17 +93,18 @@ public struct WorktreeCommitListView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(commit.summary)
                     .font(theme.ui(.tiny, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : .primary)
+                    .foregroundStyle(isSelected ? AnyShapeStyle(theme.accent) : AnyShapeStyle(.appText))
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .help(commit.summary)
 
                 HStack(spacing: 6) {
                     Text(commit.shortHash)
                         .font(theme.code(.small))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
 
                     Text(verbatim: "-")
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
 
                     Text(commit.author)
                         .themedFont(.tiny)
@@ -112,11 +112,11 @@ public struct WorktreeCommitListView: View {
                         .lineLimit(1)
 
                     Text(verbatim: "-")
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
 
                     Text(commit.relativeDate)
                         .themedFont(.tiny)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
                 }
             }
             .padding(.horizontal, 8)
@@ -125,9 +125,10 @@ public struct WorktreeCommitListView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .background(
-            isSelected ? TurboSparkTheme.accentColor.opacity(0.12) : Color.clear,
-            in: RoundedRectangle(cornerRadius: 6)
+            isSelected ? AnyShapeStyle(theme.accent.opacity(0.12)) : AnyShapeStyle(Color.clear),
+            in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
         )
     }
 }

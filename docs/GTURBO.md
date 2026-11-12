@@ -48,8 +48,8 @@ A `.gturbo` model installation is a directory structured as follows:
 ```
 
 ### Upstream Parity & Interoperability
-- **Magic Signature**: `manifest.json` specifies `"magic": "GTURBO"` and `"versionMajor": 1`.
-- **100% Binary Compatible for text installs**: Both `turbospark` (Rust) and `turbo-fieldfare` (Swift) load, validate, and execute the exact same text `.gturbo` directory format. This does not apply to the separate image-generation install.
+- **Magic Signature**: `manifest.json` specifies `"magic": "GTURBO"`, `"versionMajor": 1` and `"versionMinor": 1`. The major changes when an older reader would misparse the install. The minor changes when the layout gains something an older reader can skip. The loader accepts minor 0 through the minor it was built with (`MANIFEST_VERSION_MINOR` in `crates/model-io`) and refuses a newer one with `UnsupportedVersion`, so an install written by a later turbospark is refused by name rather than read with its new fields ignored. Minor 1 adds the `model_weights.bin` format trailer below.
+- **100% Binary Compatible for text installs**: Both `turbospark` (Rust) and `turbo-fieldfare` (Swift) load, validate, and execute the exact same text `.gturbo` directory format. This does not apply to the separate image-generation install. The format trailer lives in index padding the Swift reader skips, so a 1.1 install opens in both engines.
 - **Verification**: In cross-engine benchmarks, both `turbospark-cli` and Swift's `MferenceCLI` run against identical `.gturbo` model directories under strict `.fullSha256` integrity verification.
 
 ---
@@ -63,7 +63,7 @@ The root `manifest.json` contains metadata for model architecture validation, qu
 {
   "magic": "GTURBO",
   "versionMajor": 1,
-  "versionMinor": 0,
+  "versionMinor": 1,
   "flags": {},
   "modelID": "ggml-org/gemma-4-26B-A4B-it-GGUF",
   "arch": {
@@ -102,9 +102,24 @@ The root `manifest.json` contains metadata for model architecture validation, qu
   },
   "expertsPerLayer": 128,
   "numLayers": 30,
-  "expertStride": 33554432
+  "expertStride": 33554432,
+  "producer": {
+    "tool": "turbospark-repack",
+    "version": "0.8.0"
+  }
 }
 ```
+
+**The `producer` object.** Which turbospark build wrote the install:
+`tool` is the writer crate (`turbospark-repack` for every install the
+workspace writes), `version` its crate version, and `gitRev`, when present,
+the source revision of that build. The workspace exposes no build-time
+revision today, so the writer omits `gitRev` rather than writing `null`. The
+block is informational: the loader reads it into `Manifest.producer` and
+never refuses on its contents, and it is optional on read, so an install
+written before it existed loads unchanged with `producer: None`. The field
+needs no `versionMinor` bump for the same reason. `trained_context::record`
+rewrites `manifest.json` in place after the walk and preserves the block.
 
 **The `quant` object on a GGUF-sourced install.** Where an affine install
 carries only `groupSize`, a GGUF-sourced one writes a slot per role
@@ -147,8 +162,8 @@ one type, so a uniform install's manifest is unchanged.
 | - entryCount (u64 LE): Number of entry descriptors          |
 +-------------------------------------------------------------+
 | Entry Descriptors (72 bytes per entry x entryCount)         |
-| - nameOffset (u32), nameLen (u32)                           |
-| - dtype (u8), padding (7 bytes)                             |
+| - nameOffset (u32 LE), nameLen (u16 LE)                     |
+| - dtype (u8), reserved (1 byte)                             |
 | - fileOffset (u64 LE): Absolute file offset (>= indexSize)  |
 | - sizeBytes (u64 LE): Data byte size                        |
 | - shape (4 x u32 LE)                                        |
@@ -157,11 +172,18 @@ one type, so a uniform install's manifest is unchanged.
 +-------------------------------------------------------------+
 | String Table & Page Alignment Padding                        |
 +-------------------------------------------------------------+
+| Format Trailer (last 16 bytes of the index region, 1.1+)    |
+| - magic (8 bytes): "GTURBIDX"                               |
+| - formatVersion (u32 LE): 1                                 |
+| - reserved (u32 LE): 0                                      |
++-------------------------------------------------------------+
 | Raw Resident Tensor Data Payload (starting at indexSize)    |
 +-------------------------------------------------------------+
 ```
 
 During startup, `turbospark-model-io` reads the leading index region (`indexSize` bytes), constructs the `ResidentIndex`, and mmaps the resident tensor data payload starting at offset `indexSize`.
+
+**Format trailer.** The writer reserves the trailer before rounding the index region up to the 16 KiB page, so it always sits in the padding after the string table. The reader honors a trailer only when it lies past the last name, reads `formatVersion`, and refuses any value other than the one it implements (`INDEX_FORMAT_VERSION` in `crates/model-io`) with `UnsupportedIndexFormat`. An index region with no trailer is the layout written before manifest 1.1 and loads as before. The header, entry table and data offsets are unchanged, so the Swift reader and older turbospark builds, which never look at the padding, open a 1.1 install too. A layout change an older reader would misparse is the point at which the leading header changes and the manifest major moves.
 
 **`dtype` tags.** Affine tensors carry their companion scale and bias regions
 in the four `scaleOffset`/`scaleSize`/`biasOffset`/`biasSize` fields; GGUF

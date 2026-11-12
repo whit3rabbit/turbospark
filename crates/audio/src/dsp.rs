@@ -90,6 +90,37 @@ impl TestRng {
     }
 }
 
+/// Distance between two f32 values in bit patterns: 0 for equal values
+/// (`+0.0` and `-0.0` included) or identical bits, `u32::MAX` when the signs
+/// differ or either is NaN, else the number of representable floats between
+/// them.
+///
+/// Why the refactor-parity tests are not all bit-for-bit any more: this
+/// crate's dev build is opt-level 1 (root Cargo.toml), and under it LLVM
+/// emits a different, equally correct instruction sequence for a new path
+/// than for the retained old one it is compared against. At opt-level 0 the
+/// pairs were bit-identical. The mechanism was not isolated; the likely one
+/// is adjacent `cos` and `sin` of one angle fusing into a single `sincosf`
+/// call at one site and not the other, which fits the mimi attention case
+/// drifting only at a large position offset.
+#[cfg(test)]
+pub(crate) fn ulp_distance(a: f32, b: f32) -> u32 {
+    if a == b || a.to_bits() == b.to_bits() {
+        return 0;
+    }
+    if a.is_nan() || b.is_nan() || a.is_sign_negative() != b.is_sign_negative() {
+        return u32::MAX;
+    }
+    a.to_bits().abs_diff(b.to_bits())
+}
+
+/// `ulp_distance(a, b) <= 1`: the whisper log-mel parity tolerance.
+/// Measured 2026-10-26 at opt-level 1: one ULP in one bin of one frame.
+#[cfg(test)]
+pub(crate) fn within_one_ulp(a: f32, b: f32) -> bool {
+    ulp_distance(a, b) <= 1
+}
+
 /// Periodic Hann window of `size` points: `0.5 * (1 - cos(2 pi i / N))`.
 ///
 /// Periodic (not symmetric): the last point is not the mirror of the first,
@@ -140,6 +171,29 @@ pub fn normalize_peak(samples: &[f32], target_peak: f32) -> Vec<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ulp_distance_counts_representable_floats_within_a_sign() {
+        let one = 1.0f32;
+        let up1 = f32::from_bits(one.to_bits() + 1);
+        let up2 = f32::from_bits(one.to_bits() + 2);
+        assert_eq!(ulp_distance(one, one), 0);
+        assert_eq!(ulp_distance(one, up1), 1);
+        assert_eq!(ulp_distance(up1, one), 1);
+        assert_eq!(ulp_distance(one, up2), 2);
+        assert_eq!(ulp_distance(0.0, -0.0), 0);
+        // Adjacent bit patterns across the sign boundary are not adjacent values.
+        assert_eq!(
+            ulp_distance(f32::from_bits(1), f32::from_bits(0x8000_0001)),
+            u32::MAX
+        );
+        // Identical bit patterns pass whatever they encode, as the
+        // bit-for-bit asserts these tolerances replace did.
+        assert_eq!(ulp_distance(f32::NAN, f32::NAN), 0);
+        assert_eq!(ulp_distance(f32::NAN, 1.0), u32::MAX);
+        assert!(within_one_ulp(one, up1));
+        assert!(!within_one_ulp(one, up2));
+    }
 
     #[test]
     fn hann_window_endpoints_and_sum() {

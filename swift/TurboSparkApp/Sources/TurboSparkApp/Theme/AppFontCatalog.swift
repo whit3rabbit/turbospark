@@ -163,6 +163,18 @@ public enum AppFontCatalog {
     public static let defaultUISize: CGFloat = 16
     public static let defaultCodeSize: CGFloat = 12
 
+    /// What a fresh install and Reset to Defaults start at. Deliberately NOT
+    /// `defaultUISize`: that constant is the reference the layout was drawn at
+    /// (`textScale` and `ui(fitting:)` divide by it), so moving it would
+    /// reflow every frame. The factory UI base sits below it, which the
+    /// layout scale clamps at 1 rather than shrinking frames with the text.
+    public static let factoryUISize: Double = 14
+    public static let factoryCodeSize: Double = 12
+
+    /// Factory code family. Hack ships in the bundle, and `resolveFamily`
+    /// falls back to the system face by name if registration ever fails.
+    public static let factoryCodeFamily = "Hack"
+
     /// Families that name the system face and therefore need nothing installed.
     public static let systemFamilies: Set<String> = ["System default", "SF Pro", "SF Mono"]
 

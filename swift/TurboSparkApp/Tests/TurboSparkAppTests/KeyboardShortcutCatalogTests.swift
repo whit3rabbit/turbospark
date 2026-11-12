@@ -24,7 +24,7 @@ final class KeyboardShortcutCatalogTests: XCTestCase {
     func testUnslothAlternateChordsAreListedOnTheirRows() {
         let navigationRows = KeyboardShortcutCatalog.navigation.rows
         XCTAssertEqual(
-            navigationRows.first(where: { $0.label == "Toggle Chat Sidebar" })?.altKeys,
+            navigationRows.first(where: { $0.label == "Toggle Sidebar" })?.altKeys,
             "\u{2318} B")
         let chatRows = KeyboardShortcutCatalog.chat.rows
         XCTAssertEqual(

@@ -16,12 +16,14 @@ struct ExcludedScanPathsSectionView: View {
         VStack(alignment: .leading, spacing: 12) {
             Label { Text("Excluded from scan", bundle: .module) } icon: { Image(systemName: "eye.slash") }
                 .themedFont(.base, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
 
             VStack(alignment: .leading, spacing: 10) {
                 if orgStore.excludedScanPaths.isEmpty {
-                    Text("Models you remove from TurboSpark without deleting their files are listed here, so they can be restored.", bundle: .module)
-                        .themedFont(.small)
-                        .foregroundStyle(.appSecondary)
+                    AppEmptyState(
+                        systemImage: "eye.slash",
+                        title: Text("Models you remove from TurboSpark without deleting their files are listed here, so they can be restored.", bundle: .module)
+                    )
                 } else {
                     ForEach(orgStore.excludedScanPaths.sorted(), id: \.self) { path in
                         HStack(spacing: 8) {

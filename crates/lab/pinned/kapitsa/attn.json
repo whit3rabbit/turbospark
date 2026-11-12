@@ -1,0 +1,443 @@
+{
+  "schema": "turbospark.lab.pinned/1",
+  "id": "kapitsa.attn",
+  "kernel": "the Qwen gated full attention kernels: attn_prep (q/k RMSNorm, partial RoPE, KV cache write), the split-KV decode pair attn_decode_partial + attn_decode_reduce, and the attn_prefill1..11 family with the attn11 reduce",
+  "kernel_class": "attention_decode",
+  "repo": "kapitsa",
+  "summary": "Decode attention for the Qwen3.5/3.6/3.8 (qwen35.cpp) and qwen4_exp (qwen4_exp.cpp) families is a split-KV flash-decoding pair: one threadgroup per (chunk, kv head), 16-position K/V tiles staged in threadgroup memory behind 2 barriers per tile, one simdgroup per query head, fp32 partials combined by attn_decode_reduce with a sigmoid gate. The same file also holds the prefill family (attn_prefill through the 11 variants, default attn_prefill11r, 32 queries of one query head per 256-thread threadgroup) plus attn_prep and KV helpers, so both classes are covered here and kernel_class records the decode side. The decode pair dispatches unconditionally for every context; the prefill kernels are replaced by tensor-unit qattn_t kernels on M5-class GPUs for the served head configs.",
+  "source": {
+    "url": "https://github.com/nace-ai/kapitsa",
+    "rev": "14d1b03f306032f20426375651c8181a9105857d",
+    "rev_date": "2026-10-25",
+    "license": "Apache-2.0",
+    "files": [
+      "src/kernels/attn.metal",
+      "src/model/qwen35.cpp",
+      "src/model/qwen4_exp.cpp",
+      "README.md"
+    ],
+    "symbols": [
+      "attn_prep",
+      "kv_regrow",
+      "kv_copy_prefix",
+      "attn_decode_partial",
+      "attn_decode_reduce",
+      "attn_prefill",
+      "attn_prefill2",
+      "attn_prefill3",
+      "attn_prefill4",
+      "attn_prefill5",
+      "attn_prefill6",
+      "attn_prefill7",
+      "attn_prefill8_q4",
+      "attn_prefill9_q4_k32",
+      "attn_prefill9_q8_k16",
+      "attn_prefill9_q4_k16",
+      "attn_prefill10_q4_k32",
+      "attn_prefill10u_q4_k32",
+      "attn_prefill11",
+      "attn_prefill11_x",
+      "attn_prefill11_k16",
+      "attn_prefill11_k16x",
+      "attn_prefill11_k16xr",
+      "attn_prefill11r",
+      "attn_prefill11g",
+      "attn_prefill11gs",
+      "attn_prefill11m",
+      "attn11_reduce"
+    ]
+  },
+  "models": [
+    {
+      "name": "Qwen3.8-27B",
+      "quant": "4-bit MLX, dense, 20.2 GB",
+      "family": "qwen35",
+      "machine": "M4 Pro 48 GB",
+      "role": "primary"
+    },
+    {
+      "name": "Qwen3.6-35B-A3B",
+      "quant": "4-bit MLX, MoE 3B active, 22.1 GB",
+      "family": "qwen35",
+      "machine": "M4 Pro 48 GB",
+      "role": "secondary"
+    },
+    {
+      "name": "Qwen3.5-4B",
+      "quant": "4-bit MLX, dense, 4.6 GB",
+      "family": "qwen35",
+      "machine": "M4 Pro 48 GB",
+      "role": "secondary"
+    },
+    {
+      "name": "Qwen3.8-Flash-Next 180B-A7B",
+      "quant": "4-bit MLX, MoE 7B active, 105.9 GB",
+      "family": "qwen4_exp",
+      "machine": "M5 Max 128 GB",
+      "role": "secondary"
+    }
+  ],
+  "settings": [
+    {
+      "name": "decode_position_tile_positions",
+      "value": 16,
+      "unit": "positions",
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/attn.metal:84",
+      "note": "kTile; the tile loop steps t0 += kTile (attn.metal:111)"
+    },
+    {
+      "name": "decode_head_dim",
+      "value": 256,
+      "unit": "elements",
+      "condition": "always (Qwen3.5/3.6/3.8 and qwen4_exp decode)",
+      "kind": "hardcoded",
+      "source": "src/kernels/attn.metal:85",
+      "note": "kHD indexes q and the cache in the decode pair; attn_prep instead takes D as a runtime param (attn.metal:9)"
+    },
+    {
+      "name": "decode_barriers_per_position_tile",
+      "value": 2,
+      "unit": "count",
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/attn.metal:118",
+      "note": "one after the cooperative K/V tile load, one before the next tile overwrites threadgroup memory (attn.metal:134); the basis of our doc's claim of 16-position tiles with 2 barriers"
+    },
+    {
+      "name": "decode_lane_vector_width",
+      "value": 8,
+      "unit": "elements per lane",
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/attn.metal:102",
+      "note": "qv[8] and acc[8]: 32 lanes x 8 covers the 256-dim head"
+    },
+    {
+      "name": "decode_gqa_query_heads_per_kv_head",
+      "value": "Hq / Hkv",
+      "unit": "heads",
+      "condition": "always",
+      "kind": "derived",
+      "source": "src/kernels/attn.metal:97",
+      "note": "one simdgroup per query head (hq = kvh * G + sg, attn.metal:98); simdgroups with sg >= G idle through the barriers (attn.metal:119)"
+    },
+    {
+      "name": "decode_threads_per_threadgroup",
+      "value": "32 * (Hq / Hkv)",
+      "unit": "threads",
+      "condition": "always",
+      "kind": "derived",
+      "source": "src/model/qwen35.cpp:2123",
+      "note": "192 on the 27B (G 6), 256 on the 35B (G 8), 128 on the 4B (G 4); qwen4_exp.cpp:1288 is the same dispatch"
+    },
+    {
+      "name": "decode_split_min_chunk_positions",
+      "value": 64,
+      "unit": "positions",
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:2115"
+    },
+    {
+      "name": "decode_split_chunk_target",
+      "value": "max(64, ceil(Lk / gpu_cores))",
+      "unit": "positions",
+      "condition": "always",
+      "kind": "derived",
+      "source": "src/model/qwen35.cpp:2115",
+      "note": "comment at src/model/qwen35.cpp:2112: one chunk per GPU core and kv head (35B: 2 x 20 threadgroups on the M4 Pro); NI_GPU_CORES overrides the core count (qwen35.cpp:77-81)"
+    },
+    {
+      "name": "decode_split_chunk_rounding",
+      "value": 16,
+      "unit": "positions (multiple of)",
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:2116"
+    },
+    {
+      "name": "decode_split_chunk_count",
+      "value": "ceil(Lk / chunk)",
+      "unit": "chunks",
+      "condition": "always",
+      "kind": "derived",
+      "source": "src/model/qwen35.cpp:2117"
+    },
+    {
+      "name": "decode_kv_cache_dtype",
+      "value": "half (fp16)",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/attn.metal:87",
+      "note": "cache layout [Hkv, max_seq, D] (attn.metal:4); tiles loaded cooperatively as half4 (attn.metal:114-116)"
+    },
+    {
+      "name": "decode_accumulation_dtype",
+      "value": "fp32",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/attn.metal:88",
+      "note": "scores, running m/l, the accumulator and both partial buffers are device float (attn.metal:88-89); only the staged K/V tiles are half"
+    },
+    {
+      "name": "decode_softmax_exp",
+      "value": "metal::fast::exp",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/attn.metal:126",
+      "note": "online softmax per key inside the tile (running max m, sum l, rescale); the reduce kernel also uses fast::exp (attn.metal:157)"
+    },
+    {
+      "name": "decode_dot_reduction_order",
+      "value": "per-lane 8-dim partial sums, then one simd_sum per key",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/attn.metal:123",
+      "note": "one key per inner iteration (attn.metal:120); no unroll over positions, unlike our unroll-4 barrierless kernel"
+    },
+    {
+      "name": "decode_partials_layout",
+      "value": "part_o [Hq * nchunks, 256] fp32; part_ml [Hq * nchunks, 2] fp32 (m, l)",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/attn.metal:137",
+      "note": "written per simdgroup at attn.metal:136-143, (m, l) by lane 0"
+    },
+    {
+      "name": "decode_reduce_grid",
+      "value": "Hq threadgroups x head_dim (256) threads",
+      "unit": null,
+      "condition": "always",
+      "kind": "derived",
+      "source": "src/model/qwen35.cpp:2127",
+      "note": "attn_decode_reduce combines the chunks and applies the sigmoid gate (attn.metal:146-163)"
+    },
+    {
+      "name": "decode_gate",
+      "value": "sigmoid gate from qg applied after the softmax combine",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/attn.metal:162",
+      "note": "gated full attention: q_proj output per head is [query D | gate D] (attn.metal:4)"
+    },
+    {
+      "name": "prep_threadgroup",
+      "value": "head_dim threads per (head, token) threadgroup",
+      "unit": null,
+      "condition": "always",
+      "kind": "derived",
+      "source": "src/model/qwen35.cpp:2109",
+      "note": "grid Hq + 2*Hkv x 1; attn_prep does q/k RMSNorm, partial RoPE over rot dims, and the KV cache write (attn.metal:18-51)"
+    },
+    {
+      "name": "prep_rotary_dims",
+      "value": 64,
+      "unit": "dims",
+      "condition": "always (Qwen3.5/3.6/3.8 configs)",
+      "kind": "derived",
+      "source": "src/model/qwen35.cpp:560",
+      "note": "rot_dims = head_dim * prf, passed as p.rot; commented as 64 in AttnPrepParams (attn.metal:10)"
+    },
+    {
+      "name": "prefill_default_kernel",
+      "value": "attn_prefill11r",
+      "unit": null,
+      "condition": "always (NI_ATTN unset)",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:3049",
+      "note": "11r skips the O rescale when no row's max moved, bitwise equal to attn_prefill11"
+    },
+    {
+      "name": "prefill11_queries_per_threadgroup",
+      "value": 32,
+      "unit": "queries (of one query head)",
+      "condition": "always (11 family)",
+      "kind": "hardcoded",
+      "source": "src/kernels/attn.metal:1662",
+      "note": "kBQ11; grid ceil(T/32) x Hq, heaviest blocks first"
+    },
+    {
+      "name": "prefill11_key_tile",
+      "value": 32,
+      "unit": "keys",
+      "condition": "always (k16 variants use 16)",
+      "kind": "hardcoded",
+      "source": "src/kernels/attn.metal:1991",
+      "note": "attn_prefill11/11_x/11r/11g/11gs/11m use BK 32; attn_prefill11_k16/11_k16x/11_k16xr use 16 (attn.metal:1993-2003)"
+    },
+    {
+      "name": "prefill11_threads_per_threadgroup",
+      "value": 256,
+      "unit": "threads",
+      "condition": "always (11 family)",
+      "kind": "hardcoded",
+      "source": "src/kernels/attn.metal:1899",
+      "note": "max_total_threads_per_threadgroup(256) on every 11-family kernel"
+    },
+    {
+      "name": "prefill_lead_pad",
+      "value": "key tile + 8",
+      "unit": "elements",
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/attn.metal:1667",
+      "note": "attn11_kld = BK + 8; the v1 kernel pads the same way (kQLD = kHD + 8 = 264, attn.metal:182)"
+    },
+    {
+      "name": "prefill11_block_order",
+      "value": "latest (heaviest) query blocks first",
+      "unit": null,
+      "condition": "always (11 family)",
+      "kind": "hardcoded",
+      "source": "src/kernels/attn.metal:1746",
+      "note": "short last wave; the GQ form orders the same way (attn.metal:1736)"
+    },
+    {
+      "name": "prefill11_masked_score_sentinel",
+      "value": -1.0e30,
+      "unit": "score",
+      "condition": "always (11 family)",
+      "kind": "hardcoded",
+      "source": "src/kernels/attn.metal:1664",
+      "note": "kNeg11; exp2 underflows it to 0 in attn11_reduce so there is no inf arithmetic (attn.metal:1958)"
+    },
+    {
+      "name": "prefill_v1_tile",
+      "value": "4 queries x 16 keys per threadgroup",
+      "unit": null,
+      "condition": "always (NI_ATTN=attn_prefill)",
+      "kind": "hardcoded",
+      "source": "src/kernels/attn.metal:180",
+      "note": "kQB 4, kKB 16 (attn.metal:180-181); v2 uses kQB2 8, kKB2 32 (attn.metal:314-315); v1 requires G == 8 (attn.metal:194); v3-v10 selectable only via NI_ATTN"
+    },
+    {
+      "name": "prefill_shortpf_max_queries",
+      "value": 128,
+      "unit": "queries",
+      "condition": "always (NI_SHORTPF_ATTN_MAX default)",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:225",
+      "note": "clamped 0..512; gate at src/model/qwen35.cpp:3056"
+    },
+    {
+      "name": "prefill_split_target_threadgroups",
+      "value": "5 * gpu_cores",
+      "unit": "threadgroups",
+      "condition": "short-prefix split path (attn_prefill11g / 11gs)",
+      "kind": "derived",
+      "source": "src/model/qwen35.cpp:3092",
+      "note": "about 5 threadgroups per core, 100 on the 20-core M4 Pro"
+    },
+    {
+      "name": "prefill_split_max",
+      "value": 16,
+      "unit": "splits",
+      "condition": "short-prefix split path (attn_prefill11g / 11gs)",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:3094",
+      "note": "ns = min(ns, tiles / 8, 1024 / T, 16)"
+    },
+    {
+      "name": "prefill_m1_kernel",
+      "value": "attn_prefill11_k16xr",
+      "unit": null,
+      "condition": "always when Gpu::apple_family() <= 7 (M1) and NI_ATTN unset",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.cpp:3126",
+      "note": "16-key tiles, fewer registers, exchange in its own buffer"
+    },
+    {
+      "name": "prefill_qattn_takeover",
+      "value": "qattn_t tensor-unit kernels for head_dim 256 and G ratios 4, 6, 8",
+      "unit": null,
+      "condition": "NI_QATTN on (default) and qmt_on: NI_QMT != 0, apple_family >= 10, macOS 26",
+      "kind": "derived",
+      "source": "src/model/qwen35.cpp:3158",
+      "note": "gates at src/model/qwen35.cpp:3158 (G 6) and 3165 (G 4 or 8); qmt_on at src/model/qwen35.cpp:2263-2271; the decode pair has no tensor-unit replacement"
+    }
+  ],
+  "gates": [
+    {
+      "condition": "prefill split path: NI_SHORTPF on (default) and T <= NI_SHORTPF_ATTN_MAX (default 128) and the kernel is attn_prefill11 or attn_prefill11r",
+      "source": "src/model/qwen35.cpp:3056"
+    },
+    {
+      "condition": "prefill: attn_prefill11_k16xr replaces the default when apple_family <= 7 (M1) and NI_ATTN is unset",
+      "source": "src/model/qwen35.cpp:3126"
+    },
+    {
+      "condition": "prefill: qattn_t_g6d2s8 replaces the attn.metal prefill when NI_QATTN is on and head_dim == 256 and Hq == 6 * Hkv",
+      "source": "src/model/qwen35.cpp:3158"
+    },
+    {
+      "condition": "prefill: the qattn_t G 8 / G 4 kernels replace the attn.metal prefill when NI_QATTN is on and head_dim == 256 and Hq == 4 or 8 times Hkv",
+      "source": "src/model/qwen35.cpp:3165"
+    },
+    {
+      "condition": "qattn requires qmt_on: NI_QMT != 0 and apple_family >= 10 and macOS 26",
+      "source": "src/model/qwen35.cpp:2266"
+    }
+  ],
+  "measured": [
+    {
+      "metric": "prefill_attn_ms",
+      "value": 39.3,
+      "model": "Qwen3.5-4B/9B heads (16 q, 4 kv, D 256)",
+      "machine": "M1 Pro",
+      "conditions": "their bench_attn, attn_prefill11_k16xr, a 2048-query chunk against 4K keys; 8K: 90.8, 16K: 203.7, against attn_prefill11r's 60.2 / 140.1 / 309.2; outputs not bit-identical to 11r, fp64-reference error the same (2.1-2.4e-4)",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35.cpp:3121"
+    },
+    {
+      "metric": "prefill_attn_ms",
+      "value": 22.21,
+      "model": "Qwen3.8-27B heads (G 6, D 256)",
+      "machine": "M5 Pro",
+      "conditions": "their bench_attn, attn_prefill11r, T 2048 against 4096 keys; 16384 keys: 111.64; the qattn_t_g6d2s8 tensor kernel reads 8.85 / 44.23 (2.4-2.6x faster than 11r)",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35.cpp:3151"
+    },
+    {
+      "metric": "prefill_speedup_vs_v10",
+      "value": 2.1,
+      "model": "Qwen3.6-35B-A3B shape (attn_prefill11 vs attn_prefill10)",
+      "machine": "unspecified",
+      "conditions": "their bench_attn comment: attn_prefill11 is 2.1x v10 on the 35B shape and 3.1x on the 27B's G 6 shape",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35.cpp:3044"
+    }
+  ],
+  "lab_mapping": [
+    {
+      "setting": "decode_position_tile_positions",
+      "maps_to": "tslab kernel --bench attn_decode axes (rows, context); a staging arm would add kapitsa's 16-position tile with 2 barriers against our barrierless unroll-4 form",
+      "env": null,
+      "note": "our doc's ahead-list row for decode GQA attention"
+    },
+    {
+      "setting": "decode_gqa_query_heads_per_kv_head",
+      "maps_to": "the attn_decode_kernel knob selects our barrier vs GQA-shared decode kernel; kapitsa's one-simdgroup-per-query-head form is the GQA-shared side of that switch",
+      "env": "TURBOSPARK_ATTN_DECODE_KERNEL",
+      "note": "values unset / barrier / gqa; our GQA-shared kernel serves head_dim 128 or 256 with at most 8 query heads per KV head"
+    },
+    {
+      "setting": "prefill11_threads_per_threadgroup",
+      "maps_to": "none yet (no tslab sweep axis for prefill attention staging; TURBOSPARK_PREFILL_ROWS_ATTN toggles our rows-batched prefill attention, whose shared chunk boundaries are not bit-exact)",
+      "env": "TURBOSPARK_PREFILL_ROWS_ATTN",
+      "note": "kapitsa's 32-queries-per-threadgroup 11 family has no matching axis here"
+    }
+  ],
+  "docs": [
+    "docs/KAPITSA_KERNELS.md#where-we-were-already-ahead-not-adopted-do-not-re-propose",
+    "docs/KAPITSA_KERNELS.md#measured-gqa-shared-attention-in-the-drafter-2026-10-23"
+  ],
+  "notes": "The doc's claim that kapitsa stages 16-position tiles with 2 barriers is confirmed exactly: kTile 16 (attn.metal:84) with barriers at attn.metal:118 and 134. The doc calls this kapitsa's 'decode GQA attention'; the decode pair is indeed the only decode path and dispatches unconditionally (no gate, no single-threadgroup fallback) in enc_attn and the qwen4_exp equivalent, while the same file also holds the whole prefill family plus attn_prep and KV helpers, covered here. Two doc nuances to record: (1) on M5-class GPUs (apple_family >= 10, macOS 26) kapitsa's own prefill no longer runs this file's prefill kernels for the served head configs, because the qattn_t tensor-unit kernels take over (qwen35.cpp:3158, 3165); attn_prefill11r remains the default on M4-class and the fallback elsewhere, and decode attention has no tensor-unit replacement. (2) The decode kernel serves head_dim 256 only (kHD hardcoded) but any G = Hq/Hkv, one simdgroup per query head with sg >= G lanes idling through the barriers; our doc's comparison row ('ours serves head_dim 128 or 256 with at most 8 query heads per KV head') is about our kernel, and kapitsa's constraint is different in both directions. The repo's own measured numbers for these kernels are prefill-side comments (bench_attn); no upstream per-kernel number exists for the decode pair in the source, so the measured block holds only prefill rows. Nemotron and Flint families do not use this file (their own nh_attn.metal and flint.metal). The v1-v10 prefill kernels are reachable only through the NI_ATTN override; the 11 family is what ships."
+}

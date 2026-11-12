@@ -1,0 +1,28 @@
+{
+  "generator": "crates/runtime/tools/gen_ocr_pages.py",
+  "pillow": "12.3.0",
+  "pages": [
+    {
+      "file": "page1.png",
+      "sha256": "c93dce7383e6b21322c4b0b08bd4e13f648bfb7ac779da3ecd08009c1e13795c",
+      "lines": [
+        "Quarterly Report",
+        "Revenue grew eleven percent compared with the same",
+        "period last year, driven by strong demand in Europe.",
+        "Operating costs were flat, and the team hired twelve",
+        "new engineers to support the product roadmap."
+      ]
+    },
+    {
+      "file": "page2.png",
+      "sha256": "0bc35d66e63ff8ed469619279384d1566a7c8bf5b5f1ae479cf77024db860e81",
+      "lines": [
+        "Meeting Notes",
+        "The committee approved the new library budget.",
+        "Construction will begin in the spring and should",
+        "finish before the end of next year.",
+        "Volunteers are welcome to join the planning group."
+      ]
+    }
+  ]
+}

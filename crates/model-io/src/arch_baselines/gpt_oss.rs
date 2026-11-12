@@ -97,6 +97,7 @@ pub fn gpt_oss_20b() -> ArchConfig {
             mscale: 0.0,
         },
         vision: VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: PleConfig::NONE,
     }
 }

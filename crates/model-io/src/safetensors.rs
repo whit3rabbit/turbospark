@@ -47,6 +47,13 @@ impl SafetensorsFile {
             call: format!("open {}", path.display()),
             detail: e.to_string(),
         })?;
+        // SAFETY (per the `memmap2` crate contract): the file must not be
+        // truncated or rewritten while the mapping lives, or a later touch
+        // raises SIGBUS. Mapping the whole file means every offset checked
+        // below is within the length seen at map time. Concurrent truncation
+        // by another process is not prevented (no check can close that
+        // window); model directories are treated as immutable inputs, the
+        // same contract `resident_buffer::unsafe_map` documents.
         let mmap = unsafe {
             Mmap::map(&file).map_err(|e| ModelError::IoFailed {
                 call: format!("mmap {}", path.display()),

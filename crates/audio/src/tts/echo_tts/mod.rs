@@ -527,6 +527,7 @@ fn load_dit(weights: &Weights, config: &EchoDiTConfig) -> Result<EchoDiT> {
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn load_speaker_encoder(
     weights: &Weights,
     base: &str,
@@ -566,6 +567,7 @@ fn load_speaker_encoder(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn load_encoder_block(
     weights: &Weights,
     base: &str,

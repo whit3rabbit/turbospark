@@ -34,6 +34,7 @@ struct ProjectPermissionsSectionView: View {
     @Binding var automationPermission: AppToolPermission
     @Binding var browserPermission: AppToolPermission
     @Binding var browserOriginAllowlist: [String]
+    @Binding var computerUsePermission: AppToolPermission
     @Binding var guardrailsOption: AppProjectGuardrailsOption
     @StateObject private var browserPermissionModel: BrowserProjectPermissionsSettingsViewModel
 
@@ -47,6 +48,7 @@ struct ProjectPermissionsSectionView: View {
         automationPermission: Binding<AppToolPermission>,
         browserPermission: Binding<AppToolPermission>,
         browserOriginAllowlist: Binding<[String]>,
+        computerUsePermission: Binding<AppToolPermission>,
         guardrailsOption: Binding<AppProjectGuardrailsOption>
     ) {
         _permissionMode = permissionMode
@@ -58,6 +60,7 @@ struct ProjectPermissionsSectionView: View {
         _automationPermission = automationPermission
         _browserPermission = browserPermission
         _browserOriginAllowlist = browserOriginAllowlist
+        _computerUsePermission = computerUsePermission
         _guardrailsOption = guardrailsOption
         _browserPermissionModel = StateObject(wrappedValue: BrowserProjectPermissionsSettingsViewModel(
             permission: browserPermission.wrappedValue,
@@ -70,11 +73,11 @@ struct ProjectPermissionsSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            AppAdaptiveHeader {
                 Text("Tool Permissions & Risk Policy", bundle: .module)
                     .themedFont(.small, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
-                Spacer()
+            } actions: {
                 Menu {
                     Button { applyPreset(.auto) } label: { Text("Auto (Recommended)", bundle: .module) }
                     Button { applyPreset(.alwaysAsk) } label: { Text("Always Ask", bundle: .module) }
@@ -94,8 +97,16 @@ struct ProjectPermissionsSectionView: View {
                 Text("Execution Mode", bundle: .module)
                     .themedFont(.small, weight: .medium)
                     .foregroundStyle(.appSecondary)
+                    .accessibilityAddTraits(.isHeader)
 
-                Picker(selection: $permissionMode) {
+                // Picking a mode applies its preset, as the composer's mode
+                // menu does. A binding setter rather than `onChange`, so the
+                // Presets menu (whose `.auto` differs from `preset(for: .auto)`)
+                // is not overwritten when it sets the mode itself.
+                Picker(selection: Binding(
+                    get: { permissionMode },
+                    set: { applyPreset(AppProjectPermissions.preset(for: $0)) }
+                )) {
                     ForEach(AppPermissionMode.allCases) { mode in
                         // Every short label is a catalog key.
                         Label {
@@ -119,7 +130,7 @@ struct ProjectPermissionsSectionView: View {
                 }
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 6))
+                .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             }
 
             // Granular Category Overrides
@@ -130,9 +141,11 @@ struct ProjectPermissionsSectionView: View {
                 permissionRow(title: "Web Requests", desc: "Fetch web documentation and search", selection: $webPermission)
                 permissionRow(title: "MCP External Tools", desc: "Invoke external MCP server tools", selection: $mcpPermission)
                 permissionRow(title: "Automation & Crons", desc: "Schedule background tasks and monitors", selection: $automationPermission)
+                permissionRow(title: "Computer Use", desc: "Click and type in Mac apps you allow", selection: $computerUsePermission)
+                categoryModeNote
             }
             .padding(12)
-            .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
+            .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
 
             browserPermissionsSection
 
@@ -155,10 +168,29 @@ struct ProjectPermissionsSectionView: View {
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
-                .frame(width: 175)
+                .frame(minWidth: 140, idealWidth: 175)
             }
             .padding(12)
-            .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
+            .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
+        }
+    }
+
+    /// What the engine ignores in the selected mode, so a row's value is
+    /// never read as a promise the mode does not keep.
+    @ViewBuilder private var categoryModeNote: some View {
+        switch permissionMode {
+        case .readOnly:
+            Text("Read Only allows file reading only. The other rows are not used in this mode.", bundle: .module)
+                .themedFont(.tiny)
+                .foregroundStyle(.appSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        case .permissive, .fullAccess:
+            Text("In this mode a row set to Ask Before Execution runs without prompting. Deny still refuses.", bundle: .module)
+                .themedFont(.tiny)
+                .foregroundStyle(.appSecondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        case .ask, .auto, .agentAuto:
+            EmptyView()
         }
     }
 
@@ -166,6 +198,7 @@ struct ProjectPermissionsSectionView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Browser access", bundle: .module)
                 .themedFont(.base, weight: .medium)
+                .accessibilityAddTraits(.isHeader)
 
             Picker(
                 selection: Binding(
@@ -185,9 +218,13 @@ struct ProjectPermissionsSectionView: View {
             Text("Site grants match exact HTTP(S) origins and are limited to 256 per project. Actions ask by default.", bundle: .module)
                 .themedFont(.tiny)
                 .foregroundStyle(.appSecondary)
+            Text("Always Allow and Ask Before Execution behave the same here: the agent acts on a site only after its exact origin is granted.", bundle: .module)
+                .themedFont(.tiny)
+                .foregroundStyle(.appSecondary)
 
             Text("Allowed site origins", bundle: .module)
                 .themedFont(.small, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
 
             if !browserPermissionModel.originAllowlist.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
@@ -198,10 +235,14 @@ struct ProjectPermissionsSectionView: View {
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                             Spacer(minLength: 4)
-                            Button(role: .destructive) {
+                            Button {
                                 browserPermissionModel.revokeOrigin(origin)
                             } label: {
-                                Text("Remove", bundle: .module)
+                                Label {
+                                    Text("Remove", bundle: .module)
+                                } icon: {
+                                    Image(systemName: "minus.circle")
+                                }
                             }
                             .appAction(.quiet, size: .small)
                         }
@@ -230,12 +271,12 @@ struct ProjectPermissionsSectionView: View {
             if let feedback = browserPermissionModel.feedback {
                 Text(LocalizedStringKey(feedback.localizationKey), bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(AppAttention.color)
                     .accessibilityAddTraits(.updatesFrequently)
             }
         }
         .padding(12)
-        .background(.appSurface, in: RoundedRectangle(cornerRadius: 8))
+        .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     /// `title` and `desc` are catalog keys; the picker carries `title` as
@@ -261,7 +302,7 @@ struct ProjectPermissionsSectionView: View {
             }
             .pickerStyle(.menu)
             .labelsHidden()
-            .frame(width: 175)
+            .frame(minWidth: 140, idealWidth: 175)
         }
     }
 
@@ -273,5 +314,8 @@ struct ProjectPermissionsSectionView: View {
         webPermission = permissions.web
         mcpPermission = permissions.mcp
         automationPermission = permissions.automation
+        // Through the model, which owns the browser binding and its picker.
+        browserPermissionModel.setPermission(permissions.browser)
+        computerUsePermission = permissions.computerUse
     }
 }

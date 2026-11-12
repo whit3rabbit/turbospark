@@ -18,6 +18,10 @@ public actor SessionApprovalStore {
     private var approvedTools: [String: Set<String>] = [:]
     /// Map from sessionID -> Set of approved command prefixes.
     private var approvedCommandPrefixes: [String: Set<String>] = [:]
+    /// Map from sessionID -> Set of network hosts approved for the chat.
+    /// Exact hosts, not suffixes: approving `docs.example.com` says nothing
+    /// about `evil.example.com`.
+    private var approvedHosts: [String: Set<String>] = [:]
 
     public init() {}
 
@@ -36,6 +40,19 @@ public actor SessionApprovalStore {
         var set = approvedCommandPrefixes[sessionID] ?? []
         set.insert(clean)
         approvedCommandPrefixes[sessionID] = set
+    }
+
+    /// Approves future network requests to exactly `host` within the session.
+    /// The network policy's own deny still wins (`AppToolPermissionEngine`).
+    public func allowHost(sessionID: String, host: String) {
+        let clean = AppNetworkPolicy.normalizedHost(host)
+        guard !clean.isEmpty else { return }
+        approvedHosts[sessionID, default: []].insert(clean)
+    }
+
+    public func isHostApproved(sessionID: String, host: String?) -> Bool {
+        guard let host else { return false }
+        return approvedHosts[sessionID]?.contains(AppNetworkPolicy.normalizedHost(host)) ?? false
     }
 
     /// Checks if a tool call has been pre-approved for this session.
@@ -61,13 +78,29 @@ public actor SessionApprovalStore {
     public func clear(sessionID: String) {
         approvedTools.removeValue(forKey: sessionID)
         approvedCommandPrefixes.removeValue(forKey: sessionID)
+        approvedHosts.removeValue(forKey: sessionID)
     }
 
     /// Clears all session approvals.
     public func reset() {
         approvedTools.removeAll()
         approvedCommandPrefixes.removeAll()
+        approvedHosts.removeAll()
     }
+}
+
+/// The rootless chat's permission mode for the tool call being executed.
+///
+/// `AppToolRegistry.execute` binds it from its `fallbackMode`, and `evaluate`
+/// reads it when its own `fallbackMode` is nil. Nested gates (batch children,
+/// subagents, `tool_call`, codemode) call `evaluate` without a mode, so they
+/// used to judge a projectless Ask or Read Only chat's calls as Auto.
+///
+/// A task-local for the same reason as `AppToolRegistry.callerToolFilter`:
+/// it reaches child tasks but NOT `Task.detached`, so the codemode worker's
+/// handler captures it before the worker starts.
+public enum ToolPermissionContext {
+    @TaskLocal public static var fallbackMode: AppPermissionMode? = nil
 }
 
 /// Central permissions evaluation engine enforcing Unsloth-style security policies.
@@ -86,6 +119,8 @@ public enum AppToolPermissionEngine {
     /// That paragraph described every mode except the one that skipped all
     /// three gates in a single line at the top. `readOnly` is the only
     /// absolute arm here, and it is absolute in the SAFE direction.
+    /// `fullAccess` skips the high-risk gate on purpose, but sits under the
+    /// category deny and the MCP deny rule like every other mode.
     ///
     /// The MCP layers slot into that spine as follows. A persisted DENY rule
     /// sits immediately after the category deny (an explicitly denied tool
@@ -100,16 +135,107 @@ public enum AppToolPermissionEngine {
     /// - Parameter globalServers: the app-level MCP configurations, passed in
     ///   rather than re-read from disk (state#61). Every caller has them in
     ///   memory already, and this function runs on the main actor.
+    ///
+    /// **THE NETWORK POLICY WRAPS ALL OF IT** (`AppNetworkPolicy`, Settings >
+    /// Network). It is app-wide and a ceiling: its deny is returned before
+    /// any project mode is consulted, Full access included, and its ask turns
+    /// the project ladder's allow back into a hard-gated ask unless this
+    /// exact host was approved for the chat (`networkHostApproved`). A
+    /// tool-name session grant does not cover a new host.
     public static func evaluate(
         call: AppToolCall,
         project: AppProject?,
         sessionApproved: Bool = false,
         fallbackMode: AppPermissionMode? = nil,
         globalServers: [McpServerConfig] = GlobalMcpFileStore.load().servers,
-        browserContext: BrowserPermissionContext? = nil
+        browserContext: BrowserPermissionContext? = nil,
+        networkPolicy: AppNetworkPolicy = AppNetworkPolicyStore.current,
+        networkHostApproved: Bool = false
+    ) -> ToolPermissionDecision {
+        let network = networkDecision(
+            call: call, project: project, globalServers: globalServers,
+            browserContext: browserContext, policy: networkPolicy)
+        if case .deny(let reason)? = network {
+            return .deny(reason: reason)
+        }
+        let decision = evaluateProjectPolicy(
+            call: call, project: project, sessionApproved: sessionApproved,
+            fallbackMode: fallbackMode, globalServers: globalServers,
+            browserContext: browserContext)
+        if case .ask(let reason)? = network, !networkHostApproved, decision == .allow {
+            var assessment = call.riskAssessment ?? ToolRiskClassifier.assessRisk(
+                name: call.name, arguments: call.arguments, projectURL: project?.rootDirectoryURL)
+            // The user chose to be asked about new domains; the Agent-mode
+            // classifier must not answer for them.
+            assessment.hardGated = true
+            return .ask(assessment: assessment, reason: reason)
+        }
+        return decision
+    }
+
+    /// The network policy's verdict for this call, or nil when the call
+    /// reaches no network the policy governs (file tools, stdio MCP, the
+    /// user's own browser navigation).
+    static func networkDecision(
+        call: AppToolCall,
+        project: AppProject?,
+        globalServers: [McpServerConfig],
+        browserContext: BrowserPermissionContext?,
+        policy: AppNetworkPolicy
+    ) -> AppNetworkDecision? {
+        switch call.category {
+        case .web:
+            guard let raw = ToolApprovalPreviewSummary.httpURL(call.arguments) else {
+                // A search or code-search query: no model-chosen host, but
+                // it still sends traffic to a provider.
+                return policy.permitsOutboundTraffic
+                    ? nil : .deny(reason: "Network access for tools is blocked in Network settings.")
+            }
+            guard let host = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines))?.host,
+                  !host.isEmpty
+            else {
+                // Unparseable: the risk classifier hard-gates it, and Block
+                // all must not depend on that.
+                return policy.permitsOutboundTraffic
+                    ? nil : .deny(reason: "Network access for tools is blocked in Network settings.")
+            }
+            return policy.decision(host: host, method: call.arguments["method"])
+        case .mcp:
+            guard let target = McpPermissionRule.targetOfCall(name: call.name, arguments: call.arguments),
+                  let server = AppToolCatalogMcp.resolvedServers(global: globalServers, project: project)
+                      .first(where: { $0.name.lowercased() == target.server.lowercased() }),
+                  case .sse(let url, _) = server.transport
+            else { return nil }
+            guard let host = url.host, !host.isEmpty else {
+                return .deny(reason: "Remote MCP server '\(server.name)' has no host.")
+            }
+            return policy.decision(host: host)
+        case .browser:
+            // The browser has its own per-origin ask; the policy adds only
+            // its refusals, and never to the user's own navigation.
+            guard (browserContext?.owner ?? .agent) == .agent,
+                  let origin = browserContext?.origin
+            else { return nil }
+            if case .deny(let reason) = policy.decision(host: origin.host) {
+                return .deny(reason: reason)
+            }
+            return nil
+        default:
+            return nil
+        }
+    }
+
+    private static func evaluateProjectPolicy(
+        call: AppToolCall,
+        project: AppProject?,
+        sessionApproved: Bool,
+        fallbackMode: AppPermissionMode?,
+        globalServers: [McpServerConfig],
+        browserContext: BrowserPermissionContext?
     ) -> ToolPermissionDecision {
         // No project selected: fall back to the guarded default or chosen fallback mode.
-        let permissions = project?.permissions ?? AppProjectPermissions.preset(for: fallbackMode ?? .auto)
+        let permissions = project?.permissions ?? AppProjectPermissions.preset(
+            for: fallbackMode ?? ToolPermissionContext.fallbackMode ?? .auto)
         let category = call.category
 
         let categoryPermission: AppToolPermission
@@ -119,6 +245,12 @@ public enum AppToolPermissionEngine {
         case .terminal: categoryPermission = permissions.terminal
         case .web: categoryPermission = permissions.web
         case .browser: categoryPermission = permissions.browser
+        case .computerUse:
+            // Observing an app the user already granted needs no second
+            // prompt: the grant card was the approval. Deny still wins, and
+            // input actions keep the category's ask.
+            let readOnly = ComputerUseToolExecutor.readOnlyToolNames.contains(call.name.lowercased())
+            categoryPermission = readOnly && permissions.computerUse == .ask ? .allow : permissions.computerUse
         case .mcp: categoryPermission = permissions.mcp
         case .automation: categoryPermission = permissions.automation
         }
@@ -241,15 +373,22 @@ public enum AppToolPermissionEngine {
             return .deny(reason: "Tool execution is denied in Strict Read-Only mode.")
         }
 
-        // Full Access Mode: Unrestricted execution without approval prompts.
-        if permissions.mode == .fullAccess {
-            return .allow
-        }
-
         // 2. Granular Category Permission Check (Explicit Deny wins, and a
         // session approval cannot resurrect a category the project denies)
         if categoryPermission == .deny {
             return .deny(reason: "The \(category.label) category is set to Deny in project settings.")
+        }
+
+        // The app grant is the user's per-session consent to desktop control,
+        // so no mode, session approval, or classifier may answer it for them.
+        if category == .computerUse,
+           call.name.lowercased() == ComputerUseToolDefinitions.requestAccessToolName
+        {
+            var assessment = risk
+            assessment.hardGated = true
+            return .ask(
+                assessment: assessment,
+                reason: "Letting the agent control \(call.arguments["apps"] ?? "these apps") always needs your approval.")
         }
 
         // 2b. Persisted MCP deny rule: refused outright, ahead of every
@@ -260,6 +399,13 @@ public enum AppToolPermissionEngine {
         if let target = mcpTarget, permissions.mcpDenyMatches(serverName: target.server, toolName: target.tool) {
             let toolPart = target.tool.map { "__\($0)" } ?? " (all tools)"
             return .deny(reason: "MCP tool 'mcp__\(target.server)\(toolPart)' is denied by a project permission rule.")
+        }
+
+        // 2c. Full Access: no prompts and no risk ceiling, but BELOW the two
+        // explicit refusals. It returned above step 2, so a category the user
+        // set to Deny, or an MCP deny rule, ran anyway under this mode.
+        if permissions.mode == .fullAccess {
+            return .allow
         }
 
         // 3. High-risk actions ALWAYS require a fresh confirmation, regardless

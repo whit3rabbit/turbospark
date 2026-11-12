@@ -134,16 +134,16 @@ public struct McpImportSheet: View {
             Button { onDismiss() } label: { Text("Done", bundle: .module) }
                 .keyboardShortcut(.cancelAction)
             Spacer()
+            if isFetching {
+                AppProgressBar(value: nil, label: Text("Loading...", bundle: .module), size: .compact)
+                    .frame(minWidth: 32, idealWidth: 48, maxWidth: 64)
+            }
             Button {
                 Task { await fetchCatalog() }
             } label: {
-                if isFetching {
-                    ProgressView().scaleEffect(0.6).frame(width: 16, height: 16)
-                } else {
-                    Label { Text("Fetch Catalog", bundle: .module) } icon: { Image(systemName: "arrow.down.circle") }
-                }
+                Label { Text("Fetch Catalog", bundle: .module) } icon: { Image(systemName: "arrow.down.circle") }
             }
-            .buttonStyle(.borderedProminent)
+            .appAction(.primary)
             .disabled(isFetching || sourceText.trimmingCharacters(in: .whitespaces).isEmpty)
             .keyboardShortcut(.defaultAction)
         }
@@ -173,7 +173,7 @@ public struct McpImportSheet: View {
                         .themedFont(.tiny)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.12))
+                        .background(.appSecondary.opacity(0.12))
                         .clipShape(Capsule())
                 }
                 Spacer()
@@ -254,15 +254,10 @@ public struct McpImportSheet: View {
             if let message = entryErrors[entry.id] {
                 Text(message)
                     .themedFont(.tiny)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(AppAttention.color)
             }
         }
-        .padding(10)
-        .background(.appSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5))
+        .appCardSurface(padding: 10)
     }
 
     private func installButton(
@@ -272,12 +267,12 @@ public struct McpImportSheet: View {
             if installedNames.contains(entry.id) {
                 Label { Text("Added", bundle: .module) } icon: { Image(systemName: "checkmark.circle.fill") }
                     .themedFont(.small)
-                    .foregroundStyle(.green)
+                    .foregroundStyle(.appAccent)
             } else {
                 Button {
                     install(entry, marketplaceName: marketplaceName)
                 } label: { Text("Install", bundle: .module) }
-                .buttonStyle(.bordered)
+                .appAction(.secondary, size: .small)
             }
         }
     }
@@ -286,15 +281,15 @@ public struct McpImportSheet: View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .themedFont(.small)
-                .foregroundStyle(.orange)
+                .foregroundStyle(AppAttention.color)
             Text(message)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .background(AppAttention.color.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
     }
 
     // MARK: - Actions

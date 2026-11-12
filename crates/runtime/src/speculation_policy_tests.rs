@@ -32,20 +32,38 @@ fn auto_takes_each_drafters_own_block() {
         other => panic!("expected an enabled plan, got {other:?}"),
     };
     assert_eq!(block_of(SpeculativeDrafter::Mtp), DEFAULT_SPECULATION_BLOCK);
-    assert_eq!(block_of(SpeculativeDrafter::Dflash), DFLASH_SERVING_BLOCK);
-    // THE TWO SERVING DEFAULTS AGREE AT 2, independently measured: the MTP
-    // head's optimum (`docs/MTP.md`) and DFlash2's three-workload sweep
-    // (`DFLASH_SERVING_BLOCK`) landed on the same number, because what decides
-    // both is this engine's rollback cost rather than either drafter. So this
-    // test pins the MAPPING and can NO LONGER see an unresolved drafter by its
-    // block alone; `resolve_drafter` below covers that, and only a real-model
-    // run covers the call site. Asserted as an equality so the day they
-    // diverge is the day the discriminating check can come back, rather than a
-    // day nobody notices.
+    // DFlash2's `auto` follows the process's 8-row tile setting (read once),
+    // so the expectation is the same function the resolver calls; the next
+    // test pins the two values it chooses between.
     assert_eq!(
-        DEFAULT_SPECULATION_BLOCK, DFLASH_SERVING_BLOCK,
-        "the serving defaults diverged; restore a discriminating assertion here"
+        block_of(SpeculativeDrafter::Dflash),
+        crate::families::qwen::dflash_serving_block()
     );
+    // THE SERVING DEFAULTS DIVERGED on 2026-10-26 (DFlash2 re-measured at 3
+    // with the tile off, 7 with it on; the MTP head stays at 2), so the
+    // discriminating check this test once had to give up is back: an
+    // unresolved drafter reading the wrong default is visible by its block.
+    assert_ne!(
+        block_of(SpeculativeDrafter::Mtp),
+        block_of(SpeculativeDrafter::Dflash),
+        "the DFlash2 and MTP serving defaults agree again; this check can no longer \
+         tell them apart"
+    );
+}
+
+/// The two blocks DFlash2's `auto` chooses between, measured on 2026-10-26
+/// (`DFLASH_SERVING_BLOCK`'s table): 3 with the 8-row tile off, 7 with it on.
+#[test]
+fn dflash_auto_serves_the_measured_block_for_each_tile_setting() {
+    assert_eq!(DFLASH_SERVING_BLOCK, 3);
+    assert_eq!(crate::families::qwen::DFLASH_SERVING_BLOCK_TILE, 7);
+    let tile_on = std::env::var("TURBOSPARK_INT4_MMA8").is_ok_and(|v| v == "1" || v == "verify");
+    let want = if tile_on {
+        crate::families::qwen::DFLASH_SERVING_BLOCK_TILE
+    } else {
+        DFLASH_SERVING_BLOCK
+    };
+    assert_eq!(crate::families::qwen::dflash_serving_block(), want);
 }
 
 /// An EXPLICIT drafter is passed through untouched, because it is a promise
@@ -678,4 +696,94 @@ fn a_block_outside_allowed_range_is_refused() {
             "expected 'outside allowed range' in refusal, got: {err}"
         );
     }
+}
+
+/// Adaptive depth is a NAMED request, so it keeps the hard-fail half of the
+/// contract, and the open must size the head at the cap.
+#[test]
+fn adaptive_is_enabled_at_its_cap_and_opens_the_head_at_the_cap() {
+    let plan = resolve_speculation(
+        Speculation::Adaptive(8),
+        SpeculativeDrafter::Mtp,
+        None,
+        true,
+    )
+    .expect("a servable adaptive request");
+    assert_eq!(plan, SpeculationPlan::Enabled { block: 8 });
+    // Sampled runs are served by the step drafter, so adaptive is too.
+    assert!(resolve_speculation(
+        Speculation::Adaptive(8),
+        SpeculativeDrafter::Mtp,
+        None,
+        false
+    )
+    .is_ok());
+
+    let plain = DrafterChoice {
+        drafter: SpeculativeDrafter::Mtp,
+        install_has_mtp_head: Some(true),
+        install_has_dflash: Some(false),
+        note: None,
+    };
+    assert_eq!(
+        super::draft_policies(&plain, Speculation::Adaptive(8)).mtp,
+        crate::families::qwen::MtpDraftPolicy::Fixed(8)
+    );
+}
+
+#[test]
+fn an_unservable_adaptive_request_fails_with_the_reason() {
+    let err = resolve_speculation(
+        Speculation::Adaptive(8),
+        SpeculativeDrafter::Mtp,
+        Some("no head here".to_string()),
+        true,
+    )
+    .expect_err("a named request the install cannot serve must fail");
+    assert!(err.contains("no head here"), "{err}");
+}
+
+#[test]
+fn adaptive_refuses_the_block_drafter_and_a_cap_with_no_room() {
+    let err = resolve_speculation(
+        Speculation::Adaptive(8),
+        SpeculativeDrafter::Dflash,
+        None,
+        true,
+    )
+    .expect_err("the block drafter has no per-round depth to adapt");
+    assert!(err.contains("DFlash2"), "{err}");
+
+    for cap in [1, 2] {
+        let err = resolve_speculation(
+            Speculation::Adaptive(cap),
+            SpeculativeDrafter::Mtp,
+            None,
+            true,
+        )
+        .expect_err("a cap at the floor is a fixed block");
+        assert!(err.contains("fixed block"), "cap {cap}: {err}");
+    }
+    let err = resolve_speculation(
+        Speculation::Adaptive(16),
+        SpeculativeDrafter::Mtp,
+        None,
+        true,
+    )
+    .expect_err("above the verify row cap");
+    assert!(err.contains("outside allowed range"), "{err}");
+}
+
+#[test]
+fn adaptive_on_a_headless_install_does_not_ask_the_open_for_a_head() {
+    let headless = DrafterChoice {
+        drafter: SpeculativeDrafter::Mtp,
+        install_has_mtp_head: Some(false),
+        install_has_dflash: Some(false),
+        note: None,
+    };
+    assert_eq!(
+        super::draft_policies(&headless, Speculation::Adaptive(8)).mtp,
+        crate::families::qwen::MtpDraftPolicy::Off
+    );
 }

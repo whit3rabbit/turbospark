@@ -37,6 +37,8 @@
 //! kernel descoped), `fused.metal`, and the DSV4 compute kernels (state
 //! manager only).
 
+#[cfg(all(target_os = "macos", feature = "ane-prefill"))]
+pub mod ane_split;
 #[cfg(target_os = "macos")]
 mod attention_decode;
 #[cfg(target_os = "macos")]
@@ -52,6 +54,8 @@ mod context;
 // leaving the gate off here broke the cross-target check from the day the
 // modules landed (AGENTS.md/CLAUDE.md Gotcha 8: a mod without its gate).
 #[cfg(target_os = "macos")]
+mod conformer_stream;
+#[cfg(target_os = "macos")]
 mod dequant_1bit_gemm_batch;
 #[cfg(target_os = "macos")]
 mod dequant_1bit_gemv;
@@ -62,7 +66,11 @@ mod dequant_2bit_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_int4_batch;
 #[cfg(target_os = "macos")]
+mod dequant_int4_fused;
+#[cfg(target_os = "macos")]
 mod dequant_int4_gemv;
+#[cfg(target_os = "macos")]
+mod dequant_int4_mma8;
 #[cfg(target_os = "macos")]
 mod dequant_int4_steel;
 #[cfg(target_os = "macos")]
@@ -126,6 +134,8 @@ mod moe_prefill_batch_gguf;
 #[cfg(target_os = "macos")]
 mod moonshine_frontend;
 #[cfg(target_os = "macos")]
+mod nemotron_diar;
+#[cfg(target_os = "macos")]
 mod ple;
 #[cfg(target_os = "macos")]
 mod power_state;
@@ -146,6 +156,10 @@ mod rms_norm;
 #[cfg(target_os = "macos")]
 mod rope;
 #[cfg(target_os = "macos")]
+mod short_conv;
+#[cfg(target_os = "macos")]
+mod short_conv_state;
+#[cfg(target_os = "macos")]
 mod utility;
 #[cfg(target_os = "macos")]
 mod vision;
@@ -162,14 +176,15 @@ pub use warmup::{KernelWarmup, KernelWarmupPlan, KernelWarmupStats};
 pub use attention_decode::{
     attention_decode, attention_decode_gqa_supported, encode_attention_decode,
     encode_attention_decode_batch, encode_attention_decode_gqa, encode_attention_decode_gqa_rows,
-    encode_attention_decode_gqa_rows_with, AttentionScratch, BatchAttentionInputContract,
-    BatchAttentionKvFormat, BatchAttentionKvLayout, BatchAttentionScratch, DecodeAttentionKernel,
-    GqaRowsScratch, GQA_ROWS_SCRATCH_CHUNKS, MAX_DECODE_ATTENTION_HEAD_DIM, MAX_GQA_GROUP,
+    encode_attention_decode_gqa_rows_with, encode_attention_decode_tree, AttentionScratch,
+    BatchAttentionInputContract, BatchAttentionKvFormat, BatchAttentionKvLayout,
+    BatchAttentionScratch, DecodeAttentionKernel, GqaRowsScratch, ATTENTION_TREE_MAX_DEPTH,
+    GQA_ROWS_SCRATCH_CHUNKS, MAX_DECODE_ATTENTION_HEAD_DIM, MAX_GQA_GROUP,
 };
 #[cfg(target_os = "macos")]
 pub use attention_indexed::{
-    attention_decode_indexed, encode_attention_decode_indexed,
-    encode_attention_decode_indexed_from_count,
+    attention_decode_indexed, attention_decode_indexed_biased, encode_attention_decode_indexed,
+    encode_attention_decode_indexed_biased, encode_attention_decode_indexed_from_count,
 };
 #[cfg(target_os = "macos")]
 pub use attention_tq::{
@@ -178,6 +193,15 @@ pub use attention_tq::{
 };
 #[cfg(target_os = "macos")]
 pub use bytes::{half_slice_to_le_bytes, read_f32_buffer, read_f32_buffer_at, read_half_buffer};
+#[cfg(target_os = "macos")]
+pub use conformer_stream::{
+    encode_copy as encode_conformer_copy,
+    encode_depthwise_causal as encode_conformer_depthwise_causal,
+    encode_glu_extend as encode_conformer_glu_extend,
+    encode_relpos_attention as encode_conformer_relpos_attention,
+    encode_silu as encode_conformer_silu, RelPosAttention as ConformerRelPosAttention,
+    MAX_STREAM_HEAD_DIM, MAX_STREAM_KEYS,
+};
 #[cfg(target_os = "macos")]
 pub use context::{
     autorelease_pool, dispatch_one_threadgroup_per_row, dispatch_one_threadgroup_per_row_offsets,
@@ -209,12 +233,22 @@ pub use dequant_int4_batch::{
     MAX_BATCH_ROWS, MAX_GEMM_ROW_BLOCK, MMA_MAX_BATCH_ROWS,
 };
 #[cfg(target_os = "macos")]
+pub use dequant_int4_fused::{encode_down_epi_gemv, encode_gate_up_act_gemv, DownEpilogue};
+#[cfg(target_os = "macos")]
 pub use dequant_int4_gemv::{
     dequant_int4_gemv, dequant_int4_gemv_resident, encode_dequant_int4_gemv_resident,
     encode_embed_lookup_int4, Int4AffineRowGpu, Int4ResidentMatrix,
 };
 #[cfg(target_os = "macos")]
-pub use dequant_int4_steel::{encode_dequant_int4_gemm_steel, steel_supports, SteelTile};
+pub use dequant_int4_mma8::{
+    encode_dequant_int4_mma8_resident, int4_mma8_k_split, INT4_MMA8_MAX_ROWS,
+};
+#[cfg(target_os = "macos")]
+pub use dequant_int4_steel::{
+    encode_dequant_int4_gemm_small_n, encode_dequant_int4_gemm_steel,
+    encode_dequant_int4_gemm_steel_edge, small_n_supports, steel_edge_supports, steel_supports,
+    SteelTile, SMALL_N_MAX_ROWS, SMALL_N_MMA8_MAX_BATCH,
+};
 #[cfg(target_os = "macos")]
 pub use dequant_int8_batch::{
     best_row_block_int8, encode_dequant_int8_gemm_resident,
@@ -272,7 +306,8 @@ pub use dequant_q8_0_gemv::{
 pub use device_memory::{process_footprint, recommended_max_working_set};
 #[cfg(target_os = "macos")]
 pub use dflash_conv::{
-    encode_dflash_copy_rows, encode_dflash_grouped_conv, DFLASH_GROUP_SIZE, DFLASH_TAPS,
+    encode_copy_rows_fp16_strided, encode_dflash_copy_rows, encode_dflash_grouped_conv,
+    encode_gather_rows_fp16, DFLASH_GROUP_SIZE, DFLASH_TAPS, GATHER_MAX_ROWS,
 };
 #[cfg(target_os = "macos")]
 pub use dispatch_profile::{report as dispatch_profile_report, reset as dispatch_profile_reset};
@@ -280,10 +315,12 @@ pub use dispatch_profile::{report as dispatch_profile_report, reset as dispatch_
 pub use dsv4_state::{Dsv4StateManager, LayerCounters};
 #[cfg(target_os = "macos")]
 pub use gdn::{
-    encode_gdn_conv_decode, encode_gdn_conv_prefill, encode_gdn_conv_tail_update,
-    encode_gdn_delta_decode, encode_gdn_delta_prefill, encode_gdn_gated_norm,
+    encode_gdn_conv_decode, encode_gdn_conv_prefill, encode_gdn_conv_prefill_tree,
+    encode_gdn_conv_tail_update, encode_gdn_delta_decode, encode_gdn_delta_prefill,
+    encode_gdn_delta_prefill_lazy, encode_gdn_delta_prefill_lazy_tree, encode_gdn_gated_norm,
     encode_gdn_gated_norm_sigmoid, encode_gdn_in_proj, encode_gdn_qk_norm,
-    encode_gdn_qk_norm_with_rms_epsilon, GdnShape,
+    encode_gdn_qk_norm_with_rms_epsilon, encode_gdn_state_fold, gdn_tree_supported, GdnShape,
+    GDN_TREE_MAX_ROWS,
 };
 #[cfg(target_os = "macos")]
 pub use gdn_state::{GdnSnapshot, GdnStateManager};
@@ -312,8 +349,9 @@ pub use mla::{
 };
 #[cfg(target_os = "macos")]
 pub use moe_decode::{
-    encode_moe_phase1, encode_moe_phase2, encode_router_gemv_gemma4, moe_decode_source,
-    router_gemv_gemma4, MoeExpertOffsets, RoutedBlobsBuffer, MAX_STREAMED_EXPERTS,
+    encode_moe_phase1, encode_moe_phase1_int3, encode_moe_phase2, encode_moe_phase2_int3,
+    encode_router_gemv_gemma4, moe_decode_source, router_gemv_gemma4, MoeExpertOffsets,
+    RoutedBlobsBuffer, MAX_STREAMED_EXPERTS,
 };
 #[cfg(target_os = "macos")]
 pub use moe_gguf::{
@@ -326,8 +364,9 @@ pub use moe_gguf::{
 };
 #[cfg(target_os = "macos")]
 pub use moe_prefill_batch::{
-    encode_moe_prefill_phase1, encode_moe_prefill_phase2_fused, MoePrefillRoute,
-    RoutedBlobsWideBuffer, MAX_PREFILL_EXPERT_BINDINGS,
+    encode_moe_prefill_phase1, encode_moe_prefill_phase1_wide, encode_moe_prefill_phase2_fused,
+    encode_moe_prefill_phase2_fused_wide, MoePrefillRoute, RoutedBlobsWideBuffer,
+    MAX_PREFILL_EXPERT_BINDINGS,
 };
 #[cfg(target_os = "macos")]
 pub use moe_prefill_batch_gguf::{
@@ -339,6 +378,8 @@ pub use moonshine_frontend::{
     encode_moonshine_conv1d, encode_moonshine_embed, encode_moonshine_groupnorm,
     encode_moonshine_rope, encode_moonshine_swiglu, encode_moonshine_tanh,
 };
+#[cfg(target_os = "macos")]
+pub use nemotron_diar::encode_rope_neox_rows as encode_nemotron_rope_neox;
 #[cfg(target_os = "macos")]
 pub use ple::encode_ple_gate;
 #[cfg(target_os = "macos")]
@@ -370,10 +411,15 @@ pub use rms_norm::{
 };
 #[cfg(target_os = "macos")]
 pub use rope::{
-    encode_rope_mrope_interleaved, encode_rope_neox_freqs, encode_rope_neox_subdim,
-    encode_rope_proportional_neox, rope_mrope_interleaved, rope_neox_subdim,
-    rope_proportional_neox,
+    encode_rope_mrope_chunked, encode_rope_mrope_interleaved, encode_rope_neox_freqs,
+    encode_rope_neox_subdim, encode_rope_neox_subdim_rows, encode_rope_neox_subdim_rows_positions,
+    encode_rope_proportional_neox, encode_rope_proportional_neox_rows, rope_mrope_interleaved,
+    rope_neox_subdim, rope_proportional_neox, ROPE_POSITION_ROWS_MAX,
 };
+#[cfg(target_os = "macos")]
+pub use short_conv::{encode_short_conv_decode, encode_short_conv_prefill};
+#[cfg(target_os = "macos")]
+pub use short_conv_state::ShortConvStateManager;
 #[cfg(target_os = "macos")]
 pub use utility::{
     encode_bias_add, encode_gelu_erf_mul, encode_gelu_mul, encode_logit_softcap,
@@ -383,8 +429,15 @@ pub use utility::{
 };
 #[cfg(target_os = "macos")]
 pub use vision::{
-    encode_vision_attention, encode_vision_gelu, encode_vision_layer_norm, encode_vision_matmul,
-    encode_vision_residual_add, encode_vision_rope_2d, GeluKind, MAX_ATTENTION_HEAD_DIM,
+    encode_vision_attention, encode_vision_attention_relpos, encode_vision_attention_with,
+    encode_vision_conv2d, encode_vision_gated_dwconv3x3, encode_vision_gather_rows,
+    encode_vision_gelu, encode_vision_im2col, encode_vision_layer_norm, encode_vision_matmul,
+    encode_vision_matmul_with, encode_vision_mul, encode_vision_quick_gelu,
+    encode_vision_residual_add, encode_vision_rms_norm, encode_vision_rope_2d,
+    encode_vision_rope_axial, encode_vision_sam_attention, encode_vision_silu,
+    encode_vision_window_mean4_add, GeluKind, VisionAttentionKernel, VisionConvShape,
+    VisionMatmulKernel, MAX_ATTENTION_HEAD_DIM, SAM_ATTENTION_HEAD_DIM, SAM_ATTENTION_MAX_KEYS,
+    VISION_GATHER_ZERO,
 };
 #[cfg(target_os = "macos")]
 pub use whisper_conv::{encode_whisper_conv1d3_gelu, whisper_conv1d3_gelu};

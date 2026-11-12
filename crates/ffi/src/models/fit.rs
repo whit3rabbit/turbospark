@@ -204,6 +204,26 @@ fn evidence_name(evidence: catalog::Evidence) -> &'static str {
     }
 }
 
+/// This machine as the fit arithmetic sees it. Shared by every caller that
+/// builds a `catalog::Machine`, so a ranking and a hub search compare against
+/// the same memory figure.
+pub(super) fn local_machine(guard: model_io::LoadGuard) -> Result<catalog::Machine, String> {
+    let physical = runtime::physical_memory();
+    if physical == 0 {
+        return Err("no physical memory probe available on this platform".to_string());
+    }
+    let (working_set, chip) = match runtime::recommended_max_working_set() {
+        Some((bytes, name)) => (Some(bytes), name),
+        None => (None, String::new()),
+    };
+    Ok(catalog::Machine {
+        physical_bytes: physical,
+        working_set_bytes: working_set,
+        load_guard: guard,
+        chip,
+    })
+}
+
 pub(crate) fn recommend_json_with_progress<F>(
     context: Option<u32>,
     slots: model_io::ExpertCacheSlots,
@@ -214,23 +234,7 @@ pub(crate) fn recommend_json_with_progress<F>(
 where
     F: FnMut(u32, u32),
 {
-    let physical = runtime::physical_memory();
-    if physical == 0 {
-        return Err(
-            "no physical memory probe available on this platform; cannot recommend models"
-                .to_string(),
-        );
-    }
-    let (working_set, chip) = match runtime::recommended_max_working_set() {
-        Some((bytes, name)) => (Some(bytes), name),
-        None => (None, String::new()),
-    };
-    let machine = catalog::Machine {
-        physical_bytes: physical,
-        working_set_bytes: working_set,
-        load_guard: guard,
-        chip,
-    };
+    let machine = local_machine(guard)?;
     let catalog = Catalog::embedded()?;
     let entries: Vec<&catalog::CatalogEntry> = catalog.entries().collect();
     let context_val = context.unwrap_or(4096);

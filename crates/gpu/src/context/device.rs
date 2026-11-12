@@ -31,6 +31,11 @@ pub struct MetalContext {
     stats: MetalCompilationStats,
     buffer_allocations: AtomicU64,
     buffer_allocation_ns: AtomicU64,
+    /// The small-M MMA GEMM's activation table and group sums
+    /// (`dequant_int4_mma8.rs`), grown to the widest K seen. One per context
+    /// because one context is one queue: passes on it run in order, so
+    /// successive calls can share the scratch.
+    pub(crate) int4_mma8_scratch: Option<(metal::Buffer, metal::Buffer, usize)>,
 }
 
 /// Every specialization of one cached function, keyed by its caller-supplied
@@ -82,6 +87,15 @@ impl MetalContext {
         precise_math: bool,
         use_precompiled: bool,
     ) -> Self {
+        // The ANE prefill split (feature `ane-prefill`) encodes two command
+        // buffers per split point before committing any, and a default queue
+        // blocks the 65th creation until one completes, which never happens
+        // there.
+        #[cfg(feature = "ane-prefill")]
+        let queue = device.new_command_queue_with_max_command_buffer_count(
+            crate::ane_split::MAX_COMMAND_BUFFERS as u64,
+        );
+        #[cfg(not(feature = "ane-prefill"))]
         let queue = device.new_command_queue();
         let stats = MetalCompilationStats {
             cache_enabled: disk_cache.is_some(),
@@ -100,6 +114,7 @@ impl MetalContext {
             stats,
             buffer_allocations: AtomicU64::new(0),
             buffer_allocation_ns: AtomicU64::new(0),
+            int4_mma8_scratch: None,
         }
     }
 
@@ -339,6 +354,21 @@ impl MetalContext {
         &self.queue
     }
 
+    /// Blocks until every command buffer already committed to this queue has
+    /// completed. Commits an empty buffer and waits on it: same-queue buffers
+    /// complete in commit order, so its completion implies theirs.
+    ///
+    /// For work committed without a wait whose result the host is about to
+    /// touch, such as a GDN snapshot blit followed by a host-side state reset
+    /// (`GdnStateManager::snapshot`'s doc).
+    pub fn wait_until_idle(&self) {
+        crate::autorelease_pool(|| {
+            let command_buffer = self.queue.new_command_buffer();
+            command_buffer.commit();
+            command_buffer.wait_until_completed();
+        });
+    }
+
     /// Opens one command buffer + one serial compute encoder to batch many
     /// kernel dispatches into a single submission (the Swift original
     /// encodes a whole layer, or more, per command buffer instead of one
@@ -364,6 +394,39 @@ impl MetalContext {
             dispatch_profile::enabled()
                 .then(|| PassProfile::new(&self.device, label).map(RefCell::new))
                 .flatten(),
+        )
+    }
+
+    /// [`Self::begin_pass_labeled`] on a CONCURRENT compute encoder
+    /// (`MTLDispatchType::Concurrent`): dispatches may overlap unless the
+    /// caller separates them with [`PassEncoder::memory_barrier_with_buffers`].
+    /// The serial contract above is GONE, so this is opt-in per call site and
+    /// every caller owns a dependency audit: writes that a later dispatch
+    /// reads (including IN-PLACE updates and scratch reused across layers)
+    /// must be behind an explicit barrier naming those buffers.
+    ///
+    /// Doc lives here rather than on a flag because nothing switches this at
+    /// runtime: the caller decides per pass. NO RUNTIME SITE IS WIRED
+    /// (checked 2026-10-23: only `tests/concurrent_pass_semantics.rs` opens
+    /// one, and nothing reads `TURBOSPARK_METAL_CONCURRENT_PASSES`). The
+    /// natural first site is the decode path's q/k/v projection triple,
+    /// whose three GEMVs read the same normed input and write disjoint
+    /// outputs. Audit shared scratch before wiring any site: the small-M INT4
+    /// GEMM keeps one activation table per context (`int4_mma8_scratch`),
+    /// which concurrent dispatches would race on.
+    pub fn begin_pass_concurrent_labeled(&self, label: &'static str) -> PassEncoder {
+        let command_buffer = self.queue.new_command_buffer().to_owned();
+        command_buffer.set_label(label);
+        let encoder = command_buffer
+            .compute_command_encoder_with_dispatch_type(metal::MTLDispatchType::Concurrent)
+            .to_owned();
+        PassEncoder::new(
+            command_buffer,
+            RefCell::new(encoder),
+            // Dispatch profiling requires one encoder per dispatch to sample
+            // counters at encoder boundaries; that scheme is meaningless on a
+            // concurrent encoder, so a concurrent pass profiles as one row.
+            None,
         )
     }
 

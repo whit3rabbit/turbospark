@@ -137,7 +137,9 @@ impl TextTower {
         )?;
         let tokens = if dtype == "F32" {
             let len = w.file(TOKEN_TABLE)?.raw_bytes(TOKEN_TABLE)?.len();
-            if len != cfg.vocab_size * h * 4 {
+            // Checked: a product that wraps to `len` would admit rows the
+            // mapping does not hold.
+            if cfg.vocab_size.checked_mul(h).and_then(|n| n.checked_mul(4)) != Some(len) {
                 return Err(tensor_error(
                     TOKEN_TABLE,
                     format!("{len} bytes for an F32 table"),

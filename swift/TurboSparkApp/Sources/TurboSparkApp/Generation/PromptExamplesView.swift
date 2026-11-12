@@ -11,6 +11,7 @@ struct PromptExamplesView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Try an example", bundle: .module)
                         .font(theme.ui(.callout, weight: .semibold))
+                        .accessibilityAddTraits(.isHeader)
                     Text("Choose a prompt, edit it, or write your own.", bundle: .module)
                         .font(theme.ui(.tiny))
                         .foregroundStyle(.appSecondary)
@@ -25,11 +26,11 @@ struct PromptExamplesView: View {
         }
         .padding(14)
         .background {
-            RoundedRectangle(cornerRadius: 18)
+            RoundedRectangle(cornerRadius: AppMetrics.composerRadius, style: .continuous)
                 .fill(.appSurface)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 18)
-                        .stroke(.separator.opacity(0.5), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: AppMetrics.composerRadius, style: .continuous)
+                        .stroke(theme.border, lineWidth: 1)
                 }
         }
         .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -61,11 +62,11 @@ struct PromptExamplesView: View {
             }
             .buttonStyle(.plain)
             .background {
-                RoundedRectangle(cornerRadius: 14)
+                RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                     .fill(.appPage)
                     .overlay {
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(.separator.opacity(0.4), lineWidth: 0.5)
+                        RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                            .stroke(theme.border, lineWidth: 1)
                     }
             }
             .help(preset.title)

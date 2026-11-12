@@ -1,0 +1,387 @@
+//! Human-readable summaries of orchestrator outcomes. The ledger holds the
+//! data; this only prints it.
+
+use serde_json::{json, Value};
+
+use crate::orchestrate::Outcome;
+use crate::phases::BUCKET_NAMES;
+use crate::stats::{median, VerdictReport};
+
+/// Per-token bucket ms for one phase (`prefill_phases` or `decode_phases`),
+/// summed over the run's prompts and divided by their total forward passes.
+pub fn aggregate(record: &Value, phase: &str) -> Option<Value> {
+    let prompts = record["prompts"].as_array()?;
+    let mut calls = 0f64;
+    let mut ms = vec![0f64; BUCKET_NAMES.len()];
+    let (mut cb1, mut routed, mut fin) = (0f64, 0f64, 0f64);
+    let (mut req, mut hits, mut bytes_req) = (0f64, 0f64, 0f64);
+    let mut bytes_phys: Option<f64> = Some(0.0);
+    for p in prompts {
+        let ph = &p[phase];
+        if ph.is_null() {
+            continue;
+        }
+        let c = ph["calls"].as_f64()?;
+        calls += c;
+        for (i, b) in ph["buckets"].as_array()?.iter().enumerate().take(ms.len()) {
+            ms[i] += b["ms"].as_f64()?;
+        }
+        cb1 += ph["gpu_busy_ms_per_token"]["cb1"].as_f64()? * c;
+        routed += ph["gpu_busy_ms_per_token"]["routed"].as_f64()? * c;
+        fin += ph["gpu_busy_ms_per_token"]["final_cb"].as_f64()? * c;
+        req += ph["expert_requests"].as_f64()?;
+        hits += ph["expert_hits"].as_f64()?;
+        bytes_req += ph["expert_bytes_requested"].as_f64()?;
+        bytes_phys = match (bytes_phys, ph["expert_bytes_physical"].as_f64()) {
+            (Some(a), Some(b)) => Some(a + b),
+            _ => None,
+        };
+    }
+    if calls == 0.0 {
+        return None;
+    }
+    let mib = |b: f64| b / (1024.0 * 1024.0) / calls;
+    Some(json!({
+        "calls": calls,
+        "ms_per_token": BUCKET_NAMES.iter().zip(&ms).map(|(n, v)| (n.to_string(), json!(v / calls))).collect::<serde_json::Map<_, _>>(),
+        "total_ms_per_token": ms.iter().sum::<f64>() / calls,
+        "gpu_busy": {"cb1": cb1 / calls, "routed": routed / calls, "final": fin / calls},
+        "expert_hit_rate": (req > 0.0).then(|| hits / req),
+        "expert_mib_per_token": {"requested": mib(bytes_req), "physical": bytes_phys.map(mib)},
+    }))
+}
+
+fn med(values: impl Iterator<Item = Option<f64>>) -> Option<(f64, f64, f64)> {
+    let v: Vec<f64> = values.flatten().collect();
+    if v.is_empty() {
+        return None;
+    }
+    let lo = v.iter().copied().fold(f64::INFINITY, f64::min);
+    let hi = v.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    Some((median(&v), lo, hi))
+}
+
+/// The profile table: per arm, clean measured runs only.
+pub fn print_profile(arm_names: &[String], outcomes: &[Outcome]) -> Value {
+    let mut summary = serde_json::Map::new();
+    for name in arm_names {
+        let all: Vec<&Outcome> = outcomes
+            .iter()
+            .filter(|o| &o.arm == name && !o.warmup)
+            .collect();
+        let clean: Vec<&Outcome> = all.iter().copied().filter(|o| o.eligible).collect();
+        crate::say!();
+        let refused = outcomes
+            .iter()
+            .find(|o| &o.arm == name && o.status == "refused")
+            .and_then(|o| o.record["refusal"].as_str().map(str::to_string));
+        if let Some(r) = refused {
+            crate::say!("{name}: REFUSED: {r}");
+            summary.insert(name.clone(), json!({"refused": r}));
+            continue;
+        }
+        let first = clean.first().or(all.first());
+        crate::say!(
+            "{name}: {} clean of {} measured runs; slots {} residency {}",
+            clean.len(),
+            all.len(),
+            first.map_or(json!(null), |o| o.record["resolved_slots"].clone()),
+            first.map_or(json!(null), |o| o.record["resolved_residency"].clone()),
+        );
+        if clean.is_empty() {
+            for o in &all {
+                crate::say!("  dirty run {}: {}", o.run_id, o.reasons.join("; "));
+            }
+            summary.insert(name.clone(), json!({"clean_runs": 0}));
+            continue;
+        }
+        let tok_s = med(clean
+            .iter()
+            .map(|o| o.record["totals"]["prefill_tok_s"].as_f64()));
+        let pre_s = med(clean
+            .iter()
+            .map(|o| o.record["totals"]["prefill_s"].as_f64()));
+        let dec = med(clean
+            .iter()
+            .map(|o| o.record["totals"]["decode_tok_s"].as_f64()));
+        let peak = med(clean.iter().map(|o| {
+            o.record["peak_footprint_bytes"]
+                .as_f64()
+                .map(|b| b / (1u64 << 30) as f64)
+        }));
+        if let (Some(t), Some(s)) = (tok_s, pre_s) {
+            crate::say!(
+                "  prefill   {:.1} tok/s [{:.1}-{:.1}]   {:.2} s [{:.2}-{:.2}]",
+                t.0,
+                t.1,
+                t.2,
+                s.0,
+                s.1,
+                s.2
+            );
+        }
+        if let Some(d) = dec {
+            crate::say!("  decode    {:.2} tok/s [{:.2}-{:.2}]", d.0, d.1, d.2);
+        }
+        // Audio arms: wall time, real-time factor, and per-stage medians.
+        let audio_run = med(clean.iter().map(|o| o.record["audio"]["run_s"].as_f64()));
+        let rtf = med(clean.iter().map(|o| o.record["audio"]["rtf"].as_f64()));
+        let mut audio_stages = serde_json::Map::new();
+        if let (Some(r), Some(f)) = (audio_run, rtf) {
+            crate::say!(
+                "  audio     {:.2} s [{:.2}-{:.2}], RTF {:.3} [{:.3}-{:.3}]",
+                r.0,
+                r.1,
+                r.2,
+                f.0,
+                f.1,
+                f.2
+            );
+            let names: Vec<String> = clean[0].record["audio"]["stages"]
+                .as_object()
+                .map(|m| m.keys().cloned().collect())
+                .unwrap_or_default();
+            for n in names {
+                if let Some(s) = med(clean
+                    .iter()
+                    .map(|o| o.record["audio"]["stages"][&n].as_f64()))
+                {
+                    crate::say!("    {n:<24} {:>10.1} ms", s.0);
+                    audio_stages.insert(n, json!(s.0));
+                }
+            }
+            let digests: std::collections::BTreeSet<&str> = clean
+                .iter()
+                .filter_map(|o| o.record["audio"]["output_digest"].as_str())
+                .collect();
+            if digests.len() > 1 {
+                crate::say!(
+                    "    output differs between runs of this arm ({} digests)",
+                    digests.len()
+                );
+            }
+        }
+        if let Some(p) = peak {
+            crate::say!("  peak      {:.2} GiB phys_footprint", p.0);
+        }
+        // Chat prompts: time to first token per turn, median over clean runs.
+        if let Some(f) = med(clean
+            .iter()
+            .map(|o| o.record["totals"]["followup_ttft_s"].as_f64()))
+        {
+            crate::say!(
+                "  ttft      {:.3} s follow-up mean [{:.3}-{:.3}]",
+                f.0,
+                f.1,
+                f.2
+            );
+        }
+        let chats: Vec<(usize, usize)> = first
+            .and_then(|o| o.record["prompts"].as_array())
+            .map(|ps| {
+                ps.iter()
+                    .enumerate()
+                    .filter_map(|(i, p)| p["turns"].as_array().map(|t| (i, t.len())))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (pi, n) in chats {
+            for t in 0..n {
+                let turn = |o: &&Outcome| o.record["prompts"][pi]["turns"][t].clone();
+                let ttft = med(clean.iter().map(|o| turn(o)["ttft_s"].as_f64()));
+                let row = first.map(turn).unwrap_or_default();
+                if let Some(x) = ttft {
+                    crate::say!(
+                        "    chat {pi} turn {}: prompt {} reused {} ttft {:.3} s [{:.3}-{:.3}]",
+                        t + 1,
+                        row["prompt_tokens"],
+                        row["reused_tokens"],
+                        x.0,
+                        x.1,
+                        x.2
+                    );
+                }
+            }
+        }
+        // Speculative rounds: the first `[spec-stats]` call per run is the
+        // worker's warm pass, so only the later ones count.
+        let measured_calls = |key: &dyn Fn(&Value) -> Option<f64>| {
+            med(clean.iter().flat_map(|o| {
+                o.record["spec_stats"]
+                    .as_array()
+                    .map(|calls| calls.iter().skip(1).map(key).collect::<Vec<_>>())
+                    .unwrap_or_default()
+            }))
+        };
+        if let Some(c) = measured_calls(&|c| c["committed_per_round"].as_f64()) {
+            let ms = |phase: &str| {
+                measured_calls(&|c| c["ms_per_round"][phase].as_f64())
+                    .map_or("n/a".to_string(), |m| format!("{:.1}", m.0))
+            };
+            crate::say!(
+                "  spec      {:.2} committed/round [{:.2}-{:.2}], ms/round draft {} verify {}",
+                c.0,
+                c.1,
+                c.2,
+                ms("draft"),
+                ms("verify")
+            );
+        }
+        let mut arm_json = json!({
+            "clean_runs": clean.len(),
+            "prefill_tok_s": tok_s.map(|t| t.0),
+            "prefill_s": pre_s.map(|t| t.0),
+            "decode_tok_s": dec.map(|t| t.0),
+            "peak_gib": peak.map(|t| t.0),
+        });
+        if let (Some(r), Some(f)) = (audio_run, rtf) {
+            arm_json["audio_run_s"] = json!(r.0);
+            arm_json["rtf"] = json!(f.0);
+            arm_json["audio_stages"] = Value::Object(audio_stages);
+        }
+        for phase in ["prefill_phases", "decode_phases"] {
+            let aggs: Vec<Value> = clean
+                .iter()
+                .filter_map(|o| aggregate(&o.record, phase))
+                .collect();
+            if aggs.is_empty() {
+                continue;
+            }
+            crate::say!(
+                "  {} (median ms/token over runs):",
+                phase.trim_end_matches("_phases")
+            );
+            let mut phase_json = serde_json::Map::new();
+            let mut zero = Vec::new();
+            for b in BUCKET_NAMES {
+                let m = med(aggs.iter().map(|a| a["ms_per_token"][b].as_f64()));
+                if let Some((m, lo, hi)) = m {
+                    phase_json.insert(b.to_string(), json!(m));
+                    // Dense flows fill only the final wait and the
+                    // remainder; a column of zeros reads as a measurement.
+                    if hi == 0.0 {
+                        zero.push(b);
+                        continue;
+                    }
+                    let total = med(aggs.iter().map(|a| a["total_ms_per_token"].as_f64()))
+                        .map_or(1.0, |t| t.0);
+                    crate::say!(
+                        "    {b:<24} {m:>8.3}  [{lo:.3}-{hi:.3}]  {:>5.1}%",
+                        100.0 * m / total
+                    );
+                }
+            }
+            if !zero.is_empty() {
+                crate::say!(
+                    "    0 in every run, not filled by this flow or idle: {}",
+                    zero.join(", ")
+                );
+            }
+            let busy_cb1 = med(aggs.iter().map(|a| a["gpu_busy"]["cb1"].as_f64()));
+            let busy_routed = med(aggs.iter().map(|a| a["gpu_busy"]["routed"].as_f64()));
+            if let (Some(c), Some(r)) = (busy_cb1, busy_routed) {
+                crate::say!("    gpu busy: cb1 {:.3}, routed {:.3} ms/token", c.0, r.0);
+            }
+            if let Some(h) = med(aggs.iter().map(|a| a["expert_hit_rate"].as_f64())) {
+                let rq = med(aggs
+                    .iter()
+                    .map(|a| a["expert_mib_per_token"]["requested"].as_f64()));
+                let ph = med(aggs
+                    .iter()
+                    .map(|a| a["expert_mib_per_token"]["physical"].as_f64()));
+                crate::say!(
+                    "    experts: hit {:.1}%, requested {:.1} MiB/token, physical {}",
+                    h.0 * 100.0,
+                    rq.map_or(0.0, |v| v.0),
+                    ph.map_or("unmeasured".to_string(), |v| format!(
+                        "{:.1} MiB/token",
+                        v.0
+                    ))
+                );
+            }
+            // The MoE boundness gauge, from the median shares. Dense flows
+            // read `dense`; the reopen test for ANE expert work is
+            // `compute_bound` on prefill (docs/SPEEDUP_PLAYBOOK.md).
+            let share = |key: &str| -> f64 {
+                med(aggs.iter().map(|a| {
+                    Some(a["ms_per_token"][key].as_f64()? / a["total_ms_per_token"].as_f64()?)
+                }))
+                .map_or(0.0, |m| m.0)
+            };
+            let routed_gpu = med(aggs.iter().map(|a| {
+                Some(a["gpu_busy"]["routed"].as_f64()? / a["total_ms_per_token"].as_f64()?)
+            }))
+            .map_or(0.0, |m| m.0);
+            let io = share("expert io (pread)") + share("routed bind+upload");
+            let host_loop = share("router readback+topk") + share("encode + logit readbk");
+            let routed = aggs.iter().any(|a| {
+                a["expert_hit_rate"].as_f64().is_some()
+                    || a["gpu_busy"]["routed"].as_f64().is_some_and(|r| r > 0.0)
+            });
+            let class = crate::phases::classify_shares(routed_gpu, io, host_loop, routed);
+            if routed {
+                crate::say!(
+                    "    moe bound: {} (routed gpu {:.0}%, expert io {:.0}%, host loop {:.0}%)",
+                    serde_json::to_value(class)
+                        .ok()
+                        .and_then(|v| v.as_str().map(str::to_string))
+                        .unwrap_or_else(|| "?".into()),
+                    100.0 * routed_gpu,
+                    100.0 * io,
+                    100.0 * host_loop
+                );
+            }
+            phase_json.insert(
+                "moe_bound".into(),
+                json!({"routed_gpu_share": routed_gpu, "io_share": io,
+                       "loop_share": host_loop, "class": class}),
+            );
+            arm_json[phase] = Value::Object(phase_json);
+        }
+        // Modeled energy (IOReport, whole machine), when the worker metered.
+        let pj = med(clean
+            .iter()
+            .map(|o| o.record["totals"]["prefill_j"].as_f64()));
+        let dj = med(clean
+            .iter()
+            .map(|o| o.record["totals"]["decode_j"].as_f64()));
+        if pj.is_some() || dj.is_some() {
+            let per = |k: &str| med(clean.iter().map(|o| o.record["totals"][k].as_f64()));
+            let show = |v: Option<(f64, f64, f64)>, digits: usize| {
+                v.map_or("n/a".to_string(), |v| format!("{:.*}", digits, v.0))
+            };
+            crate::say!(
+                "  energy    prefill {} J ({} J/token), decode {} J ({} J/token); modeled whole machine, not wall",
+                show(pj, 1),
+                show(per("j_per_prefill_token"), 4),
+                show(dj, 1),
+                show(per("j_per_decode_token"), 4),
+            );
+            arm_json["prefill_j"] = json!(pj.map(|v| v.0));
+            arm_json["decode_j"] = json!(dj.map(|v| v.0));
+            arm_json["j_per_prefill_token"] = json!(per("j_per_prefill_token").map(|v| v.0));
+            arm_json["j_per_decode_token"] = json!(per("j_per_decode_token").map(|v| v.0));
+            arm_json["energy_model"] = json!(crate::energy::ENERGY_MODEL);
+        }
+        summary.insert(name.clone(), arm_json);
+    }
+    Value::Object(summary)
+}
+
+pub fn print_verdict(label: &str, v: &VerdictReport) {
+    crate::say!();
+    crate::say!(
+        "{label}: {:?} on {} clean pairs; median {:+.2}%, 95% CI [{:+.2}%, {:+.2}%], {} better / {} worse, effect floor {:.2}%",
+        v.verdict,
+        v.pairs,
+        v.median * 100.0,
+        v.ci_low * 100.0,
+        v.ci_high * 100.0,
+        v.positives,
+        v.negatives,
+        v.min_effect * 100.0
+    );
+    for r in &v.reasons {
+        crate::say!("  {r}");
+    }
+}

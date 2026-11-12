@@ -444,6 +444,28 @@ fn a_malformed_pull_vision_repo_reference_is_a_usage_error() {
     );
 }
 
+/// A `--repo` pull's `--alias` is recorded and printed raw ("installed X"),
+/// so it meets the charset pull-image already enforces. A terminal escape
+/// is refused before the repo is even parsed: the malformed repo here would
+/// otherwise be the error, which keeps this case offline.
+#[test]
+fn a_repo_pull_alias_with_control_characters_is_refused() {
+    for command in ["pull", "pull-vision"] {
+        for bad in ["evil\u{1b}]0;title\u{7}", "a\nb", "tab\tbed", "sp ace"] {
+            let (code, _, stderr) = run(&[command, "--repo", "notowneronly", "--alias", bad]);
+            assert_eq!(code, 2, "{command} {bad:?}: {stderr}");
+            assert!(
+                stderr.contains("ASCII letters"),
+                "{command} {bad:?}: {stderr}"
+            );
+            assert!(
+                !stderr.contains('\u{1b}'),
+                "{command}: echoed raw: {stderr}"
+            );
+        }
+    }
+}
+
 #[test]
 fn a_bare_discover_does_not_swallow_the_next_flag() {
     // Parse only: `--budget 1` makes every row refuse, so nothing reaches the
@@ -503,4 +525,165 @@ fn help_does_not_advertise_token_arguments() {
     assert!(!stdout.contains("--hf-token"), "{stdout}");
     assert!(!stdout.contains("--set <TOKEN>"), "{stdout}");
     assert!(!stdout.contains("auth [TOKEN]"), "{stdout}");
+}
+
+/// Alias plus modality stays unique across libraries, `--out` included: a
+/// pull whose alias another library holds is refused before any network
+/// request, rather than recording a row over that library's. The Hub
+/// endpoint is a closed local port, so a pull that got past the check fails
+/// on the network instead, with another message.
+#[test]
+fn a_pull_whose_alias_another_library_holds_is_refused_even_with_out() {
+    let home = std::env::temp_dir().join(format!(
+        "turbospark-model-cli-alias-elsewhere-{}",
+        std::process::id()
+    ));
+    std::fs::remove_dir_all(&home).ok();
+    std::fs::create_dir_all(&home).unwrap();
+    let library = "0f6c2a3e-1b7d-4c55-9e0a-7d2f1c3b4a59";
+    let row = |alias: &str, folder: &str, kind: Option<&str>| {
+        serde_json::json!({
+            "alias": alias,
+            "repo": "owner/name",
+            "revision": "main",
+            "path": format!("/Volumes/T7/TurboSpark/text/{folder}"),
+            "family": "qwen3",
+            "install_bytes": 1,
+            "installed_on": "2026-10-15",
+            "status": "runs",
+            "kind": kind,
+            "modality": "text",
+            "library": library,
+            "relative_path": format!("text/{folder}"),
+        })
+    };
+    let record = home.join("installed.json");
+    let rows = serde_json::json!([
+        row("tinyllama", "tinyllama.gturbo", None),
+        row(
+            "qwen38-vision-tower",
+            "qwen38-vision-tower.gturbo-vision",
+            Some("vision-tower")
+        ),
+    ]);
+    std::fs::write(&record, serde_json::to_vec_pretty(&rows).unwrap()).unwrap();
+    let before = std::fs::read(&record).unwrap();
+    let out = home.join("out");
+
+    for (command, alias) in [
+        ("pull", "tinyllama"),
+        ("pull-vision", "qwen38-vision-tower"),
+    ] {
+        let with_out = ["--out", out.to_str().unwrap()];
+        for extra in [&with_out[..], &[]] {
+            let output = bin()
+                .env("TURBOSPARK_HOME", &home)
+                .env("HF_ENDPOINT", "http://127.0.0.1:9")
+                .arg(command)
+                .arg(alias)
+                .args(extra)
+                .output()
+                .expect("the binary runs");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert_eq!(
+                output.status.code(),
+                Some(1),
+                "{command} {extra:?}: {stderr}"
+            );
+            assert!(
+                stderr.contains("already installed in"),
+                "{command} {extra:?}: {stderr}"
+            );
+            assert!(!out.exists(), "{command} {extra:?} created --out");
+        }
+    }
+    assert_eq!(std::fs::read(&record).unwrap(), before);
+    std::fs::remove_dir_all(&home).ok();
+}
+
+#[test]
+fn list_audio_names_every_row_where_it_runs_and_the_terms_to_accept() {
+    let (code, out, _) = run(&["list-audio"]);
+    assert_eq!(code, 0);
+    // FluidAudio's Core ML rows install from the CLI but run only in the app.
+    let ja = out
+        .lines()
+        .find(|l| l.contains("parakeet-ja-coreml"))
+        .expect("the Japanese Parakeet row is listed");
+    assert!(ja.contains("app only"), "{ja}");
+    // A row with terms prints the flag that accepts them.
+    let zh = out
+        .lines()
+        .find(|l| l.contains("paraformer-zh-coreml"))
+        .expect("the Paraformer row is listed");
+    assert!(zh.contains("--accept funasr_model_license"), "{zh}");
+    // The pre-existing music rows stay.
+    assert!(out.contains("minimax-music3-4bit"));
+    // And a speech row the old command never listed.
+    assert!(out.contains("speaker-diarization-coreml"));
+}
+
+#[test]
+fn pull_audio_refuses_without_the_terms_before_any_network_work() {
+    let (code, out, err) = run(&["pull-audio", "paraformer-zh-coreml"]);
+    assert_eq!(code, 1, "{err}");
+    // The terms print first, then the refusal names the exact flag.
+    assert!(out.contains("[funasr_model_license]"), "{out}");
+    assert!(err.contains("--accept funasr_model_license"), "{err}");
+}
+
+#[test]
+fn pull_audio_refuses_an_unknown_alias_and_a_flag_on_a_row_with_no_terms() {
+    let (code, _, err) = run(&["pull-audio", "no-such-model"]);
+    assert_eq!(code, 1);
+    assert!(err.contains("no pinned audio profile"), "{err}");
+
+    let (code, _, err) = run(&["pull-audio", "speaker-diarization-coreml", "--accept", "x"]);
+    assert_eq!(code, 1);
+    assert!(err.contains("no terms with id"), "{err}");
+}
+
+#[test]
+fn pull_audio_sends_a_converting_row_to_its_own_command() {
+    let (code, _, err) = run(&[
+        "pull-audio",
+        "fish-drama3-4bit",
+        "--accept",
+        "fish_audio_community_license",
+    ]);
+    assert_eq!(code, 1);
+    assert!(err.contains("pull-drama3"), "{err}");
+}
+
+#[test]
+fn accept_belongs_to_pull_audio_alone() {
+    let (code, _, err) = run(&["list-audio", "--accept", "x"]);
+    assert_eq!(code, 2);
+    assert!(err.contains("--accept does not apply"), "{err}");
+}
+
+#[test]
+fn path_and_rm_name_an_uninstalled_audio_model_without_deleting_anything() {
+    let (code, _, err) = run(&["path", "speaker-diarization-coreml"]);
+    assert_eq!(code, 1);
+    assert!(err.contains("not installed"), "{err}");
+    let (code, _, err) = run(&["rm", "speaker-diarization-coreml", "--yes"]);
+    assert_eq!(code, 1);
+    assert!(err.contains("not installed"), "{err}");
+}
+
+#[test]
+fn rm_refuses_a_directory_that_is_not_a_recorded_install() {
+    // `resolve` lets an existing directory stand in for an alias, which is
+    // right for `--model` but would let `rm` delete any folder it is given.
+    let dir =
+        std::env::temp_dir().join(format!("turbospark-model-rm-stray-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create stray dir");
+    std::fs::write(dir.join("keep.txt"), b"x").expect("write marker");
+    let (code, _, err) = run(&["rm", dir.to_str().expect("utf8 path"), "--yes"]);
+    let survived = dir.join("keep.txt").is_file();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(survived, "rm deleted an unrecorded directory: {err}");
+    assert_eq!(code, 1, "{err}");
+    assert!(err.contains("not a recorded install"), "{err}");
 }

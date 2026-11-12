@@ -46,7 +46,7 @@ struct PromptComposerPlusMenu: View {
                 .frame(height: iconButtonSize)
                 .padding(.horizontal, 7)
                 .background(
-                    Color.primary.opacity(isHovered ? 0.08 : 0.04),
+                    isHovered ? .appElevated : .appSurface,
                     in: Capsule()
                 )
                 .contentShape(Capsule())
@@ -56,7 +56,9 @@ struct PromptComposerPlusMenu: View {
             .fixedSize()
             .disabled(isRunning)
             .onHover { isHovered = $0 }
-            .help(Text("Add files, folders, and tools (Cmd+U)", bundle: .module))
+            .help(isRunning
+                ? Text("Cannot add files or tools while generation is running", bundle: .module)
+                : Text("Add files, folders, and tools (Cmd+U)", bundle: .module))
             .accessibilityLabel(Text("Add options and tools", bundle: .module))
         }
     }
@@ -294,6 +296,17 @@ struct PromptComposerPlusMenu: View {
     @ViewBuilder
     private var modesSection: some View {
         Section {
+            if model.interactionMode == .chat {
+                Toggle(isOn: Binding(
+                    get: { model.chatToolsEnabled },
+                    set: { newValue in
+                        model.chatToolsEnabled = newValue
+                        model.persistSettingsDebounced()
+                    })) {
+                    Label { Text("Tools in Chat", bundle: .module) } icon: { Image(systemName: "wrench.and.screwdriver") }
+                }
+            }
+
             // A Toggle so the menu shows the native checkmark and VoiceOver
             // reads the on/off state, rather than an icon swap.
             Toggle(isOn: $model.webSearchEnabled) {

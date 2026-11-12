@@ -196,6 +196,68 @@ impl MfTokenizer {
         self.apply_chat_template_with_reasoning(messages, ReasoningEffort::default())
     }
 
+    /// The begin-of-sentence literal a V2-era DeepSeek prompt must open with,
+    /// when its template does not write it.
+    ///
+    /// The DeepSeek-VL2 checkpoint's `chat_template.json` renders
+    /// `<|User|>: ...` with no BOS, while its tokenizer config sets
+    /// `add_bos_token: true` and the reference processor opens every prompt
+    /// with the BOS id. Every front end encodes a rendered prompt with
+    /// `add_bos = false` (a Gemma or Qwen template writes the literal itself
+    /// and a prefix would double it), so a BOS-less prompt silently runs
+    /// without its start mark. Done here, at the render, so the CLI, the
+    /// server and the FFI cannot disagree. Scoped to the V2 DeepSeek dialect,
+    /// and a template that already opens with the mark (DeepSeek-V2-Lite's
+    /// does) is left alone.
+    fn with_template_bos(&self, rendered: String) -> String {
+        if self.dialect != ChatDialect::DeepseekV2 {
+            return rendered;
+        }
+        let bos = crate::dialect::DEEPSEEK_BOS_MARK;
+        if rendered.starts_with(bos) {
+            rendered
+        } else {
+            format!("{bos}{rendered}")
+        }
+    }
+
+    /// Turn image parts into the literal `<image>\n` the V2 DeepSeek template
+    /// expects inside a STRING content, or `None` when nothing needs it.
+    ///
+    /// The DeepSeek-VL2 `chat_template.json` writes `{{message['content']}}`
+    /// and knows no content-part list, so a multimodal message would render as
+    /// the list's repr. The reference's prompt builder (mlx-vlm
+    /// `IMAGE_TOKEN_NEWLINE`) puts `<image>\n` in front of the text instead,
+    /// once per image, which is what this does. Scoped to the V2 dialect: every
+    /// other checkpoint's template walks the parts itself.
+    fn flatten_image_parts(&self, messages: &[Message]) -> Option<Vec<Message>> {
+        if self.dialect != ChatDialect::DeepseekV2 || messages.iter().all(|m| m.image_count() == 0)
+        {
+            return None;
+        }
+        Some(
+            messages
+                .iter()
+                .map(|m| {
+                    if m.image_count() == 0 {
+                        return m.clone();
+                    }
+                    let mut text = String::new();
+                    for part in &m.content_parts {
+                        match part {
+                            ContentPart::Image => text.push_str("<image>\n"),
+                            ContentPart::Text(t) => text.push_str(t),
+                        }
+                    }
+                    let mut flat = m.clone();
+                    flat.content = Some(text);
+                    flat.content_parts = Vec::new();
+                    flat
+                })
+                .collect(),
+        )
+    }
+
     /// [`Self::apply_chat_template`], asking the checkpoint's own template for
     /// a reasoning level.
     ///
@@ -220,13 +282,15 @@ impl MfTokenizer {
         reasoning: ReasoningEffort,
     ) -> Result<String, TokenizerError> {
         if self.chat_template_source.is_some() {
-            return crate::jinja_chat_template::render_generic_chat_template(
+            let flattened = self.flatten_image_parts(messages);
+            let rendered = crate::jinja_chat_template::render_generic_chat_template(
                 self,
-                messages,
+                flattened.as_deref().unwrap_or(messages),
                 &[],
                 true,
                 reasoning,
-            );
+            )?;
+            return Ok(self.with_template_bos(rendered));
         }
         if reasoning.enable_thinking() {
             return Err(TokenizerError::UnsupportedForDialect(format!(
@@ -330,6 +394,11 @@ impl MfTokenizer {
                  chat_template.jinja (or tokenizer_config.json's chat_template key)"
                     .to_string(),
             )),
+            ChatDialect::Flint => Err(TokenizerError::UnsupportedForDialect(
+                "Flint has no fallback renderer; the install must carry its own \
+                 chat_template.jinja (or tokenizer_config.json's chat_template key)"
+                    .to_string(),
+            )),
             ChatDialect::Kimi => Err(TokenizerError::UnsupportedForDialect(
                 "the Kimi K2 line has no fallback renderer; the install must carry its own \
                  chat_template.jinja (or tokenizer_config.json's chat_template key)"
@@ -402,6 +471,10 @@ impl MfTokenizer {
             ChatDialect::Glm => format!(
                 "{GLM_SOP_MARK}<|user|>{content}<|assistant|><think>"
             ),
+            // One user turn and the bare generation prompt, read off the
+            // checkpoint's own template: `<|user|>content<|assistant|>`, with
+            // no BOS, no turn terminator and no forced think frame.
+            ChatDialect::Flint => format!("<|user|>{content}<|assistant|>"),
             ChatDialect::Kimi => format!(
                 "{KIMI_IM_USER_MARK}user{KIMI_IM_MIDDLE_MARK}{content}{KIMI_IM_END_MARK}\
                  {KIMI_IM_ASSISTANT_MARK}assistant{KIMI_IM_MIDDLE_MARK}<think>"
@@ -488,6 +561,104 @@ impl MfTokenizer {
                 "this checkpoint's chat template renders {starts} occurrence(s) of vision_start \
                  ({vision_start}) and {pads} of image_pad ({image_pad}) for one image; \
                  splice_and_walk needs exactly one of each"
+            )));
+        }
+        Ok(())
+    }
+
+    /// [`Self::verify_image_markers`] for a tower with NO start token: the
+    /// template renders one bare image marker (LLaVA's `<image>`), and the
+    /// processor repeats it per patch.
+    ///
+    /// Same two checks minus the pair: the marker resolves to a real token,
+    /// and a minimal `[Image, Text]` turn renders EXACTLY ONE of it. A
+    /// template that renders none (a text-only tokenizer pairing) or two (an
+    /// already-expanded one) would otherwise surface as a placeholder-count
+    /// mismatch at the first image.
+    pub fn verify_bare_image_marker(&self, image_marker: i32) -> Result<(), TokenizerError> {
+        if self.id_to_token(image_marker).is_none() {
+            return Err(TokenizerError::InvalidVisionMarkers(format!(
+                "image marker token id {image_marker} does not resolve to a token in this \
+                 tokenizer's vocabulary"
+            )));
+        }
+        let probe = [Message::with_parts(
+            Role::User,
+            vec![
+                ContentPart::Image,
+                ContentPart::Text("describe this image".to_string()),
+            ],
+        )];
+        let rendered = self.apply_chat_template(&probe).map_err(|e| {
+            TokenizerError::InvalidVisionMarkers(format!(
+                "could not render a minimal one-image turn to verify the image marker: {e}"
+            ))
+        })?;
+        let ids = self.encode(&rendered, true);
+        let count = ids.iter().filter(|&&id| id == image_marker).count();
+        if count != 1 {
+            return Err(TokenizerError::InvalidVisionMarkers(format!(
+                "this checkpoint's chat template renders {count} occurrence(s) of the image \
+                 marker ({image_marker}) for one image; the expansion needs exactly one"
+            )));
+        }
+        Ok(())
+    }
+
+    /// [`Self::verify_image_markers`] for a tower whose chat template renders a
+    /// BARE placeholder per image, with the start and end markers added around
+    /// the expanded run by the processor (Muse-Glimmer's: the template emits
+    /// `<|patch|>` and
+    /// `turbospark_vision_io::wrap_bare_image_placeholders` adds
+    /// `<|image_start|>` and `<|image_end|>`).
+    ///
+    /// The three ids must be distinct and resolve to tokens, and a one-image
+    /// turn must render EXACTLY ONE `image_pad` and NEITHER marker: a template
+    /// that already renders its own markers would get them doubled by the wrap.
+    pub fn verify_bare_image_placeholder(
+        &self,
+        vision_start: i32,
+        image_pad: i32,
+        vision_end: i32,
+    ) -> Result<(), TokenizerError> {
+        if vision_start == image_pad || image_pad == vision_end || vision_start == vision_end {
+            return Err(TokenizerError::InvalidVisionMarkers(format!(
+                "image_start ({vision_start}), image_pad ({image_pad}) and image_end \
+                 ({vision_end}) must be three distinct token ids"
+            )));
+        }
+        for (name, id) in [
+            ("image_start", vision_start),
+            ("image_pad", image_pad),
+            ("image_end", vision_end),
+        ] {
+            if self.id_to_token(id).is_none() {
+                return Err(TokenizerError::InvalidVisionMarkers(format!(
+                    "{name} token id {id} does not resolve to a token in this tokenizer's \
+                     vocabulary"
+                )));
+            }
+        }
+        let probe = [Message::with_parts(
+            Role::User,
+            vec![
+                ContentPart::Image,
+                ContentPart::Text("describe this image".to_string()),
+            ],
+        )];
+        let rendered = self.apply_chat_template(&probe).map_err(|e| {
+            TokenizerError::InvalidVisionMarkers(format!(
+                "could not render a minimal one-image turn to verify the image placeholder: {e}"
+            ))
+        })?;
+        let ids = self.encode(&rendered, true);
+        let count = |id: i32| ids.iter().filter(|&&i| i == id).count();
+        let (starts, pads, ends) = (count(vision_start), count(image_pad), count(vision_end));
+        if starts != 0 || pads != 1 || ends != 0 {
+            return Err(TokenizerError::InvalidVisionMarkers(format!(
+                "this checkpoint's chat template renders {starts} image_start, {pads} image_pad \
+                 and {ends} image_end for one image; a bare-placeholder tower needs exactly one \
+                 image_pad and no markers (the processor adds them)"
             )));
         }
         Ok(())

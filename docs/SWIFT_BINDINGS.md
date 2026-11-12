@@ -151,7 +151,12 @@ options.steeringScale = 0.5                // default 1.0; 0.0 is identity
 options.steeringLayers = "20:45"           // 0-based inclusive layer range
 options.steeringTarget = 0.0               // for .clamp mode (default 0.0)
 options.steeringGate = 0.0                 // activation threshold >= 0
+options.visionSidecar = "/path/to/tower"   // or nil (default vision tower)
 options.kvBits = .threePointFive           // or .off (default), .two, .three, .four
+options.prefixReuse = true                 // or false (default true)
+options.anePrefill = .auto                 // or .off, .split, .breakMode
+options.anePrefillDir = "/path/to/ane"     // custom compiled Core ML packages
+options.expertSlotsWiring = .auto          // or .on, .off
 
 let session = try await TurboSparkSession(modelPath: "gemma4", options: options)
 ```
@@ -235,6 +240,44 @@ Unlike speculation there is no auto-detect: an unsupported family or
 so a caller asking for quantization either gets it or learns why not --
 never a session that quietly measures the wrong footprint.
 
+**`prefixReuse: true` (the default) continues from previous turn KV caches.**
+Whenever consecutive turns share a prompt prefix, the engine reuses the
+cached KV state instead of re-prefilling the transcript from scratch. Set
+`false` when benchmarking cold prefill times or when isolating sessions.
+When attached to a server, `ServerOptions.prefixReuse` overrides this.
+
+**`anePrefill` splits dense prefill between Apple Neural Engine and Metal.**
+On Apple Silicon M4+ / A18+, `.auto` (the default) automatically splits
+dense projection rows between Core ML compiled programs running on the ANE
+and Steel running on Metal shaders. Pass `.off` to force pure Metal Steel
+prefill, `.split` to force ANE splitting, or `.breakMode` for diagnostic
+overhead measurement. Custom compiled programs can be provided via
+`anePrefillDir`.
+
+**`expertSlotsWiring` locks a MoE install's expert slot cache in memory.**
+`.auto` (the default) wires the cache, at twice the auto slot budget, on
+qwen4_exp, the one family measured to gain (96 slots on a 36 GB M4 Max,
++6.7% decode against the unwired 48). It checks the OS wire limit first and
+opens an unwired cache at the usual budget when the limit or the lock
+refuses, so a load never fails on it. `.on` wires any streamed family and
+fails the open on a refused lock. `.off` never wires. Wired memory is
+unavailable to other apps while the session is open.
+`SessionInfo.expertSlotsWiring` reports what happened and why
+(`docs/QWEN4_EXP.md`, "Wired expert slots").
+
+**`moePrefillBank` opts into the temporary expert cache for streamed
+Flash Next text prefill.** Set it to `true` to request the bank or `false`
+to turn it off. Leaving it unset preserves the runtime experiment default.
+`SessionInfo.moePrefillBankSupported` and `moePrefillBankEnabled` report
+session capability and configuration. Each eligible prefill still needs
+room for the temporary bank and scratch. It uses ordinary prefill if
+admission fails.
+
+**`visionSidecar` points to an external vision tower directory.**
+When using modular multi-modal models where vision weights are stored
+separately (`.gturbo-vision`) from the primary text trunk, pass the path
+here. `nil` uses the co-located vision weights inside the model directory.
+
 ### Reading what you actually got
 
 ```swift
@@ -259,6 +302,11 @@ info.toolCalling.reason // why not, naming the dialect
 info.speculation.block  // the RESOLVED block, or nil when off
 info.speculation.drafter// .mtp | .dflash, non-nil exactly when block is
 info.speculation.reason // why it is off, when you might expect otherwise
+info.anePrefill?.active    // true when ANE+Steel split prefill is active
+info.anePrefill?.supported // whether family and chip support ANE prefill
+info.anePrefill?.reason    // why supported is false or why split is inactive
+info.anePrefill?.mode      // "split", "off", or "break"
+info.prefixReuse           // resolved prefix reuse posture (default true)
 info.specialTokens.bosId        // e.g. 1 or nil
 info.specialTokens.eosId        // e.g. 2 or nil
 info.specialTokens.endOfTurnId  // e.g. 151645 or nil
@@ -902,6 +950,22 @@ restarting it. A host that applies its own repair to a reply it read itself
 covers only that path: every HTTP client of this server bypasses it. See
 `docs/FORGE_GUARDRAILS.md` section 0b.
 
+**`ServerOptions.prefixReuse` reaches a posture the session option could
+not.** `Options.prefixReuse` is resolved when the session OPENS, and a bare
+session resolves it to `true` because one owner's session is multi-turn by
+construction. That default is wrong once a server is attached: from that
+moment the KV cache is reachable by every client of the server, is not
+partitioned by API key, and a match against another client's prompt becomes
+observable in response timing. `turbospark-server` defaults the same setting
+OFF for that reason.
+
+So a host that attached a session to a server got reuse ON with no way to
+turn it off, unless it happened to know to open the session with `false`.
+Passing it here applies it to every model attached to this server, including
+ones attached later, and cannot be changed without restarting. Absent leaves
+each session's own open-time decision alone, which is the pre-existing
+behaviour.
+
 **Idle unload.** `ServerOptions.idleUnloadSeconds` (or
 `server.setIdleUnload(after:)` on a running server) detaches a model that has
 served no request for that long, releasing its weights. Nil or 0 keeps every
@@ -917,6 +981,20 @@ developer message of their own (`turbospark-server --system`).
 `ServerOptions.defaultReasoning` sets the default reasoning effort (.off, .low,
 .medium, .high, .xhigh) applied when a request omits `reasoning_effort`
 (`turbospark-server --reasoning`).
+
+**On-demand model loading and attachment ceilings.**
+- `ServerOptions.allowRequestModelLoad`: Bool? (default false/nil). When set to `true`,
+  an incoming HTTP request naming an installed model that is not yet attached opens
+  and attaches it on demand. Opening a model is heavyweight and allocates memory,
+  so this is strictly opt-in.
+- `ServerOptions.maxAttachedModels`: Int? (default 8). Cap on concurrently attached
+  models across host-attached and on-demand loaded sessions.
+- `ServerOptions.maxAttachedModelBytes`: UInt64? (default nil, unlimited). Cumulative
+  committed weight and KV memory ceiling across all attached models. Attaching an
+  additional model that would exceed this ceiling is refused.
+- `ServerOptions.sttModels`, `ServerOptions.ttsModels`, `ServerOptions.musicModels`:
+  Arrays of model directory paths or catalog aliases to attach at server startup for
+  speech-to-text, text-to-speech, and music generation routes.
 
 ### Watching it
 
@@ -967,7 +1045,8 @@ artifact is the same either way.
 
 ```swift
 let rows = try TurboSparkCatalog.available()      // curated table, with `installed`
-let mine = try TurboSparkCatalog.installed()      // what is in ~/.turbospark
+let mine = try TurboSparkCatalog.installed()      // what can be opened now (see "Model libraries")
+let all = try TurboSparkCatalog.installedWithAvailability()  // plus Not connected and Missing rows
 let cost = try TurboSparkCatalog.cost(of: "gemma4")
 // Ranked by hardware fit. Pass the SAME guard your sessions open with, or
 // the ranking and the loader's refusal describe different machines.
@@ -984,8 +1063,11 @@ let ladder = try TurboSparkCatalog.contextLadder(modelPath: "gemma4", loadGuard:
 // Inspect control vector metadata before opening:
 let cv = try TurboSparkCatalog.controlVectorInfo(path: "/path/to/vector.gguf")
 
-// Delete an installed model to recover disk space:
-try TurboSparkCatalog.delete("gemma4")
+// Delete an installed model to recover disk space. Takes the row's installId,
+// not its alias: an alias says nothing of which library holds it.
+try TurboSparkCatalog.deleteInstall(installId: row.installId)
+// delete(_ alias:) still exists for This Mac rows and refuses an alias a
+// library holds ("use_install_id").
 
 // Check if an alias or directory is installed, and resolve canonical path:
 if try TurboSparkCatalog.isInstalled("gemma4") {
@@ -1088,6 +1170,229 @@ probe calls to target the specified base mirror URL.
 
 ---
 
+## Model libraries
+
+A **library** is a folder on a directly connected drive that holds model files.
+**This Mac** is the implicit one (id `internal`, at `<store root>/models`) and
+cannot be removed. The list of libraries lives in the store root, so unplugging
+a drive never takes it along, and each library also carries a marker file on
+its drive so another Mac can adopt it. The header's "model libraries" block is
+the contract. This section is the Swift side of it.
+
+```swift
+// Call these off the main actor: they read the mount table, probe a drive and
+// can write the registry (`Task.detached { Result { ... } }`, as the audio
+// screens do).
+let libraries = try TurboSparkLibraries.list()                  // This Mac first
+let added = try TurboSparkLibraries.add(path: "/Volumes/T7")    // adopts or creates /Volumes/T7/TurboSpark
+print(added.skipped)                                            // marker rows not recorded (alias already elsewhere)
+try TurboSparkLibraries.setDefault(id: added.library.id)        // or "internal"
+try TurboSparkLibraries.remove(id: added.library.id)            // never touches a file
+let marker = try TurboSparkLibraries.discover(volumeRoot: "/Volumes/T7")  // nil: no library there
+
+// Install into a library. nil, "internal" and "" all mean This Mac.
+for try await event in TurboSparkCatalog.install("gemma4", library: added.library.id) { ... }
+for try await event in TurboSparkCatalog.install(repo: "o/r", alias: "mine", library: id) { ... }
+for try await event in TurboSparkCatalog.installImage("z-image", library: id) { ... }
+let record = try AudioCatalog.install(profile.identity, library: id)   // blocking, like the others
+```
+
+`ModelLibrary` decodes the list: `id`, `name`, `root` (nil while the drive is
+not connected), `available`, `duplicate` (true for ONE listing, after a drive
+came back under a new name, so do not treat it as sticky), `modelCount`,
+`isDefault` (exactly one library), `lastSeen` (`YYYY-MM-DD` or nil) and
+`isInternal`. **Pass the `id` to every call, never the name.** A name gives the
+`unknown_library` code. The name of This Mac is the English literal "This Mac":
+show your own localized label when `isInternal`.
+
+### Rows, availability, and the old contract
+
+`TurboSparkCatalog.installed()` **keeps its contract from before libraries: it
+returns only rows that can be opened now** (This Mac's, and those in a
+connected library). The app feeds it to pickers, gating and session selection
+unfiltered, so a model on an unplugged drive must never be in it. The rows
+that cannot be opened come from `installedWithAvailability()`, sorted by alias:
+
+| `InstalledModel` field | Meaning |
+|---|---|
+| `availability` | `.available`, `.notConnected` (the drive is away, row stays listed, not an error) or `.missing` (drive connected, folder gone, or the library is no longer listed) |
+| `locationKind` | `.thisMac`, `.library`, `.custom` (a `pull --out` folder) or `.unknown` (a library that is no longer listed). Told from ids and paths, NEVER from `libraryName`, which a marker can set to "This Mac" |
+| `library` | the library id, `internal` for This Mac, nil for a custom location (and from an older engine) |
+| `libraryName` | raw name (English literals "This Mac", "custom location", "unknown library"): localize from `locationKind` |
+| `installId` | `<library>:<modality>/<alias>`, the identity move, forget and delete take |
+| `connectName` | the library, or for a custom folder the volume, to connect when `.notConnected` |
+| `path` | where the install is NOW for a connected library, the last recorded path otherwise |
+
+Image rows (`ImageInstalledModel`) gain `library`, `libraryName` and `installId`.
+They are nil for `imageInstalled(in:)`, which scans a folder outside every
+library and so names no registry install. `AudioCatalog.installed()` gains a
+fifth list, `notConnected` (`[AudioNotConnectedInstall]`: `record`, `identity`,
+`libraryName`), which is empty from an older engine. An unplugged drive is a
+state to show, never an error, and `incompatible` never holds one.
+
+Every field above decodes with a default, so a payload from before libraries
+reads as an available This Mac row. The memberwise `InstalledModel(...)` and
+`ImageInstalledModel(...)` initializers keep every parameter they had and add
+the new ones last with those defaults. An install RESULT carries `library`,
+`library_name` and `install_id` but not `availability` or `location_kind`, so
+`locationKind` is read from `library` there (`.library` unless it is `internal`).
+
+### Moving
+
+```swift
+let outcome = try await TurboSparkLibraries.move(
+    installId: row.installId, to: destination.id,
+    freeBytes: Int64(destinationFreeBytes)) { done, total in
+        // Byte progress only, on the move's own thread: first (0, total), then
+        // cumulative. Take the maximum if a bar is driven from it.
+    }
+// Elsewhere, from any thread:
+TurboSparkLibraries.cancelMove()
+```
+
+The engine call blocks for as long as the copy takes, so `move` runs it on a
+dedicated thread and the caller awaits. **Cancelling the awaiting `Task` does
+not stop the copy**: call `cancelMove()`, which makes `move` throw `cancelled`
+with the original untouched and the partial copy removed. `cancelMove()`
+returns false when no move runs (not an error) and leaves install walks alone,
+as `cancelInstall()` leaves moves alone.
+
+`MoveOutcome` has three cases and **all of them mean the install is in the
+destination**: `.moved`, `.sourceMarkerStale` (the original library's marker
+still lists it, harmless) and `.sourceCleanupFailed` (the original folder at
+`path` could not be deleted, so tell the user to delete it by hand). `installId`
+is the install's NEW id. Do not show a failure for any of them. An outcome this
+build does not know decodes as `.unrecognized` and means the same.
+
+`freeBytes` is the destination's free space as the app measured it. Below the
+model's size the move is refused before anything is copied
+(`insufficient_space`). Pass nil only when it could not be measured: the move
+is then refused as `free_space_unknown` before anything else, even for a
+destination that is not connected, so pass nil only for a connected one. The
+required and available figures of a refusal exist only in the engine's
+sentence, so compute them from the row's `installBytes` and your own
+measurement. Unload the model first: this library cannot see sessions.
+
+### Deleting and forgetting
+
+`deleteInstall(installId:)` and `deleteImageInstall(installId:)` place the
+install where its library is NOW, never at the row's recorded `path`, which
+names the mount point of the time and can answer for a different drive mounted
+there. A library that is not connected or is read-only is refused with nothing
+touched. A folder that is already gone, or reached through a link, is only
+forgotten and the call succeeds, so it also serves "remove from the list" for a
+missing row. For a `.notConnected` row, offer
+`TurboSparkLibraries.forget(installId:)` (drops the row and the marker entry,
+deletes no file, and an unlisted id is not an error).
+
+**Do not follow a refused delete with a raw `FileManager.removeItem(row.path)`.**
+`use_install_id`, `busy`, `not_connected` and the own-folder refusal are the
+engine protecting files, and a raw delete follows planted links, removes
+whatever is mounted at the old path, and leaves the registry and marker rows.
+`delete(_ alias:)` stays for This Mac rows and refuses an alias a library holds
+with `use_install_id`. Every delete is refused as `busy` while an install or a
+move runs.
+
+### Importing a moved store
+
+`importMovedRoot(_:)` registers the `models` folder of a store Move Store moved
+and copies its embedding and OCR models into the home. The result is an
+`ImportedStore`. **The conversion is not finished while `copyFailures` is
+non-empty** (`isComplete` is false): the copies are retried only when the import
+is called again, so keep it pending, retrying on mount and at launch, or show
+the failures. `needsAdoption` lists music installs with no receipt, which the
+user moves to This Mac and adopts there.
+
+**Move Store is retired, and nothing in the app calls the engine's relocation.**
+`TurboSparkCatalog.relocateStore(to:)` (the wrapper over the C export
+`ts_store_relocate`, which runs the Rust `relocate_default_store`) stays as a
+retired engine export with no app caller. It is marked deprecated, and the
+engine refuses it while any library is listed or the library list cannot be
+read. Without a library it copies `models`, `installed.json`
+and `models.json` out of the engine root and then DELETES them from it, and the
+engine root is the home, whose `installed.json` holds the registry rows of every
+library. Do not call it. Moving a model between libraries is
+`TurboSparkLibraries.move(...)` (see Moving), and a store a past Move Store
+moved is brought in with `importMovedRoot(_:)`.
+The app's `MoveStoreRetirementTests` fail if an app source references it again.
+
+### Error codes
+
+A refusal puts a stable lowercase code first in the engine's last-error string,
+`"<code>: <sentence>"`. The Swift wrappers still throw `TurboSparkError`
+(`code` is the status, `message` the whole string), and
+`error.libraryFault` reads the prefix:
+
+```swift
+do { try await TurboSparkLibraries.move(...) }
+catch let error as TurboSparkError {
+    switch error.libraryFault?.code {
+    case .insufficientSpace?: ...
+    case .busy?: ...                 // an install or a move is running
+    case nil: ...                    // no code: show error.message
+    default: ...
+    }
+}
+```
+
+`LibraryFault` carries `code` (a `LibraryErrorCode`), `status`, the raw
+`sentence`, and `displaySentence`. A message with no code is not a library
+fault and `libraryFault` is nil. That includes `options is not valid install
+options`, a cancelled install (`install cancelled`) and every install failure
+that keeps its pre-library form. An unknown but well-formed code decodes as
+`.unrecognized(code)`, never a crash.
+
+| Code | Status | Returned by |
+|---|---|---|
+| `same_disk_as_home`, `network`, `small_file_limit`, `read_only`, `nested`, `inside_home`, `unknown_volume`, `not_a_directory` (`LibraryRefusal`, via `.refusal`) | invalidArgument | `add`, `importMovedRoot` (`nested`) |
+| `unknown_library` | invalidArgument | `remove`, `setDefault`, installs, `move`, deletes |
+| `internal_library` | invalidArgument | `remove` of This Mac |
+| `not_connected` | invalidArgument | `importMovedRoot` (root missing), `forget`, installs, `move`, deletes, `AudioCatalog.resolve` |
+| `marker`, `io` | invalidArgument | any call that reads or writes a library |
+| `library_disconnected` | invalidArgument | `forget`, installs (the drive left mid-install, nothing partial is listed) |
+| `library_read_only` | invalidArgument | `forget`, installs, `move`, deletes (a library a newer build wrote) |
+| `home_only` | invalidArgument | `forget`, `move` (embedding and OCR models). Reserved for installs |
+| `alias_elsewhere` | invalidArgument | installs (alias and modality already installed elsewhere, so offer a move) |
+| `unknown_install` | invalidArgument | `move`, `deleteInstall`, `deleteImageInstall`, `delete(_:)` |
+| `use_install_id` | invalidArgument | `delete(_:)` of an alias a library holds |
+| `same_library`, `destination_taken`, `insufficient_space`, `verify_failed`, `free_space_unknown` | invalidArgument | `move` |
+| `cancelled` | cancelled | `move` after `cancelMove()` |
+| `busy` | busy | a library change, `forget`, `importMovedRoot`, any delete, `AudioCatalog.adopt`, `delete` and `deleteLegacy`, installs and `move` while an install or a move runs |
+
+**`busy` is keyed on the message prefix, never on the status alone.**
+`TurboSparkError.Code.busy` already meant "the native audio device or session
+is busy" (`AudioWorkspaceController+Installs` keys on it), and the same status
+now also carries the library `busy: ...`. The audio message has no prefix, so
+`error.libraryFault?.code == .busy` is the library case and a `.busy` with no
+`libraryFault` is the audio device. The `busy` check is made once, before the
+work, so it is not atomic against an install that begins afterwards: while you
+change libraries, also stop queueing installs. A move never returns
+`library_disconnected` (a drive lost mid-move is `not_connected`).
+
+### Untrusted text
+
+Library and volume names, aliases, install ids, marker names, copy-failure
+keys and the leftover `path` come from a drive anyone could have written. The
+engine passes names and ids raw (JSON-escaped only) because they are
+identities, and escapes and caps error sentences at 300 characters. Show any of
+them through `UntrustedText.display(_:limit:)`, which escapes control and
+bidirectional formatting characters (a right-to-left override can make
+`gnp.exe` read as `exe.png`) in the engine's own spelling, then cuts to 120
+characters by default with `...`. `LibraryFault.displaySentence` does that for
+the sentence, and `sentence` stays raw for logs. Zero-width and other
+invisible format characters outside the bidirectional set are not escaped.
+
+### Testing
+
+The package suites link the RELEASE archive, where the `TURBOSPARK_TEST_*`
+location overrides do not exist, so no fake drive can be mounted. They decode
+fixtures with and without the new fields (`LibraryWireTests`), map every code in
+the table from a `"<code>: sentence"` string (`LibraryErrorTests`), and run the
+real engine against a throwaway home with This Mac only (`LibraryEngineTests`).
+Drives, moves and connected-library deletes are covered by the Rust FFI tests.
+
+---
+
 ## Errors
 
 ```swift
@@ -1101,11 +1406,15 @@ do {
 ```
 
 `.cancelled` is the caller's own cancel request ending an install, an audio
-job, or an audio open (`AudioOpenToken`). It is not a failure and should not be shown as one. (A cancelled TEXT turn
+job, an audio open (`AudioOpenToken`), or a model move. It is not a failure and should not be shown as one. (A cancelled TEXT turn
 is not an error at all: it returns normally with `stopReason == .cancelled` and
-the partial text.) `.busy` means the resource is in use by another operation,
-today the native audio device or session; unlike `.open`, retrying once that
-job finishes can succeed. Before 2026-10 a cancelled install or audio job came back as `.generate` and
+the partial text.) `.busy` means the resource is in use by another operation:
+the native audio device or session, OR a library change, delete, install or
+move refused while an install or a move runs. Unlike `.open`, retrying once that
+job finishes can succeed. **The two busy cases share a status and are told
+apart by the message prefix**, so read `error.libraryFault?.code == .busy`
+for the library one and treat a `.busy` with no `libraryFault` as the audio
+device (see "Model libraries", "Error codes"). Before 2026-10 a cancelled install or audio job came back as `.generate` and
 a busy audio open as `.open`.
 
 `.panic` means a panic was caught at the boundary. The process is intact and
@@ -1223,22 +1532,37 @@ request metadata powers deterministic regeneration and the Gallery carousel.
 | `ts_server_info_json(server, out)` | host, port, active model IDs, auth, uptime |
 | `ts_server_poll_events_json(server, max, out)` | drain server event ring buffer |
 | `ts_catalog_json(out)` | every platform |
-| `ts_installed_json(out)` | every platform |
+| `ts_installed_json(out)` | every platform. Text rows from This Mac and every library, INCLUDING Not connected and Missing rows, each with `library`, `library_name`, `install_id`, `availability`, `location_kind`, `connect_name`. Swift: `installedWithAvailability()` returns all, `installed()` only the available ones |
 | `ts_image_catalog_json(out)` | curated image sources, every platform |
-| `ts_image_installed_json(out)` | installed image rows under the image namespace, every platform |
+| `ts_image_installed_json(out)` | installed image rows from This Mac and every connected library, every platform. Rows gain `library`, `libraryName`, `installId` |
 | `ts_image_installed_in_json(root, out)` | image installs under a folder outside the store: the folder and its immediate subdirectories, or one install bundle. Read-only; fails if `root` is not a directory. Swift: `TurboSparkCatalog.imageInstalled(in:)` |
-| `ts_model_delete(alias)` | delete installed model directory and forget row |
+| `ts_model_delete(alias)` | delete a This Mac install by alias (directory and row). An alias a library holds is refused as `use_install_id`. Swift: `TurboSparkCatalog.delete(_:)` |
+| `ts_model_delete_install(install_id)` | delete a text install where its library is NOW, by the row's `install_id`. Swift: `deleteInstall(installId:)` |
+| `ts_image_delete_install(install_id)` | delete an image install by `installId`. Swift: `deleteImageInstall(installId:)` |
+| `ts_libraries_json(out)` | every library, This Mac first, after locating each. Swift: `TurboSparkLibraries.list()` |
+| `ts_library_add(path, name, out)` | add or adopt a library, answers `{library, skipped}`. Swift: `add(path:name:)` |
+| `ts_library_remove(id)` / `ts_library_set_default(id)` | stop listing a library (no file touched) / choose the download default. Swift: `remove(id:)`, `setDefault(id:)` |
+| `ts_library_discover_json(volume_root, out)` | the marker at the top of a volume, or `null`. Swift: `discover(volumeRoot:)` |
+| `ts_model_forget(install_id)` | drop a row and its marker entry, deleting no file. Swift: `forget(installId:)` |
+| `ts_model_move(install_id, library_id, free_bytes, cb, ud, out)` | blocking move between libraries, byte progress only. Swift: `async move(installId:to:freeBytes:progress:)` |
+| `ts_model_move_cancel()` | stop the move in flight. Swift: `cancelMove()` |
+| `ts_store_import_moved_root(root, out)` | register a moved store as a library. Swift: `importMovedRoot(_:)` |
 | `ts_recommend_json(context, options_json, out)` | rank curated models by hardware fit; `options_json` takes `loadGuard` and may be NULL; each row also carries `evidence` (`discovered` / `caveat` / `runs` / `verified`) and `suspicious` |
 | `ts_probe_json(repo, file, sidecar, out)` | header-only, no download |
 | `ts_context_ladder_json(model_path, options_json, out)` | memory cost per context rung for installed model |
 | `ts_repo_variants_json(repo, out)` | list all GGUF variants published by repository |
+| `ts_hub_search_json(query, options_json, out)` | live Hugging Face text-model search, one list request, advisory metadata only (`archHint` is "architecture recognized", never "compatible"). A failed request is a `status`, not an error code. Swift: `hubSearch(query:limit:sort:format:refresh:)` |
+| `ts_hub_check_json(repo, options_json, out)` | compatibility verdict for ONE repository as a `state` (`runnable`, `refused`, `needsAuth`, `unavailable`); never fails for several or zero GGUF files. `file` re-reads that quantization's header for its own fit. Swift: `hubCheck(repo:sidecarHint:file:context:...)` |
 | `ts_control_vector_info_json(path, out)` | a `.gguf` control vector's shape: no model, no session, no network |
 | `ts_kv_quant_supported(full_head_dim, layer_mask, len, num_layers)` | whether `kvBits` would be accepted for an install with these arch facts; 1 or 0, never fails |
 | `ts_family_capabilities_json(family, out)` | `{family, known, steeringSupported}` from the persisted family spelling |
 | `ts_install_bytes_json(alias, out)` | cost before committing |
 | `ts_install(alias, cb, ud, out)` | blocks for minutes; later calls reuse verified ranges for pinned revisions |
+| `ts_install_with_options(alias, options_json, cb, ud, out)` | `ts_install` into `{"library": "<id>"}`. Swift: `install(_:library:)` (the no-destination call now goes through this entry point with NULL options) |
 | `ts_install_repo(repo, alias, file, sidecars, cb, ud, out)` | install arbitrary HF repository |
+| `ts_install_repo_with_options(repo, alias, file, sidecars, options_json, cb, ud, out)` | the same into a library. Swift: `install(repo:alias:file:sidecarRepo:library:)` |
 | `ts_image_install(alias, cb, ud, out)` | ranged download and pack; later calls reuse verified ranges |
+| `ts_image_install_with_options(alias, options_json, cb, ud, out)` | the same into a library. Swift: `installImage(_:library:)` |
 | `ts_embedding_encode_json(model_path, texts_json, out)` | standalone batch text embedding generation |
 | `ts_cosine_similarity(a, b, len)` | cosine similarity between two float vectors |
 | `ts_image_session_open(model_dir, out)` | open a verified image install |
@@ -1376,8 +1700,9 @@ no floor.
 cannot fit the measured headroom; the mode the session actually opened with is
 `sessionInfo.expertResidency`. A misspelling is refused before the install is
 opened. `expertCacheSlots` as a number must be one of 8, 16, 24, 32, 48, 64,
-96, 128 (`foundation::runtime_config::ALLOWED_CACHE_SLOTS`); `"auto"` climbs
-through 8/16/24/32 only.
+96, 128, 192, 256 (`foundation::runtime_config::ALLOWED_CACHE_SLOTS`);
+`"auto"` takes the largest of those a quarter of free memory covers, never
+below 16.
 
 `prefixReuse` (default `true`, which is what every release did) continues each
 turn from the previous turn's KV wherever the new render shares a prefix. Open
@@ -1475,12 +1800,13 @@ exactly three tasks:
 | Task (`AudioTask`) | Family reached today | Notes |
 |---|---|---|
 | `.speechToText` | Whisper | Catalog install (`whisper-base`) or a chosen folder. Qwen3-ASR also opens, from the app's Advanced page, behind an explicit portable or experimental-Metal opt-in and a local folder. |
-| `.textToSpeech` | Kokoro, MegaTTS3 | Kokoro: portable CPU path behind an explicit opt-in at the time of writing; the current backend list is in `crates/audio/MODELS.md`. MegaTTS3 clones a voice: see [Voice cloning](#voice-cloning). |
+| `.textToSpeech` | Kokoro, MegaTTS3, OmniVoice | Kokoro: portable CPU path behind an explicit opt-in at the time of writing; the current backend list is in `crates/audio/MODELS.md`. MegaTTS3 and OmniVoice clone a voice: see [Voice cloning](#voice-cloning). OmniVoice is multilingual (auto voice without a reference) and runs on Metal by default with portable CPU fallback. |
 | `.music` | MiniMax Music 3 | Catalog install covers `minimax-music3-4bit`. |
+| `.diarization` | pyannote community-1 on Core ML | Catalog install `speaker-diarization-coreml`, macOS 15+. Takes 16 kHz mono PCM; the result is a transcript whose segments are speaker turns with empty text and speakers `S1`, `S2`, ... |
 
 `AudioTask` has ten cases because the catalog and capability rows describe
 families the engine has code for but no session entry point yet (VAD,
-diarization, alignment, enhancement, separation, codec, language ID). Opening
+alignment, enhancement, separation, codec, language ID). Opening
 one is refused at `ts_audio_session_open` as an unknown task. **Use
 `AudioTask.isRunnable` (and `AudioTask.runnable`) before offering a control**:
 the app's Clean Up page and the unrunnable Advanced operations are hidden for
@@ -1518,10 +1844,19 @@ result.
 ### Voice cloning
 
 A profile whose `capabilities.supportsVoiceClone` is true (operation
-`voice_clone`; MegaTTS3) clones from reference audio passed as the job's PCM.
-The request names its rate and carries the user's consent; the runtime refuses
-a cloning request without `consent`, a reference outside 1 to 30 seconds, or a
-`referenceText` or `instruction` (the model aligns the reference itself).
+`voice_clone`; MegaTTS3 and OmniVoice) clones from reference audio passed as
+the job's PCM. The request names its rate and carries the user's consent; the
+runtime refuses a cloning request without `consent` or a reference outside 1
+to 30 seconds. MegaTTS3 additionally refuses a `referenceText` or
+`instruction` (it aligns the reference itself); OmniVoice reads `referenceText`
+(the transcript prepended to the script) and refuses MegaTTS3's `pW`/`tW`. Its
+`instruction` is voice design, not a delivery cue: comma-separated speaker
+attributes (gender, age, pitch, the `whisper` style, an English accent, a
+Chinese dialect) that upstream k2-fsa/OmniVoice documents for speech without
+reference audio, trained on Chinese and English only. The engine trims it,
+refuses more than 512 bytes, and does not check the attributes against
+upstream's list. Upstream does not document it alongside a reference, and the
+app's Voice Cloning page sends none.
 
 ```swift
 var request = AudioRequest(task: .textToSpeech, language: "en")
@@ -1531,31 +1866,37 @@ request.consent = true                 // the user has the right to use this voi
 request.steps = 16                     // Balanced (Fast is 8, Best is 32). Send it,
                                        // because an omitted steps is the request type's 30
 request.pW = 1.4; request.tW = 3.0     // intelligibility and similarity weights
-request.speed = 1.0                    // scales durations
+                                       // (MegaTTS3 only; OmniVoice refuses both)
+request.speed = 1.0                    // scales MegaTTS3 durations; divides OmniVoice's
+                                       // estimated length
 let result = try await session.execute(request, pcm: reference24k) { progress in ... }
 ```
 
 Progress stages are `reference` (preparing the voice; skipped when the session
 already prepared this exact reference and seed) and `diffusion` (completed of
-total steps across text chunks). MegaTTS3's declared backend is `metal`, and a
-session opens it on Metal with no opt-in. `allowPortable` lets it fall back to
-the CPU reference path only when Metal cannot open.
+total steps across text chunks). Both MegaTTS3 and OmniVoice declare backend
+`metal`, and a session opens them on Metal with no opt-in required.
+`allowPortable` lets them fall back to the CPU reference path only when Metal
+cannot open.
 
 Some catalog profiles list install terms in `requiredAcknowledgments` (MegaTTS3:
-its encoder's unverified provenance). Show them and pass the accepted ids:
-`AudioCatalog.install(identity, acknowledged: ids)`. The native installer
+its encoder's unverified provenance; OmniVoice: the bundled Higgs tokenizer is
+Boson AI's community-licensed model, not Apache-licensed). Show them and pass
+the accepted ids: `AudioCatalog.install(identity, acknowledged: ids)`. The native installer
 refuses before any download when an id is missing, and `install(identity)`
 passes none.
 
 ### Installs: installed, adopt, delete
 
-`AudioCatalog.installed()` returns four lists. `installed` are receipt-backed
+`AudioCatalog.installed()` returns five lists (the fifth, `notConnected`, holds
+installs in a model library whose drive is away: see "Model libraries"). `installed` are receipt-backed
 and usable. `needsAdoption` are installs the receipt store does not know yet
 but whose identity matches a pinned profile: a model pulled by the CLI
 (`pull-audio` of a music model) writes no receipt, so without adoption it is
 invisible. `AudioCatalog.adopt(_:)` verifies it and makes it usable.
 `incompatible` are installs that exist on disk but cannot be used, with the
-engine's reason; `otherAudio` is audio the pinned profiles do not describe.
+engine's reason (which can echo a library name and a mount path from a drive,
+so show it through `UntrustedText.display`); `otherAudio` is audio the pinned profiles do not describe.
 Removal is `AudioCatalog.delete(_:)` for a receipt-backed install and
 `AudioCatalog.deleteLegacy(_:)` for an unadopted one (including a damaged one;
 it refuses a receipt-backed install). Close any resident `AudioSession` on the
@@ -1769,9 +2110,11 @@ purpose. Each would need new evidence or an explicit decision to change.
 - **A cached audio open verification.** Cancelling and observing it is
   supported (see "Known limits"), but caching a successful result would weaken
   an integrity check and is not offered.
-- **VAD, diarization, Moonshine, enhancement and separation** have Rust model
-  code but no `Engine` variant in `runtime::native_audio`, so there is no
-  session to open (`AudioTask.isRunnable` reports it). They also need catalog
+- **VAD, the CPU diarization families (Sortformer, Nemotron), Moonshine,
+  enhancement and separation** have Rust model code but no `Engine` variant in
+  `runtime::native_audio`, so there is no session to open
+  (`AudioTask.isRunnable` reports it). Diarization itself runs through the
+  Core ML pyannote community-1 export. They also need catalog
   pins (revisions and hashes) that cannot be invented.
 - **Determinate music progress.** `Music3Runner::generate_text_with_progress`
   has the counters, but it does not take the cancellation handle that

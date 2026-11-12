@@ -21,6 +21,7 @@ struct McpStdioTransportFields: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Subprocess Configuration", bundle: .module)
                 .themedFont(.small, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
 
             labelledField(Text("Command / Executable", bundle: .module)) {
                 TextField(text: $command, prompt: Text("npx, python3, uvx, docker, or absolute path", bundle: .module)) {
@@ -31,11 +32,11 @@ struct McpStdioTransportFields: View {
             }
 
             labelledField(Text("Arguments (one per line or space-separated)", bundle: .module)) {
-                monospacedEditor(text: $argsText, height: 60, name: Text("Arguments (one per line or space-separated)", bundle: .module))
+                monospacedEditor(text: $argsText, minHeight: 60, name: Text("Arguments (one per line or space-separated)", bundle: .module))
             }
 
             labelledField(Text("Environment Variables (KEY=VALUE per line)", bundle: .module)) {
-                monospacedEditor(text: $envText, height: 60, name: Text("Environment Variables (KEY=VALUE per line)", bundle: .module))
+                monospacedEditor(text: $envText, minHeight: 60, name: Text("Environment Variables (KEY=VALUE per line)", bundle: .module))
             }
 
             workingDirectoryField
@@ -55,7 +56,7 @@ struct McpStdioTransportFields: View {
                 .labelsHidden()
                 .textFieldStyle(.roundedBorder)
                 Button { chooseWorkingDirectory() } label: { Text("Choose...", bundle: .module) }
-                    .buttonStyle(.bordered)
+                    .appAction(.secondary, size: .small)
                     .help(Text("Pick the directory this server is launched in", bundle: .module))
             }
             Text("Leave empty to launch the server in the active project's root.", bundle: .module)
@@ -69,7 +70,7 @@ struct McpStdioTransportFields: View {
             Text("Environment Passthrough (one variable NAME per line)", bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
-            monospacedEditor(text: $envPassthroughText, height: 50, name: Text("Environment Passthrough (one variable NAME per line)", bundle: .module))
+            monospacedEditor(text: $envPassthroughText, minHeight: 50, name: Text("Environment Passthrough (one variable NAME per line)", bundle: .module))
             Text("Forwards these variables from this app's own environment. PATH, HOME, LANG and TMPDIR are always forwarded; nothing else is, so a server never receives a credential it was not named.", bundle: .module)
                 .themedFont(.tiny)
                 .foregroundStyle(.appSecondary)
@@ -99,11 +100,10 @@ struct McpStdioTransportFields: View {
         }
     }
 
-    private func monospacedEditor(text: Binding<String>, height: CGFloat, name: Text) -> some View {
+    private func monospacedEditor(text: Binding<String>, minHeight: CGFloat, name: Text) -> some View {
         TextEditor(text: text)
             .themedCode(.small)
-            .frame(height: height)
-            .appEditorSurface()
+            .appEditorSurface(minHeight: minHeight)
             .accessibilityLabel(name)
     }
 }
@@ -120,6 +120,7 @@ struct McpRemoteTransportFields: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("SSE Endpoint Configuration", bundle: .module)
                 .themedFont(.small, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
 
             McpRemoteTransportFields.unavailableNotice
 
@@ -135,7 +136,7 @@ struct McpRemoteTransportFields: View {
                 if !urlIsValid && !urlText.trimmingCharacters(in: .whitespaces).isEmpty {
                     Text("Not a valid URL.", bundle: .module)
                         .themedFont(.tiny)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(AppAttention.color)
                 }
             }
 
@@ -145,8 +146,7 @@ struct McpRemoteTransportFields: View {
                     .foregroundStyle(.appSecondary)
                 TextEditor(text: $headersText)
                     .themedCode(.small)
-                    .frame(height: 60)
-                    .appEditorSurface()
+                    .appEditorSurface(minHeight: 60)
                     .accessibilityLabel(Text("Headers (Header: Value per line)", bundle: .module))
             }
         }
@@ -166,14 +166,13 @@ struct McpRemoteTransportFields: View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .themedFont(.small)
-                .foregroundStyle(.orange)
+                .foregroundStyle(AppAttention.color)
             Text("Remote MCP transport is not implemented in this build. A server saved here can be configured but every tool call against it will fail. Use a local subprocess for now.", bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.orange.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .appAttention(true, radius: AppMetrics.controlRadius)
     }
 }

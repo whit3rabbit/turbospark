@@ -1,0 +1,91 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "minimax_music3",
+  "kind": "audio",
+  "title": "MiniMax Music 3: caption and lyrics to a stereo waveform (AR stage, DiT, vocoder)",
+  "flow": "music",
+  "installs": [],
+  "recommended": [],
+  "sweeps": [],
+  "findings": [
+    {
+      "id": "minimax_music3.rtf-readings-2026-10-11",
+      "date": "2026-10-11",
+      "install": "minimax-music3",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "battery",
+      "rev": "v0.5 era",
+      "workload": "8 s and 30-step jobs, before and after the fast 4-bit path",
+      "arms": {
+        "before": {},
+        "after": {},
+        "fast_4bit": {}
+      },
+      "metric": "rtf",
+      "values": {
+        "s8_1step": {
+          "run_s": [
+            75.9,
+            32.5
+          ],
+          "rtf": [
+            9.49,
+            4.06
+          ]
+        },
+        "steps30": {
+          "run_s": [
+            323.1,
+            129.4
+          ],
+          "rtf": [
+            40.4,
+            16.2
+          ]
+        },
+        "peak_gib": [
+          11.67,
+          10.16
+        ],
+        "fast_4bit": {
+          "s8_run_s": [
+            32.9,
+            30.1
+          ],
+          "rtf": 3.76,
+          "steps30_run_s": [
+            130.0,
+            109.4
+          ],
+          "steps30_rtf": 13.68
+        },
+        "ar_dispatches_per_frame": 830,
+        "ar_ms_per_dispatch": [
+          0.2,
+          0.3
+        ]
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "crates/audio/src/music/minimax_music3/README.md",
+        "heading": "Metal performance"
+      },
+      "conditions": "battery power, host load 5-8: directions only, never quotable",
+      "note": "the AR stage is launch-bound (playbook item 6); the music3_grid bench covers its kernels"
+    }
+  ],
+  "open_questions": [
+    "a quiet-host, AC reading of the fast 4-bit path",
+    "the AR stage's dispatch count"
+  ],
+  "traps": [
+    "job defaults are 60 s and 30 steps: a sweep uses music-short.json (4 s, 4 steps) or waits an hour per run",
+    "the job's steps, duration and seed are the settings; arms cannot change the job, so a steps comparison is two sweep or profile runs with two --audio-job files"
+  ],
+  "docs": [
+    "crates/audio/src/music/minimax_music3/README.md",
+    "docs/AUDIO.md",
+    "docs/SPEEDUP_PLAYBOOK.md"
+  ]
+}

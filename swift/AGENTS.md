@@ -13,12 +13,19 @@ Short seams. Verify each one before release.
 - [Design rules](../DESIGN.md): ALWAYS read before any UI or design change
   (views, controls, copy, color, type, layout, menus, shortcuts, motion).
   It covers accessibility, theming, localization, and layout.
+- [Design system](../docs/design-system/README.md): tokens, component
+  guides, and contrast figures for every theme. Use it with DESIGN.md for
+  exact values. Never paste its hex values into Swift: use the theme
+  accessors it maps them to.
 - [Detailed archived Swift guide](../.claude/docs/modules/swift.md)
 - [Swift tool implementation](docs/SWIFT_TOOLS.md)
 - [Swift skills](docs/SWIFT_SKILLS.md)
 - [Swift storage](docs/storage.md)
 - [Swift memory architecture](docs/SWIFT_MEMORY.md)
+- [Syntext code search](docs/SYNTEXT.md) and
+  [conversation recall (Syntext context engine)](docs/SYNTEXT_CONTEXT.md)
 - [Swift localization](docs/SWIFT_LOCALIZATION.md)
+- [Swift audio and meeting notes architecture](docs/SWIFT_AUDIO_MEETING_NOTES.md)
 - [Swift keyboard and accessibility](docs/KEYBOARD_SHORTCUTS.md)
 - [Swift API workspace](docs/SWIFT_API_WORKSPACE.md)
 - [Automatic app updates](docs/AUTO_UPDATE.md)
@@ -65,6 +72,39 @@ staging files changed.
   `runsChatGenerationCommand` enables chat generation only in Chat. Full-bleed
   workspaces (`.images`, `.audio`, `.humanize`) declare `ownsGenerationShortcuts`
   to bind those chords to their own run/stop controls.
+- Tool options in Chat vs Projects: In Chat (`interactionMode == .chat`), tools
+  can be toggled on/off via `chatToolsEnabled` (persisted in `MacAppSettings`,
+  default true, switched from the Tools chip popover below the prompt composer
+  or the composer plus menu, and configured in General Settings). When enabled in
+  Chat, turns only offer and dispatch rootless tools (web search, web fetch,
+  browser automation, interactive questions, checklists, planning, memory,
+  and automation). File editing, directory navigation, codebase search, and
+  shell commands (`workspaceRootedToolNames`) as well as custom/MCP tools
+  strictly require an active project root (`interactionMode == .projects` and
+  `project != nil`) to prevent path traversal and home-directory pollution.
+- Tool profiles (`AppToolProfile`, `AppModel+ToolProfiles`): a profile only
+  REMOVES tools. `AppToolCatalog.captureTurnAvailableTools(profile:)` narrows
+  the one capture that feeds the prompt, the native lane, the token estimate
+  and `TurnAvailableTools.validate`, so a removed tool is refused at execution,
+  not just unlisted. Built-ins (Default, Minimal, Read-only) are code-defined
+  and never persisted; only `customToolProfiles` are stored. A profile stores
+  lowercase keys from `AppToolCatalog.profileKey(for:)` (`read`, `write`,
+  `edit` fold the file handlers' aliases), so a stored profile survives a
+  rename of the advertised name. The composer popover edits an unsaved session
+  override (`toolProfileOverride`), never the saved profile. Prompt sections
+  that name a tool (`TodoWrite`, `agent`) must stay conditional on that tool
+  being offered. The profile applies to interactive turns only, not to
+  `SubagentRunner` or `AutomationExecutors`.
+- Tool call normalization (`Tools/Core/ToolCallNormalization.swift`):
+  `TurnAvailableTools.validate` resolves a call's tool name (case, then
+  family such as `read`/`read_file`/`FileRead`, `bash`/`shell`) and renames
+  argument keys (`filePath`, `path`, `oldString`, `include`, `numResults`) to
+  the offered definition's declared properties BEFORE schema validation, and
+  the dispatch gate then carries the offered name. It only resolves to tools
+  the turn offered, so it never widens a profile or agent allowlist. Do not
+  make two tools with different schemas share a family (`Grep` and
+  `grep_search` stay separate). `docs/TOOL_NAME_ALIGNMENT.md` has the
+  comparison with Claude Code, opencode and Pi and what is left undone.
 - Resources live in the `TurboSparkAppResources` target
   (`Sources/TurboSparkAppResources/Resources`), and the `TurboSparkApp` target
   declares none. `Bundle.module` in the app is a hand-written forwarder
@@ -79,6 +119,13 @@ staging files changed.
   `scripts/verify-app-bundle.sh` (it launches the built app and checks every
   Mach-O's deployment target) after any change to bundle layout, resources,
   `Package.swift`, or the Xcode pin. CI runs it before the DMG is built.
+- syntext is pinned `exact:` from 2.7.1 on. Never pin an exact tag up to
+  2.7.0: those tags pin the previous release's xcframework, and
+  `exact: "2.5.0"` linked 2.4.0 with no error. For one of those, pin its
+  `swift-vX.Y.Z` commit by `revision:`. After any bump,
+  `.build/workspace-state.json` must name the matching zip
+  (`docs/SYNTEXT.md` section 6). An archive member built above the 14.0 floor
+  is only an ld warning, which `verify-app-bundle.sh` cannot see.
 - Never write or read the Keychain at launch for a feature the user has not
   turned on. The app is ad-hoc signed, so every new build is a different
   identity from the one that created an item, and macOS asks again on each
@@ -88,6 +135,38 @@ staging files changed.
   stored rather than dropping the key). Probe for an item with an
   attributes-only query, never by reading the secret. Show the system's reason
   on failure (`TypeSafeKeychain.describe`), not a bare "could not save".
+  Do not launch the installed or an older build to compare behavior while
+  testing credential storage: builds before v0.3.2 create the TypeSafe Keychain
+  item at start when it is missing and read it on every start, which recreates
+  the state under test.
+- "Start server on launch" never serves keyless. With no key in the field
+  (no Keychain opt-in, or a failed read) the auto-start branch in
+  `AppModel+Persistence.swift` refuses with a warning toast
+  (`AppModel.autoStartNeedsKey`, #150): an auto-start never shows the
+  Server pane that warns about a missing key. A start the user clicks may
+  still run keyless, because the pane shows the warning there.
+- macOS privacy prompts (microphone, screen and system audio recording) are
+  opt-in the same way. Only `RecordingPermissions` calls
+  `AVCaptureDevice.requestAccess` or `CGRequestScreenCaptureAccess`, from the
+  access sheet's Allow button. `AudioCapture` and the controller only check
+  status (`microphoneAccessAllowed`, `systemAudioAccessAllowed`) and throw,
+  and every `SCShareableContent` query sits behind that check, because a
+  query prompts when access is missing. A new capture entry point uses
+  `.recordingAccessGate` (DESIGN.md, Asking for macOS access). A declined
+  permission must leave import, transcription, and the other source usable.
+  `RecordingPermissionsTests` scans `Sources/` for the prompt APIs.
+- Computer use's Accessibility and Screen Recording grants belong to the
+  separate helper app (`Sources/TurboSparkComputerUse`), never to TurboSpark,
+  whose ad-hoc identity changes every update. The app never calls
+  `AXIsProcessTrustedWithOptions`. The helper prompts only on a
+  `requestPermission` the app sends from the user's Allow click. Changing
+  `Sources/ComputerUseKit` or the helper makes a new helper binary, and users
+  grant it again. Read `docs/COMPUTER_USE.md` first.
+- Test permission flows in the bundled app (`make app-bundle`), not
+  `swift run`. An unbundled build is attributed to the app that launched it
+  (Terminal, Xcode), so its prompts and System Settings rows name that app.
+  `tccutil reset Microphone com.whit3rabbit.turbospark` (and `ScreenCapture`)
+  returns the bundle to never asked. It resets the installed app too.
 - The API destination has three modes. Text and Image share the TurboSpark
   Rust listener, address, and key. TypeSafe manages a separate loopback
   `openkindd` process, URL, and API key through the OpenKind Swift package.
@@ -109,9 +188,73 @@ staging files changed.
   VoiceOver contracts.
 - Every UI or design change follows [DESIGN.md](../DESIGN.md): build from
   its shared control vocabulary (`Theme/AppControls.swift`,
+  `Theme/AppSurfaces.swift`, `Theme/AppProgressBar.swift`,
   `Theme/AppPreferenceOptions.swift`, `Theme/AppStrings.swift`,
   `Theme/TurboSparkMotion.swift`), not local variants, and run its
   verification list.
+- Voice cloning consent covers one exact reference region
+  (`AudioCloneOptions.consentedReference`) and lapses on any retrim. A UI
+  seam that sets the reference (drop, import, inline recording, reuse from a
+  take) never sets or copies consent. A voice reference recording captures
+  the microphone through local flags and never writes the Record page's
+  capture settings. `AudioVoiceCloneWorkspaceTests` pins all three. The
+  reference transcript follows the region: choosing a take replaces it with
+  that take's own (or none), and any retrim clears it, because OmniVoice
+  speaks a mismatched transcript in place of the script
+  (`crates/audio/src/tts/omnivoice/README.md`). The same tests pin both.
+  The OmniVoice and Drama 3 clone requests carry the user's reference
+  transcript, trimmed and omitted when blank, and clear the instruction
+  (`nativeCloneRequest`); MegaTTS3's request sends none, because the engine
+  aligns the reference itself.
+- The Voice Cloning page only presents models with native Metal or MLX
+  acceleration (`clonesNatively`). Portable CPU-only models remain gated to
+  the Advanced portable experiment and must not be presented as voice clone
+  options until an accelerated backend is implemented. OmniVoice, MegaTTS3
+  and Drama 3 are Metal-accelerated and present on the Voice Cloning page.
+  A new native cloner stays unlisted until `nativeCloneRequest` builds its
+  request shape and its family joins `nativeCloneRequestFamilies`. Without
+  that it gets MegaTTS3's request, which the runtime refuses.
+  Drama 3 and OmniVoice also speak on Voiceover with no reference
+  (`referenceFreeSpeechFamilies`). Whether a run clones follows the
+  recipe's speech mode (`runClonesNatively`), which `normalizeModelOptions`
+  sets by page, never the profile alone. MegaTTS3 always clones.
+- Audio model residency lifecycle is managed by `AudioWorkspaceController`
+  (`isModelLoaded`, `canLoadModel`, `canUnloadModel`). Unloading is wired into
+  `AppModel.canUnloadAnyModel` and the top bar eject button, ensuring audio
+  models can be loaded and unloaded consistently with text and image sessions.
+  The top bar observes only AppModel, so AppModel republishes when
+  `canUnloadModel` flips (`forwardAudioUnloadChanges`). An AppModel predicate
+  that reads another nested controller needs the same forwarding, or its
+  views stay stale until something else republishes.
+- A Qwen3-TTS load runs its Swift-side work through
+  `AudioModelOpening.perform`, not beside it: an opening enters its stop
+  barrier at init and only `open` or `perform` ends it, and
+  `stopAndDrain` waits on that barrier, so verification run outside
+  `perform` hangs a shutdown forever. A managed install refuses to load
+  without a verification token (`CancellationError`, thrown inside
+  `perform` so the barrier still ends); a chosen folder has no catalog
+  install to verify and loads without one. Byte verification is what keeps
+  a tampered or truncated download from loading.
+  `AudioQwenLoadShutdownTests` pins both the refusal and the drain.
+- Audio meeting notes and summary isolation: Post-meeting summary and action
+  item generation (`AudioMeetingNotesAdvisor`, `AudioMeetingNotesView`) strictly
+  mutates `item.summary` and never modifies or overwrites `item.transcripts` or
+  `item.transcriptText`. The raw timestamped transcript remains immutable
+  ground truth.
+- CoreAudio process tap vs ScreenCaptureKit: Meeting audio capture on macOS
+  14.2+ uses native CoreAudio process tapping (`CATapDescription`) with
+  `NSAudioCaptureUsageDescription` to isolate conference apps without
+  triggering Screen Recording prompts or displaying system recording
+  overlays. ScreenCaptureKit is reserved as fallback for older macOS
+  versions or full-system capture.
+- Speaker intelligence and voiceprints: Cross-meeting speaker recognition
+  extracts 64-band log-mel voiceprints using Accelerate vDSP without
+  external neural dependencies. Cosine similarity thresholding (>= 0.78)
+  matches known speakers in `speaker_profiles.json`. Local microphone energy
+  isolation assigns "You" tags deterministically to prevent false re-labeling.
+- Custom vocabulary normalization: Jargon and acronym replacements
+  (`AudioCustomVocabulary`) must enforce regex word boundaries `\b` to prevent
+  destructive substring replacement in transcripts.
 - The Sparkle updater starts only inside a real .app bundle (see
   `SparkleUpdateController`); never bypass that guard for `swift run` builds.
   Update trust is the EdDSA signature, not Apple code signing -- the bundle
@@ -119,6 +262,39 @@ staging files changed.
   Sparkle.framework (XPCServices, Autoupdate, Updater.app, then the
   framework) before the app itself. The brew cask's `auto_updates true` and
   the in-app updater are one contract: either may change, not just one.
+- FluidAudio is pinned `exact: "0.15.5"` ([FLUIDAUDIO.md](../docs/FLUIDAUDIO.md)).
+  From v0.15.6 it links a Rust staticlib whose unwind personality the app
+  link cannot take. Only `Audio/FluidAudio/` imports it, and
+  `FluidAudioEngine` sets `ModelHub.offlineMode` and a blocked
+  `ModelRegistry.baseURL` before any use. Left alone, FluidAudio downloads
+  Hugging Face `main` and deletes a model folder after a failed load.
+- Never call a FluidAudio download, cache or purge API
+  (`FluidAudioIsolationTests` scans for them). Installs come from the pinned
+  Rust audio catalog. A family runs only once `FluidAudioFamily.hasAdapter`
+  is true for it. Check a model's inputs before handing it to FluidAudio:
+  a mismatch is a `preconditionFailure` that ends the app, not an error.
+- Keep source files modular and focused (aiming under 800 lines). Break out
+  multi-view SwiftUI files into individual view components
+  (`Generation/MessageRowView.swift`, `ActiveStreamingRowView.swift`). Delegate
+  Markdown YAML frontmatter extraction to `MarkdownFrontmatterParser`. Keep
+  database protocol conformances and secondary schemas in companion extensions
+  (`ProfileDatabase+Workflows.swift`, `ProfileDatabase+Assets.swift`,
+  `ProfileRepository.swift`). Separate compiler pipelines into `WorkflowAST.swift`
+  and `WorkflowLexer.swift`. Isolate large embedded browser automation JavaScript
+  payloads into dedicated script extensions (`DOMSnapshotScript.swift`).
+- The ANE+Steel prefill split (`AppAnePrefillOption`) defaults to `.auto` in
+  `MacAppSettings`, resolving to split prefill when Apple Silicon M4+
+  (`TurboSparkCapabilities.chipSupportsAnePrefill`) and dense Qwen
+  (`ModelFeatureDescriptor.supportsAnePrefill`) are detected. Missing or
+  incompatible ANE programs fall back gracefully to Steel at runtime rather
+  than failing session open.
+- Expert cache locking (`AppExpertSlotsWiringOption`, Engine settings) defaults
+  to `.auto`, which the engine resolves per family: qwen4_exp gets a wired
+  cache at twice the slot budget, every other family stays unwired, and a
+  refused lock falls back to unwired instead of failing the load. The outcome
+  is `SessionInfo.expertSlotsWiring`. Wired memory is taken from the rest of
+  the system for the session's life, which is why only measured families
+  default to it.
 
 ## Checks
 
@@ -137,19 +313,6 @@ for runtime or release changes.
 
 ## Open issues
 
-- **Auto-started server has no API key on a new install**
-  ([#150](https://github.com/whit3rabbit/turbospark/issues/150)). The server key is
-  session-only unless the user opts in to Keychain storage
-  (`ServerKeychain.resolveOptIn`), so `serverAPIKeyInput` is empty at launch.
-  With "start server on launch" on (`serverAutoStartOnLaunch`,
-  `AppModel+Persistence.swift`, the `server == nil` auto-start branch), the
-  server then starts with `apiKey: nil` and any local process can drive the
-  loaded models over loopback. The Server pane warns about it, but an
-  auto-start never shows that pane. Someone who already had a stored key is
-  unaffected, because the first launch adopts the existing item. Options:
-  generate a per-session key at auto-start (as TypeSafe does) and put it in
-  the field so Copy works, or refuse to auto-start without a key. This needs a
-  decision before either is built.
 - **A fresh build directory fails to link on Xcode 27.0 (beta, build 27A266a).**
   `swift build` into a new `--scratch-path` stops with "Build input file cannot
   be found: .../CSyntext.o". `CSyntext` is a header-only C target in the

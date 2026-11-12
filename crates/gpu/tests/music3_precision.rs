@@ -4,7 +4,7 @@ use turbospark_gpu::{Music3DType, Music3Device};
 #[test]
 fn native_norm_rounds_normalized_values_before_affine() {
     let device = Music3Device::new().unwrap();
-    let x = [0.984375, 2.46875, -0.70703125, 0.2001953125];
+    let x = [0.984375, 2.46875, -0.70703125, 0.200_195_31];
     let w = [1.203125, 0.90234375, 1.796875, 0.69921875];
     // Independent MLX 0.32.3 golden values distinguish both rounding boundaries.
     assert_eq!(
@@ -13,7 +13,7 @@ fn native_norm_rounds_normalized_values_before_affine() {
             .unwrap(),
         [0.859375, 1.6171875, -0.91796875, 0.1015625]
     );
-    let b = [0.10009765625, 0.2001953125, 0.30078125, 0.400390625];
+    let b = [0.100_097_656, 0.200_195_31, 0.30078125, 0.400_390_63];
     assert_eq!(
         device
             .layer_norm(&x, &w, Some(&b), 1, 4, 1e-5, Music3DType::Bf16)
@@ -32,7 +32,7 @@ fn native_rope_preserves_contraction_order_and_rejects_position_truncation() {
         .rope(&x, 1, 1, 1, 128, 7, 1e6, Music3DType::Bf16)
         .unwrap();
     // Independent MLX output at a cancellation tie in the full checkpoint.
-    assert!((y[73] - 0.00116729736328125).abs() < 1e-4);
+    assert!((y[73] - 0.001_167_297_4).abs() < 1e-4);
     assert!(device
         .rope(&x, 1, 1, 1, 128, 1usize << 32, 1e6, Music3DType::Bf16)
         .is_err());

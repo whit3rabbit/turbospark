@@ -52,9 +52,12 @@ public struct AppSettingsView: View {
 
     /// Settings search matches the title the user actually SEES, which
     /// follows the in-app language, as well as the English source and the
-    /// tab's keywords.
-    static func matches(_ title: String, keywords: [String] = [], query: String) -> Bool {
-        query.isEmpty
+    /// tab's keywords. The query is trimmed: an untrimmed lone space hid
+    /// every tab whose title has no space (Appearance, General) while the
+    /// control results, which already trimmed, showed nothing.
+    static func matches(_ title: String, keywords: [String] = [], query rawQuery: String) -> Bool {
+        let query = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        return query.isEmpty
             || title.localizedCaseInsensitiveContains(query)
             || AppStrings.localized(String.LocalizationValue(title)).localizedCaseInsensitiveContains(query)
             || keywords.contains { $0.localizedCaseInsensitiveContains(query) }
@@ -79,8 +82,8 @@ public struct AppSettingsView: View {
     public var body: some View {
         HStack(spacing: 0) {
             settingsSidebar
-                .frame(width: 252)
-                .background(.appPage.opacity(0.85))
+                .frame(minWidth: 220, idealWidth: 252, maxWidth: 280)
+                .background(.appPage)
 
             Rectangle()
                 .fill(.appBorder)
@@ -284,6 +287,8 @@ public struct AppSettingsView: View {
             SafetySettingsPaneView(model: model)
         case .mcp:
             McpManagementView(model: model)
+        case .tools:
+            ToolsSettingsPaneView(model: model)
         case .skills:
             SkillsSettingsPaneView(model: model)
         case .memory:
@@ -300,6 +305,10 @@ public struct AppSettingsView: View {
             HooksSettingsPaneView(model: model)
         case .browser:
             BrowserSettingsPaneView(model: model)
+        case .computerUse:
+            ComputerUseSettingsPaneView(model: model)
+        case .network:
+            NetworkSettingsPaneView(model: model)
         }
     }
 }

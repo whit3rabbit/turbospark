@@ -70,15 +70,16 @@ pub(crate) struct PositionalConv {
 }
 
 impl PositionalConv {
-    /// `width` is the model width, `kernel` and `groups` the positional
-    /// convolution geometry from the checkpoint config.
+    /// `base` is the checkpoint prefix of the convolution (`width` the model
+    /// width, `kernel` and `groups` the positional convolution geometry from
+    /// the checkpoint config).
     pub(crate) fn load(
         file: &SafetensorsFile,
+        base: &str,
         width: usize,
         kernel: usize,
         groups: usize,
     ) -> Result<Self> {
-        let base = "wav2vec2.encoder.pos_conv_embed.conv";
         let weight_g = load_tensor_alias(
             file,
             &[
@@ -996,7 +997,7 @@ mod tests {
                     ],
                 );
                 let file = SafetensorsFile::open(&path).unwrap();
-                let shared = PositionalConv::load(&file, WIDTH, kernel, GROUPS).unwrap();
+                let shared = PositionalConv::load(&file, base, WIDTH, kernel, GROUPS).unwrap();
                 let old_w =
                     wav2vec_ref::PositionalConv::load(&file, &wav2vec_config(kernel)).unwrap();
                 let old_m = mms_ref::PositionalConv::load(&file, &mms_config(kernel)).unwrap();
@@ -1030,7 +1031,9 @@ mod tests {
             ],
         );
         let file = SafetensorsFile::open(&path).unwrap();
-        let new = PositionalConv::load(&file, WIDTH, 4, GROUPS).err().unwrap();
+        let new = PositionalConv::load(&file, base, WIDTH, 4, GROUPS)
+            .err()
+            .unwrap();
         let old = wav2vec_ref::PositionalConv::load(&file, &wav2vec_config(4))
             .err()
             .unwrap();

@@ -23,7 +23,7 @@ use turbospark_model_io::safetensors::SafetensorsFile;
 
 use crate::codec::conv::{load_bias, wn_fold_in_place, BiasMode, Conv1d, ConvTranspose1d, WnFold};
 use crate::codec::dac::{add_cropped_residual, load_alpha_mid};
-use crate::codec::wnconv::{load_f32_shaped, snake1d};
+use crate::codec::wnconv::load_f32_shaped;
 use crate::ops;
 use crate::{Result, SpeechError};
 
@@ -236,6 +236,52 @@ impl FishS1DacConfig {
     }
 }
 
+/// Checkpoint names of one weight-normed conv's tensors.
+struct WnNames {
+    g: String,
+    v: String,
+    bias: String,
+}
+
+/// Resolves a weight-normed conv's tensor names under `prefix`, as the
+/// reference `DAC.sanitize` maps them (mlx-audio `fish_s1_dac.py` at
+/// [`REFERENCE_COMMIT`]):
+///
+/// - MLX layout (the fixtures): `P.weight_g`, `P.weight_v`, `P.bias`.
+/// - Raw PyTorch layout (Drama 3's `codec.safetensors`):
+///   `P.conv.parametrizations.weight.original0` (g) and `original1` (v),
+///   with the bias at `P.conv.bias`.
+/// - Bare parametrization: `P.parametrizations.weight.original0/1`, bias
+///   at `P.bias`.
+///
+/// The MLX spelling wins when present, so a conv missing from every layout
+/// is reported under the name the fixtures use.
+fn wn_names(file: &SafetensorsFile, prefix: &str) -> WnNames {
+    let conv = format!("{prefix}.conv.parametrizations.weight");
+    let bare = format!("{prefix}.parametrizations.weight");
+    if !file.contains_tensor(&format!("{prefix}.weight_v")) {
+        if file.contains_tensor(&format!("{conv}.original1")) {
+            return WnNames {
+                g: format!("{conv}.original0"),
+                v: format!("{conv}.original1"),
+                bias: format!("{prefix}.conv.bias"),
+            };
+        }
+        if file.contains_tensor(&format!("{bare}.original1")) {
+            return WnNames {
+                g: format!("{bare}.original0"),
+                v: format!("{bare}.original1"),
+                bias: format!("{prefix}.bias"),
+            };
+        }
+    }
+    WnNames {
+        g: format!("{prefix}.weight_g"),
+        v: format!("{prefix}.weight_v"),
+        bias: format!("{prefix}.bias"),
+    }
+}
+
 /// Weight-norm causal conv1d: torch-layout weight `(out, in, K)`,
 /// `weight_g (out, 1, 1)` normalized over `(in, K)`, left pad
 /// `kernel_eff - stride` plus the reference's right `extra` pad. The
@@ -254,14 +300,10 @@ fn load_fish_wn_conv(
     with_bias: bool,
 ) -> Result<Conv1d> {
     let in_g = in_ch / groups;
-    let mut v = load_f32_shaped(file, &format!("{prefix}.weight_v"), &[out_ch, in_g, kernel])?;
-    let g = load_f32_shaped(file, &format!("{prefix}.weight_g"), &[out_ch, 1, 1])?;
-    let bias = load_bias(
-        file,
-        &format!("{prefix}.bias"),
-        out_ch,
-        BiasMode::required(with_bias),
-    )?;
+    let names = wn_names(file, prefix);
+    let mut v = load_f32_shaped(file, &names.v, &[out_ch, in_g, kernel])?;
+    let g = load_f32_shaped(file, &names.g, &[out_ch, 1, 1])?;
+    let bias = load_bias(file, &names.bias, out_ch, BiasMode::required(with_bias))?;
     // normalize except dim 0: per out channel over (in, K).
     wn_fold_in_place(&mut v, &g, in_g * kernel, WnFold::Div);
     Ok(Conv1d {
@@ -323,7 +365,7 @@ impl FishCausalConv {
         })
     }
 
-    fn forward(&self, x: &[f32], seq: usize) -> Vec<f32> {
+    fn forward(&self, exec: &DacExec, x: &[f32], seq: usize) -> Result<Vec<f32>> {
         let extra = seq.div_ceil(self.conv.stride) * self.conv.stride - seq;
         let padded_seq = seq + self.pad + extra;
         let mut padded = vec![0.0f32; self.conv.in_ch * padded_seq];
@@ -332,7 +374,7 @@ impl FishCausalConv {
                 .copy_from_slice(&x[c * seq..(c + 1) * seq]);
         }
         let _ = padded_seq;
-        self.conv.forward(&padded)
+        exec.conv(&self.conv, &padded)
     }
 }
 
@@ -394,13 +436,10 @@ impl FishCausalConvTr {
         wn: bool,
     ) -> Result<Self> {
         let (weight, bias) = if wn {
-            let mut v = load_f32_shaped(
-                file,
-                &format!("{prefix}.weight_v"),
-                &[in_ch, out_ch, kernel],
-            )?;
-            let g = load_f32_shaped(file, &format!("{prefix}.weight_g"), &[in_ch, 1, 1])?;
-            let bias = load_f32_shaped(file, &format!("{prefix}.bias"), &[out_ch])?;
+            let names = wn_names(file, prefix);
+            let mut v = load_f32_shaped(file, &names.v, &[in_ch, out_ch, kernel])?;
+            let g = load_f32_shaped(file, &names.g, &[in_ch, 1, 1])?;
+            let bias = load_f32_shaped(file, &names.bias, &[out_ch])?;
             wn_fold_in_place(&mut v, &g, out_ch * kernel, WnFold::Div);
             (v, Some(bias))
         } else {
@@ -433,8 +472,8 @@ impl FishCausalConvTr {
     }
 
     /// Channel-major in -> channel-major out, right-trimmed.
-    fn forward(&self, x: &[f32]) -> Vec<f32> {
-        let y = self.conv.forward(x);
+    fn forward(&self, exec: &DacExec, x: &[f32]) -> Result<Vec<f32>> {
+        let y = exec.conv_transpose(&self.conv, x)?;
         let out_ch = self.conv.out_ch;
         let out_seq = y.len() / out_ch;
         let trim_right = self.conv.kernel - self.conv.stride;
@@ -443,7 +482,7 @@ impl FishCausalConvTr {
         for c in 0..out_ch {
             trimmed[c * keep..(c + 1) * keep].copy_from_slice(&y[c * out_seq..c * out_seq + keep]);
         }
-        trimmed
+        Ok(trimmed)
     }
 }
 
@@ -501,12 +540,23 @@ impl FishConvNeXtBlock {
         })
     }
 
-    fn forward(&self, x: &mut Vec<f32>, seq: usize) {
-        let dim = self.dim;
-        let residual = x.clone();
+    fn forward(&self, exec: &DacExec, x: &mut Vec<f32>, seq: usize) -> Result<()> {
         // Causal depthwise conv on channel-major.
-        let padded_input = x.clone();
-        let mut h = self.dwconv.forward(&padded_input, seq);
+        let h = self.dwconv.forward(exec, x, seq)?;
+        self.after_dwconv(exec, x, h, seq)
+    }
+
+    /// Everything after the depthwise conv `h`: pointwise in time, so the
+    /// streamed decoder shares it.
+    fn after_dwconv(
+        &self,
+        exec: &DacExec,
+        x: &mut Vec<f32>,
+        mut h: Vec<f32>,
+        seq: usize,
+    ) -> Result<()> {
+        let dim = self.dim;
+        let residual = &*x;
         // Norm + FFN channels-last.
         let mut rows = vec![0.0f32; h.len()];
         for t in 0..seq {
@@ -516,10 +566,10 @@ impl FishConvNeXtBlock {
         }
         ops::layernorm(&mut rows, seq, dim, &self.norm.0, Some(&self.norm.1), 1e-6);
         let (in1, out1, w1, b1) = &self.pwconv1;
-        let mut f = ops::linear(&rows, w1, Some(b1), seq, *in1, *out1);
+        let mut f = exec.linear(&rows, w1, b1, seq, *in1, *out1)?;
         ops::gelu_erf(&mut f);
         let (in2, out2, w2, b2) = &self.pwconv2;
-        let mut f = ops::linear(&f, w2, Some(b2), seq, *in2, *out2);
+        let mut f = exec.linear(&f, w2, b2, seq, *in2, *out2)?;
         for chunk in f.chunks_exact_mut(dim) {
             for (d, v) in chunk.iter_mut().enumerate() {
                 *v *= self.gamma[d];
@@ -532,6 +582,7 @@ impl FishConvNeXtBlock {
             }
         }
         *x = h;
+        Ok(())
     }
 }
 
@@ -815,24 +866,14 @@ impl FishVq {
         dim: usize,
     ) -> Result<Self> {
         // in_proj/out_proj are WNConv1d k=1 with torch-layout weights.
-        let v_in = load_f32_shaped(
-            file,
-            &format!("{prefix}.in_proj.weight_v"),
-            &[dim, input_dim, 1],
-        )?;
-        let g_in = load_f32_shaped(file, &format!("{prefix}.in_proj.weight_g"), &[dim, 1, 1])?;
-        let b_in = load_f32_shaped(file, &format!("{prefix}.in_proj.bias"), &[dim])?;
-        let v_out = load_f32_shaped(
-            file,
-            &format!("{prefix}.out_proj.weight_v"),
-            &[input_dim, dim, 1],
-        )?;
-        let g_out = load_f32_shaped(
-            file,
-            &format!("{prefix}.out_proj.weight_g"),
-            &[input_dim, 1, 1],
-        )?;
-        let b_out = load_f32_shaped(file, &format!("{prefix}.out_proj.bias"), &[input_dim])?;
+        let in_names = wn_names(file, &format!("{prefix}.in_proj"));
+        let v_in = load_f32_shaped(file, &in_names.v, &[dim, input_dim, 1])?;
+        let g_in = load_f32_shaped(file, &in_names.g, &[dim, 1, 1])?;
+        let b_in = load_f32_shaped(file, &in_names.bias, &[dim])?;
+        let out_names = wn_names(file, &format!("{prefix}.out_proj"));
+        let v_out = load_f32_shaped(file, &out_names.v, &[input_dim, dim, 1])?;
+        let g_out = load_f32_shaped(file, &out_names.g, &[input_dim, 1, 1])?;
+        let b_out = load_f32_shaped(file, &out_names.bias, &[input_dim])?;
         let fold = |mut v: Vec<f32>, g: &[f32]| -> Vec<f32> {
             let per = v.len() / g.len();
             wn_fold_in_place(&mut v, g, per, WnFold::Div);
@@ -1076,14 +1117,19 @@ impl FishDownsampleRvq {
 
     /// Codes per book (semantic first) -> channel-major audio latents
     /// at the encoder frame rate, upsampled by the downsample factor.
-    fn decode(&self, codes: &[Vec<i32>], frames: usize) -> Result<(Vec<f32>, usize)> {
+    fn decode(
+        &self,
+        exec: &DacExec,
+        codes: &[Vec<i32>],
+        frames: usize,
+    ) -> Result<(Vec<f32>, usize)> {
         if codes.is_empty() {
             return Err(SpeechError::Input {
                 why: "codes must carry at least the semantic book".to_string(),
             });
         }
         let z = self.quantized_from_codes(codes, frames)?;
-        Ok(self.latents_through_post(&z, frames))
+        self.latents_through_post(exec, &z, frames)
     }
 
     /// The reference `quantizer.decode` head: clipped-code embedding sums
@@ -1104,7 +1150,12 @@ impl FishDownsampleRvq {
 
     /// The post transformer plus the mirrored upsample stack: downsampled
     /// channel-major latents -> encoder-frame-rate channel-major latents.
-    fn latents_through_post(&self, zq: &[f32], frames: usize) -> (Vec<f32>, usize) {
+    fn latents_through_post(
+        &self,
+        exec: &DacExec,
+        zq: &[f32],
+        frames: usize,
+    ) -> Result<(Vec<f32>, usize)> {
         let in_dim = self.semantic.input_dim;
         let seq = frames;
         let mut z = zq.to_vec();
@@ -1120,13 +1171,19 @@ impl FishDownsampleRvq {
                 z[d * seq + t] = rows[t * in_dim + d];
             }
         }
+        self.upsample_stack(exec, z)
+    }
+
+    /// The mirrored upsample stack: post-transformer channel-major latents
+    /// at the downsampled rate -> the encoder frame rate.
+    fn upsample_stack(&self, exec: &DacExec, mut z: Vec<f32>) -> Result<(Vec<f32>, usize)> {
         for (conv, block) in &self.upsample {
-            z = conv.forward(&z);
+            z = conv.forward(exec, &z)?;
             let out_seq = z.len() / conv.conv.out_ch;
-            block.forward(&mut z, out_seq);
+            block.forward(exec, &mut z, out_seq)?;
         }
-        let seq = z.len() / in_dim;
-        (z, seq)
+        let seq = z.len() / self.semantic.input_dim;
+        Ok((z, seq))
     }
 }
 
@@ -1196,14 +1253,14 @@ impl FishResidualUnit {
         })
     }
 
-    fn forward(&self, x: &[f32], seq: usize) -> Vec<f32> {
+    fn forward(&self, exec: &DacExec, x: &[f32], seq: usize) -> Result<Vec<f32>> {
         let mut y = x.to_vec();
-        snake1d(&mut y, &self.alpha1, self.channels, seq);
-        let y = self.conv1.forward(&y, seq);
+        exec.snake(&mut y, &self.alpha1, self.channels, seq)?;
+        let y = self.conv1.forward(exec, &y, seq)?;
         let seq2 = y.len() / self.channels;
         let mut y = y;
-        snake1d(&mut y, &self.alpha2, self.channels, seq2);
-        let y = self.conv2.forward(&y, seq2);
+        exec.snake(&mut y, &self.alpha2, self.channels, seq2)?;
+        let y = self.conv2.forward(exec, &y, seq2)?;
         let out_seq = y.len() / self.channels;
         // causal: crop the residual's tail (no start offset); symmetric
         // otherwise.
@@ -1212,7 +1269,7 @@ impl FishResidualUnit {
         } else {
             seq.saturating_sub(out_seq) / 2
         };
-        add_cropped_residual(x, seq, y, self.channels, pad)
+        Ok(add_cropped_residual(x, seq, y, self.channels, pad))
     }
 }
 
@@ -1267,6 +1324,15 @@ impl FishS1Dac {
             }
         }
         Self::load(config, &file)
+    }
+
+    /// Opens a bare weights file with the `build_ae()` geometry. For
+    /// bundles that ship the codec beside another model (Drama 3's
+    /// `codec.safetensors`), where the directory's `config.json`
+    /// belongs to that model, not to the codec.
+    pub fn open_weights(path: &Path) -> Result<Self> {
+        let file = SafetensorsFile::open(path).map_err(SpeechError::from)?;
+        Self::load(FishS1DacConfig::build_ae(), &file)
     }
 
     pub fn load(config: FishS1DacConfig, file: &SafetensorsFile) -> Result<Self> {
@@ -1395,8 +1461,13 @@ impl FishS1Dac {
     /// Mono samples -> codes per book plus the code length. Pads to a
     /// frame-length multiple exactly like the reference `encode`.
     pub fn encode(&self, samples: &[f32]) -> Result<(Vec<Vec<i32>>, usize)> {
-        let (z, frames) = self.encode_z(samples)?;
-        let (_quantized, codes) = self.quantizer_residual_encode(&z, frames);
+        self.encode_on(&DacExec::host(), samples)
+    }
+
+    /// [`Self::encode`] with the heavy operations on `exec`.
+    pub fn encode_on(&self, exec: &DacExec, samples: &[f32]) -> Result<(Vec<Vec<i32>>, usize)> {
+        let (z, frames) = self.encode_z(exec, samples)?;
+        let (_quantized, codes) = self.quantizer_residual_encode(exec, &z, frames)?;
         let code_len = codes.first().map_or(0, |c| c.len());
         Ok((codes, code_len))
     }
@@ -1406,8 +1477,9 @@ impl FishS1Dac {
     /// `encode_zq` (the quantized `from_codes` sums over the padded
     /// encoder output, before the post transformer and upsample).
     pub fn encode_zq(&self, samples: &[f32]) -> Result<(Vec<f32>, usize)> {
-        let (z, frames) = self.encode_z(samples)?;
-        let (_quantized, codes) = self.quantizer_residual_encode(&z, frames);
+        let exec = DacExec::host();
+        let (z, frames) = self.encode_z(&exec, samples)?;
+        let (_quantized, codes) = self.quantizer_residual_encode(&exec, &z, frames)?;
         let frames = codes.first().map_or(0, |c| c.len());
         if codes.is_empty() {
             return Ok((Vec::new(), 0));
@@ -1425,7 +1497,7 @@ impl FishS1Dac {
     /// The padded waveform through the encoder stack: channel-major
     /// latents at the hop rate plus the frame count. Shared by
     /// [`Self::encode`] and [`Self::encode_zq`].
-    fn encode_z(&self, samples: &[f32]) -> Result<(Vec<f32>, usize)> {
+    fn encode_z(&self, exec: &DacExec, samples: &[f32]) -> Result<(Vec<f32>, usize)> {
         if samples.is_empty() {
             return Err(SpeechError::Input {
                 why: "empty waveform".to_string(),
@@ -1436,17 +1508,17 @@ impl FishS1Dac {
         let mut x = vec![0.0f32; padded];
         x[..samples.len()].copy_from_slice(samples);
         let seq = padded;
-        let mut h = self.encoder_conv_in.forward(&x, seq);
+        let mut h = self.encoder_conv_in.forward(exec, &x, seq)?;
         for block in &self.encoder_blocks {
             let half = block.in_ch;
             for ru in &block.res_units {
                 let seq_in = h.len() / half;
-                h = ru.forward(&h, seq_in);
+                h = ru.forward(exec, &h, seq_in)?;
             }
             let seq_in = h.len() / half;
             let mut h2 = h.clone();
-            snake1d(&mut h2, &block.alpha, half, seq_in);
-            h = block.conv.forward(&h2, seq_in);
+            exec.snake(&mut h2, &block.alpha, half, seq_in)?;
+            h = block.conv.forward(exec, &h2, seq_in)?;
             let seq_t = h.len() / block.conv.conv.out_ch;
             if let Some(transformer) = &block.transformer {
                 let channels = block.conv.conv.out_ch;
@@ -1470,13 +1542,18 @@ impl FishS1Dac {
         // the build_ae geometry.
         let channels = self.encoder_alpha.len();
         let seq = h.len() / channels;
-        snake1d(&mut h, &self.encoder_alpha, channels, seq);
-        let z = self.encoder_conv_out.forward(&h, seq);
+        exec.snake(&mut h, &self.encoder_alpha, channels, seq)?;
+        let z = self.encoder_conv_out.forward(exec, &h, seq)?;
         let frames = z.len() / self.config.quantizer.input_dim;
         Ok((z, frames))
     }
 
-    fn quantizer_residual_encode(&self, z: &[f32], frames: usize) -> (Vec<f32>, Vec<Vec<i32>>) {
+    fn quantizer_residual_encode(
+        &self,
+        exec: &DacExec,
+        z: &[f32],
+        frames: usize,
+    ) -> Result<(Vec<f32>, Vec<Vec<i32>>)> {
         // Downsample stack.
         let mut z = z.to_vec();
         let mut seq = frames;
@@ -1487,10 +1564,10 @@ impl FishS1Dac {
         for (idx, (conv, block)) in self.quantizer.downsample.iter().enumerate() {
             let in_dim = dims[idx];
             seq = z.len() / in_dim.max(1);
-            z = conv.forward(&z, seq);
+            z = conv.forward(exec, &z, seq)?;
             let out_dim = dims[idx + 1];
             seq = z.len() / out_dim;
-            block.forward(&mut z, seq);
+            block.forward(exec, &mut z, seq)?;
         }
         // Pre transformer (rows round trip).
         let in_dim = self.config.quantizer.input_dim;
@@ -1564,11 +1641,16 @@ impl FishS1Dac {
             }
             all_codes.push(idx);
         }
-        (z, all_codes)
+        Ok((z, all_codes))
     }
 
     /// Codes per book (semantic first) -> mono samples.
     pub fn decode(&self, codes: &[Vec<i32>]) -> Result<Vec<f32>> {
+        self.decode_on(&DacExec::host(), codes)
+    }
+
+    /// [`Self::decode`] with the heavy operations on `exec`.
+    pub fn decode_on(&self, exec: &DacExec, codes: &[Vec<i32>]) -> Result<Vec<f32>> {
         if codes.len() != self.config.total_books() {
             return Err(SpeechError::Input {
                 why: format!(
@@ -1579,7 +1661,7 @@ impl FishS1Dac {
             });
         }
         let frames = codes[0].len();
-        let (z, seq) = self.quantizer.decode(codes, frames)?;
+        let (z, seq) = self.quantizer.decode(exec, codes, frames)?;
         if seq
             != frames
                 * self
@@ -1593,7 +1675,7 @@ impl FishS1Dac {
                 why: format!("upsampled frames {seq} do not match the code length"),
             });
         }
-        self.decoder_stack(&z, seq)
+        self.decoder_stack(exec, &z, seq)
     }
 
     /// Continuous channel-major latents `[latent_dim, frames]` at the
@@ -1609,37 +1691,43 @@ impl FishS1Dac {
                 ),
             });
         }
-        let (z, seq) = self.quantizer.latents_through_post(zq, frames);
-        self.decoder_stack(&z, seq)
+        let exec = DacExec::host();
+        let (z, seq) = self.quantizer.latents_through_post(&exec, zq, frames)?;
+        self.decoder_stack(&exec, &z, seq)
     }
 
     /// The decoder stack over channel-major latents at the hop rate:
     /// conv in, transposed-conv blocks, snake tail, conv out, tanh.
-    fn decoder_stack(&self, z: &[f32], seq: usize) -> Result<Vec<f32>> {
-        let mut h = self.decoder_conv_in.forward(z, seq);
+    fn decoder_stack(&self, exec: &DacExec, z: &[f32], seq: usize) -> Result<Vec<f32>> {
+        let mut h = self.decoder_conv_in.forward(exec, z, seq)?;
         for block in &self.decoder_blocks {
             let seq_in = h.len() / block.in_ch;
             let mut h2 = h.clone();
-            snake1d(&mut h2, &block.alpha, block.in_ch, seq_in);
-            let h3 = block.conv_tr.forward(&h2);
+            exec.snake(&mut h2, &block.alpha, block.in_ch, seq_in)?;
+            let h3 = block.conv_tr.forward(exec, &h2)?;
             let out_ch = block.conv_tr.conv.out_ch;
             let mut h3 = h3;
             for ru in &block.res_units {
                 let s = h3.len() / out_ch;
-                h3 = ru.forward(&h3, s);
+                h3 = ru.forward(exec, &h3, s)?;
             }
             h = h3;
         }
         let final_dim = self.config.decoder_dim >> self.config.decoder_rates.len();
         let seq = h.len() / final_dim;
-        snake1d(&mut h, &self.decoder_alpha, final_dim, seq);
-        let mut audio = self.decoder_conv_out.forward(&h, seq);
+        exec.snake(&mut h, &self.decoder_alpha, final_dim, seq)?;
+        let mut audio = self.decoder_conv_out.forward(exec, &h, seq)?;
         for v in &mut audio {
             *v = v.tanh();
         }
         Ok(audio)
     }
 }
+
+mod exec;
+mod stream;
+pub use exec::DacExec;
+pub use stream::FishS1DacStream;
 
 #[cfg(test)]
 mod tests;

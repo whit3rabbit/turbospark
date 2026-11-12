@@ -49,7 +49,9 @@
 
 use foundation::LogitValue;
 
-use super::batched_layers::{encode_dense_ffn_batched, encode_full_attention_block_batched};
+use super::batched_layers::{
+    encode_dense_ffn_batched, encode_full_attention_block_batched, row_batched_ops,
+};
 pub(crate) use super::mtp_state::MtpState;
 use super::mtp_state::{
     FC, FINAL_NORM, PRE_FC_NORM_EMBEDDING, PRE_FC_NORM_HIDDEN, TRUNK_FINAL_NORM,
@@ -284,17 +286,33 @@ impl RealForwardRunner {
                 &prefixed_layer_tensor(MTP_PREFIX, 0, "input_layernorm.weight"),
                 hidden,
             )?;
-            for t in 0..k {
-                gpu::encode_rms_norm_bf16w_centered(
+            if row_batched_ops() {
+                // K rows as K "heads" of width `hidden`; the centered per-head
+                // kernel shares the whole-vector one's helper and loop.
+                gpu::encode_rms_norm_bf16w_perhead_centered(
                     context,
                     &pass,
-                    (&scratch.x, row(t)),
+                    (&scratch.x, 0),
                     input_norm,
-                    (&batched.normed, row(t)),
+                    (&batched.normed, 0),
+                    k as u32,
                     hidden as u32,
                     RMS_EPS,
                 )
                 .map_err(gpu_err)?;
+            } else {
+                for t in 0..k {
+                    gpu::encode_rms_norm_bf16w_centered(
+                        context,
+                        &pass,
+                        (&scratch.x, row(t)),
+                        input_norm,
+                        (&batched.normed, row(t)),
+                        hidden as u32,
+                        RMS_EPS,
+                    )
+                    .map_err(gpu_err)?;
+                }
             }
             encode_full_attention_block_batched(
                 context,
@@ -318,26 +336,49 @@ impl RealForwardRunner {
                 &prefixed_layer_tensor(MTP_PREFIX, 0, "post_attention_layernorm.weight"),
                 hidden,
             )?;
-            for t in 0..k {
+            if row_batched_ops() {
                 // RAW residual add, as in `mtp_step` (no sandwich norms).
                 gpu::encode_residual_add(
                     context,
                     &pass,
-                    (&scratch.x, row(t)),
-                    (&batched.o, row(t)),
-                    hidden as u32,
+                    (&scratch.x, 0),
+                    (&batched.o, 0),
+                    (hidden * k) as u32,
                 )
                 .map_err(gpu_err)?;
-                gpu::encode_rms_norm_bf16w_centered(
+                gpu::encode_rms_norm_bf16w_perhead_centered(
                     context,
                     &pass,
-                    (&scratch.x, row(t)),
+                    (&scratch.x, 0),
                     post_attn,
-                    (&batched.moe_x, row(t)),
+                    (&batched.moe_x, 0),
+                    k as u32,
                     hidden as u32,
                     RMS_EPS,
                 )
                 .map_err(gpu_err)?;
+            } else {
+                for t in 0..k {
+                    // RAW residual add, as in `mtp_step` (no sandwich norms).
+                    gpu::encode_residual_add(
+                        context,
+                        &pass,
+                        (&scratch.x, row(t)),
+                        (&batched.o, row(t)),
+                        hidden as u32,
+                    )
+                    .map_err(gpu_err)?;
+                    gpu::encode_rms_norm_bf16w_centered(
+                        context,
+                        &pass,
+                        (&scratch.x, row(t)),
+                        post_attn,
+                        (&batched.moe_x, row(t)),
+                        hidden as u32,
+                        RMS_EPS,
+                    )
+                    .map_err(gpu_err)?;
+                }
             }
             encode_dense_ffn_batched(
                 context, &pass, weights, index, scratch, batched, MTP_PREFIX, 0, hidden, inter,

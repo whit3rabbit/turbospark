@@ -690,8 +690,19 @@ fn classification_buckets() {
             layer: 1
         }
     );
+    // The tower and its projector are a `VisionTower` now; whether they are
+    // ingested is the caller's request, and a text-only walk reports them as
+    // excluded (`orchestrate_orders_passes_through_and_slices_experts`).
     assert_eq!(
         classify_gemma4("vision_tower.patch_embed.weight", LAYERS),
+        Gemma4Bucket::VisionTower
+    );
+    assert_eq!(
+        classify_gemma4("embed_vision.embedding_projection.weight", LAYERS),
+        Gemma4Bucket::VisionTower
+    );
+    assert_eq!(
+        classify_gemma4("audio_tower.layers.0.weight", LAYERS),
         Gemma4Bucket::ExcludedMultimodal
     );
     assert_eq!(
@@ -1031,4 +1042,29 @@ fn failed_streamed_install_leaves_an_existing_install_unchanged() {
     let manifest = model_io::load_manifest(&dir, &arch, model_io::DEFAULT_MAX_BYTES)
         .expect("old install remains loadable");
     assert_eq!(manifest.model_id, "existing-install");
+}
+
+/// A packed weight whose declared column count only matches its bytes after
+/// the `cols * factor` and `rows * words * 4` products wrap (shape
+/// `[1, 2^62 + 16]` at 8 bits wraps both to the 64-element, 64-byte run the
+/// fixture really holds) must be refused. In release the wrapped values pass
+/// every equality check and record a 1x64 entry the header never declared;
+/// in debug the multiply panics. Either way it is a hostile header, so it
+/// must surface as a named error.
+#[test]
+fn pass_through_packed_refuses_a_shape_that_only_fits_after_wrapping() {
+    let name = "language_model.model.layers.0.self_attn.q_proj.weight";
+    let mut tensors = packed_tensor(name, 1, 64, 8, "bf16");
+    tensors[0].shape = vec![1, (1u64 << 62) + 16];
+    let blob = assemble(&tensors);
+    let header = turbospark_repack::parse_header(&blob, 1 << 20).expect("fixture header parses");
+    let source = MemoryRangeSource::new(&blob);
+    let shards = Gemma4Shards::single(&header, &source);
+    let quant = parse_gemma4_quantization(&quant_config_json(8, 64)).expect("spec parses");
+    let err = pass_through_packed(&shards, name, &quant)
+        .expect_err("a shape that only fits after wrapping must be refused");
+    assert!(
+        matches!(err, Gemma4Error::ShapeMismatch { .. }),
+        "expected ShapeMismatch, got {err:?}"
+    );
 }

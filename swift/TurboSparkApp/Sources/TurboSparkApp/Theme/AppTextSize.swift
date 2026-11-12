@@ -2,6 +2,7 @@ import SwiftUI
 
 /// User interface scaling options for readability and accessibility sizing.
 public enum AppTextSize: String, CaseIterable, Identifiable, Sendable {
+    case small
     case standard
     case large
     case extraLarge
@@ -14,6 +15,7 @@ public enum AppTextSize: String, CaseIterable, Identifiable, Sendable {
     /// Human-readable label for settings selector.
     public var label: String {
         switch self {
+        case .small: return "Small"
         case .standard: return "Default"
         case .large: return "Large"
         case .extraLarge: return "Extra Large"
@@ -23,6 +25,7 @@ public enum AppTextSize: String, CaseIterable, Identifiable, Sendable {
     /// Linear font scale factor applied to base point sizes.
     public var scale: CGFloat {
         switch self {
+        case .small: return 0.875
         case .standard: return 1.0
         case .large: return 1.15
         case .extraLarge: return 1.30

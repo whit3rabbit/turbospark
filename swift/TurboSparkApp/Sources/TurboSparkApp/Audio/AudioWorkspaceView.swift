@@ -3,6 +3,7 @@ import TurboSpark
 
 @MainActor
 struct AudioWorkspaceView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     @ObservedObject var controller: AudioWorkspaceController
     @State private var presetName = ""
@@ -13,33 +14,13 @@ struct AudioWorkspaceView: View {
     // Held here, not in the sheet, so reopening the generator keeps the choices.
     @State private var promptSelection = MusicPromptSelection()
 
+    private var scale: CGFloat { AppMetrics.textScale(theme) }
+
     var body: some View {
         VStack(spacing: 0) {
             navigation
             Divider()
-            if controller.page == .library {
-                AudioLibraryView(controller: controller)
-            } else {
-                GeometryReader { geometry in
-                    ScrollView {
-                        if geometry.size.width >= 940 && controller.page != .record {
-                            HStack(alignment: .top, spacing: 24) {
-                                workflow.frame(maxWidth: .infinity)
-                                modelPanel.frame(width: 300)
-                            }
-                            .frame(maxWidth: 1440)
-                            .frame(maxWidth: .infinity)
-                            .padding(24)
-                        } else {
-                            VStack(alignment: .leading, spacing: 20) {
-                                if controller.page != .record { compactModelPanel }
-                                workflow
-                            }
-                            .padding(24)
-                        }
-                    }
-                }
-            }
+            pageArea
             AudioWorkspaceStatusView(controller: controller)
         }
         .background(.appPage)
@@ -58,13 +39,68 @@ struct AudioWorkspaceView: View {
         .sheet(isPresented: $showingGenerator) {
             MusicPromptGeneratorView(controller: controller, selection: $promptSelection)
         }
+        .task {
+            if controller.installedPaths.isEmpty || controller.profiles.isEmpty {
+                controller.refreshModels()
+            }
+        }
+    }
+
+    /// The page under the model gate. Music and Voice Cloning are disabled and
+    /// hidden from VoiceOver while the gate is up, so nothing under it can run.
+    private var pageArea: some View {
+        let gate = controller.modelGate
+        return ZStack {
+            pageContent
+                .disabled(gate != nil)
+                .accessibilityHidden(gate != nil)
+            if let gate {
+                AudioModelGateView(model: model, controller: controller, gate: gate)
+                    .transition(.opacity)
+            }
+        }
+        .tsAnimation(TSMotion.pane, value: gate != nil)
+    }
+
+    @ViewBuilder private var pageContent: some View {
+        if controller.page == .library {
+            AudioLibraryView(controller: controller)
+        } else if controller.page == .transcribe {
+            SpeechToTextWorkspaceView(model: model, controller: controller)
+        } else if controller.page == .voiceClone {
+            VoiceCloneWorkspaceView(
+                model: model, controller: controller,
+                description: Text(LocalizedStringKey(pageDescription), bundle: .module),
+                showPromptLibrary: { showingPrompts = true }, savePrompt: beginSavingPrompt)
+        } else {
+            GeometryReader { geometry in
+                ScrollView {
+                    if geometry.size.width >= (940 * scale).rounded() && controller.page != .record {
+                        HStack(alignment: .top, spacing: 24) {
+                            workflow.frame(maxWidth: .infinity)
+                            modelPanel.frame(width: (300 * scale).rounded())
+                        }
+                        .frame(maxWidth: 1440)
+                        .frame(maxWidth: .infinity)
+                        .padding(24)
+                    } else {
+                        VStack(alignment: .leading, spacing: 20) {
+                            if controller.page != .record { compactModelPanel }
+                            workflow
+                        }
+                        .padding(24)
+                    }
+                }
+            }
+        }
     }
 
     private var navigation: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 16) { workspaceTitle; Spacer(minLength: 12); workspaceActions }
-            VStack(alignment: .leading, spacing: 12) { workspaceTitle; workspaceActions }
-        }
+        AppAdaptiveHeader(leading: {
+            workspaceTitle
+        }, actions: {
+            workspaceActions
+        })
         .padding(.horizontal, 24).padding(.vertical, 18)
     }
 
@@ -103,19 +139,16 @@ struct AudioWorkspaceView: View {
             if let item = controller.workspaceResult, item.status != .processing {
                 AudioItemDetailView(controller: controller, item: item)
             } else if !controller.isBusy && AudioWorkspacePage.destinations.contains(controller.page) {
-                VStack(spacing: 10) {
-                    Image(systemName: controller.page == .transcribe ? "text.alignleft" : "waveform")
-                        .themedFont(.title).foregroundStyle(.appSecondary)
-                    Text("No outputs yet", bundle: .module).themedFont(.base, weight: .medium)
-                    Text("Audio and edits are saved in your encrypted profile.", bundle: .module)
-                        .themedFont(.small).foregroundStyle(.appSecondary).multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity).padding(28)
-                .overlay { RoundedRectangle(cornerRadius: 12).stroke(.appBorder, style: StrokeStyle(lineWidth: 1, dash: [5])) }
+                AppEmptyState(
+                    systemImage: "waveform",
+                    title: Text("No outputs yet", bundle: .module),
+                    message: Text("Audio and edits are saved in your encrypted profile.", bundle: .module)
+                )
             }
             if !controller.workspaceHistory.isEmpty {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Saved audio", bundle: .module).themedFont(.base, weight: .semibold)
+                        .accessibilityAddTraits(.isHeader)
                     ForEach(controller.workspaceHistory.prefix(5)) { item in
                         HStack(spacing: 12) {
                             Button { controller.select(item) } label: {
@@ -134,7 +167,7 @@ struct AudioWorkspaceView: View {
                             AudioSaveAsButton(controller: controller, item: item, compact: true)
                             AudioDeleteButton(controller: controller, item: item, compact: true)
                         }
-                        .padding(12).background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
+                        .padding(12).background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
                     }
                 }
             }
@@ -143,12 +176,18 @@ struct AudioWorkspaceView: View {
 
     private var modelPanel: some View {
         AudioModelPickerView(model: model, controller: controller)
-            .padding(18)
-            .background(.appSurface, in: RoundedRectangle(cornerRadius: 12))
-            .overlay { RoundedRectangle(cornerRadius: 12).stroke(.appBorder, lineWidth: 1) }
+            .appCardSurface(padding: 18)
     }
 
-    private var compactModelPanel: some View {
+    @ViewBuilder private var compactModelPanel: some View {
+        if controller.page == .music {
+            modelPanel
+        } else {
+            collapsibleModelPanel
+        }
+    }
+
+    private var collapsibleModelPanel: some View {
         DisclosureGroup {
             AudioModelPickerView(model: model, controller: controller).padding(.top, 12)
         } label: {
@@ -162,9 +201,7 @@ struct AudioWorkspaceView: View {
                 }
             }.themedFont(.small)
         }
-        .padding(16)
-        .background(.appSurface, in: RoundedRectangle(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).stroke(.appBorder, lineWidth: 1) }
+        .appCardSurface(padding: 16)
     }
 
     private var pageDescription: String {
@@ -183,7 +220,7 @@ struct AudioWorkspaceView: View {
 
     private var modelAndInputs: some View {
         VStack(alignment: .leading, spacing: 18) {
-            if controller.page == .cleanup || controller.page == .advanced { operationPicker }
+            if controller.page == .cleanup || controller.page == .advanced { AudioOperationPicker(controller: controller) }
             if controller.page == .advanced {
                 Toggle(isOn: $controller.allowPortableExperiment) {
                     Text("Allow portable model experiments", bundle: .module)
@@ -197,67 +234,23 @@ struct AudioWorkspaceView: View {
                 }
             }
             if controller.page == .advanced { familyDetails }
-            if controller.page == .transcribe || controller.page == .cleanup
+            if controller.page == .cleanup
                 || (controller.page == .advanced && controller.task != .textToSpeech && controller.task != .music) {
                 sourcePicker
             }
             switch controller.page {
             case .voiceover, .voiceClone, .voiceDesign: voiceoverInputs
-            case .music: musicInputs
-            case .transcribe: languagePicker
+            case .music: AudioMusicInputs(controller: controller) { showingGenerator = true }
             case .advanced:
                 if controller.task == .speechToText { languagePicker }
                 if controller.task == .alignment { scriptEditor }
                 if controller.task == .textToSpeech { voiceoverInputs }
-                if controller.task == .music { musicInputs }
+                if controller.task == .music { AudioMusicInputs(controller: controller) { showingGenerator = true } }
             default: EmptyView()
             }
             experimentActions
         }
-        .padding(20)
-        .background(.appSurface, in: RoundedRectangle(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).stroke(.appBorder, lineWidth: 1) }
-    }
-
-    private var operationPicker: some View {
-        Picker(selection: Binding(get: { controller.recipe.task }, set: { controller.selectTask($0) })) {
-            if controller.page == .cleanup {
-                if AudioTask.enhancement.isRunnable {
-                    Text("Enhance speech", bundle: .module).tag(AudioTask.enhancement.rawValue)
-                }
-                if AudioTask.separation.isRunnable {
-                    Text("Separate stems", bundle: .module).tag(AudioTask.separation.rawValue)
-                }
-            } else {
-                // Only tasks the runtime can open. Offering the rest produced
-                // a picker whose every choice failed at session open.
-                if AudioTask.speechToText.isRunnable {
-                    Text("Transcribe", bundle: .module).tag(AudioTask.speechToText.rawValue)
-                }
-                if AudioTask.textToSpeech.isRunnable {
-                    Text("Voiceover", bundle: .module).tag(AudioTask.textToSpeech.rawValue)
-                }
-                if AudioTask.music.isRunnable {
-                    Text("Music", bundle: .module).tag(AudioTask.music.rawValue)
-                }
-                if AudioTask.speechDetection.isRunnable {
-                    Text("Speech detection", bundle: .module).tag(AudioTask.speechDetection.rawValue)
-                }
-                if AudioTask.alignment.isRunnable {
-                    Text("Alignment", bundle: .module).tag(AudioTask.alignment.rawValue)
-                }
-                if AudioTask.diarization.isRunnable {
-                    Text("Speaker diarization", bundle: .module).tag(AudioTask.diarization.rawValue)
-                }
-                if AudioTask.codec.isRunnable {
-                    Text("Codec", bundle: .module).tag(AudioTask.codec.rawValue)
-                }
-                if AudioTask.languageIdentification.isRunnable {
-                    Text("Language identification", bundle: .module).tag(AudioTask.languageIdentification.rawValue)
-                }
-            }
-        } label: { Text("Operation", bundle: .module) }
-        .disabled(controller.isBusy)
+        .appCardSurface(padding: 20)
     }
 
     private var sourcePicker: some View {
@@ -319,140 +312,25 @@ struct AudioWorkspaceView: View {
             } else if controller.selectedProfileClonesNatively {
                 VoiceCloneInputsView(controller: controller)
             }
-            if let profile = controller.selectedProfile {
-                if !profile.capabilities.voices.isEmpty {
-                    Picker(selection: $controller.recipe.voice) {
-                        ForEach(profile.capabilities.voices, id: \.self) { voice in Text(voice).tag(voice) }
-                    } label: { Text("Voice", bundle: .module) }
-                }
-                languagePicker
-                if controller.selectedProfile?.family != "qwen3_tts" {
-                    HStack {
-                        Text("Speed", bundle: .module)
-                        Slider(value: $controller.recipe.speed, in: 0.5...2, step: 0.05)
-                            .accessibilityLabel(Text("Speech speed", bundle: .module))
-                        Text(controller.recipe.speed, format: .number.precision(.fractionLength(2)))
-                            .monospacedDigit()
-                    }
-                }
-            }
-            let sections = controller.recipe.text.components(separatedBy: "\n\n")
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
-            if !sections.isEmpty {
-                DisclosureGroup {
-                    ForEach(Array(sections.enumerated()), id: \.offset) { index, text in
-                        HStack(alignment: .top, spacing: 12) {
-                            Text(verbatim: String(index + 1)).monospacedDigit().foregroundStyle(.appSecondary)
-                            Text(text).lineLimit(4).frame(maxWidth: .infinity, alignment: .leading)
-                            Button { controller.runSection(text) } label: {
-                                Text("Generate section", bundle: .module)
-                            }
-                            .disabled(!controller.canRun)
-                        }
-                        .padding(.vertical, 8)
-                    }
-                } label: { Text("Script sections", bundle: .module) }
-            }
+            AudioVoicePicker(controller: controller)
+            languagePicker
+            AudioSpeedControl(controller: controller)
+            AudioScriptSections(controller: controller)
         }
     }
 
     private var scriptEditor: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Script", bundle: .module).themedFont(.small, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
             TextEditor(text: $controller.recipe.text)
-                .themedFont(.base).frame(minHeight: 180)
-                .scrollContentBackground(.hidden)
+                .themedFont(.base)
                 .accessibilityLabel(Text("Script", bundle: .module))
-                .padding(8).overlay { RoundedRectangle(cornerRadius: 8).stroke(.appBorder) }
+                .appEditorSurface(minHeight: 180)
         }
     }
 
-    @ViewBuilder private var languagePicker: some View {
-        if let profile = controller.selectedProfile, !profile.capabilities.languages.isEmpty {
-            Picker(selection: $controller.recipe.language) {
-                if controller.task == .speechToText || profile.capabilities.languages.contains("auto") {
-                    Text("Detect automatically", bundle: .module).tag("auto")
-                }
-                ForEach(profile.capabilities.languages.filter { $0 != "auto" }, id: \.self) { language in
-                    Text(Locale.current.localizedString(forLanguageCode: language) ?? language).tag(language)
-                }
-            } label: { Text("Language", bundle: .module) }
-        }
-    }
-
-    private var musicInputs: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Music description", bundle: .module).themedFont(.small, weight: .semibold)
-                    Spacer()
-                    Button { showingGenerator = true } label: {
-                        Label { Text("Prompt generator", bundle: .module) } icon: { Image(systemName: "wand.and.stars") }
-                    }
-                    .appAction(.secondary, size: .small)
-                }
-                ZStack(alignment: .topLeading) {
-                    TextEditor(text: $controller.recipe.caption)
-                        .scrollContentBackground(.hidden)
-                        .themedFont(.base)
-                        .accessibilityLabel(Text("Music description", bundle: .module))
-                    if controller.recipe.caption.isEmpty {
-                        Text("Describe the mood, instruments, and style", bundle: .module)
-                            .foregroundStyle(.appSecondary)
-                            .padding(.horizontal, 5).padding(.vertical, 8)
-                            .allowsHitTesting(false).accessibilityHidden(true)
-                    }
-                }
-                .frame(height: 110).padding(8)
-                .overlay { RoundedRectangle(cornerRadius: 8).stroke(.appBorder) }
-            }
-            if controller.selectedProfile?.capabilities.supportsLyrics == true {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Lyrics", bundle: .module).themedFont(.small, weight: .semibold)
-                        Spacer()
-                        if AudioWorkspaceController.effectiveLyrics(controller.recipe.lyrics) == AudioWorkspaceController.instrumentalLyrics {
-                            Text("Instrumental", bundle: .module).themedFont(.small).foregroundStyle(.appSecondary)
-                        }
-                    }
-                    ZStack(alignment: .topLeading) {
-                        TextEditor(text: $controller.recipe.lyrics)
-                            .themedFont(.base)
-                            .scrollContentBackground(.hidden)
-                            .accessibilityLabel(Text("Lyrics", bundle: .module))
-                        if controller.recipe.lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Text(verbatim: AudioWorkspaceController.instrumentalLyrics)
-                                .foregroundStyle(.appSecondary)
-                                .padding(.horizontal, 5).padding(.vertical, 8)
-                                .allowsHitTesting(false).accessibilityHidden(true)
-                        }
-                    }
-                    .frame(height: 100).padding(8)
-                    .overlay { RoundedRectangle(cornerRadius: 8).stroke(.appBorder) }
-                }
-            }
-            if controller.selectedProfile != nil {
-                HStack {
-                    Text("Duration (seconds)", bundle: .module)
-                    TextField(value: $controller.recipe.durationSeconds, format: .number) {
-                        Text("Duration (seconds)", bundle: .module)
-                    }.textFieldStyle(.roundedBorder).frame(maxWidth: 120)
-                }
-                DisclosureGroup {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Text("Seed", bundle: .module)
-                            TextField(value: $controller.recipe.seed, format: .number) { Text("Seed", bundle: .module) }
-                                .textFieldStyle(.roundedBorder).frame(maxWidth: 200)
-                        }
-                        Stepper(value: $controller.recipe.steps, in: 1...30) {
-                            HStack { Text("Steps", bundle: .module); Text(verbatim: String(controller.recipe.steps)) }
-                        }
-                    }.padding(.top, 8)
-                } label: { Text("Generation settings", bundle: .module) }
-            }
-        }
-    }
+    private var languagePicker: some View { AudioLanguagePicker(controller: controller) }
 
     private var experimentActions: some View {
         ViewThatFits(in: .horizontal) {
@@ -472,17 +350,19 @@ struct AudioWorkspaceView: View {
                     Label { Text("Prompt library", bundle: .module) } icon: { Image(systemName: "text.book.closed") }
                 }
                 .appAction(.secondary, size: .small)
-                Button {
-                    savingPrompt = true
-                    presetName = String((controller.task == .music ? controller.recipe.caption : controller.recipe.text).prefix(60))
-                    showingPreset = true
-                } label: { Text("Save Prompt", bundle: .module) }
+                Button(action: beginSavingPrompt) { Text("Save Prompt", bundle: .module) }
                     .appAction(.secondary, size: .small)
                     .disabled(!controller.canSavePrompt)
             }.fixedSize()
         } else {
             HStack(spacing: 12) { presetMenu; saveDraftButton }
         }
+    }
+
+    private func beginSavingPrompt() {
+        savingPrompt = true
+        presetName = String((controller.task == .music ? controller.recipe.caption : controller.recipe.text).prefix(60))
+        showingPreset = true
     }
 
     private var familyDetails: some View {
@@ -494,7 +374,7 @@ struct AudioWorkspaceView: View {
                             Text(family.family).themedFont(.small, weight: .semibold)
                         } icon: { Image(systemName: family.component ? "puzzlepiece" : "waveform") }
                         Text(family.operations.joined(separator: ", ")).themedCode(.small)
-                        Text(family.backend).themedCode(.small)
+                        Text(LocalizedStringKey(AudioEngineLabel(backend: family.backend, compute: nil).title), bundle: .module)
                         if let reason = family.unavailableReason { Text(reason) }
                         Text(family.evidence).foregroundStyle(.appSecondary)
                     }

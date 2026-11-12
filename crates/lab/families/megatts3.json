@@ -1,0 +1,22 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "megatts3",
+  "kind": "audio",
+  "title": "MegaTTS3 voice cloning (diffusion steps 16 default; 8 fast, 32 best); consent required per reference",
+  "flow": "speak",
+  "installs": [],
+  "recommended": [],
+  "sweeps": [
+    {"id": "diffusion_steps", "description": "8 against 16 and 32 diffusion steps on one reference",
+     "when": ["audio:speak"], "metric": "audio_run_s", "exactness": "bit_exact",
+     "baseline": "steps16", "candidates": ["steps8", "steps32"],
+     "note": "the step count is the job's steps field, so this is three sweep runs with three --audio-job files; each job carries consent: true and the reference WAV"}
+  ],
+  "findings": [],
+  "open_questions": ["no numbers recorded for this pipeline yet", "the community WavVAE encoder's provenance is unverified, which is why consent is required"],
+  "traps": [
+    "a speak job without consent: true is a recorded refusal (CLAUDE.md: voice cloning requires explicit consent up front)",
+    "TURBOSPARK_MEGATTS3_STEPS and _FRAMES are test hooks in megatts3.rs's ignored tests, not runtime switches: the job's steps field is the setting"
+  ],
+  "docs": ["docs/AUDIO.md"]
+}

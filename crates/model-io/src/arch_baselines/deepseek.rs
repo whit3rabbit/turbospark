@@ -82,6 +82,7 @@ pub fn deepseek_v4_flash_284b_a13b() -> ArchConfig {
         swiglu_limit: 10.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: PleConfig::NONE,
     }
 }

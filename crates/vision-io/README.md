@@ -1,6 +1,6 @@
 # turbospark-vision-io
 
-Portable vision preprocessing for the `qwen3_5` vision tower. Takes encoded image bytes and produces the patch-row matrix the tower's patch-embedding GEMM consumes, plus the three position tables the tower and the text trunk need.
+Portable vision preprocessing for the `qwen3_5` vision tower (and, in their own modules, the Gemma 4 tower and Unlimited-OCR-2's page layout). Takes encoded image bytes and produces the patch-row matrix the tower's patch-embedding GEMM consumes, plus the three position tables the tower and the text trunk need.
 
 Plain arithmetic on `Vec<f32>`: no Metal, no macOS, no GPU, no model install. It builds and tests cleanly for non-macOS targets.
 
@@ -8,7 +8,7 @@ Downstream workspace crates depend on it under its real package name, no alias:
 
 ```toml
 [dependencies]
-turbospark-vision-io = { path = "../vision-io", version = "0.1.0" }
+turbospark-vision-io = { path = "../vision-io", version = "0.8.0" }
 ```
 
 ## Purpose & Role
@@ -48,10 +48,13 @@ Beside it, three tables of pure index and weight arithmetic:
 - `resize.rs`: Deterministic PIL-compatible bicubic image resampling implemented in fixed-point arithmetic.
 - `normalize.rs`: Per-channel mean/standard deviation normalization and float scaling.
 - `patchify.rs`: Extraction of spatial patch rows into the merge-window ordering (`patch_rows`, `GridThw`).
+- `preprocess.rs`: The composed pipeline (`preprocess`, `PreprocessedImage`) chaining smart resize, bicubic resample, normalization, and patchify.
 - `pos_embed.rs`: 2D bilinear interpolation weight and index calculator for position embeddings.
 - `rope.rs`: 2D spatial RoPE frequency table generator for vision attention.
 - `mrope.rs`: Multimodal 3D RoPE coordinate triple assignment for prompt/image token merging.
-- `rounding.rs`: Fixed-point numerical rounding helpers.
+- `gemma4.rs`: Gemma 4 tower preprocessing, a separate pipeline (no smart resize, temporal axis, normalize, or merge-window order; `docs/GEMMA4_VISION_PHASE0.md`).
+- `unlimited_ocr2.rs`: Unlimited-OCR-2 page layout: one page is "gundam" mode (a 1024 global view plus up to 16 crops of 640), several pages are one 1024 view each, as FP32 `[-1, 1]` channel-last views.
+- `rounding.rs`: Shared rounding helpers matching Python's `round()` convention (`round_half_to_even`).
 - `error.rs`: Typed preprocessing and dimension validation errors.
 
 ## Development & Test Commands

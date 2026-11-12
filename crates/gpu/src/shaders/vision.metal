@@ -158,6 +158,37 @@ void vision_gelu_erf_fp16(
     y[tid] = half(0.5f * x * (1.0f + vision_erf(x * M_SQRT1_2_F)));
 }
 
+// SiLU in place: the Qwen2.5-VL tower's gated MLP computes
+// `silu(gate_proj(x)) * up_proj(x)`. `x * sigmoid(x)` in FP32, narrowed once.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_silu_fp16(
+    device half*    y     [[buffer(0)]],
+    constant uint&  count [[buffer(1)]],
+    uint            tid   [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    const float x = float(y[tid]);
+    y[tid] = half(x / (1.0f + exp(-x)));
+}
+
+// CLIP's activation: `x * sigmoid(1.702 * x)` (`quick_gelu`, mlx-vlm's
+// `nn.GELU(approx="fast")`). A third kernel and not a mode on the other two,
+// for the same reason they are separate: it differs from tanh-GELU by up to
+// ~2e-2, which a parity bound CAN see, so a wrong choice here is not the
+// silent kind the tanh/erf pair is. The exponent is clamped so a large
+// negative input saturates to 0 instead of overflowing `exp`.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_gelu_quick_fp16(
+    device half*    y     [[buffer(0)]],
+    constant uint&  count [[buffer(1)]],
+    uint            tid   [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    const float x = float(y[tid]);
+    const float e = exp(clamp(-1.702f * x, -80.0f, 80.0f));
+    y[tid] = half(x / (1.0f + e));
+}
+
 // ----------------------------------------------------------------------------
 // The tower's 2-D rotary embedding.
 //
@@ -413,6 +444,348 @@ void vision_matmul_fp16(
 }
 
 // ----------------------------------------------------------------------------
+// The same GEMM on the matrix units (`simdgroup_matrix`), the tower's default.
+// `vision_matmul_fp16` above stays as the `TURBOSPARK_VISION_MMA=0` arm.
+//
+// One threadgroup of 4 simdgroups (128 threads) owns a 64 x 64 output tile;
+// each simdgroup owns a 32 x 32 quarter as 4 x 4 FP32 8x8 accumulators. Each
+// 32-wide K step stages a [64 rows][32 k] slice of `a` and of `b` in
+// threadgroup memory, both row-major by their own leading dimension, so `b`
+// is read `[n, k]` exactly as above and the multiply loads it TRANSPOSED.
+//
+// Out-of-range rows, outputs and K tail are zero-filled in the staging tiles,
+// so any (m, k, n) is legal. The fused tower shapes leave K tails
+// (fc2's k = 4304 is 134.5 steps of 32), which is what `FC_VISION_GEMM_K_ALIGNED`
+// specializes away: false keeps the per-element K check in every load and
+// skips the 8-wide sub-steps past K. It is in the pipeline cache key
+// (`vision.rs`).
+//
+// EXACTNESS CLASS: not bit-identical to `vision_matmul_fp16` (the hardware
+// reduces each 8-wide K block, then the blocks run in K order), but an output's
+// bits depend only on its own row of `a`, its own row of `b` and K, never on M,
+// N or where the tile sits. `vision_parity.rs` pins that.
+// ----------------------------------------------------------------------------
+constant bool FC_VISION_GEMM_K_ALIGNED [[function_constant(110)]];
+
+constant constexpr uint kGemmBM = 64;
+constant constexpr uint kGemmBN = 64;
+constant constexpr uint kGemmBK = 32;
+// Padded row stride of a staging tile, in halves. 8 extra halves keep the
+// transposed 8x8 loads of `b` off one bank, and 40 * 2 bytes keeps every row
+// 8-byte aligned for the half4 stores below.
+constant constexpr uint kGemmLd = kGemmBK + 8;
+constant constexpr uint kGemmThreads = 128;
+
+// Lane -> (row, first column) of the two elements a lane holds in an 8x8
+// simdgroup_matrix (MLX steel's layout, also `mma8_frag_coord`).
+inline uint2 vision_gemm_frag_coord(uint lane) {
+    const uint q = lane >> 2;
+    return uint2((q & 4u) | ((lane >> 1) & 3u), ((q & 2u) << 1) | ((lane & 1u) << 1));
+}
+
+// Stage rows [row0, row0 + 64) x k [k0, k0 + 32) of a row-major [rows, K]
+// matrix into `dst` ([64][kGemmLd]). Eight threads per row, four halves each.
+// `full` is the caller's proof that the whole slice is in range.
+inline void vision_gemm_stage(
+    threadgroup half* dst,
+    device const half* src,
+    uint row0,
+    uint rows,
+    uint k0,
+    uint K,
+    uint tid,
+    bool full
+) {
+    const uint c = (tid & 7u) * 4u;
+    for (uint r = tid >> 3; r < kGemmBM; r += kGemmThreads / 8u) {
+        threadgroup half* d = dst + r * kGemmLd + c;
+        const uint gr = row0 + r;
+        const uint gk = k0 + c;
+        if (full) {
+            // packed_half4 has half's 2-byte alignment, so this is legal at
+            // any caller offset and row stride.
+            const packed_half4 v =
+                *(device const packed_half4*)(src + uint64_t(gr) * K + gk);
+            *(threadgroup half4*)d = half4(v);
+        } else {
+            device const half* s = src + uint64_t(gr) * K;
+            half4 v = half4(0.0h);
+            if (gr < rows) {
+                for (uint e = 0; e < 4u; ++e) {
+                    if (gk + e < K) { v[e] = s[gk + e]; }
+                }
+            }
+            *(threadgroup half4*)d = v;
+        }
+    }
+}
+
+[[kernel, max_total_threads_per_threadgroup(128)]]
+void vision_matmul_fp16_mma(
+    device const half*  a         [[buffer(0)]],
+    device const half*  b         [[buffer(1)]],
+    device const half*  bias      [[buffer(2)]],
+    device half*        out       [[buffer(3)]],
+    constant uint&      k_dim     [[buffer(4)]],
+    constant uint&      n_dim     [[buffer(5)]],
+    constant uint&      has_bias  [[buffer(6)]],
+    constant uint&      m_dim     [[buffer(7)]],
+    uint2 tg            [[threadgroup_position_in_grid]],
+    uint2 lid2          [[thread_position_in_threadgroup]],
+    uint  simd_lane_id  [[thread_index_in_simdgroup]],
+    uint  simd_group_id [[simdgroup_index_in_threadgroup]]
+) {
+    const uint tid = lid2.x;
+    const uint K = k_dim;
+    const uint N = n_dim;
+    const uint M = m_dim;
+    const uint n0 = tg.x * kGemmBN;
+    const uint m0 = tg.y * kGemmBM;
+    const uint sg_r = simd_group_id >> 1;
+    const uint sg_c = simd_group_id & 1u;
+
+    threadgroup half as[kGemmBM * kGemmLd];
+    threadgroup half bs[kGemmBN * kGemmLd];
+
+    simdgroup_float8x8 acc[4][4];
+    for (uint i = 0; i < 4u; ++i) {
+        for (uint j = 0; j < 4u; ++j) {
+            acc[i][j] = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+        }
+    }
+
+    const bool rows_full = m0 + kGemmBM <= M;
+    const bool cols_full = n0 + kGemmBN <= N;
+    threadgroup const half* a_sg = as + (sg_r * 32u) * kGemmLd;
+    threadgroup const half* b_sg = bs + (sg_c * 32u) * kGemmLd;
+
+    for (uint k0 = 0; k0 < K; k0 += kGemmBK) {
+        const bool k_full = FC_VISION_GEMM_K_ALIGNED || k0 + kGemmBK <= K;
+        vision_gemm_stage(as, a, m0, M, k0, K, tid, rows_full && k_full);
+        vision_gemm_stage(bs, b, n0, N, k0, K, tid, cols_full && k_full);
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        for (uint kk = 0; kk < kGemmBK; kk += 8u) {
+            // A sub-step wholly past K would add exact zeros; skipping it
+            // changes no bits and saves the K tail's work.
+            if (!FC_VISION_GEMM_K_ALIGNED && k0 + kk >= K) { break; }
+            simdgroup_half8x8 af[4];
+            simdgroup_half8x8 bf[4];
+            for (uint i = 0; i < 4u; ++i) {
+                simdgroup_load(af[i], a_sg + (i * 8u) * kGemmLd + kk, kGemmLd);
+            }
+            for (uint j = 0; j < 4u; ++j) {
+                simdgroup_load(bf[j], b_sg + (j * 8u) * kGemmLd + kk, kGemmLd,
+                               ulong2(0, 0), true);
+            }
+            for (uint i = 0; i < 4u; ++i) {
+                for (uint j = 0; j < 4u; ++j) {
+                    simdgroup_multiply_accumulate(acc[i][j], af[i], bf[j], acc[i][j]);
+                }
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    // Straight from the accumulators to `out`: each lane owns two adjacent
+    // outputs of every 8x8 tile, bounds-checked, bias added in FP32 and
+    // narrowed once, as `vision_matmul_fp16` does.
+    const uint2 fc = vision_gemm_frag_coord(simd_lane_id);
+    for (uint i = 0; i < 4u; ++i) {
+        const uint r = m0 + sg_r * 32u + i * 8u + fc.x;
+        if (r >= M) { continue; }
+        device half* orow = out + uint64_t(r) * N;
+        for (uint j = 0; j < 4u; ++j) {
+            const uint c = n0 + sg_c * 32u + j * 8u + fc.y;
+            for (uint e = 0; e < 2u; ++e) {
+                if (c + e < N) {
+                    const float v = acc[i][j].thread_elements()[e];
+                    orow[c + e] =
+                        half(v + (has_bias != 0 ? float(bias[c + e]) : 0.0f));
+                }
+            }
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// The same attention on the matrix units, flash style: the tower's default.
+// `vision_attention_bidir_fp16` above stays as the
+// `TURBOSPARK_VISION_ATTN_MMA=0` arm and the parity cross-check.
+//
+// One threadgroup of 4 simdgroups (128 threads) owns 32 query rows of one
+// head; each simdgroup owns 8 of them. Q lives in registers as 8x8 FP16
+// fragments for the whole kernel. Each step stages a block of 16 keys' K and
+// V rows in threadgroup memory (shared by the 4 simdgroups), computes the
+// 8 x 16 score tile with `simdgroup_multiply_accumulate` (K loaded
+// TRANSPOSED), runs the online softmax in registers, and accumulates P V into
+// FP32 8x8 output fragments. Still no mask: the only -inf is the key tail
+// past `seq`, which is padding, not masking.
+//
+// THE SOFTMAX NEVER LEAVES REGISTERS. A lane of an 8x8 fragment holds two
+// adjacent columns of ONE row (`vision_gemm_frag_coord`), and the four lanes
+// holding the same row differ only in lane bits 0 and 3, so a row max or sum
+// is two `simd_shuffle_xor`s (1, then 8). Every fragment of a simdgroup's
+// 8 rows, score or output, uses that same row mapping, so each lane's running
+// max, denominator and rescale apply to exactly the outputs it holds.
+//
+// P IS NARROWED TO FP16 for the P V multiply, as flash attention does on half
+// inputs, and the denominator sums the narrowed weights so the normalization
+// matches the weights actually applied. Scores, max, denominator and the
+// output accumulators stay FP32; the running max is kept for the same reason
+// as above (block 26's absmax 9,024).
+//
+// `FC_VISION_ATTN_HEAD_DIM` (function constant 111) is the head dimension:
+// Metal will not size an array from a function constant, so the register and
+// staging arrays are sized for the 128 ceiling and every loop runs to the
+// specialized tile count, which the compiler folds. It is in the pipeline
+// cache key (`vision.rs`). The host requires `head_dim % 4 == 0` (the half4
+// staging), which the tower's rope already forces.
+// ----------------------------------------------------------------------------
+constant uint FC_VISION_ATTN_HEAD_DIM [[function_constant(111)]];
+
+constant constexpr uint kAttnBQ = 32;
+constant constexpr uint kAttnBK = 16;
+constant constexpr uint kAttnMaxTiles = 16;   // MAX_ATTENTION_HEAD_DIM / 8
+// Padded staging row stride in halves: 8 extra keep the transposed K loads
+// off one bank and every row 8-byte aligned for the half4 stores.
+constant constexpr uint kAttnLd = kAttnMaxTiles * 8 + 8;
+constant constexpr uint kAttnThreads = 128;
+
+[[kernel, max_total_threads_per_threadgroup(128)]]
+void vision_attention_bidir_fp16_mma(
+    device const half*  q         [[buffer(0)]],
+    device const half*  k         [[buffer(1)]],
+    device const half*  v         [[buffer(2)]],
+    device half*        out       [[buffer(3)]],
+    constant uint&      seq       [[buffer(4)]],
+    constant uint&      heads     [[buffer(5)]],
+    constant float&     scale     [[buffer(7)]],
+    uint2 tg            [[threadgroup_position_in_grid]],
+    uint2 lid2          [[thread_position_in_threadgroup]],
+    uint  simd_lane_id  [[thread_index_in_simdgroup]],
+    uint  simd_group_id [[simdgroup_index_in_threadgroup]]
+) {
+    const uint D = FC_VISION_ATTN_HEAD_DIM;
+    const uint tiles = (D + 7u) / 8u;
+    const uint chunks = tiles * 2u;           // half4 chunks per staged row
+    const uint tid = lid2.x;
+    const uint head = tg.y;
+    const uint stride = heads * D;
+    const uint2 fc = vision_gemm_frag_coord(simd_lane_id);
+    const uint qrow = tg.x * kAttnBQ + simd_group_id * 8u + fc.x;
+    const bool live = qrow < seq;
+    // exp(x) == exp2(x * log2(e)); folded into the score scale once.
+    const float scale2 = scale * M_LOG2E_F;
+
+    threadgroup half ks[kAttnBK * kAttnLd];
+    threadgroup half vs[kAttnBK * kAttnLd];
+
+    // Q straight from device: each lane reads only its own two elements, so
+    // the row tail past `seq` and the column tail past `D` are zeros without
+    // any staging.
+    simdgroup_half8x8 qf[kAttnMaxTiles];
+    simdgroup_float8x8 o[kAttnMaxTiles];
+    device const half* qp = q + uint64_t(qrow) * stride + head * D;
+    for (uint t = 0; t < tiles; ++t) {
+        const uint c = t * 8u + fc.y;
+        const bool in = live && c < D;
+        qf[t].thread_elements()[0] = in ? qp[c] : 0.0h;
+        qf[t].thread_elements()[1] = in ? qp[c + 1] : 0.0h;
+        o[t] = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+    }
+
+    float run_max = -INFINITY;
+    float run_sum = 0.0f;
+
+    for (uint kb = 0; kb < seq; kb += kAttnBK) {
+        // Stage K and V rows [kb, kb + 16), zero past `seq` and past `D`.
+        for (uint i = tid; i < kAttnBK * chunks; i += kAttnThreads) {
+            const uint r = i / chunks;
+            const uint c = (i % chunks) * 4u;
+            const uint key = kb + r;
+            half4 kv = half4(0.0h);
+            half4 vv = half4(0.0h);
+            if (key < seq && c < D) {
+                const uint64_t off = uint64_t(key) * stride + head * D + c;
+                kv = half4(*(device const packed_half4*)(k + off));
+                vv = half4(*(device const packed_half4*)(v + off));
+            }
+            *(threadgroup half4*)(ks + r * kAttnLd + c) = kv;
+            *(threadgroup half4*)(vs + r * kAttnLd + c) = vv;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        simdgroup_float8x8 s[kAttnBK / 8];
+        for (uint j = 0; j < kAttnBK / 8u; ++j) {
+            s[j] = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+            for (uint t = 0; t < tiles; ++t) {
+                simdgroup_half8x8 kt;
+                simdgroup_load(kt, ks + (j * 8u) * kAttnLd + t * 8u, kAttnLd,
+                               ulong2(0, 0), true);
+                simdgroup_multiply_accumulate(s[j], qf[t], kt, s[j]);
+            }
+        }
+
+        // Online softmax over this block, per row, in registers.
+        float block_max = -INFINITY;
+        for (uint j = 0; j < kAttnBK / 8u; ++j) {
+            for (uint e = 0; e < 2u; ++e) {
+                const uint key = kb + j * 8u + fc.y + e;
+                const float x = key < seq ? s[j].thread_elements()[e] * scale2 : -INFINITY;
+                s[j].thread_elements()[e] = x;
+                block_max = max(block_max, x);
+            }
+        }
+        block_max = max(block_max, simd_shuffle_xor(block_max, 1));
+        block_max = max(block_max, simd_shuffle_xor(block_max, 8));
+        // Every block holds at least one key below `seq`, so `new_max` is
+        // finite from the first block on, and the first correction is
+        // exp2(-inf) == 0 against the zero accumulators.
+        const float new_max = max(run_max, block_max);
+        const float correction = exp2(run_max - new_max);
+
+        simdgroup_half8x8 p[kAttnBK / 8];
+        float block_sum = 0.0f;
+        for (uint j = 0; j < kAttnBK / 8u; ++j) {
+            for (uint e = 0; e < 2u; ++e) {
+                const half w = half(exp2(s[j].thread_elements()[e] - new_max));
+                p[j].thread_elements()[e] = w;
+                block_sum += float(w);
+            }
+        }
+        block_sum += simd_shuffle_xor(block_sum, 1);
+        block_sum += simd_shuffle_xor(block_sum, 8);
+        run_sum = fma(run_sum, correction, block_sum);
+        run_max = new_max;
+
+        for (uint t = 0; t < tiles; ++t) {
+            o[t].thread_elements()[0] *= correction;
+            o[t].thread_elements()[1] *= correction;
+        }
+        for (uint j = 0; j < kAttnBK / 8u; ++j) {
+            for (uint t = 0; t < tiles; ++t) {
+                simdgroup_half8x8 vt;
+                simdgroup_load(vt, vs + (j * 8u) * kAttnLd + t * 8u, kAttnLd);
+                simdgroup_multiply_accumulate(o[t], p[j], vt, o[t]);
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    if (!live) { return; }
+    const float inv = 1.0f / run_sum;
+    device half* op = out + uint64_t(qrow) * stride + head * D;
+    for (uint t = 0; t < tiles; ++t) {
+        const uint c = t * 8u + fc.y;
+        if (c < D) {
+            op[c] = half(o[t].thread_elements()[0] * inv);
+            op[c + 1] = half(o[t].thread_elements()[1] * inv);
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
 // Residual add, `y += x`, in FP16 storage with an FP32 intermediate.
 //
 // Its own kernel rather than a fused tail on the matmul: the block adds the
@@ -428,4 +801,557 @@ void vision_residual_add_fp16(
 ) {
     if (tid >= count) return;
     y[tid] = half(float(y[tid]) + float(x[tid]));
+}
+
+// ============================================================================
+// The Gemma 4 tower (`docs/GEMMA4_VISION_PHASE0.md`). Same FP16 storage and
+// FP32 accumulators as above. Matmul, attention, the tanh GELU and the
+// residual add are shared; these three are what that tower adds.
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// RMSNorm, `x * rsqrt(mean(x^2) + eps) * w`, with `w` applied DIRECTLY (no
+// `1 + w` offset, Gemma 4's own convention) or not at all when `has_weight`
+// is 0 (the v norm and the projector's pre-norm carry no weight).
+//
+// One threadgroup per row, so a per-head norm is the same kernel at
+// `rows = seq * heads, D = head_dim`. Safe IN PLACE (`out == x`): the
+// reduction finishes behind a barrier before any write, and each thread
+// writes only the elements it alone reads in the final loop.
+// ----------------------------------------------------------------------------
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_rms_norm_fp16(
+    device const half*  x          [[buffer(0)]],
+    device const half*  weight     [[buffer(1)]],
+    device half*        out        [[buffer(2)]],
+    constant uint&      D          [[buffer(3)]],
+    constant float&     eps        [[buffer(4)]],
+    constant uint&      has_weight [[buffer(5)]],
+    uint  row           [[threadgroup_position_in_grid]],
+    uint  lid           [[thread_position_in_threadgroup]],
+    uint  lsize         [[threads_per_threadgroup]],
+    uint  simd_lane_id  [[thread_index_in_simdgroup]],
+    uint  simd_group_id [[simdgroup_index_in_threadgroup]],
+    uint  simdgroups    [[simdgroups_per_threadgroup]]
+) {
+    threadgroup float partial[kVisionMaxSimdGroups];
+    device const half* xr = x + uint64_t(row) * D;
+    device half*       yr = out + uint64_t(row) * D;
+
+    float acc = 0.0f;
+    for (uint i = lid; i < D; i += lsize) {
+        const float v = float(xr[i]);
+        acc = fma(v, v, acc);
+    }
+    acc = simd_sum(acc);
+    if (simd_lane_id == 0) { partial[simd_group_id] = acc; }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (simd_group_id == 0) {
+        float v = (simd_lane_id < simdgroups) ? partial[simd_lane_id] : 0.0f;
+        v = simd_sum(v);
+        if (simd_lane_id == 0) { partial[0] = rsqrt(v / float(D) + eps); }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    const float inv_rms = partial[0];
+
+    for (uint i = lid; i < D; i += lsize) {
+        const float w = (has_weight != 0) ? float(weight[i]) : 1.0f;
+        yr[i] = half(float(xr[i]) * inv_rms * w);
+    }
+}
+
+// ----------------------------------------------------------------------------
+// The axial 2-D rope. NOT `vision_rope_2d_fp16`: that one pairs element `i`
+// with `i + head_dim/2` across the whole head. Here the head is two parts of
+// `head_dim/2`, part 0 turned by the patch's x and part 1 by its y, and each
+// part rotates WITHIN itself: element `i` pairs with `i + head_dim/4`. Both
+// kernels compute plausible output on the other's input.
+//
+// `freqs` is `[seq, head_dim/2]` F32 angles, the x part's `head_dim/4` angles
+// then the y part's, for the reason the kernel above keeps them F32.
+// One thread per (pair, head, token).
+// ----------------------------------------------------------------------------
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_rope_axial_fp16(
+    device half*        qk        [[buffer(0)]],
+    device const float* freqs     [[buffer(1)]],
+    constant uint&      seq       [[buffer(2)]],
+    constant uint&      heads     [[buffer(3)]],
+    constant uint&      head_dim  [[buffer(4)]],
+    uint3               gid       [[thread_position_in_grid]]
+) {
+    const uint pair = gid.x;          // 0 .. head_dim/2
+    const uint head = gid.y;
+    const uint token = gid.z;
+    const uint pairs = head_dim / 2;
+    const uint quarter = head_dim / 4;
+    if (pair >= pairs || head >= heads || token >= seq) return;
+
+    const uint part = pair / quarter;
+    const uint i = pair % quarter;
+    const uint a_idx = part * pairs + i;
+    const uint b_idx = a_idx + quarter;
+
+    const float angle = freqs[uint64_t(token) * pairs + pair];
+    const float c = cos(angle);
+    const float s = sin(angle);
+
+    device half* row = qk + (uint64_t(token) * heads + head) * head_dim;
+    const float a = float(row[a_idx]);
+    const float b = float(row[b_idx]);
+    row[a_idx] = half(a * c - b * s);
+    row[b_idx] = half(b * c + a * s);
+}
+
+// ----------------------------------------------------------------------------
+// `y[g, c] += mean over k < 4 of x[4 * g + k, c]`, FP32 intermediate: the
+// MiniCPM-V window merger's residual (`merged + mean(windows, axis=1)`), where
+// `x` holds the windows' four tokens as consecutive rows and `y` one merged
+// row per window. `count` is `groups * width`.
+// ----------------------------------------------------------------------------
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_window_mean4_add_fp16(
+    device half*        y     [[buffer(0)]],
+    device const half*  x     [[buffer(1)]],
+    constant uint&      width [[buffer(2)]],
+    constant uint&      count [[buffer(3)]],
+    uint                tid   [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    const uint g = tid / width;
+    const uint c = tid % width;
+    const uint base = (4u * g) * width + c;
+    const float mean = (float(x[base]) + float(x[base + width])
+                        + float(x[base + 2u * width]) + float(x[base + 3u * width])) * 0.25f;
+    y[tid] = half(float(y[tid]) + mean);
+}
+
+// ----------------------------------------------------------------------------
+// `y *= x` elementwise, FP32 intermediate: the gated MLP's
+// `gelu(gate) * up`, after the GELU has run in place on `gate`.
+// ----------------------------------------------------------------------------
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_mul_fp16(
+    device half*        y     [[buffer(0)]],
+    device const half*  x     [[buffer(1)]],
+    constant uint&      count [[buffer(2)]],
+    uint                tid   [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    y[tid] = half(float(y[tid]) * float(x[tid]));
+}
+
+// ----------------------------------------------------------------------------
+// The LFM3-VL tower's conv block core (`docs/LFM3_VL_VISION_PHASE0.md`):
+//
+//   proj = in_proj(x)                      // [seq, 3 * C], split b | c | v
+//   out  = c * depthwise_conv3x3(b * v)    // zero padded, no bias
+//
+// Tokens arrive in MERGE-WINDOW order (`merge x merge` patch blocks row-major
+// over the block grid, row-major inside a block), while the convolution runs
+// over the plain `height x width` patch grid. The reference reshapes to the
+// grid, convolves, and reshapes back; here each output token computes its
+// grid cell from the window order and gathers its eight neighbours straight
+// out of the window-ordered rows, so no transposed copy exists.
+//
+// One thread per (token, channel) so adjacent threads read adjacent channels.
+// The tap weight is `w[ch][dr + 1][dc + 1]` (cross-correlation, no flip),
+// the layout of the checkpoint's `[C, 3, 3, 1]` depthwise weight.
+// ----------------------------------------------------------------------------
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_gated_dwconv3x3_fp16(
+    device half*        out      [[buffer(0)]],
+    device const half*  proj     [[buffer(1)]],
+    device const half*  w        [[buffer(2)]],
+    constant uint&      height   [[buffer(3)]],
+    constant uint&      width    [[buffer(4)]],
+    constant uint&      merge    [[buffer(5)]],
+    constant uint&      channels [[buffer(6)]],
+    uint                gid      [[thread_position_in_grid]]
+) {
+    const uint seq = height * width;
+    if (gid >= seq * channels) return;
+    const uint tok = gid / channels;
+    const uint ch = gid - tok * channels;
+
+    const uint block_cols = width / merge;
+    const uint win = tok / (merge * merge);
+    const uint in_win = tok - win * merge * merge;
+    const int r = int((win / block_cols) * merge + in_win / merge);
+    const int c = int((win % block_cols) * merge + in_win % merge);
+
+    const uint stride = 3 * channels;
+    float acc = 0.0f;
+    for (int dr = -1; dr <= 1; ++dr) {
+        for (int dc = -1; dc <= 1; ++dc) {
+            const int rr = r + dr;
+            const int cc = c + dc;
+            if (rr < 0 || cc < 0 || rr >= int(height) || cc >= int(width)) continue;
+            const uint ur = uint(rr);
+            const uint uc = uint(cc);
+            const uint nb = ((ur / merge) * block_cols + (uc / merge)) * merge * merge
+                          + (ur % merge) * merge + (uc % merge);
+            // `b * v` is formed once per neighbour, in FP32.
+            const float bv = float(proj[nb * stride + ch])
+                           * float(proj[nb * stride + 2 * channels + ch]);
+            acc += float(w[ch * 9 + uint(dr + 1) * 3 + uint(dc + 1)]) * bv;
+        }
+    }
+    out[gid] = half(float(proj[tok * stride + channels + ch]) * acc);
+}
+
+// ============================================================================
+// DeepSeek-OCR's SAM-ViT-B encoder (`docs/DEEPSEEK_OCR_VISION_PHASE0.md`):
+// three kernels the other towers have no use for.
+// ============================================================================
+
+// ----------------------------------------------------------------------------
+// Row gather with a zero sentinel. `out[r] = in[index[r]]`, or an all-zero row
+// when `index[r]` is `kVisionGatherZero`. The SAM window blocks zero-pad the
+// 64 x 64 grid to 70 x 70 BEFORE attention and crop back after it; both the
+// partition and its inverse are this gather with different index lists, built
+// on the host. One thread per output element.
+// ----------------------------------------------------------------------------
+constant constexpr uint kVisionGatherZero = 0xFFFFFFFFu;
+
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_gather_rows_fp16(
+    device const half*  in     [[buffer(0)]],
+    device const uint*  index  [[buffer(1)]],
+    device half*        out    [[buffer(2)]],
+    constant uint&      rows   [[buffer(3)]],
+    constant uint&      cols   [[buffer(4)]],
+    uint                gid    [[thread_position_in_grid]]
+) {
+    if (gid >= rows * cols) return;
+    const uint r = gid / cols;
+    const uint c = gid - r * cols;
+    const uint src = index[r];
+    out[gid] = (src == kVisionGatherZero) ? half(0.0f)
+                                          : in[uint64_t(src) * cols + c];
+}
+
+// ----------------------------------------------------------------------------
+// im2col for a square-kernel convolution over one NHWC image. The output row
+// is one output position and its columns are `(tap_row, tap_col, channel)`
+// with the channel fastest, which is a `[O, kh, kw, I]` weight flattened
+// row-major, so the convolution is then `encode_vision_matmul` against that
+// weight with no transposed copy. Out-of-image taps are zero (the pad).
+// One thread per output element.
+// ----------------------------------------------------------------------------
+[[kernel, max_total_threads_per_threadgroup(256)]]
+void vision_im2col_fp16(
+    device const half*  in      [[buffer(0)]],
+    device half*        out     [[buffer(1)]],
+    constant uint&      height  [[buffer(2)]],
+    constant uint&      width   [[buffer(3)]],
+    constant uint&      chans   [[buffer(4)]],
+    constant uint&      ksize   [[buffer(5)]],
+    constant uint&      stride  [[buffer(6)]],
+    constant uint&      pad     [[buffer(7)]],
+    constant uint&      out_h   [[buffer(8)]],
+    constant uint&      out_w   [[buffer(9)]],
+    uint                gid     [[thread_position_in_grid]]
+) {
+    const uint row_width = ksize * ksize * chans;
+    if (gid >= out_h * out_w * row_width) return;
+    const uint row = gid / row_width;
+    const uint col = gid - row * row_width;
+    const uint oy = row / out_w;
+    const uint ox = row - oy * out_w;
+    const uint c = col % chans;
+    const uint tap = col / chans;
+    const uint ty = tap / ksize;
+    const uint tx = tap - ty * ksize;
+    const int y = int(oy * stride + ty) - int(pad);
+    const int x = int(ox * stride + tx) - int(pad);
+    out[gid] = (y < 0 || x < 0 || y >= int(height) || x >= int(width))
+                   ? half(0.0f)
+                   : in[(uint64_t(y) * width + uint(x)) * chans + c];
+}
+
+// ----------------------------------------------------------------------------
+// SAM attention: multi-head, full softmax, with the DECOMPOSED RELATIVE
+// POSITION BIAS built in the kernel.
+//
+//   score[i][j] = scale * q_i . k_j + (q_i . Rh[ih - jh + gh - 1])
+//                                   + (q_i . Rw[iw - jw + gw - 1])
+//
+// where `i` and `j` are positions on a `gh x gw` grid (a 14 x 14 window or the
+// whole 64 x 64 image), `Rh`/`Rw` are the checkpoint's `rel_pos_h`/`rel_pos_w`
+// tables, and the bias is formed from the UNSCALED query and added AFTER the
+// `scale` multiply. `q`, `k`, `v`, `out` are `[windows * gh * gw, heads * 64]`
+// (a row is all heads, head-major), so the windows of a partitioned image are
+// just consecutive row blocks. Head dimension is 64.
+//
+// One threadgroup of 128 threads per (query, head, window). The whole score
+// row (up to 4096 keys) lives in threadgroup memory: there is no flash-style
+// rescale to get wrong, and at SAM's sizes the plain two-pass softmax is a few
+// hundred microseconds a block. Scores, max, sum and the P V accumulators are
+// FP32; the output is divided by the sum once at the end.
+//
+// Padded window tokens are REAL keys here (zero rows through `norm1`, then the
+// qkv bias), exactly as the reference attends them: nothing is masked.
+// ----------------------------------------------------------------------------
+constant constexpr uint kSamHeadDim = 64;
+constant constexpr uint kSamMaxKeys = 4096;
+constant constexpr uint kSamThreads = 128;
+
+[[kernel, max_total_threads_per_threadgroup(128)]]
+void vision_sam_attention_fp16(
+    device const half*  q       [[buffer(0)]],
+    device const half*  k       [[buffer(1)]],
+    device const half*  v       [[buffer(2)]],
+    device const half*  rel_h   [[buffer(3)]],
+    device const half*  rel_w   [[buffer(4)]],
+    device half*        out     [[buffer(5)]],
+    constant uint&      gh      [[buffer(6)]],
+    constant uint&      gw      [[buffer(7)]],
+    constant uint&      heads   [[buffer(8)]],
+    constant float&     scale   [[buffer(9)]],
+    uint3               tg      [[threadgroup_position_in_grid]],
+    uint3               lid3    [[thread_position_in_threadgroup]],
+    uint                simd_lane_id  [[thread_index_in_simdgroup]],
+    uint                simd_group_id [[simdgroup_index_in_threadgroup]]
+) {
+    const uint lid = lid3.x;
+    const uint keys = gh * gw;
+    const uint token = tg.x;
+    const uint head = tg.y;
+    const uint win = tg.z;
+    if (token >= keys || head >= heads) return;
+
+    threadgroup float qs[kSamHeadDim];
+    threadgroup float bias_h[64];
+    threadgroup float bias_w[64];
+    threadgroup float scores[kSamMaxKeys];
+    threadgroup float red[kSamThreads / 32];
+    threadgroup float part[2][kSamHeadDim];
+
+    const uint width_all = heads * kSamHeadDim;
+    const uint64_t base_row = uint64_t(win) * keys;
+    device const half* qrow = q + (base_row + token) * width_all + head * kSamHeadDim;
+    if (lid < kSamHeadDim) qs[lid] = float(qrow[lid]);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    const uint qh = token / gw;
+    const uint qw = token - qh * gw;
+    // Row `qh - kh + gh - 1` of the height table (`gh <= 64`, so a thread per
+    // key row), then the same for width on the next 64 lanes.
+    if (lid < gh) {
+        device const half* r = rel_h + uint64_t(qh + gh - 1 - lid) * kSamHeadDim;
+        float a = 0.0f;
+        for (uint d = 0; d < kSamHeadDim; ++d) a = fma(qs[d], float(r[d]), a);
+        bias_h[lid] = a;
+    } else if (lid >= 64 && lid < 64 + gw) {
+        const uint kw = lid - 64;
+        device const half* r = rel_w + uint64_t(qw + gw - 1 - kw) * kSamHeadDim;
+        float a = 0.0f;
+        for (uint d = 0; d < kSamHeadDim; ++d) a = fma(qs[d], float(r[d]), a);
+        bias_w[kw] = a;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    float local_max = -INFINITY;
+    for (uint j = lid; j < keys; j += kSamThreads) {
+        device const half* krow = k + (base_row + j) * width_all + head * kSamHeadDim;
+        float dot = 0.0f;
+        for (uint d = 0; d < kSamHeadDim; ++d) dot = fma(qs[d], float(krow[d]), dot);
+        const uint kh = j / gw;
+        const uint kw = j - kh * gw;
+        const float s = dot * scale + bias_h[kh] + bias_w[kw];
+        scores[j] = s;
+        local_max = max(local_max, s);
+    }
+    local_max = simd_max(local_max);
+    if (simd_lane_id == 0) red[simd_group_id] = local_max;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    const float row_max = max(max(red[0], red[1]), max(red[2], red[3]));
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    float local_sum = 0.0f;
+    for (uint j = lid; j < keys; j += kSamThreads) {
+        const float e = exp(scores[j] - row_max);
+        scores[j] = e;
+        local_sum += e;
+    }
+    local_sum = simd_sum(local_sum);
+    if (simd_lane_id == 0) red[simd_group_id] = local_sum;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    const float row_sum = red[0] + red[1] + red[2] + red[3];
+
+    // P V: 64 lanes per key half (even and odd keys), one head dim each.
+    const uint d = lid & 63u;
+    const uint half_id = lid >> 6;
+    float acc = 0.0f;
+    for (uint j = half_id; j < keys; j += 2u) {
+        acc = fma(scores[j],
+                  float(v[(base_row + j) * width_all + head * kSamHeadDim + d]), acc);
+    }
+    part[half_id][d] = acc;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (lid < kSamHeadDim) {
+        out[(base_row + token) * width_all + head * kSamHeadDim + lid] =
+            half((part[0][lid] + part[1][lid]) / row_sum);
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Unlimited-OCR-2's tower (PORT-LOCAL, `compute::uocr2_tower` is the contract).
+// ----------------------------------------------------------------------------
+
+// CLIP's activation, `x * sigmoid(1.702 x)`. Neither GELU above: it differs
+// from them by far more than a block's parity bound would hide.
+kernel void vision_quick_gelu_fp16(
+    device half*    y     [[buffer(0)]],
+    constant uint&  count [[buffer(1)]],
+    uint            tid   [[thread_position_in_grid]]
+) {
+    if (tid >= count) return;
+    const float x = float(y[tid]);
+    y[tid] = half(x / (1.0f + exp(-1.702f * x)));
+}
+
+// One thread per output element, FP32 accumulator, zero padding. `x` and `out`
+// are `[h, w, c]` and `weight` is `[out, kh, kw, in]`, MLX's layout. These run a
+// handful of times per view against a whole 256- to 1024-channel plane, so
+// nothing about them is hot enough to justify a threadgroup reduction.
+kernel void vision_conv2d_fp16(
+    device const half*  x       [[buffer(0)]],
+    device const half*  weight  [[buffer(1)]],
+    device const half*  bias    [[buffer(2)]],
+    device half*        out     [[buffer(3)]],
+    constant uint4&     in_hwc  [[buffer(4)]],  // h, w, c_in, has_bias
+    constant uint4&     k_hw    [[buffer(5)]],  // kh, kw, stride, pad
+    constant uint4&     out_hwc [[buffer(6)]],  // oh, ow, c_out, unused
+    uint3 gid [[thread_position_in_grid]]
+) {
+    const uint ox = gid.x, oy = gid.y, c = gid.z;
+    const uint h = in_hwc.x, w = in_hwc.y, c_in = in_hwc.z;
+    const uint kh = k_hw.x, kw = k_hw.y, stride = k_hw.z, pad = k_hw.w;
+    float sum = 0.0f;
+    for (uint ky = 0; ky < kh; ++ky) {
+        for (uint kx = 0; kx < kw; ++kx) {
+            const uint sy = oy * stride + ky;
+            const uint sx = ox * stride + kx;
+            if (sy < pad || sx < pad || sy - pad >= h || sx - pad >= w) continue;
+            device const half* src = x + (uint64_t(sy - pad) * w + (sx - pad)) * c_in;
+            device const half* wgt = weight + (uint64_t(c * kh + ky) * kw + kx) * c_in;
+            for (uint i = 0; i < c_in; ++i) {
+                sum = fma(float(src[i]), float(wgt[i]), sum);
+            }
+        }
+    }
+    if (in_hwc.w != 0u) sum += float(bias[c]);
+    out[(uint64_t(oy) * out_hwc.y + ox) * out_hwc.z + c] = half(sum);
+}
+
+// SAM's attention: `vision_attention_bidir_fp16` over one window at a time,
+// with the decomposed relative-position bias. The bias is q dotted with the
+// tables, NOT scaled, added to the scaled score, so the dot is split in two
+// and the two are never summed before the scale.
+//
+// `q`/`k`/`v`/`out` are `[seq, heads, head_dim]`, `seq` a whole number of
+// `side * side` windows laid end to end, and `rel_h`/`rel_w` are
+// `[side, side, head_dim]`. A global block is one window of the whole grid.
+kernel void vision_attention_relpos_fp16(
+    device const half*  q        [[buffer(0)]],
+    device const half*  k        [[buffer(1)]],
+    device const half*  v        [[buffer(2)]],
+    device half*        out      [[buffer(3)]],
+    constant uint&      seq      [[buffer(4)]],
+    constant uint&      heads    [[buffer(5)]],
+    constant uint&      head_dim [[buffer(6)]],
+    constant float&     scale    [[buffer(7)]],
+    device const half*  rel_h    [[buffer(8)]],
+    device const half*  rel_w    [[buffer(9)]],
+    constant uint&      side     [[buffer(10)]],
+    uint2 tg            [[threadgroup_position_in_grid]],
+    uint  simd_lane_id  [[thread_index_in_simdgroup]],
+    uint  simd_group_id [[simdgroup_index_in_threadgroup]],
+    uint  simdgroups    [[simdgroups_per_threadgroup]]
+) {
+    const uint token = tg.x;
+    const uint head = tg.y;
+    if (token >= seq || head >= heads) return;
+
+    threadgroup float tg_max[kVisionMaxSimdGroups];
+    threadgroup float tg_sum[kVisionMaxSimdGroups];
+    threadgroup float tg_acc[kVisionMaxSimdGroups][kVisionAttnMaxSlots * 32];
+
+    const uint window = side * side;
+    const uint first = token / window * window;
+    const uint local = token - first;
+    const uint qh = local / side;
+    const uint qw = local % side;
+    device const half* qrow = q + (uint64_t(token) * heads + head) * head_dim;
+    const uint slots = (head_dim + 31u) / 32u;
+
+    float run_max = -INFINITY;
+    float run_sum = 0.0f;
+    float acc[kVisionAttnMaxSlots] = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+    for (uint j = simd_group_id; j < window; j += simdgroups) {
+        const uint kh = j / side;
+        const uint kw = j % side;
+        device const half* krow = k + (uint64_t(first + j) * heads + head) * head_dim;
+        device const half* hrow = rel_h + uint64_t(qh * side + kh) * head_dim;
+        device const half* wrow = rel_w + uint64_t(qw * side + kw) * head_dim;
+        float dot = 0.0f;
+        float bias = 0.0f;
+        for (uint t = 0; t < slots; ++t) {
+            const uint d = t * 32u + simd_lane_id;
+            if (d < head_dim) {
+                const float qd = float(qrow[d]);
+                dot = fma(qd, float(krow[d]), dot);
+                bias = fma(qd, float(hrow[d]) + float(wrow[d]), bias);
+            }
+        }
+        const float score = simd_sum(dot) * scale + simd_sum(bias);
+
+        const float new_max = max(run_max, score);
+        const float correction = exp(run_max - new_max);
+        const float weight = exp(score - new_max);
+        run_sum = fma(run_sum, correction, weight);
+        device const half* vrow = v + (uint64_t(first + j) * heads + head) * head_dim;
+        for (uint t = 0; t < slots; ++t) {
+            const uint d = t * 32u + simd_lane_id;
+            acc[t] *= correction;
+            if (d < head_dim) {
+                acc[t] = fma(weight, float(vrow[d]), acc[t]);
+            }
+        }
+        run_max = new_max;
+    }
+
+    if (simd_lane_id == 0) {
+        tg_max[simd_group_id] = run_max;
+        tg_sum[simd_group_id] = run_sum;
+    }
+    for (uint t = 0; t < slots; ++t) {
+        tg_acc[simd_group_id][t * 32u + simd_lane_id] = acc[t];
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+
+    if (simd_group_id != 0) return;
+
+    float global_max = -INFINITY;
+    for (uint g = 0; g < simdgroups; ++g) {
+        global_max = max(global_max, tg_max[g]);
+    }
+    float denom = 0.0f;
+    for (uint g = 0; g < simdgroups; ++g) {
+        denom += tg_sum[g] * exp(tg_max[g] - global_max);
+    }
+    const float inv_denom = 1.0f / denom;
+    device half* orow = out + (uint64_t(token) * heads + head) * head_dim;
+    for (uint t = 0; t < slots; ++t) {
+        const uint d = t * 32u + simd_lane_id;
+        if (d >= head_dim) continue;
+        float total = 0.0f;
+        for (uint g = 0; g < simdgroups; ++g) {
+            total = fma(tg_acc[g][d], exp(tg_max[g] - global_max), total);
+        }
+        orow[d] = half(total * inv_denom);
+    }
 }

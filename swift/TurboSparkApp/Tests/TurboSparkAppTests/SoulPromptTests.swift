@@ -12,7 +12,7 @@ final class SoulPromptTests: XCTestCase {
     /// each case starts from the fresh-install soul state.
     @MainActor
     private func freshSoulModel() -> AppModel {
-        let model = AppModel()
+        let model = AppModel.withoutChatTools()
         model.soulPrompts = []
         model.selectedSoulPromptID = nil
         model.soulPromptEnabled = false

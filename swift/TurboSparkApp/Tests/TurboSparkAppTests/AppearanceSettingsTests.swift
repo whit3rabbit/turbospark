@@ -45,6 +45,8 @@ final class AppearanceSettingsTests: XCTestCase {
 
         XCTAssertEqual(archive.lightConfig, ThemeModeConfig.defaultLight)
         XCTAssertEqual(archive.darkConfig, ThemeModeConfig.defaultDark)
+        XCTAssertEqual(ThemeModeConfig(), ThemeModeConfig.defaultLight)
+        XCTAssertEqual(ThemeModeConfig().preset, "Spark Blue")
     }
 
     /// A preset names a set of colours; it never points at `default*`.
@@ -273,24 +275,38 @@ final class AppearanceSettingsTests: XCTestCase {
         defer { manager.textSize = savedSize }
 
         manager.textSize = .standard
+        XCTAssertEqual(AppTextSize.small.scale, 0.875)
         XCTAssertEqual(AppTextSize.standard.scale, 1.0)
         XCTAssertEqual(AppTextSize.large.scale, 1.15)
         XCTAssertEqual(AppTextSize.extraLarge.scale, 1.30)
-
-        manager.makeTextBigger()
-        XCTAssertEqual(manager.textSize, .large)
-
-        manager.makeTextBigger()
-        XCTAssertEqual(manager.textSize, .extraLarge)
-
-        manager.makeTextBigger()
-        XCTAssertEqual(manager.textSize, .extraLarge)
+        // Picker order is smallest to largest, so Small sits beside Default.
+        XCTAssertEqual(AppTextSize.allCases, [.small, .standard, .large, .extraLarge])
+        XCTAssertEqual(AppTextSize.small.label, "Small")
+        // The persisted raw value is what appearance.json stores.
+        XCTAssertEqual(AppTextSize.resolve("small"), .small)
+        XCTAssertEqual(AppTextSize.resolve("standard"), .standard)
+        XCTAssertEqual(AppTextSize.resolve("nonsense"), .standard)
 
         manager.makeTextSmaller()
-        XCTAssertEqual(manager.textSize, .large)
+        XCTAssertEqual(manager.textSize, .small)
 
         manager.makeTextSmaller()
+        XCTAssertEqual(manager.textSize, .small)
+
+        manager.makeTextBigger()
         XCTAssertEqual(manager.textSize, .standard)
+
+        manager.makeTextBigger()
+        XCTAssertEqual(manager.textSize, .large)
+
+        manager.makeTextBigger()
+        XCTAssertEqual(manager.textSize, .extraLarge)
+
+        manager.makeTextBigger()
+        XCTAssertEqual(manager.textSize, .extraLarge)
+
+        manager.makeTextSmaller()
+        XCTAssertEqual(manager.textSize, .large)
 
         manager.makeTextSmaller()
         XCTAssertEqual(manager.textSize, .standard)
@@ -298,6 +314,30 @@ final class AppearanceSettingsTests: XCTestCase {
         manager.textSize = .extraLarge
         manager.resetTextSize()
         XCTAssertEqual(manager.textSize, .standard)
+    }
+
+    /// A fresh install starts at a 14pt UI base with Hack as the code face,
+    /// from every path that builds a first archive: the memberwise init, a
+    /// JSON file missing the keys, and Reset to Defaults.
+    func testFactoryDefaultsAre14ptUIAndHackCode() throws {
+        XCTAssertEqual(AppFontCatalog.factoryUISize, 14)
+        XCTAssertEqual(AppFontCatalog.factoryCodeFamily, "Hack")
+
+        let fresh = AppearanceArchive()
+        XCTAssertEqual(fresh.uiFontSize, 14)
+        XCTAssertEqual(fresh.codeFontSize, 12)
+        XCTAssertEqual(fresh.lightConfig.codeFontFamily, "Hack")
+        XCTAssertEqual(fresh.darkConfig.codeFontFamily, "Hack")
+        XCTAssertEqual(fresh.textSize, AppTextSize.standard.rawValue)
+
+        let decoded = try JSONDecoder().decode(AppearanceArchive.self, from: Data("{}".utf8))
+        XCTAssertEqual(decoded.uiFontSize, 14)
+        XCTAssertEqual(decoded.lightConfig.codeFontFamily, "Hack")
+
+        // The offered list must include the factory family, or the picker
+        // would claim a face it cannot show.
+        XCTAssertTrue(AppFontCatalog.offeredCodeFamilies.contains(AppFontCatalog.factoryCodeFamily))
+        XCTAssertTrue(AppFontCatalog.bundledFamilies.contains(AppFontCatalog.factoryCodeFamily))
     }
 
     func testResetTextSizeRestoresDefaults() {
@@ -316,7 +356,7 @@ final class AppearanceSettingsTests: XCTestCase {
         manager.textSize = .large
 
         manager.resetTextSize()
-        XCTAssertEqual(manager.uiFontSize, 16.0)
+        XCTAssertEqual(manager.uiFontSize, 14.0)
         XCTAssertEqual(manager.codeFontSize, 12.0)
         XCTAssertEqual(manager.textSize, .standard)
     }

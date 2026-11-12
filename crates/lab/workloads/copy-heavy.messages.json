@@ -1,0 +1,6 @@
+[
+ {
+  "role": "user",
+  "content": "Rename the variable `buf` to `scratch` in the function below and return the COMPLETE function with nothing else changed.\n\n```rust\nfn merge_runs(left: &[u32], right: &[u32]) -> Vec<u32> {\n    let mut buf = Vec::with_capacity(left.len() + right.len());\n    let (mut i, mut j) = (0usize, 0usize);\n    while i < left.len() && j < right.len() {\n        if left[i] <= right[j] {\n            buf.push(left[i]);\n            i += 1;\n        } else {\n            buf.push(right[j]);\n            j += 1;\n        }\n    }\n    while i < left.len() {\n        buf.push(left[i]);\n        i += 1;\n    }\n    while j < right.len() {\n        buf.push(right[j]);\n        j += 1;\n    }\n    buf\n}\n```"
+ }
+]

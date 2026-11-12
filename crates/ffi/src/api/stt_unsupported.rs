@@ -22,10 +22,30 @@ macro_rules! unsupported {
     };
 }
 
-unsupported!(ts_stt_open(model_dir: *const c_char, out: *mut *mut TsSttModel), out);
-unsupported!(ts_stt_stream_open(model: *mut TsSttModel, options_json: *const c_char, out: *mut *mut TsSttStream), out);
-unsupported!(ts_stt_stream_append(stream: *mut TsSttStream, pcm_base64: *const c_char, out_json: *mut *mut c_char), out_json);
-unsupported!(ts_stt_stream_finish(stream: *mut TsSttStream, out_json: *mut *mut c_char), out_json);
+unsupported!(
+    ts_stt_open(model_dir: *const c_char, out: *mut *mut TsSttModel),
+    out
+);
+unsupported!(
+    ts_stt_stream_open(
+        model: *mut TsSttModel,
+        options_json: *const c_char,
+        out: *mut *mut TsSttStream,
+    ),
+    out
+);
+unsupported!(
+    ts_stt_stream_append(
+        stream: *mut TsSttStream,
+        pcm_base64: *const c_char,
+        out_json: *mut *mut c_char,
+    ),
+    out_json
+);
+unsupported!(
+    ts_stt_stream_finish(stream: *mut TsSttStream, out_json: *mut *mut c_char),
+    out_json
+);
 unsupported!(ts_stt_close(model: *mut TsSttModel));
 unsupported!(ts_stt_stream_cancel(stream: *mut TsSttStream));
 unsupported!(ts_stt_stream_close(stream: *mut TsSttStream));

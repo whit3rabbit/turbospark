@@ -39,13 +39,22 @@ public final class CustomToolTrustStore: @unchecked Sendable {
         let execution = (try? encoder.encode(tool.execution)).flatMap {
             String(data: $0, encoding: .utf8)
         } ?? ""
+        // Declared parameters decide which model arguments reach the
+        // environment and substitution (the executor drops undeclared keys),
+        // and the description is what steers the model into calling the tool.
+        // Both are repository-authored, so an edit must ask again. Adding
+        // these fields invalidated existing trust records once, on purpose.
+        let parameters = (try? encoder.encode(tool.parameters)).flatMap {
+            String(data: $0, encoding: .utf8)
+        } ?? ""
         var projectPath = ""
         if case .projectLocal(let path) = tool.scope {
             projectPath = URL(fileURLWithPath: path).standardizedFileURL.path
         }
         let material = [
             projectPath, tool.sourcePath ?? "", tool.name.lowercased(),
-            tool.effectiveCategory.rawValue, execution,
+            tool.effectiveCategory.rawValue, execution, parameters,
+            tool.toolDescription, tool.isEnabled ? "1" : "0",
         ].joined(separator: "\u{1F}")
         return SHA256.hash(data: Data(material.utf8))
             .map { String(format: "%02x", $0) }.joined()

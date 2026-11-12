@@ -112,6 +112,7 @@ pub unsafe extern "C" fn ts_server_start(
             options.capture_text,
             options.api_key,
             guardrails,
+            options.prefix_reuse,
             default_system,
             default_reasoning,
             load_policy,
@@ -133,6 +134,13 @@ pub unsafe extern "C" fn ts_server_start(
         if !session.is_null() {
             let session =
                 session::borrow(session).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+            // BEFORE the attach, so the model's first served turn already
+            // runs under the posture this server resolved. Attaching first
+            // and applying after would leave a window where a request that
+            // arrives immediately sees the session's own default instead.
+            if let Some(enabled) = options.prefix_reuse {
+                session.core().set_prefix_reuse_for_server(enabled);
+            }
             server
                 .attach(session.core(), model_id_of(session))
                 .map_err(|e| (abi::TS_ERR_OPEN, e))?;
@@ -436,6 +444,12 @@ pub unsafe extern "C" fn ts_server_poll_audio_speech_events_json(
     })
 }
 
+/// Same value as `runtime::native_audio::MAX_OUTPUT_SAMPLES`, the in-process
+/// speech cap, which is macOS-only while this module is portable.
+const MAX_SPEECH_SAMPLES: usize = 44_100 * 2 * 360;
+#[cfg(target_os = "macos")]
+const _: () = assert!(MAX_SPEECH_SAMPLES == runtime::native_audio::MAX_OUTPUT_SAMPLES);
+
 /// Completes one speech/voice cloning request with PCM samples, or with an error.
 #[no_mangle]
 pub unsafe extern "C" fn ts_server_complete_audio_speech_request(
@@ -456,6 +470,14 @@ pub unsafe extern "C" fn ts_server_complete_audio_speech_request(
             return Err((
                 abi::TS_ERR_INVALID_ARGUMENT,
                 "PCM samples are required".into(),
+            ));
+        } else if sample_count > MAX_SPEECH_SAMPLES {
+            // Before the slice exists: a count past what Swift allocated makes
+            // the copy below read host memory. The bound also keeps the byte
+            // length far inside `isize`.
+            return Err((
+                abi::TS_ERR_INVALID_ARGUMENT,
+                format!("PCM sample count exceeds the {MAX_SPEECH_SAMPLES} sample output limit"),
             ));
         } else {
             let samples = std::slice::from_raw_parts(pcm, sample_count).to_vec();

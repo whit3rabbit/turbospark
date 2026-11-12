@@ -48,6 +48,7 @@ pub(crate) fn compute_dt(dt: &[f32], dt_bias: &[f32], limit: (f32, f32)) -> Vec<
 /// Returns `(y, next_state)`: `y` is `[len, heads * head_dim]` and
 /// `next_state` is `[heads, head_dim, d_state]`, both matching the
 /// reference buffers the fixtures pin step by step.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn ssm_update(
     x: &[f32],
     a_log: &[f32],
@@ -178,6 +179,7 @@ mod tests {
     #[test]
     fn vanishing_dt_is_identity_dynamics() {
         let heads = 2;
+        let _ = heads;
         let head_dim = 1;
         let groups = 1;
         let _ = groups;

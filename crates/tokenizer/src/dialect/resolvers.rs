@@ -320,12 +320,43 @@ pub(crate) fn resolve_muse_glimmer(tokenizer: &Tokenizer) -> Result<Resolved, To
     })
 }
 
-pub(crate) fn resolve_chatml(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
+pub(crate) fn resolve_chatml(
+    tokenizer: &Tokenizer,
+    config: &TokenizerConfig,
+) -> Result<Resolved, TokenizerError> {
     let _im_start = required_id(tokenizer, IM_START_MARK)?;
     let im_end = required_id(tokenizer, IM_END_MARK)?;
     let end_of_text = required_id(tokenizer, "<|endoftext|>")?;
-    let tool_call_start = required_id(tokenizer, "<tool_call>")?;
-    let tool_call_end = required_id(tokenizer, "</tool_call>")?;
+    // BOS IS THE CONFIG'S WHEN IT DECLARES ONE. Qwen declares `bos_token:
+    // null` and its templates never print one, so `<|endoftext|>` stands in,
+    // as before. LFM3 declares `<|startoftext|>` and its template opens with
+    // `{{- bos_token -}}`; taking Qwen's stand-in there renders
+    // `<|endoftext|>` as the first token of every prompt, which the model
+    // reads as end-of-document. A declared BOS the tokenizer does not
+    // register is a malformed checkpoint and refuses.
+    let bos = match config.bos_token.content() {
+        Some(token) => required_id(tokenizer, token)?,
+        None => end_of_text,
+    };
+    // The tool-call pair is Qwen2.5's. A Qwen2-era table (LLaVA-OneVision's
+    // Qwen2-7B trunk registers `<|im_start|>`, `<|im_end|>` and `<image>`
+    // only) has neither, and its template never prints either: both ids stay
+    // `NO_SUCH_TOKEN_ID` and the decoder passes tool markup through as reply
+    // text. One side without the other is a malformed table and refuses.
+    let tool_call_start = special_token_id(tokenizer, "<tool_call>");
+    let tool_call_end = special_token_id(tokenizer, "</tool_call>");
+    if tool_call_start.is_some() != tool_call_end.is_some() {
+        return Err(TokenizerError::MissingSpecialToken(
+            if tool_call_start.is_some() {
+                "</tool_call>"
+            } else {
+                "<tool_call>"
+            }
+            .to_string(),
+        ));
+    }
+    let tool_call_start = tool_call_start.unwrap_or(NO_SUCH_TOKEN_ID);
+    let tool_call_end = tool_call_end.unwrap_or(NO_SUCH_TOKEN_ID);
     // Qwen2.5's official ChatML tokenizer registers the tool-call pair but
     // leaves tool responses and thinking as ordinary text. Those two pairs
     // are optional for this dialect: a tokenizer that registers only one
@@ -358,7 +389,7 @@ pub(crate) fn resolve_chatml(tokenizer: &Tokenizer) -> Result<Resolved, Tokenize
         ));
     }
     Ok(Resolved {
-        bos_id: end_of_text,
+        bos_id: bos,
         bos_prefix_id: None,
         eos_id: end_of_text,
         pad_id: end_of_text,
@@ -528,6 +559,53 @@ pub(crate) fn resolve_spark(tokenizer: &Tokenizer) -> Result<Resolved, Tokenizer
 /// special, so they SURVIVE detokenization as literal text, and carrying
 /// ids nothing reads would claim an id-bracket arm this dialect does not
 /// have (the Spark resolver's reason, on a dialect that does parse).
+/// Recursive Flint. `<|begin_of_text|>` is the BOS id but the encoder must
+/// not prepend it: the checkpoint's `add_bos_token` is false and its template
+/// opens directly at the first role marker. `<|end_of_text|>` is EOS, PAD and
+/// the end of turn: a turn has no closing marker, so the model signals it is
+/// done by emitting that or the next role marker, and all four ids of
+/// `generation_config.json` are stops.
+///
+/// The think pair (150006 / 150007) is added but NOT special, the same as
+/// GLM's, and the decoder splits on its ids either way. The template does not
+/// force the frame open (the generation prompt is bare `<|assistant|>`), so
+/// the model emits `<think>` itself. The tool markup is added-but-not-special
+/// text with no parser, so every tool and channel id stays the sentinel and
+/// it flows as content.
+pub(crate) fn resolve_flint(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
+    use super::resolve::{FLINT_BOS_MARK, FLINT_DEVELOPER_MARK, FLINT_EOS_MARK};
+    let bos = required_id(tokenizer, FLINT_BOS_MARK)?;
+    let eos = required_id(tokenizer, FLINT_EOS_MARK)?;
+    let user = required_id(tokenizer, GLM_USER_MARK)?;
+    let _assistant = required_id(tokenizer, GLM_ASSISTANT_MARK)?;
+    let observation = required_id(tokenizer, GLM_OBSERVATION_MARK)?;
+    let developer = required_id(tokenizer, FLINT_DEVELOPER_MARK)?;
+    let think_start = required_id(tokenizer, "<think>")?;
+    let think_end = required_id(tokenizer, "</think>")?;
+    Ok(Resolved {
+        bos_id: bos,
+        bos_prefix_id: None,
+        eos_id: eos,
+        pad_id: eos,
+        end_of_turn_id: eos,
+        tool_call_start_id: NO_SUCH_TOKEN_ID,
+        tool_call_end_id: NO_SUCH_TOKEN_ID,
+        tool_response_id: NO_SUCH_TOKEN_ID,
+        tool_response_end_id: NO_SUCH_TOKEN_ID,
+        tool_call_stop_id: observation,
+        channel_start_id: NO_SUCH_TOKEN_ID,
+        channel_end_id: NO_SUCH_TOKEN_ID,
+        message_start_id: NO_SUCH_TOKEN_ID,
+        message_end_id: NO_SUCH_TOKEN_ID,
+        think_start_id: Some(think_start),
+        think_end_id: Some(think_end),
+        stop_token_ids: [eos, user, observation, developer].into_iter().collect(),
+        // The checkpoint's `config.json` `vocab_size` (150,144): the padded
+        // lm_head row count, not the tokenizer's 150,019 ids (Gotcha 37).
+        vocab_size: 150_144,
+    })
+}
+
 pub(crate) fn resolve_glm(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
     let eos = required_id(tokenizer, GLM_ENDOFTEXT_MARK)?;
     let sop = required_id(tokenizer, GLM_SOP_MARK)?;

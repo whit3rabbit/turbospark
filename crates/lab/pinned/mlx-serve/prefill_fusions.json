@@ -1,0 +1,496 @@
+{
+  "schema": "turbospark.lab.pinned/1",
+  "id": "mlx-serve.prefill_fusions",
+  "kernel": "the prefill and fusion host settings: prefillDqGemm (dequantize the affine weight to a bf16 [N, K] transient and run the dense steel GEMM over stock qmm_t's 32x32x32 dead zone, with the per-shape M5 Ultra NAX floor), the mid-graph eval cadence and its PREFILL_EVAL_MIN_SEQ verify-width exemption, the paid fusion set (fused MoE router top-K, SwiGLU and gelu over a 65536-pattern sigmoid table, add_norm residual+next-norm, the MoE down-path tail gatherQmvDownReduce, the GDN decode fusions), the one-expert expert-bank view binding rule, the small-model row-join and residual-norm fixes, the small dense kernels mxfp8_qmv.metal, ple_gather.metal and hc_prefill_norm/mix.metal, and the MLX_SERVE_DISPATCH_PROBE chain pricing",
+  "kernel_class": "fusion",
+  "repo": "mlx-serve",
+  "summary": "Serves prefill widths and the decode fusion set on Metal. At M >= 2048 (384 at 2-bit) affine projections dequantize to a bf16 [N, K] transient (per-call cost under 1 ms by their account) and run the steel GEMM instead of stock qmm_t's stalled 32x32x32 tile; on the M5 Ultra's NAX stock qmm is the fused kernel and keeps the call until about 0.9 x min(N, K) rows. Decode fusions ship behind measured chain-shortening gates: the dispatch probe (MLX_SERVE_DISPATCH_PROBE=N) prices a chained dispatch at 1.5 to 1.7 us on an M4 Max and 2.8 us on an M5 Ultra, and only the fusions that shorten the dependency chain paid (router + SwiGLU 2.7% together, down tail 1.5%, GDN decode 3.9% of a Flash Next forward); small dense models got row-joined q|k|v and gate|up, one residual kernel, and 65536-pattern unary activation tables for +4 to +10% decode.",
+  "source": {
+    "url": "https://github.com/ddalcu/mlx-serve",
+    "rev": "191da71de32a65f69ebceeb6cb2e91036ab50b30",
+    "rev_date": "2026-10-22",
+    "license": "MIT",
+    "files": [
+      "src/transformer.zig",
+      "src/moe_affine4.zig",
+      "src/add_norm.zig",
+      "src/hc_prefill.zig",
+      "src/mxfp8_qmv.zig",
+      "src/ple_gpu.zig",
+      "src/mamba2_decode.zig",
+      "src/generate.zig",
+      "src/kernels/mxfp8_qmv.metal",
+      "src/kernels/ple_gather.metal",
+      "src/kernels/hc_prefill_norm.metal",
+      "src/kernels/hc_prefill_mix.metal",
+      "docs/gotchas/engine-mlx.md"
+    ],
+    "symbols": [
+      "prefillDqGemm",
+      "prefillDqGemmEnabled",
+      "prefillDqGemmMinRows",
+      "prefillDqGemmRowFloor",
+      "prefillEvalCadenceApplies",
+      "dispatchProbeCount",
+      "moeRouterTopK",
+      "moeRouterFusedEnabled",
+      "swigluFusedEnabled",
+      "swigluSigTable",
+      "fusedSigmoidGateMul",
+      "fusedGeluErfMul",
+      "gatherQmvDownReduce",
+      "gatherQmvDownReduceRowsEligible",
+      "downReduceFusedEnabled",
+      "downredLanesFor",
+      "gdnPreworkFused",
+      "gdnNormGateFused",
+      "gdnDecodeFusedEnabled",
+      "fuseRowGroup",
+      "bindViews",
+      "addNorm",
+      "narrowAddNorm",
+      "fusedResidualNorm",
+      "mxfp8_qmv.linear",
+      "hc_prefill.eligible",
+      "hc_prefill.norm",
+      "hc_prefill.mix",
+      "sigmoidTable"
+    ]
+  },
+  "models": [
+    {
+      "name": "Laguna XS",
+      "quant": "4-bit pack, late attention layers nvfp4 and the rest affine per their decode-attn-quant profile (exact mix not stated in the probe and fusion sections)",
+      "family": "laguna",
+      "machine": "M4 Max",
+      "role": "dispatch probe model (40 layers) and the router, SwiGLU and down-tail A/B host"
+    },
+    {
+      "name": "Qwen3.8 Flash-Next",
+      "quant": "iQ-MLX 4.7 bpw",
+      "family": "qwen4_exp",
+      "machine": "M5 Ultra",
+      "role": "M5 Ultra dispatch probe host and the GDN decode fusion forward (hybrid GDN+MoE, 22 kernels per GDN+MoE layer)"
+    },
+    {
+      "name": "Qwen3.6-27B",
+      "quant": "not stated in these sections",
+      "family": "qwen3_6",
+      "machine": "M4 Max",
+      "role": "SwiGLU arm byte-identity model and the PREFILL_EVAL_MIN_SEQ case (64 layers, 16 eval drains per MTP round before the floor)"
+    },
+    {
+      "name": "gemma4-26B-A4B",
+      "quant": "qat 4-bit (named so in the transient-budget calibration)",
+      "family": "gemma4",
+      "machine": "M4 Max",
+      "role": "softmax router arm for the router fusion byte-identity and the PREFILL_EVAL_TRANSIENT_BUDGET live calibration"
+    },
+    {
+      "name": "Spark-X2.5 4B",
+      "quant": "not stated in the gotcha entry",
+      "family": "spark",
+      "machine": "not stated (their decode A/B)",
+      "role": "small-model launch-bound fixes, +10% decode"
+    },
+    {
+      "name": "Gemma 4 E4B",
+      "quant": "not stated in the gotcha entry",
+      "family": "gemma4",
+      "machine": "not stated (their decode A/B)",
+      "role": "small-model launch-bound fixes, +9% decode"
+    },
+    {
+      "name": "Gemma 4 26B-A4B",
+      "quant": "not stated in the gotcha entry",
+      "family": "gemma4",
+      "machine": "not stated (their decode A/B)",
+      "role": "listed among the 55-65%-of-bandwidth-floor models; the gain line names it as Gemma MoE +7%"
+    },
+    {
+      "name": "LFM2.5 2.6B",
+      "quant": "not stated in the gotcha entry",
+      "family": "lfm2_5",
+      "machine": "not stated (their decode A/B)",
+      "role": "small-model launch-bound fixes, +4% decode"
+    },
+    {
+      "name": "Qwen3.8-27B dense",
+      "quant": "not stated at the comparison (defaults vs defaults)",
+      "family": "qwen3_8",
+      "machine": "M4 Max",
+      "role": "prefill comparison against oMLX and the 30.9 s 8k roofline arithmetic"
+    },
+    {
+      "name": "Qwen3.8-27B MTPLX",
+      "quant": "6-bit (MTPLX pack)",
+      "family": "qwen3_8",
+      "machine": "M4 Max",
+      "role": "ANE prefill-MLP offload measurement (+12% at 16k, +18% at 32k)"
+    }
+  ],
+  "settings": [
+    {
+      "name": "prefill_dq_gemm_min_m",
+      "value": 2048,
+      "unit": "rows",
+      "condition": "affine 3/4/5/6/8-bit: M from which dequant+steel-GEMM takes over from stock qmm_t; decode (M=1) and spec-verify widths never route",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:43898",
+      "note": "tuned against stock qmm_t's 32x32x32 steel tile; kill switch MLX_SERVE_PREFILL_DQ_GEMM=0 (comment at src/transformer.zig:43896-43897)"
+    },
+    {
+      "name": "prefill_dq_gemm_min_rows_2bit",
+      "value": 384,
+      "unit": "rows",
+      "condition": "2-bit affine only",
+      "kind": "measured",
+      "source": "src/transformer.zig:43904",
+      "note": "2-bit qmm loses from 384 rows: M4 Max 5120x17408 +5% at 384, +10% at 1024 (doc comment at src/transformer.zig:43900-43902)"
+    },
+    {
+      "name": "prefill_dq_gemm_ultra_floor_fraction",
+      "value": 0.9,
+      "unit": "x min(N, K) rows",
+      "condition": "M5 Ultra NAX only, 4/5/6/8-bit, once both N and K are 4096 or more and K < 3N: floor = max(base, 0.9 x min(N, K))",
+      "kind": "derived",
+      "source": "src/transformer.zig:43917",
+      "note": "there stock qmm is the fused NAX kernel and beats the dequant route below that row count; the M5 Max crosses the other way on K 5120, so only the dual-die arch gets the shape-aware floor (src/transformer.zig:43940-43945)"
+    },
+    {
+      "name": "prefill_dq_gemm_ultra_min_dim",
+      "value": 4096,
+      "unit": "elements",
+      "condition": "min(N, K) below this keeps the base floor on the Ultra (Flash-Next K 640 and 2560, N 2560), and K >= 3N keeps it because the dense GEMM runs MLX's split-K kernel there",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:43916",
+      "note": "K 5120 (Qwen3.8-27B) crosses at about 4608 rows, K 6144 at 5120; the test at src/transformer.zig:43920-43938 pins the per-shape floors"
+    },
+    {
+      "name": "prefill_dq_gemm_cuda_default_off",
+      "value": true,
+      "unit": null,
+      "condition": "MLX_SERVE_PREFILL_DQ_GEMM unset: on Metal the route defaults on, on CUDA off",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:43958",
+      "note": "CUDA measured slower than stock qmm (3845 vs 4400 tok/s, Llama 3.2 3B, RTX 5060 Ti) and its bf16 weight transients stacked about 5 GB into the prefill peak (comment at src/transformer.zig:43956-43957)"
+    },
+    {
+      "name": "prefill_eval_min_seq",
+      "value": 32,
+      "unit": "tokens",
+      "condition": "forwards narrower than this skip the mid-loop eval cadence entirely",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:20681",
+      "note": "spec-verify widths 2..9 ride the prefill layer loops but their transients are decode-scale, so the periodic eval only drained the pipeline: 16 drains per MTP round on a 64-layer model, depth-1 rounds 48 ms where the AR forward is about 34 ms (comment at src/transformer.zig:20671-20680)"
+    },
+    {
+      "name": "prefill_eval_cadence_layers",
+      "value": 4,
+      "unit": "layers",
+      "condition": "the prefill layer loop evals at most every N layers (also MOE_EVAL_EVERY_N_LAYERS)",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:20646",
+      "note": "one value for the prefill loops and the admission bill: at most cadence + 1 linear layers hold a chunk-wide stream between cadence points"
+    },
+    {
+      "name": "prefill_eval_transient_budget",
+      "value": 2147483648,
+      "unit": "bytes",
+      "condition": "per-layer prefill transient above which the layer loop evals after EVERY layer instead of the default cadence",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:20669",
+      "note": "2 << 30; calibrated live on gemma-4-26B-A4B-qat-4bit (M4 Max): eval-per-layer costs about 4.5% prefill at a 5K prompt and flips on at about 8K tokens, where peak 51.6 -> 27.0 GB buys the margin for a 32 GB Mac"
+    },
+    {
+      "name": "dispatch_probe_default_count",
+      "value": 0,
+      "unit": "dispatches per MoE layer",
+      "condition": "MLX_SERVE_DISPATCH_PROBE=N injects N exact 1.0 multiplies per MoE layer inside moeMLP2, chained onto expert_x; 0 or unparsable = off",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:41892",
+      "note": "injection at src/transformer.zig:33951-33975: the result feeds the expert path so MLX cannot elide it, which is what makes the slope a price for a dispatch in the live graph"
+    },
+    {
+      "name": "swiglu_table_patterns",
+      "value": 65536,
+      "unit": "bit patterns",
+      "condition": "the fused SwiGLU / gelu / sigmoid arms index a table of MLX's own sigmoid evaluated over every 16-bit pattern of the dtype, bf16 and f16 slots built once at first use",
+      "kind": "derived",
+      "source": "src/transformer.zig:41233",
+      "note": "all16BitPatterns then mlx_sigmoid, materialized once (src/transformer.zig:41233-41239); 128 KB resident per their comment (src/transformer.zig:41188-41191); an exhaustive sweep found MLX's rounding on exactly one bf16 pattern (-6.84375) that random sampling missed"
+    },
+    {
+      "name": "down_reduce_lanes_per_row",
+      "value": "8, or 16 on the M5 (device generation 17, non-phone)",
+      "unit": "lanes",
+      "condition": "the MoE down+reduce kernel's lanes per output row; 32 / LPR rows per simdgroup",
+      "kind": "measured",
+      "source": "src/transformer.zig:43094",
+      "note": "16 is measured on G17 (M5); a generation nobody measured keeps 8; the solo and rows kernels share it so a row keeps one accumulation order"
+    },
+    {
+      "name": "moe_bank_views_one_expert_default",
+      "value": true,
+      "unit": null,
+      "condition": "MLX_SERVE_MOE_BANK_VIEWS unset: the affine-4 MoE decode kernels bind one-expert views of the gate/up/down banks instead of the whole banks",
+      "kind": "hardcoded",
+      "source": "src/moe_affine4.zig:191",
+      "note": "MLX bills a command buffer for the data_size of every array a kernel binds and a whole 419 MB bank forced a commit per kernel; the kernels address experts from the buffer pointer, so the view only changes billing (src/moe_affine4.zig:181-183)"
+    },
+    {
+      "name": "add_norm_max_rows",
+      "value": 16,
+      "unit": "rows",
+      "condition": "the decode-width residual add fused with the next block's norm serves batch * seq <= 16",
+      "kind": "hardcoded",
+      "source": "src/mamba2_decode.zig:13",
+      "note": "seam default add_norm_max_rows = mamba2_decode.MAX_ROWS (src/transformer.zig:3531); the decode loop gates it with fuse_add_norm = !is_prefill (src/transformer.zig:21844); bit-equal to add then fast::rms_norm per the file header (src/add_norm.zig:15-20)"
+    },
+    {
+      "name": "fused_rows_max_m",
+      "value": 1,
+      "unit": "rows",
+      "condition": "the loader joins q|k|v and gate|up rows into one buffer with axis-0 views only at decode width M == 1",
+      "kind": "hardcoded",
+      "source": "src/transformer.zig:40445",
+      "note": "from M == 2 the verify lanes and MLX's split-K pick kernels by N, so the joined matrix would reduce K in another order; load reports [load] row-joined projection groups: N (src/transformer.zig:17900)"
+    },
+    {
+      "name": "mxfp8_qmv_max_rows",
+      "value": 8,
+      "unit": "rows",
+      "condition": "the MXFP8 qmv kernel serves 1..8 activation rows; wider stays on MLX's matmul",
+      "kind": "hardcoded",
+      "source": "src/mxfp8_qmv.zig:8",
+      "note": "rows check at src/mxfp8_qmv.zig:42; the weight row is decoded once per lane and applied to every row of x"
+    },
+    {
+      "name": "mxfp8_qmv_device_generations",
+      "value": "16 and 17",
+      "unit": null,
+      "condition": "Apple GPU generations the kernel engages on; other generations and phones keep MLX's kernel",
+      "kind": "hardcoded",
+      "source": "src/mxfp8_qmv.zig:29",
+      "note": "their comment: measured on M4 (g16) and the M5 Ultra (g17); e8m0 exponent per 32, e4m3 pair decoded by bit placement"
+    },
+    {
+      "name": "hc_prefill_max_seq",
+      "value": 8703,
+      "unit": "tokens",
+      "condition": "hyper-connection prefill norm/mix kernels: seq <= max_seq / batch",
+      "kind": "derived",
+      "source": "src/hc_prefill.zig:10",
+      "note": "8192 + TAIL_MERGE_MAX (512, src/generate.zig:1251) - 1, to include the final remainder the chunker may merge into an 8192-token chunk"
+    },
+    {
+      "name": "hc_prefill_min_seq",
+      "value": 16,
+      "unit": "tokens (exclusive)",
+      "condition": "geometry takes seq > 16 with batch 1..2",
+      "kind": "hardcoded",
+      "source": "src/hc_prefill.zig:27",
+      "note": "below it the composed op chain serves the seam"
+    },
+    {
+      "name": "hc_prefill_max_hidden",
+      "value": 4096,
+      "unit": "elements",
+      "condition": "hidden 128..4096 in steps of 128 and 1..8 hyper-connections, bf16 only",
+      "kind": "hardcoded",
+      "source": "src/hc_prefill.zig:23",
+      "note": "MLX_SERVE_HC_PREFILL=0 kills both kernels; hc_prefill_norm.metal preserves Apple's rms_single_row four-value reduction and bf16 rounding (file header); the mix kernel reads the same 65536-pattern sigmoid table"
+    },
+    {
+      "name": "ple_table_row_bytes",
+      "value": 4096,
+      "unit": "bytes",
+      "condition": "the n-gram embedding table mapping is reshaped to [len / 4096, 4096] as the no-copy GPU buffer ple_gather.metal indexes",
+      "kind": "hardcoded",
+      "source": "src/ple_gpu.zig:85",
+      "note": "shape build at src/ple_gpu.zig:117-121; one thread per output element in the kernel, n-gram order 2 + h / params[2] per head"
+    }
+  ],
+  "gates": [
+    {
+      "condition": "prefillDqGemm admission: enabled (env default on Metal, off CUDA) and bits in {2, 3, 4, 5, 6, 8} affine and x bf16/f16 and rows >= prefillDqGemmRowFloorNow(bits, n, k); otherwise the caller stays on stock qmm",
+      "source": "src/transformer.zig:45097"
+    },
+    {
+      "condition": "prefillDqGemmRowFloor: !ultra_nax or bits == 2 or min(N, K) < 4096 or K >= 3N keeps the base floor; only the M5 Ultra NAX with both N and K >= 4096 and K < 3N raises it to 0.9 x min(N, K)",
+      "source": "src/transformer.zig:43916"
+    },
+    {
+      "condition": "prefillEvalCadenceApplies(seq_len): the mid-graph eval cadence applies only for seq_len >= PREFILL_EVAL_MIN_SEQ (32), exempting the spec-verify widths that ride the prefill layer loops",
+      "source": "src/transformer.zig:20686"
+    },
+    {
+      "condition": "dispatch probe: dispatchProbeCount() > 0 chains that many exact 1.0 multiplies onto expert_x inside moeMLP2; the result feeds the expert path so nothing elides it",
+      "source": "src/transformer.zig:33964"
+    },
+    {
+      "condition": "MoE router fusion (moeRouterTopK, one kernel for top-K + softmax/renormalize incl. the shared-expert gate fold): moeRouterFusedEnabled() (MLX_SERVE_MOE_ROUTER_FUSED != 0) and a GPU stream; every unsupported geometry returns null and callers keep the composed routing chain",
+      "source": "src/transformer.zig:38522"
+    },
+    {
+      "condition": "SwiGLU and table-multiply fusion arms gate on swigluFusedEnabled() (MLX_SERVE_SWIGLU_FUSED != 0) and a GPU stream and bf16/f16 dtypes, each arm re-checking (for example src/transformer.zig:41610 and src/transformer.zig:41880)",
+      "source": "src/transformer.zig:41251"
+    },
+    {
+      "condition": "add_norm decode seam: fuse_add_norm = !is_prefill and batch * seq <= add_norm_max_rows (16) and add_norm.eligible (GPU stream, bf16/f16, hidden width the thread layouts cover, src/add_norm.zig:130-136)",
+      "source": "src/transformer.zig:21844"
+    },
+    {
+      "condition": "fuseRowGroup: 2..4 quantized {w, s, b} triples sharing one packed geometry (same packed width and dtype, same scales width and dtype, same bias presence) joined along axis 0 at FUSED_ROWS_MAX_M == 1, originals rewritten as zero-copy row views",
+      "source": "src/transformer.zig:40456"
+    },
+    {
+      "condition": "MoE bank views: bindViews returns null unless viewsOn() (MLX_SERVE_MOE_BANK_VIEWS != 0) and every bank carries scales; dense banks keep the whole-array bind",
+      "source": "src/moe_affine4.zig:209"
+    },
+    {
+      "condition": "GDN decode fusions (gdnPreworkFused generalized to S 1..9 with in-kernel gate chain and beta, gdnNormGateFused epilogue for the per-head norm and out gate): gdnDecodeFusedEnabled() (MLX_SERVE_GDN_DECODE_FUSED != 0); MLX_SERVE_GDN_PREWORK=0 kills the whole prework kernel",
+      "source": "src/transformer.zig:39714"
+    },
+    {
+      "condition": "MoE down-path tail (gatherQmvDownReduce: down gather + score multiply + sum in one kernel): downReduceFusedEnabled() (MLX_SERVE_MOE_DOWN_REDUCE_FUSED, src/transformer.zig:43113) and moeRowsFusedEnabled() and not MLX_SERVE_MOE_GATHER_QMV_OFF and hidden_act == .silu and gate/up sharing one (bits, group, mode) and down affine 2/4/8-bit or nvfp4 g16 and N % 4 == 0",
+      "source": "src/transformer.zig:43312"
+    },
+    {
+      "condition": "hc_prefill norm/mix eligibility: inject present, bf16 across x, weight and inject, enabled (MLX_SERVE_HC_PREFILL), geometry(batch 1..2, seq > 16, seq <= max_seq / batch), hc 1..8, hidden 128..4096 divisible by 128",
+      "source": "src/hc_prefill.zig:23"
+    }
+  ],
+  "measured": [
+    {
+      "metric": "forward_ms_vs_probe_count",
+      "value": "N=0: 13.08 / 13.13, N=4: 13.37 / 13.31, N=8: 13.63 / 13.66 (two runs)",
+      "model": "Laguna XS, 40 layers",
+      "machine": "M4 Max",
+      "conditions": "MLX_SERVE_DISPATCH_PROBE 0/4/8; slope about 0.067 ms per dispatch-per-layer, i.e. about 1.5-1.7 us per chained GPU dispatch at 40 layers",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:892-897"
+    },
+    {
+      "metric": "forward_ms_vs_probe_count",
+      "value": "11.07 / 11.61 / 12.13 ms GPU at N=0/4/8, about 2.8 us per chained op",
+      "model": "Qwen3.8 Flash-Next, iQ-MLX 4.7 bpw (forward reads 5.9 GB per token against a 5.4 ms bytes floor)",
+      "machine": "M5 Ultra",
+      "conditions": "MLX_SERVE_DECODE_FWD_UBENCH=30; the decode graph has 2056 nodes, about 1180 kernels (579 custom, 315 qmm), 22 per GDN+MoE layer",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:5480"
+    },
+    {
+      "metric": "forward_ms_pct",
+      "value": -2.7,
+      "model": "Laguna XS (router arm), gemma4-26B-A4B (softmax router arm), dense Qwen3.6-27B (SwiGLU arm)",
+      "machine": "M4 Max",
+      "conditions": "MoE router and SwiGLU fusions together, position-balanced across six pairs in both orders, medians 13.418 -> 13.061 ms/forward; /v1/chat/completions at temp 0 byte-identical over 260 tokens",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:930-932"
+    },
+    {
+      "metric": "ms_per_token_pct",
+      "value": -1.5,
+      "model": "Laguna XS",
+      "machine": "M4 Max",
+      "conditions": "MoE down-path tail fusion, live paired A/B: 8.58 vs 8.71 and 8.56 vs 8.70 ms/tok (-1.45% / -1.53%), on-arm wins both pairs both orders; greedy 200-token on/off byte-identical",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:1259-1260"
+    },
+    {
+      "metric": "forward_ms_pct",
+      "value": -3.9,
+      "model": "Qwen3.8 Flash-Next (qwen4_exp), serial decode, in-situ on the real pack",
+      "machine": "not stated (their gotcha log)",
+      "conditions": "GDN decode fusion gdnPreworkFused + gdnNormGateFused (MLX_SERVE_GDN_DECODE_FUSED): 15.45 -> 14.84 ms/forward, serial 60.0 -> 60.4 tok/s short, 52.7/53.4 -> 53.5/54.2 at 8.5k; 179/180 per-layer checks exact, one k element off by 1 bf16 ulp",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:4268"
+    },
+    {
+      "metric": "decode_tok_s_pct",
+      "value": "Spark +10, Gemma E4B +9, Gemma MoE +7, LFM2.5 +4",
+      "model": "Spark-X2.5 4B, Gemma 4 E4B, Gemma 4 26B-A4B, LFM2.5 2.6B",
+      "machine": "not stated (their decode A/B)",
+      "conditions": "all fixes bit-identical (q|k|v and gate|up rows joined at load, fusedResidualNorm, unary activations tabulated over all 65536 patterns then one multiply); prefill untouched; the small models decoded at 55-65% of the bandwidth floor while the 27B sat at 88%; a 4B forward was about 940 kernels at about 3 us GPU idle per dependent small kernel",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:5285"
+    },
+    {
+      "metric": "prefill_tok_s",
+      "value": "2k: 268 vs oMLX 243 (+10%); 8k: tie at 252; 32k: tie at 224 (from -4/-19/-20%)",
+      "model": "Qwen3.8-27B dense",
+      "machine": "M4 Max",
+      "conditions": "same-session defaults vs defaults against oMLX; the 8k/32k ties are roofline physics, the winnable margins are short contexts and MoE or small models",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:1445"
+    },
+    {
+      "metric": "prefill_8k_roofline_s",
+      "value": 30.9,
+      "model": "Qwen3.8-27B dense",
+      "machine": "M4 Max",
+      "conditions": "2 x 27e9 FLOP per token at MLX's measured 14.4 TFLOPS bf16 GEMM rate (89% of the M4 Max's theoretical 16.2) puts the 8k roofline at about 30.9 s and both engines within 3-6% of it",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:1447-1448"
+    },
+    {
+      "metric": "prefill_pct",
+      "value": "+12 median at 16k, +18 at 32k (best boots +15/+20)",
+      "model": "Qwen3.8-27B MTPLX 6-bit",
+      "machine": "M4 Max",
+      "conditions": "--ane-prefill, ABA-counterbalanced boots vs the same binary without the flag; int8 rows, fp16 datapath, lossy by design, opt-in default off; decode byte-flat, greedy echo byte-identical at 200 tokens; measured a loss on M5 Max (PR #223)",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:2795-2796"
+    },
+    {
+      "metric": "forward_gpu_ms",
+      "value": "10.82 (about 17 buffers per step) vs 10.45 (about 100)",
+      "model": "Qwen3.8 Flash-Next, iQ-MLX 4.7 bpw",
+      "machine": "M5 Ultra",
+      "conditions": "MLX_MAX_OPS_PER_BUFFER=200 with the MB cap lifted, 3+3 boots; the encoder stopped being throttled (3.8 ms) but the GPU started later and the head/tail overlap went; the about 5 us between kicks is not recoverable by packing",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:5509"
+    },
+    {
+      "metric": "gather_us_vs_bank_mb",
+      "value": "30 / 50 / 77 / 300 us at banks of 8 / 25 / 50 / 201 MB",
+      "model": "E-sweep fixture, all reading the same 10 experts",
+      "machine": "not stated (their uBench)",
+      "conditions": "MLX's gather_qmm at decode width costs in proportion to the expert bank's size, not the work; flat under pip-Python with the identical dylib; 141 gathers/token x 300 us was the whole 42 ms/token Laguna decode",
+      "provenance": "upstream_reported",
+      "source": "src/transformer.zig:41920-41921"
+    }
+  ],
+  "lab_mapping": [
+    {
+      "setting": "dispatch_probe_default_count",
+      "maps_to": "lab evaluator item L1 (docs/MLX_SERVE_KERNELS.md, What the lab should take): tslab profile --dispatch-probe N over {0, 4, 8} fitting us_per_chained_dispatch into the ledger; proposed there, not built: crates/lab/src/knobs.rs has no TURBOSPARK_DISPATCH_PROBE knob today",
+      "env": null,
+      "note": "the probe is pure (no KV writes) and observable (the result feeds the expert path), which is why it beats run-the-component-twice marginal pricing"
+    },
+    {
+      "setting": "prefill_dq_gemm_min_m",
+      "maps_to": "TURBOSPARK_PREFILL_STEEL (crates/lab/src/knobs.rs knob prefill_steel, families qwen35 and qwen36, KlBounded): our steel prefill route, the surface the dequant+GEMM dead-zone story maps onto",
+      "env": "TURBOSPARK_PREFILL_STEEL"
+    },
+    {
+      "setting": "moe_bank_views_one_expert_default",
+      "maps_to": "TURBOSPARK_QWEN_FUSED_FFN (crates/lab/src/knobs.rs knob qwen_fused_ffn): our MoE/FFN fusion arm; their rule is that a fusion pays only if it shortens the dependency chain, and a chain the GPU already overlaps is not a dispatch to fuse",
+      "env": "TURBOSPARK_QWEN_FUSED_FFN"
+    },
+    {
+      "setting": "fused_rows_max_m",
+      "maps_to": "none yet for the row-join and residual-norm fusions themselves; the measurement side is lab item L5 (tslab trace over xctrace Metal System Trace) and the engagement-report pattern ([load] row-joined projection groups: N) is what lab item L3 wants every arm to prove",
+      "env": null
+    }
+  ],
+  "docs": [
+    "docs/MLX_SERVE_KERNELS.md#dispatch-cost-the-probe-and-what-it-does-and-does-not-license",
+    "docs/MLX_SERVE_KERNELS.md#prefill-stock-with-two-interventions",
+    "docs/MLX_SERVE_KERNELS.md#the-quantized-linear-front-door",
+    "docs/MLX_SERVE_KERNELS.md#gdn-three-prefill-kernels-and-a-two-dispatch-decode",
+    "docs/MLX_SERVE_KERNELS.md#what-the-lab-should-take"
+  ],
+  "notes": "License: the clone's LICENSE at this rev is MIT (Copyright (c) 2026 David Dalcu) with a separate LICENSE-APACHE-2.0 file; docs/MLX_SERVE_KERNELS.md (Pinned source and license) and the pinned README example call the repo Apache-2.0, existing pinned entries use MIT, and the README rule says license from the repo's LICENSE, so this entry says MIT. Doc-vs-source: our doc says the ANE split was a loss on both M5 Max testers; the source says only measured a loss on M5 Max, PR #223 (docs/gotchas/engine-mlx.md:3269) and never counts two testers. Our doc's Spark 4B is Spark-X2.5 4B in the source, and the source also lists Gemma 4 26B-A4B among the launch-bound models while the gain line reads Gemma MoE +7%. The under-1-ms dequant transient is the source's own claim (docs/gotchas/engine-mlx.md:284, per-call dequant <1 ms); the pinned code asserts no cost. The doc's 1.5% down-tail figure is the heading number; the source's measured pairs are -1.45% and -1.53%. The doc's three fused GDN decode dispatches figure is the -3.9% forward of gdnPreworkFused + gdnNormGateFused on the qwen4_exp hybrid, not the two-dispatch decode of src/gdn_decode.zig that the separate gdn_decode pinned entry covers. Two distinct residual+norm kernels exist in the source: add_norm.zig fuses a decode residual add with the NEXT block's norm (bit-equal to add then fast::rms_norm), while the small-model fixes use fusedResidualNorm (RESIDUAL_NORM_SOURCE, src/transformer.zig:40733), one kernel doing pre-norm, add, scale and post-norm with MLX's rms_single_row tree; our doc mentions both without separating them. The prefill section's second intervention (a single long msv_attn_p256 dispatch tripping macOS IOGPU preemption, fixed by capping per-dispatch work with fp32 online-softmax state carried between key-range dispatches) is attention-side and left to the attention pinned entries. The command-buffer packing result is a null result: bigger buffers lose (10.82 vs 10.45 ms). Machine and quant for the small-model gains and the GDN fusion percentage are not stated in the source sections quoted here."
+}

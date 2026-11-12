@@ -57,6 +57,14 @@ final class SettingsWindowLayoutTests: XCTestCase {
         XCTAssertFalse(AppSettingsView.matches("Engine", keywords: ["sampling"], query: "zzz"))
     }
 
+    /// A stray space in the search field must not filter the sidebar down to
+    /// the tabs whose titles happen to contain one.
+    func testWhitespaceQueryMatchesEveryTab() {
+        XCTAssertTrue(AppSettingsView.matches("Appearance", query: " "))
+        XCTAssertTrue(AppSettingsView.matches("General", query: "\t "))
+        XCTAssertTrue(AppSettingsView.matches("Engine", keywords: ["sampling"], query: " sampl "))
+    }
+
     func testNoScreenFallsBackToFixedSize() {
         XCTAssertEqual(
             AppSettingsView.windowSize(forVisibleFrame: nil),

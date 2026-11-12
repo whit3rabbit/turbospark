@@ -307,13 +307,27 @@ cargo test -p turbospark-tokenizer
     `chat_template::encode_text_continuation`, and
     `structured_decoder::consume`'s dialect match are all non-wildcard, so a
     missing arm is a build error rather than a runtime panic.
-    **NOT COMPILER-ENFORCED, AND THERE IS EXACTLY ONE OF THEM SINCE
-    2026-09-05:** `runtime::turn_stream::TurnSplitter::new` keys on the
-    dialect through `matches!(dialect, A | B)`, which compiles fine with a
-    new variant matching neither arm -- decide by hand whether the new
-    dialect belongs in those unions. `ChatDialect::Llama3` needed none of
-    them (no tool-calling or thinking markup to decode), which is why it is
-    not the worked example for that half.
+    **NOT COMPILER-ENFORCED, AND THERE ARE TWO OF THEM:**
+    `runtime::turn_stream::TurnSplitter::new` (whether a decoder is built at
+    all) and `server::responses::map::may_produce_reasoning` (whether the
+    Responses stream reports reasoning). Both key on the dialect through
+    `matches!(dialect, A | B)`, which compiles fine with a new variant
+    matching neither arm -- decide by hand whether the new dialect belongs in
+    those unions, and in which arm: the always-on one (Harmony, Muse Glimmer,
+    MiniMax, Flint: the model reasons whatever the request asked) or the
+    `effort != Off` one. `ChatDialect::Llama3` needed none of them (no
+    tool-calling or thinking markup to decode), which is why it is not the
+    worked example for that half.
+
+    **THE FLINT LEAK (2026-10-25) IS THIS ENTRY'S FAILURE MODE.** Flint's
+    resolver left `think_start_id` / `think_end_id` as `None` on the grounds
+    that its `<think>` pair is added-but-not-special, its decoder arm was a
+    content passthrough, and it was in neither union, so the app showed
+    `<think>...</think>` inline in every reply. The special flag changes what
+    the detokenizer renders, not what the decoder can key on: GLM's pair is
+    also `special: false` and always split by id. Resolve the ids, route the
+    arm, and add the dialect to both unions together. A test through
+    `TurnSplitter` at `ReasoningEffort::Off` is what catches a missing union.
 
     **THIS ENTRY USED TO NAME THREE SITES** --
     `server::handler::exec::needs_decoder`, `cli::generate::format`'s

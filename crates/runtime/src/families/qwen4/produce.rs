@@ -11,6 +11,7 @@ use std::time::Instant;
 use foundation::LogitValue;
 
 use super::attn::{encode_full_attention_block, encode_linear_block};
+use super::cb1_trace::PassTrace;
 use super::hc::encode_hyper_connection;
 use super::moe;
 use super::ple::encode_ple_layer;
@@ -19,6 +20,7 @@ use super::{layer_tensor, TRUNK_PREFIX};
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::encode_gemv_any;
 use crate::real_forward_types::RealForwardError;
+use crate::vision::RopePosition;
 
 impl RealForwardRunner {
     pub(crate) fn produce_real_qwen4(
@@ -62,6 +64,7 @@ impl RealForwardRunner {
                 "token id {token} outside vocab {vocab}"
             )));
         }
+        self.refuse_qwen4_vision_past_qsa_budget()?;
         let capture_layer_boundaries = self
             .real_qwen4
             .as_ref()
@@ -90,20 +93,43 @@ impl RealForwardRunner {
         // Embed and TILE: `embed_tokens(ids).repeat(1, 1, C)` -- replicated,
         // not padded. `arch.embedding_scaled_by_sqrt_hidden` is refused
         // true at `RealQwen4State::build`, so the scale is always 1.0.
+        //
+        // THE IMAGE BLIT. The reference splices the tower row into
+        // `inputs_embeds` BEFORE the repeat, so at an image position the row
+        // replaces the lookup in every one of the C copies. It is a host write
+        // into shared storage, sound because `pass` is not committed until the
+        // first router wait below (`families/qwen/produce.rs`'s argument).
+        // `token` still reaches PLE unchanged: both references hash the raw
+        // placeholder id there (`docs/QWEN4EXP_VISION_PHASE0.md` item 4).
+        let vision_row = self
+            .prompt_vision
+            .as_ref()
+            .and_then(|pv| pv.row_for(position));
         for c in 0..hc_count {
             let qwen4 = self.real_qwen4.as_ref().expect("checked above");
-            encode_embed_any_qwen4(
-                &mut self.context,
-                &pass,
-                &self.weights,
-                &self.index,
-                embed_name,
-                (&qwen4.wide_x, (c * hidden * 2) as u64),
-                token as u32,
-                hidden as u32,
-                vocab,
-            )?;
+            match vision_row {
+                Some(row) => gpu::write_buffer_bytes(&qwen4.wide_x, c * hidden * 2, row),
+                None => encode_embed_any_qwen4(
+                    &mut self.context,
+                    &pass,
+                    &self.weights,
+                    &self.index,
+                    embed_name,
+                    (&qwen4.wide_x, (c * hidden * 2) as u64),
+                    token as u32,
+                    hidden as u32,
+                    vocab,
+                )?,
+            }
         }
+        // Resolved once per token, before the borrow split below.
+        let rope_position = match self.prompt_vision.as_ref() {
+            Some(pv) => {
+                let (t, h, w) = pv.rope_position(position);
+                RopePosition::Triple(t, h, w)
+            }
+            None => RopePosition::Sequential,
+        };
 
         let (
             context,
@@ -138,6 +164,9 @@ impl RealForwardRunner {
             &mut self.router_hist,
             &mut self.phases,
         );
+        // `phases.calls` is bumped after this returns, so it is the 0-based
+        // index of this pass.
+        let mut trace = PassTrace::start(phases.calls, position, phases.expert_io_nanos);
 
         for layer in 0..arch.num_layers as usize {
             if layer == qwen4.ple_layer {
@@ -148,6 +177,7 @@ impl RealForwardRunner {
                 // contents) breaks the aliasing rather than reordering
                 // around it (`crates/runtime/CLAUDE.md` Gotcha 5's shape).
                 let wide_buf = qwen4.wide_x.clone();
+                let t_ple = trace.ple_timer();
                 encode_ple_layer(
                     context,
                     &pass,
@@ -160,6 +190,7 @@ impl RealForwardRunner {
                     token,
                     0,
                 )?;
+                trace.note_ple(t_ple);
             }
 
             if capture_layer_boundaries {
@@ -228,6 +259,7 @@ impl RealForwardRunner {
                     layer,
                     position,
                     true,
+                    None,
                 )?;
             } else {
                 encode_full_attention_block(
@@ -242,6 +274,8 @@ impl RealForwardRunner {
                     kv,
                     layer,
                     position,
+                    rope_position,
+                    None,
                 )?;
             }
             if capture_attention_intermediates {
@@ -336,9 +370,24 @@ impl RealForwardRunner {
                 0,
             )?;
 
+            // `gpu_wait_nanos` has always covered `commit()` and the wait
+            // together. The three clocks split them for `TURBOSPARK_CB1_TRACE`
+            // without changing what either counter reports.
             let t_wait = Instant::now();
-            phases.cb1_gpu_nanos += (pass.commit().wait_with_gpu_time() * 1e9) as u64;
-            phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
+            let committed = pass.commit();
+            let t_committed = Instant::now();
+            let gpu_secs = committed.wait_with_gpu_time();
+            let t_end = Instant::now();
+            phases.cb1_gpu_nanos += (gpu_secs * 1e9) as u64;
+            phases.gpu_wait_nanos += t_end.duration_since(t_wait).as_nanos() as u64;
+            trace.record_layer(
+                layer,
+                t_wait,
+                t_committed,
+                t_end,
+                gpu_secs,
+                phases.expert_io_nanos,
+            );
 
             pass = context.begin_pass_labeled("routed cb");
             moe::encode_moe_layer(
@@ -366,6 +415,7 @@ impl RealForwardRunner {
                 top_k,
                 use_silu,
                 &moe::RoutedSlot::sequential(),
+                None,
             )?;
 
             gpu::encode_hc_inject_add(
@@ -390,6 +440,10 @@ impl RealForwardRunner {
                         LayerBoundaryStage::AfterMoeJoin,
                         (&qwen4.wide_x, 0),
                     )
+                    .map_err(gpu_err)?;
+            }
+            if let Some(tap) = qwen4.tap_capture.as_ref() {
+                tap.encode_layer(context, &pass, layer, (&qwen4.wide_x, 0))
                     .map_err(gpu_err)?;
             }
 
@@ -449,6 +503,9 @@ impl RealForwardRunner {
         qwen4.flush_gdn_norm_capture();
         qwen4.flush_layer_boundary_capture();
         qwen4.flush_attention_intermediate_capture();
+        if let Some(tap) = qwen4.tap_capture.as_ref() {
+            tap.append(position, token);
+        }
         self.kv.advance();
 
         if self.skip_head {
@@ -462,6 +519,28 @@ impl RealForwardRunner {
             )));
         }
         gpu::read_buffer_f16_into(&self.scratch.logits, 0, logits);
+        Ok(())
+    }
+}
+
+impl RealForwardRunner {
+    /// Refuses an image prompt on a runner whose QSA selection could run, see
+    /// `RealQwen4State::qsa_can_select`. Checked at every Qwen4Exp entry and at
+    /// `set_prompt_vision`, because `set_qsa_force_dense` can change the answer
+    /// after the map is set.
+    pub(crate) fn refuse_qwen4_vision_past_qsa_budget(&self) -> Result<(), RealForwardError> {
+        let Some(qwen4) = self.real_qwen4.as_ref() else {
+            return Ok(());
+        };
+        if self.prompt_vision.is_some() && qwen4.qsa_can_select() {
+            return Err(RealForwardError::Unsupported(format!(
+                "qwen4_exp image prompts need a context at or below the QSA budget \
+                 ({} blocks of {}); this runner was opened at {} tokens, and above the budget \
+                 the indexer rotates pooled keys by token index rather than by mRoPE position \
+                 (docs/QWEN4EXP_VISION_PHASE0.md item 3)",
+                qwen4.idx_block_topk, qwen4.idx_compress, qwen4.max_context
+            )));
+        }
         Ok(())
     }
 }

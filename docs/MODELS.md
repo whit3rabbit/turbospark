@@ -30,6 +30,37 @@ revision by name:
 turbospark-model pull --repo "mlx-community/Qwen3-VL-4B-Instruct-4bit@2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b" --alias qwen3vl-4b-vision
 ```
 
+Gemma 4 image input is real-gated (2026-11-01) on
+`mlx-community/gemma-4-26b-a4b-it-4bit@0d77464eeb233a2da68ebf9d7dc4edaac7db956d`,
+the same revision as the text install, when the install is repacked with its
+tower (manifest `visionTower: "gemma4"`). The catalog `gemma4` row is the text
+install and carries no tower. The tower has no sidecar and no soft-token
+budget above the 280 default. See
+[`GEMMA4_VISION_PHASE0.md`](GEMMA4_VISION_PHASE0.md).
+
+Unlimited-OCR-2 is the `unlimited_ocr2` family and a catalog row. It reads page
+images only (no chat), through `turbospark-ocr`, `ts_ocr_*`, or image parts on
+the server endpoints. See [`UNLIMITED_OCR2_PHASE0.md`](UNLIMITED_OCR2_PHASE0.md).
+
+```sh
+turbospark-model pull unlimited-ocr-2-4bit
+turbospark-ocr --model unlimited-ocr-2-4bit page1.png
+```
+
+LFM3 is represented by the `lfm3` family: LiquidAI's dense 1.7B hybrid of
+gated short-convolution, full-attention and sliding-window layers. Two
+artifacts are cataloged and both are `verified`: the 4-bit MLX conversion
+and the Q8_0 GGUF each carry frozen memory and quality gates. The Q8_0
+file's greedy output matches llama.cpp on the same bytes token for token.
+Its tokenizer comes from the HF checkpoint. Prefill is sequential
+([`LFM3_PHASE0.md`](LFM3_PHASE0.md)).
+
+```sh
+turbospark-model pull lfm3-1.7b
+turbospark-model pull lfm3-1.7b-q8
+turbospark-check --model lfm3-1.7b --messages-file p.json
+```
+
 Qwen2/Qwen2.5 is represented by the `qwen2` family, and it runs on both
 intake paths. Three artifacts are cataloged and gated: the 4-bit MLX
 safetensors conversion, the official single-file Q3_K_M GGUF (whose attention

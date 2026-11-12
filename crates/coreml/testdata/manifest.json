@@ -1,0 +1,23 @@
+{
+  "coremltools": "9.0",
+  "fixtures": {
+    "accumulator.mlpackage": {
+      "sha256_tree": "e977ebc4c469210231e6d6e936e76f76917c80e95cef0828952fe0a262cd3a4a"
+    },
+    "add_f32.mlpackage": {
+      "sha256_tree": "e4bf01c021a6aa8f83368f629d56dae3e23ac654c88ca54bc198a4e699f5a8d6"
+    },
+    "f16_scale.mlpackage": {
+      "sha256_tree": "46589009e01783fe43a030b22cf3b7da8acfd7fa91b718e3ea26020351d41196"
+    },
+    "i32_argmax.mlpackage": {
+      "sha256_tree": "000a54a4ea82708fa73025d9c8f3c96886f5ea4dc006104f800d0b59342d1c50"
+    },
+    "multifunction.mlpackage": {
+      "sha256_tree": "69a41042d3b5f350b77fa33d86dcdd808f4fda7829d3587f589c6e2cd446c9b2"
+    }
+  },
+  "generator": "crates/coreml/tools/gen_coreml_fixtures.py",
+  "numpy": "2.2.6",
+  "python": "3.12.11"
+}

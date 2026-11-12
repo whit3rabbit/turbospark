@@ -2,19 +2,23 @@
 
 use std::path::Path;
 
-use model_io::ArchConfig;
+use model_io::{
+    ArchConfig, HEADER_BYTES, MANIFEST_VERSION_MAJOR, MANIFEST_VERSION_MINOR, TRAILER_BYTES,
+};
 
 use super::types::{io_err, WriterError};
+use crate::resident_writer::index_format_trailer;
 
-/// A `model_weights.bin` with a valid 24-byte `ResidentIndexHeader`
-/// (`index_size == HEADER_BYTES`, zero entries) followed by the raw
-/// resident tensor region.
+/// A `model_weights.bin` with a valid 24-byte `ResidentIndexHeader` (zero
+/// entries) and the format trailer, followed by the raw resident tensor
+/// region. `index_size` is header plus trailer.
 pub(crate) fn build_empty_resident_index(resident_tensor_bytes: &[u8]) -> Vec<u8> {
-    const HEADER_BYTES: u64 = 24;
-    let mut bytes = Vec::with_capacity(HEADER_BYTES as usize + resident_tensor_bytes.len());
-    bytes.extend_from_slice(&HEADER_BYTES.to_le_bytes()); // index_size
+    let index_size = (HEADER_BYTES + TRAILER_BYTES) as u64;
+    let mut bytes = Vec::with_capacity(index_size as usize + resident_tensor_bytes.len());
+    bytes.extend_from_slice(&index_size.to_le_bytes());
     bytes.extend_from_slice(&(resident_tensor_bytes.len() as u64).to_le_bytes()); // resident_size
     bytes.extend_from_slice(&0u64.to_le_bytes()); // entry_count
+    bytes.extend_from_slice(&index_format_trailer());
     bytes.extend_from_slice(resident_tensor_bytes);
     bytes
 }
@@ -77,8 +81,8 @@ pub(crate) fn build_manifest_json(
 
     Ok(serde_json::json!({
         "magic": "GTURBO",
-        "versionMajor": 1,
-        "versionMinor": 0,
+        "versionMajor": MANIFEST_VERSION_MAJOR,
+        "versionMinor": MANIFEST_VERSION_MINOR,
         "flags": {},
         "modelID": model_id,
         "sourceSnapshotHash": null,
@@ -181,6 +185,14 @@ pub(crate) fn build_manifest_json(
             } else {
                 serde_json::json!(arch.vision.deepstack_visual_indexes)
             },
+            // The key is always written. Null for the qwen tower, as
+            // deepstack's empty list is null, so every manifest written before
+            // the key existed and every one written after for that tower say
+            // the same thing.
+            "visionTower": match arch.vision.tower {
+                model_io::VisionTowerKind::QwenSiglip => serde_json::Value::Null,
+                other => serde_json::json!(other.as_str()),
+            },
             // **THE HOLE THE COMMENT HERE USED TO DESCRIBE IS NOW CLOSED, and
             // it was closed by a family arriving rather than by anyone finding
             // it.** Every `ca*` and `hc*` field was VALIDATED and written by
@@ -237,11 +249,24 @@ pub(crate) fn build_manifest_json(
             "pleLayerIds": arch.ple.layer_ids,
             "pleSeed": arch.ple.seed,
             "pleEosTokenId": arch.ple.eos_token_id,
+            // `lfm3`'s short-conv taps, unconditional for the same reason;
+            // 0 is what every other family writes.
+            "shortConvKernelSize": arch.short_conv_kernel_size,
         },
         "quant": null,
         "files": files,
         "expertsPerLayer": experts_per_layer,
         "numLayers": num_layers,
         "expertStride": expert_stride,
+        // Which build wrote the install, for bug reports and for telling
+        // two installs of the same model apart. Informational: the loader
+        // never dispatches on it, and the field is optional on read so
+        // older installs are unaffected. `gitRev` is left out because the
+        // workspace exposes no build-time revision; a build that does can
+        // add it without a format change.
+        "producer": {
+            "tool": "turbospark-repack",
+            "version": env!("CARGO_PKG_VERSION"),
+        },
     }))
 }

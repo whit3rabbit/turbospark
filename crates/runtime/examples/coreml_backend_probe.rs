@@ -2,7 +2,7 @@
 //! `crates/runtime/scripts/benchmark_coreml.py`.
 //!
 //! ```text
-//! coreml_backend_probe parakeet <model-dir> <wav> <coreml_gpu|coreml_ane|cpu_redux>
+//! coreml_backend_probe parakeet <model-dir> <wav> <coreml_gpu|coreml_ane|coreml_cpu|cpu_redux>
 //! coreml_backend_probe embed <model-dir> <cpu|gpu|ane>
 //! coreml_backend_probe ocr <model-dir> <page.png> [page.png ...]
 //! ```
@@ -12,6 +12,9 @@
 //! line on stdout, so the script can check that every arm produced the same
 //! output. `cpu_redux` opens the CPU port (`audio::stt::parakeet`) on a
 //! `moondream/parakeet-redux` directory instead of the Core ML export.
+//! `coreml_gpu` on an encoder not verified on the GPU (an int8 one) is
+//! refused at open; `TURBOSPARK_COREML_ALLOW_QUANTIZED_GPU=1` lets it run,
+//! and only ever in this child process, because Core ML can abort there.
 //! macOS-only.
 
 #![cfg(target_os = "macos")]
@@ -56,12 +59,12 @@ fn parakeet(dir: &Path, wav: &Path, arm: &str) -> Res<()> {
             let pcm = pcm.clone();
             Box::new(move || m.transcribe(&pcm, 16_000).map_err(|e| e.to_string()))
         }
-        "coreml_gpu" | "coreml_ane" => {
+        "coreml_gpu" | "coreml_ane" | "coreml_cpu" => {
             let opts = ParakeetCoreMlOptions {
-                encoder_units: if arm == "coreml_ane" {
-                    ComputeUnits::CpuAndNeuralEngine
-                } else {
-                    ComputeUnits::CpuAndGpu
+                encoder_units: match arm {
+                    "coreml_ane" => ComputeUnits::CpuAndNeuralEngine,
+                    "coreml_cpu" => ComputeUnits::CpuOnly,
+                    _ => ComputeUnits::CpuAndGpu,
                 },
                 ..ParakeetCoreMlOptions::default()
             };

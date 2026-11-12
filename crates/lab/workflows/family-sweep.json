@@ -1,0 +1,15 @@
+{
+  "name": "family-sweep",
+  "description": "the install's family profile: capabilities, a null floor for the profile's workload, every sweep whose `when` holds, and the report",
+  "vars": {"prompt": "protocol:medium-review", "decode": "128"},
+  "steps": [
+    {"id": "capabilities", "command": "capabilities", "args": {"model": "{model}"}},
+    {"id": "family", "command": "family", "args": {"model": "{model}"}},
+    {"id": "null", "command": "ab", "when": ["runs", "profile", "!audio"], "continue_on_error": true,
+     "args": {"model": "{model}", "experiment": "{experiment}", "prompt": "{prompt}", "decode": "{decode}", "null": true, "metric": "decode_tok_s"}},
+    {"id": "sweeps", "command": "sweep", "when": ["runs", "profile"], "continue_on_error": true,
+     "args": {"model": "{model}", "experiment": "{experiment}", "sweep": "all"}},
+    {"id": "report", "command": "report",
+     "args": {"experiment": "{experiment}", "html": "{lab}/{experiment}/report.html", "force": true}}
+  ]
+}

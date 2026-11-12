@@ -342,6 +342,42 @@ fn a_repo_reference_parses_with_and_without_a_revision() {
     }
 }
 
+/// `file_url` and `api_url` interpolate by `format!`, and `parse` is fed a
+/// hub-authored `cardData.base_model` during discovery. A query, fragment,
+/// percent escape, or dot segment in either half would rewrite the request
+/// path (`a/b#x` drops `/resolve/...`, `../..` climbs out of a mirror prefix).
+#[test]
+fn a_repo_reference_refuses_url_structure_characters() {
+    for bad in [
+        "owner/name?x=1",
+        "owner/name#frag",
+        "owner/na%2Fme",
+        "../..",
+        "owner/..",
+        "./name",
+        "owner/na me",
+        "owner/name@main?x=1",
+        "owner/name@main#frag",
+        "owner/name@../../evil",
+        "owner/name@ma%2Fin",
+        "owner/name@a//b",
+    ] {
+        assert!(RepoRef::parse(bad).is_err(), "{bad:?} should not parse");
+    }
+    // Real repo ids and revisions keep parsing, including dotted names and
+    // the slash-bearing PR refs the hub publishes.
+    for good in [
+        "mlx-community/gemma-4-26b-a4b-it-4bit",
+        "Qwen/Qwen3-VL-4B-Instruct",
+        "unsloth/Llama-3.1-8B.Q4_K_M",
+        "owner/name@0123456789abcdef0123456789abcdef01234567",
+        "owner/name@v1.0",
+        "owner/name@refs/pr/3",
+    ] {
+        assert!(RepoRef::parse(good).is_ok(), "{good:?} should parse");
+    }
+}
+
 #[test]
 fn minimax_safetensors_remain_explicitly_refused() {
     let report = evaluate_config(r#"{"model_type":"minimax_m2"}"#, &repo(), None).unwrap();
@@ -389,6 +425,114 @@ fn an_mxfp4_config_with_an_unsupported_override_is_refused() {
     let report = evaluate_config(&config, &repo(), None).expect("the config parses");
     assert!(
         matches!(report.verdict, Verdict::Refused(_)),
+        "{:?}",
+        report.verdict
+    );
+}
+
+/// Fish Audio Drama 3's real `config.json` (the repack fixture, copied from
+/// `mlx-community/fish-audio-drama-3-4bit` @ cc639e27aba7edb73429d3e3806f471dcd79d316).
+/// Its trunk is a headless `qwen36` that the audio catalog installs, so the
+/// generic text probe must refuse it by name rather than call it unknown or,
+/// worse, offer it as a chat model.
+#[test]
+fn a_headless_tts_trunk_is_refused_by_name() {
+    let config = include_str!("../../repack/tests/fixtures/fish_drama3_4bit_config.json");
+    let report = evaluate_config(config, &repo(), Some(1)).expect("the config parses");
+    match &report.verdict {
+        Verdict::Refused(why) => {
+            assert!(why.contains("fish_drama3"), "{why}");
+            assert!(why.contains("text-to-speech"), "{why}");
+            assert!(!why.contains("not in this port's registry"), "{why}");
+        }
+        other => panic!("Drama 3 should be refused, got {other:?}"),
+    }
+    assert_eq!(report.family, None);
+}
+
+/// `mlx-community/flint-mixed-3-4bit`'s config, cut to what the probe reads:
+/// the published Flint shape with MLX per-tensor entries putting every routed
+/// projection at 3 bits and the embedding at 8. `extra` adds one more entry.
+fn flint_mixed_config(extra: Option<(&str, u32)>) -> String {
+    let full = [0, 1, 5, 9, 13, 17, 21, 25, 29, 33, 37, 41, 45, 48];
+    let layer_types: Vec<&str> = (0..49)
+        .map(|i| {
+            if full.contains(&i) {
+                "full_attention"
+            } else {
+                "sliding_attention"
+            }
+        })
+        .collect();
+    let mut quant = serde_json::json!({
+        "group_size": 64,
+        "bits": 4,
+        "model.embed_tokens": {"group_size": 64, "bits": 8},
+    });
+    for layer in 2..49 {
+        for proj in ["gate_proj", "up_proj", "down_proj"] {
+            quant[format!("model.layers.{layer}.mlp.switch_mlp.{proj}")] =
+                serde_json::json!({"group_size": 64, "bits": 3});
+        }
+    }
+    if let Some((name, bits)) = extra {
+        quant[name] = serde_json::json!({"group_size": 64, "bits": bits});
+    }
+    serde_json::json!({
+        "architectures": ["FlintForCausalLM"],
+        "attention_bias": false,
+        "attention_sink": true,
+        "head_dim": 128,
+        "hidden_act": "silu",
+        "hidden_size": 2048,
+        "intermediate_size": 6144,
+        "layer_types": layer_types,
+        "mlp_only_layers": [0, 1],
+        "mlx_export": {"bits": 4, "embedding_bits": 8, "routed_expert_bits": 3},
+        "model_type": "flint",
+        "moe_intermediate_size": 512,
+        "no_rope_layer_indices": full,
+        "norm_topk_prob": true,
+        "num_attention_heads": 32,
+        "num_experts": 256,
+        "num_experts_per_tok": 6,
+        "num_hidden_layers": 49,
+        "num_key_value_heads": 4,
+        "quantization": quant,
+        "rms_norm_eps": 1e-6,
+        "rope_parameters": {"rope_theta": 10000.0, "rope_type": "default"},
+        "rope_theta": 10000.0,
+        "router_expert_bias": false,
+        "scoring_func": "sigmoid",
+        "shared_expert_intermediate_size": 1024,
+        "sliding_window": 513,
+        "tie_word_embeddings": false,
+        "use_sliding_window": true,
+        "vocab_size": 150144
+    })
+    .to_string()
+}
+
+/// The probe parses Flint through Flint's own quant reader, so its 3-bit
+/// routed experts (which have the `moe_*_int3` pair) pass, while 3-bit on any
+/// other tensor, or on another family, is still refused.
+#[test]
+fn flints_three_bit_routed_experts_probe_as_runnable_and_nothing_else_does() {
+    let report = evaluate_config(&flint_mixed_config(None), &repo(), None).unwrap();
+    assert_eq!(report.verdict, Verdict::Runnable, "{:?}", report.verdict);
+    assert_eq!(report.family, Some(model_io::ModelFamily::Flint));
+
+    let attn = Some(("model.layers.2.self_attn.q_proj", 3));
+    let report = evaluate_config(&flint_mixed_config(attn), &repo(), None).unwrap();
+    assert!(
+        matches!(&report.verdict, Verdict::Refused(why) if why.contains("3-bit at group 64")),
+        "{:?}",
+        report.verdict
+    );
+
+    let report = evaluate_config(&qwen35_config(3, 64), &repo(), None).unwrap();
+    assert!(
+        matches!(&report.verdict, Verdict::Refused(why) if why.contains("3-bit at group 64")),
         "{:?}",
         report.verdict
     );

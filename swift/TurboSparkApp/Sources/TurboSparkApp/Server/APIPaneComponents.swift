@@ -288,7 +288,7 @@ struct APIServedModelRow<Details: View, Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Circle().fill(Color.green).frame(width: 7, height: 7)
+            Circle().fill(.appSuccess).frame(width: 7, height: 7)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {

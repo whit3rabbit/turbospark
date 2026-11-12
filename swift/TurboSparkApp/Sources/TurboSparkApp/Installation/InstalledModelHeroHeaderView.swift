@@ -5,6 +5,8 @@ import TurboSpark
 /// Hero header for an installed model detail pane.
 struct InstalledModelHeroHeaderView: View {
     let installedModel: InstalledModel
+    /// Where the model is and whether it can be opened (task 6.4).
+    let rowModel: InstalledModelRowModel
     let visuals: ModelFamilyVisuals
     let descriptor: ModelFeatureDescriptor
     let isCurrentlyLoaded: Bool
@@ -32,7 +34,7 @@ struct InstalledModelHeroHeaderView: View {
                     Button(action: onToggleFavorite) {
                         Image(systemName: isFavorite ? "star.fill" : "star")
                             .themedFont(.callout)
-                            .foregroundStyle(isFavorite ? Color.yellow : Color.secondary)
+                            .foregroundStyle(isFavorite ? AnyShapeStyle(.appWarning) : AnyShapeStyle(.appSecondary))
                     }
                     .buttonStyle(.plain)
                     .help(isFavorite ? "Remove from Favorites" : "Mark as Favorite")
@@ -66,9 +68,19 @@ struct InstalledModelHeroHeaderView: View {
                         .foregroundStyle(.tertiary)
                         .accessibilityHidden(true)
 
-                    Text(LocalizedStringKey(descriptor.storageSource.shortLabel), bundle: .module)
-                        .themedFont(.small, weight: .medium)
-                        .foregroundStyle(.appSecondary)
+                    locationLabel
+                }
+
+                // How long the drive will take to read the model (5.3).
+                if let estimate = rowModel.estimateText {
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock")
+                            .themedFont(.tiny)
+                            .accessibilityHidden(true)
+                        Text(verbatim: estimate)
+                            .themedFont(.small)
+                    }
+                    .foregroundStyle(.appSecondary)
                 }
 
                 if !installedModel.repo.isEmpty && installedModel.repo != "local" {
@@ -81,7 +93,7 @@ struct InstalledModelHeroHeaderView: View {
                                     .themedFont(.micro)
                             }
                             .themedCode(.small)
-                            .foregroundStyle(Color.accentColor)
+                            .foregroundStyle(.appAccentText)
                         }
                         .help(Text("Open \(installedModel.repo) on Hugging Face: \(url.absoluteString)", bundle: .module))
                         .accessibilityLabel(
@@ -99,18 +111,58 @@ struct InstalledModelHeroHeaderView: View {
         }
     }
 
+    /// The library that holds the model, or for a model only a scan found, the
+    /// source it was found in. A library model's source label would read
+    /// "Custom Folder", which it is not.
+    @ViewBuilder
+    private var locationLabel: some View {
+        if let text = rowModel.locationText {
+            HStack(spacing: 4) {
+                if let glyph = rowModel.locationGlyph {
+                    Image(systemName: glyph)
+                        .themedFont(.tiny)
+                        .accessibilityHidden(true)
+                }
+                Text(verbatim: text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .themedFont(.small, weight: .medium)
+            .foregroundStyle(.appSecondary)
+            .help(Text(verbatim: text))
+        } else {
+            Text(LocalizedStringKey(descriptor.storageSource.shortLabel), bundle: .module)
+                .themedFont(.small, weight: .medium)
+                .foregroundStyle(.appSecondary)
+        }
+    }
+
     @ViewBuilder
     private var statusBadge: some View {
-        if isCurrentlyLoaded {
+        if let status = rowModel.status, let text = rowModel.statusText {
+            // A glyph AND a word: the two states differ in both.
             HStack(spacing: 4) {
-                Circle().fill(Color.green).frame(width: 7, height: 7)
+                Image(systemName: status.glyph)
+                    .themedFont(.tiny)
+                    .accessibilityHidden(true)
+                Text(verbatim: text)
+                    .themedFont(.tiny, weight: .semibold)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3.5)
+            .background(.appElevated, in: Capsule())
+            .overlay(Capsule().stroke(.appBorder, lineWidth: 1))
+            .foregroundStyle(.appText)
+        } else if isCurrentlyLoaded {
+            HStack(spacing: 4) {
+                Circle().fill(.appSuccess).frame(width: 7, height: 7)
                 Text("Loaded in Memory", bundle: .module)
                     .themedFont(.tiny, weight: .bold)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3.5)
-            .background(Color.green.opacity(0.16), in: Capsule())
-            .foregroundStyle(Color.green)
+            .background(.appSuccessTint, in: Capsule())
+            .foregroundStyle(.appSuccess)
         } else if isCurrentlySelected {
             HStack(spacing: 4) {
                 Circle().fill(Color.accentColor).frame(width: 6, height: 6)

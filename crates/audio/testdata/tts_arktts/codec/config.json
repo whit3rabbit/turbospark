@@ -1,0 +1,13 @@
+{
+  "codec_hidden": 64,
+  "codec_quantizer_input_dim": 64,
+  "codec_decoder_channels": 32,
+  "codec_semantic_codebook_size": 64,
+  "codec_residual_books": 2,
+  "codec_residual_codebook_size": 64,
+  "codec_codebook_dim": 8,
+  "codec_post_n_layer": 2,
+  "codec_post_n_head": 4,
+  "codec_post_n_local_heads": 2,
+  "codec_post_intermediate_size": 96
+}

@@ -126,67 +126,15 @@ public enum SkillParser {
 
     /// Splits `---` delimited frontmatter from the markdown body.
     public static func extractFrontmatterAndBody(from text: String) -> (frontmatter: String?, body: String) {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.hasPrefix("---") else {
-            return (nil, text)
-        }
-
-        let lines = normalizedLines(text)
-        guard lines.first?.trimmingCharacters(in: .whitespaces) == "---" else {
-            return (nil, text)
-        }
-
-        var closingIndex: Int?
-        for i in 1..<lines.count {
-            if lines[i].trimmingCharacters(in: .whitespaces) == "---" {
-                closingIndex = i
-                break
-            }
-        }
-
-        guard let closing = closingIndex else {
-            return (nil, text)
-        }
-
-        let frontmatterLines = lines[1..<closing]
-        let frontmatter = frontmatterLines.joined(separator: "\n")
-
-        let bodyLines = lines[(closing + 1)...]
-        let body = bodyLines.joined(separator: "\n")
-
-        return (frontmatter, body)
+        MarkdownFrontmatterParser.extractFrontmatterAndBody(from: text)
     }
 
-    /// Splits into lines on LF, having first folded CRLF and bare CR into it
-    /// (state#56).
-    ///
-    /// **`components(separatedBy: .newlines)` SPLITS ON EACH CHARACTER OF A
-    /// CHARACTER SET**, measured: `"a\r\nb"` comes back as
-    /// `["a", "", "b"]`, an empty line between every real one. On a CRLF
-    /// file the block-scalar loop below met one of those immediately and
-    /// treated it as the end of the block, so a multi-line description
-    /// terminated after its first line and the rest was reparsed as
-    /// `key: value` pairs -- which is how a `name:` written inside a
-    /// description renamed the skill.
-    ///
-    /// **THIS IS NOT WHAT FIXES THAT, AND THE MUTATION CHECK IS WHAT SAID
-    /// SO.** Teaching the block loop that a blank line is PART of a block
-    /// covers the CRLF case on its own, so reverting this normalization
-    /// leaves every case green. It is kept because it makes a line index
-    /// mean a line -- every loop here counts them -- and because a bare-CR
-    /// file is not otherwise handled. Do not read it as the CRLF fix.
     static func normalizedLines(_ text: String) -> [String] {
-        text.replacingOccurrences(of: "\r\n", with: "\n")
-            .replacingOccurrences(of: "\r", with: "\n")
-            .components(separatedBy: "\n")
+        MarkdownFrontmatterParser.normalizedLines(text)
     }
 
-    /// The four block-scalar markers YAML accepts, not the two this used to
-    /// know (state#56). `|-` and `>-` are strip-chomping variants and are
-    /// what most authors actually write; unrecognized, the marker itself was
-    /// stored as the value and its body was reparsed as keys.
     static func isBlockScalarMarker(_ value: String) -> Bool {
-        ["|", ">", "|-", ">-", "|+", ">+"].contains(value)
+        MarkdownFrontmatterParser.isBlockScalarMarker(value)
     }
 
     /// Parses YAML frontmatter key-value pairs into a `SkillManifest`.

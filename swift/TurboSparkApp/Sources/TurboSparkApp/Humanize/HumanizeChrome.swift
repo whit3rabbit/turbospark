@@ -5,10 +5,10 @@ import SwiftUI
 /// text-size setting, so a fixed 46pt card row or a 300pt panel stayed put
 /// while the text inside them grew.
 enum HumanizeMetrics {
-    /// How far the UI font sits above the default. Never below 1, so a
-    /// smaller font keeps the designed proportions.
+    /// How far the UI font sits above the default. One source with
+    /// `AppMetrics.textScale`, which other workspaces use too.
     static func textScale(_ theme: ResolvedAppTheme) -> CGFloat {
-        max(1, theme.uiFontDescriptor.size / AppFontCatalog.defaultUISize)
+        AppMetrics.textScale(theme)
     }
 
     /// A card's header and footer row.
@@ -26,9 +26,10 @@ enum HumanizeMetrics {
     }
 }
 
-/// The composer's surface (`PromptComposerView`): radius 20, the composer
-/// fill, an accent edge while focused, and a soft shadow. A fixed header and
-/// footer around a flexible body keep two cards aligned row for row.
+/// The composer's surface (`appComposerSurface`, as `PromptComposerView`
+/// draws it): radius 20, the composer fill, an accent edge while focused,
+/// and a soft shadow. A fixed header and footer around a flexible body keep
+/// two cards aligned row for row.
 struct HumanizeCard<Header: View, Content: View, Footer: View>: View {
     var focused = false
     @ViewBuilder var header: Header
@@ -41,24 +42,15 @@ struct HumanizeCard<Header: View, Content: View, Footer: View>: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) { header }
                 .padding(.horizontal, 16).frame(height: HumanizeMetrics.rowHeight(theme))
-            Divider().opacity(0.6)
+            // Softened seams, but never under Increase Contrast, which raises
+            // borders instead of letting a surface lower them.
+            Divider().opacity(theme.isHighContrast ? 1 : 0.6)
             content.frame(maxWidth: .infinity, maxHeight: .infinity)
-            Divider().opacity(0.6)
+            Divider().opacity(theme.isHighContrast ? 1 : 0.6)
             HStack(spacing: 8) { footer }
                 .padding(.horizontal, 12).frame(height: HumanizeMetrics.rowHeight(theme))
         }
-        .background {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(theme.composerBackground)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(
-                            focused ? theme.accent.opacity(0.55) : Color.primary.opacity(theme.isDark ? 0.18 : 0.14),
-                            lineWidth: focused ? 1.5 : 1.0)
-                }
-                .shadow(color: Color.black.opacity(theme.isDark ? 0.28 : 0.08), radius: focused ? 10 : 6, x: 0, y: 2)
-        }
-        .tsAnimation(TSMotion.hover, value: focused)
+        .appComposerSurface(focused: focused, halo: false)
     }
 }
 
@@ -80,21 +72,29 @@ struct HumanizeModelBar: View {
     private var state: ModelLoaderControl.LoaderState {
         if downloadPending { return .installing }
         if controller.phase == .loadingModel { return .opening }
-        if !controller.isInstalled { return .noneInstalled }
+        if !controller.isInstalled {
+            // On a drive that is away is not "not downloaded": downloading it
+            // again would only be refused, and the drive is what to connect.
+            return notConnectedStatement == nil ? .noneInstalled : .notConnected
+        }
         return controller.engineLoaded ? .ready : .notLoaded
     }
+
+    private var notConnectedStatement: String? { controller.notConnectedStatement() }
 
     var body: some View {
         HStack(spacing: 0) {
             chooser
-            Rectangle().fill(.appBorder).frame(width: 0.5, height: barHeight * 0.55)
-            action
+            if state != .notConnected {
+                Rectangle().fill(.appBorder).frame(width: 0.5, height: barHeight * 0.55)
+                action
+            }
         }
         .frame(height: barHeight)
-        .background(TurboSparkTheme.surfaceColor, in: Capsule())
+        .background(.appSurface, in: Capsule())
         .overlay {
             Capsule().stroke(
-                controller.engineLoaded ? theme.accent.opacity(0.32) : TurboSparkTheme.hairlineColor, lineWidth: 0.5)
+                controller.engineLoaded ? (theme.isHighContrast ? theme.accent : theme.accent.opacity(0.32)) : theme.border, lineWidth: 0.5)
         }
         .tsAnimation(TSMotion.select, value: controller.engineLoaded)
         .tsAnimation(TSMotion.hover, value: state)
@@ -126,7 +126,7 @@ struct HumanizeModelBar: View {
                     ModelLoadProgressBar(fraction: nil, tint: theme.accent).frame(width: 42)
                 } else {
                     Image(systemName: "chevron.up.chevron.down")
-                        .font(theme.ui(.micro, weight: .bold)).foregroundStyle(.tertiary)
+                        .font(theme.ui(.micro, weight: .bold)).foregroundStyle(.appSecondary)
                         .accessibilityHidden(true)
                 }
             }
@@ -150,6 +150,7 @@ struct HumanizeModelBar: View {
         case .ready:
             Text("Ready", bundle: .module) + Text(verbatim: " -- \(HumanizePlanner.window.formatted()) ctx")
         case .notLoaded: Text("Not loaded", bundle: .module)
+        case .notConnected: Text(verbatim: notConnectedStatement ?? "")
         case .noneInstalled, .noneSelected: Text("Not downloaded", bundle: .module)
         }
     }
@@ -176,6 +177,21 @@ struct HumanizeModelBar: View {
     private func barButton(
         _ title: LocalizedStringKey, systemImage: String, tint: Color?, action: @escaping () -> Void
     ) -> some View {
+        HumanizeBarButton(title: title, systemImage: systemImage, tint: tint, action: action)
+    }
+}
+
+private struct HumanizeBarButton: View {
+    let title: LocalizedStringKey
+    let systemImage: String
+    let tint: Color?
+    let action: () -> Void
+
+    @Environment(\.appTheme) private var theme
+    @Environment(\.isEnabled) private var isEnabled
+    @State private var hovered = false
+
+    var body: some View {
         Button(action: action) {
             Label { Text(title, bundle: .module) } icon: { Image(systemName: systemImage) }
                 .font(theme.ui(.tiny, weight: .semibold))
@@ -184,9 +200,12 @@ struct HumanizeModelBar: View {
                 .foregroundStyle(tint.map { AnyShapeStyle($0) } ?? AnyShapeStyle(.appSecondary))
                 .padding(.horizontal, 11)
                 .frame(maxHeight: .infinity)
+                .background(hovered && isEnabled ? (tint.map { AnyShapeStyle($0.opacity(0.12)) } ?? AnyShapeStyle(.appSecondary.opacity(0.12))) : AnyShapeStyle(Color.clear))
                 .contentShape(Rectangle())
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.94))
+        .onHover { hovered = $0 }
+        .tsAnimation(TSMotion.hover, value: hovered)
     }
 }
 
@@ -203,19 +222,31 @@ struct HumanizeRunButton: View {
     let action: () -> Void
 
     @Environment(\.appTheme) private var theme
+    @State private var hovered = false
 
     var body: some View {
         TSMotionContext { reduceMotion in
-            let ink = ready ? theme.accent.contrastForeground : Color.secondary.opacity(0.5)
+            let scale = HumanizeMetrics.textScale(theme)
+            let buttonSize = (50 * scale).rounded()
+            let inkColor = ready ? theme.accent.contrastForeground : theme.metadataForeground
+            let inkStyle: AnyShapeStyle = ready ? AnyShapeStyle(theme.accent.contrastForeground) : AnyShapeStyle(.appSecondary)
             Button(action: action) {
                 ZStack {
                     if invite, ready, !busy, !reduceMotion { RunRipple(color: theme.accent) }
-                    Circle().fill(ready ? AnyShapeStyle(theme.accent.gradient) : AnyShapeStyle(Color.primary.opacity(0.08)))
+                    Circle()
+                        .fill(ready ? AnyShapeStyle(theme.accent.gradient) : AnyShapeStyle(.appSurface))
+                    if theme.isHighContrast {
+                        Circle()
+                            .stroke(ready ? theme.accent : theme.border, lineWidth: 1.5)
+                    }
                     if busy {
-                        Circle().stroke(ink.opacity(0.22), lineWidth: 2.5).padding(4)
+                        Circle()
+                            .stroke(inkColor.opacity(0.22), lineWidth: 2.5)
+                            .padding(4)
+                            .tsPulse(active: !reduceMotion)
                         if let prefill {
                             Circle().trim(from: 0, to: prefill)
-                                .stroke(ink, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                                .stroke(inkColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                                 .rotationEffect(.degrees(-90)).padding(4)
                                 .animation(reduceMotion ? nil : TSMotion.hover, value: prefill)
                         } else if !reduceMotion {
@@ -225,21 +256,28 @@ struct HumanizeRunButton: View {
                                 let turn = context.date.timeIntervalSinceReferenceDate
                                     .truncatingRemainder(dividingBy: 1.1) / 1.1
                                 Circle().trim(from: 0, to: 0.28)
-                                    .stroke(ink, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                                    .stroke(inkColor, style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
                                     .rotationEffect(.degrees(turn * 360 - 90)).padding(4)
                             }
                         }
                     }
                     Image(systemName: busy ? "stop.fill" : arrow)
                         .font(theme.ui(busy ? .callout : .large, weight: .bold))
-                        .foregroundStyle(ink)
+                        .foregroundStyle(inkStyle)
                         .contentTransition(.symbolEffect(.replace))
                 }
-                .frame(width: 50, height: 50)
-                .shadow(color: ready && !busy ? theme.accent.opacity(0.4) : .clear, radius: 8, y: 2)
+                .frame(width: buttonSize, height: buttonSize)
+                .scaleEffect(hovered && ready && !busy && !reduceMotion ? 1.05 : 1.0)
+                .appPrimaryGlow(ready && !busy)
                 .contentShape(Circle())
             }
             .buttonStyle(TSPressScaleStyle(scale: 0.92))
+            .onHover { isHovered in
+                hovered = isHovered
+            }
+            .tsAnimation(TSMotion.hover, value: hovered)
+            .tsAnimation(TSMotion.hover, value: ready)
+            .tsAnimation(TSMotion.select, value: busy)
         }
     }
 }
@@ -252,7 +290,7 @@ private struct RunRipple: View {
             .phaseAnimator([false, true]) { view, expanded in
                 view.scaleEffect(expanded ? 1.45 : 1).opacity(expanded ? 0 : 0.9)
             } animation: { expanded in
-                expanded ? .easeOut(duration: 1.8) : .linear(duration: 0.01)
+                expanded ? TSMotion.breathe : TSMotion.snap
             }
             .accessibilityHidden(true)
     }
@@ -269,7 +307,7 @@ struct HumanizeSkeleton: View {
             GeometryReader { geometry in
                 let width = geometry.size.width
                 ZStack(alignment: .topLeading) {
-                    bars(width).foregroundStyle(Color.primary.opacity(0.07))
+                    bars(width).foregroundStyle(.appSecondary.opacity(0.15))
                     if !reduceMotion {
                         Color.clear
                             .overlay(alignment: .leading) {
@@ -280,7 +318,7 @@ struct HumanizeSkeleton: View {
                                 .phaseAnimator([false, true]) { view, moved in
                                     view.offset(x: moved ? width : -width * 0.4)
                                 } animation: { moved in
-                                    moved ? .easeInOut(duration: 1.4) : .linear(duration: 0.01)
+                                    moved ? TSMotion.sweep : TSMotion.snap
                                 }
                             }
                             .mask(alignment: .topLeading) { bars(width) }

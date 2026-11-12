@@ -26,10 +26,15 @@ extension AppModel {
     /// paths from disk.
     func loadSettings() {
         let settings = MacAppSettingsFileStore.load()
-        let configuredStoreRoot = ModelStoreRootRecord.resolve(
+        // **THE ENGINE'S STORE ROOT IS THE HOME, ALWAYS** (requirement 1.1).
+        // This used to call `TurboSparkCatalog.setStoreRoot(record)`, a
+        // process-local override that the CLI and the server the app starts
+        // never saw. A root a past Move Store recorded is now only the input
+        // of `MoveStoreMigration`, which turns it into a library. Resolving
+        // still promotes a profile's own legacy value to the machine record so
+        // the conversion sees it.
+        self.turboSparkStoreRoot = ModelStoreRootRecord.resolve(
             profileValue: settings.turboSparkStoreRoot)
-        try? TurboSparkCatalog.setStoreRoot(configuredStoreRoot.isEmpty ? nil : configuredStoreRoot)
-        self.turboSparkStoreRoot = configuredStoreRoot
         self.maxContextTokens = Self.clampedSetting(
             settings.contextTokens, upperBound: Int(UInt32.max))
         // Not merely clamped: an out-of-set slot count is refused by
@@ -73,6 +78,11 @@ extension AppModel {
         self.runtimeOptions.speculation = AppSpeculationOption(rawValue: settings.speculation) ?? .auto
         self.runtimeOptions.speculativeDrafter = AppSpeculativeDrafterOption(rawValue: settings.speculativeDrafter) ?? .auto
         self.runtimeOptions.kvBits = AppKvBitsOption(rawValue: settings.kvBits) ?? .auto
+        self.runtimeOptions.anePrefill = AppAnePrefillOption(rawValue: settings.anePrefill) ?? .auto
+        self.runtimeOptions.anePrefillDir = settings.anePrefillDir
+        self.runtimeOptions.expertSlotsWiring = AppExpertSlotsWiringOption(rawValue: settings.expertSlotsWiring) ?? .auto
+        self.runtimeOptions.moePrefillBank = settings.moePrefillBank
+        self.runtimeOptions.expertResidency = AppExpertResidencyOption(rawValue: settings.expertResidency) ?? .auto
         self.runtimeOptions.maxTokensPerSec = settings.maxTokensPerSec
         self.runtimeOptions.steeringPath = settings.steeringPath.isEmpty ? nil : settings.steeringPath
         self.runtimeOptions.steeringMode = AppSteeringModeOption(rawValue: settings.steeringMode) ?? .ablate
@@ -97,7 +107,10 @@ extension AppModel {
         self.modelReasoningDefaults = settings.modelReasoningDefaults
         self.interactionMode = AppInteractionMode(rawValue: settings.interactionMode) ?? .chat
         self.browserSettings = settings.browser
+        self.computerUseSettings = settings.computerUse
+        self.networkPolicy = settings.networkPolicy
         self.alwaysStartInGhostMode = settings.alwaysStartInGhostMode
+        self.activePermissionMode = AppPermissionMode(rawValue: settings.rootlessPermissionMode) ?? .auto
         self.autoCompactEnabled = settings.autoCompact
         self.actionFusionEnabled = settings.actionFusion
         self.observationPackEnabled = settings.observationPack
@@ -108,8 +121,19 @@ extension AppModel {
         self.memoryAutoCaptureEnabled = settings.memoryAutoCaptureEnabled
         self.syntextIndexingEnabled = settings.syntextIndexingEnabled
         AppToolRegistry.syntextIndexingEnabled = settings.syntextIndexingEnabled
+        self.conversationRecallEnabled = settings.conversationRecallEnabled
+        // A store left by a crash between turning recall off (or protecting
+        // the profile) and the purge that should have followed.
+        ChatRecallStore.shared.purgeIfDisallowed()
         self.compactionKeepRecentTurns = AppChatCompaction.clampKeepRecent(
             settings.compactionKeepRecentTurns)
+        self.chatToolsEnabled = settings.chatToolsEnabled
+        // A built-in ID in the stored list would shadow the code-defined row.
+        self.customToolProfiles = settings.toolProfiles.filter { !$0.isBuiltIn }
+        self.activeToolProfileID = UUID(uuidString: settings.activeToolProfileID)
+            .flatMap { id in
+                (AppToolProfile.builtIns + self.customToolProfiles).contains { $0.id == id } ? id : nil
+            } ?? AppToolProfile.defaultID
         self.microcompactEnabled = settings.microcompactEnabled
         self.autoContinuationEnabled = settings.autoContinuationEnabled
         self.nativeToolCallingEnabled = settings.nativeToolCallingEnabled
@@ -154,7 +178,18 @@ extension AppModel {
         self.agentModeHints = settings.agentModeHints
 
         if settings.serverAutoStartOnLaunch && server == nil {
-            startServer()
+            // An auto-start never shows the Server pane and its missing-key
+            // warning, so a keyless one would leave every local process able
+            // to drive the loaded models unseen (#150). The key above comes
+            // only from the Keychain, so this refuses until one is saved there.
+            if Self.autoStartNeedsKey(apiKeyInput: serverAPIKeyInput) {
+                showToast(
+                    AppStrings.localized(
+                        "The server did not start on launch because it has no API key. Set a key in the Server pane and turn on Remember this key in the Keychain."),
+                    style: .warning, duration: 12)
+            } else {
+                startServer()
+            }
         }
     }
 
@@ -229,6 +264,11 @@ extension AppModel {
             speculation: runtimeOptions.speculation.rawValue,
             speculativeDrafter: runtimeOptions.speculativeDrafter.rawValue,
             kvBits: runtimeOptions.kvBits.rawValue,
+            anePrefill: runtimeOptions.anePrefill.rawValue,
+            anePrefillDir: runtimeOptions.anePrefillDir,
+            expertSlotsWiring: runtimeOptions.expertSlotsWiring.rawValue,
+            moePrefillBank: runtimeOptions.moePrefillBank,
+            expertResidency: runtimeOptions.expertResidency.rawValue,
             maxTokensPerSec: runtimeOptions.maxTokensPerSec,
             steeringPath: runtimeOptions.steeringPath ?? "",
             steeringMode: runtimeOptions.steeringMode.rawValue,
@@ -248,12 +288,16 @@ extension AppModel {
             modelReasoningDefaults: modelReasoningDefaults,
             interactionMode: interactionMode.rawValue,
             alwaysStartInGhostMode: alwaysStartInGhostMode,
+            rootlessPermissionMode: activePermissionMode.rawValue,
             autoCompact: autoCompactEnabled,
             actionFusion: actionFusionEnabled,
             observationPack: observationPackEnabled,
             evidenceReducer: evidenceReducerEnabled,
             todoBoundaryCompaction: todoBoundaryCompactionEnabled,
             compactionKeepRecentTurns: compactionKeepRecentTurns,
+            chatToolsEnabled: chatToolsEnabled,
+            toolProfiles: customToolProfiles,
+            activeToolProfileID: activeToolProfileID.uuidString,
             microcompactEnabled: microcompactEnabled,
             autoContinuationEnabled: autoContinuationEnabled,
             nativeToolCallingEnabled: nativeToolCallingEnabled,
@@ -286,7 +330,10 @@ extension AppModel {
             memoryAutoCaptureEnabled: memoryAutoCaptureEnabled,
             agentModeHints: agentModeHints,
             syntextIndexingEnabled: syntextIndexingEnabled,
-            browser: browserSettings
+            conversationRecallEnabled: conversationRecallEnabled,
+            browser: browserSettings,
+            computerUse: computerUseSettings,
+            networkPolicy: networkPolicy
         )
         // The API key follows its own storage: Keychain, written only when
         // the field changed, so a persist of unrelated settings does not
@@ -514,6 +561,10 @@ extension AppModel {
         } else {
             self.worktree = nil
         }
+        // A restored selection is a selection: open (or build) its index now,
+        // in the background, as `selectProject` does. Without this the first
+        // search of a session waited on the open.
+        refreshSyntextActivation(for: project)
     }
 
     /// Persists all project workspaces and active project selection.
@@ -563,12 +614,31 @@ public final class AppShutdownCoordinator {
 extension AppModel {
     /// Everything that must happen before the process exits, in order.
     public func shutdown() {
+        // Before anything is released: a model replaced by a vault lock or a
+        // quit must never be dissented from, and a cycle in flight must not
+        // reach for sessions this method is about to drop. The registration
+        // moves to the next model; the process-wide monitor keeps running.
+        ejectCoordination?.stop()
+        ejectCoordination = nil
+        libraryOfferAnnouncer?.stop()
+        libraryOfferAnnouncer = nil
+        // A model move is the longest thing the app starts and the engine keeps
+        // going on its own thread: ask it to stop, and never leave it on screen.
+        // The engine leaves the original intact (task 6.11).
+        cancelActiveMoveForShutdown()
         // First, so the engine stops answering requests for a model that is
         // about to be released (`swift/CLAUDE.md` Gotcha 26).
         stopServer()
+        ChatRecallStore.shared.close()
         typeSafeServer?.terminate()
         typeSafeServer = nil
         stopServerPolling()
+        // Ends this model's volume-event loop. The process-wide monitor keeps
+        // running: a vault lock gets here too, and stopping the monitor
+        // outside app termination stalls the next unmount (LibraryVolumeMonitor).
+        libraryState.stop()
+        stopInstalledListFollowing()
+        moveStoreMigration?.stop()
 
         // A reply that is still streaming exists only in `outputText`; the
         // runTask tail that would normally preserve it never runs before the

@@ -5,6 +5,7 @@ mod manifest;
 mod ngram;
 mod plan;
 mod resume;
+mod rope_freqs;
 mod sizing;
 mod transcode;
 pub use sizing::{minimax_gguf_sizing, MiniMaxSizing};
@@ -12,6 +13,7 @@ mod types;
 
 pub use manifest::gguf_manifest_quant;
 pub use resume::ResumeProvenance;
+pub use rope_freqs::zero_tail_pattern as lfm3_rope_freqs_are_zero_tail;
 pub use transcode::qwen4exp_tensor_is_transcoded;
 pub use types::{dtype_tag_for_ggml_type, GgufRepackError, GgufRepackOutput, FUSED_GATE_FIRST};
 
@@ -36,6 +38,7 @@ pub fn orchestrate_gguf_checkpoint(
         });
     }
     let plan = plan::classify(header, arch.family, arch.num_layers as usize)?;
+    rope_freqs::verify_plan(header, source, &arch, &plan)?;
     let stride = plan::expert_stride(header, &arch, &plan)?;
     let (resident, lossy_narrowing) =
         transcode::resident_entries(header, source, &arch, &plan.resident)?;
@@ -89,6 +92,9 @@ pub fn write_gguf_install_streamed_resumable(
         });
     }
     let plan = plan::classify(header, arch.family, arch.num_layers as usize)?;
+    // Before the first byte reaches disk: a vector that is not the exact
+    // zero-tail pattern refuses the whole install.
+    rope_freqs::verify_plan(header, source, &arch, &plan)?;
     let stride = plan::expert_stride(header, &arch, &plan)?;
     progress(&format!(
         "classified {} resident tensors, {} routed layers, expert stride {stride}",

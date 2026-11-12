@@ -9,6 +9,7 @@
 //! silently resize every image to a fraction of its intended resolution and
 //! produce a correct-looking, lower-quality result.
 
+use crate::decode::MAX_IMAGE_DIM;
 use crate::error::VisionIoError;
 
 /// Everything the preprocessing pipeline needs, resolved from one checkpoint.
@@ -34,6 +35,25 @@ pub struct PreprocessParams {
     pub image_std: [f32; 3],
     /// The rescale multiplier applied to the raw `0..255` sample.
     pub rescale_factor: f32,
+    /// How the resized size, the resample filter and the patch row order are
+    /// chosen. Defaults to the Qwen rule every existing checkpoint uses.
+    pub resize: ResizeRule,
+}
+
+/// Which processor family's resize and patchify rule applies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ResizeRule {
+    /// `Qwen2VLImageProcessor` / Qwen3-VL: smart resize on a pixel budget,
+    /// PIL bicubic, patches in merge-window order with `(T, P_h, P_w, C)` rows.
+    #[default]
+    QwenPixels,
+    /// Muse-Glimmer's processor: a cap on MERGED TOKENS with a nearest-aspect
+    /// grid search, PIL Lanczos, patches in raster order with `(T, C, P_h,
+    /// P_w)` rows (`crate::muse`).
+    MuseTokens {
+        /// `max_image_tokens`, merged tokens per image.
+        max_tokens: usize,
+    },
 }
 
 /// What an absent `rescale_factor` means: the reference processor's own
@@ -44,6 +64,27 @@ pub const DEFAULT_RESCALE_FACTOR: f64 = 1.0 / 255.0;
 /// The maximum accepted long-side/short-side aspect ratio, from the reference
 /// processor's own `> 200` check.
 pub const MAX_ASPECT_RATIO: f64 = 200.0;
+
+/// The largest resize target, in pixels, a processor config may declare:
+/// the largest image decode admits ([`MAX_IMAGE_DIM`] squared). A config is
+/// checkpoint data and so untrusted, and a declared target is what a small
+/// decoded image is stretched to, so without this a KB-sized file plus a
+/// hostile config is a multi-GB allocation. The qwen3_5 checkpoints' own
+/// 16,777,216 ceiling equals it exactly.
+pub const MAX_CONFIG_PIXELS: usize = MAX_IMAGE_DIM as usize * MAX_IMAGE_DIM as usize;
+
+/// Refuse a config-declared resize edge (a crop side, a tiling candidate's
+/// side) past [`MAX_IMAGE_DIM`]. Bounding each edge also bounds every
+/// `w * h` product the selection code forms, so none of them can wrap.
+pub(crate) fn check_config_edge(field: &str, edge: usize) -> Result<(), VisionIoError> {
+    if edge > MAX_IMAGE_DIM as usize {
+        return Err(VisionIoError::BadConfig {
+            field: field.into(),
+            why: format!("{edge} exceeds the {MAX_IMAGE_DIM}-pixel decode ceiling"),
+        });
+    }
+    Ok(())
+}
 
 impl PreprocessParams {
     /// The rounding granularity every resized edge is a multiple of:
@@ -58,6 +99,26 @@ impl PreprocessParams {
     /// in_channels`. 1536 for this family.
     pub fn patch_dim(&self) -> usize {
         self.temporal_patch_size * self.patch_size * self.patch_size * self.in_channels
+    }
+
+    /// Refuse a zero patch, temporal patch, or merge size. The config parser
+    /// already refuses them, but the fields are pub, and the pipeline's entry
+    /// points divide by them: a hand-built block with a zero would panic on a
+    /// remainder by zero instead of returning an error.
+    pub fn check_geometry(&self) -> Result<(), VisionIoError> {
+        for (value, name) in [
+            (self.patch_size, "patch_size"),
+            (self.temporal_patch_size, "temporal_patch_size"),
+            (self.merge_size, "merge_size"),
+        ] {
+            if value == 0 {
+                return Err(VisionIoError::BadConfig {
+                    field: name.into(),
+                    why: "must be positive".into(),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Parse a checkpoint's `preprocessor_config.json`.
@@ -128,8 +189,53 @@ impl PreprocessParams {
                 });
             }
         }
+        // Every resized edge is at least one `patch_size * merge_size`, so a
+        // factor past the decode ceiling is an upscale no pixel budget sees.
+        let factor = patch_size.saturating_mul(merge_size);
+        check_config_edge("patch_size * merge_size", factor)?;
 
-        let (min_pixels, max_pixels) = read_pixel_budget(&root)?;
+        // Muse-Glimmer states its budget as a cap on merged tokens and has no
+        // pixel budget at all. The pixel pair is DERIVED from the cap so the
+        // session's memory-budget clamp (which lowers `max_pixels`) has
+        // something to act on; `preprocess` honours the lower of the two.
+        let muse_tokens = root.get("max_image_tokens").and_then(|v| v.as_u64());
+        let (min_pixels, max_pixels, resize) = match muse_tokens {
+            Some(tokens) if tokens > 0 => {
+                let side = factor;
+                (
+                    side * side,
+                    // Saturating, then clamped: Muse never upscales, so a
+                    // token cap past what decode can produce is a no-op, but
+                    // the plain product wraps silently in release.
+                    (tokens as usize)
+                        .saturating_mul(side * side)
+                        .min(MAX_CONFIG_PIXELS),
+                    ResizeRule::MuseTokens {
+                        max_tokens: tokens as usize,
+                    },
+                )
+            }
+            Some(_) => {
+                return Err(VisionIoError::BadConfig {
+                    field: "max_image_tokens".into(),
+                    why: "must be positive".into(),
+                })
+            }
+            None => {
+                let (min, max) = read_pixel_budget(&root)?;
+                // The floor upscales every smaller image to it, so it is
+                // refused past the decode ceiling. The ceiling only ever
+                // shrinks an image, and decode already bounds the source,
+                // so clamping it changes no real resize and refuses nothing.
+                if min > MAX_CONFIG_PIXELS {
+                    return Err(VisionIoError::BadConfig {
+                        field: "min_pixels".into(),
+                        why: format!("{min} exceeds the {MAX_CONFIG_PIXELS}-pixel decode ceiling"),
+                    });
+                }
+                (min, max.min(MAX_CONFIG_PIXELS), ResizeRule::QwenPixels)
+            }
+        };
         if min_pixels > max_pixels {
             return Err(VisionIoError::BadConfig {
                 field: "size".into(),
@@ -137,6 +243,15 @@ impl PreprocessParams {
             });
         }
 
+        // The normalization divides by it: zero (or a value that rounds to
+        // zero in f32) would be silent inf or NaN in every embedding.
+        let image_std = read_triple(&root, "image_std")?;
+        if image_std.iter().any(|s| *s <= 0.0) {
+            return Err(VisionIoError::BadConfig {
+                field: "image_std".into(),
+                why: "entries must be positive".into(),
+            });
+        }
         Ok(Self {
             patch_size,
             temporal_patch_size,
@@ -145,13 +260,14 @@ impl PreprocessParams {
             min_pixels,
             max_pixels,
             image_mean: read_triple(&root, "image_mean")?,
-            image_std: read_triple(&root, "image_std")?,
+            image_std,
             // DEFAULTED, unlike the pixel budget above it, and the two are
             // not inconsistent -- see the doc comment's third bullet.
             rescale_factor: root
                 .get("rescale_factor")
                 .and_then(|v| v.as_f64())
                 .unwrap_or(DEFAULT_RESCALE_FACTOR) as f32,
+            resize,
         })
     }
 }

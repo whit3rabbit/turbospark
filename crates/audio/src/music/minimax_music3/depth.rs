@@ -332,17 +332,17 @@ impl DepthDecoder {
             let base = (b * len + len - 1) * hidden;
             last_rows.extend_from_slice(&out[base..base + hidden]);
         }
-        for row in last_rows.chunks_exact(hidden) {
-            logits.extend(backend::linear(
-                row,
-                &self.audio_heads[head],
-                None,
-                1,
-                hidden,
-                self.dims.audio_vocab,
-                head_dtype,
-            )?);
-        }
+        // MLX runs the head once over the `[batch, hidden]` last rows, which is a
+        // different kernel from one call per row.
+        logits.extend(backend::linear(
+            &last_rows,
+            &self.audio_heads[head],
+            None,
+            batch,
+            hidden,
+            self.dims.audio_vocab,
+            head_dtype,
+        )?);
         Ok((last_rows, logits))
     }
 
@@ -472,20 +472,24 @@ impl DepthDecoder {
         for b in 0..batch {
             read.push(seq.view(normed, (b * len + len - 1) * hidden, hidden)?);
         }
-        for b in 0..batch {
-            read.push(backend::sequence_linear(
-                seq.as_mut(),
-                read[b],
-                &self.audio_heads[head],
-                1,
-                hidden,
-                dims.audio_vocab,
-                final_dtype,
-            )?);
+        // One head call over the gathered `[batch, hidden]` last rows, as MLX does.
+        let gathered = seq.upload(&vec![0.0f32; batch * hidden])?;
+        for (b, src) in read.clone().into_iter().enumerate() {
+            let dst = seq.view(gathered, b * hidden, hidden)?;
+            seq.copy(src, dst)?;
         }
+        read.push(backend::sequence_linear(
+            seq.as_mut(),
+            gathered,
+            &self.audio_heads[head],
+            batch,
+            hidden,
+            dims.audio_vocab,
+            final_dtype,
+        )?);
         Ok(seq
             .finish(&read)?
-            .map(|values| (values[..batch].concat(), values[batch..].concat())))
+            .map(|values| (values[..batch].concat(), values[batch].clone())))
     }
 
     /// The blocks and the final norm, one device call per operation.

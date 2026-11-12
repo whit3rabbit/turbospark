@@ -2,6 +2,7 @@ import SwiftUI
 
 /// A row view displaying a configured MCP server, its active status, test connection action, and discovered tools.
 struct ProjectMcpServerRowView: View {
+    @Environment(\.appTheme) private var theme
     let server: McpServerConfig
     let isExpanded: Bool
     let isTesting: Bool
@@ -12,12 +13,14 @@ struct ProjectMcpServerRowView: View {
     let onEdit: () -> Void
     let onDelete: () -> Void
 
+    @State private var showDeleteConfirmation: Bool = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 Image(systemName: "server.rack")
                     .themedFont(.base, weight: .semibold)
-                    .foregroundStyle(server.isEnabled ? TurboSparkTheme.accentColor : Color.secondary)
+                    .foregroundStyle(server.isEnabled ? AnyShapeStyle(theme.accent) : AnyShapeStyle(.appSecondary))
 
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
@@ -28,7 +31,7 @@ struct ProjectMcpServerRowView: View {
                                 .themedFont(.tiny)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(Color.secondary.opacity(0.12))
+                                .background(.appElevated)
                                 .clipShape(Capsule())
                         }
                     }
@@ -85,7 +88,7 @@ struct ProjectMcpServerRowView: View {
                         }
                         Divider()
                         Button(role: .destructive) {
-                            onDelete()
+                            showDeleteConfirmation = true
                         } label: {
                             Label { Text("Delete Server", bundle: .module) } icon: { Image(systemName: "trash") }
                         }
@@ -96,18 +99,24 @@ struct ProjectMcpServerRowView: View {
                     }
                     .menuStyle(.borderlessButton)
                     .menuIndicator(.hidden)
-                    .frame(width: 18)
+                    .frame(minWidth: 18, minHeight: 18)
                     .help(Text("Server actions", bundle: .module))
                 }
             }
 
             if let toast = testResultToast, toast.id == server.id {
-                Text(toast.message)
-                    .themedFont(.small)
-                    .foregroundStyle(toast.isError ? .red : .green)
-                    .padding(6)
-                    .background(toast.isError ? Color.red.opacity(0.1) : Color.green.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                HStack(spacing: 5) {
+                    Image(systemName: toast.isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                        .themedFont(.tiny)
+                    Text(toast.message)
+                        .themedFont(.small)
+                }
+                .foregroundStyle(toast.isError ? AnyShapeStyle(AppAttention.color) : AnyShapeStyle(theme.accent))
+                .padding(6)
+                .background(
+                    toast.isError ? AnyShapeStyle(AppAttention.color.opacity(0.12)) : AnyShapeStyle(theme.accent.opacity(0.12)),
+                    in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                )
             }
 
             if !server.discoveredTools.isEmpty {
@@ -146,14 +155,34 @@ struct ProjectMcpServerRowView: View {
                         }
                     }
                     .padding(8)
-                    .background(.appSurface.opacity(0.6))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .background(.appElevated)
+                    .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                 }
             }
         }
         .padding(12)
         .background(.appSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.secondary.opacity(0.15), lineWidth: 0.5))
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                .stroke(theme.border, lineWidth: 1)
+        )
+        .confirmationDialog(
+            Text("Delete MCP Server", bundle: .module),
+            isPresented: $showDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(role: .destructive) {
+                onDelete()
+            } label: {
+                Text("Delete Server", bundle: .module)
+            }
+            Button(role: .cancel) {
+            } label: {
+                Text("Cancel", bundle: .module)
+            }
+        } message: {
+            Text("Are you sure you want to delete this MCP server configuration?", bundle: .module)
+        }
     }
 }

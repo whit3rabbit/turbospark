@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/core", "crates/compute", "crates/invocation", "crates/selection", "crates/window-fit", "crates/tokenizer", "crates/model-io", "crates/streaming", "crates/gpu", "crates/runtime", "crates/audio", "crates/cli", "crates/repack", "crates/catalog", "crates/server", "crates/bench", "crates/ffi", "crates/vision-io", "crates/image", "crates/embeddings", "crates/coreml"]
+members = ["crates/core", "crates/compute", "crates/invocation", "crates/selection", "crates/window-fit", "crates/tokenizer", "crates/model-io", "crates/streaming", "crates/gpu", "crates/runtime", "crates/audio", "crates/cli", "crates/repack", "crates/catalog", "crates/server", "crates/bench", "crates/ffi", "crates/vision-io", "crates/image", "crates/embeddings", "crates/coreml", "crates/lab"]
 
 # NO `[profile.release]`, and that is a MEASURED decision rather than an
 # oversight -- release builds run at cargo's stock opt-level 3, no LTO, 16
@@ -23,8 +23,24 @@ members = ["crates/core", "crates/compute", "crates/invocation", "crates/selecti
 # the stack -- AGENTS.md Gotcha 32), and `read_pool`'s `Claim` is what
 # `run_batch` blocks on.
 
+# `turbospark-audio` is the one package whose dev build is optimized. Its unit
+# tests are numeric reference comparisons (the Bark and Confucius scenarios,
+# MiniMax Music flow schedules, MossFormer and SAM separation) and ran 438 s of
+# the CI test step's 23 minutes unoptimized. Measured 2026-10-26 on an M4 Max
+# at three test threads, the suite takes 169 s at opt-level 0 and 60 s at
+# opt-level 1, for about 13 s more compile of this crate. Only this package: a
+# workspace-wide test opt-level would rebuild every dependency. Two
+# bit-for-bit refactor-parity tests in the crate moved under opt-level 1 and
+# now carry a tolerance: whisper log-mel by one ULP, mimi attention by about
+# one ULP of its output scale at a large position offset (bound: four).
+# Nothing else in the suite changed. `debug-assertions` and `overflow-checks` are
+# profile-wide and stay on, and `cargo test` inherits this through the `test`
+# profile.
+[profile.dev.package.turbospark-audio]
+opt-level = 1
+
 [workspace.package]
-version = "0.3.2"
+version = "0.8.0"
 edition = "2021"
 rust-version = "1.82"
 license = "MIT"

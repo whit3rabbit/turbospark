@@ -129,10 +129,10 @@ public struct ContextUsageSummary {
     /// red from 90. Claude Code's thresholds, which is also the point at
     /// which this app's own auto-compact (4/5 of usable) is close enough to
     /// matter.
-    static func tint(forFraction fraction: Double) -> Color {
-        if fraction >= 0.9 { return .red }
-        if fraction >= 0.7 { return .yellow }
-        return .green
+    static func tint(forFraction fraction: Double, in theme: ResolvedAppTheme) -> Color {
+        if fraction >= 0.9 { return theme.danger }
+        if fraction >= 0.7 { return theme.warning }
+        return theme.success
     }
 }
 

@@ -46,20 +46,23 @@ pub struct CodecConfig {
 
 impl CodecConfig {
     /// The published checkpoint's geometry, with the post-transformer
-    /// sizes from the TTS config (`codec_post_*` keys).
+    /// sizes from the TTS config (`codec_post_*` keys). The other widths
+    /// are also readable from `codec_*` keys so the fixture generator can
+    /// shrink them; a published checkpoint carries none of them and gets
+    /// the defaults verbatim.
     pub fn from_tts_config(value: &Value) -> Self {
         let u = |key: &str, default: u64| -> usize {
             value.get(key).and_then(Value::as_u64).unwrap_or(default) as usize
         };
         Self {
-            hidden: 1024,
-            quantizer_input_dim: 1024,
-            decoder_channels: 1536,
+            hidden: u("codec_hidden", 1024),
+            quantizer_input_dim: u("codec_quantizer_input_dim", 1024),
+            decoder_channels: u("codec_decoder_channels", 1536),
             upsample_strides: vec![8, 8, 4, 2],
-            semantic_codebook_size: 4096,
-            residual_books: 9,
-            residual_codebook_size: 1024,
-            codebook_dim: 8,
+            semantic_codebook_size: u("codec_semantic_codebook_size", 4096),
+            residual_books: u("codec_residual_books", 9),
+            residual_codebook_size: u("codec_residual_codebook_size", 1024),
+            codebook_dim: u("codec_codebook_dim", 8),
             post_n_layer: u("codec_post_n_layer", 8),
             post_n_head: u("codec_post_n_head", 16),
             post_n_local_heads: u("codec_post_n_local_heads", 8),
@@ -135,12 +138,22 @@ struct CausalConvTranspose {
 
 impl CausalConvTranspose {
     fn forward(&self, x: &[f32]) -> Vec<f32> {
-        let mut out = self.conv.forward(x);
-        if self.crop > 0 {
-            let frames = out.len() / self.conv.out_ch;
-            out.truncate((frames - self.crop) * self.conv.out_ch);
+        let out = self.conv.forward(x);
+        if self.crop == 0 {
+            return out;
         }
-        out
+        // The reference slices the time axis PER CHANNEL
+        // (`x[:, :len - crop]`); a flat truncate of the channel-major
+        // buffer would leave channel 0's tail frames inside every
+        // following channel's row.
+        let frames = out.len() / self.conv.out_ch;
+        let kept = frames - self.crop;
+        let mut cropped = Vec::with_capacity(kept * self.conv.out_ch);
+        for channel in 0..self.conv.out_ch {
+            let base = channel * frames;
+            cropped.extend_from_slice(&out[base..base + kept]);
+        }
+        cropped
     }
 }
 
@@ -263,12 +276,22 @@ impl WindowTransformer {
             let qkv = layer.wqkv.forward(&attended, frames);
             let q_width = heads * head_dim;
             let kv_width = local * head_dim;
-            let q = &qkv[..frames * q_width];
-            let k = &qkv[frames * q_width..frames * (q_width + kv_width)];
-            let v = &qkv[frames * (q_width + kv_width)..];
-            let mut qh = super::head_major(q, frames, heads, head_dim);
-            let mut kh = super::head_major(k, frames, local, head_dim);
-            let vh = super::head_major(v, frames, local, head_dim);
+            // Split row-wise into PACKED [frames, width] buffers: the flat
+            // qkv rows keep the full fused stride, and head_major indexes a
+            // packed `[frames, heads, dim]` layout.
+            let total_row = q_width + 2 * kv_width;
+            let mut q = Vec::with_capacity(frames * q_width);
+            let mut k = Vec::with_capacity(frames * kv_width);
+            let mut v = Vec::with_capacity(frames * kv_width);
+            for row in 0..frames {
+                let row_values = &qkv[row * total_row..(row + 1) * total_row];
+                q.extend_from_slice(&row_values[..q_width]);
+                k.extend_from_slice(&row_values[q_width..q_width + kv_width]);
+                v.extend_from_slice(&row_values[q_width + kv_width..]);
+            }
+            let mut qh = super::head_major(&q, frames, heads, head_dim);
+            let mut kh = super::head_major(&k, frames, local, head_dim);
+            let vh = super::head_major(&v, frames, local, head_dim);
             super::apply_interleaved_rope(&mut qh, heads, frames, head_dim, &cos, &sin);
             super::apply_interleaved_rope(&mut kh, local, frames, head_dim, &cos, &sin);
 
@@ -367,6 +390,8 @@ struct Quantizers {
 impl Quantizers {
     /// `codes[0]` is the semantic book, the rest are the residual books.
     /// Returns `[frames, input_dim]`.
+    // The reference names this `from_codes`; keep the name.
+    #[allow(clippy::wrong_self_convention)]
     fn from_codes(&self, codes: &[Vec<i32>], frames: usize) -> Vec<f32> {
         let mut embedded = vec![0.0f32; frames * self.codebook_dim];
         for t in 0..frames {
@@ -448,15 +473,19 @@ impl ArkttsCodec {
         let quantizer = load_quantizers(weights, config)?;
 
         let mut upsample = Vec::new();
-        for (index, &stride) in config.upsample_strides.iter().enumerate() {
-            let kernel = 2 * stride;
+        // The reference hardcodes the quantizer upsample as TWO stages of a
+        // kernel-2 stride-2 causal transposed conv (crop 0) over the codec
+        // width, each followed by a ConvNeXt block; only the width rides
+        // the config. (The decoder blocks below are the ones carrying the
+        // (8, 8, 4, 2) strides.)
+        for index in 0..2 {
             let conv_t = load_convt(
                 weights,
                 &format!("quantizer.upsample.{index}.0.conv"),
                 config.hidden,
                 config.hidden,
-                kernel,
-                stride,
+                2,
+                2,
             )?;
             let block = load_convnext(
                 weights,
@@ -466,7 +495,7 @@ impl ArkttsCodec {
             upsample.push((
                 CausalConvTranspose {
                     conv: conv_t,
-                    crop: kernel - stride,
+                    crop: 0,
                 },
                 block,
             ));
@@ -507,9 +536,59 @@ impl ArkttsCodec {
         }
         Ok(self.decoder.forward(&major))
     }
+
+    /// The decode stages for fixture bisection: the residual-VQ `from_codes`
+    /// output `[frames, quantizer_input_dim]`, the post window-transformer
+    /// output `[frames, hidden]`, and the upsample chain output
+    /// `[frames * 4, hidden]`, all row-major like the stage traces.
+    pub fn decode_stages(&self, codes: &[Vec<i32>]) -> Result<(Vec<f32>, Vec<f32>, Vec<f32>)> {
+        let expected = 1 + self.quantizer.residual_codebooks.len();
+        if codes.len() != expected {
+            return Err(SpeechError::Input {
+                why: format!("expected {expected} codebook rows, got {}", codes.len()),
+            });
+        }
+        let frames = codes[0].len();
+        let z = self.quantizer.from_codes(codes, frames);
+        let post = self.post_module.forward(&z, frames);
+        let mut major = super::to_channel_major(&post, frames, self.hidden);
+        for (upsample, convnext) in &self.upsample {
+            major = upsample.forward(&major);
+            let frames = major.len() / self.hidden;
+            let rows = convnext.forward(&super::to_row_major(&major, frames, self.hidden), frames);
+            major = super::to_channel_major(&rows, frames, self.hidden);
+        }
+        let frames = major.len() / self.hidden;
+        // Row-major like the other stage traces.
+        Ok((z, post, super::to_row_major(&major, frames, self.hidden)))
+    }
 }
 
 // Loading helpers ------------------------------------------------------------
+//
+// Tensor-name conventions: `Weights::tensor` / `Weights::linear` /
+// `Weights::embedding` take the BASE name and load `{base}.weight`
+// themselves, while `Weights::raw_tensor` takes the exact stored key (the
+// conv biases, snake alphas, ConvNeXt gammas and norms are bare parameters
+// that do not end in `.weight`).
+
+/// Loads an exact bare parameter tensor (`...bias`, `...alpha`, `...gamma`)
+/// when present.
+fn bare_tensor(weights: &Weights, name: &str, shape: &[usize]) -> Result<Option<Vec<f32>>> {
+    if weights.contains_absolute(name) {
+        Ok(Some(weights.raw_tensor(name, shape)?))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Loads a snake alpha: the sanitize layouts are `(1, 1, C)` and the raw
+/// checkpoints may keep the flat `(C,)` the reference module holds.
+fn load_alpha(weights: &Weights, name: &str, channels: usize) -> Result<Vec<f32>> {
+    weights
+        .raw_tensor(name, &[1, 1, channels])
+        .or_else(|_| weights.raw_tensor(name, &[channels]))
+}
 
 fn load_conv_weight(
     weights: &Weights,
@@ -522,6 +601,7 @@ fn load_conv_weight(
     Ok(permute_okc_to_ock(&stored, out_ch, kernel, in_g))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn load_conv(
     weights: &Weights,
     name: &str,
@@ -532,14 +612,8 @@ fn load_conv(
     dilation: usize,
     groups: usize,
 ) -> Result<Conv1d> {
-    let weight = load_conv_weight(
-        weights,
-        &format!("{name}.weight"),
-        out_ch,
-        in_ch / groups,
-        kernel,
-    )?;
-    let bias = weights.tensor_optional(&format!("{name}.bias"), &[out_ch])?;
+    let weight = load_conv_weight(weights, name, out_ch, in_ch / groups, kernel)?;
+    let bias = bare_tensor(weights, &format!("{name}.bias"), &[out_ch])?;
     Ok(Conv1d {
         in_ch,
         out_ch,
@@ -553,6 +627,7 @@ fn load_conv(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn load_causal_conv(
     weights: &Weights,
     name: &str,
@@ -591,12 +666,13 @@ fn load_convt(
     kernel: usize,
     stride: usize,
 ) -> Result<ConvTranspose1d> {
+    // `name` is the conv base (`...block.1.conv`); `tensor` appends
+    // `.weight` for the stored `[out, K, in]` layout.
     let stored = weights.tensor(name, &[out_ch, kernel, in_ch])?;
     let weight = permute_okc_to_cok(&stored, out_ch, kernel, in_ch);
-    let bias = weights.tensor_optional(
-        &format!("{}.bias", name.strip_suffix(".conv").unwrap_or(name)),
-        &[out_ch],
-    )?;
+    // The bias belongs to the ConvTranspose1d module itself, so the key
+    // keeps the `.conv` segment (`...block.1.conv.bias`).
+    let bias = bare_tensor(weights, &format!("{name}.bias"), &[out_ch])?;
     Ok(ConvTranspose1d {
         in_ch,
         out_ch,
@@ -622,8 +698,8 @@ fn load_convnext(weights: &Weights, name: &str, channels: usize) -> Result<ConvN
         channels,
     )?;
     let norm = nn::LayerNorm {
-        weight: weights.tensor(&format!("{name}.norm.weight"), &[channels])?,
-        bias: Some(weights.tensor(&format!("{name}.norm.bias"), &[channels])?),
+        weight: weights.tensor(&format!("{name}.norm"), &[channels])?,
+        bias: Some(weights.raw_tensor(&format!("{name}.norm.bias"), &[channels])?),
         epsilon: 1e-6,
     };
     let pwconv1 = weights.linear(
@@ -638,7 +714,7 @@ fn load_convnext(weights: &Weights, name: &str, channels: usize) -> Result<ConvN
         channels,
         super::Bias::Required,
     )?;
-    let gamma = weights.tensor(&format!("{name}.gamma"), &[channels])?;
+    let gamma = weights.raw_tensor(&format!("{name}.gamma"), &[channels])?;
     Ok(ConvNeXtBlock {
         dwconv,
         norm,
@@ -690,25 +766,26 @@ fn load_window_transformer(
                 super::Bias::None,
             )?,
             attn_norm: nn::RmsNorm::new(
-                weights.tensor(&format!("{base}.attention_norm.weight"), &[config.dim])?,
+                weights.tensor(&format!("{base}.attention_norm"), &[config.dim])?,
                 config.norm_eps,
             ),
             ffn_norm: nn::RmsNorm::new(
-                weights.tensor(&format!("{base}.ffn_norm.weight"), &[config.dim])?,
+                weights.tensor(&format!("{base}.ffn_norm"), &[config.dim])?,
                 config.norm_eps,
             ),
-            attn_scale: weights.tensor(
+            attn_scale: weights.raw_tensor(
                 &format!("{base}.attention_layer_scale.gamma"),
                 &[config.dim],
             )?,
-            ffn_scale: weights.tensor(&format!("{base}.ffn_layer_scale.gamma"), &[config.dim])?,
+            ffn_scale: weights
+                .raw_tensor(&format!("{base}.ffn_layer_scale.gamma"), &[config.dim])?,
             heads: config.n_head,
             local_heads: config.n_local_heads,
             head_dim: config.head_dim,
         });
     }
     let norm = nn::RmsNorm::new(
-        weights.tensor(&format!("{name}.norm.weight"), &[config.dim])?,
+        weights.tensor(&format!("{name}.norm"), &[config.dim])?,
         config.norm_eps,
     );
     Ok(WindowTransformer {
@@ -721,7 +798,7 @@ fn load_window_transformer(
 
 fn load_quantizers(weights: &Weights, config: &CodecConfig) -> Result<Quantizers> {
     let semantic_codebook = weights.tensor(
-        "quantizer.semantic_quantizer.quantizers.0.codebook.weight",
+        "quantizer.semantic_quantizer.quantizers.0.codebook",
         &[config.semantic_codebook_size, config.codebook_dim],
     )?;
     let semantic_out = weights.linear(
@@ -734,7 +811,7 @@ fn load_quantizers(weights: &Weights, config: &CodecConfig) -> Result<Quantizers
     let mut residual_out = Vec::with_capacity(config.residual_books);
     for book in 0..config.residual_books {
         residual_codebooks.push(weights.tensor(
-            &format!("quantizer.quantizer.quantizers.{book}.codebook.weight"),
+            &format!("quantizer.quantizer.quantizers.{book}.codebook"),
             &[config.residual_codebook_size, config.codebook_dim],
         )?);
         residual_out.push(weights.linear(
@@ -772,9 +849,7 @@ fn load_decoder(weights: &Weights, config: &CodecConfig) -> Result<Decoder> {
     for (index, &stride) in config.upsample_strides.iter().enumerate() {
         let output_dim = channels / (2usize.pow(index as u32 + 1));
         let base = format!("decoder.model.{}", index + 1);
-        let snake = weights
-            .tensor(&format!("{base}.block.0.alpha"), &[1, 1, input_dim])
-            .or_else(|_| weights.tensor(&format!("{base}.block.0.alpha"), &[input_dim]))?;
+        let snake = load_alpha(weights, &format!("{base}.block.0.alpha"), input_dim)?;
         let upsample = load_convt(
             weights,
             &format!("{base}.block.1.conv"),
@@ -787,11 +862,7 @@ fn load_decoder(weights: &Weights, config: &CodecConfig) -> Result<Decoder> {
         for (unit_index, dilation) in [1usize, 3, 9].into_iter().enumerate() {
             let unit_base = format!("{base}.block.{}", unit_index + 2);
             units.push(ResidualUnit {
-                snake1: weights
-                    .tensor(&format!("{unit_base}.block.0.alpha"), &[1, 1, output_dim])
-                    .or_else(|_| {
-                        weights.tensor(&format!("{unit_base}.block.0.alpha"), &[output_dim])
-                    })?,
+                snake1: load_alpha(weights, &format!("{unit_base}.block.0.alpha"), output_dim)?,
                 conv_dilated: load_causal_conv(
                     weights,
                     &format!("{unit_base}.block.1"),
@@ -802,11 +873,7 @@ fn load_decoder(weights: &Weights, config: &CodecConfig) -> Result<Decoder> {
                     1,
                     1,
                 )?,
-                snake2: weights
-                    .tensor(&format!("{unit_base}.block.2.alpha"), &[1, 1, output_dim])
-                    .or_else(|_| {
-                        weights.tensor(&format!("{unit_base}.block.2.alpha"), &[output_dim])
-                    })?,
+                snake2: load_alpha(weights, &format!("{unit_base}.block.2.alpha"), output_dim)?,
                 conv_point: load_causal_conv(
                     weights,
                     &format!("{unit_base}.block.3"),
@@ -832,17 +899,13 @@ fn load_decoder(weights: &Weights, config: &CodecConfig) -> Result<Decoder> {
         input_dim = output_dim;
     }
     let last_book = config.upsample_strides.len() + 1;
-    let last_snake = weights
-        .tensor(
-            &format!("decoder.model.{last_book}.block.0.alpha"),
-            &[1, 1, input_dim],
-        )
-        .or_else(|_| {
-            weights.tensor(
-                &format!("decoder.model.{last_book}.block.0.alpha"),
-                &[input_dim],
-            )
-        })?;
+    // The tail snake is a direct module (`decoder.model.5.alpha`), unlike
+    // the block snakes that sit inside each block's `block` list.
+    let last_snake = load_alpha(
+        weights,
+        &format!("decoder.model.{last_book}.alpha"),
+        input_dim,
+    )?;
     let last_conv = load_causal_conv(
         weights,
         &format!("decoder.model.{}", last_book + 1),

@@ -59,6 +59,46 @@ pub struct Wav2VecConfig {
 }
 
 impl Wav2VecConfig {
+    /// Shared field parser: the geometry consistency check lives here so
+    /// both entry points validate identically.
+    fn parse_fields(value: &Value) -> Result<Self> {
+        let config = Self {
+            vocab_size: positive(value, "vocab_size")?,
+            hidden_size: positive(value, "hidden_size")?,
+            num_hidden_layers: positive(value, "num_hidden_layers")?,
+            num_attention_heads: positive(value, "num_attention_heads")?,
+            intermediate_size: positive(value, "intermediate_size")?,
+            layer_norm_eps: value
+                .get("layer_norm_eps")
+                .and_then(Value::as_f64)
+                .filter(|number| number.is_finite() && *number > 0.0)
+                .map(|number| number as f32)
+                .ok_or_else(|| bad_config("layer_norm_eps", "must be a positive number"))?,
+            conv_dim: positive_array(value, "conv_dim")?,
+            conv_stride: positive_array(value, "conv_stride")?,
+            conv_kernel: positive_array(value, "conv_kernel")?,
+            conv_bias: value
+                .get("conv_bias")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| bad_config("conv_bias", "must be a boolean"))?,
+            num_conv_pos_embeddings: positive(value, "num_conv_pos_embeddings")?,
+            num_conv_pos_embedding_groups: positive(value, "num_conv_pos_embedding_groups")?,
+        };
+        if config.num_attention_heads == 0
+            || config.hidden_size % config.num_attention_heads != 0
+            || config.hidden_size % config.num_conv_pos_embedding_groups != 0
+            || config.conv_dim.len() != config.conv_stride.len()
+            || config.conv_dim.len() != config.conv_kernel.len()
+            || config.conv_dim.is_empty()
+        {
+            return Err(bad_config(
+                "config.json",
+                "inconsistent Wav2Vec2 dimensions or convolution geometry",
+            ));
+        }
+        Ok(config)
+    }
+
     /// Parses a Wav2Vec2ForCTC config for the non-stable group-norm family.
     ///
     /// The stable-layer-norm encoder variant lives in the `mms` family port;
@@ -96,42 +136,31 @@ impl Wav2VecConfig {
                 why: "adapter checkpoints belong to the mms family".into(),
             });
         }
+        Self::parse_fields(root)
+    }
 
-        let config = Self {
-            vocab_size: positive(root, "vocab_size")?,
-            hidden_size: positive(root, "hidden_size")?,
-            num_hidden_layers: positive(root, "num_hidden_layers")?,
-            num_attention_heads: positive(root, "num_attention_heads")?,
-            intermediate_size: positive(root, "intermediate_size")?,
-            layer_norm_eps: root
-                .get("layer_norm_eps")
-                .and_then(Value::as_f64)
-                .filter(|number| number.is_finite() && *number > 0.0)
-                .map(|number| number as f32)
-                .ok_or_else(|| bad_config("layer_norm_eps", "must be a positive number"))?,
-            conv_dim: positive_array(root, "conv_dim")?,
-            conv_stride: positive_array(root, "conv_stride")?,
-            conv_kernel: positive_array(root, "conv_kernel")?,
-            conv_bias: root
-                .get("conv_bias")
-                .and_then(Value::as_bool)
-                .ok_or_else(|| bad_config("conv_bias", "must be a boolean"))?,
-            num_conv_pos_embeddings: positive(root, "num_conv_pos_embeddings")?,
-            num_conv_pos_embedding_groups: positive(root, "num_conv_pos_embedding_groups")?,
-        };
-        if config.num_attention_heads == 0
-            || config.hidden_size % config.num_attention_heads != 0
-            || config.hidden_size % config.num_conv_pos_embedding_groups != 0
-            || config.conv_dim.len() != config.conv_stride.len()
-            || config.conv_dim.len() != config.conv_kernel.len()
-            || config.conv_dim.is_empty()
-        {
+    /// Parses the Higgs tokenizer's inline `semantic_model_config` dict:
+    /// the same post-norm group-norm GELU Wav2Vec2 geometry without a
+    /// ForCTC `architectures` list, and `model_type` may read `hubert`.
+    pub(crate) fn from_semantic_dict(value: &Value) -> Result<Self> {
+        if !matches!(
+            value.get("model_type").and_then(Value::as_str),
+            Some("wav2vec2") | Some("hubert")
+        ) {
             return Err(bad_config(
-                "config.json",
-                "inconsistent Wav2Vec2 dimensions or convolution geometry",
+                "model_type",
+                "the semantic tower must be a wav2vec2/hubert config",
             ));
         }
-        Ok(config)
+        if value.get("feat_extract_norm").and_then(Value::as_str) != Some("group")
+            || value.get("do_stable_layer_norm").and_then(Value::as_bool) != Some(false)
+            || value.get("hidden_act").and_then(Value::as_str) != Some("gelu")
+        {
+            return Err(SpeechError::Unsupported {
+                why: "the semantic tower requires group-normalized GELU features and the non-stable post-norm encoder".into(),
+            });
+        }
+        Self::parse_fields(value)
     }
 }
 
@@ -151,8 +180,13 @@ struct GroupNormConv {
 }
 
 impl GroupNormConv {
-    fn load(file: &SafetensorsFile, index: usize, config: &Wav2VecConfig) -> Result<Self> {
-        let prefix = format!("wav2vec2.feature_extractor.conv_layers.{index}");
+    fn load(
+        file: &SafetensorsFile,
+        root: &str,
+        index: usize,
+        config: &Wav2VecConfig,
+    ) -> Result<Self> {
+        let prefix = format!("{root}.feature_extractor.conv_layers.{index}");
         Ok(Self {
             weight: load_tensor(
                 file,
@@ -237,8 +271,13 @@ struct PlainConv {
 }
 
 impl PlainConv {
-    fn load(file: &SafetensorsFile, index: usize, config: &Wav2VecConfig) -> Result<Self> {
-        let prefix = format!("wav2vec2.feature_extractor.conv_layers.{index}");
+    fn load(
+        file: &SafetensorsFile,
+        root: &str,
+        index: usize,
+        config: &Wav2VecConfig,
+    ) -> Result<Self> {
+        let prefix = format!("{root}.feature_extractor.conv_layers.{index}");
         Ok(Self {
             weight: load_tensor(
                 file,
@@ -294,10 +333,10 @@ struct FeatureEncoder {
 }
 
 impl FeatureEncoder {
-    fn load(file: &SafetensorsFile, config: &Wav2VecConfig) -> Result<Self> {
-        let group_norm_conv = GroupNormConv::load(file, 0, config)?;
+    fn load(file: &SafetensorsFile, root: &str, config: &Wav2VecConfig) -> Result<Self> {
+        let group_norm_conv = GroupNormConv::load(file, root, 0, config)?;
         let plain_convs = (1..config.conv_dim.len())
-            .map(|index| PlainConv::load(file, index, config))
+            .map(|index| PlainConv::load(file, root, index, config))
             .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             group_norm_conv,
@@ -339,8 +378,13 @@ struct EncoderLayer {
 }
 
 impl EncoderLayer {
-    fn load(file: &SafetensorsFile, index: usize, config: &Wav2VecConfig) -> Result<Self> {
-        let prefix = format!("wav2vec2.encoder.layers.{index}");
+    fn load(
+        file: &SafetensorsFile,
+        root: &str,
+        index: usize,
+        config: &Wav2VecConfig,
+    ) -> Result<Self> {
+        let prefix = format!("{root}.encoder.layers.{index}");
         Ok(Self {
             attention: Attention::load(
                 file,
@@ -401,38 +445,39 @@ struct Wav2Vec2 {
 }
 
 impl Wav2Vec2 {
-    fn load(file: &SafetensorsFile, config: &Wav2VecConfig) -> Result<Self> {
+    fn load(file: &SafetensorsFile, root: &str, config: &Wav2VecConfig) -> Result<Self> {
         let feature_width = *config
             .conv_dim
             .last()
             .ok_or_else(|| bad_config("conv_dim", "must contain at least one feature layer"))?;
         let encoder_layers = (0..config.num_hidden_layers)
-            .map(|index| EncoderLayer::load(file, index, config))
+            .map(|index| EncoderLayer::load(file, root, index, config))
             .collect::<Result<Vec<_>>>()?;
         Ok(Self {
-            feature_encoder: FeatureEncoder::load(file, config)?,
+            feature_encoder: FeatureEncoder::load(file, root, config)?,
             feature_projection_norm: LayerNorm::load(
                 file,
-                "wav2vec2.feature_projection.layer_norm",
+                &format!("{root}.feature_projection.layer_norm"),
                 feature_width,
                 config.layer_norm_eps,
             )?,
             feature_projection: Linear::load(
                 file,
-                "wav2vec2.feature_projection.projection",
+                &format!("{root}.feature_projection.projection"),
                 feature_width,
                 config.hidden_size,
                 true,
             )?,
             positional_conv: PositionalConv::load(
                 file,
+                &format!("{root}.encoder.pos_conv_embed.conv"),
                 config.hidden_size,
                 config.num_conv_pos_embeddings,
                 config.num_conv_pos_embedding_groups,
             )?,
             encoder_norm: LayerNorm::load(
                 file,
-                "wav2vec2.encoder.layer_norm",
+                &format!("{root}.encoder.layer_norm"),
                 config.hidden_size,
                 config.layer_norm_eps,
             )?,
@@ -457,6 +502,71 @@ impl Wav2Vec2 {
         debug_assert_eq!(feature_width, *self.config.conv_dim.last().unwrap());
         Ok(hidden)
     }
+
+    /// The reference encode path consumes `output_hidden_states`: the
+    /// normed encoder input plus every layer's output, averaged. Returns
+    /// (mean over the states, final state, steps), each state
+    /// `[steps, hidden]`.
+    fn forward_hidden_mean(&self, samples: &[f32]) -> Result<(Vec<f32>, Vec<f32>, usize)> {
+        let (features, steps, feature_width) = self.feature_encoder.forward(samples)?;
+        let mut hidden = features;
+        self.feature_projection_norm.apply(&mut hidden, steps);
+        hidden = self.feature_projection.forward(&hidden, steps);
+        let positional = self.positional_conv.forward(&hidden, steps);
+        hidden = add(&hidden, &positional);
+        // The non-stable encoder normalizes after the positional convolution,
+        // before the layer stack, and applies no final norm.
+        self.encoder_norm.apply(&mut hidden, steps);
+        debug_assert_eq!(feature_width, *self.config.conv_dim.last().unwrap());
+        let width = self.config.hidden_size;
+        let state_count = 1 + self.encoder_layers.len();
+        let mut mean = vec![0.0f32; steps * width];
+        let mut accumulate = |state: &[f32]| {
+            for (slot, value) in mean.iter_mut().zip(state) {
+                *slot += value;
+            }
+        };
+        accumulate(&hidden);
+        for layer in &self.encoder_layers {
+            hidden = layer.forward(&hidden, steps);
+            accumulate(&hidden);
+        }
+        for value in &mut mean {
+            *value /= state_count as f32;
+        }
+        Ok((mean, hidden, steps))
+    }
+}
+
+/// The Higgs tokenizer's semantic tower: a bare post-norm Wav2Vec2 under
+/// the `semantic_model.` weight prefix, consumed by the OmniVoice encode
+/// path through its `output_hidden_states` mean (no CTC head exists).
+pub(crate) struct SemanticTower {
+    wav2vec2: Wav2Vec2,
+    config: Wav2VecConfig,
+}
+
+impl SemanticTower {
+    /// Loads from the checkpoint file holding `semantic_model.*` tensors
+    /// over the inline `semantic_model_config` dict.
+    pub(crate) fn load(file: &SafetensorsFile, semantic_config: &Value) -> Result<Self> {
+        let config = Wav2VecConfig::from_semantic_dict(semantic_config)?;
+        let wav2vec2 = Wav2Vec2::load(file, "semantic_model", &config)?;
+        Ok(SemanticTower { wav2vec2, config })
+    }
+
+    pub(crate) fn config(&self) -> &Wav2VecConfig {
+        &self.config
+    }
+
+    /// Raw 16 kHz samples (already padded by the caller) -> the reference
+    /// `output_hidden_states` mean, the final state, and the frame count.
+    pub(crate) fn forward_hidden_mean(
+        &self,
+        samples: &[f32],
+    ) -> Result<(Vec<f32>, Vec<f32>, usize)> {
+        self.wav2vec2.forward_hidden_mean(samples)
+    }
 }
 
 /// Loaded Wav2Vec2 base model with its own CTC head.
@@ -478,7 +588,7 @@ impl Wav2Vec {
             .map_err(|error| bad_config("config.json", error.to_string()))?;
         let config = Wav2VecConfig::from_json(&root)?;
         let base = SafetensorsFile::open(&model_dir.join("model.safetensors"))?;
-        let wav2vec2 = Wav2Vec2::load(&base, &config)?;
+        let wav2vec2 = Wav2Vec2::load(&base, "wav2vec2", &config)?;
         let lm_head = Linear::load(
             &base,
             "lm_head",

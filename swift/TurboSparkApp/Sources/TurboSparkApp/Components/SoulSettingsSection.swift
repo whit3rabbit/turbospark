@@ -11,6 +11,7 @@ struct SoulSettingsSection: View {
     @State private var statusMessage: String?
     @State private var isImportingFile = false
     @State private var showingSaveAsNewSheet = false
+    @State private var isConfirmingDelete = false
 
     private var hermesDetected: Bool {
         model.detectedSoulImportSources.contains { $0.kind == .hermes }
@@ -83,6 +84,22 @@ struct SoulSettingsSection: View {
                 statusMessage = AppStrings.localized("Saved \(prompt.name).")
             }
         }
+        .confirmationDialog(
+            Text("Delete Selected", bundle: .module),
+            isPresented: $isConfirmingDelete,
+            presenting: model.selectedSoulPrompt
+        ) { soul in
+            Button(role: .destructive) {
+                deleteSelected()
+            } label: {
+                Text("Delete '\(soul.name)'", bundle: .module)
+            }
+            Button(role: .cancel) {} label: {
+                Text("Cancel", bundle: .module)
+            }
+        } message: { soul in
+            Text("Are you sure you want to delete '\(soul.name)' from disk? This action cannot be undone.", bundle: .module)
+        }
     }
 
     /// What the editor writes back: a fixed set, so the row cannot grow.
@@ -107,7 +124,7 @@ struct SoulSettingsSection: View {
 
             if model.selectedSoulPrompt != nil {
                 Button(role: .destructive) {
-                    deleteSelected()
+                    isConfirmingDelete = true
                 } label: {
                     Text("Delete Selected", bundle: .module)
                 }
@@ -255,6 +272,7 @@ private struct SoulNameSheet: View {
     let onSave: (String) -> Void
 
     @State private var name = ""
+    @FocusState private var isNameFocused: Bool
 
     private var canSave: Bool {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -278,8 +296,11 @@ private struct SoulNameSheet: View {
                 TextField(text: $name) {
                     Text("Name", bundle: .module)
                 }
+                .focused($isNameFocused)
             }
             .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .background(.appPage)
 
             Divider()
 
@@ -295,6 +316,9 @@ private struct SoulNameSheet: View {
             }
             .padding()
         }
-        .frame(width: 360, height: 190)
+        .frame(minWidth: 360, minHeight: 190)
+        .onAppear {
+            isNameFocused = true
+        }
     }
 }

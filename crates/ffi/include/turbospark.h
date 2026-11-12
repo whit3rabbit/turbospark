@@ -26,6 +26,9 @@
  *    ts_generate() blocks for the whole turn, so call it from a background
  *    thread. The ONE exception is ts_session_cancel(), which is safe from
  *    any thread and never blocks -- that is what makes a Stop button work.
+ *    The token callback runs while ts_generate() holds the session's engine
+ *    lock, so a callback that calls back into the same session (anything
+ *    but ts_session_cancel()) deadlocks; hand the work to another thread.
  *    ts_install()'s byte callback is ALSO called concurrently from worker
  *    threads; see below.
  *
@@ -61,10 +64,13 @@ extern "C" {
 #endif
 
 /* ------------------------------------------------------------------ */
-/* Speech-to-text (whisper).                                           */
+/* Speech-to-text (Whisper, Qwen3-ASR, Parakeet TDT on Core ML).       */
 /*                                                                     */
-/* A resident STT model is opened from a speech install directory      */
-/* (config.json, model.safetensors, tokenizer.json). Streams accept    */
+/* A resident STT model is opened from a speech install directory:     */
+/* Whisper or Qwen3-ASR (config.json, weights, tokenizer), or a        */
+/* Parakeet Core ML export (macOS 15+), recognized by its layout.      */
+/* Parakeet Unified is refused here; live text uses                    */
+/* ts_audio_stream_*. Parakeet reports no language. Streams accept     */
 /* bounded PCM chunks: at most two seconds of base64 f32               */
 /* little-endian 16 kHz mono per append. The stream buffers prior      */
 /* audio internally; callers never resend. On the CPU reference path   */
@@ -147,8 +153,9 @@ int32_t ts_stt_stream_close(TsSttStream *stream);
  * returns TS_OK with stopReason "cancelled" and the partial text. */
 #define TS_ERR_CANCELLED 7
 /* The resource needed is in use by another operation (the native audio device
- * or session is running a job). Retrying once that job finishes can succeed,
- * unlike TS_ERR_OPEN. */
+ * or session is running a job, or an install is running and a library change
+ * is refused). Retrying once that job finishes can succeed, unlike
+ * TS_ERR_OPEN. */
 #define TS_ERR_BUSY 8
 
 /* ---- streaming event kinds ---- */
@@ -262,16 +269,36 @@ void ts_string_free(char *s);
  *                       mode the session ACTUALLY opened with is reported as
  *                       sessionInfo.expertResidency. A misspelling is refused
  *                       before the install is opened.
+ *   expertSlotsWiring "auto" | "on" | "off" | null (default auto). Whether
+ *                       the streamed expert slot cache is wired (mlock).
+ *                       "auto" wires it, at twice the auto slot budget, on
+ *                       qwen4_exp only, after checking the OS wire limit, and
+ *                       opens an unwired cache at the usual budget when the
+ *                       limit or the lock refuses. "on" wires any streamed
+ *                       family and fails the open on a refused lock. The
+ *                       environment variable TURBOSPARK_EXPERT_SLOTS_WIRED
+ *                       (1, 0) overrides this. The outcome is reported as
+ *                       sessionInfo.expertSlotsWiring.
+ *   moePrefillBank     boolean | null. Enables the experimental temporary expert
+ *                       bank for eligible streamed Flash Next text sessions.
+ *                       Null preserves TURBOSPARK_QWEN4_PREFILL.
  *   powerProfile      "performance" | "balanced" | "efficiency" | null
  *                       null ASKS THE OS, so Low Power Mode selects
  *                       efficiency. Name one explicitly when measuring.
  *   maxTokensPerSec   number | null
- *   speculation       "off" | "auto" | number | "<number>" | null
+ *   speculation       "off" | "auto" | number | "<number>" | "adaptive" |
+ *                       "adaptive:<N>" | null
  *                       (default auto). Resolved at OPEN, because that is
  *                       where the drafter's state is allocated. A NAMED
  *                       block that cannot be served fails this call; "auto"
  *                       that cannot be served opens and reports why in
  *                       sessionInfo.speculation.
+ *                       "adaptive" is EXPERIMENTAL and step-drafter (MTP)
+ *                       only: the round size moves between 2 and a cap N
+ *                       (3..15, default 4) with the acceptance each round
+ *                       saw. It is a named request like a number, so it
+ *                       fails this call when it cannot be served, and
+ *                       "auto" never picks it. The head is allocated at N.
  *   speculativeDrafter "auto" | "mtp" | "dflash" | null
  *                       (default auto). "auto" ENABLES an MTP head and only
  *                       REPORTS a DFlash2 one, which is measured rather
@@ -432,7 +459,9 @@ int32_t ts_image_generate(const TsImageSession *s, const char *options_json,
                           uint8_t **out_png, size_t *out_png_len,
                           char **out_metadata_json);
 
-/* Frees the byte buffer returned by ts_image_generate. */
+/* Frees the byte buffer returned by ts_image_generate. bytes and len must be
+ * exactly the out_png and out_png_len pair from one call, passed once: the
+ * length rebuilds the allocation and cannot be validated here. NULL is a no-op. */
 void ts_image_buffer_free(uint8_t *bytes, size_t len);
 
 /* ---- introspection ---- */
@@ -446,7 +475,7 @@ void ts_image_buffer_free(uint8_t *bytes, size_t len);
  *     "steering": { "active", "supported", "reason", "mode", "scale",
  *                   "summary" },
  *     "toolCalling": { "native", "reason" },
- *     "speculation": { "block", "drafter", "reason" },
+ *     "speculation": { "block", "adaptive", "drafter", "reason" },
  *     "vision": { "active", "imageTokenId", "reason", "source",
  *                 "sidecarPath" },
  *     "kvBits",
@@ -501,7 +530,9 @@ void ts_image_buffer_free(uint8_t *bytes, size_t len);
  * does not draft ahead; that null IS the "is it on" test, and drafter
  * ("mtp" | "dflash") is non-null exactly when block is. speculation.reason
  * says why it is off when a caller might have expected otherwise, and is
- * null both when they asked for "off" and when it is on.
+ * null both when they asked for "off" and when it is on. speculation.adaptive
+ * is true when block is the CAP of adaptive depth rather than a fixed round
+ * size, and is always false while block is null.
  *
  * vision.active MEANS "AN IMAGE WOULD BE SERVED", NOT "A TOWER EXISTS", and
  * a host must gate its attach control on it rather than on the family name.
@@ -527,6 +558,13 @@ void ts_image_buffer_free(uint8_t *bytes, size_t len);
  * or "mapped"), and expertCacheSlots the RESOLVED slot count: read both
  * before quoting any throughput or footprint, because one install differs by
  * 44.2 against 51.2 tok/s across slot counts.
+ *
+ * expertSlotsWiring is {requested, active, wiredBytes, reason}: the request
+ * the open used, whether the slot cache is wired, the bytes wired, and why it
+ * is not (null when it is). An auto request that fell back says why here.
+ *
+ * moePrefillBankSupported and moePrefillBankEnabled describe the session's
+ * configuration. Each prompt still needs to pass memory admission.
  *
  * A NON-NULL BLOCK IS A STATEMENT ABOUT THE SESSION, NOT THE NEXT TURN.
  * Acceptance is argmax(target) == proposal, exact only at temperature 0, so
@@ -867,6 +905,24 @@ int32_t ts_humanize(const TsSession *s, const char *draft,
  *             any client opt its own traffic out of the repair this
  *             deployment chose. Applies to every model attached to this
  *             server, including ones attached later.
+ *   prefixReuse
+ *           bool | null. Whether a request continues from the previous
+ *             request's KV cache wherever the prompts agree, instead of
+ *             re-prefilling the transcript (turbospark-server
+ *             --prefix-reuse). null leaves each attached session's own
+ *             open-time decision alone, and a bare session resolves to ON.
+ *
+ *             PROCESS-LEVEL, for the same reason guardrails is: a
+ *             per-request field would let any client opt its own traffic out
+ *             of the isolation this deployment chose. Once a server is
+ *             attached, one engine's KV cache is reachable by every client
+ *             of that server and is not partitioned by API key, so reuse
+ *             can make a match against ANOTHER client's prompt observable
+ *             through response timing. Pass false for a server with more
+ *             than one client; true is for a single trusted client, which
+ *             is the multi-turn shape the optimization is for. Applies to
+ *             every model attached to this server, including ones attached
+ *             later through ts_server_attach_session.
  *   embeddingModel
  *           string | null. An embedding model (.safetensors directory or
  *             alias) to attach at startup, enabling /v1/embeddings.
@@ -1000,6 +1056,9 @@ void ts_server_stop(TsServer *server);
  * ("" when none), kept for a reader written when a server could serve only
  * one; on a two-model server it is half the truth, so show "models".
  *
+ * "embeddingModels" is the subset of "models" that serves /v1/embeddings
+ * (they stay in "models", since hosts detach by those ids).
+ *
  * "imageModels" and "audioModels" are the attached image and audio model ids,
  * in the same canonical form as "models". "authEnabled" is whether an apiKey
  * is required. "traffic" carries the transport counters (and, when the server
@@ -1102,19 +1161,54 @@ int32_t ts_store_root_get(char **out);
  * TURBOSPARK_HOME/HOME resolution. */
 int32_t ts_store_root_set(const char *root);
 
-/* Copies and verifies the managed store at destination, then activates it.
- * The destination must be empty. Progress uses TS_INSTALL_BYTES.
- * Refused (TS_ERR_INVALID_ARGUMENT) while any install is running. */
+/* Retired: model libraries replace moving the store. Copies and verifies the
+ * managed store at destination, then activates it. The destination must be
+ * empty. Progress uses TS_INSTALL_BYTES. Refused (TS_ERR_INVALID_ARGUMENT)
+ * while any install is running, and while any model library is listed or the
+ * library list cannot be read: it deletes the home's install records, which
+ * hold every library's models. */
 int32_t ts_store_relocate(const char *destination, TsInstallCallback cb,
                           void *userdata, char **result_json);
 
 /* The curated catalog as a JSON array, each row carrying "installed". */
 int32_t ts_catalog_json(char **out);
 
-/* What is installed in ~/.turbospark, as a JSON array. */
+/* What text models are installed, as a JSON array sorted by alias, from This
+ * Mac and from every model library (see "model libraries" below). A model whose
+ * library is not connected, or whose folder is gone, stays listed and says so:
+ * filter it out where only a model that can be opened now makes sense. Each row
+ * keeps every key it had before libraries, and gains, in snake_case:
+ *   "library": the library's id, "internal" for This Mac, null for a model
+ *     installed to a folder of the user's choosing ("custom");
+ *   "library_name": its name (This Mac's is the English literal: localize it
+ *     from "location_kind"; "unknown library" and "custom location" likewise);
+ *   "install_id": "<library>:text/<alias>", the identity a move or a forget
+ *     takes;
+ *   "availability": "available", "not_connected" (its library's drive is not
+ *     connected) or "missing" (connected, but the folder is gone, or its
+ *     library is no longer listed);
+ *   "location_kind": "internal", "library", "custom" or "unknown" (a library
+ *     that is no longer listed). Never tell these from "library_name", which a
+ *     drive can set to any text;
+ *   "connect_name": the library, or for a custom folder the volume, to connect
+ *     when "availability" is "not_connected", else null.
+ * "path" is where the install is now for a model in a connected library, and
+ * the last path recorded otherwise. Names come from a drive anyone could have
+ * written, so truncate and escape them for display. Listing never fails for a
+ * drive that is away. */
 int32_t ts_installed_json(char **out);
 
-/* What valid image-generation installs are present in ~/.turbospark. */
+/* What valid image-generation installs are present, from This Mac and from
+ * every model library that is connected, as a JSON array sorted by alias.
+ * Image installs are not recorded, so a library that is not connected simply
+ * has none to list, without a warning or an error. Each row keeps every key it
+ * had before libraries (the shape ts_image_installed_in_json also writes), and
+ * gains, in camelCase:
+ *   "library": the library's id, "internal" for This Mac;
+ *   "libraryName": its name (raw, as for ts_installed_json);
+ *   "installId": "<library>:image/<alias>".
+ * A link on a drive is never followed: an install, its manifest or its image
+ * folder that is a link is not listed. */
 int32_t ts_image_installed_json(char **out);
 
 /* Valid image-generation installs under a folder outside ~/.turbospark: the
@@ -1122,7 +1216,10 @@ int32_t ts_image_installed_json(char **out);
  * directly. Read-only. Fails if `root` is not a directory. */
 int32_t ts_image_installed_in_json(const char *root, char **out);
 
-/* Deletes one valid image-generation install by path or unambiguous alias. */
+/* Deletes one valid image-generation install of This Mac by path or
+ * unambiguous alias. It looks at This Mac only: an image in a model library
+ * is "not installed" here, and is deleted by ts_image_delete_install. Refused
+ * as busy while an install or a model move runs. */
 int32_t ts_image_delete(const char *identifier);
 
 /* The curated pinned image-generation sources, including Z-Image MLX rows. */
@@ -1137,10 +1234,260 @@ int32_t ts_image_install(const char *alias, TsInstallCallback cb, void *userdata
                          char **result_json);
 
 /*
- * Deletes an installed model directory and forgets it from ~/.turbospark.
- * Returns TS_OK on success or TS_ERR_INVALID_ARGUMENT if not installed.
+ * ts_image_install into the library options_json names, {"library": "<id>"}
+ * (see "model libraries" below; NULL means This Mac). The library's staging
+ * folder holds the download and the build, and the install is published into
+ * its "image" folder only when complete. Refusals: not_connected,
+ * library_read_only, unknown_library and library_disconnected, as a code first
+ * in ts_last_error(). The result keeps every key it had, and gains, in
+ * camelCase like ts_image_installed_json rows:
+ *   "library": the library's id, "internal" for This Mac;
+ *   "libraryName": its name (raw);
+ *   "installId": "<library>:image/<alias>".
+ */
+int32_t ts_image_install_with_options(const char *alias, const char *options_json,
+                                      TsInstallCallback cb, void *userdata,
+                                      char **result_json);
+
+/*
+ * Deletes an installed model of This Mac by alias: its directory, and its row
+ * in ~/.turbospark. Returns TS_OK on success or TS_ERR_INVALID_ARGUMENT if not
+ * installed ("unknown_install"). An alias says nothing of where an install is,
+ * so an alias held by an install in a model library is refused with
+ * "use_install_id" and nothing is deleted: delete it with
+ * ts_model_delete_install. Refused as busy while an install or a model move
+ * runs. A This Mac install is deleted only at its own folder (see below).
  */
 int32_t ts_model_delete(const char *alias);
+
+/* ---- model libraries (available on every platform) ----
+ *
+ * A library is a folder on a directly connected drive that holds model files.
+ * "This Mac" is the implicit library at <store root>/models, id "internal",
+ * and cannot be removed. The registry of libraries stays in the store root,
+ * so unplugging a drive never takes it along.
+ *
+ * ERRORS. A refusal puts a stable lowercase code first in ts_last_error(),
+ * "<code>: <human sentence>". Match the text before the first ':' and
+ * localize it; the sentence is for logs, escaped and capped at 300
+ * characters. Every refusal returns TS_ERR_INVALID_ARGUMENT, except busy.
+ *   Location rules (add, import):  same_disk_as_home, network,
+ *     small_file_limit, read_only, not_a_directory, nested, inside_home,
+ *     unknown_volume (the drive cannot be identified).
+ *   Libraries:  unknown_library, internal_library, not_connected, marker (a
+ *     library marker that cannot be read or written), io.
+ *   Installs (ts_model_forget):  not_connected, library_disconnected,
+ *     library_read_only, home_only, io.
+ *   Deletes (ts_model_delete_install, ts_image_delete_install, and the
+ *     alias calls):  not_connected, library_read_only, unknown_install (the id
+ *     names no recorded install, or no image folder), unknown_library (the
+ *     id's library is not listed), io, busy, and for ts_model_delete alone
+ *     use_install_id (the alias is held by an install in a library).
+ *   Installs into a library (the _with_options calls below):  not_connected,
+ *     library_read_only, library_disconnected, unknown_library, and
+ *     alias_elsewhere (the alias and modality are already installed in This
+ *     Mac or another library, so the install is moved instead; the
+ *     sentence names where). home_only is reserved: no install entry point
+ *     returns it today, because embedding and OCR installs take no
+ *     destination.
+ *     Every other failure of an install keeps its message with no code, as it
+ *     had before libraries: TS_ERR_CANCELLED after ts_install_cancel, and for
+ *     the rest TS_ERR_GENERATE (TS_ERR_INVALID_ARGUMENT for audio).
+ *   Moves (ts_model_move):  not_connected (also a drive lost during the move),
+ *     library_read_only, home_only, same_library, unknown_install,
+ *     unknown_library, destination_taken, insufficient_space, verify_failed,
+ *     free_space_unknown, io, and two with their own status: cancelled, with
+ *     TS_ERR_CANCELLED, and busy. A refused, failed or cancelled move leaves
+ *     the original where it was, listed and loadable, and no partial copy.
+ *   Any change while an install or a move runs:  busy, with TS_ERR_BUSY.
+ *     Nothing was changed. The check is made once, before the work, so it is
+ *     not atomic against an install that begins afterwards: the host also stops
+ *     queueing installs while it changes libraries. Listing and discovery are
+ *     never refused.
+ * A call that fails writes nothing to its out-parameter. A null out-parameter
+ * is refused before anything changes.
+ *
+ * INSTALL DESTINATIONS. ts_install, ts_install_repo and ts_image_install
+ * install into This Mac. Their _with_options variants (and
+ * ts_audio_install_with_options) take an options_json of
+ *   {"library": "<id>"}
+ * where the id is the "id" that ts_libraries_json lists for the library, not
+ * its name. An absent key, null, "internal", and a NULL or empty options_json
+ * all mean This Mac. An unknown key, or a value that is not a string, is
+ * refused with TS_ERR_INVALID_ARGUMENT before any work, so a misspelt key
+ * cannot install into This Mac by accident. The destination is settled before
+ * the first request, and a refusal makes none: a library that is not
+ * connected (not_connected), one a newer TurboSpark wrote (library_read_only),
+ * an id the list does not have (unknown_library), or an alias another library
+ * already holds (alias_elsewhere). A drive lost while the install runs stops
+ * it with library_disconnected, and nothing partial is listed. Embedding and
+ * OCR models install into This Mac only and take no destination. An install
+ * into a library clears its install folder first when the folder, left by an
+ * earlier install or by anyone who can write the drive, holds anything but
+ * plain files and folders (a link above all), so a link is unlinked and never
+ * written through. An install with a
+ * destination is registered like any other: ts_install_cancel stops it, a text
+ * install can be paused, and it makes a library change busy. While a model
+ * move runs, every install entry point (including the embedding and audio
+ * ones) is refused as busy, before any request.
+ *
+ * A library's name comes from its marker, which sits on a drive anyone could
+ * have written, so truncate and escape it for display. Aliases and install
+ * ids are the same.
+ */
+
+/* Every library, This Mac first, after locating each one: a JSON array of
+ *   {"id", "name", "root": string|null, "available", "duplicate",
+ *    "modelCount", "isDefault", "lastSeen": "YYYY-MM-DD"|null, "isInternal"}
+ * "root" is null while the library is not connected. "name" of This Mac is the
+ * English literal, so show a localized label when "isInternal". "duplicate"
+ * is true for one listing only: another connected folder carries the same
+ * library marker, and the first is used. Exactly one library has "isDefault".
+ * Bookkeeping trouble (the dates could not be recorded, a library list was set
+ * aside) never fails the call: it is written to stderr as a warning. */
+int32_t ts_libraries_json(char **out);
+
+/* Adds the folder at `path` as a library (or the TurboSpark folder it holds),
+ * adopting the library already there with its models. A new library gets a
+ * "TurboSpark" folder and a marker written by this call. NULL or an empty
+ * `name` derives one: the marker's, else the drive's. Adding a library that
+ * is already listed returns it unchanged. Writes
+ *   {"library": <the object ts_libraries_json lists>, "skipped": [alias, ...]}
+ * where "skipped" lists marker rows not recorded because the alias and kind
+ * already belong to another library. Refusals: the location rules above, plus
+ * marker, io and busy. */
+int32_t ts_library_add(const char *path, const char *name, char **out);
+
+/* Stops listing the library `id` and its models. Never touches a file: the
+ * folder and its marker stay, and adding the drive again lists its models
+ * again. Refusals: unknown_library, internal_library, io, busy. */
+int32_t ts_library_remove(const char *id);
+
+/* Makes `id`, or "internal" for This Mac, the only library new downloads go
+ * to. Refusals: unknown_library, io, busy. */
+int32_t ts_library_set_default(const char *id);
+
+/* The library marker in the standard TurboSpark folder at the top of the volume
+ * at `volume_root`, as
+ *   {"id", "name", "createdOn": "YYYY-MM-DD", "modelCount", "readOnly"}
+ * or the JSON text null when there is none, the marker cannot be read, or the
+ * path does not exist. Reads one file and never walks the drive. "readOnly"
+ * marks a library a newer TurboSpark wrote, which this build can list but not
+ * change. */
+int32_t ts_library_discover_json(const char *volume_root, char **out);
+
+/* Stops listing the install `install_id` (the "installId" of an installed
+ * row, "<library>:<modality>/<alias>") and drops it from its library's
+ * marker. Deletes no file. An id that is not listed is not an error.
+ * Refusals: not_connected, library_read_only, library_disconnected,
+ * home_only, io, busy. */
+int32_t ts_model_forget(const char *install_id);
+
+/* Deletes the text install `install_id` (the "installId" of an installed row,
+ * "<library>:text/<alias>"): its folder, its row in the registry, and its
+ * entry in its library's marker. A vision tower is a text install under its
+ * own suffix and deletes only its own folder. The install is looked for where
+ * its library is NOW, never at the "path" its row recorded, which names the
+ * mount point of the time and can answer for a different drive mounted there:
+ *   - a library that is not connected is refused (not_connected), and so is
+ *     one a newer TurboSpark wrote (library_read_only) and a library root
+ *     that leads off its drive (io). Nothing is touched, the row stays;
+ *   - every folder from the library root to the install is examined without
+ *     following links, and the folder is renamed into the library's own
+ *     ".staging" folder before the row is dropped, so a row that cannot be
+ *     dropped puts the folder back (io). Only then is it removed;
+ *   - a folder that is gone from a connected library, or is reached through a
+ *     link, is not followed or deleted: the row is only forgotten, and the
+ *     call succeeds. "availability" of the row says "missing" for both;
+ *   - a row may name only its alias's own install folder (io otherwise).
+ * A This Mac row ("internal:text/<alias>", or a custom folder) is deleted at
+ * its recorded path as before, but only when that is the alias's own folder in
+ * the models folder, or a custom folder holding nothing TurboSpark manages
+ * (not the home, the models folder, another install or a library), else io.
+ * A custom folder on a volume that is not mounted is not_connected. Audio
+ * installs have their own ts_audio_delete. The install must not be loaded:
+ * this library cannot see sessions, the app unloads it first.
+ * Refused as busy (TS_ERR_BUSY, "busy: ...") while an install or a model move
+ * runs. Codes are listed under "model libraries" above. */
+int32_t ts_model_delete_install(const char *install_id);
+
+/* Deletes the image install `install_id` ("<library>:image/<alias>", the
+ * "installId" of an image row): its folder in the library's "image" folder and
+ * the MLX source folder kept beside it (".<alias>.<revision>.image-source").
+ * Image installs are not recorded, so there is no row to drop. Placed and
+ * removed as ts_model_delete_install does; a folder that is not there, or is
+ * reached through a link, is unknown_install. An id of This Mac
+ * ("internal:image/<alias>") is ts_image_delete of the alias. */
+int32_t ts_image_delete_install(const char *install_id);
+
+/* Moves the install `install_id` (the "installId" of an installed row,
+ * "<library>:<modality>/<alias>"; an image install is
+ * "<library>:image/<alias>") to the library `library_id`, the "id" that
+ * ts_libraries_json lists, or "internal" for This Mac. It copies the install,
+ * checks the copy, lists it under the destination (registry and both library
+ * markers), and only then deletes the original. Embedding and OCR models stay
+ * on This Mac (home_only). A text, vision, audio, or image model that is
+ * loaded must be unloaded by the app first: this library cannot see sessions.
+ *
+ * `free_bytes` is the destination's free space as the app measured it. Below
+ * the model's size the move is refused before anything is copied
+ * (insufficient_space; the sentence has both figures). A NEGATIVE value means
+ * the app could not measure it, and the move is refused as free_space_unknown,
+ * as the command line refuses when df cannot be read.
+ *
+ * `cb` may be NULL. It receives TS_INSTALL_BYTES (`done` of `total` bytes, the
+ * first call 0 of `total`) ON THE CALLING THREAD, between files and chunks; no
+ * TS_INSTALL_STAGE lines are sent. The call blocks until the move ends.
+ *
+ * On success writes
+ *   {"outcome": "moved" | "source_marker_stale" | "source_cleanup_failed",
+ *    "installId": the install's id in its new library,
+ *    "staleMarker": library name       (source_marker_stale; also
+ *                                       source_cleanup_failed, or null),
+ *    "path": folder left over          (source_cleanup_failed only)}
+ * Every outcome means the install is in the destination and listed there.
+ * source_marker_stale: the original library's marker still lists it, which is
+ * harmless. source_cleanup_failed: the original folder at "path" could not be
+ * deleted and is left over; tell the user to delete it by hand.
+ *
+ * A move is registered with the running installs. It is refused as busy
+ * (TS_ERR_BUSY, "busy: ...") while an install or another move runs, and while
+ * it runs every library change and install is refused as busy. The check is
+ * made once, so it is not atomic against an install that begins afterwards.
+ * ts_model_move_cancel stops it: the call then fails with TS_ERR_CANCELLED and
+ * "cancelled: ...", the original untouched and the partial copy removed.
+ *
+ * Codes are listed under "model libraries" above. The unknown_install,
+ * unknown_library and busy refusals come from the registry, not from the
+ * wording of a sentence. Names, aliases and ids in the sentences are escaped
+ * and capped; the JSON above is raw. A failed call writes nothing to
+ * `result_json`. */
+int32_t ts_model_move(const char *install_id, const char *library_id,
+                      int64_t free_bytes, TsInstallCallback cb, void *userdata,
+                      char **result_json);
+
+/* Asks the model move in flight to stop at its next file or chunk boundary.
+ * Returns 1 when a move was running and has been signalled, 0 when none was,
+ * which is not an error and does nothing. A cancel that comes after the copy
+ * was published cannot undo the move, and the move ends "moved". It does not
+ * touch install walks: ts_install_cancel stops those. */
+int32_t ts_model_move_cancel(void);
+
+/* Registers the "models" folder of a store Move Store moved to `root` as a
+ * library, keeping every model where it is, and copies its embedding and OCR
+ * models and its models.json into the home. Safe to call again: it returns the
+ * same library and tries failed copies again. Writes
+ *   {"library": <as ts_libraries_json>, "skipped": [alias],
+ *    "custom": [alias], "needsAdoption": [alias], "copiedToHome": [name],
+ *    "copyFailures": [{"key", "reason"}], "restoredCatalogOverride": bool}
+ * "skipped": rows not recorded because their alias already belongs to another
+ * place. "custom": rows outside the models folder, kept as custom locations.
+ * "needsAdoption": music installs with no receipt, which the app asks the user
+ * to move to This Mac and adopt there. "copyFailures": home copies that
+ * failed, with a capped reason; the import is NOT complete while it is
+ * non-empty, so keep the conversion pending and call again. Refusals: not_connected
+ * (the root or its models folder is not there), nested, marker, io, busy. */
+int32_t ts_store_import_moved_root(const char *root, char **out);
 
 /*
  * Ranks curated models by hardware fit on this machine for `context_window`
@@ -1255,6 +1602,80 @@ int32_t ts_context_ladder_json(const char *model_path, const char *options_json,
 int32_t ts_repo_variants_json(const char *repo, char **out);
 
 /*
+ * Searches Hugging Face for TEXT models. One list request, no repository is
+ * probed: a row carries advisory metadata and NEVER claims a model runs.
+ * Call ts_hub_check_json() on the row the user selects.
+ *
+ *   { "status": "ok" | "offline" | "rateLimited" | "needsAuth" | "error",
+ *     "message", "retryAfterSecs", "fetchedAt", "fromCache", "rejected",
+ *     "results": [ { "repoId", "revision", "downloads", "likes",
+ *                    "hasGguf", "hasMlx", "gated", "baseModel",
+ *                    "architecture", "archHint", "archNeeds",
+ *                    "bundledAliases" } ] }
+ *
+ * A failed request is a STATUS with an empty "results", not an error code,
+ * so a host can say "offline" and "slow down" differently. Error codes are
+ * for a malformed call.
+ *
+ * "archHint" is one of recognized, planned, unrecognized, unknown. It says
+ * whether this port KNOWS the architecture name and nothing about the
+ * checkpoint: quantization, a missing tokenizer and the dense/MoE split of
+ * one GGUF architecture are decided only by the check. Render "recognized"
+ * as "architecture recognized", never as "compatible". "unknown" for a
+ * safetensors row is NOT a negative: the registry's table holds supported
+ * rows only. "archNeeds" is the registry's next step for a "planned" row.
+ *
+ * "bundledAliases" lists curated catalog aliases for the same repository,
+ * so a host can send the user to the verified install.
+ *
+ * `query` is required, at least two characters. `options_json` may be NULL,
+ * "" or "{}". Keys: limit (default 20, at most 50), sort ("downloads"
+ * default, "trending", "likes"), format ("any" default, "gguf", "mlx"),
+ * refresh (true skips the 15-minute cache). Results are cached on disk by
+ * query, so a repeat search inside the window makes no request.
+ */
+int32_t ts_hub_search_json(const char *query, const char *options_json,
+                           char **out);
+
+/*
+ * The compatibility verdict for ONE repository, as a state to render:
+ *
+ *   { "repo", "revision",
+ *     "state": "runnable" | "refused" | "needsAuth" | "unavailable",
+ *     "reason", "kind": "gguf" | "mlx" | null, "file", "architecture",
+ *     "family", "downloadBytes", "trainedContext", "chatTemplate",
+ *     "warnings", "sidecarsMissing", "sidecarRepo",
+ *     "variants": [ same rows as ts_repo_variants_json ], "shardedSkipped",
+ *     "fit" }
+ *
+ * BRANCH ON "state". "refused" carries the probe's own reason. "needsAuth"
+ * (the Hub said 401 or 403) and "unavailable" (offline, 404, rate limited)
+ * are NOT verdicts on the checkpoint: do not show them as incompatible.
+ * Unlike ts_probe_json() this never fails for a repository with several GGUF
+ * files or none, it reports them.
+ *
+ * For GGUF the header is read from one representative file (the best
+ * quality one with kernels), so the verdict is the model's; per-file
+ * "executable" stays on "variants". "sidecarRepo" is set only when the GGUF
+ * repository had no tokenizer.json and options.sidecarHint supplied one that
+ * has it: an install of this result must pass the same repository.
+ *
+ * Seconds, not milliseconds: the file list, one header or config.json, and
+ * for safetensors a HEAD per shard. Call it for the repository the user
+ * picked, not for every search row.
+ *
+ * `options_json` may be NULL, "" or "{}". Keys: contextWindow, loadGuard and
+ * expertCacheSlots (ts_probe_json's spellings, for the "fit"),
+ * sidecarHint ("owner/name", a search row's baseModel), and file (the .gguf
+ * whose header to read instead of the best quantization). The fit is PER
+ * FILE: a smaller quantization can fit where the best one does not, so a
+ * quantization picker calls this again with the user's choice. A file the
+ * repository does not list is a "refused" state, not an error code.
+ */
+int32_t ts_hub_check_json(const char *repo, const char *options_json,
+                          char **out);
+
+/*
  * What a .gguf control vector declares, read from the file alone: no model,
  * no session, no network. A vector is around 1.3 MB, so this is milliseconds.
  *
@@ -1296,12 +1717,36 @@ int32_t ts_kv_quant_supported(int64_t full_head_dim, const uint8_t *layer_mask,
 /*
  * What a model family can do, as JSON, from the spelling installed.json and
  * manifest.json carry (ModelFamily::as_str, e.g. "gemma4", "gptOss"):
- *   { "family": "gemma4", "known": true, "steeringSupported": true }
+ *   { "family": "gemma4", "known": true, "steeringSupported": true,
+ *     "anePrefillSupported": false, "mappedResidencySupported": true,
+ *     "mappedResidencyMeasured": true }
+ * mappedResidencyMeasured: a real-install memory and speed measurement exists
+ * for mapped residency on this family, not only a correctness check.
  * A family this build does not recognise is "known": false with every
- * capability false, not an error. steeringSupported is false off macOS, where
- * no decode flow exists.
+ * capability false, not an error. steeringSupported and
+ * mappedResidencySupported are false off macOS, where no decode flow exists.
  */
 int32_t ts_family_capabilities_json(const char *family, char **out);
+
+/*
+ * Returns 1 if the host chip is an Apple Silicon M4 or newer capable of ANE prefill,
+ * 0 otherwise.
+ */
+int32_t ts_chip_supports_ane_prefill(void);
+
+/*
+ * What ts_session_open would do with an expertResidency request ("auto",
+ * "streamed" or "mapped") on the install at `path`, without opening it:
+ *   { "applicable": true, "requested": "mapped",
+ *     "resolved": "mapped" | "streamed" | null, "refusal": null | "..." }
+ * applicable is false on an install with no routed experts (send "auto").
+ * resolved is null and refusal names why when the open would refuse the
+ * request: a family with no mapped arm, or an expert table past Metal's
+ * working set. A typo in `requested` is TS_ERR_INVALID_ARGUMENT. Always
+ * applicable: false off macOS.
+ */
+int32_t ts_expert_residency_for_install_json(const char *path, const char *requested,
+                                             char **out);
 
 /*
  * What installing `alias` will cost, as {"downloadBytes","installBytes"}.
@@ -1326,6 +1771,25 @@ int32_t ts_install(const char *alias, TsInstallCallback cb, void *userdata,
                    char **result_json);
 
 /*
+ * ts_install into the library options_json names, {"library": "<id>"} (see
+ * "model libraries" above; NULL means This Mac). The destination is settled
+ * before the first request, so a refused one costs none: not_connected,
+ * library_read_only and unknown_library come as a code first in
+ * ts_last_error() (TS_ERR_INVALID_ARGUMENT), and a drive lost while the walk
+ * runs as library_disconnected, with nothing recorded.
+ *
+ * The result is the recorded row, as ts_installed_json lists it, and it
+ * gains, in snake_case like the row beside them:
+ *   "library": the library's id, "internal" for This Mac;
+ *   "library_name": its name (raw);
+ *   "install_id": "<library>:text/<alias>".
+ * ts_install answers with these keys too.
+ */
+int32_t ts_install_with_options(const char *alias, const char *options_json,
+                                TsInstallCallback cb, void *userdata,
+                                char **result_json);
+
+/*
  * Probes and installs an arbitrary Hugging Face repository `repo` under
  * local `alias`. `file` and `sidecar_repo` may be NULL.
  *
@@ -1334,6 +1798,16 @@ int32_t ts_install(const char *alias, TsInstallCallback cb, void *userdata,
 int32_t ts_install_repo(const char *repo, const char *alias, const char *file,
                         const char *sidecar_repo, TsInstallCallback cb,
                         void *userdata, char **result_json);
+
+/*
+ * ts_install_repo into the library options_json names, as
+ * ts_install_with_options. The destination is settled before the probe, the
+ * walk's first request. The result has the same library keys.
+ */
+int32_t ts_install_repo_with_options(const char *repo, const char *alias,
+                                     const char *file, const char *sidecar_repo,
+                                     const char *options_json, TsInstallCallback cb,
+                                     void *userdata, char **result_json);
 
 /*
  * Signals every in-flight install walk to stop. Returns 1 when at least one
@@ -1447,21 +1921,42 @@ int32_t ts_embedding_encode_request_json(const char *model_path,
  * Pinned embedding profiles (crates/catalog/src/embedding_models.json).
  * Writes a JSON array to *out (free with ts_string_free); each row has
  * alias, display_name, family, backend, repository, revision, license,
- * modalities, dimensions, matryoshka_dims, download_bytes, installed_path
- * (null until a verified install exists), can_run and unavailable_reason.
- * An installed alias works anywhere an embedding model path is accepted.
+ * modalities, dimensions, matryoshka_dims, status ("verified", "runs" or
+ * "caveat"), gates (the test targets behind "verified"), download_bytes,
+ * installed_path (null until an install verifies against the CURRENT pin),
+ * install_state ("current", "stale" = older pin or damaged and replaced by a
+ * download, "foreign" = refused by a download, or "absent"),
+ * install_problem (why not, in words), can_run and unavailable_reason. An installed alias works anywhere an embedding model
+ * path is accepted.
  */
 int32_t ts_embedding_catalog_json(char **out);
 
 /*
+ * The verdict for one embedding model argument (a pinned alias or a
+ * directory), without loading it. Writes to *out:
+ *   {"input", "resolved_path", "runnable", "family", "backend",
+ *    "verified", "profile_alias", "refused_because"}
+ * Runnable families: the Core ML EmbeddingGemma 2 export, and BERT or
+ * XLM-RoBERTa encoders (config.json model_type) with CLS pooling. Others are
+ * refused with a reason. "verified" is true only for the verified install of
+ * a catalog profile whose status is "verified". Every embedding open and
+ * server attach applies the same check.
+ */
+int32_t ts_embedding_probe_json(const char *model_path, char **out);
+
+/*
  * Downloads, verifies (size and SHA-256 per file) and installs one pinned
  * embedding profile into models/embeddings/<alias> of the default store.
- * Progress arrives as TS_INSTALL_BYTES; ts_install_cancel stops it with
- * TS_ERR_CANCELLED. Refuses an existing install. Writes
+ * `revision` must be the catalog's current pin for `alias` (the one the host
+ * showed), else TS_ERR_INVALID_ARGUMENT before any work. Refuses an install
+ * that already verifies and a folder TurboSpark did not write; replaces an
+ * older pin of the same alias. Progress arrives as TS_INSTALL_BYTES;
+ * ts_install_cancel stops it with TS_ERR_CANCELLED. Writes
  * {"alias", "path"} to *out.
  */
-int32_t ts_embedding_install(const char *alias, TsInstallCallback callback,
-                             void *userdata, char **out);
+int32_t ts_embedding_install(const char *alias, const char *revision,
+                             TsInstallCallback callback, void *userdata,
+                             char **out);
 
 /*
  * Document OCR on Core ML (Unlimited OCR, macOS 15+).
@@ -1473,9 +1968,29 @@ int32_t ts_embedding_install(const char *alias, TsInstallCallback callback,
  */
 typedef struct TsOcrSession TsOcrSession;
 
+/*
+ * Pinned OCR profiles (crates/catalog/src/ocr_models.json). Writes a JSON
+ * array to *out: alias, display_name, family, backend, repository,
+ * revision, license, download_bytes, installed_path (null until an install
+ * verifies against the current pin), can_run and unavailable_reason.
+ */
+int32_t ts_ocr_catalog_json(char **out);
+
+/*
+ * Downloads, verifies and installs one pinned OCR profile into
+ * models/ocr/<alias> of the default store, under the same revision,
+ * refusal and replacement rules as ts_embedding_install. Writes
+ * {"alias", "path"} to *out.
+ */
+int32_t ts_ocr_install(const char *alias, const char *revision,
+                       TsInstallCallback callback, void *userdata, char **out);
+
 /* Opens a directory holding UnlimitedOcrPageEncoder.mlpackage,
  * UnlimitedOcrDecoder.mlpackage, embeddings.f16, tokenizer.json and
- * config.json. The first open compiles the decoder for this machine. */
+ * config.json, or a pinned OCR alias (resolved only to an install of its
+ * current pin). The first open compiles the decoder for this machine. */
+/* An Unlimited-OCR-2 install, or its text alias, opens the same way and runs on
+ * Metal, with no compile step. */
 int32_t ts_ocr_open(const char *model_path, TsOcrSession **out);
 
 /* Closes a session. Not while a read is in flight. NULL is a no-op. */
@@ -1574,8 +2089,10 @@ typedef struct TsAudioJob TsAudioJob;
  * more ts_audio_job_append() of input PCM, then exactly one ts_audio_job_run()
  * (a second run is refused), then ts_audio_job_close(). Transcription input
  * is 16 kHz mono f32. For a voice-cloning text_to_speech model (family
- * "megatts3") the appended PCM is the mono reference voice at the request's
- * reference_sample_rate, 1 to 30 seconds. One append carries at most 32,000
+ * "megatts3" or "fish_drama3") the appended PCM is the mono reference voice
+ * at the request's reference_sample_rate, 1 to 30 seconds. Drama 3 also
+ * speaks without a reference, so appending nothing is valid there. One append
+ * carries at most 32,000
  * samples and the whole job at most 30 minutes. Appends after run has started
  * are refused.
  *
@@ -1584,12 +2101,36 @@ typedef struct TsAudioJob TsAudioJob;
  * runtime has session entry points for) is refused at open as an unknown
  * variant. Request keys: task, language, text, voice, speed, caption, lyrics,
  * duration_seconds, steps, seed, instruction, reference_text, p_w, t_w,
- * reference_sample_rate, consent; an unrecognised key is refused. Voice
+ * temperature, top_p, top_k, max_frames, reference_sample_rate, consent; an
+ * unrecognised key is refused. Voice
  * cloning requires consent: true (the caller has the right to use the
  * reference voice), reference_sample_rate, and English text; p_w (0.1 to 5)
  * and t_w (0.1 to 10) weigh intelligibility and similarity. Send steps (1 to
  * 100) explicitly: an omitted steps means the request type's 30, not the
  * model's default of 16 (8, 16 and 32 are the app's Fast, Balanced and Best).
+ *
+ * FISH AUDIO DRAMA 3 (family "fish_drama3", Metal only, mono 44.1 kHz). Text
+ * is at most 32,768 bytes and may carry inline cues such as [whispers] and
+ * speaker tags <|speaker:0|> to <|speaker:15|>. A reference makes the request
+ * a clone: it then requires consent: true, reference_sample_rate and
+ * reference_text, the exact words spoken in the reference. Without a
+ * reference the model picks its own voice, and reference_text is refused.
+ * speed must be 1.0, and instruction, p_w and t_w are refused.
+ * steps is ignored. The sampler fields default to the reference recipe
+ * (temperature 0.7, top_p 0.7, top_k 30): temperature is finite and not
+ * negative, top_p is above 0 through 1, top_k is at least 1, and max_frames
+ * (1 through 1024, a frame is 46.4 ms) bounds one chunk and can only shorten
+ * it. Every other family refuses these four keys. A fixed seed repeats a run.
+ *
+ * DERIVED INSTALLS. A catalog profile with a "derived" object (Drama 3)
+ * does not copy its files: the install downloads five small pinned files and
+ * converts the upstream shards on this Mac. It needs derived.working_bytes
+ * free (about 25 GiB), takes tens of minutes, and refuses before any
+ * network work when the space is short. Progress arrives as one bar over
+ * upstream bytes and then over the hash of the converted files, with the
+ * stage in the callback's path. Cancelling stops it at the next chunk and
+ * leaves nothing behind. The receipt records each converted file's size and
+ * sha256, and ts_audio_session_open verifies them like any pinned file.
  *
  * CALLBACK. TsAudioCallback is invoked synchronously on the thread calling
  * ts_audio_job_run, and `kind` says what the other arguments hold:
@@ -1604,8 +2145,11 @@ typedef struct TsAudioJob TsAudioJob;
  *
  * ts_audio_job_run's result is {"transcript": {...} | null, "pcm_format":
  * {"sample_rate", "channels"} | null, "sample_count": number, "seed": number
- * | null}. A cancelled or failed run returns non-zero with the reason in
- * ts_last_error.
+ * | null, "stopped_early": bool}. stopped_early is true when a Drama 3 take
+ * likely stopped speaking before its text ended (a chunk hit its frame cap
+ * without EOS, or the audio held a silence no completed take has); a host can
+ * retake with another seed. It is false for every other model. A cancelled or
+ * failed run returns non-zero with the reason in ts_last_error.
  *
  * CANCELLATION. ts_audio_job_cancel and ts_audio_session_cancel never block
  * and are safe from any thread, including during run. ts_audio_job_status_json
@@ -1614,14 +2158,27 @@ typedef struct TsAudioJob TsAudioJob;
  *
  * OPEN COST. ts_audio_session_open of a managed model hashes its files to
  * verify them before loading, with no progress and no cancel. Call it off the
- * main thread.
+ * main thread. A Drama 3 install is about 24 GB, so this takes longest there.
  */
 typedef void (*TsAudioCallback)(void *userdata, int kind, const char *json,
                                size_t json_len, const float *pcm, size_t count);
 int ts_audio_catalog_json(char **out);
 int ts_audio_capabilities_json(char **out);
+/* The installed audio models, in buckets: installed, needs_adoption,
+ * incompatible, other_audio, and not_connected. A model in a model library is
+ * reported at the folder it has now ("path" under wherever the library is
+ * connected; rows keep "library"). One whose library's drive is not connected
+ * is in not_connected as {"record", "identity", "library_name"} and is never an
+ * error. ts_installed_json's rule for names applies to "library_name". */
 int ts_audio_installed_json(char **out);
+/* The folder of an installed model, after the quick receipt and size check. A
+ * model in a library that is not connected fails with TS_ERR_INVALID_ARGUMENT
+ * and "not_connected: <sentence naming the library>"; any other failure is an
+ * escaped sentence of at most 300 characters. */
 int ts_audio_resolve(const char *identity_json, char **out);
+/* Like ts_audio_delete_legacy and ts_audio_adopt below, this writes the
+ * registry, so it is refused with TS_ERR_BUSY and "busy: ..." while an install
+ * or a model move runs. */
 int ts_audio_delete(const char *identity_json);
 /* Removes an owned install with NO receipt (listed under needsAdoption by
  * ts_audio_installed_json), including one whose payload is damaged. A
@@ -1629,16 +2186,22 @@ int ts_audio_delete(const char *identity_json);
 int ts_audio_delete_legacy(const char *identity_json);
 int ts_audio_adopt(const char *identity_json, char **out);
 int ts_audio_install(const char *identity_json, TsInstallCallback cb, void *userdata, char **out);
-/* ts_audio_install for a profile with "acknowledgments" in the catalog:
- * options_json is {"acknowledged": [id, ...]} with every id the user accepted
- * (NULL or "" means none). A missing id is refused before any download.
- * ts_audio_install passes none, so it refuses such a profile. */
+/* ts_audio_install for a profile with "acknowledgments" in the catalog, and
+ * into a model library: options_json is {"acknowledged": [id, ...],
+ * "library": "<id>"}, both optional (NULL or "" means neither). Every
+ * acknowledgment of the profile needs its id in "acknowledged", and a missing
+ * one is refused before any download. ts_audio_install passes none, so it
+ * refuses such a profile. "library" is the "id" ts_libraries_json lists
+ * ("internal", null or absent is This Mac); see "model libraries" above for
+ * the refusals, which come before the first request. The result is the
+ * recorded row, and it gains "library", "library_name" and "install_id", as
+ * ts_installed_json rows have them. */
 int ts_audio_install_with_options(const char *identity_json, const char *options_json,
                                   TsInstallCallback cb, void *userdata, char **out);
 /* options: task, allow_portable (false), allow_experimental_metal (false),
    optional expected_family. A mismatch refuses the loaded model. MegaTTS3
    opens on Metal; allow_portable lets it fall back to the CPU reference path
-   only when Metal cannot open. */
+   only when Metal cannot open. Drama 3 opens on Metal only. */
 int ts_audio_session_open(const char *path, const char *options_json, TsAudioSession **out);
 /* A cancel request for one ts_audio_session_open_cancellable call. Create it
  * before the open, press Stop from any thread with _cancel (never blocks, a
@@ -1675,6 +2238,41 @@ int ts_audio_job_run(const TsAudioJob *job, TsAudioCallback cb, void *userdata, 
 int ts_audio_job_cancel(const TsAudioJob *job);
 int ts_audio_job_status_json(const TsAudioJob *job, char **out);
 int ts_audio_job_close(TsAudioJob *job);
+
+/* LIVE TRANSCRIPTION STREAMS over a streaming speech install (Parakeet
+ * Unified EN on Core ML, family "parakeet_unified"). Unlike an audio
+ * session, a stream never uses Metal and takes no heavy-work permit, so chat
+ * and image work keep running while it transcribes. Batch opens of the same
+ * install are refused.
+ *
+ * ts_audio_stream_open verifies a managed install exactly as
+ * ts_audio_session_open_cancellable does (`token` and `cb` may be NULL;
+ * options_json may be NULL or {"expected_family":"parakeet_unified"}). The
+ * first load compiles the encoder for the Neural Engine, which can take
+ * minutes and is not interruptible; later loads come from the cache.
+ *
+ * append (1..32000 samples of 16 kHz mono f32) and finish run synchronously
+ * on the calling thread and return JSON in *out (free with ts_string_free):
+ * {"appended_text","closed_words":[{"text","start_seconds","end_seconds"}],
+ *  "open_word","received_seconds","committed_through_seconds","is_final"}.
+ * Joining appended_text across calls gives the transcript; committed text is
+ * never revised. Text trails the audio by the encoder's chunk plus
+ * look-ahead (about 1.1 s) plus compute. A call made while another runs on
+ * the same stream fails with TS_ERR_BUSY. finish commits the tail and
+ * restarts the stream at time zero for a new segment.
+ *
+ * cancel works from any thread and is terminal: the stream refuses further
+ * calls (TS_ERR_CANCELLED for the interrupted one). close is refused while a
+ * call is running; do not start a call concurrently with close. */
+typedef struct TsAudioStream TsAudioStream;
+int ts_audio_stream_open(const char *path, const char *options_json,
+                         const TsAudioOpenToken *token, TsAudioCallback cb,
+                         void *userdata, TsAudioStream **out);
+int ts_audio_stream_append(const TsAudioStream *stream, const float *pcm, size_t count,
+                           char **out);
+int ts_audio_stream_finish(const TsAudioStream *stream, char **out);
+int ts_audio_stream_cancel(const TsAudioStream *stream);
+int ts_audio_stream_close(TsAudioStream *stream);
 
 #ifdef __cplusplus
 }

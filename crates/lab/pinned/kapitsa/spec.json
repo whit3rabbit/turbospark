@@ -1,0 +1,827 @@
+{
+  "schema": "turbospark.lab.pinned/1",
+  "id": "kapitsa.spec",
+  "kernel": "the speculative host machinery: the DFlash2 block drafter (lattice draft, top-16 candidates, rank-256 pair-score selector walk, chain and tree acceptance), the KFlash best-first tree builder with its per-depth calibrated budget and per-Mac cost table, the wide 16/32-row tree verifies, and the batched multi-request verify with the KfBatch row allocation",
+  "kernel_class": "drafter",
+  "repo": "kapitsa",
+  "summary": "One decode cycle drafts a depth-7 lattice over the last committed context (8-row block, anchor plus 7 mask rows), then either walks one chain through the selector's pair scores or builds a best-first tree over the calibrated lattice and verifies it in 8 rows by default (16 or 32 only where NI_KFLASH_ROWS names them and the target runs wide verifies). Trees are the shipping default on every target since PR 187; a per-Mac budget calibrates the drafter's probabilities against its own acceptances and measures each row count's cycle cost. When 2 to 8 requests decode together, one shared verify pass of at most 8 rows covers every member's anchor plus drafts, with KfBatch (2 to 4 members) allocating rows by calibrated survival against a measured marginal cost.",
+  "source": {
+    "url": "https://github.com/nace-ai/kapitsa",
+    "rev": "14d1b03f306032f20426375651c8181a9105857d",
+    "rev_date": "2026-10-25",
+    "license": "Apache-2.0",
+    "files": [
+      "src/model/dflash2.h",
+      "src/model/dflash2.cpp",
+      "src/kernels/spec_dflash.metal",
+      "src/kernels/kflash.h",
+      "src/model/kflash_budget.h",
+      "src/model/kflash_budget.cpp",
+      "src/model/qwen35.h",
+      "src/model/qwen35_v8.cpp",
+      "src/engine/engine.h",
+      "src/engine/engine.cpp",
+      "docs/kflash.md",
+      "docs/kflash-map.md",
+      "docs/benchmarks-m5-max.md",
+      "docs/usage.md",
+      "docs/benchmarks.md",
+      "README.md",
+      "LICENSE"
+    ],
+    "symbols": [
+      "DFlash2Config",
+      "DFlashSeq",
+      "DFlash2::plan_block_rows",
+      "DFlash2::rows16_auto_ok",
+      "DFlash2::set_tree",
+      "DFlash2::encode_draft",
+      "DFlash2::encode_accept",
+      "DFlash2::encode_cycle",
+      "DFlash2::encode_save_scores",
+      "DFlash2::DepthGate",
+      "kf_tree_default",
+      "dfl_top16",
+      "dfl_lattice",
+      "dfl_kf_table",
+      "dfl_walk",
+      "dfl_dist_rows",
+      "dfl_accept",
+      "dfl_depth",
+      "kf_build",
+      "kf_build_impl",
+      "kf_lattice_tokens",
+      "kf_accept",
+      "KfParams",
+      "KfBuildP",
+      "KfAcceptP",
+      "KfCosts",
+      "KfBudget",
+      "KfBatch",
+      "KfBatch::allocate",
+      "KfBatch::plan",
+      "Qwen35::kf_dense_rows",
+      "Qwen35::verify_wide_ok",
+      "Qwen35::set_tree_rows",
+      "Qwen35::encode_verify_multi",
+      "Engine::batch_rows",
+      "Engine::batch_wanted",
+      "Engine::batch_cycle",
+      "Engine::run_batch"
+    ]
+  },
+  "models": [
+    {
+      "name": "Qwen3.8-27B",
+      "quant": "MLX affine 4-bit group 64, 20.2 GB pack, dense; DFlash2 drafter (incoai/Qwen3.8-27B-DFlash2 @015e795 per docs/benchmarks.md) with its projections re-quantized at load to 4-bit g64 (NI_DFLASH_BITS default 4) and a reduced draft head of 98304 id-order LM-head rows; the verify always uses the full head",
+      "family": "qwen35",
+      "machine": "M4 Pro 48 GB (docs/kflash.md primary), M5 Pro 48 GB (wide-row and block A/Bs), M5 Max 128 GB (README table and benchmarks-m5-max.md)",
+      "role": "primary"
+    },
+    {
+      "name": "Qwen3.6-35B-A3B",
+      "quant": "MLX affine 4-bit group 64, MoE 3B active of 256 experts; DFlash2 drafter (incoai/Qwen3.6-35B-A3B-DFlash2 @51ef7b6); the budget picks 1 to 8 live rows per cycle and the verify routes experts for those rows alone; dynamic verify depth tau 0.5 applies here (MoE only)",
+      "family": "qwen35",
+      "machine": "M4 Pro 48 GB",
+      "role": "secondary"
+    },
+    {
+      "name": "Qwen3.5-4B",
+      "quant": "MLX affine 4-bit group 64, dense, 4.6 GB pack; DFlash drafter (the v1 block layout without selector convolutions, e.g. z-lab/Qwen3.5-4B-DFlash, runs as the same 8-row block); KFlash tree and wide-verify checks ran here",
+      "family": "qwen35",
+      "machine": "M4 Pro 48 GB; M1 Pro 16 GB rows in docs/kflash-map.md; M5 Pro A/B in docs/kflash.md",
+      "role": "secondary"
+    }
+  ],
+  "settings": [
+    {
+      "name": "draft_block_rows",
+      "value": 8,
+      "unit": "rows",
+      "condition": "always (kB, the 8-row tile; one 8-row tile of the X8 table per weight read)",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.h:84"
+    },
+    {
+      "name": "draft_block_rows_alt",
+      "value": 16,
+      "unit": "rows",
+      "condition": "only where the whole 16-row path exists (one-slot engine, trees on, tensor path); NI_DFLASH_BLOCK accepts 8, 16 or auto",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.cpp:505"
+    },
+    {
+      "name": "draft_lattice_depth",
+      "value": 7,
+      "unit": "proposals",
+      "condition": "always on the 8-row block: verify depth defaults to block - 1, clamped 1..block-1 (NI_DFLASH_VERIFY or a genuine NI_DFLASH_CAP below full depth override)",
+      "kind": "derived",
+      "source": "src/model/dflash2.cpp:526"
+    },
+    {
+      "name": "draft_context_window",
+      "value": 2048,
+      "unit": "positions",
+      "condition": "always (ring slots = window; slot = position mod 2048)",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.h:84"
+    },
+    {
+      "name": "context_ring_keep",
+      "value": 2047,
+      "unit": "positions",
+      "condition": "always (prefill captures arm at [max(start, n - 2047), n); draft attention lo = P - 2047)",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.h:84"
+    },
+    {
+      "name": "draft_q_heads",
+      "value": 32,
+      "unit": "heads",
+      "condition": "always (DFlash2Config default; the load-time config check pins it)",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.h:21"
+    },
+    {
+      "name": "draft_kv_heads",
+      "value": 8,
+      "unit": "heads",
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/spec_dflash.metal:14"
+    },
+    {
+      "name": "draft_head_dim",
+      "value": 128,
+      "unit": "dims",
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/spec_dflash.metal:15"
+    },
+    {
+      "name": "candidates_per_position",
+      "value": 16,
+      "unit": "candidates",
+      "condition": "always (per-position top-16 of the draft head; DFlash2Config.topk default 16)",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.h:84"
+    },
+    {
+      "name": "selector_rank",
+      "value": 256,
+      "unit": "features",
+      "condition": "always (candidate_selector.hidden_projection output rank and the two codebooks)",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.h:84"
+    },
+    {
+      "name": "selector_pair_scores_per_position",
+      "value": 256,
+      "unit": "scores",
+      "condition": "always (the selector's [16 x 16] pair-score lattice per proposal position; edges buffer D * 256 floats)",
+      "kind": "derived",
+      "source": "src/model/dflash2.cpp:711"
+    },
+    {
+      "name": "walk_depth",
+      "value": 7,
+      "unit": "proposals",
+      "condition": "always (the chain walk loop over 7 positions; the walk's score is U_p[k] + E[p][j_p][k])",
+      "kind": "hardcoded",
+      "source": "src/kernels/spec_dflash.metal:1543"
+    },
+    {
+      "name": "walk_temperature_ratio",
+      "value": 1.0,
+      "unit": "ratio",
+      "condition": "always at T > 0 (the walk samples its chain at T_q = walk_tf_ * T; NI_DFLASH_QT overrides; 0 drafts the argmax chain with one-hot q)",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.h:414"
+    },
+    {
+      "name": "reduced_draft_head_rows",
+      "value": 65536,
+      "unit": "rows",
+      "condition": "default when NI_DFLASH_HEAD_IDS names a ranked id list (most useful first); NI_DFLASH_HEAD=n overrides; the verify always uses the full head so outputs are unchanged",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.h:93"
+    },
+    {
+      "name": "reduced_draft_head_rows_id_order",
+      "value": 98304,
+      "unit": "rows",
+      "condition": "default when no NI_DFLASH_HEAD_IDS (id order = BPE merge order; covers 99.8-100% of generated tokens per docs/kflash.md and the build_head comment)",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.h:93"
+    },
+    {
+      "name": "chain_greedy_accept_rule",
+      "value": "longest prefix with draft token equal to the verify row's argmax (ties to the lowest id as in plain decoding); the token after the prefix is the verify argmax and becomes the bonus or correction",
+      "unit": null,
+      "condition": "always at T = 0 (K = 1..7 proposals verified)",
+      "kind": "hardcoded",
+      "source": "src/kernels/spec_dflash.metal:1732"
+    },
+    {
+      "name": "tree_accept_rule",
+      "value": "from the root descend into the child whose token equals the target's own sample at that row (argmax at T = 0; the plain sampler's draw keyed by position and depth at T > 0), so emitted tokens are plain decoding's whatever the tree",
+      "unit": null,
+      "condition": "always (kf_accept; the tree is fixed before any sample is drawn)",
+      "kind": "hardcoded",
+      "source": "src/kernels/kflash.h:281"
+    },
+    {
+      "name": "dyn_depth_tau",
+      "value": 0.5,
+      "unit": "cumulative probability",
+      "condition": "MoE targets only (dense 0: dense reads every weight whatever the row count); NI_DFLASH_DYN overrides; 0 = off; dfl_depth keeps proposals while the cumulative survival >= tau",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.cpp:549"
+    },
+    {
+      "name": "dyn_depth_tau_sampled",
+      "value": 0.3,
+      "unit": "cumulative probability",
+      "condition": "MoE targets at T > 0 (exact rule dfl_depth); NI_DFLASH_DYN_T overrides; chosen from a 35B offline replay where 0.25/0.3/0.35 were within 0.4%",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.cpp:556"
+    },
+    {
+      "name": "dyn_depth_rule",
+      "value": "0 on M5-class (apple10) GPUs, 2 elsewhere",
+      "unit": null,
+      "condition": "always (rule 0: inclusive product of softmax walk scores; rule 2: exclusive product of the walk's q; NI_DFLASH_DYN_RULE overrides, 1 is tests-only)",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.cpp:557"
+    },
+    {
+      "name": "depth_gate_break_even",
+      "value": 0.0,
+      "unit": "marginal acceptance",
+      "condition": "off by default; NI_DFLASH_GATE=<p>[:<win>] enables (needs an MoE target with NI_DFLASH_DYN > 0 and chains); caps depth at the first position whose rolling marginal acceptance falls below p",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.h:396"
+    },
+    {
+      "name": "depth_gate_window",
+      "value": 64,
+      "unit": "cycles",
+      "condition": "always when the gate is on (one bit per cycle per position; the first win cycles are warmup and keep the static depth)",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.h:267"
+    },
+    {
+      "name": "depth_gate_min_observations",
+      "value": 4,
+      "unit": "cycles",
+      "condition": "always when the gate is on (a position caps only with at least this many kept observations)",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.h:268"
+    },
+    {
+      "name": "attn_splits_default",
+      "value": 16,
+      "unit": "splits",
+      "condition": "always (draft attention context splits; NI_DFLASH_ATTN_SPLITS overrides, clamped 1..32; the mma variant pins 32 and the old scalar one 8)",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.h:438"
+    },
+    {
+      "name": "attn_splits_max",
+      "value": 32,
+      "unit": "splits",
+      "condition": "always (partial buffers max_splits_)",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.h:436"
+    },
+    {
+      "name": "attn_chunk_positions",
+      "value": 256,
+      "unit": "positions",
+      "condition": "always (kGpuChunk for GPU-driven passes; the host plan's min_chunk default is 256 per the dfl_attn_plan contract; chunks round to multiples of 32)",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.h:91"
+    },
+    {
+      "name": "prefill_commit_row_threshold",
+      "value": 256,
+      "unit": "rows",
+      "condition": "prompt rows at or below this commit through 8-row chunks of the 8-row GEMM (it streams each weight once per 8 rows at ~180 GB/s); NI_DFLASH_PF8 overrides",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.cpp:1379"
+    },
+    {
+      "name": "uniform_salt_walk",
+      "value": "0x57a1c3e5",
+      "unit": null,
+      "condition": "always at T > 0 (the sampled walk draws proposal p with the uniform of position P+1+p keyed by this salt)",
+      "kind": "hardcoded",
+      "source": "src/kernels/spec_dflash.metal:17"
+    },
+    {
+      "name": "uniform_salt_accept",
+      "value": "0x3c6ef372",
+      "unit": null,
+      "condition": "always at T > 0 (acceptance of proposal i uses the uniform of position P+1+i)",
+      "kind": "hardcoded",
+      "source": "src/kernels/spec_dflash.metal:1633"
+    },
+    {
+      "name": "uniform_salt_residual",
+      "value": "0xa54ff53a",
+      "unit": null,
+      "condition": "always at T > 0 (the residual / bonus draw uses the uniform of position P+1+a)",
+      "kind": "hardcoded",
+      "source": "src/kernels/spec_dflash.metal:1634"
+    },
+    {
+      "name": "tree_max_rows",
+      "value": 32,
+      "unit": "rows",
+      "condition": "always (the tree descriptor's row capacity, the builder's clamp and the KfParams table bound)",
+      "kind": "hardcoded",
+      "source": "src/kernels/kflash.h:43"
+    },
+    {
+      "name": "tree_rows_cap_dense",
+      "value": 32,
+      "unit": "rows",
+      "condition": "dense Qwen targets with the wide verify (set_tree_rows rounds any capacity above 16 up to this)",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.h:296"
+    },
+    {
+      "name": "verify_rows_max_dense",
+      "value": 8,
+      "unit": "rows",
+      "condition": "always on dense targets (kMaxVerify; a plain chain verify and one 8-row MMA tile)",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.h:294"
+    },
+    {
+      "name": "tree_row_capacity_default",
+      "value": 8,
+      "unit": "rows",
+      "condition": "always (KfBudget's default max_rows before a target raises it; the builder clamps 1..32)",
+      "kind": "hardcoded",
+      "source": "src/model/kflash_budget.h:144"
+    },
+    {
+      "name": "wide_tree_rows_optin",
+      "value": [8, 16, 32],
+      "unit": "rows",
+      "condition": "only when NI_KFLASH_ROWS names them and the target runs wide tree verifies; the default stays the single 8-row tile (one | 1<<15 | 1<<31 allowed)",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35_v8.cpp:248"
+    },
+    {
+      "name": "builder_children_per_row_max",
+      "value": 32,
+      "unit": "children",
+      "condition": "always (K clamped to 32; the lattice drafters use 16; frontier arrays are kMaxRows * 32)",
+      "kind": "hardcoded",
+      "source": "src/kernels/kflash.h:130"
+    },
+    {
+      "name": "calibration_depths",
+      "value": 32,
+      "unit": "depths",
+      "condition": "always (alpha, beta and cost indexed 1..32; a node's calibrated probability is p = sigmoid(alpha_d + beta_d logit q))",
+      "kind": "hardcoded",
+      "source": "src/kernels/kflash.h:71"
+    },
+    {
+      "name": "calibration_refit_interval_cycles",
+      "value": 16,
+      "unit": "cycles",
+      "condition": "always (Newton refit of alpha/beta when 16 cycles of records accumulate; 2048 records kept per depth)",
+      "kind": "hardcoded",
+      "source": "src/model/kflash_budget.cpp:312"
+    },
+    {
+      "name": "calibration_records_per_depth",
+      "value": 2048,
+      "unit": "records",
+      "condition": "always (ring per depth, KfBudget and KfBatch)",
+      "kind": "hardcoded",
+      "source": "src/model/kflash_budget.h:113"
+    },
+    {
+      "name": "tree_size_objective",
+      "value": "live rows n maximize E(n) - rate * cost[n] over the allowed n, where E(n) = 1 + the summed calibrated path probabilities of the first n-1 nodes; at rate 0 the rule is E(n) / cost[n]; force_n (cost exploration) overrides",
+      "unit": null,
+      "condition": "always (rate is the recent cycles' tokens per ms; before 16 measured cycles the rate is 0)",
+      "kind": "derived",
+      "source": "src/kernels/kflash.h:204"
+    },
+    {
+      "name": "budget_rate_warmup_cycles",
+      "value": 16,
+      "unit": "cycles",
+      "condition": "always (the rate needs 16 measured cycles of this process; before that the builder falls back to E(n) / cost[n])",
+      "kind": "hardcoded",
+      "source": "src/model/kflash_budget.cpp:379"
+    },
+    {
+      "name": "budget_explore_cycles",
+      "value": 3,
+      "unit": "cycles",
+      "condition": "each allowed row count is verified this many times before the size rule decides (wide verifies use 2; KfBudget::kExplore)",
+      "kind": "hardcoded",
+      "source": "src/model/kflash_budget.h:92"
+    },
+    {
+      "name": "budget_save_every_cycles",
+      "value": 256,
+      "unit": "cycles",
+      "condition": "always (budget cache save cadence, KfBudget and KfBatch; cache keyed per model, drafter, bit depth, block and chip)",
+      "kind": "hardcoded",
+      "source": "src/model/kflash_budget.h:86"
+    },
+    {
+      "name": "wide_capacity_stats_every",
+      "value": 8,
+      "unit": "cycles",
+      "condition": "when a wide target runs capacity-8 (narrow) cycles: one cycle in 8 builds max_rows nodes so E(8), E(16), E(32) statistics feed the capacity decision",
+      "kind": "hardcoded",
+      "source": "src/model/kflash_budget.h:136"
+    },
+    {
+      "name": "budget_row_remeasure_interval",
+      "value": 2048,
+      "unit": "cycles",
+      "condition": "wide verifies: cycles between re-measurements of the stalest allowed row count",
+      "kind": "hardcoded",
+      "source": "src/model/kflash_budget.h:139"
+    },
+    {
+      "name": "min_measured_row_cost_ms",
+      "value": 0.01,
+      "unit": "ms",
+      "condition": "always (a measured row cost is clamped to at least 0.01 ms before it reaches the builder; unmeasured counts read 1.0)",
+      "kind": "hardcoded",
+      "source": "src/model/kflash_budget.cpp:390"
+    },
+    {
+      "name": "batch_max_members",
+      "value": 8,
+      "unit": "requests",
+      "condition": "batched decode engages only for 2..8 decoding requests (NI_BATCH=0 takes turns; unset requires the drafter to have been measured batched)",
+      "kind": "hardcoded",
+      "source": "src/engine/engine.cpp:1149"
+    },
+    {
+      "name": "batch_verify_rows_max",
+      "value": 8,
+      "unit": "rows",
+      "condition": "always (one shared verify pass over every member's anchor plus drafts; rows > 8 refuses)",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35_v8.cpp:1278"
+    },
+    {
+      "name": "batch_rows_cap_total",
+      "value": 8,
+      "unit": "rows",
+      "condition": "always (a table row count clamps to 8 / members when members * rows exceed 8)",
+      "kind": "hardcoded",
+      "source": "src/engine/engine.cpp:1193"
+    },
+    {
+      "name": "batch_budget_sentinel",
+      "value": 9,
+      "unit": "sentinel",
+      "condition": "DFlash2 drafters with 2..4 members when the KFlash batch budget is on (NI_BATCH_KF default on): each member drafts its 7-token chain and KfBatch allocates the shared rows per cycle",
+      "kind": "hardcoded",
+      "source": "src/engine/engine.h:583"
+    },
+    {
+      "name": "batch_budget_members_max",
+      "value": 4,
+      "unit": "requests",
+      "condition": "always (KfBatch allocates rows for 2..kMembers members; 5..8 members fall to the fixed tables, 1 row each past 4)",
+      "kind": "hardcoded",
+      "source": "src/model/kflash_budget.h:168"
+    },
+    {
+      "name": "batch_budget_rows",
+      "value": 8,
+      "unit": "rows",
+      "condition": "always (rows one batched verify pass runs, Qwen35::encode_verify_multi)",
+      "kind": "hardcoded",
+      "source": "src/model/kflash_budget.h:169"
+    },
+    {
+      "name": "batch_drafts_per_member",
+      "value": 7,
+      "unit": "drafts",
+      "condition": "always (a member's drafts per batched cycle: the walk's chain, kB - 1)",
+      "kind": "hardcoded",
+      "source": "src/model/kflash_budget.h:170"
+    },
+    {
+      "name": "batch_budget_explore_cycles",
+      "value": 3,
+      "unit": "cycles",
+      "condition": "per allowed row count N and member count M before the allocation rule decides",
+      "kind": "hardcoded",
+      "source": "src/model/kflash_budget.h:171"
+    },
+    {
+      "name": "batch_budget_refresh_cycles",
+      "value": 64,
+      "unit": "cycles",
+      "condition": "every 64th cycle of M members re-verifies and re-measures the row count measured longest ago",
+      "kind": "hardcoded",
+      "source": "src/model/kflash_budget.h:172"
+    },
+    {
+      "name": "batch_budget_floor_drafts",
+      "value": 0,
+      "unit": "drafts",
+      "condition": "default; NI_BATCH_KF_FLOOR=1 gives every member at least one draft row within the 8 rows",
+      "kind": "hardcoded",
+      "source": "src/model/dflash2.cpp:601"
+    },
+    {
+      "name": "batch_rows_table_dense",
+      "value": [0, 0, 4, 0, 2],
+      "unit": "rows per member",
+      "condition": "fallback when the batch budget is off (NI_BATCH_KF=0) or the drafter is not DFlash2: dense DFlash2 by member count 1..4 (0 = take turns); 5+ members take 1 row each; M4 Pro measured basis in the batch_rows comment",
+      "kind": "measured",
+      "source": "src/engine/engine.cpp:1189"
+    },
+    {
+      "name": "batch_rows_table_moe",
+      "value": [0, 0, 4, 2, 2],
+      "unit": "rows per member",
+      "condition": "same fallback for MoE DFlash2 (35B) by member count 1..4",
+      "kind": "measured",
+      "source": "src/engine/engine.cpp:1189"
+    },
+    {
+      "name": "batch_rows_table_lilicorr",
+      "value": [0, 0, 4, 2, 1],
+      "unit": "rows per member",
+      "condition": "same fallback for the LiLiCorr drafter (Nemotron) by member count 1..4",
+      "kind": "measured",
+      "source": "src/engine/engine.cpp:1189"
+    },
+    {
+      "name": "batch_allocation_rule",
+      "value": "every member verifies its anchor and the floor drafts, then drafts in decreasing calibrated survival (ties: earlier position, then earlier member, so a member's drafts stay a prefix of its chain), each while survival >= rate * (cost(N+1) - cost(N)); at rate 0 while the expected tokens per ms still grow; up to 8 rows in all",
+      "unit": null,
+      "condition": "always under the batch budget (KfBatch::allocate; greedy members take the drafter KfBudget's calibration, sampled members the budget's own)",
+      "kind": "derived",
+      "source": "src/model/kflash_budget.cpp:514"
+    },
+    {
+      "name": "batch_sampled_accept_exact",
+      "value": true,
+      "unit": null,
+      "condition": "always (NI_BATCH_EXACT defaults on): sampled members keep the single-stream cycle's exact speculative acceptance; greedy members keep a draft row while it equals the verify argmax",
+      "kind": "hardcoded",
+      "source": "src/engine/engine.cpp:1339"
+    },
+    {
+      "name": "auto_slots",
+      "value": 4,
+      "unit": "conversations",
+      "condition": "default slot count when none are asked for and memory allows (auto_slots walks down from kAutoSlots; the fit check counts 2)",
+      "kind": "hardcoded",
+      "source": "src/engine/engine.h:85"
+    }
+  ],
+  "gates": [
+    {
+      "condition": "KFlash trees are the default on every target; NI_KFLASH=0 or NI_DFLASH_TREE=0 keeps chains, and a genuine NI_DFLASH_CAP=<n> below the full depth also keeps chains",
+      "source": "src/model/dflash2.cpp:399"
+    },
+    {
+      "condition": "a genuine NI_DFLASH_CAP below the full depth returns false from kf_tree_default: a capped verify cannot tree the lattice, even where the trees are explicitly asked",
+      "source": "src/model/dflash2.cpp:394"
+    },
+    {
+      "condition": "a cycle runs the tree only when tree_ = on && block_drafter_ok && verify_tree_ok && verify_depth() == block() - 1 (the full verify depth)",
+      "source": "src/model/dflash2.cpp:1456"
+    },
+    {
+      "condition": "wide rows beyond 8 need the tree default on, v8_wide_ok_c (dense non-MoE, head_dim 256, hq/hkv <= 16, split GDN, MMA attention, X8 widths multiple of 256) and NI_KFLASH_ROWS naming 16 or 32; otherwise one 8-row tile",
+      "source": "src/model/qwen35_v8.cpp:247"
+    },
+    {
+      "condition": "the 16-row drafting block auto-selects only on a one-slot engine (slots == 1), dense target, trees on at depth 15, no NI_DFLASH_VERIFY below 15, no NI_DFLASH_ATTN=scalar, and the matrix-unit tensor path (tw_ok)",
+      "source": "src/model/dflash2.cpp:894"
+    },
+    {
+      "condition": "a 16-row drafting block has no batched cycle: batch_rows returns 0 and requests take turns",
+      "source": "src/engine/engine.cpp:1152"
+    },
+    {
+      "condition": "a request joins the batch when at least 2 requests are decoding and batch_rows() > 0",
+      "source": "src/engine/engine.cpp:1205"
+    },
+    {
+      "condition": "a tree verify of R rows is legal when R <= 8, or R is a multiple of 8 within verify_rows_max() on a target of verify_wide_ok()",
+      "source": "src/model/qwen35.h:340"
+    }
+  ],
+  "measured": [
+    {
+      "metric": "decode_tok_s_gain_pct",
+      "value": 6.0,
+      "model": "Qwen3.8-27B 4-bit",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "greedy, KFlash trees vs the build just before (chain), over three prompts: code +6%, prose +16%, a long agent turn -3%",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash.md"
+    },
+    {
+      "metric": "tree_vs_main_gain_pct",
+      "value": "27B: +9.9 code, +18.6 prose, +5.4 agent; 4B: +9.8, +10.8, +3.7",
+      "model": "Qwen3.8-27B 4-bit and Qwen3.5-4B 4-bit",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "trees of 7 nodes vs main, interleaved, output identical to plain decoding",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash-map.md"
+    },
+    {
+      "metric": "tokens_per_cycle_gain_pct",
+      "value": "8-17 on short answers for 1-6% more GPU time per cycle on the dense models (6-12% on the 35B); agent turns +2-10% tokens for 5-16% time",
+      "model": "Qwen3.8-27B, Qwen3.5-4B, Qwen3.6-35B-A3B",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "greedy, trees vs old main, per-prompt; agent turns land between -5% and +3% tok/s",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash.md"
+    },
+    {
+      "metric": "verify_ms_by_rows",
+      "value": [74.4, 70.6, 71.6, 74.3],
+      "model": "Qwen3.8-27B 4-bit",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "verify pass of 1, 2, 4 and 8 rows vs 67.3 ms for a plain one-row decode step (GPU time from tools/batch_cost on an earlier build, after an 85-token prompt): 8 rows cost about 1.1x one row",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash.md"
+    },
+    {
+      "metric": "moe_cycle_ms_by_live_rows",
+      "value": [14.8, 16.4, 18.0, 19.1, 19.5, 21.2, 22.3, 23.1],
+      "model": "Qwen3.6-35B-A3B 4-bit",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "whole cycle (draft plus verify) with 1 to 8 live rows, from the budget's measured cost table: 8 rows cost 1.56x one row",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash.md"
+    },
+    {
+      "metric": "wide_rows_tok_s",
+      "value": [64.9, 42.3, 22.7],
+      "model": "Qwen3.8-27B 4-bit",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "experimental 16- and 32-row tree verifies at 8, 16 and 32 rows, tokens per GPU second; 5.16, 5.81 and 6.01 tokens per cycle for 79.5, 137 and 264 ms per cycle, so 32 rows cost 3.32x the 8-row cycle; an experiment not in the release",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash.md"
+    },
+    {
+      "metric": "wide_rows_m5pro_median_tok_s",
+      "value": "72.9 vs 70.5",
+      "model": "Qwen3.8-27B 4-bit",
+      "machine": "M5 Pro 48 GB (Mac17,8, macOS 26.5.2)",
+      "conditions": "NI_KFLASH_ROWS=8,16,32 vs the 8-row default, 256-token coding prompt, greedy, three interleaved runs each: +3% at +12% tokens per cycle (5.44 vs 4.76); ranges overlap so the gain is suggestive, not settled; 16-row verify cycles 74.4 ms, 32-row 115.4 ms; default 70.6/70.5/68.8 tok/s, wide arm 69.3/74.7/72.9; all six runs wrote plain decoding's greedy ids",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash.md"
+    },
+    {
+      "metric": "block16_harness_gain_pct",
+      "value": 15.0,
+      "model": "Qwen3.8-27B 4-bit",
+      "machine": "M5 Pro 48 GB (Mac17,8, macOS 26.5.2)",
+      "conditions": "harness corpus, NI_DFLASH_BLOCK=16 (87.59 tok/s greedy, 85.6-90.4) vs 8 (76.07, 71.7-76.8), ten interleaved runs each under the GPU lock; +11% at T 0.6 (79.77 vs 71.70); 6.33 vs 5.17 tokens per cycle at 77.7-104 vs 70.3-85 ms cycles (1.10x the cycle for 1.22x the tokens)",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash.md"
+    },
+    {
+      "metric": "tile_pair_mlp_cycle_ms",
+      "value": [16.7, 17.92, 24.96],
+      "model": "Qwen3.8-27B 4-bit",
+      "machine": "M5-class Mac (author's timings, not re-run by the reviewers)",
+      "conditions": "verify cycle on a coding answer at 8, 16 and 32 rows with the qmm8t2 tile-pair MLP (1.07x and 1.49x the 8-row cycle, against 1.73x and 3.32x before it)",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash.md"
+    },
+    {
+      "metric": "m5_max_greedy_tok_s",
+      "value": 83.7,
+      "model": "Qwen3.8-27B 4-bit",
+      "machine": "M5 Max 128 GB",
+      "conditions": "stock harness, median of 5 valid trials (79.6-92.7); sampled T 0.6 median 72.9 (65.7-83.5); every run flagged for background GPU contention; builds predate the KFlash default and the M5 prefill kernels, so read as the 0.1.36 record",
+      "provenance": "upstream_reported",
+      "source": "docs/benchmarks-m5-max.md"
+    },
+    {
+      "metric": "readme_decode_tok_s",
+      "value": [63, 140],
+      "model": "Qwen3.8-27B 4-bit with KFlash",
+      "machine": "M4 Pro 48 GB and M5 Max 128 GB",
+      "conditions": "README catalog tables, decode of a 512-token coding answer at T 0.6 (63 tok/s on the M4 Pro with 396 tok/s 4K prefill; 140 on the M5 Max with 459)",
+      "provenance": "upstream_reported",
+      "source": "README.md"
+    },
+    {
+      "metric": "batch_three_requests_gain_pct",
+      "value": "27B +15-23, 35B +16-20",
+      "model": "Qwen3.8-27B 4-bit and Qwen3.6-35B-A3B 4-bit",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "three requests decoding at once sharing one verify pass vs the requests taking turns; with two or four requests the gain is between -1% and +4%",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash.md"
+    },
+    {
+      "metric": "batch_table_27b_m4pro_tok_s",
+      "value": "2 at once 4 rows each 61-65 vs 57-59 turns; 3 at once 2 rows each 52-54 vs 56 (turns win); 4 at once 2 rows each 63-65 vs 55-56",
+      "model": "Qwen3.8-27B 4-bit (DFlash2)",
+      "machine": "M4 Pro 48 GB (MacBook Pro)",
+      "conditions": "512-token greedy replies to code prompts, bench/batch/concurrency.py streams, tok/s in all against the requests taking turns; the fixed table replaces the batch budget on this model at 3 members",
+      "provenance": "upstream_reported",
+      "source": "src/engine/engine.cpp"
+    },
+    {
+      "metric": "calibration_acceptance_at_q07",
+      "value": [0.55, 0.52, 0.38],
+      "model": "Qwen3.6-35B-A3B 4-bit",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "calibrated chance the target accepts a node the drafter scores q = 0.7, at depths 1, 2 and 4 (below the diagonal p = q; calibration fitted on this Mac's acceptances, refit every 16 cycles on the last 2048 records per position)",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash.md"
+    },
+    {
+      "metric": "budget_rows_by_text",
+      "value": "code mean 6.4 rows, prose mean 4.8 rows (52% of cycles at 5), agent turns 6.3-7.1",
+      "model": "Qwen3.6-35B-A3B 4-bit",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "the budget's chosen tree size over two greedy runs per prompt; expected vs measured tokens per cycle 3.92/3.98, 2.87/2.72, 4.44/4.39, 4.98/5.00, 3.49/3.27",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash.md"
+    },
+    {
+      "metric": "sampled_tree_gain_pct",
+      "value": "+9.6 on the 4B, +2.8 on the 27B",
+      "model": "Qwen3.5-4B 4-bit and Qwen3.8-27B 4-bit",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "sampled decoding with trees vs the chain, same seed; trees accept by matching the target's own draw instead of a ratio test",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash.md"
+    },
+    {
+      "metric": "replay_bigger_trees_gain_pct",
+      "value": "+4 at 7 nodes, +16 at 15, +21 at 31 (agent session); +9 / +23 / +28 (code)",
+      "model": "Qwen3.8-27B 4-bit",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "tokens per cycle over the chain in replay, before the cost of the extra rows",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash-map.md"
+    },
+    {
+      "metric": "pin_wide_basis_tok_s",
+      "value": "69.3 narrow vs 90.6 wide",
+      "model": "Qwen3.8-27B 4-bit (16-row drafting block)",
+      "machine": "one Mac (docs/kflash.md quotes the same episode as 69.3 vs the 8-row block's 76.5, and 93.5 with all 72 cycles at 16 rows)",
+      "conditions": "a budget cost table written during a burst of foreign GPU load ran the 16-row block at capacity 8; pin_wide() fixes the capacity at the block's width so the fallback is not a choice",
+      "provenance": "upstream_reported",
+      "source": "src/model/kflash_budget.h"
+    }
+  ],
+  "lab_mapping": [
+    {
+      "setting": "draft_lattice_depth",
+      "maps_to": "workload speculation.block (Speculation.block, crates/lab/src/workload.rs:111) and tslab tree-replay --serve-block (crates/lab/src/tree_replay.rs:106)",
+      "env": null,
+      "note": "kapitsa's default depth is 7 proposals over an 8-row verify; our block axis sweeps 2/4/7/8 on the same anchor-plus-drafts row layout, so tree-replay's DFlash2 depth-7 rows map onto this entry's lattice directly"
+    },
+    {
+      "setting": "wide_tree_rows_optin",
+      "maps_to": "tslab tree-replay shape axis (chain / best-first / oracle); no verify-rows axis beyond the block yet",
+      "env": null,
+      "note": "kapitsa's 16/32-row verifies fill the same rows our oracle replay prices; our replay keeps the row count at the block, so their wide-verify cost table (79.5/137/264 ms) is the missing axis"
+    },
+    {
+      "setting": "dyn_depth_tau",
+      "maps_to": "TURBOSPARK_ADAPTIVE_DEPTH (crates/lab/src/knobs.rs:240, values like 8,6,4,2)",
+      "env": "TURBOSPARK_ADAPTIVE_DEPTH",
+      "note": "kapitsa's tau keeps rows by cumulative survival and is MoE-only; the closer analogue for dense chains is its opt-in NI_DFLASH_GATE (break-even on rolling marginal acceptance), while our AdaptiveDepth is a host controller on the dense 27B under our cost curve"
+    },
+    {
+      "setting": "batch_verify_rows_max",
+      "maps_to": "none yet (our batched multi-request verify shares one pass; no per-member row-allocation axis in the lab workloads)",
+      "env": null,
+      "note": "kapitsa's KfBatch allocation rule (survival >= rate * marginal cost, 8 rows in all) is the mechanism our batched_forward probe does not yet price"
+    }
+  ],
+  "docs": [
+    "docs/KAPITSA_KERNELS.md#kflash-tree-verify",
+    "docs/KAPITSA_KERNELS.md#measured-dflash2-lattice-replay-and-the-check-as-a-lab-command-2026-10-24",
+    "docs/KAPITSA_KERNELS.md#costing-the-tree-dflash2-at-depth-7-2026-10-24",
+    "docs/KAPITSA_KERNELS.md#measured-kapitsa-on-this-machine-2026-10-22",
+    "docs/KAPITSA_KERNELS.md#measured-dflash2-and-the-flat-verify-2026-10-22",
+    "docs/KAPITSA_KERNELS.md#prompt-lookup"
+  ],
+  "notes": "Doc checks and caveats, sided with the source. (1) Our KAPITSA_KERNELS.md 'Measured: kapitsa on this machine' reports 90.7 tok/s greedy for the 27B from kapitsa's own harness on our M4 Max; that number is ours, not in the clone, so it is excluded from measured. The clone's own 27B numbers are the README catalog rows (63 tok/s at T 0.6 on the M4 Pro, 140 on the M5 Max), the formal M5 Max run (83.7 greedy / 72.9 sampled, contention-flagged, on builds before KFlash was the default), and the kflash.md A/Bs. (2) The clone disagrees with itself on the batch gain: docs/kflash.md says the 27B gained 15-23% with three requests at once (and the README says up to +23%), while the engine comment (src/engine/engine.cpp:1170) says +14-22% at three and -2 to +4% at two and four; measured quotes the docs figure and records the engine comment here. (3) Our doc's tree claims check out against the source: +6% code / +16% prose over the chain (docs/kflash.md:3), the 8-17% tokens-per-pass figure (docs/kflash.md:394), the 1-6% tree overhead on dense models (docs/kflash.md:394), and the verify row costs 74.4/70.6/71.6/74.3 ms vs 67.3 (docs/kflash.md:81). (4) Our doc's KFlash section says the tree is verified 'in the 8 rows the chain already uses'; at this rev 16- and 32-row verifies exist behind NI_KFLASH_ROWS and the one-slot 16-row block, but the shipped default is still the single 8-row tile everywhere (docs/usage.md:1027), so the doc statement holds for the default. (5) Prompt lookup: our doc declined a standalone lookup drafter; the clone's copy lane (PR 109, merged) embeds prompt lookup inside DFlash chain cycles only (NI_KFLASH=0) and reports a 21K-token agent request on the 4B going from 114 to 166 tok/s (docs/kflash-map.md:16); a different construction than the one we declined, and chain-only at this rev. (6) kapitsa's dynamic verify depth (tau 0.5) is MoE-only; dense targets read every weight whatever the row count, so its tau is not a dense-target setting and should not be compared to our AdaptiveDepth numbers on the 27B as if it were the same mechanism. (7) The 35B can part from plain decoding at near-ties under the trees (docs/kflash.md:3); on the Qwen dense models a greedy reply is plain decoding's. (8) A 16-row block pins the budget capacity at its width (pin_wide) because a narrow-biased cost table measured under foreign GPU load cost 9% (docs/kflash.md:299-301); the budget cache is per model, drafter, bit depth, block and chip. (9) The batch budget covers 2..4 members; 5..8 members use the fixed tables (1 row each past 4, not measured upstream) or take turns, and a 16-row block never batches. (10) The dfl_attn_plan default chunk of 256 positions is the GPU-driven-pass constant (kGpuChunk) and the header contract's stated default; the fused-attention call site passes min_chunk 0 and derives the smallest multiple of 32 that fits max_splits, so 256 is the documented default rather than the fused path's runtime plan. (11) The uniform salts shape sampled exactness only; greedy paths never draw them. (12) The NI_DFLASH_CAP material (the F74 verify-depth cap, 1.46x per token for tree-7 over capped chain-2 in their shipping build) is a large in-repo measurement program with ledger citations we did not audit; its own text flags the shipping default as still undecided pending a pre-registered sweep."
+}

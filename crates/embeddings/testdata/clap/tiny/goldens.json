@@ -1,0 +1,199 @@
+{
+ "audio": {
+  "audio_a": {
+   "batch_norm": [
+    200,
+    16
+   ],
+   "mel2img": [
+    64,
+    64
+   ],
+   "patch_embed": [
+    256,
+    8
+   ],
+   "stage0_blocks": [
+    256,
+    8
+   ],
+   "stage0_out": [
+    64,
+    16
+   ],
+   "stage1_blocks": [
+    64,
+    16
+   ],
+   "stage1_out": [
+    16,
+    32
+   ],
+   "stage2_blocks": [
+    16,
+    32
+   ],
+   "stage2_out": [
+    16,
+    32
+   ],
+   "norm": [
+    16,
+    32
+   ],
+   "pooled": [
+    32
+   ],
+   "embed": [
+    16
+   ]
+  },
+  "audio_b": {
+   "batch_norm": [
+    256,
+    16
+   ],
+   "mel2img": [
+    64,
+    64
+   ],
+   "patch_embed": [
+    256,
+    8
+   ],
+   "stage0_blocks": [
+    256,
+    8
+   ],
+   "stage0_out": [
+    64,
+    16
+   ],
+   "stage1_blocks": [
+    64,
+    16
+   ],
+   "stage1_out": [
+    16,
+    32
+   ],
+   "stage2_blocks": [
+    16,
+    32
+   ],
+   "stage2_out": [
+    16,
+    32
+   ],
+   "norm": [
+    16,
+    32
+   ],
+   "pooled": [
+    32
+   ],
+   "embed": [
+    16
+   ]
+  }
+ },
+ "text": {
+  "text0": {
+   "ids": [
+    0,
+    5,
+    17,
+    99,
+    42,
+    2
+   ],
+   "embeddings": [
+    6,
+    32
+   ],
+   "layer0": [
+    6,
+    32
+   ],
+   "layer1": [
+    6,
+    32
+   ],
+   "pooled": [
+    32
+   ],
+   "embed": [
+    16
+   ]
+  },
+  "text1": {
+   "ids": [
+    0,
+    3,
+    8,
+    13,
+    21,
+    34,
+    55,
+    89,
+    44,
+    33,
+    22,
+    11,
+    10,
+    9,
+    7,
+    6,
+    4,
+    2
+   ],
+   "embeddings": [
+    18,
+    32
+   ],
+   "layer0": [
+    18,
+    32
+   ],
+   "layer1": [
+    18,
+    32
+   ],
+   "pooled": [
+    32
+   ],
+   "embed": [
+    16
+   ]
+  },
+  "text2": {
+   "ids": [
+    0,
+    7,
+    1,
+    9,
+    2
+   ],
+   "embeddings": [
+    5,
+    32
+   ],
+   "layer0": [
+    5,
+    32
+   ],
+   "layer1": [
+    5,
+    32
+   ],
+   "pooled": [
+    32
+   ],
+   "embed": [
+    16
+   ]
+  }
+ },
+ "logit_scale_a_exp": 10.0,
+ "logit_scale_t_exp": 30.000001907348633
+}

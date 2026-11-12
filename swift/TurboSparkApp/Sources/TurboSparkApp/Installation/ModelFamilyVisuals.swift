@@ -239,6 +239,19 @@ public struct ModelFamilyVisuals {
                 capabilities: ["Reasoning", "Compact", "Coding"],
                 description: name
             )
+        } else if lAlias.contains("flint") || lFamily == "flint" {
+            return ModelFamilyVisuals(
+                family: "Flint",
+                letter: "F",
+                iconSystemName: "flame.circle.fill",
+                logoAssetName: "hf.svg",
+                accentColor: Color.orange,
+                parameterTag: "40B-A2.5B",
+                architectureType: "MoE 256-Expert",
+                formatLabel: derivedFormat,
+                capabilities: ["Reasoning", "MoE 256-Expert", "Shared Expert", "Chunked Prefill"],
+                description: "Recursive Flint 40B-A2.5B with 256 routed experts top-6, one shared expert, and hybrid attention."
+            )
         }
 
         // Generic fallback

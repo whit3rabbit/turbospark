@@ -114,8 +114,8 @@ fn stft_matches_reference() {
         // Flatten frame-major for comparison against the transposed plane.
         let mut real = Vec::with_capacity(frames * freq_bins);
         let mut imag = Vec::with_capacity(frames * freq_bins);
-        for t in 0..frames {
-            for value in &spectra[t] {
+        for frame in &spectra {
+            for value in frame {
                 real.push(value.re);
                 imag.push(value.im);
             }

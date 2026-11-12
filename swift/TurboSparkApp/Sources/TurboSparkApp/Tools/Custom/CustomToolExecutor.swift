@@ -52,9 +52,11 @@ public enum CustomToolExecutor {
                 environment["TOOL_ARG_\(environmentKey(for: key))"] = val
             }
             let timeout = tool.execution.timeoutSeconds ?? ProcessExecutor.defaultTimeoutSeconds
+            let launch = try ShellNetworkSandbox.launch(
+                executable: URL(fileURLWithPath: "/bin/zsh"), arguments: ["-c", cmd])
             let result = try await ProcessExecutor.run(
-                executableURL: URL(fileURLWithPath: "/bin/zsh"),
-                arguments: ["-c", cmd],
+                executableURL: launch.executable,
+                arguments: launch.arguments,
                 currentDirectoryURL: projectRootURL,
                 environment: environment,
                 timeoutSeconds: timeout
@@ -71,6 +73,11 @@ public enum CustomToolExecutor {
                 throw NSError(domain: "TurboSparkTool", code: 31, userInfo: [NSLocalizedDescriptionKey: "Script content is not configured for '\(tool.name)'."])
             }
             let tempDir = FileManager.default.temporaryDirectory
+            // The name becomes part of a temp file name; a name like
+            // "../../x" would write the script outside the temp directory.
+            guard CustomToolDefinition.isSafeName(tool.name) else {
+                throw NSError(domain: "TurboSparkTool", code: 90, userInfo: [NSLocalizedDescriptionKey: "Custom tool name '\(tool.name)' is not a safe file name."])
+            }
             let scriptFile = tempDir.appendingPathComponent("custom_\(tool.name)_\(UUID().uuidString.prefix(8)).sh")
             try script.write(to: scriptFile, atomically: true, encoding: .utf8)
             try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptFile.path)
@@ -79,20 +86,17 @@ public enum CustomToolExecutor {
             var args: [String] = []
             if let customArgs = tool.execution.arguments {
                 for arg in customArgs {
-                    var rendered = arg
-                    for (k, v) in arguments {
-                        rendered = rendered.replacingOccurrences(of: "{{\(k)}}", with: v)
-                        rendered = rendered.replacingOccurrences(of: "${\(k)}", with: v)
-                    }
-                    args.append(rendered)
+                    args.append(substituteLiteral(into: arg, arguments: arguments))
                 }
             }
 
             let interpreter = tool.execution.scriptInterpreter ?? "/bin/zsh"
             let scriptTimeout = tool.execution.timeoutSeconds ?? 30.0
+            let launch = try ShellNetworkSandbox.launch(
+                executable: URL(fileURLWithPath: interpreter), arguments: [scriptFile.path] + args)
             let result = try await ProcessExecutor.run(
-                executableURL: URL(fileURLWithPath: interpreter),
-                arguments: [scriptFile.path] + args,
+                executableURL: launch.executable,
+                arguments: launch.arguments,
                 currentDirectoryURL: projectRootURL,
                 environment: baseEnvironment().merging(tool.execution.environment ?? [:]) { _, declared in declared },
                 timeoutSeconds: scriptTimeout
@@ -107,6 +111,13 @@ public enum CustomToolExecutor {
         case .http:
             guard let urlStr = tool.execution.httpURL, let url = URL(string: urlStr) else {
                 throw NSError(domain: "TurboSparkTool", code: 32, userInfo: [NSLocalizedDescriptionKey: "Invalid HTTP endpoint configured for '\(tool.name)'."])
+            }
+            // The endpoint is the user's own configuration, not a host the
+            // model chose, so only Block all applies (localhost exception
+            // included); the per-domain lists govern model-chosen URLs.
+            let policy = AppNetworkPolicyStore.current
+            if policy.mode == .blockAll, case .deny(let reason) = policy.decision(host: url.host ?? "") {
+                throw NSError(domain: "TurboSparkTool", code: 34, userInfo: [NSLocalizedDescriptionKey: reason])
             }
             var req = URLRequest(url: url)
             req.httpMethod = tool.execution.httpMethod ?? "POST"
@@ -195,6 +206,26 @@ public enum CustomToolExecutor {
         }
         result += ns.substring(from: cursor)
         return result
+    }
+
+    /// Literal `{{key}}` and `${key}` replacement for argv elements, in ONE
+    /// pass. A per-argument `replacingOccurrences` loop re-scanned earlier
+    /// output, so a value holding another argument's marker was substituted
+    /// into, in dictionary order. Markers naming no argument stay as written.
+    static func substituteLiteral(into template: String, arguments: [String: String]) -> String {
+        guard let regex = try? NSRegularExpression(pattern: "\\{\\{([^{}]+)\\}\\}|\\$\\{([^{}]+)\\}")
+        else { return template }
+        let ns = template as NSString
+        var result = ""
+        var cursor = 0
+        for match in regex.matches(in: template, range: NSRange(location: 0, length: ns.length)) {
+            result += ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
+            cursor = match.range.location + match.range.length
+            let group = match.range(at: 1).location != NSNotFound ? 1 : 2
+            let name = ns.substring(with: match.range(at: group))
+            result += arguments[name] ?? ns.substring(with: match.range)
+        }
+        return result + ns.substring(from: cursor)
     }
 
     private static func updateQuoteState(with text: String, quote: inout Character?) {

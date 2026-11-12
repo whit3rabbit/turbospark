@@ -1,0 +1,247 @@
+/* TurboSpark: a static web rendition of the SwiftUI control vocabulary
+   (swift/TurboSparkApp/Sources/TurboSparkApp/Theme). Every value is a token
+   from tokens.json. The app itself draws native macOS controls; these classes
+   exist so previews, docs and web surfaces read as the same product. */
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 24px;
+  background: var(--page);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Preview scaffolding */
+.ts-stage { padding: var(--space-18); display: flex; flex-direction: column; gap: var(--space-12); }
+.ts-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-8); }
+.ts-spread { display: flex; align-items: center; gap: var(--space-12); }
+.ts-grow { flex: 1 1 auto; min-width: 0; }
+.ts-label { font-size: 11px; line-height: 14px; color: var(--ink-secondary); }
+.ts-mono { font-family: var(--font-mono); }
+.ts-glyph { width: 1em; height: 1em; flex: none; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ts-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Focus: one solid ring for every keyboard-reachable element. */
+.ts-btn:focus-visible, .ts-icon-btn:focus-visible, .ts-chip:focus-visible,
+.ts-rail-item:focus-visible, .ts-sidebar-row:focus-visible, .ts-send:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+[data-theme^="hc"] .ts-btn:focus-visible, [data-theme^="hc"] .ts-icon-btn:focus-visible,
+[data-theme^="hc"] .ts-chip:focus-visible, [data-theme^="hc"] .ts-send:focus-visible { outline-width: 3px; }
+
+/* Button: .appAction(.primary / .secondary / .quiet / .destructive, size:) */
+.ts-btn {
+  appearance: none;
+  display: inline-flex; align-items: center; gap: var(--space-6);
+  min-height: 28px; padding: 0 var(--space-12);
+  font: inherit; font-size: 14px; line-height: 20px; font-weight: 500;
+  color: var(--ink); background: var(--elevated);
+  border: 1px solid var(--border); border-radius: var(--radius-control);
+  cursor: pointer; white-space: nowrap;
+}
+.ts-btn:hover { background: var(--surface); box-shadow: inset 0 0 0 100px var(--hover); }
+.ts-btn-primary { background: var(--accent); color: var(--on-accent); border-color: transparent; }
+.ts-btn-primary:hover { background: var(--accent); box-shadow: inset 0 0 0 100px var(--chip-hover); }
+.ts-btn-primary.is-ready { box-shadow: var(--glow-primary); }
+.ts-btn-quiet { background: transparent; border-color: transparent; }
+.ts-btn-quiet:hover { background: var(--hover); box-shadow: none; }
+.ts-btn-destructive { color: var(--danger); }
+.ts-btn-small { min-height: 22px; padding: 0 var(--space-8); font-size: 12px; line-height: 16px; }
+.ts-btn[disabled], .ts-btn[aria-disabled="true"] { color: var(--ink-disabled); cursor: not-allowed; box-shadow: none; }
+.ts-btn-primary[disabled] { background: var(--track); color: var(--ink-disabled); }
+.ts-btn-menu::after { content: ""; width: 6px; height: 6px; margin-inline-start: 2px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: translateY(-2px) rotate(45deg); }
+
+/* AppIconButton: icon-only, label is the tooltip and the VoiceOver name */
+.ts-icon-btn {
+  appearance: none; display: inline-grid; place-items: center;
+  width: 28px; height: 28px; padding: 0;
+  font-size: 16px; color: var(--ink-secondary);
+  background: transparent; border: 0; border-radius: var(--radius-control); cursor: pointer;
+}
+.ts-icon-btn:hover { background: var(--hover); color: var(--ink); }
+
+/* AppChip: composer-style toggle chip */
+.ts-chip {
+  appearance: none; display: inline-flex; align-items: center; gap: var(--space-5);
+  padding: var(--space-5) var(--space-8);
+  font: inherit; font-size: 12px; line-height: 16px; font-weight: 500;
+  color: var(--ink-secondary); background: var(--chip-fill);
+  border: 0.5px solid transparent; border-radius: var(--radius-chip);
+  cursor: pointer; white-space: nowrap;
+}
+.ts-chip .ts-glyph { font-size: 11px; }
+.ts-chip:hover { background: var(--chip-hover); }
+.ts-chip[aria-pressed="true"] { color: var(--ink); background: var(--accent-tint); border-color: var(--accent-edge); }
+.ts-chip[disabled] { opacity: 0.45; cursor: not-allowed; }
+
+/* AppSearchField */
+.ts-search {
+  display: flex; align-items: center; gap: var(--space-6);
+  min-width: var(--search-min-width); width: var(--search-ideal-width); max-width: var(--search-max-width);
+  padding: var(--space-5) var(--space-8);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-control);
+}
+.ts-search .ts-glyph { font-size: 12px; color: var(--ink-secondary); }
+.ts-search input {
+  flex: 1 1 auto; min-width: 0; border: 0; padding: 0; background: transparent;
+  font: inherit; font-size: 16px; line-height: 24px; color: var(--ink); outline: none;
+}
+.ts-search input::placeholder { color: var(--ink-secondary); }
+.ts-search:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+/* .appEditorSurface(minHeight:) */
+.ts-editor {
+  display: block; box-sizing: border-box; width: 100%; min-height: 96px; padding: var(--space-8);
+  font-family: var(--font-mono); font-size: 12px; line-height: 18px; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-control);
+  resize: vertical;
+}
+.ts-editor:focus { outline: none; border-color: var(--focus-ring); box-shadow: var(--glow-focus); }
+.ts-editor::placeholder { color: var(--ink-secondary); }
+
+/* .appCardSurface(padding:) */
+.ts-card {
+  padding: var(--space-18);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-card);
+}
+
+/* .appComposerSurface(focused:halo:) and its contents */
+.ts-composer {
+  display: flex; flex-direction: column; gap: var(--space-8);
+  padding: var(--space-12) var(--space-12) var(--space-8);
+  background: var(--composer); border: 1px solid var(--composer-edge); border-radius: var(--radius-composer);
+  box-shadow: var(--shadow-composer);
+}
+.ts-composer:focus-within { border: 1.5px solid var(--focus-edge); box-shadow: var(--shadow-composer-focus); }
+[data-theme^="hc"] .ts-composer:focus-within { border-width: 2.5px; }
+.ts-composer textarea {
+  border: 0; padding: 0 var(--space-4); resize: none; background: transparent; outline: none;
+  font: inherit; font-size: 16px; line-height: 24px; color: var(--ink); min-height: 48px;
+}
+.ts-composer textarea::placeholder { color: var(--ink-secondary); }
+.ts-send {
+  appearance: none; display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0;
+  font-size: 15px; color: var(--on-accent); background: var(--accent); border: 0; border-radius: var(--radius-pill);
+  box-shadow: var(--glow-primary); cursor: pointer;
+}
+.ts-send[disabled] { background: var(--track); color: var(--ink-disabled); box-shadow: none; cursor: not-allowed; }
+
+/* AppSectionHeader */
+.ts-section-header { display: flex; flex-direction: column; gap: var(--space-3); }
+.ts-section-header h3 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 600; }
+.ts-section-header p { margin: 0; font-size: 12px; line-height: 16px; color: var(--ink-secondary); }
+
+/* AppAdaptiveHeader: row, stacked, compact */
+.ts-header { display: flex; align-items: center; gap: var(--space-12); }
+.ts-header .ts-actions { display: flex; gap: var(--space-8); margin-inline-start: auto; }
+.ts-header.is-stacked, .ts-header.is-compact { flex-direction: column; align-items: flex-start; gap: var(--space-10); }
+.ts-header.is-stacked .ts-actions, .ts-header.is-compact .ts-actions { margin-inline-start: 0; }
+.ts-header h2 { margin: 0; font-size: 21px; line-height: 28px; font-weight: 600; }
+.ts-header p { margin: 0; font-size: 12px; line-height: 16px; color: var(--ink-secondary); }
+.ts-frame { padding: var(--space-12); border: 1px dashed var(--border); border-radius: var(--radius-card); }
+
+/* AppEmptyState */
+.ts-empty {
+  display: flex; flex-direction: column; align-items: center; text-align: center;
+  gap: var(--space-12); padding: var(--space-32);
+}
+.ts-empty .ts-glyph { font-size: 36px; color: var(--ink-secondary); stroke-width: 1.5; }
+.ts-empty h3 { margin: 0; font-size: 18px; line-height: 24px; font-weight: 600; }
+.ts-empty p { margin: 0; max-width: var(--message-max-width); font-size: 16px; line-height: 24px; color: var(--ink-secondary); }
+.ts-empty .ts-row { padding-top: var(--space-4); justify-content: center; }
+
+/* AppProgressBar */
+.ts-progress {
+  position: relative; height: var(--progress-regular); min-width: 120px;
+  background: var(--track); border-radius: var(--radius-pill);
+}
+.ts-progress.is-compact { height: var(--progress-compact); }
+.ts-progress-fill {
+  position: absolute; inset-block: 0; inset-inline-start: 0; overflow: hidden;
+  background: var(--accent); border-radius: var(--radius-pill);
+  -webkit-mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.7), #000);
+  mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.7), #000);
+}
+.ts-progress-fill::after {
+  content: ""; position: absolute; inset-block: 0; width: 35%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  animation: ts-sheen 1.4s ease-in-out infinite;
+}
+.ts-progress.is-paused .ts-progress-fill::after { display: none; }
+.ts-progress.is-indeterminate .ts-progress-fill { width: 40%; animation: ts-sweep 1.4s ease-in-out infinite alternate; }
+.ts-progress.is-indeterminate .ts-progress-fill::after { display: none; }
+[dir="rtl"] .ts-progress { transform: scaleX(-1); }
+[data-theme^="hc"] .ts-progress { box-shadow: inset 0 0 0 1px var(--border); }
+[data-theme^="hc"] .ts-progress-fill { -webkit-mask-image: none; mask-image: none; }
+[data-theme^="hc"] .ts-progress-fill::after { display: none; }
+@keyframes ts-sheen { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+@keyframes ts-sweep { from { transform: translateX(0); } to { transform: translateX(150%); } }
+
+/* ModelStatusDot and the model loader capsule */
+.ts-dot { display: inline-block; width: var(--status-dot); height: var(--status-dot); border-radius: var(--radius-pill); background: var(--ink-secondary); flex: none; }
+.ts-dot.is-ready, .ts-dot.is-working { background: var(--accent); }
+.ts-dot.is-working { animation: ts-breathe 0.85s ease-in-out infinite alternate; }
+@keyframes ts-breathe { from { opacity: 0.45; } to { opacity: 1; } }
+.ts-capsule {
+  display: inline-flex; align-items: center; gap: var(--space-6);
+  padding: var(--space-4) var(--space-12);
+  font-size: 12px; line-height: 16px; color: var(--ink-secondary);
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-pill);
+}
+.ts-capsule strong { color: var(--ink); font-weight: 600; }
+
+/* Status label: glyph + word, never color alone */
+.ts-status { display: inline-flex; align-items: center; gap: var(--space-5); font-size: 12px; line-height: 16px; font-weight: 500; }
+.ts-status .ts-glyph { font-size: 13px; }
+.ts-status.is-success { color: var(--success); }
+.ts-status.is-warning { color: var(--warning); }
+.ts-status.is-danger { color: var(--danger); }
+.ts-status.is-pill { padding: 2px var(--space-8); border-radius: var(--radius-pill); }
+.ts-status.is-pill.is-success { background: var(--success-tint); }
+.ts-status.is-pill.is-warning { background: var(--warning-tint); }
+.ts-status.is-pill.is-danger { background: var(--danger-tint); }
+
+/* NavigationRail */
+.ts-rail {
+  display: flex; flex-direction: column; align-items: center; gap: var(--space-4);
+  width: var(--rail-width); padding: var(--space-6) 0 var(--space-8);
+  background: var(--rail); border-inline-end: 0.5px solid var(--hairline);
+}
+.ts-rail-item {
+  appearance: none; position: relative; display: grid; place-items: center;
+  width: var(--rail-item); height: var(--rail-item); padding: 0;
+  font-size: 16px; color: var(--ink-secondary); background: transparent;
+  border: 0; border-radius: var(--radius-chip); cursor: pointer;
+}
+.ts-rail-item:hover { background: var(--hover); }
+.ts-rail-item[aria-current="page"] { color: var(--accent-ink); background: var(--accent-tint); }
+.ts-rail-item[aria-current="page"]::before {
+  content: ""; position: absolute; inset-inline-start: -9px; top: 22.5%;
+  width: 2.5px; height: 55%; background: var(--accent); border-radius: var(--radius-pill);
+}
+.ts-rail-divider { width: 28px; height: 0.5px; margin: var(--space-4) 0; background: var(--hairline); }
+
+/* SidebarPanelRow */
+.ts-sidebar { display: flex; flex-direction: column; gap: 2px; width: var(--sidebar-width); padding: var(--space-8); box-sizing: border-box; background: var(--sidebar); }
+.ts-sidebar-row {
+  appearance: none; display: flex; align-items: center; gap: var(--space-9); width: 100%;
+  padding: var(--space-4) var(--space-8);
+  font: inherit; font-size: 12px; line-height: 16px; text-align: start;
+  color: var(--ink-secondary); background: transparent;
+  border: 0; border-radius: var(--radius-control); cursor: pointer;
+}
+.ts-sidebar-row .ts-glyph { width: 18px; font-size: 14px; }
+.ts-sidebar-row:hover { background: var(--hover); }
+.ts-sidebar-row[aria-current="page"] { color: var(--ink); font-weight: 600; background: var(--selection); }
+.ts-sidebar-row[aria-current="page"] .ts-glyph { color: var(--accent-ink); }
+.ts-sidebar-row .ts-kbd { margin-inline-start: auto; font-family: var(--font-mono); font-size: 11px; color: var(--ink-secondary); font-weight: 400; }
+.ts-sidebar-heading { margin: var(--space-8) var(--space-8) var(--space-4); font-size: 11px; line-height: 14px; font-weight: 600; color: var(--ink-secondary); }
+
+/* Motion: nothing moves under Reduce Motion. */
+@media (prefers-reduced-motion: reduce) {
+  .ts-progress-fill::after, .ts-dot.is-working, .ts-progress.is-indeterminate .ts-progress-fill { animation: none; }
+  .ts-progress.is-indeterminate .ts-progress-fill { width: 50%; opacity: 0.5; }
+}

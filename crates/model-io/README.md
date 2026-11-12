@@ -15,7 +15,7 @@ model_io = { package = "turbospark-model-io", path = "../model-io" }
 
 ## Safety
 
-- Contains `unsafe` code strictly isolated to memory-mapping operations (`mmap`) in `resident_buffer.rs` and `safetensors.rs`.
+- Contains `unsafe` code strictly isolated to the documented narrow boundary: memory mapping (`mmap`) in `resident_buffer.rs` and `safetensors.rs`, plus the single `statvfs` free-space call in `disk_space.rs`.
 - All other modules enforce safe Rust.
 
 ## Key Modules
@@ -24,17 +24,21 @@ model_io = { package = "turbospark-model-io", path = "../model-io" }
 - `arch_config/`: Architecture configuration structures (`ArchConfig`, `ModelFamily`) and field resolution logic.
 - `arch_baselines/`: Per-family baseline specifications defining tensor layouts, hyper-parameters, and layer conventions:
   - `gemma.rs`: Gemma 4 family.
-  - `qwen.rs`: Qwen 3.5, 3.6, 3.8, Qwen 2, Qwen3-MoE, and `qwen4_exp`.
+  - `qwen.rs`: Qwen 3.5, 3.6, 3.8 GDN hybrids, Qwen 2.5, Qwen 3 dense, Qwen3-MoE, Qwen3-VL, and `qwen4_exp`.
   - `deepseek.rs`: DeepSeek-V4-Flash.
+  - `deepseek2.rs`: DeepSeek-V2-Lite latent-attention MoE (the `deepseek2` architecture).
+  - `flint.rs`: Recursive Flint (`flint_40b_a2_5b`, `flint_layer_mask`): a 40B-A2.5B MoE with two dense lead layers, 256 routed experts under a top-6 INT8 sigmoid router, one ungated shared expert, learned attention sinks, and a 35 sliding / 14 full NoPE layer mask.
   - `llama.rs`: Llama 3, Mixtral, and related Dense/MoE variants.
-  - `gpt_oss.rs`: Harmony and GPT-OSS architectures.
+  - `gpt_oss.rs`: GPT-OSS-20B (Harmony chat template) architecture.
   - `muse_glimmer.rs`: Muse Glimmer architecture.
   - `spark.rs`: Spark-X2.5-4B architecture.
   - `minimax.rs`: MiniMax-M2 split-GGUF and sigmoid routing architecture.
+- `dash_config.rs`: The DASH router constants (`sparse_attention_config`) an `unlimited_ocr2` install carries beside its manifest, written at repack and read back at open.
 - `arch_validation.rs`: Structural validation of parsed configurations against family constraints.
 - `context_policy.rs`: Context-window bounding (`MaxContext`) and KV cache memory estimation.
 - `expert_cache_policy.rs`: MoE expert cache slot sizing algorithms (`ExpertCacheSlots`).
 - `load_guard.rs`: Multi-tier memory guardrails (`LoadGuard`, `LoadPolicy`) bounding session memory commitments.
+- `disk_space.rs`: Free-disk-space check (`available_bytes`) for the install path via one `statvfs` call.
 - `encoder_config.rs`: Configuration schema and validation for BERT/XLM-RoBERTa encoder models.
 - `kv_quant.rs`: TurboQuant KV cache quantization policy (`--kv-bits` parameter validation and memory byte savings).
 - `packed_experts_layout.rs`: Decodes `packed_experts/layout.json`, supporting multi-dtype companion bias shapes for MoE streaming.
@@ -43,12 +47,13 @@ model_io = { package = "turbospark-model-io", path = "../model-io" }
 - `resident_buffer.rs`: Zero-copy `mmap` wrapper (`ResidentBuffer`) for memory-mapped model weights.
 - `safetensors.rs`: Memory-mapped reader (`SafetensorsFile`) for direct inspection of `.safetensors` headers and slices.
 - `steering_set.rs`: Portable per-layer steering vector serialization and loading (`SteeringSet`, `LayerDirection`).
-- `speech_family.rs`: `SpeechFamily` enumeration for audio transcription architectures (`whisper`).
-- `speech_receipt.rs`: `SpeechInstallReceipt` and schema validation for speech model installs (`turbospark-speech-install.json`).
+- `speech_family.rs`: `SpeechFamily` enumeration for audio transcription architectures (`whisper`, `qwen3_asr`, `parakeet_tdt`).
+- `speech_receipt.rs`: `SpeechInstallReceipt` and schema validation for speech model installs (`speech-receipt.json`).
 - `whisper_config.rs`: OpenAI Whisper configuration parser (`WhisperConfig`) and special token resolver (`WhisperSpecialTokens`).
 - `vision_sidecar.rs`: Vision tower sidecar installation format and verification (`SidecarRecord`).
 - `sha256.rs`: Streaming cryptographic SHA-256 verification of installed files.
 - `install_receipt.rs`: Parses and validates `.gturbo` install receipts.
+- `trunk_role.rs`: Headless-trunk install marker (`trunk_role.json`, `TrunkRoleRecord`) that refuses a chat open on a headless `.gturbo` trunk.
 
 ## Development & Test Commands
 

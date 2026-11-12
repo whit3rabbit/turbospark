@@ -31,6 +31,10 @@ struct EngineSettingsPaneView: View {
             guardrailsSection
             speculationSection
             kvBitsSection
+            anePrefillSection
+            expertResidencySection
+            expertSlotsWiringSection
+            moePrefillBankSection
             inProcessServerSection
         }
         .formStyle(.grouped)
@@ -331,7 +335,7 @@ struct EngineSettingsPaneView: View {
     private func readout(_ value: String, enabled: Bool = true) -> some View {
         Text(verbatim: value)
             .monospacedDigit()
-            .foregroundStyle(enabled ? AppThemeColor.appText : AppThemeColor.appSecondary)
+            .foregroundStyle(enabled ? AnyShapeStyle(AppThemeColor.appText) : AnyShapeStyle(AppThemeColor.appSecondary))
             .fixedSize()
             .frame(minWidth: 40, alignment: .trailing)
             .accessibilityHidden(true)

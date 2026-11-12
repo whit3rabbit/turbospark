@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "profiles": [
+    {
+      "alias": "unlimited-ocr-coreml",
+      "display_name": "Unlimited OCR (Core ML)",
+      "family": "unlimited_ocr",
+      "backend": "coreml",
+      "repository": "FluidInference/unlimited-ocr-mlx-coreml",
+      "revision": "4568571eacd864e0a253c609b3c9d0e00450cebc",
+      "license": "MIT",
+      "assets": [
+        {
+          "path": "UnlimitedOcrDecoder.mlpackage/Data/com.apple.CoreML/model.mlmodel",
+          "size": 3423081,
+          "sha256": "4a339171fbfd8ca84a1de4d39de77d53538feb7e4bb9759d3fb92b3d0ee20ee2"
+        },
+        {
+          "path": "UnlimitedOcrDecoder.mlpackage/Data/com.apple.CoreML/weights/weight.bin",
+          "size": 2942897664,
+          "sha256": "9dca216cc86a99767f5837c2b17e132c96001ec21006c12eae45830fbebc468e"
+        },
+        {
+          "path": "UnlimitedOcrDecoder.mlpackage/Manifest.json",
+          "size": 617,
+          "sha256": "b0086733d3888c7cb881628e6a60d227a6f1c63f09c86db7ed21eb633e5dd3de"
+        },
+        {
+          "path": "UnlimitedOcrPageEncoder.mlpackage/Data/com.apple.CoreML/model.mlmodel",
+          "size": 480813,
+          "sha256": "7dcce3bed4dcf35e3dde7bd2510aa7cbc7b1bd3ca8eff93d859d11456005fc9d"
+        },
+        {
+          "path": "UnlimitedOcrPageEncoder.mlpackage/Data/com.apple.CoreML/weights/weight.bin",
+          "size": 806020480,
+          "sha256": "767a77ddc86f6721dfe1e46fbb44c1e624429dfc3920682e49f68734189e40f9"
+        },
+        {
+          "path": "UnlimitedOcrPageEncoder.mlpackage/Manifest.json",
+          "size": 617,
+          "sha256": "614ed2ad82f254936583de24a8001d440c39b00828f81343791f9eaa42913d1a"
+        },
+        {
+          "path": "config.json",
+          "size": 704,
+          "sha256": "210d30d4698482e1672cbbb83846d88b5ca2b67333a3fbbbefa056663080945b"
+        },
+        {
+          "path": "embeddings.f16",
+          "size": 330956800,
+          "sha256": "5d1df8b73bdff79c672f53ddc000451158cd16cd04ed143a1c0054b30ca03455"
+        },
+        {
+          "path": "tokenizer.json",
+          "size": 9979544,
+          "sha256": "a02f8fd5228c90256bb4f6554c34a579d48f909e5beb232dc4afad870b55a8b4"
+        }
+      ]
+    }
+  ]
+}

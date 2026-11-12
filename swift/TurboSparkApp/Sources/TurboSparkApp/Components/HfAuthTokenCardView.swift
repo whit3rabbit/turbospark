@@ -19,6 +19,7 @@ public struct HfAuthTokenCardView: View {
     @State private var validationStatus: HfTokenValidationStatus? = nil
     @State private var isValidating: Bool = false
     @State private var validationTask: Task<Void, Never>? = nil
+    @State private var showingRemoveConfirmation: Bool = false
 
     public init(model: AppModel) {
         self.model = model
@@ -39,13 +40,21 @@ public struct HfAuthTokenCardView: View {
             Divider().padding(.vertical, 2)
             HfMirrorEndpointRowView(model: model)
         }
-        .padding(16)
-        .background(.appPage)
-        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
-                .stroke(.appBorder.opacity(0.4), lineWidth: 1)
-        )
+        // The same card as every other Models & Storage section, instead
+        // of an inline copy that had already drifted to its own padding.
+        .modelsSettingsCard()
+        .confirmationDialog(
+            Text("Remove Token", bundle: .module),
+            isPresented: $showingRemoveConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(role: .destructive) {
+                clearToken()
+            } label: { Text("Remove Token", bundle: .module) }
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
+        } message: {
+            Text("This removes the saved Hugging Face token from this Mac.", bundle: .module)
+        }
         .onAppear(perform: loadSavedToken)
     }
 
@@ -57,13 +66,14 @@ public struct HfAuthTokenCardView: View {
                     Text("Hugging Face API Token", bundle: .module)
                         .settingsControl("Hugging Face API Token", pane: .models, timing: .action)
                         .font(theme.ui(.base, weight: .semibold))
+                        .accessibilityAddTraits(.isHeader)
                     if savedToken != nil {
                         Text("Configured", bundle: .module)
                             .font(theme.ui(.tiny, weight: .medium))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Color.green.opacity(0.15))
-                            .foregroundStyle(.green)
+                            .background(theme.accent.opacity(0.15))
+                            .foregroundStyle(theme.accent)
                             .clipShape(Capsule())
 
                         if let source = tokenSource {
@@ -89,6 +99,7 @@ public struct HfAuthTokenCardView: View {
                 }
             }
             .buttonStyle(.link)
+            .appLinkTint()
             .appPointerCursor()
         }
     }
@@ -152,8 +163,7 @@ public struct HfAuthTokenCardView: View {
     private var statusRow: some View {
         if isValidating {
             HStack(spacing: 6) {
-                ProgressView()
-                    .controlSize(.small)
+                AppProgressBar(value: nil, label: Text("Validating token with Hugging Face...", bundle: .module), size: .compact)
                 Text("Validating token with Hugging Face...", bundle: .module)
                     .font(theme.ui(.small))
                     .foregroundStyle(.appSecondary)
@@ -163,12 +173,12 @@ public struct HfAuthTokenCardView: View {
             case .valid(let name, let fullname, let email):
                 HStack(spacing: 6) {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
+                        .foregroundStyle(theme.accent)
                     VStack(alignment: .leading, spacing: 1) {
                         HStack(spacing: 4) {
                             Text("Valid token", bundle: .module)
                                 .font(theme.ui(.small, weight: .semibold))
-                                .foregroundStyle(.green)
+                                .foregroundStyle(theme.accent)
                             if let name, !name.isEmpty {
                                 Text("signed in as @\(name)", bundle: .module)
                                     .font(theme.ui(.small))
@@ -185,7 +195,7 @@ public struct HfAuthTokenCardView: View {
             case .invalid(let message):
                 HStack(alignment: .top, spacing: 6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.red)
+                        .foregroundStyle(AppAttention.color)
                     Group {
                         // The service's own message wins when it sent one.
                         if let message {
@@ -195,18 +205,18 @@ public struct HfAuthTokenCardView: View {
                         }
                     }
                     .font(theme.ui(.small))
-                    .foregroundStyle(.red)
+                    .foregroundStyle(AppAttention.color)
                 }
             case .rateLimited(let retryAfter):
                 HStack(spacing: 6) {
                     Image(systemName: "clock.arrow.circlepath")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppAttention.color)
                     // `Int`, not the payload's `UInt64`: the catalog key is
                     // spelled `%lld`, and a `UInt64` interpolates as `%llu`,
                     // which matched no key and rendered English everywhere.
                     Text("Hugging Face API rate limit reached. Retry in \(Int(retryAfter ?? 60))s.", bundle: .module)
                         .font(theme.ui(.small))
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppAttention.color)
                 }
             case .unavailable(let message):
                 HStack(spacing: 6) {
@@ -230,11 +240,12 @@ public struct HfAuthTokenCardView: View {
             } label: { Text("Save Token", bundle: .module) }
             .appAction(.primary, size: .small)
             .disabled(tokenInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !isDirty || isValidating)
+            .help(Text("Save Token", bundle: .module))
             .appPointerCursor()
 
             if savedToken != nil {
                 Button(role: .destructive) {
-                    clearToken()
+                    showingRemoveConfirmation = true
                 } label: { Text("Remove Token", bundle: .module) }
                 .appAction(.destructive, size: .small)
                 .appPointerCursor()

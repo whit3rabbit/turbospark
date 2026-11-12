@@ -381,7 +381,7 @@ public enum SendFeedbackExecutor {
         // tell the model a report was filed when it went nowhere.
         throw NSError(
             domain: "TurboSparkTool",
-            code: 35,
+            code: 100,
             userInfo: [NSLocalizedDescriptionKey:
                 "SendFeedback is not implemented: nothing was recorded or sent. "
                 + "Tell the user in your reply instead."]

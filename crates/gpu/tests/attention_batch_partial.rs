@@ -57,6 +57,7 @@ fn read_f16(buffer: &metal::Buffer, count: usize) -> Vec<f32> {
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn expected_partial(
     q: &[f32],
     k: &[f32],
@@ -181,7 +182,7 @@ fn reuses_kv_across_overlapping_and_disjoint_four_query_tiles() {
             (&live_rows.to_le_bytes(), 10),
             (&scale.to_le_bytes(), 11),
         ],
-        ((live_rows as u64 + 3) / 4) * num_q_heads as u64 * num_chunks as u64,
+        (live_rows as u64).div_ceil(4) * num_q_heads as u64 * num_chunks as u64,
         THREADS_PER_GROUP,
     );
     pass.commit_and_wait();
@@ -278,6 +279,8 @@ fn combines_partial_states_per_live_row_and_head_without_touching_absent_rows() 
     let mut m = vec![f32::NEG_INFINITY; partial_slots];
     let mut d = vec![0.0f32; partial_slots];
     let mut o = vec![0.0f32; partial_slots * head_dim as usize];
+    // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+    #[allow(clippy::needless_range_loop)]
     for row in 0..live_rows as usize {
         for q_head in 0..num_q_heads as usize {
             for chunk in 0..active_chunks[row][q_head] {
@@ -336,6 +339,8 @@ fn combines_partial_states_per_live_row_and_head_without_touching_absent_rows() 
     pass.commit_and_wait();
 
     let got = read_f16(&output_buffer, output_count);
+    // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+    #[allow(clippy::needless_range_loop)]
     for row in 0..live_rows as usize {
         for q_head in 0..num_q_heads as usize {
             let count = active_chunks[row][q_head];

@@ -16,6 +16,53 @@ fn load() -> MfTokenizer {
     MfTokenizer::load_from_dir(&fixture_dir()).expect("fixture tokenizer should load")
 }
 
+/// The ChatML fixture copied to a fresh directory with `tokenizer_config.json
+/// -> bos_token` set to `bos`.
+fn load_with_declared_bos(tag: &str, bos: serde_json::Value) -> Result<MfTokenizer, String> {
+    let dir = std::env::temp_dir().join(format!(
+        "turbospark-tokenizer-bos-{tag}-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("create dir");
+    for file in ["tokenizer.json", "chat_template.jinja"] {
+        std::fs::copy(fixture_dir().join(file), dir.join(file)).expect("copy fixture");
+    }
+    let mut config: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(fixture_dir().join("tokenizer_config.json")).unwrap(),
+    )
+    .unwrap();
+    config["bos_token"] = bos;
+    std::fs::write(dir.join("tokenizer_config.json"), config.to_string()).unwrap();
+    MfTokenizer::load_from_dir(&dir).map_err(|e| e.to_string())
+}
+
+/// Qwen's `bos_token: null` keeps `<|endoftext|>` as the stand-in BOS.
+#[test]
+fn an_undeclared_bos_stands_in_as_endoftext() {
+    let tok = load();
+    assert_eq!(Some(tok.bos_id), tok.token_to_id("<|endoftext|>"));
+}
+
+/// A ChatML checkpoint that DECLARES its BOS gets it (LFM3's
+/// `<|startoftext|>`, which its template prints first). The fixture has no
+/// `<|startoftext|>`, so a registered marker it does have stands in.
+#[test]
+fn a_declared_bos_is_honored() {
+    let tok = load_with_declared_bos("declared", serde_json::json!("<|im_start|>")).unwrap();
+    assert_eq!(Some(tok.bos_id), tok.token_to_id("<|im_start|>"));
+    // EOS and PAD keep the ChatML convention.
+    assert_eq!(Some(tok.eos_id), tok.token_to_id("<|endoftext|>"));
+}
+
+#[test]
+fn a_declared_bos_the_tokenizer_lacks_refuses() {
+    let err = match load_with_declared_bos("missing", serde_json::json!("<|startoftext|>")) {
+        Ok(_) => panic!("a declared BOS the tokenizer lacks must refuse"),
+        Err(e) => e,
+    };
+    assert!(err.contains("<|startoftext|>"), "{err}");
+}
+
 fn load_qwen2_like() -> MfTokenizer {
     let dir =
         std::env::temp_dir().join(format!("turbospark-tokenizer-qwen2-{}", std::process::id()));

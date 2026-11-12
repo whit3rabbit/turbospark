@@ -521,7 +521,7 @@ fn probe_t5_stages() {
     });
     eprintln!("bias[0,0,:4]: {:?}", &bias.as_ref().unwrap()[0..4]);
     let buckets: Vec<usize> = (0..seq)
-        .map(|ki| enc.relative_bucket(ki as isize - 0))
+        .map(|ki| enc.relative_bucket(ki as isize))
         .collect();
     eprintln!("bucket row0: {:?}", buckets);
     let block = &enc.blocks[0];

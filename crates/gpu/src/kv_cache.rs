@@ -27,14 +27,17 @@ use crate::kv_quant_tables::KvQuantTables;
 
 /// Which attention variant a layer runs, sourced from
 /// `ArchConfig.full_attention_layer_mask` (0 = swa, 1 = full, 2 = linear,
-/// 3/4 = DeepSeek V4 CSA/HCA, both `Compressed` here).
+/// 3/4 = DeepSeek V4 CSA/HCA, both `Compressed` here, 6 = `lfm3`'s gated
+/// short convolution, `Linear` here: it keeps a fixed tail, not KV).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayerKind {
     /// Sliding-window attention layer using ring buffer KV storage.
     Swa,
     /// Full attention layer using full context length KV storage.
     Full,
-    /// Linear-attention layer (e.g., Qwen gated-DeltaNet) carrying no per-token KV storage.
+    /// A layer carrying no per-token KV storage whose state is a fixed-size
+    /// recurrent tail: Qwen's gated DeltaNet (mask 2) or `lfm3`'s short
+    /// convolution (mask 6), each owned by its own state manager.
     Linear,
     /// Compressed attention layer carrying no per-token KV storage.
     Compressed,
@@ -149,7 +152,7 @@ impl KvCacheManager {
             // them) and panic on the first `k_slot`/`v_slot` call, because
             // that layer has real per-token KV rows and no placeholder can
             // stand in for them.
-            if mask_value == 2 || mask_value == 3 || mask_value == 4 {
+            if matches!(mask_value, 2 | 3 | 4 | 6) {
                 let placeholder = match &linear_placeholder {
                     Some(existing) => existing.clone(),
                     None => {
@@ -165,7 +168,7 @@ impl KvCacheManager {
                 v_buffers.push(placeholder);
                 k_strides.push(0);
                 v_strides.push(0);
-                kinds.push(if mask_value == 2 {
+                kinds.push(if mask_value == 2 || mask_value == 6 {
                     LayerKind::Linear
                 } else {
                     LayerKind::Compressed

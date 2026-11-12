@@ -48,7 +48,7 @@ struct ProjectRulesSectionView: View {
                     }
                 } label: { Text("Conflict Preference", bundle: .module) }
                 .pickerStyle(.menu)
-                .frame(width: 180)
+                .frame(minWidth: 140, idealWidth: 180)
                 .accessibilityLabel(Text("Rules conflict preference", bundle: .module))
             }
 
@@ -60,8 +60,7 @@ struct ProjectRulesSectionView: View {
 
             TextEditor(text: $customInstructions)
                 .themedCode(.base)
-                .frame(height: 100)
-                .appEditorSurface()
+                .appEditorSurface(minHeight: 100)
                 .accessibilityLabel(Text("Additional project instructions", bundle: .module))
                 .accessibilityHint(Text("Guidance stored with this project; repository instruction files are read live", bundle: .module))
         }

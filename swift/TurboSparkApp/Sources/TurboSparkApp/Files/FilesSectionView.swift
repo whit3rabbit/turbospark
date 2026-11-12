@@ -96,7 +96,7 @@ struct FilesSectionView: View {
     private func errorRow(_ text: String) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
+                .foregroundStyle(.appWarning)
                 .accessibilityHidden(true)
             Text(text)
                 .fixedSize(horizontal: false, vertical: true)
@@ -231,7 +231,7 @@ private struct FileRowView: View {
             if !attachment.sourceExists {
                 Image(systemName: "questionmark.folder")
                     .themedFont(.tiny)
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(.appWarning)
                     .help(Text("The source file has moved; only the extracted text remains.", bundle: .module))
             }
 

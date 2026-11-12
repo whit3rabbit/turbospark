@@ -84,6 +84,13 @@ pub struct PackedExpertsLayout {
 
 impl PackedExpertsLayout {
     /// Resolve `(layer, expert)` -> `ExpertEntry`. O(1).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `layer >= num_layers` or `expert >= experts_per_layer`.
+    /// The indices are the caller's (router output), not checkpoint data:
+    /// `load_from` already guarantees every layer holds exactly
+    /// `experts_per_layer` entries, so in-range indices never panic.
     pub fn expert(&self, layer: usize, expert: usize) -> &ExpertEntry {
         &self.layers[layer].experts[expert]
     }
@@ -138,10 +145,14 @@ pub fn load_from(
             detail: format!("layout.json size {size} exceeds metadata cap {max_bytes}"),
         });
     }
-    let data = std::fs::read(&path).map_err(|e| ModelError::IoFailed {
-        call: "read".to_string(),
-        detail: e.to_string(),
-    })?;
+    let data = crate::bounded_read::read_capped(&path, max_bytes)
+        .map_err(|e| ModelError::IoFailed {
+            call: "read".to_string(),
+            detail: e.to_string(),
+        })?
+        .ok_or_else(|| ModelError::IndexCorrupt {
+            detail: format!("layout.json size exceeds metadata cap {max_bytes}"),
+        })?;
     let root: Value = serde_json::from_slice(&data).map_err(|e| ModelError::IndexCorrupt {
         detail: format!("layout.json: {e}"),
     })?;
@@ -190,6 +201,15 @@ pub fn load_from(
             .and_then(Value::as_str)
             .ok_or_else(|| corrupt("malformed layer entry"))?
             .to_string();
+        // Consumers join this onto the layout's directory and read the result
+        // as expert weights. `Path::join` replaces the base on an absolute
+        // path and `..` walks out of it, so an unchecked name lets a checkpoint
+        // read any file the user can. Every writer emits a bare name.
+        if Path::new(&file).file_name() != Some(std::ffi::OsStr::new(&file)) {
+            return Err(corrupt(&format!(
+                "layer {layer_idx} file {file:?} must be a plain file name inside {subdir}"
+            )));
+        }
         let experts_arr = layer_obj
             .get("experts")
             .and_then(Value::as_array)
@@ -216,6 +236,18 @@ pub fn load_from(
             .checked_mul(experts_per_layer as u64)
             .ok_or_else(|| corrupt(&format!("layer {layer_idx} file size overflows u64")))?;
 
+        // `expertsPerLayer` sizes the slot vector below before any entry is
+        // read, so an unbounded value panics or aborts the allocation. A valid
+        // layer lists exactly that many entries (fewer is refused as missing,
+        // more as a duplicate or out-of-range id), so the array length bounds
+        // it without refusing anything that loaded before.
+        if experts_arr.len() != experts_per_layer {
+            return Err(corrupt(&format!(
+                "layer {layer_idx} lists {} experts but expertsPerLayer declares \
+                 {experts_per_layer}",
+                experts_arr.len()
+            )));
+        }
         let mut experts: Vec<Option<ExpertEntry>> = vec![None; experts_per_layer];
         for expert_obj in experts_arr {
             let offset = expert_obj
@@ -381,7 +413,14 @@ pub fn load_from(
                         expert.expert, first.expert
                     )));
                 }
-                if expert.sub_tensors != first.sub_tensors {
+                // Routed experts of a layer are one shape by construction, so
+                // a divergent layout there is corruption. The vision tower's
+                // blocks are not experts: the LFM3-VL tower alternates conv
+                // and attention blocks with different role sets
+                // (`docs/LFM3_VL_VISION_PHASE0.md`). The tower's own reader
+                // resolves and size-checks every block's roles; what stays
+                // enforced for it here is the equal blob size above.
+                if subdir != PACKED_VISION_DIR && expert.sub_tensors != first.sub_tensors {
                     return Err(corrupt(&format!(
                         "layer {layer_idx} expert {} has a different sub-tensor layout from \
                          expert {}",

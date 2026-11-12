@@ -204,6 +204,17 @@ pub async fn messages(
         .unwrap_or_else(|_| model.default_reasoning());
     let streaming = request.stream.unwrap_or(false);
     let cancel = crate::cancel::new_cancel();
+    // Reserved before either branch: a streaming 200 cannot turn into a 429.
+    let ticket = match crate::queue::reserve(model.as_ref()) {
+        Ok(ticket) => ticket,
+        Err(crate::queue::QueueFull) => {
+            return crate::queue::with_retry_after(error_body(
+                StatusCode::TOO_MANY_REQUESTS,
+                ErrorType::RateLimitError,
+                crate::queue::QUEUE_FULL_MESSAGE.to_string(),
+            ))
+        }
+    };
     let mut response = if streaming {
         stream_response(
             model,
@@ -215,9 +226,10 @@ pub async fn messages(
             &openai,
             request.model,
             cancel,
+            ticket,
         )
     } else {
-        full_response(model, &openai, effort, request.model, cancel).await
+        full_response(model, &openai, effort, request.model, cancel, ticket).await
     };
 
     if let Some(value) = degraded.and_then(|v| v.parse().ok()) {
@@ -317,12 +329,13 @@ async fn full_response(
     // rather than derived.
     client_model: String,
     cancel: crate::cancel::Cancel,
+    ticket: Option<crate::queue::QueueTicket>,
 ) -> Response {
     let backend_model = openai.model.clone();
     // Set if THIS future is dropped (client gone) before `run_guarded`
     // resolves; defused right after, whatever it returned.
     let mut guard = crate::cancel::CancelGuard::new(cancel.clone());
-    let result = run_guarded(model, openai, effort, cancel).await;
+    let result = run_guarded(model, openai, effort, cancel, ticket).await;
     guard.defuse();
     let generated = match result {
         Ok(r) => r,
@@ -361,20 +374,28 @@ fn stream_response(
     openai: &ChatCompletionRequest,
     client_model: String,
     cancel: crate::cancel::Cancel,
+    ticket: Option<crate::queue::QueueTicket>,
 ) -> Response {
     if !tools.is_empty() && model.guardrails().active() {
-        return buffered_stream_response(model, openai.clone(), effort, client_model, cancel);
+        return buffered_stream_response(
+            model,
+            openai.clone(),
+            effort,
+            client_model,
+            cancel,
+            ticket,
+        );
     }
     let backend_model = openai.model.clone();
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
+    let (tx, rx) = tokio::sync::mpsc::channel::<Event>(crate::cancel::STREAM_BACKLOG);
     let id = request_id("chatcmpl-");
     let created = now_unix();
     let cancel_for_task = cancel.clone();
 
     // The FIFO gate's acquisition point for this endpoint's live-stream
     // path (the non-streaming and buffered arms acquire inside
-    // `run_guarded`). See `queue.rs`.
-    let gate = model.generation_queue();
+    // `run_guarded`). The ticket was reserved by the handler. See `queue.rs`.
+    let gate = ticket;
     let cancel_for_gate = cancel.clone();
     tokio::spawn(async move {
         let _ = crate::queue::run_gated(gate, &cancel_for_gate, move || {
@@ -391,10 +412,9 @@ fn stream_response(
                     // Same fast-path detection as the OpenAI endpoint's: a
                     // failed send means the receiver -- and the
                     // `CancelOnDrop`-wrapped stream around it -- is already
-                    // gone.
-                    if tx.send(to_sse(&event)).is_err() {
-                        cancel_for_task.store(true, std::sync::atomic::Ordering::Relaxed);
-                    }
+                    // gone. A full backlog (client connected but not
+                    // reading) cancels too.
+                    crate::cancel::send_or_cancel(&tx, to_sse(&event), &cancel_for_task);
                 }
             };
 
@@ -453,13 +473,13 @@ fn stream_response(
                         &mut translator,
                     );
                     for event in translator.finish() {
-                        let _ = tx.send(to_sse(&event));
+                        let _ = tx.try_send(to_sse(&event));
                     }
                 }
                 // A failed run is not a completed one: emit an `error` event
                 // rather than closing the message as if it had stopped normally.
                 Err(e) => {
-                    let _ = tx.send(to_sse(&StreamEvent::Error {
+                    let _ = tx.try_send(to_sse(&StreamEvent::Error {
                         error: StreamError {
                             error_type: "api_error".to_string(),
                             message: e.to_string(),
@@ -476,11 +496,8 @@ fn stream_response(
     let stream: std::pin::Pin<
         Box<dyn Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
     > = Box::pin(
-        crate::cancel::CancelOnDrop::new(
-            tokio_stream::wrappers::UnboundedReceiverStream::new(rx),
-            cancel,
-        )
-        .map(Ok),
+        crate::cancel::CancelOnDrop::new(tokio_stream::wrappers::ReceiverStream::new(rx), cancel)
+            .map(Ok),
     );
     Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(SSE_KEEP_ALIVE))
@@ -502,6 +519,7 @@ fn buffered_stream_response(
     effort: ReasoningEffort,
     client_model: String,
     cancel: crate::cancel::Cancel,
+    ticket: Option<crate::queue::QueueTicket>,
 ) -> Response {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Event>();
     let id = request_id("chatcmpl-");
@@ -522,7 +540,7 @@ fn buffered_stream_response(
 
         // Nothing is sent until the whole generation is done, so `CancelOnDrop`
         // below is the only signal this path has that the client is gone.
-        match run_guarded(model, &openai, effort, cancel).await {
+        match run_guarded(model, &openai, effort, cancel, ticket).await {
             // Discarded silently, same contract as the live path.
             Ok(generated) if generated.decode.reason == runtime::StopReason::Cancelled => (),
             Ok(generated) => {

@@ -72,12 +72,17 @@ impl RealForwardRunner {
     /// support.
     pub fn supports_chunked_prefill(&self) -> bool {
         self.real.is_some()
-            || self.real_llama.is_some()
+            // The llama MoE driver has no image injection, so a turn carrying
+            // an image map takes the sequential path instead; the dense
+            // driver mirrors the embed blit and the deepstack adds.
+            || (self.real_llama.is_some()
+                && !(self.arch.num_experts > 0 && self.prompt_vision.is_some()))
             // `deepseek2` is deliberately absent: its chunked driver is not
             // written, and the plain sequential `produce` path serves it
             // correctly. Record the ceiling, do not half-wire the driver.
             || self.real_muse.is_some()
             || self.real_gpt_oss.is_some()
+            || self.real_flint.is_some()
             || (self.real_qwen.as_ref().is_some_and(|s| s.dense)
                 && self.real_mtp.is_none()
                 && self.real_dflash.is_none())
@@ -88,6 +93,9 @@ impl RealForwardRunner {
             || (self.real_qwen.as_ref().is_some_and(|s| !s.dense)
                 && self.qwen_moe_chunked_refusal().is_none())
             || self.real_qwen4.is_some()
+            // INT4-affine installs only, through the same refusal the
+            // driver itself checks.
+            || (self.real_lfm3.is_some() && self.lfm3_chunked_refusal().is_none())
     }
 
     /// Rows this model's output head writes, i.e. the length every `produce`
@@ -115,6 +123,12 @@ impl RealForwardRunner {
         self.expert_cache_slots
     }
 
+    /// Footprint sampled while the last experimental Qwen4 prefill's
+    /// temporary buffers were still live. Consume it before sampling decode.
+    pub fn take_prefill_experiment_footprint(&mut self) -> Option<u64> {
+        self.real_qwen4.as_mut()?.prefill_footprint.take()
+    }
+
     /// The routed slot cache's eviction policy, or `None` when no layer
     /// streams (a dense install, or mapped residency). Printed beside
     /// [`Self::expert_cache_slots`] so a run names the cache arm it measured
@@ -133,6 +147,12 @@ impl RealForwardRunner {
     /// streamed row differ by the entire slot cache.
     pub fn resolved_expert_residency(&self) -> model_io::ResolvedExpertResidency {
         self.resolved_residency
+    }
+
+    /// What became of the slot-wiring request at open: whether the cache is
+    /// wired, how many bytes, and why not when it is not.
+    pub fn expert_slot_wiring(&self) -> &crate::ExpertSlotWiringOutcome {
+        &self.expert_slot_wiring
     }
 
     /// How many distinct sessions this runner may hold reusable KV/
@@ -204,6 +224,14 @@ impl RealForwardRunner {
     }
 
     /// Sibling of [`Self::set_shared_cb_overlap`] for
+    /// `TURBOSPARK_ROUTED_BATCH_OVERLAP` (the batched routed half's
+    /// read-ahead). Does nothing unless the routed batch is on too.
+    #[doc(hidden)]
+    pub fn set_routed_batch_overlap(&mut self, on: bool) {
+        self.routed_batch_overlap = on;
+    }
+
+    /// Sibling of [`Self::set_shared_cb_overlap`] for
     /// `TURBOSPARK_BATCHED_GEMV` (the chunked-prefill driver's batched
     /// resident GEMVs). An explicit choice either way: `true` forces the
     /// batched arm, `false` the per-token one, and both end the qwen dense
@@ -236,6 +264,77 @@ impl RealForwardRunner {
     #[doc(hidden)]
     pub fn set_prefill_rows_attention(&mut self, on: bool) {
         self.prefill_rows_attention = on;
+    }
+
+    /// `TURBOSPARK_ANE_PREFILL` and `TURBOSPARK_ANE_PREFILL_DIR`: the opt-in
+    /// ANE+Steel prefill split for the dense qwen family, reading its Core ML
+    /// programs and `manifest.json` from `programs`
+    /// (`crates/coreml/tools/gen_ane_prefill_programs.py`). Takes effect at
+    /// the next chunk. Programs that are missing or do not match this
+    /// install turn the split off with one warning, and prefill runs on
+    /// Steel. It needs micro-batches of at least 512 rows, so a prefill chunk
+    /// of 2048.
+    #[cfg(feature = "ane-prefill")]
+    pub fn set_ane_prefill(
+        &mut self,
+        mode: crate::AnePrefillMode,
+        programs: Option<std::path::PathBuf>,
+    ) {
+        let resolved_mode = match mode {
+            crate::AnePrefillMode::Auto => {
+                if crate::hardware_supports_ane_prefill()
+                    && self.arch.family == model_io::ModelFamily::QwenGdnDense
+                {
+                    crate::AnePrefillMode::Split
+                } else {
+                    crate::AnePrefillMode::Off
+                }
+            }
+            other => other,
+        };
+        self.ane_prefill = crate::families::qwen::AnePrefill::new(resolved_mode, programs);
+    }
+
+    #[cfg(not(feature = "ane-prefill"))]
+    pub fn set_ane_prefill(
+        &mut self,
+        _mode: crate::AnePrefillMode,
+        _programs: Option<std::path::PathBuf>,
+    ) {
+    }
+
+    /// The current ANE prefill mode configured on this runner.
+    #[cfg(feature = "ane-prefill")]
+    pub fn ane_prefill_mode(&self) -> crate::AnePrefillMode {
+        self.ane_prefill.mode()
+    }
+
+    #[cfg(not(feature = "ane-prefill"))]
+    pub fn ane_prefill_mode(&self) -> crate::AnePrefillMode {
+        crate::AnePrefillMode::Off
+    }
+
+    /// The programs directory used for the ANE prefill split, if any.
+    #[cfg(feature = "ane-prefill")]
+    pub fn ane_prefill_programs(&self) -> Option<&Path> {
+        self.ane_prefill.programs()
+    }
+
+    #[cfg(not(feature = "ane-prefill"))]
+    pub fn ane_prefill_programs(&self) -> Option<&Path> {
+        None
+    }
+
+    /// Whether this runner's architecture and hardware support the ANE prefill split.
+    #[cfg(feature = "ane-prefill")]
+    pub fn ane_prefill_supported(&self) -> bool {
+        crate::hardware_supports_ane_prefill()
+            && self.arch.family == model_io::ModelFamily::QwenGdnDense
+    }
+
+    #[cfg(not(feature = "ane-prefill"))]
+    pub fn ane_prefill_supported(&self) -> bool {
+        false
     }
 
     /// [`RealForwardRunner::open`] with an explicit KV capacity: the

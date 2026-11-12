@@ -66,6 +66,7 @@ pub fn pos_embed_weights(
             detail: "position embedding grid side must be positive".into(),
         });
     }
+    params.check_geometry()?;
     let merge = params.merge_size;
     if grid.h == 0 || grid.w == 0 || grid.h % merge != 0 || grid.w % merge != 0 {
         return Err(VisionIoError::InvalidDimensions {

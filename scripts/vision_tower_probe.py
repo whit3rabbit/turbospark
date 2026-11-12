@@ -82,7 +82,42 @@ def load_tower_weights(mx, tower_dir: str) -> dict:
     hdr = json.load(open(Path(tower_dir) / "vision_tower_header.json"))
     blob = open(Path(tower_dir) / "vision_tower.bin", "rb").read()
     weights = {}
+    # A packed tower (the qwen4_exp MLX conversion,
+    # docs/QWEN4EXP_VISION_PHASE0.md item 1) ships U32 planes plus BF16
+    # `.scales`/`.biases`. They are dequantized with MLX's own
+    # `mx.dequantize` at the checkpoint's bits and group, then narrowed to FP16
+    # exactly as the install's repack does, so both sides run the same values.
+    packed = {n for n, m in hdr.items() if m["dtype"] == "U32"}
+    companions = {n[: -len(".weight")] + suffix for n in packed for suffix in (".scales", ".biases")}
+    quant = {}
+    config_path = Path(tower_dir) / "config.json"
+    if packed and config_path.exists():
+        quant = json.load(open(config_path)).get("quantization", {})
+    for name in sorted(packed):
+        base = name[: -len(".weight")]
+        meta = hdr[name]
+        s, e = meta["data_offsets"]
+        wq = mx.array(np.frombuffer(blob[s:e], dtype=np.uint32).reshape(meta["shape"]))
+
+        def bf16(n):
+            m = hdr[n]
+            a, b = m["data_offsets"]
+            bits = np.frombuffer(blob[a:b], dtype=np.uint16).astype(np.uint32) << 16
+            return mx.array(bits.view(np.float32).reshape(m["shape"]))
+
+        if "bits" not in quant or "group_size" not in quant:
+            raise ValueError(f"{name} is packed but {config_path} carries no quantization block")
+        w = mx.dequantize(
+            wq, bf16(base + ".scales"), bf16(base + ".biases"),
+            group_size=quant["group_size"], bits=quant["bits"],
+        )
+        wide = np.array(w.astype(mx.float32))
+        if not np.isfinite(wide).all() or np.abs(wide).max() > 65504.0:
+            raise ValueError(f"{name} dequantizes to a value FP16 cannot hold")
+        weights[name[len("vision_tower."):]] = mx.array(wide.astype(np.float16))
     for name, meta in hdr.items():
+        if name in packed or name in companions:
+            continue
         s, e = meta["data_offsets"]
         if meta["dtype"] == "F16":
             arr = np.frombuffer(blob[s:e], dtype=np.float16).reshape(meta["shape"])

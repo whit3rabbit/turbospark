@@ -1,0 +1,428 @@
+{
+  "schema": "turbospark.lab.pinned/1",
+  "id": "mlx-serve.row_exact",
+  "kernel": "the row-exact 4/6/8-bit affine quantized matmul pair, TensorFold ports: simd_qmm (one fixed FMA chain per 64-input group, groups split over S chunks combined by a fixed tree, 8x8 fp32 simdgroup_matrix mma for 2 or more rows with a per-pass pre-scaled activation fragment, a scalar one-row form, a row-staged scalar variant, and a per-shape prepare probe) and rowqmv (MLX's qmv_fast loop, one input row per simdgroup, 4 output rows per simdgroup)",
+  "kernel_class": "verify_matmul",
+  "repo": "mlx-serve",
+  "summary": "Serves every decode-width affine projection of 1 to 16 rows on a trunk with ModelConfig.rowExactDecode set (dense qwen3_5 or nemotron_h, no Hadamard pack, a DFlash drafter bound), so serial-decode rows, MTP rows and DFlash verify/tree rows all get the one-row step's bits. simd_qmm splits a row's K/64 groups over S shape-only chunks (16 for N <= 2048, else 8) combined in a fixed order: mma for 2 or more rows (frag over prep-staged fragments at 2 to 8), a scalar form for one row, a row-staged scalar variant at 2 to 3 rows at 4 bits; a per-shape probe routes one-row calls through mma where the chip's mma differs from the scalar chain. rowqmv is the fallback: MLX's qmv_fast loop with each input row on its own simdgroup. Under rowExactDecode it serves both decode and verify rows; without a drafter, batched decode takes it only from 8 rows where no matmul2d tile exists.",
+  "source": {
+    "url": "https://github.com/ddalcu/mlx-serve",
+    "rev": "191da71de32a65f69ebceeb6cb2e91036ab50b30",
+    "rev_date": "2026-10-22",
+    "license": "MIT",
+    "files": [
+      "src/simd_qmm.zig",
+      "src/rowqmv.zig",
+      "src/model.zig",
+      "src/transformer.zig",
+      "docs/reference.md",
+      "docs/gotchas/engine-mlx.md"
+    ],
+    "symbols": [
+      "qmm",
+      "qmmKind",
+      "prepare",
+      "fits",
+      "splits",
+      "rowTiles",
+      "tiles",
+      "rowsFit",
+      "planFor",
+      "kernelFor",
+      "launch",
+      "qmv",
+      "qmvAct",
+      "experts",
+      "router",
+      "rowExactQmm",
+      "qmatmul",
+      "projectWithConfig",
+      "simdQmmDecode",
+      "rowExactDecode",
+      "rowExactArch",
+      "firstRowExactMiss"
+    ]
+  },
+  "models": [
+    {
+      "name": "Qwen3.8-27B",
+      "quant": "MLX affine 4-bit, group 64, bf16 scales and biases (the kernels also take 6 and 8 bits)",
+      "family": "qwen3_5 (dense)",
+      "machine": "M4 Max 128 GB",
+      "role": "primary"
+    },
+    {
+      "name": "Ternary Bonsai 2 27B",
+      "quant": "2-bit ternary affine pack; its DFlash2 drafter linears are load-time quantized to bf16 affine so the bf16-only row kernels accept them",
+      "family": "qwen3_5",
+      "machine": "M4 16 GB",
+      "role": "secondary (drafter path behind the measured 22.5 tok/s result)"
+    },
+    {
+      "name": "Nemotron 3.5 (nemotron_h)",
+      "quant": "affine 4/6/8-bit, group 32/64/128 through the rowqmv path",
+      "family": "nemotron_h",
+      "machine": "not stated",
+      "role": "gate-covered family; its projection shapes are the rowqmv test shapes (src/rowqmv.zig:469)"
+    }
+  ],
+  "settings": [
+    {
+      "name": "row_exact_max_rows",
+      "value": 16,
+      "unit": "rows",
+      "condition": "simd_qmm.qmm and rowqmv.qmv, experts and router row count",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:11",
+      "note": "same bound in src/rowqmv.zig:7; x is reshaped to [rows, K] at src/simd_qmm.zig:622 and back after"
+    },
+    {
+      "name": "quant_bits_supported",
+      "value": [4, 6, 8],
+      "unit": "bits",
+      "condition": "both kernels' fits check",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:524",
+      "note": "rowqmv's check at src/rowqmv.zig:142"
+    },
+    {
+      "name": "group_size_simd_qmm",
+      "value": 64,
+      "unit": "inputs per group",
+      "condition": "simd_qmm only; other group sizes decline",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:524"
+    },
+    {
+      "name": "group_sizes_rowqmv",
+      "value": [32, 64, 128],
+      "unit": "inputs per group",
+      "condition": "rowqmv only",
+      "kind": "hardcoded",
+      "source": "src/rowqmv.zig:143",
+      "note": "a pack at group 32 or 128 routes to rowqmv under the gate, not simd_qmm"
+    },
+    {
+      "name": "k_multiple",
+      "value": 64,
+      "unit": "inputs",
+      "condition": "both kernels require K % 64 == 0",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:527",
+      "note": "simd_qmm: ws[1] * 32 % (64 * bits) == 0; rowqmv: (last-dim * 32 / bits) % 64 == 0 at src/rowqmv.zig:149"
+    },
+    {
+      "name": "n_multiple",
+      "value": 8,
+      "unit": "outputs",
+      "condition": "both kernels require N % 8 == 0",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:527",
+      "note": "rowqmv at src/rowqmv.zig:149"
+    },
+    {
+      "name": "operand_dtypes",
+      "value": "w uint32, scales and biases bfloat16, x bfloat16",
+      "unit": null,
+      "condition": "both kernels decline anything else",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:525",
+      "note": "rowqmv at src/rowqmv.zig:144; x dtype at src/simd_qmm.zig:594 and src/rowqmv.zig:165; the Bonsai f16-scale incident was exactly a bf16-only decline"
+    },
+    {
+      "name": "split_chunks_n_le_2048",
+      "value": 16,
+      "unit": "chunks",
+      "condition": "N <= 2048",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:403",
+      "note": "capped at 16 because mma runs S simdgroups per threadgroup and a 1024-thread group exceeds what older GPUs grant this kernel (comment at src/simd_qmm.zig:400-401)"
+    },
+    {
+      "name": "split_chunks_n_gt_2048",
+      "value": 8,
+      "unit": "chunks",
+      "condition": "N > 2048",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:403",
+      "note": "splits(n) is a function of the shape only, which is what pins a row's bits"
+    },
+    {
+      "name": "fma_chain_per_group",
+      "value": "64 fmas per 64-input group: 8 passes s of 8 inputs i, one fixed (s, i) order shared by scalar, rows, mma and frag",
+      "unit": null,
+      "condition": "every row of every kind",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:110",
+      "note": "the row-staged variant keeps the one-row chain per row and builds the masked weight fields once per pass across rows (comment and loop at src/simd_qmm.zig:182-194)"
+    },
+    {
+      "name": "activation_pre_scale",
+      "value": "wpre = 2^-(4*p) per pass p at 4 bits, 2^-(8*(p mod 4)) at 8 bits, written as exponent-bias 127-e << 23; 1.0 at 6 bits",
+      "unit": null,
+      "condition": "activation fragment of pass s, all kinds",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:32",
+      "note": "pre-scaling the input cancels the in-place mask shift so no shift rides the dot; applied at src/simd_qmm.zig:80 (scalar staging) and 341-342 (mma fragment)"
+    },
+    {
+      "name": "six_bit_field_decode",
+      "value": "6-bit codes straddle 32-bit words: field shifted down to 0..63 with a carry from the next word, so wpre stays 1",
+      "unit": null,
+      "condition": "6 bits only",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:37"
+    },
+    {
+      "name": "mma_fragment_form",
+      "value": "8x8 fp32 simdgroup_matrix accumulators, one per (row tile, output tile); the weight fragment am is built per (pass, output tile) and reused across the row tiles via simdgroup_multiply_accumulate",
+      "unit": null,
+      "condition": "2 or more rows (mma and frag)",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:266",
+      "note": "accumulate at src/simd_qmm.zig:285; per-group scale/bias at 294-295; the frag variant reads prep-staged pre-scaled fragments instead of re-reading x per threadgroup (src/simd_qmm.zig:345-359)"
+    },
+    {
+      "name": "mma_row_tiles_max",
+      "value": 2,
+      "unit": "row tiles (8 rows each)",
+      "condition": "mma and frag; rowTiles = min(RT_MAX, ceil(rows / 8))",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:12",
+      "note": "rowTiles formula at src/simd_qmm.zig:407"
+    },
+    {
+      "name": "mma_output_tiles",
+      "value": "4 when N % 32 == 0, 2 when N % 16 == 0, else 1; halved while S * row_tiles * nt * 64 floats would exceed 16384 bytes of threadgroup reduction",
+      "unit": null,
+      "condition": "mma and frag",
+      "kind": "derived",
+      "source": "src/simd_qmm.zig:413",
+      "note": "16 KB cap at src/simd_qmm.zig:414"
+    },
+    {
+      "name": "staging_block_groups",
+      "value": 32,
+      "unit": "groups (XB)",
+      "condition": "scalar, rows and mma input staging blocks",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:15",
+      "note": "the rows variant shrinks the block to the largest multiple of S fitting 32 KB so each chunk still visits its groups in order (src/simd_qmm.zig:503-506)"
+    },
+    {
+      "name": "rows_staging_bytes",
+      "value": 32768,
+      "unit": "bytes",
+      "condition": "row-staged scalar variant: rows * splits(n) * 76 floats must fit",
+      "kind": "derived",
+      "source": "src/simd_qmm.zig:420",
+      "note": "past it the kind pick falls to mma/frag even below the row cap (src/simd_qmm.zig:617)"
+    },
+    {
+      "name": "scalar_rows_max_4bit",
+      "value": 3,
+      "unit": "rows",
+      "condition": "4-bit; at 6 and 8 bits only one row takes scalar",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:397",
+      "note": "selection rows_max = (bits == 4) ? SCALAR_ROWS_MAX : 1 at src/simd_qmm.zig:616; their comment: past it mma is cheaper, and at 6 and 8 bits from two rows (src/simd_qmm.zig:395-396)"
+    },
+    {
+      "name": "fragment_rows_max",
+      "value": 8,
+      "unit": "rows",
+      "condition": "rows 2..8 read prep-staged fragments; past that plain mma",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:394",
+      "note": "kind pick at src/simd_qmm.zig:617-618; prep writes pre-scaled fragments once per (row tile, group), one simdgroup each (src/simd_qmm.zig:364-390)"
+    },
+    {
+      "name": "scalar_simdgroups",
+      "value": "8 simdgroups per threadgroup at N <= 2048, 2 at N > 2048; 1 output row per lane at N <= 2048, 2 above",
+      "unit": null,
+      "condition": "scalar and rows kinds",
+      "kind": "derived",
+      "source": "src/simd_qmm.zig:499",
+      "note": "constants SGS 2 and NR 2 at src/simd_qmm.zig:13-14"
+    },
+    {
+      "name": "combine_tree",
+      "value": "cross-lane sum by simd_shuffle_xor fma pairs at offsets 1, 2, 4, ... ascending (scalar); mma folds its S partials pairwise v[k] = fma(v[k+w], one, v[k]) with w doubling 1, 2, 4, 8",
+      "unit": null,
+      "condition": "after the per-chunk group walk, every kind",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:123",
+      "note": "mma form at src/simd_qmm.zig:316-317; halving the simdgroups per threadgroup keeps this order, so the bits do not change (test at src/simd_qmm.zig:705-734)"
+    },
+    {
+      "name": "per_group_scale_bias",
+      "value": "acc = fma(fp32(scale_g), P_g, acc) then acc = fma(fp32(bias_g), xsum_g, acc), groups ascending within a chunk, one fp32 accumulator per row",
+      "unit": null,
+      "condition": "every kind; the row's group sum rides the bias term",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:114",
+      "note": "mma form at src/simd_qmm.zig:294-295; bf16 store of the fp32 accumulator at src/simd_qmm.zig:125"
+    },
+    {
+      "name": "probe_rows",
+      "value": 8,
+      "unit": "rows",
+      "condition": "prepare, once per (N, K, bits) shape on the first simd_qmm call of any kind",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:646",
+      "note": "8 random normal f32 rows (sd 0.5, mlx_random_key seed 0x5eed at src/simd_qmm.zig:643) cast to bf16; all 8 run through mma, each row also through a one-row scalar call, compared with mlx_array_equal (src/simd_qmm.zig:654-668); any mismatch marks the shape mma_one_row (src/simd_qmm.zig:670), which routes that shape's one-row calls through mma from then on; a shape whose kernel fails is recorded in declined and never re-probed (src/simd_qmm.zig:606-615)"
+    },
+    {
+      "name": "rowqmv_rows_per_simdgroup",
+      "value": 4,
+      "unit": "output rows",
+      "condition": "every rowqmv launch; one input row per simdgroup, the row count a launch dimension only",
+      "kind": "hardcoded",
+      "source": "src/rowqmv.zig:9",
+      "note": "structure comment at src/rowqmv.zig:87-88; grid (32 * rows, N / 4) at src/rowqmv.zig:127"
+    },
+    {
+      "name": "rowqmv_lane_load",
+      "value": "16 inputs per lane per block at 4 bits, 8 at 6 and 8 bits (VPL)",
+      "unit": null,
+      "condition": "rq_load",
+      "kind": "hardcoded",
+      "source": "src/rowqmv.zig:60"
+    },
+    {
+      "name": "rowqmv_block_inputs",
+      "value": "32 lanes * VPL: 512 inputs per block at 4 bits, 256 at 6 and 8 bits; a K tail below one block runs one more chunk on the first (K % block) / VPL lanes",
+      "unit": null,
+      "condition": "rq_rowdot main loop and tail",
+      "kind": "derived",
+      "source": "src/rowqmv.zig:62",
+      "note": "tail at src/rowqmv.zig:77-81"
+    },
+    {
+      "name": "rowqmv_predivide",
+      "value": "inputs pre-divided per nibble lane (4-bit: 16, 256, 4096; 6-bit: 64, 16, 4) so masked weight fields need no shift; the 4/6-bit dot adds each run of 4 in bf16 first as MLX does on bfloat16_t, the 8-bit one adds each input in fp32",
+      "unit": null,
+      "condition": "rq_load and rq_qdot",
+      "kind": "hardcoded",
+      "source": "src/rowqmv.zig:24",
+      "note": "6-bit per-byte masks at src/rowqmv.zig:41-51"
+    },
+    {
+      "name": "rowqmv_threadgroup_blocks",
+      "value": "2 when rows <= 8, else 1 (threadgroup (32 * rows, blocks, 1))",
+      "unit": null,
+      "condition": "rowqmv config",
+      "kind": "derived",
+      "source": "src/rowqmv.zig:126"
+    },
+    {
+      "name": "output_dtype",
+      "value": "bfloat16",
+      "unit": "dtype",
+      "condition": "both kernels store the fp32 accumulator rounded once to bf16",
+      "kind": "hardcoded",
+      "source": "src/simd_qmm.zig:496",
+      "note": "rowqmv output arg at src/rowqmv.zig:125; stores at src/simd_qmm.zig:125 and src/rowqmv.zig:101"
+    }
+  ],
+  "gates": [
+    {
+      "condition": "rowExactDecode: row_exact_covered and dflash_bound and rowExactArch; while it holds every decode-width affine projection takes the row-exact kernels, otherwise stock paths",
+      "source": "src/model.zig:1225"
+    },
+    {
+      "condition": "rowExactArch: model_type nemotron_h, or a qwen3_5 prefix that is not MoE and has hadamard_block == 0 (no Hadamard rotation pack)",
+      "source": "src/model.zig:1237"
+    },
+    {
+      "condition": "row_exact_covered is set at load only when rowExactArch holds and firstRowExactMiss finds no weight outside the kernels; a miss logs '[row-exact] ... outside the row kernels' and verify rows stay non-byte-exact",
+      "source": "src/transformer.zig:18381"
+    },
+    {
+      "condition": "in Transformer.qmatmul: format engines (GGUF, sushi fp8, int8/Hadamard, ternary) run first; rowExactQmm only when rowExactDecode and mode == affine; stock qmatmulBits after",
+      "source": "src/transformer.zig:19343"
+    },
+    {
+      "condition": "rowExactQmm pick: dense qwen3_5 tries lane_qmm on NAX hosts, then simd_qmm; rowqmv.qmv is the fallback and serves nemotron_h directly (its thin MoE trunk streams faster through per-row matvecs); the pick follows the weight and the GPU, never the row count",
+      "source": "src/transformer.zig:36694",
+      "note": "fallback at src/transformer.zig:36697; nemotron_h branch at 36692"
+    },
+    {
+      "condition": "simd_qmm declines (returns null): non-GPU stream, fits false, non-bf16 x, K * bits mismatch, rows outside 1..16, or a shape in the declined map",
+      "source": "src/simd_qmm.zig:594",
+      "note": "rows check at 603, declined check at 606, probe-failure recording at 607-615"
+    },
+    {
+      "condition": "kind pick inside simd_qmm: probe-flagged shapes, rows past rows_max, or staging overflow take mma (frag at 2..8 rows); otherwise scalar at 1 row and the row-staged variant at 2..3 rows (4-bit)",
+      "source": "src/simd_qmm.zig:617"
+    },
+    {
+      "condition": "the probe switches one-row calls of a shape to mma where this GPU's mma bits differ from scalar's; it runs once per (N, K, bits) on the first call of any kind",
+      "source": "src/simd_qmm.zig:670",
+      "note": "probe body at src/simd_qmm.zig:635-671, first-call hook at 607"
+    },
+    {
+      "condition": "batched decode without a drafter: simd_qmm from 8 rows where no matmul2d verify tile exists, off where one does; MLX_SERVE_SIMD_QMM_DECODE=N overrides (0 = off)",
+      "source": "src/transformer.zig:36744"
+    },
+    {
+      "condition": "the drafter-side projection path (projectWithConfig) applies the same rowExactDecode gate",
+      "source": "src/transformer.zig:36733"
+    }
+  ],
+  "measured": [
+    {
+      "metric": "mtp_round_cost_pct",
+      "value": "about 30",
+      "model": "row-exact archs (dense qwen3_5, nemotron_h)",
+      "machine": "not stated",
+      "conditions": "their reference: 'exact mode costs MTP ~30%, so MTP/serial stay stock', the reason serial decode and MTP rounds keep stock paths unless a DFlash drafter is bound",
+      "provenance": "upstream_reported",
+      "source": "docs/reference.md:814"
+    },
+    {
+      "metric": "decode_tok_s_mean",
+      "value": 22.5,
+      "model": "Ternary Bonsai 2 27B 2-bit with z-lab's bf16 DFlash2 drafter",
+      "machine": "M4 16 GB",
+      "conditions": "code 24.6, math 29.7, prose 13.3; the M4 MMA lane with block 8 as the default, after the f16/bf16 drafter dtype fix that had made simd_qmm decline (14.6 before); assist 13.5 ms, head 7.4 ms, peak 9.4 GB",
+      "provenance": "upstream_reported",
+      "source": "docs/gotchas/engine-mlx.md:5595"
+    },
+    {
+      "metric": "decode_tok_s",
+      "value": 245,
+      "model": "Qwen3.8-27B 4-bit (the lane_qmm NAX arm of the same row-exact contract, not simd_qmm)",
+      "machine": "M5 Ultra",
+      "conditions": "vs TensorFold 0.5.0's 241 in the same session, llmprobe --runs 2; prefill 1936 vs 1691, 8k/16k rungs 179-196 / 177-181 vs 166 / 163, 6-bit decode 190 vs 166, 8-bit 168 vs 159",
+      "provenance": "upstream_reported",
+      "source": "docs/reference.md:558"
+    }
+  ],
+  "lab_mapping": [
+    {
+      "setting": "row_exact_max_rows",
+      "maps_to": "tslab kernel --bench int4_matmul --rows: the bench sweeps (rows, cols) shape pairs from int4_matmul::shapes, so the 1..16 row range and the scalar / row-staged / frag / mma crossover are the axes a baseline comparison would sweep",
+      "env": null,
+      "note": "our bench times only; their per-row bit-equality tests (every row of an R-row call equals its one-row call, src/simd_qmm.zig:769-856 and src/rowqmv.zig:462-499) have no tslab counterpart yet"
+    },
+    {
+      "setting": "probe_rows",
+      "maps_to": "docs/MLX_SERVE_KERNELS.md lever E1 (under 'How each engine lever would be done here'): copy the per-shape prepare probe and the drafter-bound gate onto our MMA8 tile before any flag-on default; E1 targets the flat verify behind TURBOSPARK_INT4_MMA8",
+      "env": null,
+      "note": "TURBOSPARK_INT4_MMA8 is not a knobs.rs entry; it appears in crates/lab/src/depth_replay.rs. E1 lives in docs/MLX_SERVE_KERNELS.md, not docs/KAPITSA_KERNELS.md as the extraction brief had it"
+    },
+    {
+      "setting": "split_chunks_n_le_2048",
+      "maps_to": "none yet: the int4_matmul bench has no K-split axis, so the S-chunk contract and its fixed combine tree have no tslab surface to sweep",
+      "env": null
+    }
+  ],
+  "docs": [
+    "docs/MLX_SERVE_KERNELS.md#the-row-exact-kernels-which-make-the-tree-verify-possible",
+    "docs/MLX_SERVE_KERNELS.md#the-quantized-linear-front-door",
+    "docs/MLX_SERVE_KERNELS.md#how-the-custom-kernels-are-built-and-gated",
+    "docs/MLX_SERVE_KERNELS.md#how-each-engine-lever-would-be-done-here"
+  ],
+  "notes": "Doc-vs-source: our section says the mma 'weight fragment built once per group and reused across row tiles'; the source builds the weight fragment per (pass, output tile) and reuses it across the two row tiles (src/simd_qmm.zig:280-285), and the row-staged scalar variant builds masked weight fields once per pass across staged rows (src/simd_qmm.zig:189-194) - sided with the source. Our section calls rowqmv 'the fallback when simd_qmm declines a shape or its probe fails'; the source also tries lane_qmm before simd_qmm on NAX hosts and serves nemotron_h through rowqmv directly rather than as a fallback (src/transformer.zig:36692-36697). The 448-thread M1/M2 threadgroup cap for this kernel family is a source comment (src/simd_qmm.zig:430-431); the source shows only the halving fallback on a 'Thread group size' eval error (src/simd_qmm.zig:567-578), not our doc's 448-or-704 range, and the halving keeps the chunk walk order so the bits do not change. Our line 'This is simdgroup_matrix, so it runs on the M4 Max' is not shown by this file: simd_qmm names no chip; the mma_sg map exists because some GPUs cap the threadgroup and the probe exists because some chips' mma does not reproduce the scalar chain, so the M4 Max claim rests on their release notes, not the kernel source. The probe runs on the first call of any kind for a shape (src/simd_qmm.zig:607), not only before the first one-row call. simd_qmm requires group size 64 while rowqmv admits 32, 64 and 128, so a 32- or 128-group pack under the gate routes to rowqmv. rowqmv also carries routed-expert up/down kernels with fused relu2 and a dense bf16 router on the same one-simdgroup-per-row contract (src/rowqmv.zig:274, 334); they are outside this matmul entry's scope but share the contract and the gate. All three measured figures were found only in the repo's docs (docs/reference.md:814, docs/reference.md:558, docs/gotchas/engine-mlx.md:5595), not in the kernel files, and none carries a protocol or seed detail beyond the conditions listed."
+}

@@ -357,8 +357,19 @@ fn parity_layer(rng: &mut Rng, d: usize, heads: usize, context: usize) -> Transf
     }
 }
 
+/// Tolerance of the table-driven attention against the inline reference:
+/// every output within this many ULPs of the shape's largest output. The
+/// two paths evaluate the same expressions and agree bit for bit at
+/// opt-level 0. At opt-level 1 (this crate's dev profile, root Cargo.toml)
+/// the shape with `pos_offset = 1000` differs in 108 of 744 outputs by at
+/// most 2.4e-7 absolute against a largest output of 1.8, about one ULP of
+/// that scale (measured 2026-10-26); the other four shapes still agree
+/// exactly. Counting ULPs per element would read a 3e-8 difference on a
+/// 6e-4 output as 524 ULPs, so the bound is in the scale's ULPs.
+const ATTENTION_PARITY_SCALE_ULPS: f32 = 4.0;
+
 #[test]
-fn attention_matches_original_bitwise() {
+fn attention_matches_original_within_ulps_of_scale() {
     let mut rng = Rng(0x9e37_79b9_7f4a_7c15);
     // (d_model, heads, frames, context, pos_offset): covers a context
     // shorter than the sequence, a context longer than it, one frame,
@@ -375,12 +386,17 @@ fn attention_matches_original_bitwise() {
         let want = attention_reference(&layer, &x, frames, offset);
         let got = layer.attention(&x, frames, offset);
         assert_eq!(got.len(), frames * d);
+        let scale = want.iter().flatten().fold(0.0f32, |m, v| m.max(v.abs()));
+        let tolerance = ATTENTION_PARITY_SCALE_ULPS * f32::EPSILON * scale;
         for (t, row) in want.iter().enumerate() {
             for (c, w) in row.iter().enumerate() {
-                assert_eq!(
-                    got[t * d + c].to_bits(),
+                let g = got[t * d + c];
+                assert!(
+                    (g - w).abs() <= tolerance,
+                    "d={d} heads={heads} frames={frames} ctx={context} off={offset} t={t} c={c}: {:#010x} vs {:#010x}, diff {:e} over {tolerance:e}",
+                    g.to_bits(),
                     w.to_bits(),
-                    "d={d} heads={heads} frames={frames} ctx={context} off={offset} t={t} c={c}"
+                    (g - w).abs()
                 );
             }
         }

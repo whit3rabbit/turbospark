@@ -37,9 +37,18 @@ of the registry's. It sits in the caller.
 2. **Gate, in the caller.** `PreToolUse` hooks run first and fail CLOSED
    (state#40). Then `Tools/Core/AppToolPermissionEngine.evaluate`, which
    asks `Tools/Core/ToolRiskClassifier` for a risk assessment and applies
-   eight ordered steps: strict read-only mode, category deny, high-risk
-   always asks, permissive mode, session approval, MCP `autoApprove`, ask
-   mode, auto mode. For a shell command the classifier consults
+   ordered steps: strict read-only mode, category deny, MCP deny rule, full
+   access, high-risk always asks, permissive mode, MCP allow rule, session
+   approval, MCP `autoApprove`, ask mode, auto mode. Full access skips the
+   risk ceiling but not the two explicit refusals above it. A risk rating
+   stored at parse time is redone after a hook's `updatedInput`, so the
+   engine rates the arguments that will run. A session "Always Allow" on a
+   shell call grants that command (and the same command with more
+   arguments), never the shell tool's name, and is dropped when the mode or
+   category matrix changes. Nested gates (batch, subagent, `tool_call`,
+   codemode) call `evaluate` with no mode and read the rootless chat's mode
+   from `ToolPermissionContext.fallbackMode`, which `AppToolRegistry.execute`
+   binds. For a shell command the classifier consults
    `Tools/Terminal/TerminalCommandClassifier.isAutoApprovable` (a positive
    allowlist) and `Tools/Core/CommandGate` (advisory reason on, veto off).
    A `.ask` raises the approval card. A `.deny` is recorded as refused.
@@ -73,7 +82,9 @@ the engine's tool calling instead:
 - **Parsing.** The engine returns structured calls (`.toolCall` events). They
   become `ToolCallParser.nativeCandidates` and enter
   `ToolCallDispatchGate.evaluate(nativeCalls:)`, which runs the SAME schema
-  validation (`TurnAvailableTools.validate`) as a text call, then the same
+  validation (`TurnAvailableTools.validate`, which first normalizes the tool
+  name and argument spellings, see "Tool call normalization") as a text call,
+  then the same
   hooks, permission engine, risk classifier, approval cards and executors.
   Nothing after "a call exists" changed. With native calls present the reply
   text is prose and neither the text arms nor Forge inspect it; with none, the
@@ -206,6 +217,42 @@ web tools need no root and still run. There is no defensible default root.
 `/` makes the containment check a no-op and `~` holds every credential on
 the machine (Gotcha 30).
 
+### Chat vs Projects: tool availability and user options
+
+TurboSpark separates tool execution environments between **Chat** and **Projects** to protect host security while providing assistants with web, planning, and reasoning capabilities:
+
+- **Projects Mode (`interactionMode == .projects` with an active project)**:
+  Full access to the project's tool suite according to its profile (`tools(for: profile, projectURL: url)`). This includes workspace-rooted tools (`workspaceRootedToolNames`: `read_file`, `write_file`, `edit_file`, `grep_search`, `search_code`, `list_directory`, `run_command`, `bashoutput`, `killshell`), project skills, and configured MCP servers.
+
+- **Chat Mode (`interactionMode == .chat`)**:
+  Designed for general and conversational assistance. Tools are toggled via `chatToolsEnabled` (persisted in `MacAppSettings`, default `true`):
+  - **When enabled (`chatToolsEnabled == true`)**: The turn offers only rootless tools. `AppToolCatalog.captureTurnAvailableTools` pulls `.general` tools with a `nil` project URL and strictly filters out all tools in `AppToolRegistry.workspaceRootedToolNames`. This safely exposes web search (`websearch`), web fetch (`webfetch`, `read_url_content`), browser automation subagents, structured user questionnaires (`askuserquestion`), checklists (`todowrite`), planning mode (`enterplanmode`/`exitplanmode`), memory (`memory`), and automation (`croncreate`, `sleep`, `pushnotification`), while withholding file edits and host shell execution.
+  - **When disabled (`chatToolsEnabled == false`)**: The turn completely disables tool advertising, prompt injection, and tool call extraction (`turnAllowsToolCalls == false`).
+
+**User Controls and Settings:**
+1. **Composer Tools chip** (`ToolsStatusChip`): An `AppChip` ("Tools", wrench and screwdriver icon) in the leading action row beneath the text editor, shown in Chat and Projects. A filled green dot means a turn would be offered tools, a slashed red ring means it would not, and the label shows `enabled/total` when the set is narrowed. Clicking opens `ToolsPopoverView`: the Chat master switch, the profile picker, and per-tool toggles for this session.
+2. **Plus Menu (`+`)**: A toggle item in the attachment/plus menu ("Tools in Chat") provides discoverability.
+3. **General Settings**: Under the "Chat & Runtime" section of General Settings, "Enable tools in Chat by default" sets the persistent default for new sessions.
+
+### Tool profiles
+
+A tool profile (`AppToolProfile`) is a named set of tools a turn is offered. Default offers everything and is the selection on a fresh install. Minimal (read, write, edit, bash and the shell-output helpers) and Read-only are built in.
+
+- **Storage.** Built-ins are code-defined and never persisted. `MacAppSettings.toolProfiles` holds the user's own, `activeToolProfileID` the selection (empty or stale means Default). A malformed row is dropped on load, and a row whose allowlist is unreadable is dropped rather than widened to every tool.
+- **Keys.** `allowedTools` holds lowercase keys from `AppToolCatalog.profileKey(for:)`. `nil` means every tool, so Default picks up new tools without a migration. `includesMcpAndCustom` is one switch for MCP servers, the progressive-disclosure tools that front them, `codemode` and custom tools, because they are discovered at runtime. `recall_tool_output` is always on: elided results point at it.
+- **Enforcement.** `AppToolCatalog.captureTurnAvailableTools(profile:)` narrows the capture, which feeds the prompt, the native lane, the token estimate and `TurnAvailableTools.validate`. A removed tool is refused at execution. A profile never grants anything the permission engine denies. It does not apply to `SubagentRunner` or `AutomationExecutors`.
+- **Session override.** The popover edits `AppModel.toolProfileOverride` over the selected profile. It is not persisted, ends on Reset or when another profile is selected, and "Save as profile..." turns it into a custom profile.
+- **What the composer lists.** `toolGroupsForContext` shows only tools the turn's agent profile is ever offered (`offeredProfileKeys`, cached), without the workspace-rooted ones in Chat. The Settings editor (Tools tab, `ToolsSettingsPaneView`) lists every built-in because a profile is global.
+- **Prompt guidance.** `systemPromptAddendum` emits the TodoWrite and Subagents sections only when those tools are offered.
+
+### Tool call normalization
+
+`TurnAvailableTools.validate` used to match the tool name and every required argument exactly, which refused calls the executor would have accepted (`read` for `FileRead`, `path` or `filePath` for `file_path`). `Tools/Core/ToolCallNormalization.swift` now resolves the offered definition (exact, case-insensitive, then a family such as `read`/`read_file`/`FileRead` or `bash`/`shell`/`run_command`) and renames argument keys to the declared properties, then validation runs unchanged. The dispatch gate sets the call's name to the offered one. A canonical value is never overwritten by a synonym, and only tools the turn offered can be reached. The comparison with Claude Code, opencode and Pi, and what was deliberately not changed, is in `docs/TOOL_NAME_ALIGNMENT.md`.
+
+**Defense in Depth:**
+Even if a model in Chat mode produces a tool call targeting a file or terminal tool, `AppToolRegistry.execute` validates the presence of a project root for all names in `workspaceRootedToolNames`, refusing execution with a clear safety error.
+
+
 **Containment is on the FILE tools only.** `resolveSecurePath` refuses
 absolute and `~` paths and compares the resolved target against the resolved
 root with symlinks followed on both sides. `AppToolSandbox.validateWritePath`
@@ -324,6 +371,10 @@ five files adding a tool touches.
 | `Tools/Registry/AppToolCatalog.swift` | the eight `OpenAITool` collections, `allTools`, `tools(for:)`, `category(for:)`, `systemPromptAddendum` |
 | `Tools/Core/OpenAIToolSchema.swift` | `OpenAITool`, `JSONSchema`, the serializer |
 | `Tools/Core/ToolCallParser.swift` | the one parser, XML block first and the markdown form as fallback |
+| `Tools/Core/ToolCallNormalization.swift` | tool-name families and argument-spelling folding applied in `TurnAvailableTools.validate` |
+| `Tools/Registry/AppToolCatalog+Profiles.swift` | `profileKey(for:)`, the profile filter, `profileGroups`, the offered-key cache |
+| `State/AppToolProfile.swift`, `State/AppModel+ToolProfiles.swift` | the profile type and built-ins, selection, session override and library operations |
+| `Generation/ToolsStatusChip.swift`, `App/ToolsSettingsPaneView.swift` | the composer chip and popover, and the Settings Tools tab |
 | `Tools/Core/AppToolPermissionEngine.swift` | `evaluate`, `ToolPermissionDecision`, `SessionApprovalStore` |
 | `Tools/Core/ToolRiskClassifier.swift` | `assessRisk`, sensitive-path list, `assessTerminalCommand` (the classifier's hook point) |
 | `Tools/Core/CommandGate.swift`, `CommandLexicalFeatures.swift`, `HashedFeatureVectorizer.swift` | the bundled logistic model: weight loading, features, scoring. `docs/PERMISSION_GATE.md` owns these |
@@ -1031,11 +1082,11 @@ requiring a shell process:
   base64 encoded credentials), `api_key` (X-API-Key header), or custom headers.
 - Formatters: `json` (indented pretty-printed JSON), `markdown` (HTML converted
   to Markdown with tag stripping), or `raw`.
-- Containment and SSRF Protection: Every request destination passes through
-  `AppToolSandbox.isPrivateOrMetadataHost(host)`. Requests to loopback (127.0.0.1,
-  localhost, ::1), RFC 1918 private subnets (10.0.0.0/8, 172.16.0.0/12,
-  192.168.0.0/16), link-local addresses (169.254.0.0/16), and cloud metadata
-  endpoints are blocked with a safety refusal.
+- Containment and SSRF Protection: every destination, each redirect hop
+  included, goes through the network policy below. Cloud metadata
+  (169.254.0.0/16 and the named metadata hosts) is always refused. Loopback
+  follows "Allow localhost" (on by default), and RFC 1918, CGNAT, `.local`
+  and other non-public addresses follow "Allow local network" (off).
 - **Residual risk: DNS rebinding sends before it is detected.** The
   destination is validated by a separate lookup, and URLSession resolves
   again to connect. The address the socket really used is checked afterwards
@@ -1048,6 +1099,53 @@ requiring a shell process:
   judged too large and regression-prone for this finding. Side-effecting
   `http_request` calls (POST/PUT/DELETE/PATCH) are the exposed case; they
   already go through the normal approval gate.
+
+### Network policy (Settings > Network)
+
+`AppNetworkPolicy` (`State/AppNetworkPolicy.swift`) is app-wide and a
+CEILING over project permissions. `AppToolPermissionEngine.evaluate` returns
+its deny before any project mode is consulted, Full access included, and its
+ask turns the project ladder's allow back into a hard-gated ask (the Agent
+mode classifier never answers it). A project can only be stricter
+(`web = .deny`). Modes: Ask (default: allowlist runs, other domains ask),
+Allow all (except the blocklist), Block all, Custom (allowlist, blocklist,
+unlisted domains ask or deny, optional GET/HEAD/OPTIONS only). The blocklist
+beats the allowlist; `example.com` covers its subdomains, `*.example.com`
+only them. `AppToolSandbox.hostScope` classifies hosts as metadata, loopback,
+private network or public.
+
+- Approvals are per HOST. A URL tool that is not high risk asks through
+  `Generation/NetworkAccessApprovalView` ("Allow access to <host>?"), which
+  `ToolCallCardView.approvalPrompt` shows in place of the generic buttons.
+  Allow for This Chat (the primary action) records the host in
+  `SessionApprovalStore.allowHost`, never the tool name, so one approved
+  fetch does not open every domain. Allow Once grants nothing. Always Allow
+  and its menu's Always Block write the host into the policy lists. A high
+  risk call keeps the generic Approve Once and Deny, because the engine
+  checks risk before a host grant, so the grant would never apply.
+- The card binds no Return or Esc, unlike Codex's. It sits in the transcript
+  while the composer can hold focus, so a default-action Return would grant
+  a site in the middle of the user's next message. Its buttons are native
+  and reachable with Tab. Its last `ViewThatFits` layout puts one button per
+  row: the last option is used when none fits, and a two-row form clipped
+  German at 360 pt.
+- Executors re-check: `HttpRequestDestinationValidator.validate` refuses a
+  policy deny on every hop, and `AppToolRegistry.execute` refuses a web tool
+  with no URL (a search provider call) under Block all.
+- The local exception never reaches a public name. A URL whose host is
+  public must resolve and connect only to public addresses, with localhost
+  allowed or not, so DNS rebinding is still refused
+  (`AppNetworkPolicy.permitsLocalConnection`).
+- Shell commands and custom tools run under `sandbox-exec` with a Seatbelt
+  profile only in Block all (`Tools/Terminal/ShellNetworkSandbox.swift`).
+  Seatbelt cannot filter by domain, so the other modes leave the shell
+  unconfined, and the pane says so. Never write
+  `(allow network* (local ip "localhost:*"))`: an unbound outbound socket
+  matches it, and `curl http://1.1.1.1` went straight through.
+- Not covered: stdio MCP servers, plugins, hooks, and a process that asks a
+  system daemon over Mach IPC to fetch for it.
+- Subagents have no approval UI, so in Ask mode a subagent's request to a
+  domain that is not allowlisted is refused with the ask reason.
 
 ### Tavily web search and direct answer extraction
 
@@ -1079,6 +1177,34 @@ also never widens to another origin: `currentActionApproved` only counts
 when the destination equals the approved origin.
 
 Test: `BrowserAppIntegrationTests.testAgentTabNavigationWithoutLiveCommandIsDenied`.
+
+### Browser automation: what an agent tab's page can reach
+
+The navigation delegate authorizes frames only. `fetch`, XHR, images,
+WebSockets and beacons never reach it, so until 2026-10-31 a page on a
+granted public origin could send requests to the TurboSpark listener, the
+OpenKind daemon, a LAN device or a metadata endpoint.
+`BrowserAutomation/AgentBrowserIsolation.swift` closes that for agent-owned
+tabs:
+
+- `AgentBrowserNetworkRules` is a `WKContentRuleList` that blocks
+  http(s) and ws(s) requests to loopback, RFC1918, link-local, IPv6 ULA and
+  link-local, `.local`, `.localhost` and the named metadata hosts, UNLESS the
+  top document is itself on a private host. Reaching a private top document
+  already took an exact grant or a hard-gated approval. An agent tab loads
+  nothing until the list is installed, and a compile failure refuses the
+  navigation. A user takeover removes the list. Numeric host spellings
+  (`http://2130706433/`) cannot be written as rules, so subresources with
+  those hosts are not blocked. Frames with them are still refused.
+- `AgentBrowserDataStore` gives agent tabs their own persistent
+  `WKWebsiteDataStore`, one per profile, so an origin grant never carries
+  the user's cookies or signed-in sessions. A taken-over tab keeps it.
+
+Origin grants cover agent browser control only. `web_fetch`, MCP tools and
+shell `curl` are gated by their own categories, so a project that grants
+just `https://a.example` can still fetch any host when Web is Allow.
+
+Tests: `AgentBrowserIsolationTests`.
 
 ## 17. Gotchas
 

@@ -1,0 +1,27 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "minimax_m2",
+  "kind": "text",
+  "title": "MiniMax M2: full GQA with whole-projection q/k norms and sigmoid MoE routing, on the llama flow",
+  "flow": "llama",
+  "installs": [],
+  "recommended": [
+    {"knob": "routed_batch", "value": "<unset>", "when": ["moe"],
+     "why": "opt-in and unmeasured on this family; the sigmoid router's near-ties make moe_kl the class",
+     "findings": []}
+  ],
+  "sweeps": [
+    {"id": "routed_batch", "description": "the batched routed half against one GEMV per route",
+     "when": ["moe"], "metric": "prefill_tok_s", "exactness": "moe_kl",
+     "workload": {"prompts": [{"protocol": "long-synthesis"}], "decode_tokens": 16},
+     "baseline": "gemv", "candidates": ["batched:routed_batch=1"]},
+    {"id": "slots", "description": "expert cache slots at streamed residency",
+     "when": ["moe"], "metric": "decode_tok_s", "exactness": "bit_exact",
+     "workload": {"prompts": [{"protocol": "medium-review"}], "decode_tokens": 64},
+     "baseline": "s16@16/streamed", "candidates": ["s32@32/streamed", "s64@64/streamed"]}
+  ],
+  "findings": [],
+  "open_questions": ["no install measured by the lab yet: run workflow new-family first"],
+  "traps": ["sigmoid routing: top-k ties flip under a numerics change, so declare moe_kl"],
+  "docs": ["docs/BATCHED_PREFILL.md"]
+}

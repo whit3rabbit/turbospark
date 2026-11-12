@@ -5,6 +5,10 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
+use super::libraries::{
+    coded, install_fault, parse_options, refuse_while_busy, refuse_while_moving, require_listed,
+    store_fault,
+};
 use crate::abi::{self, guard_result};
 use crate::models::{self, TS_INSTALL_BYTES, TS_INSTALL_STAGE};
 use crate::strings;
@@ -38,6 +42,9 @@ pub unsafe extern "C" fn ts_store_root_set(root: *const c_char) -> c_int {
 }
 
 /// Relocates the managed store and activates the destination on success.
+///
+/// Retired: refused while any model library is listed, because it deletes the
+/// home's install records (see `catalog::relocate_default_store`).
 #[no_mangle]
 pub unsafe extern "C" fn ts_store_relocate(
     destination: *const c_char,
@@ -116,12 +123,16 @@ pub unsafe extern "C" fn ts_image_installed_in_json(
     })
 }
 
-/// Deletes one valid image-generation install by path or unambiguous alias.
+/// Deletes one valid image-generation install of This Mac by path or
+/// unambiguous alias. A library's image is deleted by its install id
+/// ([`ts_image_delete_install`]). Refused as `busy` while an install or a
+/// move runs.
 #[no_mangle]
 pub unsafe extern "C" fn ts_image_delete(identifier: *const c_char) -> c_int {
     guard_result(|| {
         let identifier = strings::required(identifier, "identifier")
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        refuse_while_busy("delete a model")?;
         models::delete_image(identifier).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
 }
@@ -135,7 +146,8 @@ pub unsafe extern "C" fn ts_image_catalog_json(out: *mut *mut c_char) -> c_int {
     })
 }
 
-/// Downloads and packs one curated image-generation catalog row.
+/// Downloads and packs one curated image-generation catalog row into This
+/// Mac. [`ts_image_install_with_options`] picks the library.
 #[no_mangle]
 pub unsafe extern "C" fn ts_image_install(
     alias: *const c_char,
@@ -143,64 +155,129 @@ pub unsafe extern "C" fn ts_image_install(
     userdata: *mut c_void,
     result_json: *mut *mut c_char,
 ) -> c_int {
-    guard_result(|| {
-        if result_json.is_null() {
-            return Err((
-                abi::TS_ERR_INVALID_ARGUMENT,
-                "resultJson must not be null".to_string(),
-            ));
+    guard_result(|| run_image_install(alias, std::ptr::null(), cb, userdata, result_json))
+}
+
+/// [`ts_image_install`] into the library `options_json` names
+/// (`{"library": "<id>"}`; see [`destination`]).
+#[no_mangle]
+pub unsafe extern "C" fn ts_image_install_with_options(
+    alias: *const c_char,
+    options_json: *const c_char,
+    cb: TsInstallCallback,
+    userdata: *mut c_void,
+    result_json: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| run_image_install(alias, options_json, cb, userdata, result_json))
+}
+
+unsafe fn run_image_install(
+    alias: *const c_char,
+    options_json: *const c_char,
+    cb: TsInstallCallback,
+    userdata: *mut c_void,
+    result_json: *mut *mut c_char,
+) -> Result<(), (c_int, String)> {
+    if result_json.is_null() {
+        return Err((
+            abi::TS_ERR_INVALID_ARGUMENT,
+            "resultJson must not be null".to_string(),
+        ));
+    }
+    let alias = strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+    refuse_while_moving()?;
+    let library = destination(options_json)?;
+    struct Sink(TsInstallCallback, *mut c_void);
+    unsafe impl Send for Sink {}
+    unsafe impl Sync for Sink {}
+    let sink = Arc::new(Sink(cb, userdata));
+    let bytes_sink = Arc::clone(&sink);
+    let on_bytes: Arc<dyn Fn(u64, u64) + Send + Sync> = Arc::new(move |done, total| {
+        if let Some(f) = bytes_sink.0 {
+            unsafe {
+                f(
+                    bytes_sink.1,
+                    TS_INSTALL_BYTES,
+                    std::ptr::null(),
+                    0,
+                    done,
+                    total,
+                )
+            };
         }
-        let alias =
-            strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        struct Sink(TsInstallCallback, *mut c_void);
-        unsafe impl Send for Sink {}
-        unsafe impl Sync for Sink {}
-        let sink = Arc::new(Sink(cb, userdata));
-        let bytes_sink = Arc::clone(&sink);
-        let on_bytes: Arc<dyn Fn(u64, u64) + Send + Sync> = Arc::new(move |done, total| {
-            if let Some(f) = bytes_sink.0 {
+    });
+    let json = models::image_install(
+        alias,
+        library.as_deref(),
+        |line| {
+            if let Some(f) = sink.0 {
                 unsafe {
                     f(
-                        bytes_sink.1,
-                        TS_INSTALL_BYTES,
-                        std::ptr::null(),
+                        sink.1,
+                        TS_INSTALL_STAGE,
+                        line.as_ptr() as *const c_char,
+                        line.len(),
                         0,
-                        done,
-                        total,
+                        0,
                     )
                 };
             }
-        });
-        let json = models::image_install(
-            alias,
-            |line| {
-                if let Some(f) = sink.0 {
-                    unsafe {
-                        f(
-                            sink.1,
-                            TS_INSTALL_STAGE,
-                            line.as_ptr() as *const c_char,
-                            line.len(),
-                            0,
-                            0,
-                        )
-                    };
-                }
-            },
-            on_bytes,
-        )
-        .map_err(abi::install_error)?;
-        strings::emit(&json, result_json).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
-    })
+        },
+        on_bytes,
+    )
+    .map_err(install_fault)?;
+    strings::emit(&json, result_json).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
 }
 
-/// Deletes an installed model from `~/.turbospark` and drops its directory.
+/// The install options of the entry points that take a destination.
+///
+/// Unknown keys are refused, as `ts_audio_install_with_options` refuses them,
+/// so a misspelt `library` cannot quietly install into This Mac.
+#[derive(serde::Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct DestinationOptions {
+    /// The id of the library to install into, as `ts_libraries_json` lists
+    /// it. "internal", an absent key and `null` are This Mac.
+    #[serde(default)]
+    library: Option<String>,
+}
+
+/// The library `options_json` names, `None` for This Mac. NULL and an empty
+/// string are no options, like every optional string in this crate. A library
+/// the list does not have is refused as `unknown_library` here, before any
+/// install work, so the app gets the code and not a bare message.
+unsafe fn destination(options_json: *const c_char) -> Result<Option<String>, (c_int, String)> {
+    let options: DestinationOptions = match strings::optional(options_json, "options")
+        .map_err(|message| (abi::TS_ERR_INVALID_ARGUMENT, message))?
+    {
+        Some(json) => parse_options(json)?,
+        None => DestinationOptions::default(),
+    };
+    require_listed(options.library.as_deref())?;
+    Ok(options.library)
+}
+
+/// Deletes an installed model of This Mac by alias and drops its directory.
+/// An alias held by an install in a library is refused as `use_install_id`:
+/// an alias says nothing of where the install is, and a library's install is
+/// deleted by [`ts_model_delete_install`], which places it where its library
+/// is now. Refused as `busy` while an install or a move runs.
 #[no_mangle]
 pub unsafe extern "C" fn ts_model_delete(alias: *const c_char) -> c_int {
     guard_result(|| {
         let alias =
             strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        models::delete(alias).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+        refuse_while_busy("delete a model")?;
+        models::delete(alias).map_err(|error| match error {
+            models::DeleteError::Store(error) => store_fault(&error),
+            models::DeleteError::InLibrary { alias, library } => coded(
+                "use_install_id",
+                &format!(
+                    "{alias:?} is installed in the library {library:?}; delete it by its \
+                     install id"
+                ),
+            ),
+        })
     })
 }
 
@@ -305,6 +382,69 @@ pub unsafe extern "C" fn ts_probe_json(
     })
 }
 
+/// Searches Hugging Face for text models. One list request: no repository is
+/// probed, so every row carries advisory metadata only (format tags, the
+/// architecture string the Hub read) and never claims a model runs. Pair it
+/// with `ts_hub_check_json` on the row the user selects.
+///
+/// `query` is required and at least two characters. `options_json` may be
+/// NULL, "" or "{}".
+#[no_mangle]
+pub unsafe extern "C" fn ts_hub_search_json(
+    query: *const c_char,
+    options_json: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let query =
+            strings::required(query, "query").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let options =
+            abi::parse_json_or_default::<crate::wire::HubSearchOptions>(options_json, "options")?;
+        let json = models::hub_search_json(query, &options)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// The compatibility verdict for ONE Hugging Face repository, as a state a
+/// host can render: `runnable`, `refused` (with the probe's own reason),
+/// `needsAuth` or `unavailable`. The last two are not verdicts on the
+/// checkpoint. Unlike `ts_probe_json` this never fails for a repository with
+/// several GGUF files or none; it reports them.
+///
+/// Reads the file list, one GGUF header or `config.json`, and for
+/// safetensors a HEAD per shard: seconds for a repository the user picked,
+/// not for every row of a search. `repo` is `owner/name` or
+/// `owner/name@revision`.
+#[no_mangle]
+pub unsafe extern "C" fn ts_hub_check_json(
+    repo: *const c_char,
+    options_json: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let repo =
+            strings::required(repo, "repo").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let options =
+            abi::parse_json_or_default::<crate::wire::HubCheckOptions>(options_json, "options")?;
+        let guard = crate::wire::load_guard(&options.load_guard)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let slots = crate::wire::expert_cache_slots(&options.expert_cache_slots)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let context = options.context_window.filter(|c| *c > 0);
+        let json = models::hub_check_json(
+            repo,
+            options.sidecar_hint.as_deref(),
+            options.file.as_deref(),
+            context,
+            slots,
+            guard,
+        )
+        .map_err(|e| (abi::TS_ERR_JSON, e))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
 /// What a longer context window would cost an INSTALLED model.
 ///
 /// A different question from `ts_recommend_json`'s and NOT derivable from it:
@@ -388,13 +528,22 @@ pub unsafe extern "C" fn ts_kv_quant_supported(
         if layer_mask.is_null() || layer_mask_len == 0 || num_layers == 0 {
             return 0;
         }
+        // Open refuses a manifest whose mask is not one entry per layer, so
+        // a mismatch is a "no" here too. The `isize` bound is what
+        // `from_raw_parts` requires; past it the slice itself is undefined.
+        if layer_mask_len != num_layers || layer_mask_len > isize::MAX as usize {
+            return 0;
+        }
         let mask = std::slice::from_raw_parts(layer_mask, layer_mask_len);
         models::kv_quant_supported(full_head_dim, mask, num_layers) as c_int
     })
 }
 
 /// What a model family can do, as JSON, from its persisted
-/// `ModelFamily::as_str` spelling: `{"family","known","steeringSupported"}`.
+/// `ModelFamily::as_str` spelling:
+/// `{"family","known","steeringSupported","anePrefillSupported"}`.
+/// `anePrefillSupported` is the family and this build only; whether `Auto`
+/// turns it on also needs `ts_chip_supports_ane_prefill`.
 /// A family this build does not recognise is `known: false` with every
 /// capability false rather than an error.
 #[no_mangle]
@@ -407,6 +556,59 @@ pub unsafe extern "C" fn ts_family_capabilities_json(
             strings::required(family, "family").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
         strings::emit(&models::family_capabilities_json(family), out)
             .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// What `ts_session_open` would do with an `expertResidency` request
+/// (`auto`, `streamed` or `mapped`) on the install at `path`, without opening
+/// it: `{"applicable","requested","resolved","refusal"}`. `applicable` is
+/// false on an install with no routed experts (send `auto`). `resolved` is
+/// `"streamed"` or `"mapped"` when the open would take the request, and null
+/// with `refusal` naming why when it would refuse it (a family with no mapped
+/// arm, or an expert table past Metal's working set). Always `applicable:
+/// false` off macOS, where nothing decodes.
+#[no_mangle]
+pub unsafe extern "C" fn ts_expert_residency_for_install_json(
+    path: *const c_char,
+    requested: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let path =
+            strings::required(path, "path").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let requested = strings::required(requested, "requested")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        #[cfg(target_os = "macos")]
+        let json = models::expert_residency_for_install_json(path, requested)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        #[cfg(not(target_os = "macos"))]
+        let json = {
+            let _ = path;
+            serde_json::json!({
+                "applicable": false,
+                "requested": requested,
+                "resolved": null,
+                "refusal": null,
+            })
+            .to_string()
+        };
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Returns 1 if the host chip is an Apple Silicon M4 or newer capable of ANE prefill,
+/// 0 otherwise.
+#[no_mangle]
+pub unsafe extern "C" fn ts_chip_supports_ane_prefill() -> c_int {
+    abi::guard_value(0, || {
+        #[cfg(target_os = "macos")]
+        {
+            runtime::hardware_supports_ane_prefill() as c_int
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            0
+        }
     })
 }
 
@@ -435,6 +637,8 @@ pub unsafe extern "C" fn ts_install_bytes_json(
 /// `cb` receives `TS_INSTALL_STAGE` lines on the calling thread and
 /// `TS_INSTALL_BYTES` updates **from worker threads, concurrently**. A
 /// caller whose callback touches shared state must synchronise it.
+///
+/// Installs into This Mac. [`ts_install_with_options`] picks the library.
 #[no_mangle]
 pub unsafe extern "C" fn ts_install(
     alias: *const c_char,
@@ -442,74 +646,98 @@ pub unsafe extern "C" fn ts_install(
     userdata: *mut c_void,
     result_json: *mut *mut c_char,
 ) -> c_int {
-    guard_result(|| {
-        // Checked before any work: discovering an invalid result pointer only
-        // after a multi-minute download and conversion would waste the walk,
-        // even when a later retry can reuse its verified network ranges.
-        if result_json.is_null() {
-            return Err((
-                abi::TS_ERR_INVALID_ARGUMENT,
-                "resultJson must not be null".to_string(),
-            ));
+    guard_result(|| run_install(alias, std::ptr::null(), cb, userdata, result_json))
+}
+
+/// [`ts_install`] into the library `options_json` names
+/// (`{"library": "<id>"}`; see [`destination`]).
+#[no_mangle]
+pub unsafe extern "C" fn ts_install_with_options(
+    alias: *const c_char,
+    options_json: *const c_char,
+    cb: TsInstallCallback,
+    userdata: *mut c_void,
+    result_json: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| run_install(alias, options_json, cb, userdata, result_json))
+}
+
+unsafe fn run_install(
+    alias: *const c_char,
+    options_json: *const c_char,
+    cb: TsInstallCallback,
+    userdata: *mut c_void,
+    result_json: *mut *mut c_char,
+) -> Result<(), (c_int, String)> {
+    // Checked before any work: discovering an invalid result pointer only
+    // after a multi-minute download and conversion would waste the walk,
+    // even when a later retry can reuse its verified network ranges.
+    if result_json.is_null() {
+        return Err((
+            abi::TS_ERR_INVALID_ARGUMENT,
+            "resultJson must not be null".to_string(),
+        ));
+    }
+    let alias = strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+    refuse_while_moving()?;
+    let library = destination(options_json)?;
+
+    // The raw pointer has to cross into worker threads for the byte
+    // callback. `Send + Sync` is asserted here rather than assumed, and
+    // the header states the matching obligation on the caller: the
+    // callback must tolerate concurrent invocation.
+    struct Sink(TsInstallCallback, *mut c_void);
+    unsafe impl Send for Sink {}
+    unsafe impl Sync for Sink {}
+    let sink = Arc::new(Sink(cb, userdata));
+
+    let bytes_sink = Arc::clone(&sink);
+    let downloaded = AtomicU64::new(0);
+    let total = models::install_bytes(alias)
+        .map(|(download, _)| download)
+        .unwrap_or(0);
+    let on_bytes: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |bytes: u64| {
+        // The range source reports chunk deltas; the ABI promises cumulative bytes.
+        let done = downloaded.fetch_add(bytes, Ordering::Relaxed) + bytes;
+        if let Some(f) = bytes_sink.0 {
+            unsafe {
+                f(
+                    bytes_sink.1,
+                    TS_INSTALL_BYTES,
+                    std::ptr::null(),
+                    0,
+                    done,
+                    total,
+                )
+            };
         }
-        let alias =
-            strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+    });
 
-        // The raw pointer has to cross into worker threads for the byte
-        // callback. `Send + Sync` is asserted here rather than assumed, and
-        // the header states the matching obligation on the caller: the
-        // callback must tolerate concurrent invocation.
-        struct Sink(TsInstallCallback, *mut c_void);
-        unsafe impl Send for Sink {}
-        unsafe impl Sync for Sink {}
-        let sink = Arc::new(Sink(cb, userdata));
-
-        let bytes_sink = Arc::clone(&sink);
-        let downloaded = AtomicU64::new(0);
-        let total = models::install_bytes(alias)
-            .map(|(download, _)| download)
-            .unwrap_or(0);
-        let on_bytes: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |bytes: u64| {
-            // The range source reports chunk deltas; the ABI promises cumulative bytes.
-            let done = downloaded.fetch_add(bytes, Ordering::Relaxed) + bytes;
-            if let Some(f) = bytes_sink.0 {
+    let json = models::install(
+        alias,
+        library.as_deref(),
+        |line| {
+            if let Some(f) = sink.0 {
                 unsafe {
                     f(
-                        bytes_sink.1,
-                        TS_INSTALL_BYTES,
-                        std::ptr::null(),
+                        sink.1,
+                        TS_INSTALL_STAGE,
+                        line.as_ptr() as *const c_char,
+                        line.len(),
                         0,
-                        done,
-                        total,
+                        0,
                     )
                 };
             }
-        });
-
-        let json = models::install(
-            alias,
-            |line| {
-                if let Some(f) = sink.0 {
-                    unsafe {
-                        f(
-                            sink.1,
-                            TS_INSTALL_STAGE,
-                            line.as_ptr() as *const c_char,
-                            line.len(),
-                            0,
-                            0,
-                        )
-                    };
-                }
-            },
-            on_bytes,
-        )
-        .map_err(abi::install_error)?;
-        strings::emit(&json, result_json).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
-    })
+        },
+        on_bytes,
+    )
+    .map_err(install_fault)?;
+    strings::emit(&json, result_json).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
 }
 
-/// Probes and installs an arbitrary Hugging Face repository.
+/// Probes and installs an arbitrary Hugging Face repository into This Mac.
+/// [`ts_install_repo_with_options`] picks the library.
 #[no_mangle]
 pub unsafe extern "C" fn ts_install_repo(
     repo: *const c_char,
@@ -521,63 +749,113 @@ pub unsafe extern "C" fn ts_install_repo(
     result_json: *mut *mut c_char,
 ) -> c_int {
     guard_result(|| {
-        // Checked before any work, for `ts_install`'s reason: an invalid
-        // result pointer discovered only after download and conversion wastes
-        // the walk even when verified network ranges can be reused.
-        if result_json.is_null() {
-            return Err((
-                abi::TS_ERR_INVALID_ARGUMENT,
-                "resultJson must not be null".to_string(),
-            ));
-        }
-        let repo =
-            strings::required(repo, "repo").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        let alias =
-            strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        let file =
-            strings::optional(file, "file").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        let sidecars = strings::optional(sidecar_repo, "sidecarRepo")
-            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-
-        struct Sink(TsInstallCallback, *mut c_void);
-        unsafe impl Send for Sink {}
-        unsafe impl Sync for Sink {}
-        let sink = Arc::new(Sink(cb, userdata));
-
-        let bytes_sink = Arc::clone(&sink);
-        let downloaded = AtomicU64::new(0);
-        let on_bytes: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |bytes: u64| {
-            // The range source reports chunk deltas; the ABI promises cumulative bytes.
-            let done = downloaded.fetch_add(bytes, Ordering::Relaxed) + bytes;
-            if let Some(f) = bytes_sink.0 {
-                unsafe { f(bytes_sink.1, TS_INSTALL_BYTES, std::ptr::null(), 0, done, 0) };
-            }
-        });
-
-        let json = models::install_repo(
+        run_install_repo(
             repo,
             alias,
             file,
-            sidecars,
-            |line| {
-                if let Some(f) = sink.0 {
-                    unsafe {
-                        f(
-                            sink.1,
-                            TS_INSTALL_STAGE,
-                            line.as_ptr() as *const c_char,
-                            line.len(),
-                            0,
-                            0,
-                        )
-                    };
-                }
-            },
-            on_bytes,
+            sidecar_repo,
+            std::ptr::null(),
+            cb,
+            userdata,
+            result_json,
         )
-        .map_err(abi::install_error)?;
-        strings::emit(&json, result_json).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
     })
+}
+
+/// [`ts_install_repo`] into the library `options_json` names
+/// (`{"library": "<id>"}`; see [`destination`]).
+#[no_mangle]
+pub unsafe extern "C" fn ts_install_repo_with_options(
+    repo: *const c_char,
+    alias: *const c_char,
+    file: *const c_char,
+    sidecar_repo: *const c_char,
+    options_json: *const c_char,
+    cb: TsInstallCallback,
+    userdata: *mut c_void,
+    result_json: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        run_install_repo(
+            repo,
+            alias,
+            file,
+            sidecar_repo,
+            options_json,
+            cb,
+            userdata,
+            result_json,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn run_install_repo(
+    repo: *const c_char,
+    alias: *const c_char,
+    file: *const c_char,
+    sidecar_repo: *const c_char,
+    options_json: *const c_char,
+    cb: TsInstallCallback,
+    userdata: *mut c_void,
+    result_json: *mut *mut c_char,
+) -> Result<(), (c_int, String)> {
+    // Checked before any work, for `ts_install`'s reason: an invalid
+    // result pointer discovered only after download and conversion wastes
+    // the walk even when verified network ranges can be reused.
+    if result_json.is_null() {
+        return Err((
+            abi::TS_ERR_INVALID_ARGUMENT,
+            "resultJson must not be null".to_string(),
+        ));
+    }
+    let repo = strings::required(repo, "repo").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+    let alias = strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+    let file = strings::optional(file, "file").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+    let sidecars = strings::optional(sidecar_repo, "sidecarRepo")
+        .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+    refuse_while_moving()?;
+    let library = destination(options_json)?;
+
+    struct Sink(TsInstallCallback, *mut c_void);
+    unsafe impl Send for Sink {}
+    unsafe impl Sync for Sink {}
+    let sink = Arc::new(Sink(cb, userdata));
+
+    let bytes_sink = Arc::clone(&sink);
+    let downloaded = AtomicU64::new(0);
+    let on_bytes: Arc<dyn Fn(u64) + Send + Sync> = Arc::new(move |bytes: u64| {
+        // The range source reports chunk deltas; the ABI promises cumulative bytes.
+        let done = downloaded.fetch_add(bytes, Ordering::Relaxed) + bytes;
+        if let Some(f) = bytes_sink.0 {
+            unsafe { f(bytes_sink.1, TS_INSTALL_BYTES, std::ptr::null(), 0, done, 0) };
+        }
+    });
+
+    let json = models::install_repo(
+        repo,
+        alias,
+        file,
+        sidecars,
+        library.as_deref(),
+        |line| {
+            if let Some(f) = sink.0 {
+                unsafe {
+                    f(
+                        sink.1,
+                        TS_INSTALL_STAGE,
+                        line.as_ptr() as *const c_char,
+                        line.len(),
+                        0,
+                        0,
+                    )
+                };
+            }
+        },
+        on_bytes,
+    )
+    .map_err(install_fault)?;
+    strings::emit(&json, result_json).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
 }
 
 /// Signals every in-flight install walk (`ts_install`, `ts_install_repo`)
@@ -757,4 +1035,34 @@ pub unsafe extern "C" fn ts_model_resolve_path(
             ))
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A manifest whose mask length is not `numLayers` is refused at open
+    /// (`model_io` arch validation), so the predicate must answer no too.
+    /// The slice is formed from a real buffer here, so every case is defined.
+    #[test]
+    fn kv_quant_supported_refuses_a_mask_length_that_is_not_num_layers() {
+        let mask = [1u8; 8];
+        unsafe {
+            assert_eq!(ts_kv_quant_supported(128, mask.as_ptr(), 4, 4), 1);
+            assert_eq!(ts_kv_quant_supported(128, mask.as_ptr(), 8, 1), 0);
+            assert_eq!(ts_kv_quant_supported(128, mask.as_ptr(), 3, 4), 0);
+        }
+    }
+
+    /// A length past `isize::MAX` cannot back a slice; it must be refused
+    /// before `from_raw_parts`, even when `num_layers` agrees with it.
+    #[test]
+    fn kv_quant_supported_refuses_a_length_past_isize_max() {
+        let mask = [1u8; 1];
+        unsafe {
+            for len in [isize::MAX as usize + 1, usize::MAX] {
+                assert_eq!(ts_kv_quant_supported(128, mask.as_ptr(), len, len), 0);
+            }
+        }
+    }
 }

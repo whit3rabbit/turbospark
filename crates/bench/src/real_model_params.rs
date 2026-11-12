@@ -85,6 +85,26 @@ pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
             max_context: 8192,
             max_new: 4096,
         },
+        // `flint`, provisional: its chat template carries a `<think>`
+        // reasoning channel, so the shared 1,024-token budget is expected to
+        // truncate it (the `muse_glimmer` lesson). Freeze only after real
+        // completions are measured on an install.
+        ModelFamily::Flint => ProtocolParameters {
+            family,
+            max_context: 8192,
+            max_new: 4096,
+        },
+        // `lfm3`: the model reasons in a think block before answering, so the
+        // shared 1,024 budget truncates. Measured 2026-10-27 on the MLX 4-bit
+        // install: short-explanation ends at 419 tokens and long-synthesis at
+        // 580, but medium-review runs past 4,096 (7,490 sampled), so
+        // `lfm3_memory_oracle` drives the two that fit, on the qwen3_vl
+        // precedent.
+        ModelFamily::Lfm3 => ProtocolParameters {
+            family,
+            max_context: 8192,
+            max_new: 4096,
+        },
         // The shared protocol, and what every frozen row in
         // `docs/BENCHMARKS.md` was measured at.
         // `qwen3_5` is here on the TOKENIZER's evidence rather than on a
@@ -136,6 +156,13 @@ pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
         // a full-cache one. The budget stays at the shared 1,024:
         // V2-Lite-Chat answers directly with no reasoning channel, and a
         // `maxTokens` stop on the frozen prose is what would say otherwise.
+        // Provisional like `deepseek2`: no frozen row exists. A page prompt is
+        // about 1,500 tokens, so the window must clear that plus its answer.
+        ModelFamily::UnlimitedOcr2 => ProtocolParameters {
+            family,
+            max_context: DENSE_LLAMA_MAX_CONTEXT,
+            max_new: PROTOCOL_MAX_NEW,
+        },
         ModelFamily::Deepseek2 => ProtocolParameters {
             family,
             max_context: DENSE_LLAMA_MAX_CONTEXT,

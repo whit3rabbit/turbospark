@@ -89,6 +89,7 @@ public struct LocalModelDefaultsSectionView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Model defaults", bundle: .module)
                 .themedFont(.base, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
@@ -126,15 +127,14 @@ public struct LocalModelDefaultsSectionView: View {
             Text("Model loading guardrails", bundle: .module)
                 .settingsControl("Model loading guardrails", pane: .models, timing: .modelReload)
                 .themedFont(.base, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
 
             VStack(alignment: .leading, spacing: 12) {
                 Text("Loading models beyond system resource limits may cause instability. Guardrails hold memory back for the rest of the machine. Relaxed is the default and is what every published memory figure for this engine was measured under.", bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
 
-                ForEach(AppLoadGuardOption.allCases) { option in
-                    guardRow(option)
-                }
+                guardPicker
 
                 if model.runtimeOptions.loadGuard == .custom {
                     customCeiling
@@ -144,18 +144,20 @@ public struct LocalModelDefaultsSectionView: View {
         }
     }
 
-    private func guardRow(_ option: AppLoadGuardOption) -> some View {
-        Button {
-            model.runtimeOptions.loadGuard = option
-            model.persistSettings()
-        } label: {
-            HStack(alignment: .top, spacing: 10) {
-                Image(
-                    systemName: model.runtimeOptions.loadGuard == option
-                        ? "largecircle.fill.circle" : "circle"
-                )
-                .foregroundStyle(model.runtimeOptions.loadGuard == option ? Color.accentColor : .secondary)
-                .accessibilityHidden(true)
+    /// A native radio group rather than hand-drawn rows (DESIGN.md "Native
+    /// first"): the drawn rows were separate buttons, so arrow keys did not
+    /// move the choice and VoiceOver heard no group or position. Each label
+    /// keeps its detail line, since the tier names alone do not say what
+    /// they reserve.
+    private var guardPicker: some View {
+        Picker(selection: Binding(
+            get: { model.runtimeOptions.loadGuard },
+            set: { option in
+                model.runtimeOptions.loadGuard = option
+                model.persistSettings()
+            }
+        )) {
+            ForEach(AppLoadGuardOption.allCases) { option in
                 VStack(alignment: .leading, spacing: 2) {
                     Self.guardTitle(option)
                         .themedFont(.base)
@@ -163,13 +165,14 @@ public struct LocalModelDefaultsSectionView: View {
                     Self.guardDetail(option)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                Spacer()
+                .padding(.bottom, 4)
+                .tag(option)
             }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(model.runtimeOptions.loadGuard == option ? [.isSelected] : [])
+        } label: { Text("Model loading guardrails", bundle: .module) }
+        .pickerStyle(.radioGroup)
+        .labelsHidden()
     }
 
     private var customCeiling: some View {

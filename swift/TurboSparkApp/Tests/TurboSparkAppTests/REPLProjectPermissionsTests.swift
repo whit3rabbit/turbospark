@@ -39,4 +39,38 @@ final class REPLProjectPermissionsTests: XCTestCase {
 
         XCTAssertTrue(presets.allSatisfy { $0.replFileAccessRoots.isEmpty })
     }
+
+    /// The project sheet rebuilt permissions from its own fields, so a save
+    /// (a rename, say) dropped the REPL roots and any origin an approval
+    /// card granted while the sheet was open.
+    func testProjectSheetSaveKeepsLiveRootsAndOriginGrants() {
+        let loadedOrigins = ["https://docs.example"]
+        var live = AppProjectPermissions.standard
+        live.replFileAccessRoots = ["/tmp/turbospark-project"]
+        live.browserOriginAllowlist = loadedOrigins + ["https://granted.example"]
+        live.mcpDenyRules = ["mcp__evil__*"]
+
+        var edited = AppProjectPermissions.alwaysAsk
+        edited.browserOriginAllowlist = loadedOrigins
+        let untouched = ProjectSettingsSheet.mergedPermissions(
+            edited: edited, live: live, loadedOrigins: loadedOrigins)
+        XCTAssertEqual(untouched.mode, .ask, "The sheet's own edits still apply.")
+        XCTAssertEqual(untouched.replFileAccessRoots, ["/tmp/turbospark-project"])
+        XCTAssertEqual(untouched.browserOriginAllowlist, live.browserOriginAllowlist)
+        XCTAssertEqual(untouched.mcpDenyRules, ["mcp__evil__*"])
+
+        edited.browserOriginAllowlist = []
+        let revoked = ProjectSettingsSheet.mergedPermissions(
+            edited: edited, live: live, loadedOrigins: loadedOrigins)
+        XCTAssertEqual(revoked.browserOriginAllowlist, [], "A revoke made in the sheet wins.")
+    }
+
+    /// Read Only refuses everything but file reads, so its preset says so.
+    func testReadOnlyPresetDeniesEveryCategoryButFileRead() {
+        let preset = AppProjectPermissions.readOnly
+        XCTAssertEqual(preset.fileRead, .allow)
+        for value in [preset.fileWrite, preset.terminal, preset.web, preset.mcp, preset.automation, preset.browser] {
+            XCTAssertEqual(value, .deny)
+        }
+    }
 }

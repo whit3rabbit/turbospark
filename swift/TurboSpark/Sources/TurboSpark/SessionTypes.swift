@@ -59,6 +59,14 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
     /// Whether this session continues each turn from the previous turn's KV
     /// (the `prefixReuse` open option's resolved value, default true).
     public let prefixReuse: Bool
+    /// What the ANE+Steel prefill split resolved to for this session.
+    public let anePrefill: AnePrefill?
+    /// Whether this session's expert slot cache is wired, and why not.
+    public let expertSlotsWiring: ExpertSlotsWiring?
+    /// Whether the loaded configuration can use the shared expert bank.
+    public let moePrefillBankSupported: Bool?
+    /// Whether the bank is configured for this session. Admission is per prefill.
+    public let moePrefillBankEnabled: Bool?
 
     /// The reasoning levels this checkpoint accepts. **BUILD A PICKER FROM
     /// THIS AND FROM NOTHING ELSE.**
@@ -180,6 +188,9 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
         /// turn decodes sequentially whatever this says. Send
         /// `GenerateOptions.temperature = 0` to speculate.
         public let block: Int?
+        /// True when `block` is the CAP of adaptive depth and not a fixed
+        /// round size. False whenever `block` is nil.
+        public let adaptive: Bool
         /// Non-nil exactly when `block` is. Two drafters serve one family
         /// with different shapes and different measured optima, so a
         /// throughput figure is unreadable without knowing which ran.
@@ -189,6 +200,47 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
         /// surfacing: an install carrying a drafter and decoding one token
         /// at a time with nothing said is the failure this feature exists
         /// to end.
+        public let reason: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case block, adaptive, drafter, reason
+        }
+
+        /// `adaptive` is DEFAULTED, not required: a report from an engine
+        /// that predates adaptive depth omits it, and "absent" can only mean
+        /// a fixed block.
+        public init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            block = try c.decodeIfPresent(Int.self, forKey: .block)
+            adaptive = try c.decodeIfPresent(Bool.self, forKey: .adaptive) ?? false
+            drafter = try c.decodeIfPresent(Drafter.self, forKey: .drafter)
+            reason = try c.decodeIfPresent(String.self, forKey: .reason)
+        }
+    }
+
+    /// The session's resolved ANE+Steel prefill split, reported once.
+    public struct AnePrefill: Decodable, Sendable, Equatable {
+        /// True when ANE+Steel split prefill is active for this session.
+        public let active: Bool
+        /// The resolved mode: "split", "off", or "break".
+        public let mode: String
+        /// Whether this model family and host hardware support the split.
+        public let supported: Bool
+        /// Why supported is false or why the split was disabled, or nil when active.
+        public let reason: String?
+        /// The programs directory from which ANE prefill models are loaded, if any.
+        public let programsDir: String?
+    }
+
+    /// What a session resolved about wiring its expert slot cache.
+    public struct ExpertSlotsWiring: Decodable, Sendable, Equatable {
+        /// The request the open used: "auto", "on" or "off".
+        public let requested: String
+        /// True when the slot cache is wired.
+        public let active: Bool
+        /// Bytes wired; 0 when inactive.
+        public let wiredBytes: UInt64
+        /// Why it is not active, or nil when it is.
         public let reason: String?
     }
 }

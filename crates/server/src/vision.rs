@@ -28,7 +28,9 @@
 
 use anyllm_translate::openai::{ChatContentPart, ChatMessage};
 use turbospark_vision_io::{
-    GridThw, MropePositions, PreprocessParams, PreprocessedImage, VisionSpecialIds,
+    ClipPatches, ClipPreprocessParams, DeepseekVl2Params, DeepseekVl2Tiles, Gemma4ImageIds,
+    Gemma4Patches, GridThw, ImageSpan, MropePositions, PreprocessParams, PreprocessedImage,
+    Uocr2ImageIds, Uocr2Page, VisionSpecialIds,
 };
 
 /// Above this many image parts in one request, `handler::plan` refuses
@@ -64,18 +66,97 @@ pub(crate) fn image_count(message: &ChatMessage) -> usize {
 /// Read off the INSTALL by the backend rather than assembled here: the pixel
 /// budget and the special ids are per-checkpoint, and a constant in this
 /// crate would be AGENTS.md Gotcha 38's shape.
+///
+/// One variant per tower, because the two share no preprocessing and no
+/// splice: the qwen tower resizes to a pixel budget and its trunk places
+/// image tokens with mRoPE; the Gemma 4 tower fits a soft-token budget and
+/// its prompt brackets each image with `boi`/`eoi` at plain positions.
 #[derive(Debug, Clone)]
-pub struct VisionInfo {
-    pub params: PreprocessParams,
-    pub specials: VisionSpecialIds,
+pub enum VisionInfo {
+    Qwen {
+        params: PreprocessParams,
+        specials: VisionSpecialIds,
+        /// `Some(image_end)` for a tower whose template renders a BARE
+        /// placeholder (Muse-Glimmer's): the request path wraps each one in
+        /// `specials.vision_start` and this id before the splice.
+        wrap_end: Option<i32>,
+    },
+    Gemma4 {
+        max_soft_tokens: usize,
+        ids: Gemma4ImageIds,
+    },
+    /// Unlimited-OCR-2: a fixed page layout, so nothing to budget.
+    UnlimitedOcr2 { ids: Uocr2ImageIds },
+    /// The CLIP tower (LLaVA): a fixed crop, a bare marker run. `fill` is the
+    /// id the expanded run carries (the marker where the trunk's table has a
+    /// row for it, else an in-vocabulary stand-in).
+    Clip {
+        params: ClipPreprocessParams,
+        marker: i32,
+        fill: i32,
+        /// `([IMG_BREAK], [IMG_END])` for a Pixtral tower, `None` for CLIP.
+        break_end: Option<(i32, i32)>,
+    },
+    /// MiniCPM-V 4.7: a best-fit resize to about 448 squared, raster patches,
+    /// and a prompt whose rendered `<|image_pad|>` expands to a marker run with
+    /// canvas positions. Thumbnail only.
+    MiniCpm {
+        params: turbospark_vision_io::MiniCpmParams,
+        ids: turbospark_vision_io::MiniCpmIds,
+    },
+    /// The SigLIP tower (DeepSeek-VL2): padded tiles, a bare marker run whose
+    /// length depends on each image's best-fitting tile grid.
+    SigLip {
+        params: DeepseekVl2Params,
+        marker: i32,
+        fill: i32,
+    },
+    /// The DeepSeek-OCR tower (SAM + CLIP-L): one padded 1024 px base view per
+    /// image and a bare marker run of 273 positions.
+    DeepseekOcr {
+        params: turbospark_vision_io::DeepseekOcrParams,
+        marker: i32,
+        fill: i32,
+    },
 }
 
-/// One request's images, preprocessed, plus the position table for the
-/// spliced prompt.
+/// One request's images, preprocessed, plus what the trunk needs to place
+/// them in the expanded prompt.
 #[derive(Debug, Clone)]
-pub struct RequestImages {
-    pub images: Vec<PreprocessedImage>,
-    pub positions: MropePositions,
+pub enum RequestImages {
+    /// The position table for the spliced prompt.
+    Qwen {
+        images: Vec<PreprocessedImage>,
+        positions: MropePositions,
+    },
+    /// Each image's placeholder span in the expanded prompt.
+    Gemma4 {
+        images: Vec<Gemma4Patches>,
+        spans: Vec<ImageSpan>,
+    },
+    /// The pages, in prompt order. Their rows go at every image token.
+    UnlimitedOcr2 { pages: Vec<Uocr2Page> },
+    /// Each image's placeholder run in the expanded prompt.
+    Clip {
+        images: Vec<ClipPatches>,
+        spans: Vec<ImageSpan>,
+    },
+    /// MiniCPM-V: the preprocessed thumbnails and the canvas position table
+    /// for the spliced prompt.
+    MiniCpm {
+        images: Vec<PreprocessedImage>,
+        positions: MropePositions,
+    },
+    /// Each image's tiles and placeholder run in the expanded prompt.
+    SigLip {
+        images: Vec<DeepseekVl2Tiles>,
+        spans: Vec<ImageSpan>,
+    },
+    /// DeepSeek-OCR: each image's padded base view and placeholder run.
+    DeepseekOcr {
+        images: Vec<turbospark_vision_io::DeepseekOcrView>,
+        spans: Vec<ImageSpan>,
+    },
 }
 
 /// The image parts of one message, in order, as raw encoded bytes.
@@ -269,7 +350,7 @@ pub fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
 /// Decode and preprocess every image, in request order.
 pub(crate) fn preprocess_all(
     encoded: &[Vec<u8>],
-    info: &VisionInfo,
+    params: &PreprocessParams,
 ) -> Result<Vec<PreprocessedImage>, String> {
     encoded
         .iter()
@@ -277,7 +358,7 @@ pub(crate) fn preprocess_all(
         .map(|(i, bytes)| {
             let decoded = turbospark_vision_io::decode_image_bytes(bytes)
                 .map_err(|e| format!("image {i}: {e}"))?;
-            turbospark_vision_io::preprocess(&decoded, &info.params)
+            turbospark_vision_io::preprocess(&decoded, params)
                 .map_err(|e| format!("image {i}: {e}"))
         })
         .collect()
@@ -287,7 +368,7 @@ pub(crate) fn preprocess_all(
 /// before any pixel buffer is allocated.
 pub(crate) fn preflight_all(
     encoded: &[Vec<u8>],
-    info: &VisionInfo,
+    params: &PreprocessParams,
 ) -> Result<Vec<GridThw>, String> {
     let mut source_pixels = 0u64;
     let mut patch_bytes = 0u64;
@@ -304,15 +385,15 @@ pub(crate) fn preflight_all(
             ));
         }
         let (resized_h, resized_w) =
-            turbospark_vision_io::resized_dims(height as usize, width as usize, &info.params)
+            turbospark_vision_io::resized_dims(height as usize, width as usize, params)
                 .map_err(|e| format!("image {i}: {e}"))?;
         let grid = GridThw::new(
             1,
-            resized_h / info.params.patch_size,
-            resized_w / info.params.patch_size,
+            resized_h / params.patch_size,
+            resized_w / params.patch_size,
         );
         let bytes = (grid.patches() as u64)
-            .checked_mul(info.params.patch_dim() as u64)
+            .checked_mul(params.patch_dim() as u64)
             .and_then(|n| n.checked_mul(std::mem::size_of::<f32>() as u64))
             .ok_or_else(|| "image preprocessing size overflows".to_string())?;
         patch_bytes = patch_bytes
@@ -326,6 +407,287 @@ pub(crate) fn preflight_all(
         grids.push(grid);
     }
     Ok(grids)
+}
+
+/// [`preflight_all`] for the Gemma 4 tower: each image's soft-token count
+/// from its header alone, under the same per-request pixel and patch-byte
+/// limits, before any pixel buffer exists.
+pub(crate) fn gemma4_preflight_all(
+    encoded: &[Vec<u8>],
+    max_soft_tokens: usize,
+) -> Result<Vec<usize>, String> {
+    let mut source_pixels = 0u64;
+    let mut patch_bytes = 0u64;
+    let mut soft = Vec::with_capacity(encoded.len());
+    for (i, bytes) in encoded.iter().enumerate() {
+        let (width, height) =
+            turbospark_vision_io::image_dimensions(bytes).map_err(|e| format!("image {i}: {e}"))?;
+        source_pixels = source_pixels
+            .checked_add(u64::from(width) * u64::from(height))
+            .ok_or_else(|| "image pixel count overflows".to_string())?;
+        if source_pixels > MAX_SOURCE_PIXELS_PER_REQUEST {
+            return Err(format!(
+                "images contain {source_pixels} source pixels; the per-request limit is {MAX_SOURCE_PIXELS_PER_REQUEST}"
+            ));
+        }
+        let n = turbospark_vision_io::gemma4_soft_tokens_for(
+            height as usize,
+            width as usize,
+            max_soft_tokens,
+        )
+        .map_err(|e| format!("image {i}: {e}"))?;
+        let patches =
+            (n * turbospark_vision_io::GEMMA4_POOL * turbospark_vision_io::GEMMA4_POOL) as u64;
+        patch_bytes = patch_bytes
+            .checked_add(
+                patches
+                    * turbospark_vision_io::GEMMA4_PATCH_DIM as u64
+                    * std::mem::size_of::<f32>() as u64,
+            )
+            .ok_or_else(|| "image preprocessing size overflows".to_string())?;
+        if patch_bytes > MAX_PATCH_BYTES_PER_REQUEST {
+            return Err(format!(
+                "images need {patch_bytes} bytes of preprocessed patches; the per-request limit is {MAX_PATCH_BYTES_PER_REQUEST}"
+            ));
+        }
+        soft.push(n);
+    }
+    Ok(soft)
+}
+
+/// [`preflight_all`] for the CLIP tower. Every image becomes the same fixed
+/// crop, so the token count is a property of the config; what remains to
+/// check, from the headers alone and before any pixel buffer exists, is the
+/// per-request source-pixel and patch-byte budget.
+pub(crate) fn clip_preflight_all(
+    encoded: &[Vec<u8>],
+    params: &ClipPreprocessParams,
+) -> Result<(), String> {
+    let mut source_pixels = 0u64;
+    // Pixtral's patch count depends on the image; its worst case is a square
+    // at the cap, which is what `tokens()` reports for that layout.
+    let per_image_bytes =
+        (params.tokens() * params.patch_dim() * std::mem::size_of::<f32>()) as u64;
+    let mut patch_bytes = 0u64;
+    for (i, bytes) in encoded.iter().enumerate() {
+        let (width, height) =
+            turbospark_vision_io::image_dimensions(bytes).map_err(|e| format!("image {i}: {e}"))?;
+        source_pixels = source_pixels
+            .checked_add(u64::from(width) * u64::from(height))
+            .ok_or_else(|| "image pixel count overflows".to_string())?;
+        if source_pixels > MAX_SOURCE_PIXELS_PER_REQUEST {
+            return Err(format!(
+                "images contain {source_pixels} source pixels; the per-request limit is {MAX_SOURCE_PIXELS_PER_REQUEST}"
+            ));
+        }
+        patch_bytes = patch_bytes
+            .checked_add(per_image_bytes)
+            .ok_or_else(|| "image preprocessing size overflows".to_string())?;
+        if patch_bytes > MAX_PATCH_BYTES_PER_REQUEST {
+            return Err(format!(
+                "images need {patch_bytes} bytes of preprocessed patches; the per-request limit is {MAX_PATCH_BYTES_PER_REQUEST}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Each image's patch grid `(rows, cols)` from its header alone, in request
+/// order: the same answer `clip_preprocess` will give, available before any
+/// pixel buffer exists so the prompt can be sized and checked first.
+pub(crate) fn clip_grids(
+    encoded: &[Vec<u8>],
+    params: &ClipPreprocessParams,
+) -> Result<Vec<(usize, usize)>, String> {
+    encoded
+        .iter()
+        .enumerate()
+        .map(|(i, bytes)| {
+            let (width, height) = turbospark_vision_io::image_dimensions(bytes)
+                .map_err(|e| format!("image {i}: {e}"))?;
+            Ok(params.grid_for(width as usize, height as usize))
+        })
+        .collect()
+}
+
+/// Decode and preprocess every image for the CLIP tower, in request order.
+pub(crate) fn clip_preprocess_all(
+    encoded: &[Vec<u8>],
+    params: &ClipPreprocessParams,
+) -> Result<Vec<ClipPatches>, String> {
+    encoded
+        .iter()
+        .enumerate()
+        .map(|(i, bytes)| {
+            let decoded = turbospark_vision_io::decode_image_bytes(bytes)
+                .map_err(|e| format!("image {i}: {e}"))?;
+            turbospark_vision_io::clip_preprocess(&decoded, params)
+                .map_err(|e| format!("image {i}: {e}"))
+        })
+        .collect()
+}
+
+/// The SigLIP (DeepSeek-VL2) preflight: from the headers alone, work out each
+/// image's tile grid, check the per-request source-pixel and patch-byte
+/// budgets, and return each image's placeholder-run length.
+///
+/// Tiling is on for at most two images (the reference's `len(images) <= 2`),
+/// so the counts depend on the whole request.
+pub(crate) fn siglip_preflight_all(
+    encoded: &[Vec<u8>],
+    params: &DeepseekVl2Params,
+) -> Result<Vec<usize>, String> {
+    let crop = encoded.len() <= 2;
+    let per_tile_bytes = (params.patches_per_side().pow(2)
+        * turbospark_vision_io::DSVL2_PATCH_DIM
+        * std::mem::size_of::<f32>()) as u64;
+    let mut source_pixels = 0u64;
+    let mut patch_bytes = 0u64;
+    let mut counts = Vec::with_capacity(encoded.len());
+    for (i, bytes) in encoded.iter().enumerate() {
+        let (width, height) =
+            turbospark_vision_io::image_dimensions(bytes).map_err(|e| format!("image {i}: {e}"))?;
+        source_pixels = source_pixels
+            .checked_add(u64::from(width) * u64::from(height))
+            .ok_or_else(|| "image pixel count overflows".to_string())?;
+        if source_pixels > MAX_SOURCE_PIXELS_PER_REQUEST {
+            return Err(format!(
+                "images contain {source_pixels} source pixels; the per-request limit is {MAX_SOURCE_PIXELS_PER_REQUEST}"
+            ));
+        }
+        let (bw, bh) = if crop {
+            turbospark_vision_io::select_best_resolution(
+                width as usize,
+                height as usize,
+                &params.candidates,
+            )
+            .ok_or_else(|| format!("image {i}: the processor lists no candidate resolutions"))?
+        } else {
+            (params.image_size, params.image_size)
+        };
+        let (tiles_w, tiles_h) = (bw / params.image_size, bh / params.image_size);
+        patch_bytes = patch_bytes
+            .checked_add(per_tile_bytes * (1 + (tiles_w * tiles_h) as u64))
+            .ok_or_else(|| "image preprocessing size overflows".to_string())?;
+        if patch_bytes > MAX_PATCH_BYTES_PER_REQUEST {
+            return Err(format!(
+                "images need {patch_bytes} bytes of preprocessed patches; the per-request limit is {MAX_PATCH_BYTES_PER_REQUEST}"
+            ));
+        }
+        counts.push(turbospark_vision_io::deepseek_vl2_image_tokens(
+            tiles_w,
+            tiles_h,
+            params.merged_per_side(),
+        ));
+    }
+    Ok(counts)
+}
+
+/// Decode and tile every image for the SigLIP tower, in request order.
+pub(crate) fn siglip_preprocess_all(
+    encoded: &[Vec<u8>],
+    params: &DeepseekVl2Params,
+) -> Result<Vec<DeepseekVl2Tiles>, String> {
+    let crop = encoded.len() <= 2;
+    encoded
+        .iter()
+        .enumerate()
+        .map(|(i, bytes)| {
+            let decoded = turbospark_vision_io::decode_image_bytes(bytes)
+                .map_err(|e| format!("image {i}: {e}"))?;
+            turbospark_vision_io::deepseek_vl2_preprocess(&decoded, params, crop)
+                .map_err(|e| format!("image {i}: {e}"))
+        })
+        .collect()
+}
+
+/// The DeepSeek-OCR preflight: from the headers alone, check the per-request
+/// source-pixel and view-byte budgets, and return each image's
+/// placeholder-run length (always the base view's 273 positions).
+pub(crate) fn deepseek_ocr_preflight_all(encoded: &[Vec<u8>]) -> Result<Vec<usize>, String> {
+    let per_view_bytes = (turbospark_vision_io::OCR_BASE_SIZE
+        * turbospark_vision_io::OCR_BASE_SIZE
+        * 3
+        * std::mem::size_of::<f32>()) as u64;
+    let mut source_pixels = 0u64;
+    let mut view_bytes = 0u64;
+    let mut counts = Vec::with_capacity(encoded.len());
+    for (i, bytes) in encoded.iter().enumerate() {
+        let (width, height) =
+            turbospark_vision_io::image_dimensions(bytes).map_err(|e| format!("image {i}: {e}"))?;
+        source_pixels = source_pixels
+            .checked_add(u64::from(width) * u64::from(height))
+            .ok_or_else(|| "image pixel count overflows".to_string())?;
+        if source_pixels > MAX_SOURCE_PIXELS_PER_REQUEST {
+            return Err(format!(
+                "images contain {source_pixels} source pixels; the per-request limit is {MAX_SOURCE_PIXELS_PER_REQUEST}"
+            ));
+        }
+        view_bytes += per_view_bytes;
+        if view_bytes > MAX_PATCH_BYTES_PER_REQUEST {
+            return Err(format!(
+                "images need {view_bytes} bytes of preprocessed views; the per-request limit is {MAX_PATCH_BYTES_PER_REQUEST}"
+            ));
+        }
+        counts.push(turbospark_vision_io::OCR_IMAGE_TOKENS);
+    }
+    Ok(counts)
+}
+
+/// Decode and pad every image for the DeepSeek-OCR tower, in request order.
+pub(crate) fn deepseek_ocr_preprocess_all(
+    encoded: &[Vec<u8>],
+    params: &turbospark_vision_io::DeepseekOcrParams,
+) -> Result<Vec<turbospark_vision_io::DeepseekOcrView>, String> {
+    encoded
+        .iter()
+        .enumerate()
+        .map(|(i, bytes)| {
+            let decoded = turbospark_vision_io::decode_image_bytes(bytes)
+                .map_err(|e| format!("image {i}: {e}"))?;
+            turbospark_vision_io::deepseek_ocr_preprocess(&decoded, params)
+                .map_err(|e| format!("image {i}: {e}"))
+        })
+        .collect()
+}
+
+/// Decode and preprocess every image for the Gemma 4 tower, in request order.
+pub(crate) fn gemma4_preprocess_all(
+    encoded: &[Vec<u8>],
+    max_soft_tokens: usize,
+) -> Result<Vec<Gemma4Patches>, String> {
+    encoded
+        .iter()
+        .enumerate()
+        .map(|(i, bytes)| {
+            let decoded = turbospark_vision_io::decode_image_bytes(bytes)
+                .map_err(|e| format!("image {i}: {e}"))?;
+            turbospark_vision_io::gemma4_preprocess(&decoded, max_soft_tokens)
+                .map_err(|e| format!("image {i}: {e}"))
+        })
+        .collect()
+}
+
+/// Decode every image and lay out its pages for Unlimited-OCR-2, in request
+/// order, under the same aggregate pixel cap as the other towers.
+pub(crate) fn uocr2_pages_all(encoded: &[Vec<u8>]) -> Result<Vec<Uocr2Page>, String> {
+    let mut total = 0u64;
+    let mut images = Vec::with_capacity(encoded.len());
+    for (i, bytes) in encoded.iter().enumerate() {
+        let (w, h) =
+            turbospark_vision_io::image_dimensions(bytes).map_err(|e| format!("image {i}: {e}"))?;
+        total += u64::from(w) * u64::from(h);
+        if total > MAX_SOURCE_PIXELS_PER_REQUEST {
+            return Err(format!(
+                "the images in this request exceed {MAX_SOURCE_PIXELS_PER_REQUEST} source pixels"
+            ));
+        }
+        images.push(
+            turbospark_vision_io::decode_image_bytes(bytes)
+                .map_err(|e| format!("image {i}: {e}"))?,
+        );
+    }
+    Ok(turbospark_vision_io::uocr2_pages(&images))
 }
 
 #[cfg(test)]
@@ -343,6 +705,7 @@ mod tests {
             image_mean: [0.5; 3],
             image_std: [0.5; 3],
             rescale_factor: 1.0 / 255.0,
+            resize: Default::default(),
         }
     }
 
@@ -358,16 +721,48 @@ mod tests {
     #[test]
     fn preflight_refuses_aggregate_patch_memory_before_preprocessing() {
         let png = gray_png(2048, 2048);
-        let info = VisionInfo {
-            params: params(16_777_216),
-            specials: VisionSpecialIds {
-                vision_start: 1,
-                image_pad: 2,
-            },
-        };
-        let err = preflight_all(&[png.clone(), png], &info).unwrap_err();
+        let err = preflight_all(&[png.clone(), png], &params(16_777_216)).unwrap_err();
         assert!(err.contains("preprocessed patches"), "{err}");
         assert!(err.contains("134217728"), "{err}");
+    }
+
+    /// The Gemma 4 preflight reports the soft-token count the preprocessing
+    /// will produce, from the header alone, and holds the same pixel limit.
+    #[test]
+    fn gemma4_preflight_counts_soft_tokens_and_holds_the_pixel_limit() {
+        let png = gray_png(640, 480);
+        assert_eq!(
+            gemma4_preflight_all(std::slice::from_ref(&png), 280).unwrap(),
+            vec![266]
+        );
+        let pre = gemma4_preprocess_all(&[png], 280).unwrap();
+        assert_eq!(pre[0].soft_tokens(), 266);
+        let big = gray_png(4096, 4096);
+        let err = gemma4_preflight_all(&[big.clone(), big], 280).unwrap_err();
+        assert!(err.contains("source pixels"), "{err}");
+    }
+
+    /// The CLIP preflight charges a fixed patch budget per image (the crop is
+    /// the same whatever the source size), holds the aggregate pixel limit
+    /// from headers alone, and the preprocess yields the 24x24 grid.
+    #[test]
+    fn clip_preflight_holds_the_limits_and_preprocess_yields_the_fixed_grid() {
+        let params = turbospark_vision_io::ClipPreprocessParams {
+            size: 336,
+            layout: turbospark_vision_io::ClipLayout::Crop,
+            image_mean: [0.5; 3],
+            image_std: [0.5; 3],
+            rescale_factor: 1.0 / 255.0,
+            pinpoints: Vec::new(),
+        };
+        let png = gray_png(640, 480);
+        clip_preflight_all(std::slice::from_ref(&png), &params).unwrap();
+        let out = clip_preprocess_all(&[png], &params).unwrap();
+        assert_eq!((out[0].grid, out[0].num_patches()), (24, 576));
+        // 4096 x 4096 is 16,777,216 source pixels: one fits, two do not.
+        let big = gray_png(4096, 4096);
+        let err = clip_preflight_all(&[big.clone(), big], &params).unwrap_err();
+        assert!(err.contains("source pixels"), "{err}");
     }
 
     #[test]

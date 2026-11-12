@@ -143,6 +143,8 @@ final class MLXImageGenerationSession: ImageGenerationSession, @unchecked Sendab
                         if permit == nil { try await Task.sleep(for: .milliseconds(50)) }
                     }
                     defer { permit?.release() }
+                    // Without its kernels MLX exits the process instead of throwing.
+                    try MLXKernelLibrary.requireForCurrentProcess()
                     let modelSpec = try sourcePath.map {
                         try MLXImageModelSnapshot.prepare(
                             sourcePath: $0,

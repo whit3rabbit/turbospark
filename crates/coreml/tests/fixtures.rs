@@ -12,9 +12,14 @@ use turbospark_coreml::{
 };
 
 fn fixture(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
+    let p = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("testdata")
-        .join(name)
+        .join(name);
+    if p.extension().and_then(|e| e.to_str()) == Some("mlpackage") {
+        let weights_dir = p.join("Data").join("com.apple.CoreML").join("weights");
+        let _ = std::fs::create_dir_all(&weights_dir);
+    }
+    p
 }
 
 struct Scratch(PathBuf);
@@ -124,9 +129,73 @@ fn compile_cache_is_reused() {
     );
     // A compiled model passes straight through.
     assert_eq!(compile_if_needed(&first, &s.0).unwrap(), first);
-    // Nothing but the one cache entry is left behind (no staging dirs).
-    let entries: Vec<_> = std::fs::read_dir(&s.0).unwrap().flatten().collect();
-    assert_eq!(entries.len(), 1);
+    // Nothing but the one cache entry and its source marker is left behind
+    // (no staging dirs).
+    let mut names: Vec<_> = std::fs::read_dir(&s.0)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    let entry = first.file_name().unwrap().to_string_lossy().into_owned();
+    let marker = entry.replace(".mlmodelc", ".source");
+    assert_eq!(names, [entry, marker]);
+}
+
+fn copy_tree(src: &Path, dst: &Path) {
+    std::fs::create_dir_all(dst).unwrap();
+    for e in std::fs::read_dir(src).unwrap().flatten() {
+        let to = dst.join(e.file_name());
+        if e.file_type().unwrap().is_dir() {
+            copy_tree(&e.path(), &to);
+        } else {
+            std::fs::copy(e.path(), &to).unwrap();
+        }
+    }
+}
+
+#[test]
+fn same_stem_packages_do_not_prune_each_other() {
+    // Two different packages named `M.mlpackage` (a model config may name
+    // `a/M.mlpackage` and `b/M.mlpackage`) compile into one cache root.
+    let s = Scratch::new("stem");
+    let a = s.0.join("a/M.mlpackage");
+    let b = s.0.join("b/M.mlpackage");
+    copy_tree(&fixture("add_f32.mlpackage"), &a);
+    copy_tree(&fixture("f16_scale.mlpackage"), &b);
+    let cache = s.0.join("cache");
+    let ca = compile_if_needed(&a, &cache).unwrap();
+    let cb = compile_if_needed(&b, &cache).unwrap();
+    assert_ne!(ca, cb);
+    assert!(ca.is_dir(), "compiling b pruned a's entry");
+    let mtime = std::fs::metadata(&ca).unwrap().modified().unwrap();
+    assert_eq!(compile_if_needed(&a, &cache).unwrap(), ca);
+    assert_eq!(std::fs::metadata(&ca).unwrap().modified().unwrap(), mtime);
+    // A changed `a` still replaces its own stale entry.
+    std::fs::write(a.join("Manifest.json.extra"), b"x").unwrap();
+    let ca2 = compile_if_needed(&a, &cache).unwrap();
+    assert_ne!(ca2, ca);
+    assert!(!ca.exists(), "a's stale entry was kept");
+    assert!(cb.is_dir());
+}
+
+#[test]
+fn orphaned_staging_dirs_are_pruned() {
+    let s = Scratch::new("staging");
+    // Left behind by a process that crashed between compile and rename.
+    let old = s.0.join(".staging-add_f32-1-0.mlmodelc");
+    std::fs::create_dir_all(&old).unwrap();
+    let day_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(24 * 3600);
+    std::fs::File::open(&old)
+        .unwrap()
+        .set_modified(day_ago)
+        .unwrap();
+    // A fresh one may belong to another process mid-publish.
+    let fresh = s.0.join(".staging-add_f32-2-0.mlmodelc");
+    std::fs::create_dir_all(&fresh).unwrap();
+    compile_if_needed(&fixture("add_f32.mlpackage"), &s.0).unwrap();
+    assert!(!old.exists());
+    assert!(fresh.is_dir());
 }
 
 #[test]
@@ -218,6 +287,35 @@ fn stateful_accumulator_carries_state() {
         st.read(&state_name).unwrap().to_f32_vec().unwrap(),
         vec![2., 4., 6., 8.]
     );
+}
+
+#[test]
+fn state_owner_survives_moves_and_refuses_address_reuse() {
+    let s = Scratch::new("owner");
+    if !supports(Capability::State) {
+        return;
+    }
+    let x = Tensor::f16_from_f32("x", vec![1, 4], &[1., 2., 3., 4.]).unwrap();
+
+    // Moving the model that made a state must not orphan the state.
+    let m = open("accumulator.mlpackage", &s, &cpu());
+    let mut st = m.new_state().unwrap();
+    let moved = Box::new(m);
+    assert!(moved.predict_with_state(&mut st, &[("x", &x)]).is_ok());
+
+    // A new model written into the slot the old one occupied has the same
+    // address, so pointer identity would accept the stale state.
+    let mut slot = Some(open("accumulator.mlpackage", &s, &cpu()));
+    let mut stale = slot.as_ref().unwrap().new_state().unwrap();
+    let before = slot.as_ref().unwrap() as *const CoreMlModel;
+    slot = Some(open("accumulator.mlpackage", &s, &cpu()));
+    let after = slot.as_ref().unwrap() as *const CoreMlModel;
+    assert_eq!(before, after, "replacement must reuse the slot");
+    assert!(slot
+        .as_ref()
+        .unwrap()
+        .predict_with_state(&mut stale, &[("x", &x)])
+        .is_err());
 }
 
 #[test]

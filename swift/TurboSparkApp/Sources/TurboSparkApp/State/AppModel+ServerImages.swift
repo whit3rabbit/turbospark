@@ -5,6 +5,12 @@ extension AppModel {
     /// One resident pipeline is shared by the Images screen and the API worker.
     /// Call only while holding ImageJobCoordinator's permit.
     func sharedImageSession(for model: ImageInstalledModel) throws -> any ImageGenerationSession {
+        // **THE ONE DOOR TO THE IMAGE WEIGHTS**, for the Images screen and the API
+        // worker alike: a model that is being moved is not opened, because the engine
+        // removes the folder it would be opened from when the move ends.
+        if isMoving(path: model.path) {
+            throw TurboSparkError(code: .open, message: ModelMoveText.modelBeingMoved())
+        }
         if imageSessionPath != model.path || imageSession == nil {
             let old = imageSession
             Task { await old?.unload() }
@@ -24,6 +30,10 @@ extension AppModel {
     }
 
     public func attachImageModelToServer(_ model: ImageInstalledModel) {
+        if isMoving(path: model.path) {
+            announceModelBeingMoved()
+            return
+        }
         guard let server, Self.supportsMLXImageModel(modelID: model.modelID) else { return }
         do {
             try server.attachImageModel(id: model.alias)

@@ -5,7 +5,7 @@ import XCTest
 /// The non-terminal halves of the tool boundary: which workspace a tool runs
 /// against, which permission preset a new project gets, which hosts count as
 /// private, and what an unimplemented transport reports.
-final class WorkspaceAndNetworkGateTests: XCTestCase {
+final class WorkspaceAndNetworkGateTests: NetworkPolicyPinnedTestCase {
 
     // MARK: - S1: one default, not two
 

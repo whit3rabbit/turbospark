@@ -306,8 +306,19 @@ extension AppModel {
     /// Whether an input may be injected into this chat now. A turn in flight
     /// parks it for the tail; so does an approval card, whose own approve
     /// path refuses to run while `generating` is true.
+    ///
+    /// **SO DOES A RELEASE FOR AN EJECT** (`isEjecting`). Stopping a chat's
+    /// background agents makes each one's completion watcher inject a
+    /// notification and start a model turn, and a cancelled turn's tail
+    /// drains the queued and scheduled prompts the same way. Every one of
+    /// those turns holds the session strongly again, so the first eject ended
+    /// in `unloadBlocked` and only a second attempt worked. They PARK instead
+    /// (`pendingTaskNotifications`, `pendingUserMessages`), not drop: they
+    /// drain at the next idle tail after the eject, which is a later turn's
+    /// tail or selecting the chat, exactly as they do after a busy turn.
     func canInjectChatInput(into chatID: UUID) -> Bool {
         !generating && !submitting && pendingToolCall == nil && pendingBatchCalls == nil
+            && !isEjecting
             && selectedChatID == chatID
             && chats.contains(where: { $0.id == chatID })
     }

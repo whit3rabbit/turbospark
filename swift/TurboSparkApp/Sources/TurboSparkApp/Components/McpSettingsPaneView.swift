@@ -212,7 +212,7 @@ public struct McpSettingsPaneView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
-        .background(Color.secondary.opacity(0.08))
+        .background(.appElevated)
         .clipShape(Capsule())
         .accessibilityElement(children: .combine)
     }

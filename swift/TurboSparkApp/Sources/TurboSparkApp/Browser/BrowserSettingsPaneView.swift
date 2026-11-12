@@ -93,21 +93,35 @@ struct BrowserSettingsPaneView: View {
 
     private var viewportSection: some View {
         Section(header: Text("Default viewport", bundle: .module)) {
-            viewportRow(Text("Width", bundle: .module), unit: "px") { value in
-                viewModel.setDefaultViewport(
-                    width: value,
-                    height: viewModel.settings.defaultViewport.height,
-                    zoom: viewModel.settings.defaultViewport.zoom
+            viewportRow(
+                Text("Width", bundle: .module),
+                unit: "px",
+                value: Binding(
+                    get: { viewModel.settings.defaultViewport.width },
+                    set: { value in
+                        viewModel.setDefaultViewport(
+                            width: value,
+                            height: viewModel.settings.defaultViewport.height,
+                            zoom: viewModel.settings.defaultViewport.zoom
+                        )
+                    }
                 )
-            } value: { viewModel.settings.defaultViewport.width }
+            )
 
-            viewportRow(Text("Height", bundle: .module), unit: "px") { value in
-                viewModel.setDefaultViewport(
-                    width: viewModel.settings.defaultViewport.width,
-                    height: value,
-                    zoom: viewModel.settings.defaultViewport.zoom
+            viewportRow(
+                Text("Height", bundle: .module),
+                unit: "px",
+                value: Binding(
+                    get: { viewModel.settings.defaultViewport.height },
+                    set: { value in
+                        viewModel.setDefaultViewport(
+                            width: viewModel.settings.defaultViewport.width,
+                            height: value,
+                            zoom: viewModel.settings.defaultViewport.zoom
+                        )
+                    }
                 )
-            } value: { viewModel.settings.defaultViewport.height }
+            )
 
             viewportZoomRow
         }
@@ -137,12 +151,11 @@ struct BrowserSettingsPaneView: View {
     private func viewportRow(
         _ label: Text,
         unit: String,
-        setValue: @escaping (Int) -> Void,
-        value: @escaping () -> Int
+        value: Binding<Int>
     ) -> some View {
         LabeledContent {
             HStack(spacing: 6) {
-                TextField(value: Binding(get: value, set: setValue), format: .number) {
+                TextField(value: value, format: .number) {
                     label
                 }
                 .modifier(BrowserViewportFieldStyle())

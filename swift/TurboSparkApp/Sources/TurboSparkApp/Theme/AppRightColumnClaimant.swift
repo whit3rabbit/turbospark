@@ -111,21 +111,18 @@ extension AppChromeLayout {
     /// folded the preview into the inspector's term, which was correct while
     /// the two were the same width and silently wrong for a claimant that is
     /// not.
-    /// The label says EXPANDED rather than visible, and the arithmetic adds
-    /// ONE left column rather than two.
-    ///
-    /// Before the merge this summed a permanent 52pt rail and a conditional
-    /// 260pt sidebar, so an expanded window needed 313pt of left chrome. The
-    /// two are one column in two presentations now, so the sidebar's width
-    /// REPLACES the rail's instead of stacking on it, and the expanded
-    /// minimum drops by exactly `navigationRailWidth + dividerWidth`.
+    /// `isPanelVisible` is the panel actually ON SCREEN (the user's sidebar
+    /// preference AND a section that has a panel), never the raw preference:
+    /// in a rail-only section such as Files the preference can be on while
+    /// no panel exists, and reserving its width there leaves an empty band.
+    /// The rail is always counted, because it is always shown.
     public static func minimumWindowWidth(
-        isSidebarExpanded: Bool,
+        isPanelVisible: Bool,
         rightColumn: AppRightColumnClaimant,
         isExpandedWorktree: Bool = false
     ) -> CGFloat {
         let columnWidth = rightColumnWidth(rightColumn, isExpandedWorktree: isExpandedWorktree)
-        return sidebarColumnWidth(isExpanded: isSidebarExpanded)
+        return leftChromeWidth(isPanelVisible: isPanelVisible)
             + dividerWidth
             + primaryMinimumWidth
             + (rightColumn.isVisible ? columnWidth + dividerWidth : 0)

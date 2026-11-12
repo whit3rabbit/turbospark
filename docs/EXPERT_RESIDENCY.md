@@ -232,10 +232,11 @@ why both paths ship rather than one replacing the other.
   greedy output between the streamed and mapped arms, and
   `TURBOSPARK_PHASES=1` shows the same fingerprint Gemma 4's own capture
   does: `expert io (pread): 0.0 ms (0.0%)` and a 100% cache hit rate.
-  `qwen`'s own family (`QwenGdnMoe`, e.g. Ornith 35B) has no real install on
-  this machine at the time of writing (see `CLAUDE.local.md`'s artifact
-  drift note), so it is verified on the synthetic fixture only
-  (`crates/runtime/tests/mapped_expert_residency_qwen.rs`).
+  `qwen`'s own family (`QwenGdnMoe`) was verified on the synthetic fixture
+  (`crates/runtime/tests/mapped_expert_residency_qwen.rs`) and, since
+  2026-10-15, on two real installs whose tables do not fit what the GPU will
+  keep wired. See "Mapped residency wires the table" below: both are now
+  refused by the fit guard.
   **Only `DeepseekV4Flash` remains refused**, and it stays refused for an
   unrelated reason: compressed attention is not wired at all yet
   (`crates/runtime/src/real_forward_init.rs::validate_arch_config`), so no
@@ -323,6 +324,65 @@ why both paths ship rather than one replacing the other.
   byte-identity one green, which is exactly the silent-fallback failure the
   accessor exists to catch. No real-install run yet; see Not done.
 
+## Mapped residency wires the table (2026-10-15)
+
+The first real `QwenGdnMoe` mapped runs collapsed. Fish Audio Drama 3's trunk
+(40 layers, 16.88 GiB table, 2.38 GiB resident) decoded at 8.6 s per frame
+mapped against 48 ms streamed. MiniCPM-V 4.7's trunk (15.94 GiB table, 4.54
+GiB resident) decoded text at 0.155 tok/s mapped against 11.2 streamed. A
+`sample` showed the Metal queue thread blocked inside
+`IOGPUCommandQueueSubmitCommandBuffers`.
+
+`crates/bench/tests/mapped_residency_cycle_probe.rs` reproduces it without a
+model. It maps every layer file as one no-copy buffer and times one INT4
+GEMV per submission while walking the first n layers in order, as a decode
+does. Apple M4 Max, 36 GiB, Drama 3's trunk:
+
+| Held during the walk | Last fast n (GiB mapped) | First slow n (GiB mapped) | Slow pass |
+| --- | ---: | ---: | ---: |
+| nothing, calm host | 40 (16.88) | none | |
+| nothing, parallel compiles at load 16 to 17 | 35 (14.77) | 40 (16.88) | 70 to 179 ms |
+| 16 GiB of incompressible memory | 25 (10.55) | 30 (12.66) | 156 to 160 ms |
+
+A fast pass is 0.09 to 0.16 ms. Mapping only the first 128 or 192 experts of
+every layer keeps all 40 buffers fast (8.4 and 12.7 GiB), and every variant
+reads the same four experts per layer. So the limit is the bytes bound, not
+the buffer count and not the pages read.
+
+**The GPU wires every bound no-copy mapping in full.** On a calm host, total
+wired memory rose from 5.4 to 22.7 GiB within two seconds of the probe
+binding all 40 layers, and fell back to 5.5 GiB when it exited. That is the
+whole table, and `phys_footprint` never sees it, which is why the footprint
+table above reads the mapping as free. Wired memory is capped near Metal's
+`recommendedMaxWorkingSetSize` (28.08 GiB here, 78% of RAM) and is shared
+with everything else on the machine. Past it the driver unwires a layer, the
+next pass that binds it re-wires all of it (about 2.6 GB/s), and an in-order
+walk misses on every layer. Under that pressure a slow Drama run held only
+10.5 to 12.3 GB wired in total. Gemma 4's 12.3 GB table left enough room on
+this host, which is why its rows above held.
+
+**The guard.** `model_io::mapped_residency_fits` admits mapped residency only
+when resident weights plus the expert table plus `MAPPED_WIRED_RESERVE_BYTES`
+(10 GiB: 5.4 GiB wired at idle here, plus the rest of the process and a
+margin) fit in the working set. `runtime::real_forward_init` applies it in
+both `open_expert_streamers` and `resolve_expert_residency_for_install`, so
+admission and the open agree. Mapped asked for by name (the flag or
+`TURBOSPARK_EXPERT_RESIDENCY=mapped`) past it is refused with the reason, and
+`auto` resolves down to streamed. Drama 3 (19.26 GiB) and MiniCPM-V 4.7
+(20.48 GiB) are refused on this machine.
+
+The trade is deliberate. On a calm host Drama 3 decoded mapped at 29.5 ms per
+frame, faster than streamed, and the guard gives that up. The same install
+collapses 180 times under ordinary background load, and nothing at open time
+can tell which host it will get. The guard cannot make mapped residency safe
+under arbitrary pressure either: with 16 GiB held elsewhere, the walk
+collapsed at 12.66 GiB, under Gemma 4's table. It only refuses installs that
+are marginal even on a quiet machine.
+
+Decided 2026-10-15: past the budget, mapped residency asked for by name stays
+refused. Allowing it with a warning was the alternative, and it was declined
+because the collapse depends on load the open cannot see.
+
 ## Landed since: the flag, the mode-first budget, and the eviction probe
 (2026-09-11, ROADMAP P1 item 3)
 
@@ -379,7 +439,14 @@ why both paths ship rather than one replacing the other.
 - The mapped arm under the purged cold condition, interleaved with the streamed
   arm at 16, 32 and 64 slots (the streamed half exists in
   `docs/EXPERT_ROUTING.md`; the mapped half does not).
-- A real `QwenGdnMoe` install on this machine to verify against (Ornith 35B
-  was on disk when this feature was scoped; it no longer is -- see
-  `CLAUDE.local.md`'s artifact inventory, which needs a re-check against
-  what is actually present before the next session trusts it).
+- A real `QwenGdnMoe` install whose table FITS the guard, to verify the arm
+  end to end on a mapped decode that the guard admits. The two real installs
+  measured (below) are both past it.
+- The guard's 10 GiB reserve and its working-set basis come from one 36 GiB
+  machine. Another memory size needs its own probe run before the number is
+  trusted there.
+- A mapped arm that degrades instead of collapsing. One no-copy buffer per
+  expert rather than per layer would make an unwired miss cost one expert
+  (1.7 MiB on Drama 3), not a whole layer (422 MiB). Unmeasured. The gate is
+  `mapped_residency_cycle_probe` with `TURBOSPARK_PROBE_PRESSURE_GIB` set, run
+  against both buffer layouts.

@@ -1,0 +1,1 @@
+{"reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9", "n_timesteps": 10, "prompt_tokens": [617, 3541, 6224, 3085, 1735, 2227, 1972, 5572, 6359, 6292, 5668, 6233], "gen_tokens": [104, 4767, 3836, 5662, 5134, 1784, 4693, 2261], "prompt_feat_shape": [24, 80], "embedding_shape": [48], "flow_mel_shape": [16, 80], "flow_mel_abs_max": 8.870859146118164}

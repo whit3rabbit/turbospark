@@ -37,14 +37,14 @@ struct ChatSidebarChatRowView: View {
             actionsMenu(showsActions: showsActions)
         }
         .background {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                 .fill(
                     isSelected
                         ? theme.selection
                         : theme.foreground.opacity(isHovered ? 0.05 : 0))
                 .overlay {
                     if isSelected {
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                             .stroke(theme.accent.opacity(0.25), lineWidth: 1)
                     }
                 }
@@ -59,7 +59,7 @@ struct ChatSidebarChatRowView: View {
                     .padding(.vertical, 9)
             }
         }
-        .contentShape(.rect(cornerRadius: 9))
+        .contentShape(.rect(cornerRadius: AppMetrics.cardRadius))
         .tsAnimation(TSMotion.hover, value: isHovered)
         .tsAnimation(TSMotion.select, value: isSelected)
         .onHover { hovering in
@@ -108,9 +108,24 @@ struct ChatSidebarChatRowView: View {
                 chatBeingRenamed = chat
             }
         }
+        .accessibilityAction(named: Text("Chat System Prompt", bundle: .module)) {
+            if !model.isRunning {
+                chatForSystemPrompt = chat
+            }
+        }
         .accessibilityAction(named: Text("Duplicate", bundle: .module)) {
             if !model.isRunning && !chat.isGhost {
                 _ = model.duplicateChat(id: chat.id)
+            }
+        }
+        .accessibilityAction(named: (chat.isArchived ? Text("Unarchive", bundle: .module) : Text("Archive", bundle: .module))) {
+            if !chat.isGhost {
+                model.setChatArchived(id: chat.id, archived: !chat.isArchived)
+            }
+        }
+        .accessibilityAction(named: (model.isSplitPane(chatID: chat.id) ? Text("Close Split Pane", bundle: .module) : Text("Open in Split View", bundle: .module))) {
+            if !chat.isGhost && !model.isRunning && chat.id != model.selectedChatID {
+                model.toggleSplitPane(chatID: chat.id)
             }
         }
         .accessibilityAction(named: Text("Delete", bundle: .module)) {
@@ -170,7 +185,9 @@ struct ChatSidebarChatRowView: View {
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.985))
         .disabled(model.isRunning && !isSelected)
-        .help(Text("Switch to \(chat.title)", bundle: .module))
+        .help(model.isRunning && !isSelected
+            ? Text("Cannot switch chats while generation is running", bundle: .module)
+            : Text("Switch to \(chat.title)", bundle: .module))
         .accessibilityLabel(chat.title)
         .accessibilityValue(Text(verbatim: chat.preview))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)

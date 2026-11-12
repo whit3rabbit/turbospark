@@ -133,6 +133,67 @@ pub(crate) fn int8_triple(name: &str, rows: usize, cols: usize, seed: u64) -> Ve
     ]
 }
 
+/// Rank-3 expert-major affine triple whose codes all lie in `0..=7`, packed
+/// at `bits` (4 or 3) in MLX's layout: `U32 [experts, rows, cols*bits/32]`
+/// plus group-64 BF16 companions.
+///
+/// The codes, scales and biases depend only on the seed, never on `bits`, so
+/// the 4-bit and the 3-bit triple of one seed dequantize to IDENTICAL
+/// experts. That is what lets a 3-bit install be checked against a 4-bit one.
+pub(crate) fn expert_low_code_triple(
+    name: &str,
+    experts: usize,
+    rows: usize,
+    cols: usize,
+    seed: u64,
+    bits: u32,
+) -> Vec<Tensor> {
+    assert!(matches!(bits, 3 | 4) && cols % 64 == 0);
+    let base = name.strip_suffix(".weight").unwrap();
+    let groups = experts * rows * cols / 64;
+    let codes: Vec<u8> = deterministic_row(seed, experts * rows * cols)
+        .iter()
+        .map(|v| ((v + 1.0) * 4.0).clamp(0.0, 7.0) as u8)
+        .collect();
+    let jitter = deterministic_row(seed ^ 0x5bd1_e995, 2 * groups);
+    // About 2/7 per code around a bias of about -1, so values span roughly
+    // [-1, 1] like the INT4 fixture's.
+    let scales: Vec<u16> = (0..groups)
+        .map(|g| f32_to_bf16(0.28 + 0.04 * jitter[g]))
+        .collect();
+    let biases: Vec<u16> = (0..groups)
+        .map(|g| f32_to_bf16(-1.0 + 0.1 * jitter[groups + g]))
+        .collect();
+    let mut packed = Vec::with_capacity(codes.len() * bits as usize / 8);
+    for pack in codes.chunks(8) {
+        let word = pack
+            .iter()
+            .enumerate()
+            .fold(0u32, |w, (j, &c)| w | (c as u32) << (bits as usize * j));
+        packed.extend_from_slice(&word.to_le_bytes()[..bits as usize]);
+    }
+    let companion = |suffix: &str, values: &[u16]| Tensor {
+        name: format!("{base}.{suffix}"),
+        dtype: "BF16",
+        shape: vec![experts as u64, rows as u64, (cols / 64) as u64],
+        bytes: u16_le(values),
+    };
+    vec![
+        Tensor {
+            name: name.to_string(),
+            dtype: "U32",
+            shape: vec![
+                experts as u64,
+                rows as u64,
+                (cols * bits as usize / 32) as u64,
+            ],
+            bytes: packed,
+        },
+        companion("scales", &scales),
+        companion("biases", &biases),
+    ]
+}
+
 /// Rank-3 expert-major INT4 triple: `U32 [experts, rows, cols/8]`.
 pub(crate) fn expert_int4_triple(
     name: &str,

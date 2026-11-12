@@ -88,6 +88,9 @@ extension SubagentRunner {
         var call = call
         if let updated = hookDecision.updatedInput {
             for (key, value) in updated { call.arguments[key] = value }
+            // The parser's stored rating describes the replaced arguments.
+            call.riskAssessment = ToolRiskClassifier.assessRisk(
+                name: call.name, arguments: call.arguments, projectURL: project?.rootDirectoryURL)
         }
         // Hooks may rewrite the deferred target; authorize the name that
         // actually reaches the registry against this agent's profile.
@@ -224,10 +227,9 @@ extension SubagentRunner {
         case .deny(let reason):
             return "Tool '\(call.name)' is denied by project permissions: \(reason)"
         case .ask(let assessment, let reason):
-            // Rootless subagents resolve like the rootless chat default
-            // (`.auto`), which is what the main loop's router falls back to
-            // as well; only a project can select Agent mode.
-            let mode = project?.permissions.mode ?? AppPermissionMode.auto
+            // Rootless subagents resolve like the rootless chat that spawned
+            // them, which is what `evaluate` above used too.
+            let mode = project?.permissions.mode ?? ToolPermissionContext.fallbackMode ?? .auto
             guard mode == .agentAuto else { return askRefusal(reason) }
             let sessionID = chatID?.uuidString ?? "subagent"
             let decision = AgentModeRouting.preClassifierDecision(

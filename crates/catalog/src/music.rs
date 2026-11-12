@@ -1,14 +1,16 @@
 //! Curated, pinned MiniMax Music 3 checkpoint profiles and their install path.
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+use crate::install::{install_destination, record_into, InstallKind};
+use crate::library::LocationEnv;
 use crate::{
-    CancelFlag, Catalog, Client, DownloadReceipt, HubClient, HubDownloadProgress, InstalledModel,
-    Machine, ModelModality, PinnedArtifactPlan, PinnedSourceFile, PinnedSourceGroup, RepoRef,
-    Store,
+    AudioCatalog, CancelFlag, Catalog, Client, DownloadReceipt, HubClient, HubDownloadProgress,
+    HubError, InstalledModel, Machine, ModelModality, PinnedArtifactPlan, PinnedSourceFile,
+    PinnedSourceGroup, RepoRef, Store, StoreError,
 };
 
 const EMBEDDED: &str = include_str!("music_models.json");
@@ -57,6 +59,8 @@ pub struct MusicCatalogEntry {
     pub quantization: MusicQuantization,
     pub recommended: bool,
     pub experimental: bool,
+    #[serde(default)]
+    pub turbo: bool,
     pub required_files: Vec<String>,
 }
 
@@ -70,9 +74,9 @@ impl MusicCatalog {
     pub fn embedded() -> Result<Self, String> {
         let entries: Vec<MusicCatalogEntry> = serde_json::from_str(EMBEDDED)
             .map_err(|error| format!("parsing embedded MiniMax Music 3 catalog: {error}"))?;
-        if entries.len() != 7 {
+        if entries.len() != 8 {
             return Err(format!(
-                "MiniMax Music 3 catalog has {} rows; expected all seven profiles",
+                "MiniMax Music 3 catalog has {} rows; expected seven quantizations plus Turbo",
                 entries.len()
             ));
         }
@@ -134,12 +138,15 @@ fn validate_entry(entry: &MusicCatalogEntry) -> Result<(), String> {
     {
         return Err(format!("invalid MiniMax Music 3 alias {:?}", entry.alias));
     }
-    if entry.model_id
-        != format!(
+    let expected_model_id = if entry.turbo {
+        "cowWhySo/MiniMax-Music3-TurboSpark-4bit-8step".to_string()
+    } else {
+        format!(
             "mlx-community/MiniMax-Music3-{}",
             entry.quantization_repo_suffix()
         )
-    {
+    };
+    if entry.model_id != expected_model_id {
         return Err(format!(
             "{} points to an unapproved MiniMax Music 3 repository {}",
             entry.alias, entry.model_id
@@ -151,12 +158,18 @@ fn validate_entry(entry: &MusicCatalogEntry) -> Result<(), String> {
             entry.alias
         ));
     }
-    if entry.experimental
-        != matches!(
+    if entry.turbo && entry.quantization != MusicQuantization::Affine4Bit {
+        return Err(format!(
+            "{} Turbo profile must use affine 4-bit weights",
+            entry.alias
+        ));
+    }
+    let expected_experimental = entry.turbo
+        || matches!(
             entry.quantization,
             MusicQuantization::Mxfp4 | MusicQuantization::Nvfp4
-        )
-    {
+        );
+    if entry.experimental != expected_experimental {
         return Err(format!(
             "{} has an incorrect experimental-profile marker",
             entry.alias
@@ -234,8 +247,9 @@ pub fn embedded_music_entry(alias: &str) -> Result<MusicCatalogEntry, String> {
         .ok_or_else(|| format!("no MiniMax Music 3 profile named {alias:?}"))
 }
 
-/// Download and atomically install one approved profile into the audio store.
-/// The source revision and exact file list come from the embedded catalog.
+/// Download and atomically install one approved profile into This Mac's
+/// audio store. The source revision and exact file list come from the
+/// embedded catalog.
 pub fn install_music(
     client: &Client,
     catalog: &Catalog,
@@ -244,45 +258,150 @@ pub fn install_music(
     progress: &mut dyn FnMut(HubDownloadProgress),
     cancel: &CancelFlag,
 ) -> Result<InstalledModel, String> {
-    let music = MusicCatalog::embedded()?;
+    let env = LocationEnv::system(store.root())?;
+    install_music_into(client, catalog, store, alias, None, &env, progress, cancel)
+        .map_err(|error| error.to_string())
+}
+
+/// [`install_music`] into `library`, This Mac for `None`, with `env`
+/// locating it (2.1, 2.6).
+///
+/// Where the install lands is settled by [`install_destination`] before
+/// anything is downloaded, so a library that is not connected or is
+/// read-only, or an alias another library holds, fails before the first
+/// request and progress callback. Into a library the transfer stages on the
+/// library's drive (`Store::staging_parent_for`) and publishes with a
+/// same-volume rename (`Store::publish_staged`), while the pinned range
+/// cache stays in the home, where a retry into any library finds it. A
+/// profile the audio catalog also lists is published into a library with
+/// the audio receipt adoption would write, and refused when its bytes are
+/// not that profile's pins. A drive that goes away mid-install ends with
+/// [`StoreError::LibraryDisconnected`] and no row. This Mac keeps exactly
+/// today's staging, paths, and errors.
+#[allow(clippy::too_many_arguments)]
+pub fn install_music_into(
+    client: &Client,
+    catalog: &Catalog,
+    store: &Store,
+    alias: &str,
+    library: Option<&str>,
+    env: &LocationEnv,
+    progress: &mut dyn FnMut(HubDownloadProgress),
+    cancel: &CancelFlag,
+) -> Result<InstalledModel, StoreError> {
+    install_music_with(
+        store,
+        alias,
+        library,
+        env,
+        AudioCatalog::embedded,
+        cancel,
+        |plan, staging_parent, cache_parent| {
+            HubClient::new(
+                client,
+                catalog.clone(),
+                Machine::default(),
+                4096,
+                model_io::ExpertCacheSlots::Auto,
+            )
+            .with_store(store.clone())
+            .download_pinned_artifacts_into(
+                plan,
+                staging_parent,
+                cache_parent,
+                progress,
+                cancel,
+            )
+        },
+    )
+}
+
+/// [`install_music_into`] with the audio catalog and the transfer,
+/// `download(plan, staging_parent, cache_parent)`, passed in, so tests can
+/// pin a profile to fixture bytes and stand in for the Hub.
+pub(crate) fn install_music_with(
+    store: &Store,
+    alias: &str,
+    library: Option<&str>,
+    env: &LocationEnv,
+    audio_catalog: impl FnOnce() -> Result<AudioCatalog, String>,
+    cancel: &CancelFlag,
+    download: impl FnOnce(&PinnedArtifactPlan, &Path, &Path) -> Result<DownloadReceipt, HubError>,
+) -> Result<InstalledModel, StoreError> {
+    let music = MusicCatalog::embedded().map_err(StoreError::Io)?;
     let entry = music
         .get(alias)
-        .ok_or_else(|| format!("no MiniMax Music 3 profile named {alias:?}"))?;
-    let plan = music.pinned_plan(alias)?;
-    let destination = store.audio_install_path(alias);
+        .ok_or_else(|| StoreError::Io(format!("no MiniMax Music 3 profile named {alias:?}")))?;
+    let plan = music.pinned_plan(alias).map_err(StoreError::Io)?;
+    let target = install_destination(store, library, InstallKind::Audio, alias, env)?;
+    let destination = &target.dir;
     if destination.exists() {
-        return Err(format!(
+        return Err(StoreError::Io(format!(
             "{} already exists; remove it before pulling again",
             destination.display()
-        ));
+        )));
     }
-    std::fs::create_dir_all(store.root())
-        .map_err(|error| format!("creating audio store {}: {error}", store.root().display()))?;
-    std::fs::create_dir_all(destination.parent().expect("audio install has parent"))
-        .map_err(|error| format!("creating audio install parent: {error}"))?;
+    // A library's root is never created here: with its drive gone that
+    // would rebuild it on the disk under the mount point. Publishing makes
+    // the audio folder.
+    let into_library = target.library_id.is_some();
+    if !into_library {
+        std::fs::create_dir_all(store.root()).map_err(|error| {
+            StoreError::Io(format!(
+                "creating audio store {}: {error}",
+                store.root().display()
+            ))
+        })?;
+        std::fs::create_dir_all(destination.parent().expect("audio install has parent"))
+            .map_err(|error| StoreError::Io(format!("creating audio install parent: {error}")))?;
+    }
+    // A catalog profile's install is published with the receipt adoption
+    // would write, on This Mac too, so the app lists a CLI install as
+    // installed without adopting it first. Read before the transfer, so a
+    // catalog that fails to parse wastes no download.
+    let audio = audio_catalog().map_err(StoreError::Io)?;
+    // Classified by the store's one rule, so a step that failed because the
+    // drive went away reads as a disconnect. This Mac's are IO errors.
+    let failed = |staging: &Path, error: String| {
+        store.install_failure(staging, &target.root, &target.library_name, error)
+    };
+    let staging_parent = store
+        .staging_parent_for(&target.root)
+        .map_err(|error| failed(&target.root, error.to_string()))?;
 
-    let hub = HubClient::new(
-        client,
-        catalog.clone(),
-        Machine::default(),
-        4096,
-        model_io::ExpertCacheSlots::Auto,
-    )
-    .with_store(store.clone());
-    let receipt = hub
-        .download_pinned_artifacts(&plan, store.root(), progress, cancel)
-        .map_err(|error| error.to_string())?;
+    let receipt = download(&plan, &staging_parent, store.root()).map_err(|error| match error {
+        HubError::Staging(_) => failed(&staging_parent, error.to_string()),
+        other => StoreError::Io(other.to_string()),
+    })?;
     if cancel.is_cancelled() {
         let _ = std::fs::remove_dir_all(&receipt.staging_root);
-        return Err(crate::INSTALL_CANCELLED.to_string());
+        return Err(StoreError::Io(crate::INSTALL_CANCELLED.to_string()));
     }
-    if let Err(error) = promote_music_source(&receipt, entry, &destination) {
+    let published = if into_library {
+        // Written into the staged tree, so one rename publishes it complete.
+        verified_music_source(&receipt, entry)
+            .and_then(|staged| {
+                audio.write_transfer_receipt(alias, &receipt.sources[0].files, &staged)?;
+                Ok(staged)
+            })
+            .map_err(|error| failed(&receipt.staging_root, error))
+            .and_then(|staged| store.publish_staged(&staged, destination, &target.library_name))
+    } else {
+        promote_music_source(&receipt, entry, &audio, destination).map_err(StoreError::Io)
+    };
+    if let Err(error) = published {
         let _ = std::fs::remove_dir_all(&receipt.staging_root);
         return Err(error);
     }
     if let Err(error) = std::fs::remove_dir_all(&receipt.staging_root) {
-        let _ = std::fs::remove_dir_all(&destination);
-        return Err(format!("removing music staging tree: {error}"));
+        // Classified before the published install is removed, which would
+        // otherwise read as the drive going away.
+        let error = failed(
+            &receipt.staging_root,
+            format!("removing music staging tree: {error}"),
+        );
+        let _ = std::fs::remove_dir_all(destination);
+        return Err(error);
     }
 
     let installed = InstalledModel {
@@ -291,18 +410,32 @@ pub fn install_music(
         revision: entry.revision.clone(),
         path: destination.clone(),
         family: "minimax_music3".to_string(),
-        install_bytes: crate::directory_bytes(&destination),
+        install_bytes: crate::directory_bytes(destination),
         installed_on: crate::install::today(),
         status: "unverified".to_string(),
         kind: None,
         modality: ModelModality::Audio,
+        // The quantization alone, as the audio catalog records it: Turbo is
+        // affine 4-bit, and the alias already names it.
         variant: Some(entry.quantization.as_str().to_string()),
+        library: None,
+        relative_path: None,
     };
-    if let Err(error) = store.record(&installed) {
-        let _ = std::fs::remove_dir_all(&destination);
-        return Err(format!("recording MiniMax Music 3 install: {error}"));
-    }
-    Ok(installed)
+    let recorded = match record_into(store, &installed, &target, env) {
+        Ok(recorded) => recorded,
+        Err(error) => {
+            let error = failed(
+                destination,
+                format!("recording MiniMax Music 3 install: {error}"),
+            );
+            let _ = std::fs::remove_dir_all(destination);
+            return Err(error);
+        }
+    };
+    // Best effort: the published install holds these bytes now, and a
+    // leftover cache costs disk, not correctness.
+    let _ = receipt.discard_download_cache();
+    Ok(recorded)
 }
 
 /// Hub repository ids are ASCII case-insensitive and the transfer layer
@@ -315,8 +448,27 @@ fn same_repository_pin(repo: &str, revision: &str, entry: &MusicCatalogEntry) ->
 fn promote_music_source(
     receipt: &DownloadReceipt,
     entry: &MusicCatalogEntry,
+    audio: &AudioCatalog,
     destination: &Path,
 ) -> Result<(), String> {
+    let staged_root = verified_music_source(receipt, entry)?;
+    // Written into the staged tree, so one rename publishes it complete. A
+    // profile outside the audio catalog writes none.
+    audio.write_transfer_receipt(&entry.alias, &receipt.sources[0].files, &staged_root)?;
+    std::fs::rename(&staged_root, destination).map_err(|error| {
+        format!(
+            "installing audio profile {}: {error}",
+            destination.display()
+        )
+    })
+}
+
+/// The staged source tree of `receipt`, once the receipt is exactly the
+/// pinned profile `entry`: owner, source, repository pin, and file set.
+fn verified_music_source(
+    receipt: &DownloadReceipt,
+    entry: &MusicCatalogEntry,
+) -> Result<PathBuf, String> {
     if receipt.owner_id != format!("music:{}", entry.alias) {
         return Err("music transfer returned an unexpected owner id".to_string());
     }
@@ -365,12 +517,7 @@ fn promote_music_source(
             remaining.into_iter().collect::<Vec<_>>().join(", ")
         ));
     }
-    std::fs::rename(&staged_root, destination).map_err(|error| {
-        format!(
-            "installing audio profile {}: {error}",
-            destination.display()
-        )
-    })
+    Ok(staged_root)
 }
 
 #[cfg(test)]
@@ -379,10 +526,10 @@ mod tests {
     use crate::{VerifiedSourceFile, VerifiedSourceGroup};
 
     #[test]
-    fn bundled_music_profiles_are_exactly_the_seven_approved_pins() {
+    fn bundled_music_profiles_are_the_seven_quantizations_plus_turbo_pin() {
         let catalog = MusicCatalog::embedded().unwrap();
         let entries: Vec<_> = catalog.entries().collect();
-        assert_eq!(entries.len(), 7);
+        assert_eq!(entries.len(), 8);
         assert_eq!(
             entries
                 .iter()
@@ -397,7 +544,11 @@ mod tests {
                 .filter(|entry| entry.experimental)
                 .map(|entry| entry.quantization)
                 .collect::<Vec<_>>(),
-            vec![MusicQuantization::Mxfp4, MusicQuantization::Nvfp4]
+            vec![
+                MusicQuantization::Affine4Bit,
+                MusicQuantization::Mxfp4,
+                MusicQuantization::Nvfp4,
+            ]
         );
         for entry in entries {
             assert_eq!(entry.revision.len(), 40, "{}", entry.alias);
@@ -527,16 +678,18 @@ mod tests {
                 files,
             }],
             staging_root: staging_root.clone(),
+            download_cache: Vec::new(),
         };
         let destination = root.join("audio").join(format!("{}.gturbo", entry.alias));
         std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
         let mut malformed = receipt.clone();
         malformed.sources[0].files[0].path = "unexpected.json".to_string();
         let rejected_destination = root.join("rejected");
-        assert!(promote_music_source(&malformed, &entry, &rejected_destination).is_err());
+        let audio = AudioCatalog::embedded().unwrap();
+        assert!(promote_music_source(&malformed, &entry, &audio, &rejected_destination).is_err());
         assert!(!rejected_destination.exists());
 
-        promote_music_source(&receipt, &entry, &destination).unwrap();
+        promote_music_source(&receipt, &entry, &audio, &destination).unwrap();
         assert!(destination.join("config.json").is_file());
         assert!(!source_root.exists());
         std::fs::remove_dir_all(&staging_root).unwrap();

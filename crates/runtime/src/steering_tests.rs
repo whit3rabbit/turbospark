@@ -83,6 +83,7 @@ fn the_reason_is_present_exactly_when_the_family_cannot_steer() {
         F::MuseGlimmer,
         F::DeepseekV4Flash,
         F::Qwen4Exp,
+        F::Flint,
     ] {
         let dispatches = family_dispatches_steering(family);
         let reason = steering_unsupported_reason(family);

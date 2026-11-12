@@ -178,6 +178,8 @@ impl T2S {
                 let mut weighted = vec![0.0f32; head_dim];
                 let mut scores = vec![0.0f32; visible];
                 let mut max = f32::NEG_INFINITY;
+                // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+                #[allow(clippy::needless_range_loop)]
                 for j in 0..visible {
                     let mut dot = 0.0f32;
                     for e in 0..head_dim {
@@ -196,6 +198,8 @@ impl T2S {
                     sum += weight;
                 }
                 let inv = 1.0 / sum;
+                // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+                #[allow(clippy::needless_range_loop)]
                 for j in 0..visible {
                     let weight = scores[j] * inv;
                     for e in 0..head_dim {
@@ -344,8 +348,8 @@ impl T2S {
         let h = self.transformer(&prefill, prefill_rows, &mut caches);
         let mut logits = self.head(&h[(prefill_rows - 1) * d..prefill_rows * d], 1);
         let mut cur: Vec<i32> = vec![BOS];
-        let mut position = 1usize;
-        for _ in 0..max_new {
+        // Row 0 is BOS, so the first sampled token sits at position 1.
+        for (position, _) in (1usize..).zip(0..max_new) {
             let token = if greedy {
                 crate::tts::sampling::argmax(&logits)
             } else {
@@ -356,7 +360,6 @@ impl T2S {
                 break;
             }
             let embed = self.semantic_row(token, position)?;
-            position += 1;
             let h = self.transformer(&embed, 1, &mut caches);
             logits = self.head(&h, 1);
         }

@@ -28,7 +28,7 @@ struct PromptComposerView: View {
             if let documentImportError {
                 Text(documentImportError)
                     .themedFont(.small)
-                    .foregroundStyle(.red)
+                    .foregroundStyle(AppAttention.color)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if autocomplete.isVisible {
@@ -44,7 +44,7 @@ struct PromptComposerView: View {
                 // is certain to look as they compose. Persistent rather than
                 // first-send-only, so a return to the chat re-warns too.
                 HStack(spacing: 4) {
-                    GhostGlyph(size: 11, color: .secondary)
+                    GhostGlyph(size: 11, color: theme.secondaryText)
                         .accessibilityHidden(true)
                     Text("Temporary chat: this conversation can't be recovered.", bundle: .module)
                 }
@@ -82,26 +82,9 @@ struct PromptComposerView: View {
         .padding(.horizontal, 14)
         .padding(.top, 12)
         .padding(.bottom, 10)
-        .background {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(theme.composerBackground)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(
-                            promptFocused
-                                ? theme.accent.opacity(0.55)
-                                : Color.primary.opacity(theme.isDark ? 0.18 : 0.14),
-                            lineWidth: promptFocused ? 1.5 : 1.0
-                        )
-                }
-                .shadow(
-                    color: Color.black.opacity(theme.isDark ? 0.28 : 0.08),
-                    radius: promptFocused ? 10 : 6,
-                    x: 0,
-                    y: 2
-                )
-        }
-        .tsAnimation(.easeInOut(duration: 0.15), value: promptFocused)
+        // The shared composer surface, edge only: the welcome screen's
+        // composer keeps its look without the accent halo.
+        .appComposerSurface(focused: promptFocused, halo: false)
         .fileImporter(
             isPresented: $isImportingDocuments,
             allowedContentTypes: model.attachmentContentTypes,
@@ -317,8 +300,8 @@ private struct QueuedPromptsSection: View {
                         .padding(.horizontal, 8)
                         .padding(.vertical, 5)
                         .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(theme.composerBackground.opacity(0.6))
+                            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                                .fill(theme.surface)
                         )
                         .contentShape(Rectangle())
                     }
@@ -329,7 +312,7 @@ private struct QueuedPromptsSection: View {
                 Text("Queued behind the running turn; drains when it finishes.",
                      bundle: .module)
                     .themedFont(.tiny)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
             }
         }
     }

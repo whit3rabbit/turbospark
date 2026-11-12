@@ -689,6 +689,8 @@ impl VoxtralRealtime {
             }
             let mut embed = self.decoder.embed(&[next])?;
             if pos < prepared.adapter_len {
+                // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+                #[allow(clippy::needless_range_loop)]
                 for column in 0..hidden {
                     embed[column] += prepared.adapter[pos * hidden + column];
                 }

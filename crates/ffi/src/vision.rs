@@ -36,7 +36,7 @@ use std::path::Path;
 
 use turbospark_vision_io::{
     decode_image_bytes, decode_image_file, preprocess, PreprocessParams, PreprocessedImage,
-    VisionSpecialIds,
+    Rgb8Image, VisionSpecialIds,
 };
 
 use crate::wire::{ImageSource, WirePart};
@@ -158,32 +158,330 @@ pub(crate) fn prepare(
         .iter()
         .enumerate()
         .map(|(i, part)| {
-            let (label, decoded) = match part.image_source()? {
-                ImageSource::Path(p) => (
-                    p.to_string(),
-                    decode_image_file(Path::new(p)).map_err(|e| format!("image {p}: {e}"))?,
-                ),
-                // A bare payload OR a full `data:<media>;base64,<data>` URL,
-                // both through `turbospark_server::vision`'s own decoder
-                // rather than a second copy of one here.
-                ImageSource::Base64(b) => {
-                    let label = format!("image {}", i + 1);
-                    let bytes = if b.starts_with("data:") {
-                        turbospark_server::vision::decode_data_url(b)
-                    } else {
-                        turbospark_server::vision::base64_decode(b)
-                    }
-                    .map_err(|e| format!("{label}: {e}"))?;
-                    (
-                        label.clone(),
-                        decode_image_bytes(&bytes).map_err(|e| format!("{label}: {e}"))?,
-                    )
-                }
-            };
+            let (label, decoded) = decode_part(part, i)?;
             let image = preprocess(&decoded, params).map_err(|e| format!("{label}: {e}"))?;
             Ok(PreparedImage { label, image })
         })
         .collect()
+}
+
+/// Decode one image part: a path, a bare base64 payload, or a full
+/// `data:<media>;base64,<data>` URL. Returns the label to name it by in an
+/// error, and the pixels.
+fn decode_part(part: &WirePart, i: usize) -> Result<(String, Rgb8Image), String> {
+    match part.image_source()? {
+        ImageSource::Path(p) => Ok((
+            p.to_string(),
+            decode_image_file(Path::new(p)).map_err(|e| format!("image {p}: {e}"))?,
+        )),
+        // Through `turbospark_server::vision`'s own decoder rather than a
+        // second copy of one here.
+        ImageSource::Base64(b) => {
+            let label = format!("image {}", i + 1);
+            let bytes = if b.starts_with("data:") {
+                turbospark_server::vision::decode_data_url(b)
+            } else {
+                turbospark_server::vision::base64_decode(b)
+            }
+            .map_err(|e| format!("{label}: {e}"))?;
+            let decoded = decode_image_bytes(&bytes).map_err(|e| format!("{label}: {e}"))?;
+            Ok((label, decoded))
+        }
+    }
+}
+
+/// The MiniCPM-V tower's whole turn: decode every part and hand the runner
+/// the rendered prompt, which preprocesses, expands each rendered
+/// `<|image_pad|>` to its marker run with canvas positions, runs the tower and
+/// injects the rows. Thumbnail only (no slicing). The same runner method the
+/// CLI and the server call.
+pub(crate) fn attach_minicpm(
+    runner: &mut runtime::RealForwardRunner,
+    tokenizer: &tokenizer::MfTokenizer,
+    rendered: &[i32],
+    parts: &[&WirePart],
+) -> Result<Vec<i32>, String> {
+    let mut decoded = Vec::with_capacity(parts.len());
+    for (i, part) in parts.iter().enumerate() {
+        decoded.push(decode_part(part, i)?.1);
+    }
+    let index_ids = |k: usize| tokenizer.encode(&k.to_string(), false);
+    let token_text = |id: i32| tokenizer.id_to_token(id);
+    runner
+        .attach_minicpm_images(rendered, &decoded, &index_ids, &token_text)
+        .map_err(|e| format!("cannot attach the images: {e}"))
+}
+
+/// The Gemma 4 tower's whole turn: decode and preprocess every part at the
+/// default soft-token budget (the one the install's KV ring is sized for),
+/// expand each rendered `<|image|>` to `boi`, placeholders, `eoi`, encode,
+/// and hand the runner the rows. Returns the expanded ids to prefill.
+///
+/// Everything is decoded before the tower runs, for [`prepare`]'s reason.
+pub(crate) fn attach_gemma4(
+    runner: &mut runtime::RealForwardRunner,
+    rendered: &[i32],
+    parts: &[&WirePart],
+) -> Result<Vec<i32>, String> {
+    let ids = runner
+        .gemma4_image_ids()
+        .ok_or("this install's vision tower is not a Gemma 4 one")?;
+    let budget = turbospark_vision_io::GEMMA4_DEFAULT_SOFT_TOKENS;
+    let mut prepared = Vec::with_capacity(parts.len());
+    for (i, part) in parts.iter().enumerate() {
+        let (label, decoded) = decode_part(part, i)?;
+        let patches = turbospark_vision_io::gemma4_preprocess(&decoded, budget)
+            .map_err(|e| format!("{label}: {e}"))?;
+        prepared.push((label, patches));
+    }
+    let soft: Vec<usize> = prepared.iter().map(|(_, p)| p.soft_tokens()).collect();
+    let (expanded, spans) = turbospark_vision_io::gemma4_expand_image_placeholders(
+        rendered, ids, &soft,
+    )
+    .map_err(|e| {
+        format!(
+            "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
+                     <|image|> per image; check the messages actually carry image parts",
+            parts.len()
+        )
+    })?;
+    let mut rows = Vec::with_capacity(prepared.len());
+    for (label, patches) in &prepared {
+        rows.push(
+            runner
+                .encode_image_gemma4(patches)
+                .map_err(|e| format!("{label}: {e}"))?,
+        );
+    }
+    runner
+        .set_prompt_vision_gemma4(&rows, &spans, expanded.len())
+        .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
+    Ok(expanded)
+}
+
+/// The CLIP tower's processor config, read beside the tower (the sidecar's
+/// directory when one is attached) and cross-checked against the install's own
+/// `arch.vision` for the two numbers that must agree for the tower to read the
+/// rows at all: the patch edge and the position-table size. A config that
+/// describes a different crop would otherwise fail at a shape check inside the
+/// tower, far from the file that caused it.
+pub(crate) fn clip_params(
+    runner: &runtime::RealForwardRunner,
+) -> Result<turbospark_vision_io::ClipPreprocessParams, String> {
+    let path = runner.vision_dir().join("preprocessor_config.json");
+    let json = std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "{}: {e}\n  this install declares no image preprocessing config; re-stream it with \
+             its sidecars, or copy the checkpoint's preprocessor_config.json in",
+            path.display()
+        )
+    })?;
+    let params = turbospark_vision_io::ClipPreprocessParams::from_preprocessor_config_json(&json)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let vision = runner.vision_config();
+    params
+        .check_against_tower(vision.patch_size, vision.num_position_embeddings)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(params)
+}
+
+/// The SigLIP tower's processor settings (DeepSeek-VL2), read from
+/// `processor_config.json` beside the tower and cross-checked against the
+/// install's own `arch.vision` for the numbers that must agree for the tower to
+/// read the rows at all.
+pub(crate) fn siglip_params(
+    runner: &runtime::RealForwardRunner,
+) -> Result<turbospark_vision_io::DeepseekVl2Params, String> {
+    let path = runner.vision_dir().join("processor_config.json");
+    let json = std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "{}: {e}\n  this install declares no image processor config; re-pull the vision \
+             sidecar, or copy the checkpoint's processor_config.json in",
+            path.display()
+        )
+    })?;
+    let params = turbospark_vision_io::DeepseekVl2Params::from_processor_config_json(&json)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    let vision = runner.vision_config();
+    let side = params.patches_per_side() as i64;
+    if vision.patch_size != turbospark_vision_io::DSVL2_PATCH as i64
+        || vision.num_position_embeddings != side * side
+        || vision.spatial_merge_size != params.downsample_ratio as i64
+    {
+        return Err(format!(
+            "{}: a {}-pixel tile is {side}x{side} patches, but this install's tower has patch {}, \
+             a {}-row position table and unfold {}; the two describe different checkpoints",
+            path.display(),
+            params.image_size,
+            vision.patch_size,
+            vision.num_position_embeddings,
+            vision.spatial_merge_size
+        ));
+    }
+    Ok(params)
+}
+
+/// The SigLIP tower's whole turn (DeepSeek-VL2,
+/// `docs/DEEPSEEK_VL2_VISION_PHASE0.md`): pad and tile every part (a global
+/// view plus the best-fitting local grid, tiling off past two images), expand
+/// each rendered `<image>` to its full run, encode, and hand the runner the
+/// rows. Returns the expanded ids to prefill. Mirrors
+/// `crates/cli/src/generate/vision.rs::attach_siglip`.
+pub(crate) fn attach_siglip(
+    runner: &mut runtime::RealForwardRunner,
+    rendered: &[i32],
+    parts: &[&WirePart],
+) -> Result<Vec<i32>, String> {
+    let (marker, fill) = runner
+        .siglip_image_ids()
+        .ok_or("this install's vision tower is not a SigLIP one")?;
+    let params = siglip_params(runner)?;
+    let crop = parts.len() <= 2;
+    let mut prepared = Vec::with_capacity(parts.len());
+    for (i, part) in parts.iter().enumerate() {
+        let (label, decoded) = decode_part(part, i)?;
+        let tiles = turbospark_vision_io::deepseek_vl2_preprocess(&decoded, &params, crop)
+            .map_err(|e| format!("{label}: {e}"))?;
+        prepared.push((label, tiles));
+    }
+    let counts: Vec<usize> = prepared.iter().map(|(_, t)| t.image_tokens()).collect();
+    let (expanded, spans) =
+        turbospark_vision_io::clip_expand_image_placeholders(rendered, marker, fill, &counts)
+            .map_err(|e| {
+                format!(
+                    "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
+                     <image> per image; check the messages actually carry image parts",
+                    parts.len()
+                )
+            })?;
+    let mut rows = Vec::with_capacity(prepared.len());
+    for (label, tiles) in &prepared {
+        rows.push(
+            runner
+                .encode_image_siglip(tiles)
+                .map_err(|e| format!("{label}: {e}"))?,
+        );
+    }
+    runner
+        .set_prompt_vision_flat(&rows, &spans, expanded.len())
+        .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
+    Ok(expanded)
+}
+
+/// The DeepSeek-OCR tower's processor settings, read from
+/// `processor_config.json` beside the tower.
+pub(crate) fn deepseek_ocr_params(
+    runner: &runtime::RealForwardRunner,
+) -> Result<turbospark_vision_io::DeepseekOcrParams, String> {
+    let path = runner.vision_dir().join("processor_config.json");
+    let json = std::fs::read_to_string(&path).map_err(|e| {
+        format!(
+            "{}: {e}\n  this install declares no image processor config; re-pull the vision \
+             sidecar, or copy the checkpoint's processor_config.json in",
+            path.display()
+        )
+    })?;
+    turbospark_vision_io::DeepseekOcrParams::from_processor_config_json(&json)
+        .map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// The DeepSeek-OCR tower's whole turn (`docs/DEEPSEEK_OCR_VISION_PHASE0.md`):
+/// pad every part to the 1024 px base view, expand each rendered `<image>` to
+/// its 273-position run, encode, and hand the runner the rows. Returns the
+/// expanded ids to prefill. Mirrors
+/// `crates/cli/src/generate/vision.rs::attach_deepseek_ocr`.
+pub(crate) fn attach_deepseek_ocr(
+    runner: &mut runtime::RealForwardRunner,
+    rendered: &[i32],
+    parts: &[&WirePart],
+) -> Result<Vec<i32>, String> {
+    let (marker, fill) = runner
+        .deepseek_ocr_image_ids()
+        .ok_or("this install's vision tower is not a DeepSeek-OCR one")?;
+    let params = deepseek_ocr_params(runner)?;
+    let mut prepared = Vec::with_capacity(parts.len());
+    for (i, part) in parts.iter().enumerate() {
+        let (label, decoded) = decode_part(part, i)?;
+        let view = turbospark_vision_io::deepseek_ocr_preprocess(&decoded, &params)
+            .map_err(|e| format!("{label}: {e}"))?;
+        prepared.push((label, view));
+    }
+    let counts = vec![turbospark_vision_io::OCR_IMAGE_TOKENS; prepared.len()];
+    let (expanded, spans) =
+        turbospark_vision_io::clip_expand_image_placeholders(rendered, marker, fill, &counts)
+            .map_err(|e| {
+                format!(
+                    "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
+                     <image> per image; check the messages actually carry image parts",
+                    parts.len()
+                )
+            })?;
+    let mut rows = Vec::with_capacity(prepared.len());
+    for (label, view) in &prepared {
+        rows.push(
+            runner
+                .encode_image_deepseek_ocr(view)
+                .map_err(|e| format!("{label}: {e}"))?,
+        );
+    }
+    runner
+        .set_prompt_vision_flat(&rows, &spans, expanded.len())
+        .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
+    Ok(expanded)
+}
+
+/// The CLIP tower's whole turn (LLaVA, `docs/LLAVA_VISION_PHASE0.md`): read
+/// the processor config beside the tower, decode and preprocess every part
+/// (shortest-edge resize, center crop, normalize), expand each rendered
+/// `<image>` to one placeholder per patch, encode, and hand the runner the
+/// rows. Returns the expanded ids to prefill. Mirrors
+/// `crates/cli/src/generate/vision.rs::attach_clip`.
+pub(crate) fn attach_clip(
+    runner: &mut runtime::RealForwardRunner,
+    rendered: &[i32],
+    bos: Option<i32>,
+    parts: &[&WirePart],
+) -> Result<Vec<i32>, String> {
+    let (marker, fill) = runner
+        .clip_image_ids()
+        .ok_or("this install's vision tower is not a CLIP one")?;
+    let params = clip_params(runner)?;
+    let mut prepared = Vec::with_capacity(parts.len());
+    for (i, part) in parts.iter().enumerate() {
+        let (label, decoded) = decode_part(part, i)?;
+        let patches = turbospark_vision_io::clip_preprocess(&decoded, &params)
+            .map_err(|e| format!("{label}: {e}"))?;
+        prepared.push((label, patches));
+    }
+    let grids: Vec<(usize, usize)> = prepared.iter().map(|(_, p)| (p.grid, p.grid_w)).collect();
+    // The llava-hf template emits no `<s>`; the reference's processor adds it.
+    let rendered = turbospark_vision_io::clip_prepend_bos(rendered, bos);
+    let (expanded, spans) = turbospark_vision_io::flat_expand_image_placeholders(
+        &rendered,
+        marker,
+        fill,
+        runner.pixtral_break_end_ids(),
+        &grids,
+    )
+    .map_err(|e| {
+        format!(
+            "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
+                     <image> per image; check the messages actually carry image parts",
+            parts.len()
+        )
+    })?;
+    let mut rows = Vec::with_capacity(prepared.len());
+    for (label, patches) in &prepared {
+        rows.push(
+            runner
+                .encode_image_clip(patches)
+                .map_err(|e| format!("{label}: {e}"))?,
+        );
+    }
+    runner
+        .set_prompt_vision_flat(&rows, &spans, expanded.len())
+        .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
+    Ok(expanded)
 }
 
 /// Run the tower over `images` and hand the runner the injection map for
@@ -204,19 +502,31 @@ pub(crate) fn attach(
     params: &PreprocessParams,
 ) -> Result<Vec<i32>, String> {
     let grids: Vec<_> = images.iter().map(|p| p.image.grid).collect();
-    let spliced = turbospark_vision_io::splice_and_walk(
-        rendered,
-        &grids,
-        special_ids(runner),
-        params.merge_size,
-    )
-    .map_err(|e| {
-        format!(
-            "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
+    let special = special_ids(runner);
+    // A template that renders a bare placeholder (Muse-Glimmer's) gets the
+    // start and end markers added here, as its processor does.
+    let wrapped;
+    let rendered = match runner.image_wrap_ids() {
+        Some((start, end)) => {
+            wrapped = turbospark_vision_io::wrap_bare_image_placeholders(
+                rendered,
+                special.image_pad,
+                start,
+                end,
+            );
+            &wrapped[..]
+        }
+        None => rendered,
+    };
+    let spliced =
+        turbospark_vision_io::splice_and_walk(rendered, &grids, special, params.merge_size)
+            .map_err(|e| {
+                format!(
+                    "cannot place {} image(s) in this prompt: {e}\n  the template renders one \
              <|image_pad|> per image; check the messages actually carry image parts",
-            images.len()
-        )
-    })?;
+                    images.len()
+                )
+            })?;
 
     let mut embeddings = Vec::with_capacity(images.len());
     for prepared in images {
@@ -230,4 +540,26 @@ pub(crate) fn attach(
         .set_prompt_vision(&embeddings, &spliced.positions, spliced.ids.len())
         .map_err(|e| format!("cannot inject the encoded images: {e}"))?;
     Ok(spliced.ids)
+}
+
+/// The Unlimited-OCR-2 tower's attach: pages, expansion, tower, prompt.
+pub(crate) fn attach_unlimited_ocr2(
+    runner: &mut runtime::RealForwardRunner,
+    rendered: &[i32],
+    parts: &[&WirePart],
+) -> Result<Vec<i32>, String> {
+    let ids = runner
+        .unlimited_ocr2_image_ids()
+        .ok_or("this install is not unlimited_ocr2")?;
+    let mut images = Vec::with_capacity(parts.len());
+    for (i, part) in parts.iter().enumerate() {
+        images.push(decode_part(part, i)?.1);
+    }
+    let pages = turbospark_vision_io::uocr2_pages(&images);
+    let expanded = turbospark_vision_io::uocr2_expand_prompt(rendered, &pages, ids)
+        .map_err(|e| format!("cannot place {} image(s) in this prompt: {e}", parts.len()))?;
+    runner
+        .attach_unlimited_ocr2_pages(&pages, &expanded)
+        .map_err(|e| format!("cannot encode the pages: {e}"))?;
+    Ok(expanded)
 }

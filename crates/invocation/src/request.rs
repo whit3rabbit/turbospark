@@ -285,7 +285,14 @@ pub enum Speculation {
     Off,
     /// Draft this many tokens per round, or fail naming the reason.
     Block(u32),
+    /// Draft between the runtime's floor and this cap, moving with the
+    /// acceptance each round saw. Fails like [`Speculation::Block`] when it
+    /// cannot be served, for the same reason: naming it is a measurement
+    /// request. Opt-in and step-drafter (MTP) only; `Auto` stays fixed.
+    Adaptive(u32),
 }
+
+pub use foundation::runtime_config::{DEFAULT_ADAPTIVE_CAP, MIN_ADAPTIVE_CAP};
 
 /// The blocks a caller may name, re-exported from `foundation` so this
 /// parser and `turbospark-server`'s own read ONE range.

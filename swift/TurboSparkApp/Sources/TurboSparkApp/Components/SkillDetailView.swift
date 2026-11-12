@@ -70,13 +70,7 @@ struct SkillDetailView: View {
                 metaItem(title: Text("Source Path", bundle: .module), value: skill.sourceURL.lastPathComponent, icon: "doc.text")
             }
         }
-        .padding(16)
-        .background(.appSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.appBorder, lineWidth: 1)
-        )
+        .appCardSurface(padding: 16)
     }
 
     private var controls: some View {
@@ -161,14 +155,18 @@ struct SkillDetailView: View {
                         Image(systemName: "arrow.triangle.turn.up.right.diamond")
                             .themedFont(.tiny)
                             .accessibilityHidden(true)
-                        Text(pathPattern)
+                        Text(verbatim: pathPattern)
                             .themedCode(.small)
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Color.purple.opacity(0.12))
-                    .foregroundStyle(.purple)
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .background(.appElevated)
+                    .foregroundStyle(AnyShapeStyle(.appAccent))
+                    .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                            .stroke(.appBorder, lineWidth: 1)
+                    )
                 }
             }
         }
@@ -186,14 +184,14 @@ struct SkillDetailView: View {
                             .themedFont(.small)
                             .foregroundStyle(.appSecondary)
                             .accessibilityHidden(true)
-                        Text(fileName)
+                        Text(verbatim: fileName)
                             .themedCode(.small)
                         Spacer()
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(.appSurface.opacity(0.6))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .background(.appSurface)
+                    .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                 }
             }
         }
@@ -201,11 +199,11 @@ struct SkillDetailView: View {
 
     private var instructions: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            AppAdaptiveHeader {
                 Text("Instruction Body (SKILL.md)", bundle: .module)
                     .themedFont(.base, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
-                Spacer()
+            } actions: {
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(skill.content, forType: .string)
@@ -221,9 +219,9 @@ struct SkillDetailView: View {
                 .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(.appElevated)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 6)
+                    RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
                         .stroke(.appBorder, lineWidth: 1)
                 )
         }
@@ -234,13 +232,12 @@ struct SkillDetailView: View {
             Image(systemName: icon)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
-                .frame(width: 16)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
                 title
                     .themedFont(.tiny)
-                    .foregroundStyle(.tertiary)
-                Text(value)
+                    .foregroundStyle(.appSecondary)
+                Text(verbatim: value)
                     .themedFont(.small, weight: .medium)
                     .lineLimit(1)
             }
@@ -267,11 +264,11 @@ struct SkillScopeBadge: View {
         .padding(.vertical, 2)
         .background(
             scope.isProjectScope
-                ? Color.orange.opacity(0.15)
-                : Color.blue.opacity(0.15)
+                ? AnyShapeStyle(AppAttention.color.opacity(0.15))
+                : AnyShapeStyle(.appAccent.opacity(0.15))
         )
         .foregroundStyle(
-            scope.isProjectScope ? Color.orange : Color.blue
+            scope.isProjectScope ? AnyShapeStyle(AppAttention.color) : AnyShapeStyle(.appAccent)
         )
         .clipShape(Capsule())
     }

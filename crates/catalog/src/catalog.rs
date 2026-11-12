@@ -27,11 +27,24 @@ use crate::entry::CatalogEntry;
 /// The embedded curated table.
 const EMBEDDED: &str = include_str!("models.json");
 
+/// Short `family[:variant]` names (`qwen3.6:35b`) for curated aliases, the
+/// way a user types a model in ollama. A separate table rather than a field
+/// on [`CatalogEntry`] so the row schema the FFI and the app read is
+/// unchanged: tags are a front-end spelling, and the alias stays the one
+/// identity every install, receipt and server id is keyed on.
+const EMBEDDED_TAGS: &str = include_str!("tags.json");
+
 /// The schema version this build understands. A file declaring anything else
 /// is refused rather than best-effort parsed: the failure mode of guessing is
 /// a silently dropped field, and a dropped `sidecars.repo` is a 404 twenty
 /// minutes into a stream.
 pub const SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Deserialize)]
+struct TagsFile {
+    schema_version: u32,
+    tags: BTreeMap<String, String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct CatalogFile {
@@ -45,6 +58,8 @@ pub struct Catalog {
     by_alias: BTreeMap<String, CatalogEntry>,
     /// Aliases the user override replaced or added, for `list` to mark.
     overridden: BTreeMap<String, bool>,
+    /// Tag -> alias, from `tags.json`.
+    tags: BTreeMap<String, String>,
 }
 
 impl Catalog {
@@ -54,6 +69,7 @@ impl Catalog {
     pub fn embedded() -> Result<Self, String> {
         let mut catalog = Catalog::default();
         catalog.merge_str(EMBEDDED, "embedded models.json", false)?;
+        catalog.load_tags(EMBEDDED_TAGS, "embedded tags.json")?;
         Ok(catalog)
     }
 
@@ -88,6 +104,61 @@ impl Catalog {
             self.by_alias.insert(entry.alias.clone(), entry);
         }
         Ok(())
+    }
+
+    /// A tag table is refused whole when any tag points at an alias that is
+    /// not a row, or shadows an alias: a tag that silently resolved to a
+    /// different model than the alias of the same spelling would be the
+    /// worst kind of wrong install.
+    fn load_tags(&mut self, text: &str, origin: &str) -> Result<(), String> {
+        let file: TagsFile =
+            serde_json::from_str(text).map_err(|e| format!("parsing {origin}: {e}"))?;
+        if file.schema_version != SCHEMA_VERSION {
+            return Err(format!(
+                "{origin}: schema_version {} is not {SCHEMA_VERSION}",
+                file.schema_version
+            ));
+        }
+        for (tag, alias) in &file.tags {
+            if tag.is_empty() || tag.chars().any(char::is_whitespace) {
+                return Err(format!("{origin}: tag {tag:?} is empty or has whitespace"));
+            }
+            if self.by_alias.contains_key(tag) {
+                return Err(format!("{origin}: tag {tag:?} shadows an alias"));
+            }
+            if !self.by_alias.contains_key(alias) {
+                return Err(format!(
+                    "{origin}: tag {tag:?} names unknown alias {alias:?}"
+                ));
+            }
+        }
+        self.tags = file.tags;
+        Ok(())
+    }
+
+    /// The row a user-typed name means: an alias first, then a tag. Matching
+    /// is exact (case-insensitive only for tags), so a typo is a miss the
+    /// caller reports rather than a near neighbour it installs.
+    pub fn resolve_name(&self, name: &str) -> Option<&CatalogEntry> {
+        if let Some(entry) = self.by_alias.get(name) {
+            return Some(entry);
+        }
+        let lower = name.to_lowercase();
+        self.tags
+            .get(&lower)
+            .and_then(|alias| self.by_alias.get(alias))
+    }
+
+    /// Every tag naming `alias`, shortest first, for display.
+    pub fn tags_for(&self, alias: &str) -> Vec<&str> {
+        let mut tags: Vec<&str> = self
+            .tags
+            .iter()
+            .filter(|(_, a)| a.as_str() == alias)
+            .map(|(t, _)| t.as_str())
+            .collect();
+        tags.sort_by_key(|t| (t.len(), *t));
+        tags
     }
 
     /// The row for `alias`, or `None`.
@@ -128,6 +199,7 @@ impl Catalog {
             .filter(|e| {
                 e.alias.to_lowercase().contains(&needle)
                     || e.name.to_lowercase().contains(&needle)
+                    || self.tags_for(&e.alias).iter().any(|t| t.contains(&needle))
                     || e.source.repo.to_lowercase().contains(&needle)
             })
             .collect()

@@ -10,11 +10,15 @@ import TurboSpark
 @MainActor
 struct ModelInstallView: View {
     @ObservedObject var model: AppModel
+    @Environment(\.appTheme) private var theme
     @State private var recommendations: [ModelRecommendation] = []
     @State private var isLoadingRecommendations = true
     @State private var recommendationProgress: ModelRecommendationProbeProgress?
     @State private var recommendationError: String?
     @State private var selectedFilter: RecommendationFilter = .recommended
+    /// The library the user picked for the install. Nil follows the default
+    /// (requirement 2.2). Per install: it is not remembered across launches.
+    @State private var destination: String?
 
     enum RecommendationFilter: String, CaseIterable, Identifiable {
         case recommended = "Best Fit (MoE & Fast)"
@@ -62,7 +66,7 @@ struct ModelInstallView: View {
         HStack(spacing: 12) {
             Image(systemName: "shippingbox.fill")
                 .themedFont(.title2)
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(.appAccent)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("LM Studio Library Detected", bundle: .module)
@@ -85,8 +89,8 @@ struct ModelInstallView: View {
             .appAction(.secondary, size: .small)
         }
         .padding(12)
-        .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.accentColor.opacity(0.3), lineWidth: 1))
+        .background(.appAccent.opacity(theme.surfaceOpacity(0.1)), in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous).stroke(theme.border, lineWidth: 1))
     }
 
     private var headerSection: some View {
@@ -116,6 +120,7 @@ struct ModelInstallView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Recommended Models for Your Mac", bundle: .module)
                         .themedFont(.base, weight: .semibold)
+                        .accessibilityAddTraits(.isHeader)
                     Group {
                         if let chip = model.telemetry?.chip {
                             Text("Ranked by compatibility with your \(chip) memory budget.", bundle: .module)
@@ -135,9 +140,12 @@ struct ModelInstallView: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .themedFont(.small)
-                .fixedSize()
                 .accessibilityLabel(Text("Recommendations filter", bundle: .module))
             }
+
+            // Where an install from this list goes: only when there is a choice
+            // (requirement 2.1). A drive with no models yet is a library too.
+            InstallDestinationPicker(model: model, selection: $destination)
 
             if isLoadingRecommendations {
                 ModelRecommendationLoadingView(progress: recommendationProgress)
@@ -147,7 +155,7 @@ struct ModelInstallView: View {
                 VStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle")
                         .themedFont(.title2)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(AppAttention.color)
                     Text(recommendationError)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
@@ -162,12 +170,10 @@ struct ModelInstallView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 24)
             } else if displayedRecommendations.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "sparkles")
-                        .themedFont(.title2)
-                        .foregroundStyle(.quaternary)
-                    Text("No recommended models", bundle: .module)
-                        .themedFont(.base, weight: .medium)
+                AppEmptyState(
+                    systemImage: "sparkles",
+                    title: Text("No recommended models", bundle: .module)
+                ) {
                     Button {
                         selectedFilter = .all
                     } label: {
@@ -180,7 +186,9 @@ struct ModelInstallView: View {
             } else {
                 VStack(spacing: 10) {
                     ForEach(displayedRecommendations) { rec in
-                        ModelRecommendationRow(recommendation: rec, model: model)
+                        ModelRecommendationRow(
+                            recommendation: rec, model: model,
+                            library: model.installDestinations.libraryForInstall(selection: destination))
                     }
                 }
             }
@@ -285,16 +293,14 @@ struct ModelRecommendationLoadingView: View {
     var body: some View {
         VStack(spacing: 8) {
             if let progress, progress.total > 0 {
-                ProgressView(value: progress.fraction)
-                    .progressViewStyle(.linear)
-                    .accessibilityValue(MetricFormat.percent(progress.fraction * 100))
+                AppProgressBar(value: progress.fraction,
+                               label: Text("Calculating hardware fit recommendations...", bundle: .module))
                 Text(MetricFormat.percent(progress.fraction * 100))
                     .themedFont(.tiny)
                     .monospacedDigit()
                     .foregroundStyle(.appSecondary)
             } else {
-                ProgressView()
-                    .progressViewStyle(.linear)
+                AppProgressBar(value: nil, label: Text("Calculating hardware fit recommendations...", bundle: .module))
             }
             Text("Calculating hardware fit recommendations...", bundle: .module)
                 .themedFont(.small)

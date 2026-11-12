@@ -386,10 +386,10 @@ fn an_image_free_map_reproduces_the_sequential_logits() {
     }
 }
 
-/// An open drafter is refused by name too (`families/qwen/prefill.rs`'s
-/// header): the driver does not encode the DFlash2 aux-capture hook the
-/// sequential dense branch fires on every pass, so silently prefilling
-/// through it would leave the drafter reading a stale/empty capture.
+/// An open drafter is refused by name on the PLAIN entry point
+/// (`families/qwen/prefill.rs`'s header): only the priming entry point
+/// primes a drafter over the prompt, so silently prefilling through the
+/// plain one would leave the drafter's cache empty.
 #[test]
 fn an_open_drafter_is_refused_by_name() {
     let dir = temp_dir("drafter-refused");
@@ -418,7 +418,7 @@ fn an_open_drafter_is_refused_by_name() {
         .prefill_chunk(&PROMPT, 0, &mut logits)
         .expect_err("an open drafter must be refused by the chunked driver");
     assert!(
-        err.to_string().contains("aux capture"),
+        err.to_string().contains("prefill_chunk_priming_drafter"),
         "the refusal must name the reason; got {err}"
     );
 }
@@ -426,9 +426,13 @@ fn an_open_drafter_is_refused_by_name() {
 /// The MoE half (`qwenGdnMoe`) has its own driver since 2026-10-14
 /// (`families/qwen/moe_prefill.rs`, tested in `real_forward_qwen_moe_chunked.rs`).
 /// What this case pins is the DISPATCH: a MoE install must reach that driver
-/// and never this file's dense one. A forced `TURBOSPARK_BATCHED_GEMV` tells
-/// them apart, because the dense driver's batched arm would accept these
-/// INT4 weights while the MoE driver refuses the seam by name.
+/// and never this file's dense one. `TURBOSPARK_ROUTED_BATCH` with the batched
+/// arm forced OFF tells them apart: the MoE driver serves the routed seam only
+/// on top of its batched arm and refuses it by that arm's name otherwise,
+/// where the dense driver has no routed half and would refuse the install as
+/// non-dense instead. (`TURBOSPARK_BATCHED_GEMV` alone told them apart until
+/// the MoE driver gained its batched arm, and the routed seam alone until it
+/// gained its batched routed half.)
 #[test]
 fn a_moe_qwen_install_is_dispatched_to_the_moe_driver() {
     let dir = temp_dir("moe-dispatch");
@@ -442,13 +446,14 @@ fn a_moe_qwen_install_is_dispatched_to_the_moe_driver() {
         runner.supports_chunked_prefill(),
         "a MoE qwen install now reports chunked-prefill support"
     );
-    runner.set_batched_gemv_prefill(true);
+    runner.set_batched_gemv_prefill(false);
+    runner.set_routed_batch_prefill(true);
     let mut logits = vec![f16::from_f32(0.0); VOCAB as usize];
     let err = runner
         .prefill_chunk(&PROMPT, 0, &mut logits)
-        .expect_err("the MoE driver refuses the batched resident-GEMV seam");
+        .expect_err("the MoE driver refuses the routed seam without its batched arm");
     assert!(
-        err.to_string().contains("qwen MoE chunked driver"),
+        err.to_string().contains("qwen MoE batched arm"),
         "a MoE install must reach the MoE driver, not the dense one; got {err}"
     );
 }

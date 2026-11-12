@@ -122,10 +122,11 @@ struct ImageStyleBrowserSheet: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
+        AppAdaptiveHeader {
             Text("Style", bundle: .module)
                 .themedFont(.title3, weight: .semibold)
-            Spacer(minLength: 0)
+                .accessibilityAddTraits(.isHeader)
+        } actions: {
             AppSearchField(
                 text: $search, prompt: Text("Search styles", bundle: .module),
                 minWidth: 160, idealWidth: 230, maxWidth: 300, focus: $searchFocused)
@@ -169,15 +170,10 @@ struct ImageStyleBrowserSheet: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "paintbrush")
-                .themedFont(.hero)
-                .foregroundStyle(.appSecondary)
-            Text("No styles match your search.", bundle: .module)
-                .themedFont(.small)
-                .foregroundStyle(.appSecondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        AppEmptyState(
+            systemImage: "paintbrush",
+            title: Text("No styles match your search.", bundle: .module)
+        )
     }
 
     private var footer: some View {
@@ -204,12 +200,12 @@ struct ImageStyleBrowserSheet: View {
         } label: {
             HStack(alignment: .top, spacing: 10) {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(isSelected ? .appAccent : .appSecondary)
+                    .foregroundStyle(isSelected ? AnyShapeStyle(.appAccent) : AnyShapeStyle(.appSecondary))
                     .padding(.top, 2)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(verbatim: style.name)
                         .themedFont(.base, weight: .medium)
-                        .foregroundStyle(isSelected ? .appAccent : .appText)
+                        .foregroundStyle(isSelected ? AnyShapeStyle(.appAccent) : AnyShapeStyle(.appText))
                     Text(verbatim: style.prompt)
                         .themedFont(.tiny)
                         .foregroundStyle(.appSecondary)
@@ -231,7 +227,7 @@ struct ImageStyleBrowserSheet: View {
             favorites.toggle(style.id)
         } label: {
             Image(systemName: starred ? "star.fill" : "star")
-                .foregroundStyle(starred ? .appAccent : .appSecondary)
+                .foregroundStyle(starred ? AnyShapeStyle(.appAccent) : AnyShapeStyle(.appSecondary))
                 .padding(4)
                 .contentShape(Rectangle())
         }

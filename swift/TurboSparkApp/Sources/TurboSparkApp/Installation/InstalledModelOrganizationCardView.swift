@@ -22,12 +22,12 @@ struct InstalledModelOrganizationCardView: View {
                     .foregroundStyle(.appSecondary)
 
                 FlowLayout(spacing: 6, lineSpacing: 6) {
-                    ForEach(orgStore.tags(alias: installedModel.alias, path: installedModel.path), id: \.self) { tag in
+                    ForEach(orgStore.tags(installedModel), id: \.self) { tag in
                         HStack(spacing: 4) {
                             Text(verbatim: tag)
                                 .themedFont(.tiny, weight: .medium)
                             AppIconButton("xmark", label: Text("Remove tag \(tag)", bundle: .module)) {
-                                orgStore.removeTag(tag, for: installedModel.alias, path: installedModel.path)
+                                orgStore.removeTag(tag, for: installedModel)
                             }
                             .buttonStyle(.plain)
                             .themedFont(.micro, weight: .bold)
@@ -96,7 +96,7 @@ struct InstalledModelOrganizationCardView: View {
                     .appEditorSurface()
                     .accessibilityLabel(Text("Personal Notes", bundle: .module))
                     .onChange(of: notesText) { _, newValue in
-                        orgStore.setNotes(newValue, for: installedModel.alias, path: installedModel.path)
+                        orgStore.setNotes(newValue, for: installedModel)
                     }
             }
         }
@@ -114,7 +114,7 @@ struct InstalledModelOrganizationCardView: View {
     }
 
     private func syncState() {
-        notesText = orgStore.notes(alias: installedModel.alias, path: installedModel.path)
+        notesText = orgStore.notes(installedModel)
         isAddingTag = false
         newTagText = ""
     }
@@ -122,7 +122,7 @@ struct InstalledModelOrganizationCardView: View {
     private func addTagAction() {
         let trimmed = newTagText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        orgStore.addTag(trimmed, for: installedModel.alias, path: installedModel.path)
+        orgStore.addTag(trimmed, for: installedModel)
         newTagText = ""
         isAddingTag = false
     }

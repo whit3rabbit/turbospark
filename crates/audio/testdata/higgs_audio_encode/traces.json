@@ -1,0 +1,14 @@
+{
+  "downsample_factor": 4,
+  "dsf": 160,
+  "hubert_pad": 2,
+  "books": 8,
+  "a_tower_steps": 320,
+  "a_hidden_states_count": 3,
+  "a_frames": 2,
+  "a_rvq_min_margin": 0.0,
+  "b_tower_steps": 640,
+  "b_hidden_states_count": 3,
+  "b_frames": 4,
+  "b_rvq_min_margin": 0.0
+}

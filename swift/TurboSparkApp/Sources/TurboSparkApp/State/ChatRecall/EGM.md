@@ -1,0 +1,36 @@
+# ChatRecall
+
+## Overview
+Conversation recall for chats. Syntext's context engine journals each chat's user and assistant turns into a local store. When turns have left the model's window (compacted or dropped by the window fit), the relevant ones are brought back as cited evidence and prepended to the person's newest message in the model-bound prompt. The directory splits into a pure planner (which rows are journaled, how the journal reconciles with the transcript, which turns the fitted prompt still carries, how evidence is injected) and a stateful store that owns the Syntext handles on one serial queue.
+
+## Interface
+- Planner (pure, offline-testable): `ChatRecallPlanner` with `Role`, `Turn`, `Reconcile` (`none`, `append`, `rebuild`), `recordable(_:)`, `normalize(_:)`, `reconcilePlan(recorded:recordable:)`, `earliestRetainedRow(...)`, `keptTurns(_:earliestRetainedRow:)`, `inject(evidence:policy:into:)`, the `Fit` and `Inputs` structs, and `applyConversationRecall(fitted:inputs:refit:countTokens:evidence:policy:)`. Constants: `maxTurnBytes` (32 KiB), `maxEvidenceTokens` (1,024), `minEvidenceTokens` (96) [ChatRecallPlanner.swift:ChatRecallPlanner].
+- Store: `ChatRecallStore` (`@unchecked Sendable` final class) with `shared`, `scope(for:)`, `maxOpenConversations`, `storeDirectory`, `setEnabled(_:)`, `reconcile(chatID:turns:)`, `evidence(chatID:question:keptTurns:budget:modelPath:)`, `forget(chatID:)`, `purge()`, `close()`, `purgeIfDisallowed()`. Test hooks: `recordedTurns(chatID:)`, `drain()`, `compactNow()` [ChatRecallStore.swift:ChatRecallStore].
+- Child directories: none.
+
+## Invariants
+- THE STORE IS PLAINTEXT. Ghost chats are never sent here, and a passphrase-protected profile has no store at all (every read and write checks `enabled && !isProtected()` on the queue via `allowedLocked`) [ChatRecallStore.swift:allowedLocked]. Protection and a disabled setting must lead to a purge, and `purgeIfDisallowed` removes a store left by a crash between the toggle and the purge [ChatRecallStore.swift:purgeIfDisallowed].
+- Each chat is its own memory scope (`turbospark.chat.<uuid>`). Syntext grants a conversation's whole scope to a request, so a shared scope would let one chat recall another's turns [ChatRecallStore.swift:scope(for:)].
+- All state is confined to one private serial queue (`utility` QoS), not an actor, because every call blocks in the FFI and would starve the cooperative pool. Serial order also guarantees a reconcile lands before the evidence request that follows it. `*Locked` methods must only run on that queue [ChatRecallStore.swift:queue].
+- Recall results are derived data. A failed reconcile drops the open conversation so the next reconcile re-reads from scratch. The store opens with `sync: false` because the transcript is the source of truth and the next reconcile re-records any torn tail [ChatRecallStore.swift:reconcileLocked] [ChatRecallStore.swift:storeLocked].
+- Recordable rows are user rows that are not synthetic (hook reasons and guardrail nudges can carry injected text) and assistant rows with no tool calls or results and no `guardrail_retry` stop reason. Whitespace-only text is skipped [ChatRecallPlanner.swift:recordable(_:)].
+- `normalize` is the exact text recorded and also what `history()` is compared against. Do not change it without a rebuild path. It converts CRLF, strips NUL, and caps at 32 KiB, because Syntext does not index a turn over 8 MiB or with an early NUL, which would force a rebuild on every launch. The byte cut is deterministic (a split multi-byte character decodes to U+FFFD) [ChatRecallPlanner.swift:normalize(_:)].
+- `reconcilePlan` returns `.rebuild` for any divergence (more recorded than recordable, or a role or text mismatch at any index), `.none` for equal, and otherwise appends the suffix. A rebuild forgets the chat and re-records all turns, then schedules a non-forced compaction [ChatRecallPlanner.swift:reconcilePlan(recorded:recordable:)] [ChatRecallStore.swift:reconcileLocked].
+- `earliestRetainedRow` relies on the window fitter removing messages oldest first after a leading system or developer message, with the preserved-instructions pin fitted outside the history. A count mismatch between projection messages and source rows returns nil [ChatRecallPlanner.swift:earliestRetainedRow].
+- `applyConversationRecall` returns the fitted prompt byte for byte unchanged when: there is no question or no turns, every recorded turn is already in the prompt, the person's message was dropped, the budget is below 96 tokens, evidence is blank, or the final recounted prompt would not fit under `promptBudget`. The reserve is capped at one eighth of the prompt budget (and 1,024). It may refit tighter to make room, and the policy text overhead is deducted from the budget. The window is never exceeded because the final prompt is counted [ChatRecallPlanner.swift:applyConversationRecall].
+- Injected messages are model-bound copies, never stored and never localized (layout: policy, evidence, then `Question:`) [ChatRecallPlanner.swift:inject(evidence:policy:into:)].
+- At most 4 conversations stay open (LRU order), and the evidence cache holds 16 entries keyed by chat, kept turns, budget, model path and question hash, so every step of a tool loop gets identical text. The cache is invalidated per chat on a reconcile change or forget. Empty results are cached as empty and returned as nil [ChatRecallStore.swift:conversationLocked] [ChatRecallStore.swift:evidenceLocked].
+- The token counter uses a separate `TurboSparkTokenizer` opened from the model path, not the session's counter, because generation holds the session queue for the whole turn and calling it would risk deadlock. It falls back to `utf8.count / 3` [ChatRecallStore.swift:engineLocked].
+- Deleting or clearing a chat forgets its turns and schedules a forced, debounced (2 s) compaction so compacted bytes leave disk. Edits and rebuilds compact only when the store is due [ChatRecallStore.swift:forget(chatID:)] [ChatRecallStore.swift:scheduleCompactionLocked].
+- Turning recall off purges the store (it rebuilds lazily when turned on) [ChatRecallStore.swift:setEnabled(_:)].
+- Store open retries up to 3 times on `isContextStoreLocked` with a growing `usleep`, to ride out spurious lock failures under fork churn (the app spawns git). Any other error returns nil [ChatRecallStore.swift:storeLocked].
+
+## Side Effects
+- Disk: creates `context-recall` under `AppStorageRoot.directory` with mode 0700 and excludes it from backups. Syntext writes journal and segment files there, compaction rewrites segments, and purge removes the folder [ChatRecallStore.swift:storeLocked] [ChatRecallStore.swift:purgeLocked].
+- FFI: Syntext store, engine and conversation calls (`record`, `history`, `forget`, `prepare`, `compact`) and the TurboSpark tokenizer [ChatRecallStore.swift].
+- Reads `ProfileVaultStore.shared.isProtected` by default through the injected closure [ChatRecallStore.swift:init].
+- Timers and queues: a dispatch queue plus a `DispatchWorkItem` for debounced compaction [ChatRecallStore.swift:scheduleCompactionLocked].
+- None for network, Keychain, UserDefaults, process spawn or NotificationCenter. The planner has no side effects.
+
+## Verification
+- Run: `swift test --package-path swift/TurboSparkApp`

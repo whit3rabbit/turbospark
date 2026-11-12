@@ -9,9 +9,11 @@ HiggsAudioV2 codebooks (vocab 1025 including the mask token at 1024,
 
 ## Layout
 
-- `mod.rs` (one file):
+- `mod.rs`:
   - `OmniVoiceConfig` over the checkpoint `config.json` (the
-    `llm_config` dict parses through the shared qwen3 engine config);
+    `llm_config` dict parses through the shared qwen3 engine config;
+    newer exports nest `rope_theta` under `rope_parameters` and the
+    loader lifts it);
   - `combine_text` / `build_style_text` / `build_wrapped_text` - the
     reference string rules (ref-transcript join, newline removal,
     space/tab run collapse, CJK-adjacent whitespace removal, the
@@ -34,7 +36,19 @@ HiggsAudioV2 codebooks (vocab 1025 including the mask token at 1024,
     reveal of the k best-scoring still-masked cells with
     `k = ceil(total_mask * dt)` (the last step reveals everything);
   - `generate`: assemble, unmask, then decode through the shared
-    [`codec::higgs_audio`](../../../codec/higgs_audio) port.
+    [`codec::higgs_audio`](../../../codec/higgs_audio) port; the load
+    path accepts both the converted fixture layout (`backbone.` prefix,
+    per-codebook tables) and the released k2-fsa layout (the fused
+    `audio_embeddings.weight`/`audio_heads.weight` tables split into
+    per-codebook slices, the `llm.` prefix, and the `omnivoice-rowwise`
+    8-bit scheme recorded in `mlx_manifest.json`, dequantized as
+    `w = q * scale` over signed int8 groups with f16 scales; unverified
+    schemes refuse). `duration.rs`: the rule-based duration estimator
+    (`duration.py`), with Unicode category tables generated from the
+    pinned CPython. `pipeline.rs`: the intake facade - the HF
+    `tokenizer.json` text tokenizer, the nonverbal-tag atomic
+    tokenization, the reference-audio encode through the codec's
+    Transformers-format path, and the generate wrapper.
 
 ## Reference quirks kept
 
@@ -93,16 +107,86 @@ space-run collapse, and the layer penalty zipped against the flat
 confidence (only the first row penalized instead of each cell's
 column).
 
-Rust gates: `cargo test -p turbospark-audio --lib omnivoice` (4 tests).
+Rust gates: `cargo test -p turbospark-audio --lib omnivoice` (15 tests:
+fixture parity, the raw-release intake equivalence, the duration
+fixture, the pipeline end-to-end) plus the env-gated runtime gates
+(`TURBOSPARK_TEST_OMNIVOICE`, `TURBOSPARK_TEST_OMNIVOICE_REF`) and the
+reference-transcript A/B
+(`cargo test --release -p turbospark-runtime --test omnivoice_reference_transcript -- --ignored --nocapture`).
+
+## Checkpoint gates (measured, 2026-10-15, M-series, release build)
+
+- **Cross-engine encode parity, exact.** The Rust Higgs encode over the
+  Transformers-format `audio_tokenizer/` (PyTorch conv layouts, the
+  Wav2Vec2 semantic tower's `output_hidden_states` mean, the sinc
+  resampler, `encoder_semantic`, the fusion `fc`, greedy RVQ) reproduces
+  the Python reference's codes bit-exactly on the real bfloat16
+  checkpoint: 70 frames x 8 codebooks (`real_checkpoint_encode_matches_the_python_reference`).
+- **Real 8-bit generation.** `mlx-community/OmniVoice-8bit` (rowwise
+  int8 + manifest): open 4.1 s, 32 diffusion steps in 68.4 s for 3 s of
+  audio (RTF about 23 on the portable CPU path), 3.06 GiB process
+  footprint after open and 3.2 GiB after generation (file-backed
+  checkpoint pages excluded). Seeded runs are bit-identical. The
+  generated audio and the Python reference's own generation both
+  transcribe as "The quick brown fox jumps over the lazy dog." with a
+  whisper oracle.
+- The Python reference cannot load the 8-bit conversion at all (it is
+  the ailuntx rowwise format, not the mlx-audio layout), so the 8-bit
+  gate is Rust-only (determinism + oracle) and the cross-engine parity
+  runs on bfloat16.
+- **Reference transcript A/B (2026-10-16, M4 Max, Metal, release).**
+  `reference_transcript_ab` (`crates/runtime/tests/omnivoice_reference_transcript.rs`)
+  clones a 12-word and a 13-word target from four LibriSpeech test-clean
+  references: 1284-1180-0000, 2830-3979-0000, 4992-23283-0000, and
+  7176-88083-0000 (two female, two male, 5.7 to 8.1 s). The references
+  go in at 16 kHz and the runner resamples them. Seeds 7, 11, and 23, 32
+  steps, the 8-bit checkpoint at `b222e4d8`. Each variant gets 24 clips
+  and 300 target words. Every variant generates the same frame count,
+  because the target length comes from the target text alone. The
+  oracle is CPU Parakeet Redux (`2bf12860`), not the whisper oracle
+  above, so these numbers do not compare with that line. Scoring folds
+  Parakeet's "neighbours" to "neighbors".
+
+  | Transcript sent | WER | Clean clips | Leading words lost | Transcript words spoken |
+  | --- | ---: | ---: | ---: | ---: |
+  | none | 0.67% (2/300) | 23/24 | 0 clips | 0 clips |
+  | exact, sentence case | 0.00% (0/300) | 24/24 | 0 clips | 0 clips |
+  | Parakeet's transcript of the reference | 0.00% (0/300) | 24/24 | 0 clips | 0 clips |
+  | stale (the next reference's words) | 75.67% (227/300) | 2/24 | 16 clips, 160 words | 20 clips, 93 words |
+
+  - The expected failure without a transcript, dropped leading words, did
+    not occur in 24 clips. The two errors with none are one clip ("the old
+    stole" for "the old stone wall", reference 1284-1180-0000, seed 11).
+    None and exact are one clip apart, so this sample shows no
+    intelligibility gain from sending a transcript, and no cost either.
+  - A transcript that does not match the reference audio is catastrophic.
+    The model speaks part of the wrong transcript into the target span,
+    most often its last words ("scattered in broad splashes, our
+    neighbours planted a small garden"), and the fixed target length cuts
+    the script short. The ASR transcript
+    (one "colour" for "color" across four references) behaves like the
+    exact one.
+  - The clone in `real_checkpoint_gate` passes the placeholder transcript
+    "The reference transcript.", which is a mismatched transcript of this
+    kind. That gate checks determinism only.
+  - Not measured: speaker similarity, prosody, and real takes whose ASR
+    transcript is partly wrong (between exact and stale).
+  - A first run of the none, exact, and stale variants in a separate
+    process gave the same transcripts for all 72 clips. The wall time (3128 s for 96 clips, host load average up to
+    14) is not a speed figure.
 
 ## Open items
 
-- Real-checkpoint gate not run (fixtures are seeded tiny instances);
-  the `mlx-community/OmniVoice-bfloat16` backbone plus the full
-  HiggsAudioV2 tokenizer is the recorded open item.
-- `class_temperature > 0`, batch generation, and the duration
-  estimator (`duration.py`) are ported only at the call sites that the
-  fixture exercises (`duration_s` given; the rule-based estimator stays
-  reference-side).
-- The reference-audio encode path (semantic fusion + PyTorch CPU
-  tokenizer) is out of contract; reference tokens are caller-supplied.
+- Metal acceleration of the bidirectional backbone, attention, MLP, and 8
+  prediction heads is implemented via `lm::Execution` in `turbospark-audio`
+  wired to Metal GPU `Music3Device` in `turbospark-runtime` with transparent
+  CPU fallback.
+- `class_temperature > 0` is ported but only the temperature-0 greedy
+  path is fixture-verified; batch generation (`generate_batch`) is not
+  ported.
+- The `create_voice_clone_prompt` file-path preprocessing (RMS
+  normalization, silence removal, trim) is not ported: in-memory PCM
+  encodes directly, which is the path the app and the session use.
+- Long-text chunking does not exist; the request validator caps the
+  text length and the estimator sizes one utterance.
+- The 4-bit rowwise conversion is refused (only 8-bit is verified).

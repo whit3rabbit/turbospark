@@ -1,6 +1,14 @@
 //! `model_weights.bin`'s leading index region: a fixed header followed by a
-//! fixed-width entry table and a string table. Ported from
+//! fixed-width entry table, a string table, and (on installs written since
+//! manifest 1.1) a format trailer in the page padding. Ported from
 //! `Infrastructure/ModelIO/ResidentIndex.swift`.
+//!
+//! The trailer is the last [`TRAILER_BYTES`] of the index region: the
+//! [`INDEX_MAGIC`] bytes, a `u32` format version, and a reserved `u32`. It
+//! sits in padding that the Swift reader and older turbospark builds skip,
+//! so they keep opening new installs, while this reader refuses a format
+//! version it does not know by name instead of misreading the bytes. A file
+//! with no trailer is the legacy layout and is accepted as it always was.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -12,6 +20,14 @@ use crate::error::ModelError;
 pub const HEADER_BYTES: usize = 24;
 /// Byte size of each resident index table entry (72 bytes).
 pub const ENTRY_BYTES: usize = 72;
+/// Byte size of the format trailer at the end of the index region.
+pub const TRAILER_BYTES: usize = 16;
+/// Magic bytes opening the format trailer.
+pub const INDEX_MAGIC: [u8; 8] = *b"GTURBIDX";
+/// The index layout this reader understands. The writer stamps it into the
+/// trailer and a different value is refused with
+/// [`ModelError::UnsupportedIndexFormat`].
+pub const INDEX_FORMAT_VERSION: u32 = 1;
 
 /// `indexSize` is the full byte size of the leading index region: it
 /// INCLUDES the header itself, the entry table, the string table, and the
@@ -176,7 +192,10 @@ pub fn load(file_path: &Path) -> Result<ResidentIndex, ModelError> {
         )));
     }
 
-    let region_len = header.index_size as usize;
+    // Checked so a 32-bit target refuses a >4 GiB index instead of truncating
+    // it. entry_count is bounded by index_size above, so its casts below fit.
+    let region_len = usize::try_from(header.index_size)
+        .map_err(|_| corrupt("indexSize exceeds the address space"))?;
     let mut index_buf = vec![0u8; region_len];
     {
         use std::io::Seek;
@@ -190,6 +209,9 @@ pub fn load(file_path: &Path) -> Result<ResidentIndex, ModelError> {
         .map_err(|_| corrupt("short read for index region"))?;
 
     let mut entries = HashMap::with_capacity(header.entry_count as usize);
+    // The trailer is honored only past the string table, so a legacy name
+    // that happens to end in the magic bytes is not mistaken for one.
+    let mut string_table_end = HEADER_BYTES + header.entry_count as usize * ENTRY_BYTES;
     for i in 0..header.entry_count as usize {
         let base = HEADER_BYTES + i * ENTRY_BYTES;
         let p = &index_buf[base..base + ENTRY_BYTES];
@@ -216,6 +238,7 @@ pub fn load(file_path: &Path) -> Result<ResidentIndex, ModelError> {
         }
         let name = String::from_utf8_lossy(&index_buf[name_offset..name_offset + name_length])
             .into_owned();
+        string_table_end = string_table_end.max(name_offset + name_length);
 
         // Every offset/size pair below is untrusted input: a corrupt or
         // hostile index can name any `u64`, and every consumer (host slices,
@@ -270,5 +293,31 @@ pub fn load(file_path: &Path) -> Result<ResidentIndex, ModelError> {
         entries.insert(name, entry);
     }
 
+    check_trailer(&index_buf, string_table_end)?;
+
     Ok(ResidentIndex { header, entries })
+}
+
+/// Refuse an index region whose trailer names a format this reader does not
+/// implement. A region with no trailer past its string table is the legacy
+/// layout and passes.
+fn check_trailer(index_buf: &[u8], string_table_end: usize) -> Result<(), ModelError> {
+    let Some(trailer_start) = index_buf.len().checked_sub(TRAILER_BYTES) else {
+        return Ok(());
+    };
+    if trailer_start < string_table_end {
+        return Ok(());
+    }
+    let trailer = &index_buf[trailer_start..];
+    if trailer[..8] != INDEX_MAGIC {
+        return Ok(());
+    }
+    let found = u32::from_le_bytes(trailer[8..12].try_into().unwrap());
+    if found != INDEX_FORMAT_VERSION {
+        return Err(ModelError::UnsupportedIndexFormat {
+            found,
+            supported: INDEX_FORMAT_VERSION,
+        });
+    }
+    Ok(())
 }

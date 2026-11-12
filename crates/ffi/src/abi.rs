@@ -42,8 +42,9 @@ pub const TS_ERR_PANIC: c_int = 6;
 /// cancelled image or audio run that still has a result keeps returning it.
 pub const TS_ERR_CANCELLED: c_int = 7;
 /// The resource needed is in use by another operation (a native audio session
-/// or the audio device is already running a job). Retrying after that job
-/// finishes can succeed, unlike `TS_ERR_OPEN`.
+/// or the audio device is already running a job, or an install is running and
+/// a library change is refused). Retrying after that job finishes can
+/// succeed, unlike `TS_ERR_OPEN`.
 pub const TS_ERR_BUSY: c_int = 8;
 
 thread_local! {

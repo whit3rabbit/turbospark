@@ -191,6 +191,28 @@ pub(crate) fn plan_and_stream_union(
     Ok(union.iter().copied().zip(slots).collect())
 }
 
+/// [`plan_and_stream_union`] that may not evict `avoiding`, the slots a
+/// sub-batch still in flight reads: `None`, with nothing planned, read or
+/// booked, when the union's misses do not fit the other slots.
+pub(crate) fn try_plan_and_stream_union(
+    streamer: &mut streaming::PreadExpertStreamer,
+    phases: &mut PhaseCounters,
+    union: &[usize],
+    avoiding: &HashSet<usize>,
+) -> Result<Option<HashMap<usize, usize>>, RealForwardError> {
+    let t_io = Instant::now();
+    let Some(plan) = streamer.plan_experts_cached_if_possible(union, avoiding) else {
+        return Ok(None);
+    };
+    phases.expert_requests += plan.experts.len() as u64;
+    phases.expert_hits += plan.hits as u64;
+    let slots = streamer
+        .execute_expert_cache_plan(&plan)
+        .map_err(|e| RealForwardError::Unsupported(format!("expert stream: {e}")))?;
+    phases.expert_io_nanos += t_io.elapsed().as_nanos() as u64;
+    Ok(Some(union.iter().copied().zip(slots).collect()))
+}
+
 /// The route list and FP16 routing weights for one sub-batch, in PAIR
 /// order (token-major, rank within): the fused phase 2 looks its routes up
 /// BY PAIR, so a blob-locality sort would break it -- and each blob is

@@ -78,19 +78,17 @@ impl RealForwardRunner {
         // Final norm, then the TRUNK's lm_head (the drafter shares it) and
         // the selector's hidden projection.
         let final_norm = norm_view(weights, index, "dflash.norm.weight", hidden)?;
-        for r in 0..rows {
-            let row = r as u64 * row_bytes;
-            gpu::encode_rms_norm_bf16w(
-                context,
-                &pass,
-                (&dflash.x, row),
-                final_norm,
-                (&dflash.normed, row),
-                hidden as u32,
-                DFLASH_RESIDUAL_EPS,
-            )
-            .map_err(gpu_err)?;
-        }
+        gpu::encode_rms_norm_bf16w_perhead(
+            context,
+            &pass,
+            (&dflash.x, 0),
+            final_norm,
+            (&dflash.normed, 0),
+            rows as u32,
+            hidden as u32,
+            DFLASH_RESIDUAL_EPS,
+        )
+        .map_err(gpu_err)?;
         encode_gemm_any(
             context,
             &pass,

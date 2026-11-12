@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Assembles swift/TurboSparkApp's bare SwiftPM executable into a real
-# TurboSpark.app bundle, with the three CLI binaries and openkindd inside it.
+# TurboSpark.app bundle, with every CLI binary and openkindd inside it.
 #
 # WHY THIS SCRIPT EXISTS: `swift build` emits an executable and a resource
 # bundle side by side in `.build/release`, not an `.app` (swift/CLAUDE.md
@@ -22,6 +22,14 @@
 #                      minimum an arm64 binary needs to execute AT ALL, and it
 #                      is NOT notarization -- see docs/RELEASE.md's Gatekeeper
 #                      section before assuming a downloaded build just opens.
+#   OPENKINDD_INSTALL_ROOT
+#                      where `cargo install openkind-server` lands; default a
+#                      temp dir discarded with the run. A persistent root is
+#                      what ci.yml caches, because cargo install builds in a
+#                      target directory of its own that no workspace cache
+#                      sees, and the mlx feature (mlx-sys, candle, mlx-rs) was
+#                      15 minutes of every package-macos leg. A matching
+#                      daemon and kernel library make the install a no-op.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -74,9 +82,9 @@ sparkle_public_ed_key="O+w+eDlUPQQa1Y+quYgz9BiJljUdS01KeafmpSzoZ3g="
 app="$out_dir/TurboSpark.app"
 contents="$app/Contents"
 openkind_revision="${OPENKIND_RELEASE_REVISION:-}"
-openkind_server_version="${OPENKIND_SERVER_VERSION:-0.3.0}"
+openkind_server_version="${OPENKIND_SERVER_VERSION:-0.5.1}"
 openkind_bin="${OPENKINDD_BINARY:-}"
-openkind_build_dir=""
+openkind_metallib=""
 
 if [ "$skip_build" -eq 0 ]; then
   [[ "$openkind_revision" =~ ^[0-9a-f]{40}$ ]] || {
@@ -105,11 +113,29 @@ if [ "$skip_build" -eq 0 ]; then
   fi
   openkind_build_dir="$(mktemp -d)"
   trap 'rm -rf "$openkind_build_dir"' EXIT
-  cargo install --locked --version "$openkind_server_version" --target "$target" --features mlx \
-    --root "$openkind_build_dir/install" openkind-server
-  openkind_bin="$openkind_build_dir/install/bin/openkindd"
+  openkind_install_root="${OPENKINDD_INSTALL_ROOT:-$openkind_build_dir/install}"
+  openkind_bin="$openkind_install_root/bin/openkindd"
+  openkind_metallib="$openkind_install_root/bin/mlx-${openkind_server_version}.metallib"
+  openkind_install_args=(
+    --locked
+    --version "$openkind_server_version"
+    --target "$target"
+    --features mlx
+    --root "$openkind_install_root"
+  )
+  # Rebuild a cached daemon if it predates the packaged Metal library.
+  if [ -x "$openkind_bin" ] && [ ! -s "$openkind_metallib" ]; then
+    openkind_install_args+=(--force)
+  fi
+  MLX_RS_METAL_PATH="$openkind_build_dir/metal" cargo install "${openkind_install_args[@]}" openkind-server
+  if [ -s "$openkind_build_dir/metal/mlx.metallib" ]; then
+    # Remove MLX's build-time fallback so the app smoke test exercises the bundle.
+    mv "$openkind_build_dir/metal/mlx.metallib" "$openkind_metallib"
+  fi
 fi
 [ -x "$openkind_bin" ] || { echo "openkindd binary missing; set OPENKINDD_BINARY for --skip-build" >&2; exit 1; }
+openkind_metallib="${openkind_metallib:-$(dirname "$openkind_bin")/mlx.metallib}"
+[ -s "$openkind_metallib" ] || { echo "openkindd Metal library missing at $openkind_metallib" >&2; exit 1; }
 
 if [ "$skip_build" -eq 0 ]; then
   echo "==> staging the FFI staticlib (crates/ffi -> SwiftPM)"
@@ -118,13 +144,60 @@ if [ "$skip_build" -eq 0 ]; then
   echo "==> compiling the string catalog (Localization/Localizable.xcstrings -> .lproj)"
   "$root/scripts/compile-strings.sh"
 
+  # The SAME deployment target swift-lib.sh exported for the staticlib.
+  # Without it the two release builds disagree on MACOSX_DEPLOYMENT_TARGET
+  # and cargo rebuilds 22 shared crates (runtime, gpu, audio, catalog,
+  # repack, image and their deps) a second time: 4m45s of the package-macos
+  # leg, measured 2026-10-26. The CLI binaries' floor becomes 13.0 instead
+  # of rustc's 11.0 default; the bundle's floor is 14.0 either way.
   echo "==> cargo build --release (CLI + server)"
-  cargo build --release --target "$target" \
+  MACOSX_DEPLOYMENT_TARGET=13.0 cargo build --release --target "$target" \
     -p turbospark-cli -p turbospark-server --manifest-path "$root/Cargo.toml"
 
   echo "==> swift build -c release (TurboSparkApp)"
   (cd "$root/swift/TurboSparkApp" && swift build -c release -Xbuild-tools-swiftc -suppress-warnings)
 fi
+
+# MLX's GPU kernels. mlx-swift ships them as .metal sources that only Xcode's
+# build system compiles (xcodebuild, or SwiftPM's swiftbuild): the native
+# `swift build` above, which every Xcode the release and CI pin uses, emits
+# no mlx-swift_Cmlx.bundle at all. Without it MLX's first GPU op hits
+# mlx-c's default error handler, which calls exit(-1): v0.6.0 quit on the
+# first Z-Image generation with no crash report. So build that one bundle
+# with xcodebuild, from a copy of the SAME resolved checkout the app linked,
+# so kernels and C++ never disagree. The copy keeps Xcode's .swiftpm state
+# out of SwiftPM's checkout. Under .build, so CI's SwiftPM cache keeps it and
+# --skip-build reuses it.
+mlx_checkout="$root/swift/TurboSparkApp/.build/checkouts/mlx-swift"
+mlx_kernels="$root/swift/TurboSparkApp/.build/mlx-kernels"
+mlx_bundle="$mlx_kernels/derived/Build/Products/Release/mlx-swift_Cmlx.bundle"
+if [ "$skip_build" -eq 0 ]; then
+  [ -f "$mlx_checkout/Package.swift" ] || {
+    echo "no mlx-swift checkout at $mlx_checkout; the swift build should have resolved it" >&2
+    exit 1
+  }
+  if ! xcrun --find metal >/dev/null 2>&1; then
+    # Xcode 26 and later ship the Metal compiler as a separate component.
+    # CI fetches it; on a workstation that download is the user's call.
+    if [ -n "${CI:-}" ]; then
+      echo "==> Metal toolchain missing; xcodebuild -downloadComponent MetalToolchain"
+      xcodebuild -downloadComponent MetalToolchain
+    else
+      echo "the Metal compiler is missing; run: xcodebuild -downloadComponent MetalToolchain" >&2
+      exit 1
+    fi
+  fi
+  echo "==> xcodebuild mlx-swift's Metal kernels (mlx-swift_Cmlx.bundle)"
+  mkdir -p "$mlx_kernels"
+  rsync -a --delete --exclude .git --exclude .swiftpm "$mlx_checkout/" "$mlx_kernels/src/"
+  (cd "$mlx_kernels/src" && xcodebuild build -quiet -scheme MLX -configuration Release \
+    -destination 'generic/platform=macOS' -derivedDataPath "$mlx_kernels/derived" \
+    -skipPackagePluginValidation ARCHS=arm64 ONLY_ACTIVE_ARCH=NO)
+fi
+[ -s "$mlx_bundle/Contents/Resources/default.metallib" ] || {
+  echo "expected MLX kernels at $mlx_bundle/Contents/Resources/default.metallib; run without --skip-build" >&2
+  exit 1
+}
 
 build_dir="$root/swift/TurboSparkApp/.build/release"
 exe="$build_dir/TurboSparkApp"
@@ -136,6 +209,9 @@ mkdir -p "$contents/MacOS" "$contents/Resources" "$contents/Frameworks"
 
 cp "$exe" "$contents/MacOS/TurboSparkApp"
 cp "$openkind_bin" "$contents/MacOS/openkindd"
+# MLX looks beside the daemon, and codesign expects data under Resources.
+cp "$openkind_metallib" "$contents/Resources/mlx.metallib"
+ln -s ../Resources/mlx.metallib "$contents/MacOS/mlx.metallib"
 if [ "$skip_build" -eq 0 ]; then
   printf '%s\n' "$openkind_revision" > "$contents/Resources/OpenKindRevision.txt"
   printf '%s\n' "$openkind_server_version" > "$contents/Resources/OpenKindServerVersion.txt"
@@ -155,11 +231,22 @@ done
   echo "no *.bundle in $build_dir -- Logos/ and app-prompts.json would be missing" >&2
   exit 1
 }
+# MLX looks for it in every loaded bundle's resources, the main bundle's
+# Contents/Resources included. A build that already made one (swiftbuild)
+# is replaced, so the kernels always come from the step above.
+rm -rf "$contents/Resources/mlx-swift_Cmlx.bundle"
+cp -R "$mlx_bundle" "$contents/Resources/"
 
 # The CLI, inside the app. The cask links these onto PATH from here.
 # `turbospark` is the front end the Server pane's Launch buttons run
-# (AgentTerminalLaunch.findCLI looks next to the app executable first).
-for bin in turbospark turbospark-check turbospark-model turbospark-server; do
+# (AgentTerminalLaunch.findCLI looks next to the app executable first). It
+# hands image, music, clone, speak and ocr to the sibling binaries
+# (`find_peer_binary`), so every [[bin]] of turbospark-cli ships: v0.6.0
+# carried four and `turbospark image` failed with "No such file".
+# `turbospark-steer` is the model detail pane's trait-extraction tool
+# (SteeringTraitTool.findSteerCLI resolves it the same way).
+cli_bins=(turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-music turbospark-clone turbospark-speak turbospark-steer turbospark-ocr)
+for bin in "${cli_bins[@]}"; do
   src="$root/target/$target/release/$bin"
   [ -x "$src" ] || { echo "expected $src to exist; run without --skip-build" >&2; exit 1; }
   cp "$src" "$contents/MacOS/$bin"
@@ -236,6 +323,8 @@ cat > "$contents/Info.plist" <<PLIST
     <string>TurboSpark opens Terminal to run the coding agent you launch from the Server pane.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>TurboSpark records microphone audio for meetings and local transcription when you start recording.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>TurboSpark captures system and app audio for meeting recordings and local transcription without screen recording.</string>
     <key>NSScreenCaptureUsageDescription</key>
     <string>TurboSpark captures audio from the apps you select for a meeting. Screen frames are not saved.</string>
     <key>NSHighResolutionCapable</key>
@@ -263,11 +352,101 @@ plutil -replace CFBundleLocalizations -json \
 
 plutil -lint "$contents/Info.plist" >/dev/null
 
+# --- Computer-use helper ------------------------------------------------------
+# The helper owns the Accessibility and Screen Recording grants
+# (docs/COMPUTER_USE.md). macOS ties an ad-hoc signed app's grants to its code
+# hash, so the helper must be byte-identical from release to release or every
+# update re-prompts. Swift builds are not reliably reproducible, so a signed
+# helper is cached by a hash of everything that can change its bytes, and
+# reused while that hash holds. Its Info.plist is sealed into the signature,
+# which is why it carries a fixed version instead of the app's.
+helper_name="TurboSpark Computer Use.app"
+helper_src="$root/swift/TurboSparkApp/Sources"
+helper_key="$(
+  {
+    # Relative paths and a fixed sort order, so a release runner and a local
+    # checkout at another path compute the same key.
+    cd "$helper_src" && find ComputerUseKit TurboSparkComputerUse -type f -name '*.swift' -print0 \
+      | LC_ALL=C sort -z | xargs -0 shasum -a 256
+    echo "min_macos=$min_macos identity=$identity bundle_id=$bundle_id plist=2"
+  } | shasum -a 256 | cut -c1-16
+)"
+helper_cache_root="${COMPUTER_USE_HELPER_CACHE:-$HOME/Library/Caches/com.whit3rabbit.turbospark/computer-use-helper}"
+helper_cached="$helper_cache_root/$helper_key/$helper_name"
+# A release runner starts with an empty cache, so release.yml passes the helper
+# from the previous published release as COMPUTER_USE_HELPER_SEED. It is reused
+# only when it was built from the same inputs (its stamped key matches) and its
+# signature is intact. Anything else falls through to a new build.
+helper_seed="${COMPUTER_USE_HELPER_SEED:-}"
+if [ -n "$helper_seed" ] && [ ! -d "$helper_cached" ]; then
+  seed_key="$(/usr/libexec/PlistBuddy -c 'Print :TSComputerUseSourceKey' "$helper_seed/Contents/Info.plist" 2>/dev/null || true)"
+  if [ "$seed_key" != "$helper_key" ]; then
+    echo "==> computer-use helper: seed key '${seed_key:-none}' is not $helper_key, ignoring the seed"
+  elif ! codesign --verify --strict "$helper_seed" 2>/dev/null; then
+    echo "==> computer-use helper: seed signature does not verify, ignoring the seed"
+  else
+    echo "==> computer-use helper: seeding the cache from $helper_seed"
+    mkdir -p "$(dirname "$helper_cached")"
+    ditto "$helper_seed" "$helper_cached"
+  fi
+fi
+if [ -d "$helper_cached" ] && codesign --verify --strict "$helper_cached" 2>/dev/null; then
+  echo "==> computer-use helper: reusing cached build $helper_key"
+else
+  echo "==> computer-use helper: new build $helper_key (users re-grant its permissions once)"
+  helper_bin="$build_dir/TurboSparkComputerUse"
+  [ -x "$helper_bin" ] || { echo "expected $helper_bin to exist; run without --skip-build" >&2; exit 1; }
+  helper_stage="$(mktemp -d)/$helper_name"
+  mkdir -p "$helper_stage/Contents/MacOS"
+  cp "$helper_bin" "$helper_stage/Contents/MacOS/TurboSparkComputerUse"
+  cat > "$helper_stage/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>TurboSparkComputerUse</string>
+    <key>CFBundleIdentifier</key>
+    <string>${bundle_id}.computeruse</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>TurboSpark Computer Use</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>${min_macos}</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>TurboSpark captures the windows of apps you allow it to control, so a local model can see them.</string>
+    <key>TSComputerUseSourceKey</key>
+    <string>${helper_key}</string>
+</dict>
+</plist>
+PLIST
+  plutil -lint "$helper_stage/Contents/Info.plist" >/dev/null
+  codesign --force --timestamp=none --sign "$identity" "$helper_stage"
+  mkdir -p "$(dirname "$helper_cached")"
+  rm -rf "$helper_cached"
+  cp -R "$helper_stage" "$helper_cached"
+fi
+mkdir -p "$contents/Helpers"
+rm -rf "$contents/Helpers/$helper_name"
+# ditto keeps the signature's extended attributes and bytes intact.
+ditto "$helper_cached" "$contents/Helpers/$helper_name"
+
 echo "==> codesign (identity: ${identity})"
 # Inner executables first, then the bundle: a signature over the bundle seals
 # what is inside it, so signing the wrapper before its contents invalidates
 # itself. `--deep` is deprecated by Apple for exactly this reason.
-for bin in turbospark turbospark-check turbospark-model turbospark-server openkindd; do
+for bin in "${cli_bins[@]}" openkindd; do
   codesign --force --timestamp=none --sign "$identity" "$contents/MacOS/$bin"
 done
 

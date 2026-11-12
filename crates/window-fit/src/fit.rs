@@ -19,6 +19,12 @@ use crate::outcome::WindowFitOutcome;
 /// and the newest turn are never removed, so an outcome that is still at or
 /// over the bound is a normal result, not an error.
 ///
+/// A measurement of `u64::MAX` is always at or over any bound, so a caller
+/// that cannot measure a slice (for example a render failure) may return
+/// `u64::MAX` to fail closed: the slice is treated as too long, trimming
+/// continues, and the outcome reports no room for generation unless a
+/// later slice measures under the bound.
+///
 /// This operation performs no input or output, holds no state between
 /// calls, and depends on nothing but its arguments: the same arguments
 /// always produce the same outcome.

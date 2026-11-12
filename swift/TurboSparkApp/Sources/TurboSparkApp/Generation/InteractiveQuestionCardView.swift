@@ -50,10 +50,10 @@ struct InteractiveQuestionCardView: View {
             footer
         }
         .padding(10)
-        .background(.appAccent.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
+        .background(theme.accent.opacity(0.06), in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.appAccent.opacity(0.35), lineWidth: 1)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                .stroke(theme.accent.opacity(0.35), lineWidth: 1)
         )
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text("Questions from the model: \(questions.count)", bundle: .module))
@@ -68,9 +68,7 @@ struct InteractiveQuestionCardView: View {
                 } label: {
                     Text("Submit Answers", bundle: .module)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
-                .themedFont(.small, weight: .semibold)
+                .appAction(.primary, size: .small)
                 .disabled(!allQuestionsAnswered)
                 .help(Text("Answer every question to submit", bundle: .module))
                 .accessibilityLabel(Text("Submit all answers", bundle: .module))
@@ -81,9 +79,7 @@ struct InteractiveQuestionCardView: View {
             } label: {
                 Text("Skip", bundle: .module)
             }
-            .buttonStyle(.plain)
-            .themedFont(.small)
-            .foregroundStyle(.appSecondary)
+            .appAction(.quiet, size: .small)
             .help(Text("Tell the model you are not answering these", bundle: .module))
             .accessibilityLabel(Text("Skip questions", bundle: .module))
         }
@@ -128,9 +124,7 @@ struct InteractiveQuestionCardView: View {
                     } label: {
                         submitTitle(index)
                     }
-                    .buttonStyle(.plain)
-                    .themedFont(.small, weight: .semibold)
-                    .foregroundStyle(.appAccent)
+                    .appAction(.quiet, size: .small)
                     .disabled(selectedCount(index) == 0)
                     .padding(.top, 2)
                     .accessibilityLabel(Text("Submit answer for \(question.header)", bundle: .module))
@@ -182,7 +176,7 @@ struct InteractiveQuestionCardView: View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: systemImage)
                 .themedFont(.tiny)
-                .foregroundStyle(isSelected ? TurboSparkTheme.accentColor : Color.secondary)
+                .foregroundStyle(isSelected ? AnyShapeStyle(theme.accent) : AnyShapeStyle(.appSecondary))
                 .padding(.top, 2)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 1) {
@@ -197,8 +191,8 @@ struct InteractiveQuestionCardView: View {
         .padding(6)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            isSelected ? TurboSparkTheme.accentColor.opacity(0.10) : Color.primary.opacity(0.03),
-            in: RoundedRectangle(cornerRadius: 6))
+            isSelected ? theme.selection : theme.surface,
+            in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         .contentShape(Rectangle())
     }
 

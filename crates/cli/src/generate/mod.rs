@@ -23,7 +23,7 @@ use std::io::Write;
 use invocation::{InvocationRequest, Mode};
 use runtime::{
     run_raw_completion, run_raw_completion_chunked, run_raw_completion_speculative,
-    GenerationConfig, RawDecodeResult, TurnSplitter,
+    run_raw_completion_speculative_adaptive, GenerationConfig, RawDecodeResult, TurnSplitter,
 };
 use tokenizer::{Message, MfTokenizer, ReasoningEffort, ReasoningSupport};
 
@@ -373,9 +373,23 @@ fn run_one_turn(
                 images.len()
             ));
         }
-        let params = vision::preprocess_params(session)?;
-        let prepared = vision::prepare_images(images, &params)?;
-        vision::attach(session, &rendered, &prepared, &params)?
+        if session.runner.unlimited_ocr2_image_ids().is_some() {
+            vision::attach_unlimited_ocr2(session, &rendered, images)?
+        } else if session.runner.gemma4_image_ids().is_some() {
+            vision::attach_gemma4(session, &rendered, images)?
+        } else if session.runner.clip_image_ids().is_some() {
+            vision::attach_clip(session, &rendered, images)?
+        } else if session.runner.is_minicpm_vision() {
+            vision::attach_minicpm(session, &rendered, images)?
+        } else if session.runner.siglip_image_ids().is_some() {
+            vision::attach_siglip(session, &rendered, images)?
+        } else if session.runner.deepseek_ocr_image_ids().is_some() {
+            vision::attach_deepseek_ocr(session, &rendered, images)?
+        } else {
+            let params = vision::preprocess_params(session)?;
+            let prepared = vision::prepare_images(images, &params)?;
+            vision::attach(session, &rendered, &prepared, &params)?
+        }
     };
 
     if std::env::var_os("TURBOSPARK_DEBUG_PROMPT_IDS").is_some() {
@@ -533,6 +547,19 @@ pub(crate) fn stream_turn(
         // the speculative loop has its own prefill (it primes the drafter as
         // it walks) and no chunked variant. They are not composable today and
         // pretending otherwise would silently run one of them.
+        (SpeculationPlan::Enabled { block }, _) if session.adaptive_depth => {
+            run_raw_completion_speculative_adaptive(
+                &mut session.runner,
+                &session.tokenizer,
+                prompt_ids,
+                &config,
+                session.max_context,
+                vocab_size,
+                *block,
+                runtime::AdaptiveDepth::DEFAULT_FLOOR,
+                on_progress,
+            )?
+        }
         (SpeculationPlan::Enabled { block }, _) => run_raw_completion_speculative(
             &mut session.runner,
             &session.tokenizer,

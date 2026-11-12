@@ -221,6 +221,98 @@ final class HumanizeControllerTests: XCTestCase {
         XCTAssertEqual(controller.phase, .idle)
     }
 
+    func testClearRewriteDropsTheResultAndItsNoticesButKeepsTheDraft() async throws {
+        // A length stop leaves a notice, and the audit leaves checks and stats:
+        // all of it belongs to the rewrite and must go with it.
+        let engine = StubEngine(events: [
+            .content("cut"),
+            .finished(try result(content: "cut", stop: "maxTokens", audit: cleanAudit)),
+        ])
+        let (controller, _) = controller(engine: engine)
+        controller.draft = "text"
+        controller.run()
+        await settle(controller)
+        XCTAssertEqual(controller.rewrite, "cut")
+        XCTAssertNotNil(controller.checks)
+        XCTAssertNotNil(controller.stats)
+        XCTAssertTrue(controller.wasTruncated)
+        XCTAssertFalse(controller.segments.isEmpty)
+
+        controller.clearRewrite()
+
+        XCTAssertEqual(controller.rewrite, "")
+        XCTAssertEqual(controller.sourceDraft, "")
+        XCTAssertTrue(controller.segments.isEmpty)
+        XCTAssertNil(controller.checks)
+        XCTAssertNil(controller.ruleFindings)
+        XCTAssertNil(controller.stats)
+        XCTAssertNil(controller.stopReason)
+        XCTAssertFalse(controller.wasTruncated)
+        XCTAssertEqual(controller.draft, "text", "Clear Rewrite never touches the draft")
+        XCTAssertTrue(controller.canRun, "the draft can be rewritten again")
+    }
+
+    func testClearRewriteAlsoDropsAnErrorFromTheLastRun() async {
+        let engine = StubEngine(failure: NSError(domain: "t", code: 1))
+        let (controller, _) = controller(engine: engine)
+        controller.draft = "text"
+        controller.run()
+        await settle(controller)
+        XCTAssertNotNil(controller.errorMessage)
+
+        controller.clearRewrite()
+
+        XCTAssertNil(controller.errorMessage)
+    }
+
+    func testClearAllEmptiesBothCards() async throws {
+        let engine = StubEngine(events: [.finished(try result(content: "first", audit: cleanAudit))])
+        let (controller, _) = controller(engine: engine)
+        controller.draft = "text"
+        controller.run()
+        await settle(controller)
+        XCTAssertEqual(controller.rewrite, "first")
+
+        controller.clearAll()
+
+        XCTAssertEqual(controller.draft, "")
+        XCTAssertEqual(controller.rewrite, "")
+        XCTAssertNil(controller.checks)
+        XCTAssertFalse(controller.canRun, "an empty draft cannot run")
+    }
+
+    func testClearsAreRefusedWhileARewriteRuns() async throws {
+        // A running task keeps writing into the rewrite, so a clear would be
+        // refilled by the next delta and the draft would vanish mid-run.
+        final class Hanging: HumanizeEngine, @unchecked Sendable {
+            func humanize(
+                _ draft: String, options: HumanizeOptions
+            ) -> AsyncThrowingStream<GenerationEvent, Error> {
+                AsyncThrowingStream { $0.yield(.content("partial")) }
+            }
+            func cancel() {}
+        }
+        let controller = HumanizeController(defaults: freshDefaults())
+        controller.installedPath = { "/m" }
+        controller.countDraftTokens = { text, _ in text.count }
+        controller.openEngine = { _ in Hanging() }
+        controller.draft = "text"
+        controller.run()
+        for _ in 0..<200 where controller.rewrite.isEmpty {
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertTrue(controller.isBusy)
+
+        controller.clearRewrite()
+        controller.clearAll()
+
+        XCTAssertEqual(controller.rewrite, "partial")
+        XCTAssertEqual(controller.draft, "text")
+
+        controller.cancel()
+        await settle(controller)
+    }
+
     func testLoadDoesNotGenerateAndCancelledLoadCannotResurrectTheEngine() async throws {
         let engine = StubEngine()
         let (controller, opens) = controller(engine: engine)

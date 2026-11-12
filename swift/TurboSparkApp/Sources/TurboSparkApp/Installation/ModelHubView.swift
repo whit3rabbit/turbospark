@@ -13,6 +13,7 @@ import TurboSpark
 @MainActor
 struct ModelHubView: View {
     @ObservedObject var model: AppModel
+    @Environment(\.appTheme) private var theme
 
     @State private var filter = ModelHubFilter()
     @State private var selectedAlias: String?
@@ -21,18 +22,34 @@ struct ModelHubView: View {
     @State private var recommendationProgress: ModelRecommendationProbeProgress?
     @State private var recommendationError: String?
     @State private var showingProbeSheet = false
+    /// Live Hugging Face search. It sends nothing until asked (Return in the
+    /// search box, or the row in the list that says so).
+    @StateObject private var hub = HubSearchController()
+    @State private var selectedHubRepo: String?
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
+            // `onSubmit` is applied to the filter bar alone: it reacts to any
+            // text field below it, and the install pane's "Save as" field
+            // must not start a search when the user presses Return there.
             ModelHubFilterBarView(
                 filter: $filter,
                 catalog: model.catalog,
                 recommendations: recommendations
             )
+            .onSubmit { runHubSearch() }
             Divider()
             masterDetailContent
+        }
+        .onChange(of: filter.searchText) {
+            // A new query makes the old answer, and a selection in it, stale.
+            hub.reset()
+            selectedHubRepo = nil
+        }
+        .onChange(of: filter.tab) {
+            if !offersHubSearch { selectedHubRepo = nil }
         }
         // Native controls without their own role inherit the same live theme
         // as the explicit text roles below, including font family and size.
@@ -90,18 +107,22 @@ struct ModelHubView: View {
 
     // MARK: - List and detail
 
-    private var masterDetailContent: some View {
-        HStack(spacing: 0) {
-            masterList
-                .frame(minWidth: 250, idealWidth: 300, maxWidth: 340)
-                .frame(maxHeight: .infinity)
+    @ViewBuilder private var masterDetailContent: some View {
+        if filter.tab == .audio {
+            AudioDiscoverCatalogView(model: model, controller: model.audioWorkspace, filter: $filter)
+        } else {
+            HStack(spacing: 0) {
+                masterList
+                    .frame(minWidth: 250, idealWidth: 300, maxWidth: 340)
+                    .frame(maxHeight: .infinity)
 
-            Rectangle()
-                .fill(.appBorder)
-                .frame(width: AppChromeLayout.dividerWidth)
+                Rectangle()
+                    .fill(.appBorder)
+                    .frame(width: AppChromeLayout.dividerWidth)
 
-            detailPane
-                .frame(minWidth: 260, maxWidth: .infinity, maxHeight: .infinity)
+                detailPane
+                    .frame(minWidth: 260, maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
     }
 
@@ -120,10 +141,28 @@ struct ModelHubView: View {
                     recommendationFailureState(recommendationError)
                 } else if filteredEntries.isEmpty {
                     emptyListState
+                } else if let sections = recommendedSections {
+                    // Grouped by fit, so the order is something a reader can
+                    // see and not a ranking only the code knew.
+                    ForEach(sections) { section in
+                        RecommendedSectionHeader(verdict: section.verdict)
+                        ForEach(section.entries) { entry in
+                            cardView(for: entry)
+                        }
+                    }
                 } else {
                     ForEach(filteredEntries) { entry in
                         cardView(for: entry)
                     }
+                }
+                if showsHubSection {
+                    HubSearchSectionView(
+                        controller: hub,
+                        query: trimmedQuery,
+                        directRepo: HubSearchController.exactRepo(from: trimmedQuery),
+                        selectedRepo: $selectedHubRepo,
+                        onSearch: runHubSearch,
+                        onSettings: { model.openSettings(tab: .models) })
                 }
             }
             .padding(.horizontal, 8)
@@ -139,7 +178,7 @@ struct ModelHubView: View {
                     .foregroundStyle(.appAccent)
                 Text("Optimized for Your Mac", bundle: .module)
                     .themedFont(.tiny, weight: .bold)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(.appText)
                 Spacer()
                 if let chip = model.telemetry?.chip {
                     Text(verbatim: chip)
@@ -149,15 +188,15 @@ struct ModelHubView: View {
                 if let ram = model.telemetry?.physicalMemoryBytes {
                     Text(verbatim: "(\(MetricFormat.memory(ram)))")
                         .themedFont(.micro)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
                 }
             }
         }
         .padding(8)
-        .background(.appAccent.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+        .background(.appAccent.opacity(0.08), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.appAccent.opacity(0.2), lineWidth: 0.5)
+            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                .stroke(theme.border, lineWidth: 0.5)
         }
         .padding(.bottom, 4)
     }
@@ -180,9 +219,35 @@ struct ModelHubView: View {
             downloadFraction: model.isInstallingModel && model.installingAlias == entry.alias
                 ? model.installProgressFraction : nil,
             recommendation: rec,
-            isSelected: isSelected,
-            onSelect: { selectedAlias = entry.alias }
+            isSelected: isSelected && selectedHubRepo == nil,
+            onSelect: {
+                selectedAlias = entry.alias
+                selectedHubRepo = nil
+            }
         )
+    }
+
+    // MARK: - Hugging Face search
+
+    private var trimmedQuery: String {
+        filter.searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Live search is offered next to the two catalog tabs, not under
+    /// "Installed only" (which is about this Mac) or Audio (its own catalog).
+    private var offersHubSearch: Bool {
+        filter.tab == .discover || filter.tab == .recommended
+    }
+
+    private var showsHubSection: Bool {
+        offersHubSearch && trimmedQuery.count >= HubSearchController.minimumQueryLength
+    }
+
+    private func runHubSearch() {
+        guard showsHubSection else { return }
+        let query = trimmedQuery
+        selectedHubRepo = nil
+        Task { await hub.search(query: query) }
     }
 
     private var emptyListState: some View {
@@ -206,6 +271,7 @@ struct ModelHubView: View {
         case .onDevice: return "internaldrive"
         case .recommended: return "sparkles"
         case .discover: return "tray"
+        case .audio: return "waveform"
         }
     }
 
@@ -229,7 +295,7 @@ struct ModelHubView: View {
         VStack(spacing: 8) {
             Image(systemName: "exclamationmark.triangle")
                 .themedFont(.hero)
-                .foregroundStyle(.orange)
+                .foregroundStyle(AppAttention.color)
                 .accessibilityHidden(true)
             Text(message)
                 .themedFont(.small)
@@ -249,7 +315,13 @@ struct ModelHubView: View {
 
     @ViewBuilder
     private var detailPane: some View {
-        if let selectedEntry {
+        if let repo = selectedHubRepo, showsHubSection {
+            HubResultDetailView(
+                model: model,
+                controller: hub,
+                repoId: repo,
+                result: hub.row(for: repo))
+        } else if let selectedEntry {
             ModelDetailPaneView(
                 model: model,
                 entry: selectedEntry,
@@ -277,6 +349,14 @@ struct ModelHubView: View {
             to: model.catalog,
             installedAliases: Set(model.installed.map(\.alias)),
             recommendations: recommendations)
+    }
+
+    /// The Recommended tab's fit groups, or `nil` when the list is not
+    /// grouped: another tab, or another sort. A list sorted by name or size
+    /// has no meaningful group boundaries, so it stays flat.
+    private var recommendedSections: [ModelHubFilter.RecommendedSection]? {
+        guard filter.tab == .recommended, filter.sort == .recommended else { return nil }
+        return ModelHubFilter.recommendedSections(filteredEntries, recommendations: recommendations)
     }
 
     private func loadRecommendations() async {

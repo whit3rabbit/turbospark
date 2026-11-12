@@ -13,6 +13,14 @@ struct CatalogSheet: View {
     @State private var customRepo = ""
     @State private var customAlias = ""
     @State private var isCustomExpanded = false
+    /// The library the user picked for the installs on this sheet. Nil follows
+    /// the default (requirement 2.2). Per install: not remembered across launches.
+    @State private var destination: String?
+
+    /// The `library:` the installs take for the menu's choice: nil for This Mac.
+    private var chosenLibrary: String? {
+        model.installDestinations.libraryForInstall(selection: destination)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,6 +61,10 @@ struct CatalogSheet: View {
                     installProgressBox
                 }
 
+                // Where an install from this sheet goes: only when there is a
+                // choice (requirement 2.1).
+                InstallDestinationPicker(model: model, selection: $destination)
+
                 installedSection
                 curatedSection
                 customSection
@@ -81,9 +93,8 @@ struct CatalogSheet: View {
             }
 
             if let fraction = model.installProgressFraction {
-                ProgressView(value: fraction)
-                    .accessibilityLabel(Text("Download progress", bundle: .module))
-                    .accessibilityValue(MetricFormat.percent(fraction * 100))
+                AppProgressBar(value: fraction, label: Text("Download progress", bundle: .module),
+                               animated: !model.isInstallPaused)
                 HStack {
                     if let downloaded = model.installDownloadedBytes, let total = model.installTotalBytes {
                         Text(verbatim: "\(MetricFormat.storage(downloaded)) / \(MetricFormat.storage(total))")
@@ -94,7 +105,7 @@ struct CatalogSheet: View {
                 .themedFont(.small).monospacedDigit()
                 .foregroundStyle(.appSecondary)
             } else {
-                ProgressView()
+                AppProgressBar(value: nil, label: Text("Download progress", bundle: .module))
             }
         }
         .padding(12)
@@ -191,7 +202,7 @@ struct CatalogSheet: View {
                             .foregroundStyle(.appSecondary)
                     } else {
                         Button {
-                            model.installModel(alias: entry.alias)
+                            model.installModel(alias: entry.alias, library: chosenLibrary)
                         } label: { Text("Install", bundle: .module) }
                         .appAction(.secondary, size: .small)
                         .disabled(model.isRunning || !model.canInstall(alias: entry.alias))
@@ -218,7 +229,7 @@ struct CatalogSheet: View {
                 .textFieldStyle(.roundedBorder)
 
                 Button {
-                    model.installRepo(repo: customRepo, alias: customAlias)
+                    model.installRepo(repo: customRepo, alias: customAlias, library: chosenLibrary)
                 } label: { Text("Install Custom Repo", bundle: .module) }
                 .appAction(.secondary, size: .small)
                 .disabled(

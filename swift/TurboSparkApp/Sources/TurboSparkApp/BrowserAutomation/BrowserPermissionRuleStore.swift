@@ -49,7 +49,10 @@ public struct BrowserOrigin: Hashable, Sendable {
               components.user == nil,
               components.password == nil,
               let url = components.url,
-              let host = url.host?.lowercased(),
+              let rawHost = url.host?.lowercased(),
+              // `example.com.` is the same DNS name as `example.com`; without
+              // this a grant typed one way never matched the other.
+              case let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost,
               !host.isEmpty,
               !host.contains("*"),
               host.rangeOfCharacter(

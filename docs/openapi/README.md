@@ -15,8 +15,14 @@ the `turbospark-server` HTTP service (`turbospark serve`).
   - Ollama Compatibility: `/api/tags`, `/api/version`, `/api/show`, `/api/chat`, `/api/generate`
   - Audio: `/v1/audio/transcriptions`, `/v1/audio/translations`, `/v1/audio/transcriptions/realtime`, `/v1/audio/speech`, `/v1/audio/generate`, `/v1/audio/jobs/{id}`, `/v1/audio/jobs/{id}/result`, `/v1/audio/models`, `/v1/audio/models/{id}`
   - System: `/health`, `/v1/metrics`
+- `text.openapi.yaml`: Dedicated specification for Text and Chat completions,
+  completions, Anthropic messages, and Ollama compatibility.
 - `audio.openapi.yaml`: Dedicated specification for audio-only hosts and audio
-  routes.
+  routes (transcriptions, realtime WebSocket, speech synthesis, voice cloning, music).
+- `images.openapi.yaml`: Dedicated specification for prompt-to-image diffusion
+  generation (`/v1/images/generations` and `/v1/images/edits`).
+- `embeddings.openapi.yaml`: Dedicated specification for vector embeddings
+  (`/v1/embeddings`, `/api/embeddings`, `/api/embed`).
 
 ## Contract Verification
 

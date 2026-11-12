@@ -99,6 +99,12 @@ impl KvPrefix {
         }
     }
 
+    /// How many positions the record describes, or `None` when the state is
+    /// tainted and describes nothing reusable.
+    pub(crate) fn untainted_len(&self) -> Option<usize> {
+        (!self.tainted).then_some(self.fed.len())
+    }
+
     /// How many leading tokens of `prompt_ids` this state already holds.
     ///
     /// The LONGEST COMMON PREFIX, not an all-or-nothing match, and that is

@@ -8,12 +8,14 @@
 
 use model_io::{ArchConfig, ResidentIndex};
 
+use crate::families::qwen4::batched::{BatchedGemvScratch, PreProjected};
 use crate::families::qwen4::state::RealQwen4State;
 use crate::families::qwen4::{layer_tensor, RMS_EPS};
 use crate::kv_write::{encode_attention_any, encode_kv_commit, kv_write_target, KvHalf};
 use crate::real_forward_dispatch::encode_gemv_any;
 use crate::real_forward_types::{DecodeScratch, RealForwardError};
 use crate::real_forward_utils::{entry, norm_view, resident_matrix};
+use crate::vision::RopePosition;
 
 /// Mask-2 layer: gated DeltaNet. Identical dataflow to
 /// `families/qwen/attn.rs::encode_linear_block`, differing in the state
@@ -36,6 +38,7 @@ pub(crate) fn encode_linear_block(
     layer: usize,
     position: usize,
     capture_norm: bool,
+    pre: Option<&PreProjected>,
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
     let hidden = arch.hidden_size as usize;
@@ -43,6 +46,22 @@ pub(crate) fn encode_linear_block(
     let qkv_dim = shape.qkv_dim() as usize;
     let value_dim = shape.value_dim() as usize;
     let v_heads = shape.num_v_heads as usize;
+    // Where this token's projections live: its row of the chunked driver's
+    // M-row GEMM outputs, or the single-row buffers the GEMVs below fill.
+    let (qkv_raw, z, a, b) = match pre {
+        Some(p) => (
+            (&p.rows.gdn_qkv_raw, BatchedGemvScratch::row(p.t, qkv_dim)),
+            (&p.rows.gdn_z, BatchedGemvScratch::row(p.t, value_dim)),
+            (&p.rows.gdn_a, BatchedGemvScratch::row(p.t, v_heads)),
+            (&p.rows.gdn_b, BatchedGemvScratch::row(p.t, v_heads)),
+        ),
+        None => (
+            (&qwen4.gdn_qkv_raw, 0),
+            (&qwen4.gdn_z, 0),
+            (&qwen4.gdn_a, 0),
+            (&qwen4.gdn_b, 0),
+        ),
+    };
 
     let name = |suffix: &str| layer_tensor(layer, &format!("linear_attn.{suffix}"));
     let in_proj = [
@@ -51,7 +70,15 @@ pub(crate) fn encode_linear_block(
         ("in_proj_a.weight", v_heads, &qwen4.gdn_a),
         ("in_proj_b.weight", v_heads, &qwen4.gdn_b),
     ];
-    if entry(index, &name(in_proj[0].0))?.dtype == 4 {
+    // The fused in-proj is GEMV arithmetic. Under `TURBOSPARK_INT4_MMA8`,
+    // once any of its matrices is a shape the shared tile serves, the
+    // per-tensor arm below takes over so decode meets verify's kernel.
+    let mma8_served = in_proj
+        .iter()
+        .any(|(_, rows, _)| crate::real_forward_dispatch::int4_mma8_takes(*rows, hidden));
+    if pre.is_some() {
+        // Projected already, as one GEMM per matrix over the micro-batch.
+    } else if entry(index, &name(in_proj[0].0))?.dtype == 4 && !mma8_served {
         let projection = |suffix: &str, rows: usize| {
             resident_matrix(weights, index, &name(suffix), rows, hidden)
         };
@@ -102,7 +129,7 @@ pub(crate) fn encode_linear_block(
         pass,
         shape,
         (qwen4.gdn.conv_tail_buffer(layer), 0),
-        (&qwen4.gdn_qkv_raw, 0),
+        qkv_raw,
         conv_w,
         (&qwen4.gdn_conv_out, 0),
         1, // this chain's own conv is undilated; PLE's is the dilated one.
@@ -161,8 +188,8 @@ pub(crate) fn encode_linear_block(
         pass,
         shape,
         (&qwen4.gdn_conv_out, 0),
-        (&qwen4.gdn_a, 0),
-        (&qwen4.gdn_b, 0),
+        a,
+        b,
         a_log,
         dt_bias,
         qwen4.gdn.state_buffer(layer),
@@ -178,17 +205,25 @@ pub(crate) fn encode_linear_block(
     )?;
     // SIGMOID variant: `qwen4_exp`'s `output_gate_sigmoid`, unlike
     // `qwen3_5`/`qwen3_6`'s silu (`crates/gpu/CLAUDE.md` Gotcha 12).
+    let gated_out = match pre {
+        Some(p) => (&p.rows.gdn_out, BatchedGemvScratch::row(p.t, value_dim)),
+        None => (&qwen4.gdn_out, 0),
+    };
     gpu::encode_gdn_gated_norm_sigmoid(
         context,
         pass,
         shape,
         (&qwen4.gdn_y, 0),
-        (&qwen4.gdn_z, 0),
+        z,
         gated_norm,
-        (&qwen4.gdn_out, 0),
+        gated_out,
         1,
     )
     .map_err(gpu_err)?;
+    if pre.is_some() {
+        // `out_proj` runs once over the micro-batch's rows.
+        return Ok(());
+    }
     encode_gemv_any(
         context,
         pass,
@@ -207,8 +242,8 @@ pub(crate) fn encode_linear_block(
 /// CENTERED (unconditionally -- unlike `families/qwen/attn.rs`, this family
 /// has no plain-norm sibling tensor sharing this call, so there is no
 /// `QkNormConvention` parameter), `rope_neox_subdim` at `rotary_dim = 64`,
-/// text-only (`RopePosition` is always sequential; no mRoPE, since vision
-/// is out of scope for this cut).
+/// or the interleaved mRoPE at an image position whose triple diverges
+/// (`rope`, the same dispatch condition as `families/qwen/attn.rs`).
 ///
 /// **THE INDEXER RUNS EVERY TOKEN; SELECTION RUNS ONLY ABOVE BUDGET.**
 /// Every token projects `index_qk_proj`, stores its raw key in the
@@ -235,6 +270,8 @@ pub(crate) fn encode_full_attention_block(
     kv: &gpu::KvCacheManager,
     layer: usize,
     position: usize,
+    rope: RopePosition,
+    pre: Option<&PreProjected>,
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
     let hidden = arch.hidden_size as usize;
@@ -252,24 +289,35 @@ pub(crate) fn encode_full_attention_block(
     let compress = qwen4.idx_compress;
     let visible = position + 1;
     let complete_blocks = visible / compress as usize;
-    encode_gemv_any(
-        context,
-        pass,
-        weights,
-        index,
-        &name("indexer.index_qk_proj.weight"),
-        ((idx_heads + 1) * idx_dim) as usize,
-        hidden,
-        mixed,
-        (&qwen4.idx_qk, 0),
-    )?;
+    let idx_len = ((idx_heads + 1) * idx_dim) as usize;
+    // This token's indexer projection: its row of the chunked driver's GEMM
+    // output, or the single-row buffer the GEMV fills. Normed and roped in
+    // place below either way.
+    let idx_qk_buf = qwen4.idx_qk.clone();
+    let idx_qk = match pre {
+        Some(p) => (&p.rows.idx_qk, BatchedGemvScratch::row(p.t, idx_len)),
+        None => {
+            encode_gemv_any(
+                context,
+                pass,
+                weights,
+                index,
+                &name("indexer.index_qk_proj.weight"),
+                idx_len,
+                hidden,
+                mixed,
+                (&idx_qk_buf, 0),
+            )?;
+            (&idx_qk_buf, 0)
+        }
+    };
     // The raw (un-normed, un-roped) key is the projection's LAST head. A
     // plain strided row copy; the kernel's name says what first needed it.
     let (raw_buf, raw_off) = qwen4.qsa.raw_key_slot(layer, position);
     gpu::encode_dflash_copy_rows(
         context,
         pass,
-        (&qwen4.idx_qk, (idx_heads * idx_dim) as u64 * 2),
+        (idx_qk.0, idx_qk.1 + (idx_heads * idx_dim) as u64 * 2),
         (raw_buf, raw_off as u64),
         1,
         idx_dim,
@@ -309,42 +357,69 @@ pub(crate) fn encode_full_attention_block(
     // --- Attention proper: projections, norms, RoPE, KV write.
     let (k_buf, k_off) = kv_write_target(kv, scratch, KvHalf::K, layer, position);
     let (v_buf, v_off) = kv_write_target(kv, scratch, KvHalf::V, layer, position);
-    encode_gemv_any(
-        context,
-        pass,
-        weights,
-        index,
-        &name("q_proj.weight"),
-        2 * q_dim,
-        hidden,
-        mixed,
-        (&qwen4.q_packed, 0),
-    )?;
+    let q_packed = match pre {
+        Some(p) => (&p.rows.q_packed, BatchedGemvScratch::row(p.t, 2 * q_dim)),
+        None => {
+            encode_gemv_any(
+                context,
+                pass,
+                weights,
+                index,
+                &name("q_proj.weight"),
+                2 * q_dim,
+                hidden,
+                mixed,
+                (&qwen4.q_packed, 0),
+            )?;
+            (&qwen4.q_packed, 0)
+        }
+    };
     gpu::encode_split_q_gate(
         context,
         pass,
-        (&qwen4.q_packed, 0),
+        q_packed,
         (&scratch.q, 0),
         (&qwen4.attn_gate, 0),
         num_heads,
         head_dim,
     )
     .map_err(gpu_err)?;
-    for (suffix, out) in [
-        ("k_proj.weight", (k_buf, k_off)),
-        ("v_proj.weight", (v_buf, v_off)),
-    ] {
-        encode_gemv_any(
-            context,
-            pass,
-            weights,
-            index,
-            &name(suffix),
-            kv_dim,
-            hidden,
-            mixed,
-            out,
-        )?;
+    match pre {
+        // A bit copy of this token's GEMM rows into the slots the GEMVs
+        // would have written.
+        Some(p) => {
+            let row = BatchedGemvScratch::row(p.t, kv_dim);
+            for (src, dst) in [(&p.rows.k, (k_buf, k_off)), (&p.rows.v, (v_buf, v_off))] {
+                gpu::encode_dflash_copy_rows(
+                    context,
+                    pass,
+                    (src, row),
+                    dst,
+                    1,
+                    kv_dim as u32,
+                    kv_dim as u32,
+                )
+                .map_err(gpu_err)?;
+            }
+        }
+        None => {
+            for (suffix, out) in [
+                ("k_proj.weight", (k_buf, k_off)),
+                ("v_proj.weight", (v_buf, v_off)),
+            ] {
+                encode_gemv_any(
+                    context,
+                    pass,
+                    weights,
+                    index,
+                    &name(suffix),
+                    kv_dim,
+                    hidden,
+                    mixed,
+                    out,
+                )?;
+            }
+        }
     }
 
     for (suffix, data, heads) in [
@@ -352,24 +427,60 @@ pub(crate) fn encode_full_attention_block(
         ("k_norm.weight", (k_buf, k_off), num_kv),
     ] {
         let weight = norm_view(weights, index, &name(suffix), head_dim as usize)?;
-        gpu::encode_rms_norm_bf16w_perhead(
-            context, pass, data, weight, data, heads, head_dim, RMS_EPS,
+        super::rms_norm_perhead(
+            qwen4.norms_centered,
+            context,
+            pass,
+            data,
+            weight,
+            data,
+            heads,
+            head_dim,
+            RMS_EPS,
         )
         .map_err(gpu_err)?;
     }
 
+    // mRoPE only where the triple diverges, which on a real prompt is image
+    // positions alone; a text token of a mixed prompt keeps the scalar kernel
+    // at `t`, bit-identical at `t == h == w` (`families/qwen/attn.rs` has the
+    // full argument). `position` keeps its KV-slot and attention-span jobs.
+    let mrope = match rope {
+        RopePosition::Sequential => None,
+        RopePosition::Triple(t, h, w) if t == h && h == w => None,
+        RopePosition::Triple(t, h, w) => Some((t as u32, h as u32, w as u32)),
+    };
+    let scalar = match rope {
+        RopePosition::Sequential => position as u32,
+        RopePosition::Triple(t, _, _) => t as u32,
+    };
+    let section = arch.vision.mrope_section;
     for (data, heads) in [((&scratch.q, 0u64), num_heads), ((k_buf, k_off), num_kv)] {
-        gpu::encode_rope_neox_subdim(
-            context,
-            pass,
-            data,
-            position as u32,
-            heads,
-            head_dim,
-            qwen4.rotary_dim,
-            theta,
-        )
-        .map_err(gpu_err)?;
+        match mrope {
+            Some(positions) => gpu::encode_rope_mrope_interleaved(
+                context,
+                pass,
+                data,
+                positions,
+                heads,
+                head_dim,
+                qwen4.rotary_dim,
+                (section[0] as u32, section[1] as u32, section[2] as u32),
+                theta,
+            )
+            .map_err(gpu_err)?,
+            None => gpu::encode_rope_neox_subdim(
+                context,
+                pass,
+                data,
+                scalar,
+                heads,
+                head_dim,
+                qwen4.rotary_dim,
+                theta,
+            )
+            .map_err(gpu_err)?,
+        }
     }
 
     // On a TurboQuant-quantized layer, quantize the staging row into the
@@ -393,12 +504,13 @@ pub(crate) fn encode_full_attention_block(
             &name("indexer.q_layernorm.weight"),
             idx_dim as usize,
         )?;
-        gpu::encode_rms_norm_bf16w_perhead(
+        super::rms_norm_perhead(
+            qwen4.norms_centered,
             context,
             pass,
-            (&qwen4.idx_qk, 0),
+            idx_qk,
             q_norm,
-            (&qwen4.idx_qk, 0),
+            idx_qk,
             idx_heads,
             idx_dim,
             RMS_EPS,
@@ -407,7 +519,7 @@ pub(crate) fn encode_full_attention_block(
         gpu::encode_rope_neox_subdim(
             context,
             pass,
-            (&qwen4.idx_qk, 0),
+            idx_qk,
             position as u32,
             idx_heads,
             idx_dim,
@@ -418,7 +530,7 @@ pub(crate) fn encode_full_attention_block(
         gpu::encode_qsa_score_blocks(
             context,
             pass,
-            (&qwen4.idx_qk, 0),
+            idx_qk,
             (qwen4.qsa.pooled_blocks_buffer(layer), 0),
             (&qwen4.qsa_scores, 0),
             idx_heads,
@@ -539,6 +651,19 @@ pub(crate) fn encode_full_attention_block(
         q_dim as u32,
     )
     .map_err(gpu_err)?;
+    if let Some(p) = pre {
+        // `o_proj` runs once over the micro-batch's rows.
+        return gpu::encode_dflash_copy_rows(
+            context,
+            pass,
+            (&scratch.attn_out, 0),
+            (&p.rows.attn_out, BatchedGemvScratch::row(p.t, q_dim)),
+            1,
+            q_dim as u32,
+            q_dim as u32,
+        )
+        .map_err(gpu_err);
+    }
     encode_gemv_any(
         context,
         pass,

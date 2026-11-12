@@ -1,0 +1,158 @@
+{
+  "8bit": {
+    "qat_q8": {
+      "embed_tokens": {
+        "mean": 0.2494,
+        "p99": 0.5298,
+        "max": 1.0911,
+        "frac_over_half_step": 0.02913
+      },
+      "layers.0.self_attn.q_proj": {
+        "mean": 0.2488,
+        "p99": 0.5291,
+        "max": 1.0542,
+        "frac_over_half_step": 0.02836
+      },
+      "layers.0.mlp.down_proj": {
+        "mean": 0.2493,
+        "p99": 0.5254,
+        "max": 1.0515,
+        "frac_over_half_step": 0.02629
+      },
+      "layers.11.self_attn.o_proj": {
+        "mean": 0.2491,
+        "p99": 0.5286,
+        "max": 1.0503,
+        "frac_over_half_step": 0.02807
+      },
+      "layers.23.mlp.gate_proj": {
+        "mean": 0.2493,
+        "p99": 0.5257,
+        "max": 1.0714,
+        "frac_over_half_step": 0.02644
+      },
+      "dense.0": {
+        "mean": 0.2492,
+        "p99": 0.5279,
+        "max": 1.0547,
+        "frac_over_half_step": 0.0276
+      }
+    },
+    "upstream": {
+      "embed_tokens": {
+        "mean": 0.3127,
+        "p99": 1.0365,
+        "max": 4.3732,
+        "frac_over_half_step": 0.1791
+      },
+      "layers.0.self_attn.q_proj": {
+        "mean": 2.09,
+        "p99": 7.6723,
+        "max": 26.4274,
+        "frac_over_half_step": 0.8373
+      },
+      "layers.0.mlp.down_proj": {
+        "mean": 2.352,
+        "p99": 8.2307,
+        "max": 29.1532,
+        "frac_over_half_step": 0.8577
+      },
+      "layers.11.self_attn.o_proj": {
+        "mean": 1.35,
+        "p99": 5.113,
+        "max": 20.6194,
+        "frac_over_half_step": 0.7435
+      },
+      "layers.23.mlp.gate_proj": {
+        "mean": 1.637,
+        "p99": 5.7399,
+        "max": 15.162,
+        "frac_over_half_step": 0.7984
+      },
+      "dense.0": {
+        "mean": 1.6112,
+        "p99": 6.0126,
+        "max": 27.6139,
+        "frac_over_half_step": 0.7923
+      }
+    }
+  },
+  "4bit": {
+    "qat_q4": {
+      "embed_tokens": {
+        "mean": 0.2487,
+        "p99": 0.4975,
+        "max": 1.0038,
+        "frac_over_half_step": 0.005337
+      },
+      "layers.0.self_attn.q_proj": {
+        "mean": 0.249,
+        "p99": 0.4976,
+        "max": 1.0028,
+        "frac_over_half_step": 0.005729
+      },
+      "layers.0.mlp.down_proj": {
+        "mean": 0.2495,
+        "p99": 0.4976,
+        "max": 1.0023,
+        "frac_over_half_step": 0.005341
+      },
+      "layers.11.self_attn.o_proj": {
+        "mean": 0.2504,
+        "p99": 0.4977,
+        "max": 1.0018,
+        "frac_over_half_step": 0.005841
+      },
+      "layers.23.mlp.gate_proj": {
+        "mean": 0.252,
+        "p99": 0.4979,
+        "max": 1.0027,
+        "frac_over_half_step": 0.005866
+      },
+      "dense.0": {
+        "mean": 0.2669,
+        "p99": 0.4992,
+        "max": 1.0035,
+        "frac_over_half_step": 0.006976
+      }
+    },
+    "upstream": {
+      "embed_tokens": {
+        "mean": 0.2491,
+        "p99": 0.5112,
+        "max": 1.1353,
+        "frac_over_half_step": 0.01601
+      },
+      "layers.0.self_attn.q_proj": {
+        "mean": 0.2818,
+        "p99": 0.8035,
+        "max": 1.8296,
+        "frac_over_half_step": 0.139
+      },
+      "layers.0.mlp.down_proj": {
+        "mean": 0.29,
+        "p99": 0.838,
+        "max": 1.851,
+        "frac_over_half_step": 0.1569
+      },
+      "layers.11.self_attn.o_proj": {
+        "mean": 0.2652,
+        "p99": 0.6968,
+        "max": 1.6598,
+        "frac_over_half_step": 0.09636
+      },
+      "layers.23.mlp.gate_proj": {
+        "mean": 0.2768,
+        "p99": 0.7676,
+        "max": 1.482,
+        "frac_over_half_step": 0.1299
+      },
+      "dense.0": {
+        "mean": 0.3266,
+        "p99": 1.0331,
+        "max": 4.1081,
+        "frac_over_half_step": 0.2169
+      }
+    }
+  }
+}

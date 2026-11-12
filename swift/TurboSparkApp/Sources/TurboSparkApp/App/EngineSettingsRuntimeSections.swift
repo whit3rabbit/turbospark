@@ -125,6 +125,198 @@ extension EngineSettingsPaneView {
         }
     }
 
+    var anePrefillSection: some View {
+        Section(header: Text("ANE+Steel Prefill Split", bundle: .module)) {
+            Picker(selection: $model.runtimeOptions.anePrefill) {
+                ForEach(AppAnePrefillOption.allCases) { opt in
+                    Text(LocalizedStringKey(opt.menuLabel), bundle: .module).tag(opt)
+                }
+            } label: { Text("Prefill Mode", bundle: .module) }
+            .settingsControl("Prefill Mode", pane: .engine, timing: .modelReload)
+            .pickerStyle(.menu)
+            .onChange(of: model.runtimeOptions.anePrefill) { _, _ in
+                model.persistSettingsDebounced()
+            }
+
+            if let info = model.session?.info {
+                LabeledContent {
+                    Group {
+                        if let ane = info.anePrefill {
+                            if ane.active {
+                                HStack(spacing: 4) {
+                                    Text("Active", bundle: .module)
+                                    Text(verbatim: "(ANE+Steel)")
+                                }
+                            } else if let reason = ane.reason {
+                                Text(verbatim: "Off (\(reason))")
+                            } else {
+                                Text("Off", bundle: .module)
+                            }
+                        } else {
+                            Text("Off", bundle: .module)
+                        }
+                    }
+                    .themedFont(.tiny, systemDesign: .monospaced)
+                    .foregroundStyle(.appSecondary)
+                } label: {
+                    Text("Resolved", bundle: .module)
+                }
+            }
+
+            Text("Splits prompt prefill projections across the Apple Neural Engine and Metal GPU for dense Qwen models on Apple Silicon M4 or newer. Auto enables the split when supported. Takes effect on the next model load.", bundle: .module)
+            .themedFont(.tiny)
+            .foregroundStyle(.appSecondary)
+        }
+    }
+
+    var expertSlotsWiringSection: some View {
+        Section(header: Text("Expert Cache Locking", bundle: .module)) {
+            Picker(selection: $model.runtimeOptions.expertSlotsWiring) {
+                ForEach(AppExpertSlotsWiringOption.allCases) { opt in
+                    Text(LocalizedStringKey(opt.menuLabel), bundle: .module).tag(opt)
+                }
+            } label: { Text("Lock Expert Cache", bundle: .module) }
+            .settingsControl("Lock Expert Cache", pane: .engine, timing: .modelReload)
+            .pickerStyle(.menu)
+            .onChange(of: model.runtimeOptions.expertSlotsWiring) { _, _ in
+                model.persistSettingsDebounced()
+            }
+
+            if let wiring = model.session?.info.expertSlotsWiring {
+                LabeledContent {
+                    Group {
+                        if wiring.active {
+                            HStack(spacing: 4) {
+                                Text("Active", bundle: .module)
+                                Text(verbatim: "(\(ByteCountFormatter.string(fromByteCount: Int64(clamping: wiring.wiredBytes), countStyle: .memory)))")
+                            }
+                        } else if let reason = wiring.reason {
+                            HStack(spacing: 4) {
+                                Text("Off", bundle: .module)
+                                Text(verbatim: "(\(reason))")
+                            }
+                        } else {
+                            Text("Off", bundle: .module)
+                        }
+                    }
+                    .themedFont(.tiny, systemDesign: .monospaced)
+                    .foregroundStyle(.appSecondary)
+                } label: {
+                    Text("Resolved", bundle: .module)
+                }
+            }
+
+            Text("Locks the expert cache of mixture-of-experts models in memory so macOS cannot compress it. Auto locks a larger cache on models measured to gain from it (Qwen 3.8-Flash-Next) and uses an unlocked cache when macOS will not lock it. Locked memory is unavailable to other apps while the model is loaded. Takes effect on the next model load.", bundle: .module)
+            .themedFont(.tiny)
+            .foregroundStyle(.appSecondary)
+        }
+    }
+
+    @ViewBuilder
+    var moePrefillBankSection: some View {
+        if model.session?.info.moePrefillBankSupported == true
+            || model.installed.contains(where: {
+                ModelFeatureDescriptor.supportsMoEPrefillBank(atInstallPath: $0.path)
+            }) {
+            Section {
+                Toggle(isOn: $model.runtimeOptions.moePrefillBank) {
+                    Text("Prefill Expert Cache", bundle: .module)
+                }
+                .settingsControl("Prefill Expert Cache", pane: .engine, timing: .modelReload)
+                .onChange(of: model.runtimeOptions.moePrefillBank) { _, _ in
+                    model.persistSettingsDebounced()
+                }
+
+                Text("Experimental. Uses extra memory to reduce expert reads on long text prompts when experts are streamed. Takes effect on the next model load.", bundle: .module)
+                    .themedFont(.tiny)
+                    .foregroundStyle(.appSecondary)
+            }
+        }
+    }
+
+    /// Where routed experts live, and the streamed cache's size beside it,
+    /// since mapped residency has no slot cache to size.
+    var expertResidencySection: some View {
+        Section(header: Text("Expert Residency", bundle: .module)) {
+            Picker(selection: $model.runtimeOptions.expertResidency) {
+                ForEach(AppExpertResidencyOption.allCases) { opt in
+                    Text(LocalizedStringKey(opt.menuLabel), bundle: .module).tag(opt)
+                }
+            } label: { Text("Expert Residency", bundle: .module) }
+            .settingsControl("Expert Residency", pane: .engine, timing: .modelReload)
+            .pickerStyle(.menu)
+            .onChange(of: model.runtimeOptions.expertResidency) { _, _ in
+                model.persistSettingsDebounced()
+            }
+
+            // The same engine-owned value set the Inspector offers
+            // (`AppRuntimeOptions.allowedSlotCounts`).
+            Picker(selection: $model.runtimeOptions.expertCacheSlots) {
+                ForEach(AppRuntimeOptions.allowedSlotCounts, id: \.self) { slots in
+                    Group {
+                        if slots == 0 {
+                            Text("Auto", bundle: .module)
+                        } else {
+                            Text("\(slots) slots", bundle: .module)
+                        }
+                    }
+                    .tag(slots)
+                }
+            } label: { Text("Cache Slots", bundle: .module) }
+            .settingsControl("Cache Slots", pane: .engine, timing: .modelReload)
+            .pickerStyle(.menu)
+            .onChange(of: model.runtimeOptions.expertCacheSlots) { _, _ in
+                model.persistSettingsDebounced()
+            }
+
+            if let info = model.session?.info, let resolved = info.expertResidency {
+                LabeledContent {
+                    expertResidencyResolved(info: info, resolved: resolved)
+                        .themedFont(.tiny, systemDesign: .monospaced)
+                        .foregroundStyle(.appSecondary)
+                } label: {
+                    Text("Resolved", bundle: .module)
+                }
+            }
+
+            Text("Where the experts of mixture-of-experts models live while they run. Streamed copies them into a cache in memory, sized by Cache Slots. Mapped reads them in place from the model file, which uses less memory, on models that support it and fit; other models open as Auto. Auto chooses per model. Takes effect on the next model load.", bundle: .module)
+            .themedFont(.tiny)
+            .foregroundStyle(.appSecondary)
+        }
+    }
+
+    /// The loaded model's residency, why a Mapped request opened as Auto, and
+    /// an unmeasured-family note when it runs mapped.
+    private func expertResidencyResolved(info: SessionInfo, resolved: String) -> some View {
+        let fallback = model.expertResidencyFallbacks[info.modelPath]
+        let unmeasured = resolved == "mapped"
+            && !TurboSparkCapabilities.family(info.family).mappedResidencyMeasured
+        let note = AppStrings.localized("Not measured on this model family. It may not improve speed or memory.")
+        return HStack(spacing: 4) {
+            if resolved == "mapped" {
+                Text("Mapped", bundle: .module)
+            } else {
+                Text("Streamed", bundle: .module)
+            }
+            switch fallback {
+            case .noRoutedExperts?:
+                Text(verbatim: "(") + Text("No routed experts", bundle: .module) + Text(verbatim: ")")
+            case .unreadable?:
+                Text(verbatim: "(") + Text("Mapped unavailable", bundle: .module) + Text(verbatim: ")")
+            case .refused(let reason)?:
+                Text(verbatim: "(") + Text("Mapped unavailable", bundle: .module)
+                    + Text(verbatim: reason.map { ": \($0))" } ?? ")")
+            case nil:
+                EmptyView()
+            }
+            if unmeasured {
+                Image(systemName: "info.circle")
+                    .help(note)
+                    .accessibilityLabel(note)
+            }
+        }
+    }
+
     var inProcessServerSection: some View {
         Section(header: Text("In-Process Server", bundle: .module)) {
             LabeledContent {
@@ -181,7 +373,7 @@ extension EngineSettingsPaneView {
                     // ("API key required", "none"), both catalog keys.
                     Text(LocalizedStringKey(rows.authLabel), bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(rows.authIsWarning ? Color.orange : Color.secondary)
+                        .foregroundStyle(rows.authIsWarning ? AnyShapeStyle(.appWarning) : AnyShapeStyle(.appSecondary))
                 } label: {
                     Text("Auth", bundle: .module)
                 }

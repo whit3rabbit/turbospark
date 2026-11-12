@@ -51,7 +51,10 @@ prompt recall until the user approves it.
 
 The actual current user message or subagent task is the search query. The
 claim-ID keyed index combines FTS and optional semantic recall, with lexical
-fallback if the encoder or embedding index is missing or stale. Main-turn
+fallback if the encoder is missing or no active claim has a current
+embedding. A partial index still ranks: claims without a current row compete
+on lexical rank only, and the recall task embeds them after it publishes its
+result, so a new or edited claim needs no manual rebuild. Main-turn
 semantic waiting is bounded at 200 ms. The Rust FFI holds one serialized
 encoder instance, avoiding a model reload on each call. A turn caches one
 recall result for its prompt assembly, context estimates, and retries.
@@ -75,6 +78,28 @@ The nightly job runs once per local day after 02:00 while the app is open,
 unlocked, idle, and a local model is available. It stores a dated reflection
 and reviewable guidance. Raw prose is never injected. Approved standing
 guidance remains subordinate to the current user request.
+
+## Memory vs the context engine
+
+Memory is not the only remembered text in a prompt. Conversation recall
+([SYNTEXT_CONTEXT.md](SYNTEXT_CONTEXT.md)) uses syntext's context engine to
+bring back a chat's own earlier turns once compaction or the window fit has
+removed them. The two differ on every axis that matters:
+
+- **What:** memory holds short approved claims. Recall holds one chat's
+  verbatim turns.
+- **Reach:** memory spans every chat in the profile plus the attached project.
+  Recall never leaves the chat that wrote the turns.
+- **Storage:** memory lives in the encrypted SQLCipher profile. Recall's store
+  is plaintext, so it is off for Ghost chats and protected profiles.
+- **Prompt:** recalled claims go in the system prompt on every turn. Recalled
+  turns go on the newest user message as `<evidence>` blocks, and only when
+  turns are outside the prompt.
+
+Neither reads the other's store. Forgetting a claim does not touch recall, and
+deleting a chat does not touch memory beyond invalidating that chat's
+evidence. The full comparison table is in
+[SYNTEXT_CONTEXT.md](SYNTEXT_CONTEXT.md#memory-vs-the-context-engine).
 
 ## Verification
 

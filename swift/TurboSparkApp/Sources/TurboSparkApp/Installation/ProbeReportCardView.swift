@@ -7,20 +7,21 @@ import TurboSpark
 /// every fact below and asked the reader to parse it.
 @MainActor
 struct ProbeReportCardView: View {
+    @Environment(\.appTheme) private var theme
     let report: ProbeReport
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             verdictRow
             if let why = report.refusedBecause {
-                calloutBox(why, tone: .red, icon: "xmark.octagon.fill")
+                calloutBox(why, tone: theme.danger, icon: "xmark.octagon.fill")
             }
             identityRows
             if let fit = report.fit { fitSection(fit) }
             if !report.types.isEmpty { blockTypeSection }
             sidecarSection
             ForEach(Array(report.warnings.enumerated()), id: \.offset) { _, w in
-                calloutBox(w, tone: .orange, icon: "exclamationmark.triangle.fill")
+                calloutBox(w, tone: theme.warning, icon: "exclamationmark.triangle.fill")
             }
         }
         .padding(14)
@@ -41,7 +42,7 @@ struct ProbeReportCardView: View {
                 Image(systemName: report.runnable ? "checkmark.seal.fill" : "xmark.octagon.fill")
             }
             .themedFont(.small, weight: .semibold)
-            .foregroundStyle(report.runnable ? Color.green : Color.red)
+            .foregroundStyle(report.runnable ? AnyShapeStyle(.appSuccess) : AnyShapeStyle(.appDanger))
             Spacer()
             // The fit pill is a SECOND question and only shown when something
             // answered it. A runnable checkpoint whose header yielded no
@@ -154,11 +155,11 @@ struct ProbeReportCardView: View {
                     // inverse of its real rank.
                     (t.bytes.map { Text(verbatim: MetricFormat.storage($0)) } ?? Text("UNSIZED", bundle: .module))
                         .themedFont(.small).monospacedDigit()
-                        .foregroundStyle(t.bytes == nil ? Color.orange : .secondary)
+                        .foregroundStyle(t.bytes == nil ? AnyShapeStyle(.appWarning) : AnyShapeStyle(.appSecondary))
                         .frame(width: 84, alignment: .leading)
                     (t.executable ? Text("has kernels", bundle: .module) : Text("no kernels", bundle: .module))
                         .themedFont(.small)
-                        .foregroundStyle(t.executable ? Color.green : Color.red)
+                        .foregroundStyle(t.executable ? AnyShapeStyle(.appSuccess) : AnyShapeStyle(.appDanger))
                     Spacer()
                 }
             }
@@ -177,7 +178,7 @@ struct ProbeReportCardView: View {
                 // they are discovered after the walk (catalog Gotcha 1), so
                 // this is a finding rather than a footnote.
                 specRow("Sidecars missing", report.sidecarsMissing.joined(separator: ", "))
-                    .foregroundStyle(Color.orange)
+                    .foregroundStyle(.appWarning)
             }
         }
     }

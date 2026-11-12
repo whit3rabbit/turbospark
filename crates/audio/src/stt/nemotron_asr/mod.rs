@@ -18,7 +18,7 @@ use crate::nn::json::{frontend_len, frontend_seconds_to_samples};
 use crate::nn::symmetric_hann;
 use crate::{Result, SpeechError};
 
-mod encoder;
+pub(crate) mod encoder;
 pub(crate) mod rnnt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,6 +112,13 @@ fn context_pair(value: &Value, field: &str) -> Result<[usize; 2]> {
     Ok(out)
 }
 
+/// Whether the checkpoint carries Nemotron 3.5's language prompt kernel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PromptPolicy {
+    Required,
+    Absent,
+}
+
 impl NemotronAsrConfig {
     pub fn from_json(value: &Value) -> Result<Self> {
         if string(value, "model_type")? != "nemotron_asr" {
@@ -119,9 +126,23 @@ impl NemotronAsrConfig {
                 why: "config is not a Nemotron ASR checkpoint".into(),
             });
         }
+        Self::parse(value, PromptPolicy::Required)
+    }
+
+    /// The same encoder, decoder and joint graph without a language prompt
+    /// (Multitalker Parakeet, which shares this cache-aware FastConformer).
+    /// The caller checks `model_type`; prompt fields come back empty.
+    pub(crate) fn from_json_prompt_free(value: &Value) -> Result<Self> {
+        Self::parse(value, PromptPolicy::Absent)
+    }
+
+    fn parse(value: &Value, policy: PromptPolicy) -> Result<Self> {
         let pre = required(value, "preprocessor")?;
         let encoder = required(value, "encoder")?;
-        let prompt = required(value, "prompt")?;
+        let prompt = match policy {
+            PromptPolicy::Required => Some(required(value, "prompt")?),
+            PromptPolicy::Absent => None,
+        };
         let decoder = required(value, "decoder")?;
         let joint = required(value, "joint")?;
 
@@ -206,32 +227,40 @@ impl NemotronAsrConfig {
             ));
         }
 
-        let prompt_indices_object = required(prompt, "prompt_dictionary")?
-            .as_object()
-            .ok_or_else(|| bad("prompt.prompt_dictionary", "must be an object"))?;
-        let num_prompts = positive(prompt, "num_prompts")?;
-        let mut prompt_indices = Vec::with_capacity(prompt_indices_object.len());
-        for (language, index) in prompt_indices_object {
-            let index = index
-                .as_u64()
-                .and_then(|n| usize::try_from(n).ok())
-                .filter(|&n| n < num_prompts)
-                .ok_or_else(|| bad("prompt.prompt_dictionary", "index exceeds num_prompts"))?;
-            prompt_indices.push((language.clone(), index));
-        }
-        let default_language = required(value, "default_language")?
-            .as_str()
-            .ok_or_else(|| bad("default_language", "must be a string"))?
-            .to_string();
-        if !prompt_indices
-            .iter()
-            .any(|(language, _)| language == &default_language)
-        {
-            return Err(bad(
-                "default_language",
-                "must be present in prompt.prompt_dictionary",
-            ));
-        }
+        let (prompt_indices, num_prompts, prompt_hidden, default_language) = match prompt {
+            Some(prompt) => {
+                let prompt_indices_object = required(prompt, "prompt_dictionary")?
+                    .as_object()
+                    .ok_or_else(|| bad("prompt.prompt_dictionary", "must be an object"))?;
+                let num_prompts = positive(prompt, "num_prompts")?;
+                let mut prompt_indices = Vec::with_capacity(prompt_indices_object.len());
+                for (language, index) in prompt_indices_object {
+                    let index = index
+                        .as_u64()
+                        .and_then(|n| usize::try_from(n).ok())
+                        .filter(|&n| n < num_prompts)
+                        .ok_or_else(|| {
+                            bad("prompt.prompt_dictionary", "index exceeds num_prompts")
+                        })?;
+                    prompt_indices.push((language.clone(), index));
+                }
+                let default_language = required(value, "default_language")?
+                    .as_str()
+                    .ok_or_else(|| bad("default_language", "must be a string"))?
+                    .to_string();
+                if !prompt_indices
+                    .iter()
+                    .any(|(language, _)| language == &default_language)
+                {
+                    return Err(bad(
+                        "default_language",
+                        "must be present in prompt.prompt_dictionary",
+                    ));
+                }
+                (prompt_indices, num_prompts, Some(prompt), default_language)
+            }
+            None => (Vec::new(), 0, None, String::new()),
+        };
 
         let vocabulary = required(value, "vocabulary")?
             .as_array()
@@ -248,7 +277,7 @@ impl NemotronAsrConfig {
         let decoder_hidden = positive(decoder, "pred_hidden")?;
         let decoder_layers = positive(decoder, "pred_rnn_layers")?;
         let joint_hidden = positive(joint, "joint_hidden")?;
-        if boolean(decoder, "blank_as_pad")? != true
+        if !boolean(decoder, "blank_as_pad")?
             || vocabulary.len() != vocab_size
             || positive(joint, "num_classes")? != vocab_size
             || positive(joint, "encoder_hidden")? != encoder_hidden
@@ -274,7 +303,10 @@ impl NemotronAsrConfig {
             vocabulary,
             prompt_indices,
             num_prompts,
-            prompt_hidden: positive(prompt, "prompt_hidden")?,
+            prompt_hidden: match prompt_hidden {
+                Some(prompt) => positive(prompt, "prompt_hidden")?,
+                None => 0,
+            },
             encoder_layers: positive(encoder, "n_layers")?,
             encoder_hidden,
             encoder_heads,
@@ -302,105 +334,6 @@ impl NemotronAsrConfig {
                     .find_map(|(name, index)| (name == &self.default_language).then_some(*index))
             })
             .unwrap_or(0)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    fn tiny_config() -> Value {
-        json!({
-            "model_type": "nemotron_asr",
-            "preprocessor": {
-                "sample_rate": 16000,
-                "features": 4,
-                "n_fft": 8,
-                "window_size": 0.00025,
-                "window_stride": 0.000125,
-                "window": "hann",
-                "normalize": "NA",
-                "preemph": 0.97,
-                "log_zero_guard_value": 0.000000059604644775390625
-            },
-            "encoder": {
-                "feat_in": 4,
-                "n_layers": 1,
-                "d_model": 8,
-                "n_heads": 2,
-                "ff_expansion_factor": 2,
-                "subsampling_factor": 2,
-                "subsampling_conv_channels": 2,
-                "conv_kernel_size": 3,
-                "causal_downsampling": true,
-                "conv_context_size": "causal",
-                "conv_norm_type": "layer_norm",
-                "att_context_style": "chunked_limited",
-                "att_context_size": [[4, 1], [4, 0]],
-                "use_bias": false,
-                "self_attention_model": "rel_pos",
-                "xscaling": false,
-                "pos_emb_max_len": 64
-            },
-            "prompt": {
-                "num_prompts": 2,
-                "prompt_hidden": 16,
-                "prompt_dictionary": {"en-US": 0, "auto": 1}
-            },
-            "decoder": {
-                "vocab_size": 3,
-                "pred_hidden": 4,
-                "pred_rnn_layers": 2,
-                "blank_as_pad": true
-            },
-            "joint": {
-                "num_classes": 3,
-                "joint_hidden": 4,
-                "encoder_hidden": 8,
-                "pred_hidden": 4,
-                "activation": "relu"
-            },
-            "vocabulary": ["<unk>", "▁hi", "!"],
-            "default_language": "auto",
-            "default_att_context_size": [4, 1],
-            "max_symbols": 5
-        })
-    }
-
-    #[test]
-    fn profile_pin_is_immutable_and_language_aliases_resolve() {
-        assert_eq!(
-            NEMOTRON_3_5_ASR.repository,
-            "mlx-community/nemotron-3.5-asr-streaming-0.6b"
-        );
-        assert_eq!(
-            NEMOTRON_3_5_ASR.revision,
-            "e550040c0478027ed679b2b6b0d055502c103663"
-        );
-        let config = NemotronAsrConfig::from_json(&tiny_config()).unwrap();
-        assert_eq!(config.prompt_index("en-US"), 0);
-        assert_eq!(config.prompt_index("unknown"), 1);
-    }
-
-    #[test]
-    fn rejects_encoder_or_language_prompt_variants_outside_the_checkpoint_graph() {
-        let mut value = tiny_config();
-        value["encoder"]["causal_downsampling"] = json!(false);
-        assert!(NemotronAsrConfig::from_json(&value).is_err());
-
-        let mut value = tiny_config();
-        value["prompt"]["prompt_dictionary"]["en-US"] = json!(2);
-        assert!(NemotronAsrConfig::from_json(&value).is_err());
-    }
-
-    #[test]
-    fn filters_language_tags_like_the_reference_tokenizer() {
-        assert!(is_special_piece("<en-US>"));
-        assert!(is_special_piece("<zh-Hant>"));
-        assert!(is_special_piece("<unk>"));
-        assert!(!is_special_piece("<unknown>"));
-        assert!(!is_special_piece("▁hello"));
     }
 }
 
@@ -667,4 +600,103 @@ fn is_special_piece(piece: &str) -> bool {
         && language.bytes().all(|byte| byte.is_ascii_lowercase())
         && (2..=4).contains(&region.len())
         && region.bytes().all(|byte| byte.is_ascii_alphabetic())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn tiny_config() -> Value {
+        json!({
+            "model_type": "nemotron_asr",
+            "preprocessor": {
+                "sample_rate": 16000,
+                "features": 4,
+                "n_fft": 8,
+                "window_size": 0.00025,
+                "window_stride": 0.000125,
+                "window": "hann",
+                "normalize": "NA",
+                "preemph": 0.97,
+                "log_zero_guard_value": 0.000_000_059_604_644_775_390_63
+            },
+            "encoder": {
+                "feat_in": 4,
+                "n_layers": 1,
+                "d_model": 8,
+                "n_heads": 2,
+                "ff_expansion_factor": 2,
+                "subsampling_factor": 2,
+                "subsampling_conv_channels": 2,
+                "conv_kernel_size": 3,
+                "causal_downsampling": true,
+                "conv_context_size": "causal",
+                "conv_norm_type": "layer_norm",
+                "att_context_style": "chunked_limited",
+                "att_context_size": [[4, 1], [4, 0]],
+                "use_bias": false,
+                "self_attention_model": "rel_pos",
+                "xscaling": false,
+                "pos_emb_max_len": 64
+            },
+            "prompt": {
+                "num_prompts": 2,
+                "prompt_hidden": 16,
+                "prompt_dictionary": {"en-US": 0, "auto": 1}
+            },
+            "decoder": {
+                "vocab_size": 3,
+                "pred_hidden": 4,
+                "pred_rnn_layers": 2,
+                "blank_as_pad": true
+            },
+            "joint": {
+                "num_classes": 3,
+                "joint_hidden": 4,
+                "encoder_hidden": 8,
+                "pred_hidden": 4,
+                "activation": "relu"
+            },
+            "vocabulary": ["<unk>", "▁hi", "!"],
+            "default_language": "auto",
+            "default_att_context_size": [4, 1],
+            "max_symbols": 5
+        })
+    }
+
+    #[test]
+    fn profile_pin_is_immutable_and_language_aliases_resolve() {
+        assert_eq!(
+            NEMOTRON_3_5_ASR.repository,
+            "mlx-community/nemotron-3.5-asr-streaming-0.6b"
+        );
+        assert_eq!(
+            NEMOTRON_3_5_ASR.revision,
+            "e550040c0478027ed679b2b6b0d055502c103663"
+        );
+        let config = NemotronAsrConfig::from_json(&tiny_config()).unwrap();
+        assert_eq!(config.prompt_index("en-US"), 0);
+        assert_eq!(config.prompt_index("unknown"), 1);
+    }
+
+    #[test]
+    fn rejects_encoder_or_language_prompt_variants_outside_the_checkpoint_graph() {
+        let mut value = tiny_config();
+        value["encoder"]["causal_downsampling"] = json!(false);
+        assert!(NemotronAsrConfig::from_json(&value).is_err());
+
+        let mut value = tiny_config();
+        value["prompt"]["prompt_dictionary"]["en-US"] = json!(2);
+        assert!(NemotronAsrConfig::from_json(&value).is_err());
+    }
+
+    #[test]
+    fn filters_language_tags_like_the_reference_tokenizer() {
+        assert!(is_special_piece("<en-US>"));
+        assert!(is_special_piece("<zh-Hant>"));
+        assert!(is_special_piece("<unk>"));
+        assert!(!is_special_piece("<unknown>"));
+        assert!(!is_special_piece("▁hello"));
+    }
 }

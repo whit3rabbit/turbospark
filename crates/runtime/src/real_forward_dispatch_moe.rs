@@ -73,6 +73,9 @@ pub(crate) fn encode_moe_phase1_any(
         RoutedBlobLayout::Affine => gpu::encode_moe_phase1(
             context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
         ),
+        RoutedBlobLayout::AffineInt3 => gpu::encode_moe_phase1_int3(
+            context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
+        ),
         // No real file puts IQ4_NL in gate/up, so there is no such kernel.
         // Reaching here means an install this port installed but cannot run;
         // `open()`'s dtype gate lets it through because the TYPE is
@@ -147,6 +150,10 @@ pub(crate) fn encode_moe_phase2_any(
             offsets.down_b != 0,
         ),
         RoutedBlobLayout::Affine => gpu::encode_moe_phase2(
+            context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, top_k,
+            use_silu,
+        ),
+        RoutedBlobLayout::AffineInt3 => gpu::encode_moe_phase2_int3(
             context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, top_k,
             use_silu,
         ),

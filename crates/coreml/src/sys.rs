@@ -35,11 +35,12 @@ use objc2_core_ml::{
 };
 use objc2_foundation::{NSArray, NSDictionary, NSError, NSNumber, NSProcessInfo, NSString, NSURL};
 
-use crate::cache::{cache_key, compiled_path_for, copy_dir, is_cache_entry_for};
-use crate::error::{CoreMlError, Result};
-use crate::tensor::{
-    element_count, gather_strided, scatter_strided, strided_extent, DType, Tensor,
+use crate::cache::{
+    cache_key, compiled_path_for, copy_dir, is_cache_entry_for, is_staging_name, source_id,
+    source_marker,
 };
+use crate::error::{CoreMlError, Result};
+use crate::tensor::{element_count, gather_strided, scatter_strided, strided_bytes, DType, Tensor};
 use crate::{
     check_inputs, Capability, ComputeDevice, ComputePlan, ComputeUnits, FeatureKind, FeatureSpec,
     LoadOptions, OpPlacement,
@@ -254,18 +255,22 @@ fn write_multiarray(name: &str, arr: &MLMultiArray, t: &Tensor) -> Result<()> {
     let src = t.to_bytes();
     let shape = t.shape().to_vec();
     let mut failure: Option<CoreMlError> = None;
+    // A handler that never runs must not report a write that did not
+    // happen (the input would silently keep its uninitialized contents).
+    let ran = std::cell::Cell::new(false);
     {
         let failure_ref = &mut failure;
         let failure_cell = std::cell::RefCell::new(failure_ref);
         let block = RcBlock::new(
             |ptr: NonNull<std::ffi::c_void>, size: isize, strides: NonNull<NSArray<NSNumber>>| {
+                ran.set(true);
                 // SAFETY: Core ML passes a live strides array for the
                 // duration of the block.
                 let strides = numbers(unsafe { strides.as_ref() });
                 let res = (|| -> Result<()> {
-                    let extent = strided_extent(&shape, &strides)?;
+                    let bytes = strided_bytes(&shape, &strides, elem)?;
                     let size = usize::try_from(size).unwrap_or(0);
-                    if extent * elem > size {
+                    if bytes > size {
                         return Err(CoreMlError::Prediction(format!(
                             "{name}: buffer of {size} bytes is smaller than its strides imply"
                         )));
@@ -290,6 +295,9 @@ fn write_multiarray(name: &str, arr: &MLMultiArray, t: &Tensor) -> Result<()> {
     }
     match failure {
         Some(e) => Err(e),
+        None if !ran.get() => Err(CoreMlError::Prediction(format!(
+            "{name}: buffer not exposed"
+        ))),
         None => Ok(()),
     }
 }
@@ -310,7 +318,7 @@ fn from_multiarray(name: &str, arr: &MLMultiArray) -> Result<Tensor> {
         got: format!("MLMultiArrayDataType {}", dt.0),
     })?;
     let shape = to_usizes(name, &shape)?;
-    let extent = strided_extent(&shape, &strides)?;
+    let bytes = strided_bytes(&shape, &strides, dtype.size())?;
     let ustrides: Vec<usize> = strides.iter().map(|&s| s as usize).collect();
     let elem = dtype.size();
     let mut out: Option<Result<Vec<u8>>> = None;
@@ -318,7 +326,7 @@ fn from_multiarray(name: &str, arr: &MLMultiArray) -> Result<Tensor> {
         let out_cell = std::cell::RefCell::new(&mut out);
         let block = RcBlock::new(|ptr: NonNull<std::ffi::c_void>, size: isize| {
             let size = usize::try_from(size).unwrap_or(0);
-            let res = if extent * elem > size {
+            let res = if bytes > size {
                 Err(CoreMlError::Prediction(format!(
                     "{name}: buffer of {size} bytes is smaller than its strides imply"
                 )))
@@ -413,7 +421,14 @@ pub struct CoreMlModel {
     states: Vec<FeatureSpec>,
     path: PathBuf,
     function: Option<String>,
+    /// Process-unique id that states record. Not the address: a move would
+    /// orphan a state, and a new model at a freed address would accept a
+    /// stale one (a mismatched MLState can raise an uncaught NSException).
+    id: u64,
 }
+
+/// Source of `CoreMlModel::id`. Starts at 1 and never repeats in practice.
+static NEXT_MODEL_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 impl std::fmt::Debug for CoreMlModel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -472,6 +487,7 @@ impl CoreMlModel {
                 states,
                 path: path.to_path_buf(),
                 function: opts.function.clone(),
+                id: NEXT_MODEL_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             })
         })
     }
@@ -547,8 +563,8 @@ impl CoreMlModel {
         })
     }
 
-    fn owner_id(&self) -> usize {
-        self as *const Self as usize
+    fn owner_id(&self) -> u64 {
+        self.id
     }
 
     /// Runs one prediction that reads and updates `state`.
@@ -589,7 +605,7 @@ unsafe impl Send for SendState {}
 /// `Sync`: one prediction at a time.
 pub struct CoreMlState {
     state: SendState,
-    owner: usize,
+    owner: u64,
     specs: Vec<FeatureSpec>,
 }
 
@@ -626,6 +642,10 @@ impl CoreMlState {
         for spec in &self.specs {
             let key = NSString::from_str(&spec.name);
             let mut failure: Option<CoreMlError> = None;
+            // Set only by the inner handler, so it proves both accessors ran.
+            // Otherwise a skipped handler would report a copy that did not
+            // happen, like `read` refuses below.
+            let ran = std::cell::Cell::new(false);
             {
                 let cell = std::cell::RefCell::new(&mut failure);
                 let outer = RcBlock::new(|src_arr: NonNull<MLMultiArray>| {
@@ -633,6 +653,7 @@ impl CoreMlState {
                     // (synchronous, nested) blocks.
                     let src_arr = unsafe { src_arr.as_ref() };
                     let inner = RcBlock::new(|dst_arr: NonNull<MLMultiArray>| {
+                        ran.set(true);
                         let dst_arr = unsafe { dst_arr.as_ref() };
                         let r = copy_array(&spec.name, src_arr, dst_arr);
                         if let Err(e) = r {
@@ -656,6 +677,12 @@ impl CoreMlState {
             }
             if let Some(e) = failure {
                 return Err(e);
+            }
+            if !ran.get() {
+                return Err(CoreMlError::Prediction(format!(
+                    "state {}: buffer not exposed",
+                    spec.name
+                )));
             }
         }
         Ok(())
@@ -708,7 +735,7 @@ fn copy_array(name: &str, src: &MLMultiArray, dst: &MLMultiArray) -> Result<()> 
         .map(DType::size)
         .ok_or_else(|| CoreMlError::Prediction(format!("state {name}: unsupported dtype")))?;
     let shape = to_usizes(name, &ss)?;
-    let bytes = strided_extent(&shape, &sd)? * elem;
+    let bytes = strided_bytes(&shape, &sd, elem)?;
     // Read the source's raw buffer, then write it into the destination.
     // Same layout on both sides, so the strided bytes copy one to one.
     let mut raw: Option<Result<Vec<u8>>> = None;
@@ -739,10 +766,14 @@ fn copy_array(name: &str, src: &MLMultiArray, dst: &MLMultiArray) -> Result<()> 
         )))
     })?;
     let mut failure: Option<CoreMlError> = None;
+    // Like the read above, a handler that never runs must not report a
+    // copy that did not happen (the KV state would silently stay stale).
+    let ran = std::cell::Cell::new(false);
     {
         let cell = std::cell::RefCell::new(&mut failure);
         let block = RcBlock::new(
             |ptr: NonNull<std::ffi::c_void>, size: isize, strides: NonNull<NSArray<NSNumber>>| {
+                ran.set(true);
                 // SAFETY: Core ML passes a live strides array for the block.
                 let now = numbers(unsafe { strides.as_ref() });
                 let size = usize::try_from(size).unwrap_or(0);
@@ -766,6 +797,9 @@ fn copy_array(name: &str, src: &MLMultiArray, dst: &MLMultiArray) -> Result<()> 
     }
     match failure {
         Some(e) => Err(e),
+        None if !ran.get() => Err(CoreMlError::Prediction(format!(
+            "state {name}: destination buffer not exposed"
+        ))),
         None => Ok(()),
     }
 }
@@ -791,52 +825,88 @@ pub fn compile_if_needed(path: &Path, cache_root: &Path) -> Result<PathBuf> {
     }
     let key = cache_key(path, &os_tag())?;
     let dest = compiled_path_for(path, cache_root, &key);
-    if dest.is_dir() {
-        return Ok(dest);
-    }
-    fs::create_dir_all(cache_root)?;
-    let stem = path
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "model".into());
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let staging = cache_root.join(format!(
-        ".staging-{stem}-{}-{nanos}.mlmodelc",
-        std::process::id()
-    ));
-    let url = NSURL::from_file_path(path)
-        .ok_or_else(|| CoreMlError::Compile(format!("bad path {}", path.display())))?;
+    serialized_cold_compile(
+        || dest.is_dir().then(|| dest.clone()),
+        || {
+            fs::create_dir_all(cache_root)?;
+            let stem = path
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "model".into());
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let staging = cache_root.join(format!(
+                ".staging-{stem}-{}-{nanos}.mlmodelc",
+                std::process::id()
+            ));
+            let url = NSURL::from_file_path(path)
+                .ok_or_else(|| CoreMlError::Compile(format!("bad path {}", path.display())))?;
 
-    let compiled_tmp = compile_to_temp(&url)?;
-    // The compiler writes to a temporary directory it may clean up, so move
-    // the result into the cache now. A cross-volume install falls back to
-    // a copy.
-    if fs::rename(&compiled_tmp, &staging).is_err() {
-        copy_dir(&compiled_tmp, &staging)
-            .map_err(|e| CoreMlError::Compile(format!("copying compiled model: {e}")))?;
-        let _ = fs::remove_dir_all(&compiled_tmp);
-    }
-    match fs::rename(&staging, &dest) {
-        Ok(()) => {}
-        Err(_) if dest.is_dir() => {
-            // Another process finished the same compile first.
-            let _ = fs::remove_dir_all(&staging);
-        }
-        Err(e) => {
-            let _ = fs::remove_dir_all(&staging);
-            return Err(CoreMlError::Compile(format!(
-                "installing compiled model: {e}"
-            )));
-        }
-    }
-    prune_stale(cache_root, &stem, &dest);
-    Ok(dest)
+            let compiled_tmp = compile_to_temp(&url)?;
+            // The compiler writes to a temporary directory it may clean up, so move
+            // the result into the cache now. A cross-volume install falls back to
+            // a copy.
+            if fs::rename(&compiled_tmp, &staging).is_err() {
+                copy_dir(&compiled_tmp, &staging)
+                    .map_err(|e| CoreMlError::Compile(format!("copying compiled model: {e}")))?;
+                let _ = fs::remove_dir_all(&compiled_tmp);
+            }
+            let source = source_id(path, cache_root);
+            match fs::rename(&staging, &dest) {
+                // Best effort: a missing marker only makes this entry
+                // prunable by a same-stem package, costing one recompile.
+                Ok(()) => {
+                    let _ = fs::write(source_marker(&dest), &source);
+                }
+                Err(_) if dest.is_dir() => {
+                    // Another process finished the same compile first.
+                    let _ = fs::remove_dir_all(&staging);
+                }
+                Err(e) => {
+                    let _ = fs::remove_dir_all(&staging);
+                    return Err(CoreMlError::Compile(format!(
+                        "installing compiled model: {e}"
+                    )));
+                }
+            }
+            prune_stale(cache_root, &stem, &dest, &source);
+            Ok(dest.clone())
+        },
+    )
 }
 
-fn prune_stale(cache_root: &Path, stem: &str, keep: &Path) {
+// Core ML may return the same temporary directory to simultaneous
+// compilers of one package, even with different destination cache roots.
+// Keep compilation and publication in one critical section; prediction
+// remains independently serialized per model.
+fn serialized_cold_compile<T>(
+    cached: impl Fn() -> Option<T>,
+    compile: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    if let Some(value) = cached() {
+        return Ok(value);
+    }
+    static COMPILE_AND_PUBLISH: Mutex<()> = Mutex::new(());
+    let _compile = COMPILE_AND_PUBLISH
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if let Some(value) = cached() {
+        return Ok(value);
+    }
+    compile()
+}
+
+/// A staging dir lives only between compile and rename (a copy at most),
+/// so one this old was left by a crashed process, not one mid-publish.
+const STAGING_ORPHAN_AGE: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// Removes this package's older entries and orphaned staging dirs. An entry
+/// whose marker names a different package with the same stem is kept, or
+/// two such packages would prune each other on every open. An entry with no
+/// marker (written before markers existed) is treated as this package's.
+fn prune_stale(cache_root: &Path, stem: &str, keep: &Path, source: &str) {
     let Ok(entries) = fs::read_dir(cache_root) else {
         return;
     };
@@ -844,8 +914,27 @@ fn prune_stale(cache_root: &Path, stem: &str, keep: &Path) {
         let name = entry.file_name();
         let name = name.to_string_lossy();
         let path = entry.path();
-        if path != keep && is_cache_entry_for(&name, stem) && path.is_dir() {
+        if !path.is_dir() {
+            continue;
+        }
+        if path != keep && is_cache_entry_for(&name, stem) {
+            let marker = source_marker(&path);
+            match fs::read_to_string(&marker) {
+                Ok(owner) if owner != source => continue,
+                _ => {}
+            }
             let _ = fs::remove_dir_all(&path);
+            let _ = fs::remove_file(&marker);
+        } else if is_staging_name(&name) {
+            let old = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| t.elapsed().ok())
+                .is_some_and(|age| age > STAGING_ORPHAN_AGE);
+            if old {
+                let _ = fs::remove_dir_all(&path);
+            }
         }
     }
 }
@@ -1036,4 +1125,429 @@ fn device(d: &ProtocolObject<dyn MLComputeDeviceProtocol>) -> ComputeDevice {
     }
     let obj: &AnyObject = d.as_ref();
     ComputeDevice::Other(obj.class().name().to_string_lossy().into_owned())
+}
+
+// ---- IOSurface-backed planes (feature `ane-prefill`, off by default) ----
+
+#[cfg(feature = "ane-prefill")]
+pub use shared_plane::SharedF16Plane;
+
+#[cfg(feature = "ane-prefill")]
+mod shared_plane {
+    //! F16 planes that Metal and Core ML both read and write in place, for
+    //! the opt-in ANE+Steel prefill split (`turbospark-runtime`'s
+    //! `families/qwen/ane_split.rs`).
+    //! Each plane is an IOSurface wrapped as a `CVPixelBuffer` and an
+    //! `MLMultiArray`; the caller wraps [`SharedF16Plane::base_ptr`] in a
+    //! no-copy Metal buffer and must drop that buffer first. Inputs and
+    //! outputs bound this way are never copied by Core ML, which is what a
+    //! plain `MLMultiArray` would cost per prediction on the Neural Engine.
+
+    use std::ffi::c_void;
+
+    use objc2::encode::{Encoding, RefEncode};
+    use objc2::rc::{autoreleasepool, Retained};
+    use objc2::runtime::{AnyClass, AnyObject, ProtocolObject};
+    use objc2::{msg_send, AllocAnyThread};
+    use objc2_core_ml::{
+        MLDictionaryFeatureProvider, MLFeatureProvider, MLFeatureValue, MLMultiArray,
+    };
+    use objc2_foundation::{NSArray, NSDictionary, NSError, NSNumber, NSString};
+
+    use super::{guarded, ns_error, CoreMlModel};
+    use crate::error::{CoreMlError, Result};
+    use crate::tensor::DType;
+    use crate::{FeatureKind, FeatureSpec};
+
+    type CFTypeRef = *const c_void;
+
+    /// `CVBufferRef`'s pointee, so the message encoding matches
+    /// `^{__CVBuffer=}` (objc2 verifies it under debug assertions).
+    #[repr(C)]
+    struct CvBuffer {
+        _private: [u8; 0],
+    }
+    // SAFETY: the encoding CoreVideo declares for CVBufferRef.
+    unsafe impl RefEncode for CvBuffer {
+        const ENCODING_REF: Encoding = Encoding::Pointer(&Encoding::Struct("__CVBuffer", &[]));
+    }
+
+    #[link(name = "IOSurface", kind = "framework")]
+    extern "C" {
+        static kIOSurfaceWidth: CFTypeRef;
+        static kIOSurfaceHeight: CFTypeRef;
+        static kIOSurfaceBytesPerElement: CFTypeRef;
+        static kIOSurfaceBytesPerRow: CFTypeRef;
+        static kIOSurfacePixelFormat: CFTypeRef;
+        fn IOSurfaceCreate(properties: CFTypeRef) -> *mut c_void;
+        fn IOSurfaceGetBaseAddress(surface: *mut c_void) -> *mut c_void;
+        fn IOSurfaceGetAllocSize(surface: *mut c_void) -> usize;
+        fn IOSurfaceGetBytesPerRow(surface: *mut c_void) -> usize;
+        fn IOSurfaceAlignProperty(property: CFTypeRef, value: usize) -> usize;
+    }
+
+    #[link(name = "CoreVideo", kind = "framework")]
+    extern "C" {
+        fn CVPixelBufferCreateWithIOSurface(
+            allocator: CFTypeRef,
+            surface: *mut c_void,
+            attributes: CFTypeRef,
+            out: *mut *mut CvBuffer,
+        ) -> i32;
+    }
+
+    #[link(name = "CoreFoundation", kind = "framework")]
+    extern "C" {
+        fn CFRelease(cf: CFTypeRef);
+    }
+
+    /// `kCVPixelFormatType_OneComponent16Half`, the one format
+    /// `initWithPixelBuffer:shape:` accepts.
+    const ONE_COMPONENT_16_HALF: u32 = u32::from_be_bytes(*b"L00h");
+
+    /// A `[1, 1, rows, cols]` Float16 plane over one IOSurface.
+    pub struct SharedF16Plane {
+        array: Retained<MLMultiArray>,
+        pixel: *mut CvBuffer,
+        surface: *mut c_void,
+        rows: usize,
+        cols: usize,
+        stride: usize,
+    }
+
+    // SAFETY: IOSurface and CVPixelBuffer are thread-safe CoreFoundation
+    // objects, and the multi-array is only read through `&self` by one
+    // prediction at a time (the model's mutex). Not Sync.
+    unsafe impl Send for SharedF16Plane {}
+
+    impl std::fmt::Debug for SharedF16Plane {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("SharedF16Plane")
+                .field("rows", &self.rows)
+                .field("cols", &self.cols)
+                .field("stride", &self.stride)
+                .finish()
+        }
+    }
+
+    fn key(k: CFTypeRef) -> &'static NSString {
+        // SAFETY: the kIOSurface* keys are immortal CFStrings, toll-free
+        // bridged to NSString.
+        unsafe { &*(k as *const NSString) }
+    }
+
+    impl SharedF16Plane {
+        pub fn new(rows: usize, cols: usize) -> Result<Self> {
+            if rows == 0 || cols == 0 {
+                return Err(CoreMlError::Prediction("empty shared plane".into()));
+            }
+            // Without this, release builds (no overflow checks) would wrap
+            // to a tiny bytes-per-row that no longer matches `cols`.
+            let row_bytes = cols.checked_mul(2).ok_or_else(|| {
+                CoreMlError::Prediction(format!("shared plane of {cols} columns overflows"))
+            })?;
+            autoreleasepool(|_| {
+                // SAFETY: plain C calls with a valid key and value; the keys
+                // are framework statics.
+                let bpr = unsafe { IOSurfaceAlignProperty(kIOSurfaceBytesPerRow, row_bytes) };
+                let keys = unsafe {
+                    [
+                        key(kIOSurfaceWidth),
+                        key(kIOSurfaceHeight),
+                        key(kIOSurfaceBytesPerElement),
+                        key(kIOSurfaceBytesPerRow),
+                        key(kIOSurfacePixelFormat),
+                    ]
+                };
+                let values = [
+                    NSNumber::numberWithUnsignedInteger(cols),
+                    NSNumber::numberWithUnsignedInteger(rows),
+                    NSNumber::numberWithUnsignedInteger(2),
+                    NSNumber::numberWithUnsignedInteger(bpr),
+                    NSNumber::numberWithUnsignedInteger(ONE_COMPONENT_16_HALF as usize),
+                ];
+                let value_refs: Vec<&NSNumber> = values.iter().map(|v| &**v).collect();
+                let props = NSDictionary::<NSString, NSNumber>::from_slices(&keys, &value_refs);
+                // SAFETY: an NSDictionary is a CFDictionary (toll-free
+                // bridged); IOSurfaceCreate follows the Create rule.
+                let surface = unsafe { IOSurfaceCreate(Retained::as_ptr(&props).cast()) };
+                if surface.is_null() {
+                    return Err(CoreMlError::Prediction(format!(
+                        "IOSurfaceCreate {cols} x {rows} failed"
+                    )));
+                }
+                let mut pixel: *mut CvBuffer = std::ptr::null_mut();
+                // SAFETY: a live surface; the out pointer follows the Create
+                // rule.
+                let rc = unsafe {
+                    CVPixelBufferCreateWithIOSurface(
+                        std::ptr::null(),
+                        surface,
+                        std::ptr::null(),
+                        &mut pixel,
+                    )
+                };
+                if rc != 0 || pixel.is_null() {
+                    // SAFETY: releasing our +1 on the surface.
+                    unsafe { CFRelease(surface) };
+                    return Err(CoreMlError::Prediction(format!(
+                        "CVPixelBufferCreateWithIOSurface returned {rc}"
+                    )));
+                }
+                let shape: Vec<Retained<NSNumber>> = [1, 1, rows, cols]
+                    .iter()
+                    .map(|&d| NSNumber::numberWithInteger(d as isize))
+                    .collect();
+                let shape = NSArray::from_retained_slice(&shape);
+                // SAFETY: initWithPixelBuffer:shape: (macOS 12) with a
+                // OneComponent16Half buffer whose width is the last
+                // dimension and height the product of the others.
+                let array: Option<Retained<MLMultiArray>> =
+                    guarded("MLMultiArray initWithPixelBuffer", || unsafe {
+                        msg_send![MLMultiArray::alloc(), initWithPixelBuffer: pixel, shape: &*shape]
+                    })?;
+                // SAFETY: plain getters on a live surface.
+                let stride = unsafe { IOSurfaceGetBytesPerRow(surface) } / 2;
+                let plane = Self {
+                    array: match array {
+                        Some(a) => a,
+                        None => {
+                            // SAFETY: releasing our +1s.
+                            unsafe {
+                                CFRelease(pixel as CFTypeRef);
+                                CFRelease(surface);
+                            }
+                            return Err(CoreMlError::Prediction(
+                                "MLMultiArray initWithPixelBuffer returned nil".into(),
+                            ));
+                        }
+                    },
+                    pixel,
+                    surface,
+                    rows,
+                    cols,
+                    stride,
+                };
+                Ok(plane)
+            })
+        }
+
+        /// Base of the surface's memory. Page-aligned; valid while `self`
+        /// lives.
+        pub fn base_ptr(&self) -> *const u8 {
+            // SAFETY: a getter on a live surface.
+            unsafe { IOSurfaceGetBaseAddress(self.surface) as *const u8 }
+        }
+
+        /// Bytes allocated behind [`Self::base_ptr`] (page-rounded).
+        pub fn alloc_size(&self) -> usize {
+            // SAFETY: a getter on a live surface.
+            unsafe { IOSurfaceGetAllocSize(self.surface) }
+        }
+
+        pub fn rows(&self) -> usize {
+            self.rows
+        }
+
+        pub fn cols(&self) -> usize {
+            self.cols
+        }
+
+        /// Halfs between the starts of consecutive rows.
+        pub fn stride(&self) -> usize {
+            self.stride
+        }
+
+        fn as_feature(&self) -> Retained<MLFeatureValue> {
+            // SAFETY: wraps a live multi-array.
+            unsafe { MLFeatureValue::featureValueWithMultiArray(&self.array) }
+        }
+    }
+
+    impl Drop for SharedF16Plane {
+        fn drop(&mut self) {
+            // SAFETY: releasing the +1s taken in `new`. The multi-array
+            // keeps its own reference to the pixel buffer until it drops.
+            unsafe {
+                CFRelease(self.pixel as CFTypeRef);
+                CFRelease(self.surface);
+            }
+        }
+    }
+
+    fn check_plane(specs: &[FeatureSpec], name: &str, plane: &SharedF16Plane) -> Result<()> {
+        let spec = specs
+            .iter()
+            .find(|s| s.name == name)
+            .ok_or_else(|| CoreMlError::MissingFeature(name.to_string()))?;
+        let want = [1, 1, plane.rows, plane.cols];
+        match &spec.kind {
+            FeatureKind::MultiArray {
+                dtype: Some(DType::F16),
+                shape: Some(s),
+            } if s.as_slice() == want => Ok(()),
+            other => Err(CoreMlError::Shape {
+                name: format!("{name} ({other:?})"),
+                expected: want.to_vec(),
+                got: Vec::new(),
+            }),
+        }
+    }
+
+    impl CoreMlModel {
+        /// One stateless prediction reading `inputs` and writing `outputs`
+        /// in place (`MLPredictionOptions.outputBackings`). Every declared
+        /// input and output must be bound, and every plane must match its
+        /// feature's fixed F16 shape. Refuses a result Core ML did not
+        /// write into the backing, which would otherwise read as stale data.
+        pub fn predict_shared(
+            &self,
+            inputs: &[(&str, &SharedF16Plane)],
+            outputs: &[(&str, &SharedF16Plane)],
+        ) -> Result<()> {
+            for (name, plane) in inputs {
+                check_plane(&self.inputs, name, plane)?;
+            }
+            for (name, plane) in outputs {
+                check_plane(&self.outputs, name, plane)?;
+            }
+            if inputs.len() != self.inputs.len() || outputs.len() != self.outputs.len() {
+                return Err(CoreMlError::MissingFeature(
+                    "predict_shared binds every input and output".into(),
+                ));
+            }
+            let options_class = AnyClass::get(c"MLPredictionOptions")
+                .ok_or_else(|| CoreMlError::Prediction("no MLPredictionOptions".into()))?;
+            let guard = self.lock();
+            autoreleasepool(|_| {
+                let keys: Vec<Retained<NSString>> =
+                    inputs.iter().map(|(n, _)| NSString::from_str(n)).collect();
+                let values: Vec<Retained<MLFeatureValue>> =
+                    inputs.iter().map(|(_, p)| p.as_feature()).collect();
+                let key_refs: Vec<&NSString> = keys.iter().map(|k| &**k).collect();
+                let value_refs: Vec<&AnyObject> = values.iter().map(|v| v.as_ref()).collect();
+                let dict = NSDictionary::<NSString, AnyObject>::from_slices(&key_refs, &value_refs);
+                // SAFETY: every value is an MLFeatureValue.
+                let provider = guarded("MLDictionaryFeatureProvider init", || unsafe {
+                    MLDictionaryFeatureProvider::initWithDictionary_error(
+                        MLDictionaryFeatureProvider::alloc(),
+                        &dict,
+                    )
+                })?
+                .map_err(|e| CoreMlError::Prediction(ns_error(&e)))?;
+                let provider = ProtocolObject::<dyn MLFeatureProvider>::from_ref(&*provider);
+
+                let out_keys: Vec<Retained<NSString>> =
+                    outputs.iter().map(|(n, _)| NSString::from_str(n)).collect();
+                let out_key_refs: Vec<&NSString> = out_keys.iter().map(|k| &**k).collect();
+                let out_refs: Vec<&AnyObject> =
+                    outputs.iter().map(|(_, p)| p.array.as_ref()).collect();
+                let backings =
+                    NSDictionary::<NSString, AnyObject>::from_slices(&out_key_refs, &out_refs);
+                // SAFETY: `new` on the MLPredictionOptions class, then its
+                // documented outputBackings setter (macOS 11) with a
+                // name -> MLMultiArray dictionary.
+                let options: Retained<AnyObject> = unsafe { msg_send![options_class, new] };
+                let () = unsafe { msg_send![&*options, setOutputBackings: &*backings] };
+                // SAFETY: predictionFromFeatures:options:error: with a
+                // provider and backings that passed the shape checks.
+                let result: std::result::Result<
+                    Retained<ProtocolObject<dyn MLFeatureProvider>>,
+                    Retained<NSError>,
+                > = guarded("MLModel shared prediction", || unsafe {
+                    msg_send![&*guard.0, predictionFromFeatures: provider, options: &*options, error: _]
+                })?;
+                let result = result.map_err(|e| CoreMlError::Prediction(ns_error(&e)))?;
+                for ((name, plane), key) in outputs.iter().zip(&out_keys) {
+                    // SAFETY: featureValueForName: and multiArrayValue on a
+                    // live provider.
+                    let same = unsafe { result.featureValueForName(key) }
+                        .and_then(|v| unsafe { v.multiArrayValue() })
+                        .is_some_and(|a| Retained::as_ptr(&a) == Retained::as_ptr(&plane.array));
+                    if !same {
+                        return Err(CoreMlError::Prediction(format!(
+                            "{name}: Core ML did not write into the output backing"
+                        )));
+                    }
+                }
+                Ok(())
+            })
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::SharedF16Plane;
+
+        #[test]
+        fn new_refuses_row_bytes_overflow() {
+            // cols * 2 bytes per half overflows usize; must be an error, not
+            // a debug panic or a release wrap to a tiny bytes-per-row.
+            assert!(SharedF16Plane::new(1, usize::MAX / 2 + 1).is_err());
+        }
+    }
+}
+
+#[cfg(test)]
+mod compile_serialization_tests {
+    use super::*;
+    use std::sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    };
+    #[test]
+    fn cold_publication_excludes_other_compilers_until_cache_is_ready() {
+        let cached = Arc::new(AtomicBool::new(false));
+        let compiles = Arc::new(AtomicUsize::new(0));
+        let (started_tx, started_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let first_cache = cached.clone();
+        let first_count = compiles.clone();
+        let first = std::thread::spawn(move || {
+            serialized_cold_compile(
+                || first_cache.load(Ordering::Acquire).then_some(7),
+                || {
+                    first_count.fetch_add(1, Ordering::Relaxed);
+                    started_tx.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    first_cache.store(true, Ordering::Release);
+                    Ok(7)
+                },
+            )
+        });
+        started_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        let (checking_tx, checking_rx) = mpsc::channel();
+        let (compiling_tx, compiling_rx) = mpsc::channel();
+        let second_cache = cached.clone();
+        let second_count = compiles.clone();
+        let second = std::thread::spawn(move || {
+            serialized_cold_compile(
+                || {
+                    let _ = checking_tx.send(());
+                    second_cache.load(Ordering::Acquire).then_some(7)
+                },
+                || {
+                    second_count.fetch_add(1, Ordering::Relaxed);
+                    compiling_tx.send(()).unwrap();
+                    Ok(7)
+                },
+            )
+        });
+        checking_rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+        let premature = compiling_rx
+            .recv_timeout(std::time::Duration::from_millis(100))
+            .is_ok();
+        release_tx.send(()).unwrap();
+        assert_eq!(first.join().unwrap().unwrap(), 7);
+        assert_eq!(second.join().unwrap().unwrap(), 7);
+        assert!(
+            !premature,
+            "second compiler entered before first publication"
+        );
+        assert_eq!(compiles.load(Ordering::Relaxed), 1);
+    }
 }

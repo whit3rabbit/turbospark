@@ -24,14 +24,48 @@ impl RealForwardRunner {
         base: u64,
         slot: usize,
     ) -> Result<(), RealForwardError> {
+        let q = self.scratch.q.clone();
+        self.encode_gemma4_layer_qkv(pass, layer, position, slot, (&q, 0))?;
+        let kv_start = if self.arch.full_attention_layer_mask[layer] == 1 {
+            0
+        } else {
+            seq_len.saturating_sub(self.arch.sliding_window as u32)
+        };
+        self.encode_gemma4_layer_attend_and_router(
+            pass,
+            layer,
+            position,
+            seq_len,
+            kv_start,
+            base,
+            slot,
+            (&q, 0),
+        )
+    }
+
+    /// The first half of [`Self::encode_gemma4_layer_attn_and_router`]: the
+    /// input norm, the q projection into `q`, and this position's K and V
+    /// written, normed, RoPE'd and committed into the cache.
+    ///
+    /// Split out so an image span can write EVERY row's K/V before any row
+    /// attends: Gemma 4's sliding layers attend bidirectionally inside an
+    /// image (`docs/GEMMA4_VISION_PHASE0.md`), which needs keys from rows
+    /// later in the span. `q` is a caller-chosen location for the same
+    /// reason: the text path keeps one row in `scratch.q`, a span keeps one
+    /// per row.
+    pub(crate) fn encode_gemma4_layer_qkv(
+        &mut self,
+        pass: &gpu::PassEncoder,
+        layer: usize,
+        position: usize,
+        slot: usize,
+        q: (&gpu::MetalBuffer, u64),
+    ) -> Result<(), RealForwardError> {
         let arch = self.arch.clone();
         let hidden = arch.hidden_size as usize;
         let num_heads = arch.num_heads as u32;
-        let num_experts = arch.num_experts as usize;
-        let attn_scale = arch.attention_scale as f32;
         let gpu_err = RealForwardError::Gpu;
         let x_off = (slot * hidden * 2) as u64;
-        let logits_off = (slot * num_experts * 4) as u64;
 
         let is_full = arch.full_attention_layer_mask[layer] == 1;
         let head_dim_l = if is_full {
@@ -71,7 +105,6 @@ impl RealForwardRunner {
         } else {
             layer_tensor(layer, "self_attn.v_proj.weight")
         };
-        let o_name = layer_tensor(layer, "self_attn.o_proj.weight");
         // FP16 layer: straight into the cache slot. TurboQuant-quantized
         // layer (full attention only -- SWA layers are never quantized, so
         // `is_full == false` always takes the FP16 arm regardless of
@@ -88,7 +121,7 @@ impl RealForwardRunner {
             q_dim,
             hidden,
             (&self.scratch.normed, 0),
-            (&self.scratch.q, 0),
+            q,
         )?;
         encode_gemv_any(
             &mut self.context,
@@ -128,9 +161,9 @@ impl RealForwardRunner {
         gpu::encode_rms_norm_bf16w_perhead(
             &mut self.context,
             pass,
-            (&self.scratch.q, 0),
+            q,
             q_norm,
-            (&self.scratch.q, 0),
+            q,
             num_heads,
             head_dim_l,
             RMS_EPS,
@@ -169,7 +202,7 @@ impl RealForwardRunner {
         gpu::encode_rope_proportional_neox(
             &mut self.context,
             pass,
-            (&self.scratch.q, 0),
+            q,
             position as u32,
             num_heads,
             head_dim_l,
@@ -189,15 +222,6 @@ impl RealForwardRunner {
         )
         .map_err(gpu_err)?;
 
-        let (kv_start, active_ring) = if is_full {
-            (0, 0)
-        } else {
-            let ring = self.kv.ring_capacity(layer) as u32;
-            (
-                seq_len.saturating_sub(arch.sliding_window as u32),
-                if ring > 0 && seq_len > ring { ring } else { 0 },
-            )
-        };
         // No-op on an FP16 (or SWA) layer; quantizes the normed, RoPE'd
         // staging row into the cache on a TurboQuant-quantized one.
         encode_kv_commit(
@@ -210,10 +234,60 @@ impl RealForwardRunner {
             head_dim_l,
             num_kv_l,
         )?;
+        Ok(())
+    }
+
+    /// The second half: attention for `position` over cache rows
+    /// `kv_start..seq_len`, then the o projection, the residual and either
+    /// the dense tail or the router. The text path passes the causal range;
+    /// an image row on a sliding layer passes a `seq_len` reaching to the
+    /// end of its span, with `kv_start` still counted from its own position.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn encode_gemma4_layer_attend_and_router(
+        &mut self,
+        pass: &gpu::PassEncoder,
+        layer: usize,
+        position: usize,
+        seq_len: u32,
+        kv_start: u32,
+        base: u64,
+        slot: usize,
+        q: (&gpu::MetalBuffer, u64),
+    ) -> Result<(), RealForwardError> {
+        let arch = self.arch.clone();
+        let hidden = arch.hidden_size as usize;
+        let num_heads = arch.num_heads as u32;
+        let num_experts = arch.num_experts as usize;
+        let attn_scale = arch.attention_scale as f32;
+        let x_off = (slot * hidden * 2) as u64;
+        let logits_off = (slot * num_experts * 4) as u64;
+        let is_full = arch.full_attention_layer_mask[layer] == 1;
+        let head_dim_l = if is_full {
+            arch.full_head_dim
+        } else {
+            arch.head_dim
+        } as u32;
+        let num_kv_l = if is_full {
+            arch.num_full_kv_heads
+        } else {
+            arch.num_kv_heads
+        } as u32;
+        let q_dim = (num_heads * head_dim_l) as usize;
+        let o_name = layer_tensor(layer, "self_attn.o_proj.weight");
+        let active_ring = if is_full {
+            0
+        } else {
+            let ring = self.kv.ring_capacity(layer) as u32;
+            if ring > 0 && seq_len > ring {
+                ring
+            } else {
+                0
+            }
+        };
         encode_attention_any(
             &mut self.context,
             pass,
-            (&self.scratch.q, 0),
+            q,
             &self.kv,
             &self.scratch,
             (&self.scratch.attn_out, 0),

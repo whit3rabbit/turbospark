@@ -167,6 +167,27 @@ pub fn build_synthetic_qwen_gdn_dense_install_with_vision_streamed(
     )
 }
 
+/// [`build_synthetic_qwen_gdn_dense_install_with_dflash`] with the attention
+/// and linear-attention heads at 128 wide (`head_dim`, GDN key and value
+/// dims), the narrowest shapes the tree-verify kernels serve: the GQA-shared
+/// decode attention takes head_dim 128 or 256 and the GDN tree takes a
+/// baked key dim of 128 (`docs/KAPITSA_KERNELS.md`, lever 4). Everything
+/// else is the default fixture's.
+pub fn build_synthetic_qwen_gdn_dense_install_with_dflash_wide_heads(
+    dir: &std::path::Path,
+    vocab_size: i64,
+    num_layers: i64,
+    model_id: &str,
+    bits: u32,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    let mut arch = tiny_qwen_gdn_dense_arch(vocab_size, num_layers);
+    arch.head_dim = 128;
+    arch.full_head_dim = 128;
+    arch.linear_attention.key_head_dim = 128;
+    arch.linear_attention.value_head_dim = 128;
+    build_from_arch(arch, dir, model_id, bits, false, false, true, false)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_synthetic_qwen_gdn_dense_install_inner(
     dir: &std::path::Path,
@@ -179,7 +200,37 @@ fn build_synthetic_qwen_gdn_dense_install_inner(
     with_dflash: bool,
     with_vision: bool,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
-    let mut arch = tiny_qwen_gdn_dense_arch(vocab_size, num_layers);
+    build_from_arch(
+        tiny_qwen_gdn_dense_arch(vocab_size, num_layers),
+        dir,
+        model_id,
+        bits,
+        with_mtp,
+        streamed,
+        with_dflash,
+        with_vision,
+    )
+}
+
+/// The install for `arch`, whose head shapes the trunk tensors follow (the
+/// default fixture's constants for every caller but the wide-head one).
+#[allow(clippy::too_many_arguments)]
+fn build_from_arch(
+    mut arch: ArchConfig,
+    dir: &std::path::Path,
+    model_id: &str,
+    bits: u32,
+    with_mtp: bool,
+    streamed: bool,
+    with_dflash: bool,
+    with_vision: bool,
+) -> Result<ArchConfig, Box<dyn std::error::Error>> {
+    let (vocab_size, num_layers) = (arch.vocab_size, arch.num_layers);
+    let (num_heads, head_dim, num_kv_heads) = (
+        arch.num_heads as usize,
+        arch.full_head_dim as usize,
+        arch.num_full_kv_heads as usize,
+    );
     // The tower is on the ARCH as well as in the tensor list, because
     // `vision::should_ingest` requires both: the arch is the caller's request
     // and the tensors are the artifact's answer. A fixture that set only one
@@ -191,7 +242,8 @@ fn build_synthetic_qwen_gdn_dense_install_inner(
     let la = &arch.linear_attention;
     let qkv_dim = la.qkv_dim() as usize;
     let value_dim = la.value_dim() as usize;
-    let v_heads = LA_V_HEADS;
+    let v_heads = la.num_v_heads as usize;
+    let la_value_dim = la.value_head_dim as usize;
 
     let mut ts: Vec<Tensor> = Vec::new();
     ts.extend(packed_triple(
@@ -229,7 +281,7 @@ fn build_synthetic_qwen_gdn_dense_install_inner(
         if is_full {
             ts.extend(packed_triple(
                 &format!("{p}.self_attn.q_proj.weight"),
-                2 * NUM_HEADS * HEAD_DIM,
+                2 * num_heads * head_dim,
                 HIDDEN,
                 seed + 1,
                 bits,
@@ -237,7 +289,7 @@ fn build_synthetic_qwen_gdn_dense_install_inner(
             for (i, role) in ["k_proj", "v_proj"].iter().enumerate() {
                 ts.extend(packed_triple(
                     &format!("{p}.self_attn.{role}.weight"),
-                    NUM_KV_HEADS * HEAD_DIM,
+                    num_kv_heads * head_dim,
                     HIDDEN,
                     seed + 2 + i as u64,
                     bits,
@@ -246,14 +298,14 @@ fn build_synthetic_qwen_gdn_dense_install_inner(
             ts.extend(packed_triple(
                 &format!("{p}.self_attn.o_proj.weight"),
                 HIDDEN,
-                NUM_HEADS * HEAD_DIM,
+                num_heads * head_dim,
                 seed + 4,
                 bits,
             ));
             for (i, norm) in ["q_norm", "k_norm"].iter().enumerate() {
                 ts.push(f16_vector(
                     &format!("{p}.self_attn.{norm}.weight"),
-                    HEAD_DIM,
+                    head_dim,
                     1.0,
                     seed + 20 + i as u64,
                 ));
@@ -294,7 +346,7 @@ fn build_synthetic_qwen_gdn_dense_install_inner(
             ));
             ts.push(f16_vector(
                 &format!("{p}.linear_attn.norm.weight"),
-                LA_VALUE_DIM,
+                la_value_dim,
                 1.0,
                 seed + 13,
             ));

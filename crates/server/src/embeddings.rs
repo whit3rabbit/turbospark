@@ -116,6 +116,7 @@ fn check_embedding_input_size(texts: &[String]) -> Result<(), String> {
 async fn encode_blocking(
     model: std::sync::Arc<dyn ChatModel>,
     texts: Vec<String>,
+    ticket: Option<crate::queue::QueueTicket>,
 ) -> (Vec<String>, Result<Vec<Vec<f32>>, String>) {
     // The FIFO gate's acquisition point for embeddings: the encoder holds
     // the same runner a generation would (`RealEncoderModel` lends through
@@ -124,9 +125,8 @@ async fn encode_blocking(
     // cancellation on this path, so the flag the gate reads is one nobody
     // can set -- admission waits, and a queued request cannot be skipped
     // for a disconnect the protocol has no way to observe.
-    let gate = model.generation_queue();
     let never = crate::cancel::new_cancel();
-    match crate::queue::run_gated(gate, &never, move || {
+    match crate::queue::run_gated(ticket, &never, move || {
         let text_refs: Vec<&str> = texts.iter().map(String::as_str).collect();
         let result = model.encode(&text_refs);
         (texts, result)
@@ -138,6 +138,14 @@ async fn encode_blocking(
         // Unreachable in practice: nothing can fire `never`.
         None => (Vec::new(), Err("embedding admission cancelled".to_string())),
     }
+}
+
+/// 429 for a full generation queue: the encoder shares the runner's gate.
+fn queue_full_response() -> Response {
+    crate::queue::with_retry_after(error_response(
+        StatusCode::TOO_MANY_REQUESTS,
+        crate::queue::QUEUE_FULL_MESSAGE.to_string(),
+    ))
 }
 
 /// Input can be a single string or an array of strings.
@@ -236,7 +244,11 @@ pub async fn embeddings(
         );
     }
 
-    let (texts, encoded) = encode_blocking(model.clone(), texts).await;
+    let ticket = match crate::queue::reserve(model.as_ref()) {
+        Ok(ticket) => ticket,
+        Err(crate::queue::QueueFull) => return queue_full_response(),
+    };
+    let (texts, encoded) = encode_blocking(model.clone(), texts, ticket).await;
     let raw_embeddings = match encoded {
         Ok(embs) => embs,
         Err(err) => return error_response(StatusCode::BAD_REQUEST, err),
@@ -338,7 +350,11 @@ pub async fn ollama_embeddings(
     if let Err(e) = check_embedding_input_size(std::slice::from_ref(&req.prompt)) {
         return error_response(StatusCode::BAD_REQUEST, e);
     }
-    let (_, encoded) = encode_blocking(model, vec![req.prompt]).await;
+    let ticket = match crate::queue::reserve(model.as_ref()) {
+        Ok(ticket) => ticket,
+        Err(crate::queue::QueueFull) => return queue_full_response(),
+    };
+    let (_, encoded) = encode_blocking(model, vec![req.prompt], ticket).await;
     match encoded {
         Ok(mut embs) => {
             let embedding = embs.pop().unwrap_or_default();
@@ -385,7 +401,11 @@ pub async fn ollama_embed(
         return error_response(StatusCode::BAD_REQUEST, e);
     }
 
-    let (texts, encoded) = encode_blocking(model.clone(), texts).await;
+    let ticket = match crate::queue::reserve(model.as_ref()) {
+        Ok(ticket) => ticket,
+        Err(crate::queue::QueueFull) => return queue_full_response(),
+    };
+    let (texts, encoded) = encode_blocking(model.clone(), texts, ticket).await;
     let embeddings = match encoded {
         Ok(embs) => embs,
         Err(err) => return error_response(StatusCode::BAD_REQUEST, err),

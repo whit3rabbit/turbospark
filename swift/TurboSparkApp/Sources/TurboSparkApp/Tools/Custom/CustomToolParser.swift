@@ -21,6 +21,16 @@ public enum CustomToolParseError: Error, LocalizedError, Sendable {
 /// Parser for loading CustomToolDefinition models from JSON and YAML disk files.
 public enum CustomToolParser {
     public static func parse(fileURL: URL, scope: SkillScope) throws -> CustomToolDefinition {
+        let tool = try parseUnchecked(fileURL: fileURL, scope: scope)
+        // A repository-authored name is used in file names and as the model's
+        // tool name; refuse separators and dots rather than sanitize silently.
+        guard CustomToolDefinition.isSafeName(tool.name) else {
+            throw CustomToolParseError.invalidFormat("unsafe tool name '\(tool.name)'")
+        }
+        return tool
+    }
+
+    private static func parseUnchecked(fileURL: URL, scope: SkillScope) throws -> CustomToolDefinition {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             throw CustomToolParseError.fileNotFound(fileURL.path)
         }

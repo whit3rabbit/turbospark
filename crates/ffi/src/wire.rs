@@ -74,6 +74,16 @@ pub fn expert_residency(value: &Option<String>) -> Result<model_io::ExpertReside
     }
 }
 
+/// Reads the slot-cache wiring request. Absent and `null` mean `auto`; a
+/// typo is rejected before an install is opened.
+pub fn expert_slots_wiring(value: &Option<String>) -> Result<model_io::ExpertSlotWiring, String> {
+    match value.as_deref() {
+        None => Ok(model_io::ExpertSlotWiring::Auto),
+        Some(raw) => model_io::ExpertSlotWiring::parse(raw)
+            .ok_or_else(|| format!("expertSlotsWiring must be auto, on or off, got {raw:?}")),
+    }
+}
+
 /// Reads a load guard that may be a tier NAME, a byte ceiling, `null`, or
 /// absent.
 ///
@@ -157,6 +167,37 @@ pub struct ProbeOptions {
     pub expert_cache_slots: Option<serde_json::Value>,
 }
 
+/// Arguments to `ts_hub_search_json`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct HubSearchOptions {
+    /// Results to request; absent means 20. The Hub's own page cap applies.
+    pub limit: Option<u32>,
+    /// `trending`, `downloads` or `likes`; absent means `downloads`, the
+    /// order that surfaces installable repositories rather than new ones.
+    pub sort: Option<String>,
+    /// `any`, `gguf` or `mlx`; absent means `any`.
+    pub format: Option<String>,
+    /// Skip the 15-minute response cache.
+    pub refresh: bool,
+}
+
+/// Arguments to `ts_hub_check_json`: `ProbeOptions`' three fit knobs, plus the
+/// repository a GGUF conversion was made from.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct HubCheckOptions {
+    pub context_window: Option<u32>,
+    pub load_guard: Option<serde_json::Value>,
+    pub expert_cache_slots: Option<serde_json::Value>,
+    /// `owner/name`: where to look for `tokenizer.json` when the GGUF
+    /// repository has none. A search row's `baseModel`.
+    pub sidecar_hint: Option<String>,
+    /// The `.gguf` whose header to read, instead of the best quantization.
+    /// The fit is per file, so a picker re-checks with the user's choice.
+    pub file: Option<String>,
+}
+
 /// Arguments to `ts_session_open`. Every field is optional; `{}` is valid and
 /// means "everything automatic", which is what the two user-facing binaries
 /// default to.
@@ -168,6 +209,15 @@ pub struct OpenOptions {
     /// `auto` | `streamed` | `mapped`. Absent means `auto`, which maps only
     /// when the minimum streamed cache cannot fit the measured headroom.
     pub expert_residency: Option<String>,
+    /// `auto` | `on` | `off`: whether the streamed slot cache is wired
+    /// (`mlock`). Absent means `auto`, which wires it, at twice the slot
+    /// budget, on the families measured to gain (qwen4_exp) and falls back
+    /// to an unwired cache when the OS will not lock it. The environment
+    /// variable `TURBOSPARK_EXPERT_SLOTS_WIRED` wins over this.
+    pub expert_slots_wiring: Option<String>,
+    /// Enable the temporary Flash Next expert bank on eligible text prefill.
+    /// Absent leaves the runtime experiment selection in effect.
+    pub moe_prefill_bank: Option<bool>,
     /// `performance` | `balanced` | `efficiency`. Absent means ASK THE OS,
     /// which is what a user-facing binary should do (Low Power Mode selects
     /// `efficiency`) and what a measurement harness must not.
@@ -213,9 +263,11 @@ pub struct OpenOptions {
     pub vision_sidecar: Option<String>,
     /// `"off"` | `"2"` | `"3"` | `"3.5"` | `"4"`. Absent means `"off"`, which
     /// is what every release before this option existed produced byte for
-    /// byte. An unsupported family or `head_dim` REFUSES `ts_session_open`
-    /// by name rather than silently opening at FP16 -- see
-    /// `docs/TRUBOQUANT.md`.
+    /// byte. An install that cannot take it REFUSES `ts_session_open` by name
+    /// rather than silently opening at FP16. Eligibility is install facts
+    /// only, not the family: a power-of-two full head width in 32..=512 and a
+    /// quantizable full-attention layer (`ts_kv_quant_supported` answers the
+    /// same rule before open) -- see `docs/TRUBOQUANT.md`.
     pub kv_bits: Option<String>,
     /// Continue each turn from the previous turn's KV wherever the new render
     /// shares a prefix with the old one. Absent or `true` is what every
@@ -227,6 +279,41 @@ pub struct OpenOptions {
     /// itself defaults it off because one engine's cache is shared by every
     /// client of that server.
     pub prefix_reuse: Option<bool>,
+    /// `auto` | `split` | `off` | `break`. Absent means `auto`, which enables
+    /// the ANE+Steel prefill split on Apple Silicon M4 or newer for dense Qwen.
+    pub ane_prefill: Option<String>,
+    /// Optional directory to load compiled ANE prefill programs from.
+    pub ane_prefill_dir: Option<String>,
+}
+
+/// What a session resolved about the ANE+Steel prefill split, once, at open.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AnePrefillInfo {
+    /// True when ANE+Steel split prefill is active for this session.
+    pub active: bool,
+    /// The resolved mode: `"split"`, `"off"`, or `"break"`.
+    pub mode: String,
+    /// Whether this model family and host hardware support the split.
+    pub supported: bool,
+    /// Why `supported` is false or why the split is inactive, or null when active.
+    pub reason: Option<String>,
+    /// The programs directory from which ANE prefill models are loaded, if any.
+    pub programs_dir: Option<String>,
+}
+
+/// What a session resolved about wiring its expert slot cache, once, at open.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExpertSlotsWiringInfo {
+    /// The request the open used: `"auto"`, `"on"` or `"off"`.
+    pub requested: String,
+    /// True when the slot cache is wired.
+    pub active: bool,
+    /// Bytes wired; 0 when inactive.
+    pub wired_bytes: u64,
+    /// Why it is not active, or null when it is.
+    pub reason: Option<String>,
 }
 
 /// What a session resolved about directional steering, once, at open.
@@ -288,6 +375,9 @@ pub struct SpeculationInfo {
     /// speculate at all. Null is the "is it on" test; there is no separate
     /// flag to disagree with it.
     pub block: Option<usize>,
+    /// True when `block` is the CAP of adaptive depth rather than a fixed
+    /// round size. Always false while `block` is null.
+    pub adaptive: bool,
     /// `mtp` | `dflash`, present only when `block` is. Two drafters serve
     /// one family with different shapes and different measured optima, so a
     /// throughput figure is unreadable without knowing which one ran.
@@ -692,6 +782,12 @@ pub struct SessionInfo {
     /// Whether this session continues turns from the previous turn's KV. The
     /// `prefixReuse` open option's resolved value (default `true`).
     pub prefix_reuse: bool,
+    /// What the ANE+Steel prefill split resolved to for this session.
+    pub ane_prefill: AnePrefillInfo,
+    /// Whether this session's expert slot cache is wired, and why not.
+    pub expert_slots_wiring: ExpertSlotsWiringInfo,
+    pub moe_prefill_bank_supported: bool,
+    pub moe_prefill_bank_enabled: bool,
 }
 
 /// Arguments to `ts_server_start`. `{}` is valid and means "an OS-assigned
@@ -728,6 +824,23 @@ pub struct ServerOptions {
     /// SERVED path agree with it -- the setting looked global and reached
     /// only whatever the host itself did with a reply.
     pub guardrails: Option<String>,
+    /// `true` | `false`, or absent to leave the session's own open-time
+    /// decision alone.
+    ///
+    /// **The server's default is `false`, and absent is NOT that default.**
+    /// `ts_session_open` resolves prefix reuse to `true`, because a bare
+    /// session is one owner's and multi-turn by construction. Once a server
+    /// is attached, that is the wrong posture: the KV cache is reachable by
+    /// every client of the server, is not partitioned by API key, and a match
+    /// against another client's prompt becomes observable in response timing.
+    /// `turbospark-server` defaults the same setting OFF for that reason, and
+    /// this is the field that lets an in-process host reach the same posture
+    /// for the session it shares.
+    ///
+    /// Absent leaves the runner as opened, so a host that opts nothing in
+    /// keeps whatever its session decided -- which is the pre-existing
+    /// behavior, deliberately not silently changed here.
+    pub prefix_reuse: Option<bool>,
     /// Optional embedding model (.safetensors directory or alias) to attach at startup.
     pub embedding_model: Option<String>,
     /// Optional Hugging Face mirror endpoint (e.g. https://hf-mirror.com).
@@ -812,6 +925,9 @@ pub struct ServerInfo {
     /// intentionally absent here, so a host can keep using the id returned
     /// by attach to identify and detach its session.
     pub models: Vec<String>,
+    /// The ids in `models` that serve `/v1/embeddings`. They stay in
+    /// `models` too, since hosts detach by those ids.
+    pub embedding_models: Vec<String>,
     pub image_models: Vec<String>,
     pub audio_models: Vec<String>,
     pub auth_enabled: bool,

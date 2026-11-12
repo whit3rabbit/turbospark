@@ -449,6 +449,8 @@ impl Lstm {
             }
             if step > 0 {
                 // h_pre = h_prev @ wh.T: wh [4H, H], h_prev [H].
+                // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
+                #[allow(clippy::needless_range_loop)]
                 for j in 0..4 * h {
                     let mut acc = 0.0f32;
                     let w_row = &self.wh[j * h..(j + 1) * h];
@@ -587,6 +589,9 @@ impl ResnetBlock {
     }
 }
 
+// Built once per model and held for its life, a handful of values. Boxing
+// the large variant would only add a pointer chase to every forward call.
+#[allow(clippy::large_enum_variant)]
 enum EncLayer {
     Conv(EncodecConv1d),
     Resnet(ResnetBlock),
@@ -594,6 +599,9 @@ enum EncLayer {
     Elu,
 }
 
+// Built once per model and held for its life, a handful of values. Boxing
+// the large variant would only add a pointer chase to every forward call.
+#[allow(clippy::large_enum_variant)]
 enum DecLayer {
     Conv(EncodecConv1d),
     ConvT(EncodecConvT1d),
@@ -1015,12 +1023,7 @@ impl Encodec {
             });
         }
         let bandwidth = bandwidth.unwrap_or(self.config.target_bandwidths[0]);
-        if !self
-            .config
-            .target_bandwidths
-            .iter()
-            .any(|&b| b == bandwidth)
-        {
+        if !self.config.target_bandwidths.contains(&bandwidth) {
             return Err(SpeechError::Input {
                 why: format!(
                     "bandwidth {bandwidth} not in {:?}",

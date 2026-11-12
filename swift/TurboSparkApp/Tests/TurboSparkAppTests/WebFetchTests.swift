@@ -1,7 +1,7 @@
 import XCTest
 @testable import TurboSparkApp
 
-final class WebFetchTests: XCTestCase {
+final class WebFetchTests: NetworkPolicyPinnedTestCase {
     override func setUp() {
         super.setUp()
         AppToolRegistry.webToolsEnabledProvider = nil

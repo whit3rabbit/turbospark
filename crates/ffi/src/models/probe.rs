@@ -88,6 +88,21 @@ pub(crate) fn probe_json(
     .to_string())
 }
 
+/// One pickable `.gguf`. Shared by `ts_repo_variants_json` and
+/// `ts_hub_check_json` so a host decodes both listings with one type.
+pub(super) fn variant_json(v: &catalog::GgufVariant) -> serde_json::Value {
+    json!({
+        "file": v.file,
+        // Null rather than 0 when Hugging Face reported no length: a
+        // 0-byte row sorts and reads as a tiny file, which is the
+        // opposite of "unknown".
+        "bytes": v.bytes,
+        "quantLabel": v.quant_label,
+        "ladderRank": v.ladder_rank,
+        "executable": v.executable,
+    })
+}
+
 /// The `.gguf` files a repository publishes, as JSON, best quality first.
 ///
 /// One Hugging Face API call and no header reads, so a GUI can fill a
@@ -101,16 +116,7 @@ pub(crate) fn repo_variants_json(repo: &str) -> Result<String, String> {
     Ok(json!({
         "repo": repo.repo,
         "revision": repo.revision,
-        "variants": found.variants.iter().map(|v| json!({
-            "file": v.file,
-            // Null rather than 0 when Hugging Face reported no length: a
-            // 0-byte row sorts and reads as a tiny file, which is the
-            // opposite of "unknown".
-            "bytes": v.bytes,
-            "quantLabel": v.quant_label,
-            "ladderRank": v.ladder_rank,
-            "executable": v.executable,
-        })).collect::<Vec<_>>(),
+        "variants": found.variants.iter().map(variant_json).collect::<Vec<_>>(),
         // Nonzero here is why a picker can be short or empty; say so rather
         // than letting it read as "this repository publishes no GGUF".
         "shardedSkipped": found.sharded_skipped,

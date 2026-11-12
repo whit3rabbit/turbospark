@@ -246,7 +246,15 @@ pub(crate) fn strided_extent(shape: &[usize], strides: &[isize]) -> Result<usize
             .checked_add((d - 1).checked_mul(s as usize).ok_or_else(overflow)?)
             .ok_or_else(overflow)?;
     }
-    Ok(max + 1)
+    max.checked_add(1).ok_or_else(overflow)
+}
+
+/// `strided_extent` in bytes. The sys.rs bounds checks compare this to the
+/// buffer size Core ML reports, so a wrapped product would pass them.
+pub(crate) fn strided_bytes(shape: &[usize], strides: &[isize], elem: usize) -> Result<usize> {
+    strided_extent(shape, strides)?
+        .checked_mul(elem)
+        .ok_or_else(overflow)
 }
 
 fn overflow() -> CoreMlError {
@@ -356,6 +364,17 @@ mod tests {
         assert!(strided_extent(&[2], &[-1]).is_err());
         assert_eq!(strided_extent(&[0, 5], &[5, 1]).unwrap(), 0);
         assert!(strided_extent(&[2, 3], &[3]).is_err());
+    }
+
+    #[test]
+    fn extent_and_bytes_refuse_overflow() {
+        // Largest offset is exactly usize::MAX, so "one past" must not wrap to 0.
+        let m = isize::MAX;
+        assert!(strided_extent(&[2, 2, 2], &[m, m, 1]).is_err());
+        // Extent fits in usize, but the byte count does not.
+        assert!(strided_bytes(&[2], &[m], 4).is_err());
+        assert_eq!(strided_bytes(&[2, 3], &[4, 1], 4).unwrap(), 28);
+        assert_eq!(strided_bytes(&[0, 3], &[3, 1], 4).unwrap(), 0);
     }
 
     #[test]

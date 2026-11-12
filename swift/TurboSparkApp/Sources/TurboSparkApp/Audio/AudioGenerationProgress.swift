@@ -80,6 +80,48 @@ struct AudioGenerationProgress {
     }
 }
 
+/// The stages of a speech run, for the Voice Cloning progress card. The
+/// engines visit them in different orders (Qwen3 loads its speech model
+/// after preparing the reference), so a stage is done once it was visited
+/// and another is active, not because it sorts earlier.
+struct AudioSpeechRunProgress: Equatable, Sendable {
+    enum Stage: Int, CaseIterable, Sendable { case waiting, loadingModel, preparingReference, generating, saving }
+    enum StageState: Equatable, Sendable { case pending, active, done }
+    private(set) var stage: Stage = .waiting
+    private(set) var reached: Set<Stage> = [.waiting]
+    let startedAt: Date
+
+    init(now: Date = Date()) { startedAt = now }
+
+    /// Late engine events after saving began cannot move the card back.
+    /// A setup stage after generating means generation had not begun: the
+    /// native worker's start ("running") precedes MegaTTS3's own reference
+    /// stage, and the card must not show speech as done before it exists.
+    mutating func enter(_ next: Stage) {
+        guard stage != .saving else { return }
+        if next.rawValue < Stage.generating.rawValue { reached.remove(.generating) }
+        stage = next; reached.insert(next)
+    }
+
+    func state(of candidate: Stage) -> StageState {
+        if candidate == stage { return .active }
+        return reached.contains(candidate) ? .done : .pending
+    }
+
+    /// The stage an engine progress event names, from the Swift and Rust
+    /// speech providers' stage strings. "running" is the native worker
+    /// starting the job after the model loaded and the reference was read;
+    /// Fish Audio Drama 3 reports nothing else until its audio arrives.
+    static func stage(forProgress name: String) -> Stage? {
+        switch name {
+        case "Preparing reference audio", "reference": return .preparingReference
+        case "Loading speech model", "verifying": return .loadingModel
+        case "Generating speech", "diffusion", "diffusion_step", "synthesis", "running": return .generating
+        default: return nil
+        }
+    }
+}
+
 extension AudioWorkspaceController {
     func receiveProgress(_ update: AudioProgress, runID: UUID, token: UUID) {
         guard valid(token), isBusy, activeRunID == runID else { return }
@@ -89,12 +131,21 @@ extension AudioWorkspaceController {
             status = generation.title
             progress = generation.fraction
         } else {
-            switch update.stage {
-            case "Preparing reference audio": status = AppStrings.localized("Preparing reference audio")
-            case "Loading speech model": status = AppStrings.localized("Loading speech model")
-            case "Generating speech", "diffusion": status = AppStrings.localized("Generating speech")
-            case "reference": status = AppStrings.localized("Preparing reference audio")
-            default: status = update.stage
+            // Stage names are engine ids ("running", "diffusion_step"), not
+            // text for the user, so none reaches the status strip as is. An
+            // id with no title, or a speech id outside a speech run, reads as
+            // generic work.
+            let stage = speechRun == nil ? nil : AudioSpeechRunProgress.stage(forProgress: update.stage)
+            if let stage { speechRun?.enter(stage) }
+            if update.stage == "verifying" {
+                status = AppStrings.localized("Verifying")
+            } else {
+                switch stage {
+                case .preparingReference?: status = AppStrings.localized("Preparing reference audio")
+                case .loadingModel?: status = AppStrings.localized("Loading speech model")
+                case .generating?: status = AppStrings.localized("Generating speech")
+                case .waiting?, .saving?, nil: status = AppStrings.localized("Processing")
+                }
             }
             progress = update.total.flatMap { $0 > 0 ? Double(max(0, min($0, update.completed))) / Double($0) : nil }
         }

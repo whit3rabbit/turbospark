@@ -5,6 +5,7 @@ import SwiftUI
 /// Project-scoped MCP server manager and auto-detection importer.
 @MainActor
 public struct ProjectMcpSettingsSheet: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     let projectID: UUID
     let onDismiss: () -> Void
@@ -125,6 +126,7 @@ public struct ProjectMcpSettingsSheet: View {
             Spacer()
             Button { onDismiss() } label: { Text("Close", bundle: .module) }
                 .appAction(.quiet)
+                .keyboardShortcut(.cancelAction)
                 .foregroundStyle(.appSecondary)
         }
         .padding(.horizontal, 20)
@@ -133,7 +135,9 @@ public struct ProjectMcpSettingsSheet: View {
 
     private var inheritedServersSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Inherited user servers", bundle: .module).themedFont(.base, weight: .semibold)
+            Text("Inherited user servers", bundle: .module)
+                .themedFont(.base, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
             ForEach(model.globalMcpServers) { server in
                 HStack {
                     Text(server.name).themedFont(.base)
@@ -156,6 +160,7 @@ public struct ProjectMcpSettingsSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Configured Project Servers (\(projectServers.count))", bundle: .module)
                         .themedFont(.small, weight: .semibold)
+                        .accessibilityAddTraits(.isHeader)
                     Text("Active servers are available to the assistant during turns in this project.", bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
@@ -171,15 +176,10 @@ public struct ProjectMcpSettingsSheet: View {
             }
 
             if projectServers.isEmpty {
-                VStack(spacing: 8) {
-                    Text("No project MCP servers configured.", bundle: .module)
-                        .themedFont(.small)
-                        .foregroundStyle(.appSecondary)
-                }
-                .padding(20)
-                .frame(maxWidth: .infinity)
-                .background(Color.secondary.opacity(0.04))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                AppEmptyState(
+                    systemImage: "server.rack",
+                    title: Text("No project MCP servers configured.", bundle: .module)
+                )
             } else {
                 VStack(spacing: 8) {
                     ForEach(projectServers) { server in
@@ -224,6 +224,7 @@ public struct ProjectMcpSettingsSheet: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Permission Rules", bundle: .module)
                     .themedFont(.small, weight: .semibold)
+                    .accessibilityAddTraits(.isHeader)
                 Text("`mcp__server` covers every tool on a server; `mcp__server__tool` covers one. Deny also hides the tool from the assistant.", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
@@ -236,8 +237,8 @@ public struct ProjectMcpSettingsSheet: View {
                     .foregroundStyle(.appSecondary)
                     .padding(10)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.secondary.opacity(0.06))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .background(.appSurface)
+                    .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             } else {
                 VStack(spacing: 4) {
                     ForEach(permissions?.mcpAllowRules ?? [], id: \.self) { rule in
@@ -254,12 +255,12 @@ public struct ProjectMcpSettingsSheet: View {
     private func ruleRow(_ rule: String, isAllow: Bool) -> some View {
         HStack(spacing: 8) {
             Image(systemName: isAllow ? "checkmark.circle.fill" : "nosign")
-                .foregroundStyle(isAllow ? Color.green : Color.red)
+                .foregroundStyle(isAllow ? AnyShapeStyle(theme.accent) : AnyShapeStyle(AppAttention.color))
                 .themedFont(.small)
             Text(rule)
                 .themedCode(.small)
             Spacer()
-            AppIconButton("trash", label: Text("Remove this rule", bundle: .module), role: .destructive) {
+            AppIconButton("minus.circle", label: Text("Remove this rule", bundle: .module)) {
                 removeRule(rule)
             }
             .appAction(.quiet, size: .small)
@@ -267,8 +268,8 @@ public struct ProjectMcpSettingsSheet: View {
         }
         .padding(.vertical, 4)
         .padding(.horizontal, 8)
-        .background(.appSurface.opacity(0.8))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .background(.appSurface)
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
     }
 
     private func removeRule(_ rule: String) {

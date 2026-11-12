@@ -19,6 +19,18 @@ enum AppMetrics {
     static let cardRadius: CGFloat = 10
     /// Gap between actions in a header row.
     static let actionSpacing: CGFloat = 8
+
+    /// The type role `appAction` and `appMenuAction` give a control's label
+    /// at `size`, or nil to inherit. Small and mini follow AppKit's own
+    /// control fonts (11 and 9pt against a 13pt regular), which sit closest
+    /// to `.small` and `.tiny` on the scale.
+    static func labelFontStep(for size: ControlSize) -> AppFontStep? {
+        switch size {
+        case .mini: return .tiny
+        case .small: return .small
+        default: return nil
+        }
+    }
 }
 
 /// The four action treatments. Pick by CONSEQUENCE, not by looks: one
@@ -42,13 +54,13 @@ extension View {
     func appAction(_ role: AppActionRole, size: ControlSize = .regular) -> some View {
         switch role {
         case .primary:
-            buttonStyle(.borderedProminent).controlSize(size)
+            buttonStyle(.borderedProminent).controlSize(size).appControlLabelFont(size)
         case .secondary:
-            buttonStyle(.bordered).controlSize(size)
+            buttonStyle(.bordered).controlSize(size).appControlLabelFont(size)
         case .quiet:
-            buttonStyle(.borderless).controlSize(size)
+            buttonStyle(.borderless).controlSize(size).appControlLabelFont(size)
         case .destructive:
-            buttonStyle(.bordered).controlSize(size).foregroundStyle(.red)
+            buttonStyle(.bordered).controlSize(size).appControlLabelFont(size).foregroundStyle(.appDanger)
         }
     }
 
@@ -59,7 +71,23 @@ extension View {
         menuStyle(.button)
             .buttonStyle(.bordered)
             .controlSize(size)
+            .appControlLabelFont(size)
             .fixedSize()
+    }
+
+    /// The label font a reduced control size needs. A native button keeps
+    /// its small bezel height but draws its label in the inherited font, and
+    /// every window sets the base UI font, so small row actions drew
+    /// base-size text that overflowed the bezel (Choose Model Folder in the
+    /// inspector). Regular and large keep inheriting. A font set inside the
+    /// label at the call site still wins, being nearer the text.
+    @ViewBuilder
+    fileprivate func appControlLabelFont(_ size: ControlSize) -> some View {
+        if let step = AppMetrics.labelFontStep(for: size) {
+            themedFont(step)
+        } else {
+            self
+        }
     }
 
     /// The shared surface for a multi-line `TextEditor` or code area: the
@@ -261,6 +289,8 @@ struct AppEmptyState<Actions: View>: View {
         self.actions = actions
     }
 
+    @Environment(\.appTheme) private var theme
+
     var body: some View {
         VStack(spacing: 12) {
             Image(systemName: systemImage)
@@ -277,7 +307,7 @@ struct AppEmptyState<Actions: View>: View {
                     .foregroundStyle(.appSecondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 440)
+                    .frame(maxWidth: (440 * AppMetrics.textScale(theme)).rounded())
             }
             HStack(spacing: AppMetrics.actionSpacing) { actions() }
                 .padding(.top, 4)
@@ -293,8 +323,14 @@ extension AppEmptyState where Actions == EmptyView {
     }
 }
 
+/// The state a status chip reports.
+enum AppChipIndicator: Equatable {
+    case on
+    case off
+}
+
 /// The chip every composer-style surface uses (chat composer toggles,
-/// Humanize's options): radius 8, a faint fill that deepens on hover, and an
+/// Humanize's options): radius 7, a faint fill that deepens on hover, and an
 /// accent tint while on. One definition so the chat and Humanize chips stop
 /// drifting apart, which the 2026-10-11 audit found they had.
 ///
@@ -303,29 +339,49 @@ extension AppEmptyState where Actions == EmptyView {
 /// selected trait for toggles.
 struct AppChip: View {
     let label: Text
-    let systemImage: String
+    let systemImage: String?
     var isOn = false
     var iconOnly = false
+    /// A status dot ahead of the icon, for a chip that reports a state beside
+    /// toggling it (the composer's Tools chip). Nil draws nothing, so every
+    /// other chip is unchanged.
+    var indicator: AppChipIndicator?
     let action: () -> Void
 
     @Environment(\.appTheme) private var theme
     @Environment(\.isEnabled) private var isEnabled
     @State private var hovered = false
 
-    init(_ label: Text, systemImage: String, isOn: Bool = false, iconOnly: Bool = false, action: @escaping () -> Void) {
+    init(
+        _ label: Text, systemImage: String? = nil, isOn: Bool = false, iconOnly: Bool = false,
+        indicator: AppChipIndicator? = nil, action: @escaping () -> Void
+    ) {
         self.label = label
         self.systemImage = systemImage
         self.isOn = isOn
         self.iconOnly = iconOnly
+        self.indicator = indicator
         self.action = action
     }
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 5) {
-                Image(systemName: systemImage)
-                    .themedFont(.tiny, weight: .medium)
-                    .accessibilityHidden(true)
+                if let indicator {
+                    // A filled dot for on and a slashed ring for off: the two
+                    // differ in shape as well as hue (`DESIGN.md`: status is
+                    // never color alone). Hidden from VoiceOver because the
+                    // caller reports the state as the chip's value.
+                    Image(systemName: indicator == .on ? "circle.fill" : "circle.slash")
+                        .themedFont(.tiny, weight: .semibold)
+                        .foregroundStyle(indicator == .on ? theme.success : theme.danger)
+                        .accessibilityHidden(true)
+                }
+                if let systemImage, !systemImage.isEmpty {
+                    Image(systemName: systemImage)
+                        .themedFont(.tiny, weight: .medium)
+                        .accessibilityHidden(true)
+                }
                 if !iconOnly {
                     label.themedFont(.small, weight: .medium)
                 }
@@ -333,14 +389,17 @@ struct AppChip: View {
             .lineLimit(1)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
-            .foregroundStyle(isOn ? Color.primary : Color.secondary)
+            .foregroundStyle(isOn ? theme.foreground : theme.secondaryText)
             .background(
-                isOn ? theme.accent.opacity(0.14) : Color.primary.opacity(hovered && isEnabled ? 0.08 : 0.04),
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                isOn ? theme.selection : (hovered && isEnabled ? theme.elevatedSurface : theme.surface),
+                in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             .overlay {
-                if isOn {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(theme.accent.opacity(0.3), lineWidth: 0.5)
+                if isOn && theme.isHighContrast {
+                    RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                        .stroke(theme.accent, lineWidth: 1)
+                } else {
+                    RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                        .stroke(theme.border, lineWidth: 1)
                 }
             }
             .opacity(isEnabled ? 1 : 0.45)

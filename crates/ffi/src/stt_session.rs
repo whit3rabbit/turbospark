@@ -35,8 +35,12 @@ impl SttRunner {
     fn open(model_dir: &Path) -> Result<Self, String> {
         // Core ML exports carry no `model_type`; they are recognized by
         // their file layout before config.json is read.
-        if detect_layout(model_dir) == Some(CoreMlLayout::ParakeetTdt) {
-            let opts = ParakeetCoreMlOptions::from_env()?;
+        let layout = detect_layout(model_dir);
+        if layout == Some(CoreMlLayout::ParakeetUnified) {
+            return Err(runtime::native_audio::UNIFIED_IS_STREAMING_ONLY.into());
+        }
+        if layout == Some(CoreMlLayout::ParakeetTdt) {
+            let opts = ParakeetCoreMlOptions::for_model(model_dir)?;
             return Ok(Self::ParakeetCoreMl(Arc::new(ParakeetCoreMl::open(
                 model_dir, &opts,
             )?)));

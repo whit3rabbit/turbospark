@@ -18,12 +18,12 @@ struct ChatSidebarProjectsSectionView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            HStack {
+            AppAdaptiveHeader {
                 Text("Projects", bundle: .module)
                     .font(theme.ui(.tiny, weight: .semibold))
                     .foregroundStyle(.appSecondary)
                     .accessibilityAddTraits(.isHeader)
-                Spacer()
+            } actions: {
                 Button {
                     projectBeingEdited = nil
                     showingProjectSettingsSheet = true
@@ -67,7 +67,7 @@ struct ChatSidebarProjectsSectionView: View {
                 Text("Cancel", bundle: .module)
             }
         } message: { project in
-            Text(verbatim: project.name)
+            Text("The project '\(project.name)' will be removed. This cannot be undone.", bundle: .module)
         }
     }
 
@@ -97,7 +97,7 @@ struct ChatSidebarProjectsSectionView: View {
         .buttonStyle(.plain)
         .background(
             isSelected ? theme.selection : Color.clear,
-            in: .rect(cornerRadius: 8)
+            in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
         )
         .help(Text("All Chats", bundle: .module))
         .accessibilityLabel(Text("All Chats", bundle: .module))
@@ -204,7 +204,7 @@ struct ChatSidebarProjectsSectionView: View {
         }
         .background(
             isSelected ? theme.selection : Color.clear,
-            in: .rect(cornerRadius: 8)
+            in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
         )
         .onHover { isHovering in
             hoveredProjectID = isHovering ? project.id : nil

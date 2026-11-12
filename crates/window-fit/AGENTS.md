@@ -1,6 +1,8 @@
 # turbospark-window-fit
 
-This crate owns deterministic context-window and memory-fit calculations.
+This crate owns the deterministic conversation-window fit: dropping the
+oldest eligible turns until a caller-measured conversation length is under
+a caller-supplied bound.
 
 ## Read first
 
@@ -10,11 +12,11 @@ This crate owns deterministic context-window and memory-fit calculations.
 ## Rules
 
 - Keep calculations deterministic and independent of model execution.
-- A missing physical-memory probe means unavailable data, not zero memory.
-- Distinguish trained context, explicit context, KV cost, resident weights,
-  expert slots, and reserve. Do not estimate fit from on-disk size alone.
-- Preserve refusal messages and arithmetic so users can understand why a
-  context window does not fit.
+- The length measurement is caller-supplied. The crate never tokenizes and
+  never inspects turn contents or roles.
+- An outcome still at or over the bound is a normal result, not an error.
+  Report the measured length and room flag so callers can explain why a
+  conversation does not fit.
 
 ## Checks
 

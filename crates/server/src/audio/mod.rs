@@ -47,6 +47,12 @@ pub(crate) const MAX_AUDIO_UPLOAD_BYTES: usize = 128 * 1024 * 1024;
 /// Concurrent realtime WebSockets.
 const MAX_REALTIME_SOCKETS: usize = 8;
 
+/// Concurrent upload decodes. Each decode of a full-size upload transiently
+/// holds up to 4x `MAX_AUDIO_UPLOAD_BYTES` of f32 plus the resampled copy, so
+/// without a gate a handful of parallel uploads commit several GiB at once.
+/// Excess requests wait for a slot rather than fail.
+const MAX_CONCURRENT_DECODES: usize = 2;
+
 /// Longest decoded clip a transcription request may carry. Qwen3-ASR refuses
 /// past 20 minutes on its own; this is the server-wide ceiling.
 pub(crate) const MAX_TRANSCRIBE_SECONDS: f64 = 30.0 * 60.0;
@@ -97,7 +103,10 @@ pub struct AudioModelInfo {
 
 /// Families whose speech request carries `reference_audio`.
 pub(crate) fn clones_voices(family: &str) -> bool {
-    matches!(family, "megatts3" | "qwen3_tts")
+    matches!(
+        family,
+        "megatts3" | "omnivoice" | "qwen3_tts" | "fish_drama3"
+    )
 }
 
 /// Mono 16 kHz f32 PCM, already decoded and resampled by the route.
@@ -141,6 +150,12 @@ pub struct SpeechRequest {
     pub p_w: Option<f32>,
     /// Similarity guidance weight (MegaTTS3).
     pub t_w: Option<f32>,
+    /// Drama 3 sampler settings. Unset keeps the model's reference recipe.
+    pub temperature: Option<f32>,
+    pub top_p: Option<f32>,
+    pub top_k: Option<usize>,
+    /// Drama 3: an upper bound on one chunk's frames.
+    pub max_frames: Option<usize>,
 }
 
 /// Synthesized audio arriving one segment at a time. Dropping the receiver
@@ -156,6 +171,8 @@ pub struct GenerateRequest {
     pub caption: String,
     pub lyrics: String,
     pub duration_seconds: Option<f64>,
+    pub max_frames: Option<usize>,
+    pub context_size: Option<usize>,
     pub steps: Option<usize>,
     pub seed: Option<u64>,
 }
@@ -227,6 +244,8 @@ pub(crate) struct AudioState {
     pub(crate) metrics: Arc<AudioMetrics>,
     /// Open realtime sockets are capped; each holds up to 300 s of PCM.
     pub(crate) realtime_slots: Arc<tokio::sync::Semaphore>,
+    /// Bounds concurrent WAV decodes; see [`MAX_CONCURRENT_DECODES`].
+    pub(crate) decode_slots: Arc<tokio::sync::Semaphore>,
 }
 
 impl AudioState {
@@ -236,6 +255,7 @@ impl AudioState {
             jobs: Arc::new(JobStore::default()),
             metrics: Arc::new(AudioMetrics::default()),
             realtime_slots: Arc::new(tokio::sync::Semaphore::new(MAX_REALTIME_SOCKETS)),
+            decode_slots: Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_DECODES)),
         }
     }
 

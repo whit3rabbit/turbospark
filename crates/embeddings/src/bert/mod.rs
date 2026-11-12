@@ -316,6 +316,15 @@ fn read_max_seq_length(dir: &Path, config: &BertConfig) -> Result<usize> {
                     .as_u64()
                     .filter(|&n| n > 0)
                     .ok_or_else(|| bad_config("max_seq_length", "not a positive integer"))?;
+                // Same bound as the other families: a cut past the
+                // position table never truncates, so a long text is
+                // tokenized in full and then fails the forward.
+                if n > limit as u64 {
+                    return Err(bad_config(
+                        "max_seq_length",
+                        format!("{n} outside 1..=max_position_embeddings {limit}"),
+                    ));
+                }
                 return Ok(n as usize);
             }
         }

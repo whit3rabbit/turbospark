@@ -42,4 +42,11 @@ final class CapabilitiesTests: XCTestCase {
         XCTAssertFalse(TurboSparkCapabilities.kvQuantSupported(fullHeadDim: 128, layerMask: [1, 300], numLayers: 2))
         XCTAssertFalse(TurboSparkCapabilities.kvQuantSupported(fullHeadDim: 128, layerMask: [-1, 1], numLayers: 2))
     }
+
+    func testAnePrefillCapabilityAndChipDetection() {
+        XCTAssertTrue(TurboSparkCapabilities.family("qwen35").anePrefillSupported)
+        XCTAssertFalse(TurboSparkCapabilities.family("gemma4").anePrefillSupported)
+        XCTAssertFalse(TurboSparkCapabilities.family("qwen3moe").anePrefillSupported)
+        _ = TurboSparkCapabilities.chipSupportsAnePrefill
+    }
 }

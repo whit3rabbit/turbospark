@@ -483,6 +483,12 @@ pub fn family_dispatches_steering(family: model_io::ModelFamily) -> bool {
         // the wrong side of it would steer a per-stream mix rather than the
         // stream. Decide it with the flow, not ahead of it.
         F::Qwen4Exp => false,
+        // Flint's decode flow carries no steering hook yet; gate stays shut.
+        F::Flint => false,
+        // No decode flow yet, so no layer loop for a hook to sit in.
+        F::Lfm3 => false,
+        // Its flow carries no steering hook yet; gate stays shut.
+        F::UnlimitedOcr2 => false,
     }
 }
 
@@ -509,8 +515,9 @@ pub fn steering_unsupported_reason(family: model_io::ModelFamily) -> Option<Stri
          per-token), gpt-oss, museGlimmer, and spark2_5. Unwired: \
          DeepSeek-V4-Flash (no decode flow exists to hook), deepseek2 (the flow \
          carries the hooks; the gate stays shut until a real MLA steering gate \
-         runs), and qwen4_exp (its residual is hc_count streams wide, \
-         so the boundary is a different shape)"
+         runs), qwen4_exp (its residual is hc_count streams wide, \
+         so the boundary is a different shape), and flint (its decode flow \
+         carries no steering hook yet)"
     ))
 }
 

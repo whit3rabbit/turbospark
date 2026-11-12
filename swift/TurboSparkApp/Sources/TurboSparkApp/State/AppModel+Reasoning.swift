@@ -86,20 +86,19 @@ extension AppModel {
     }
 
     /// Updates the current reasoning effort level and saves it as the preferred default for the active model.
-    /// **KEYED ON `path`, NOT ON `alias`** (state#96, which is state#14's
-    /// rule arriving in a third place). `??` takes the alias whenever there
-    /// is one, so the path arm was dead code -- and an alias is not unique
-    /// once a scanned LM Studio or custom-folder row exists, so two installs
-    /// sharing a name shared one remembered reasoning level.
-    /// `restoreReasoningPreference` still READS the alias as a legacy
-    /// fallback, so nobody's existing preference is forgotten, and
-    /// `deleteModel` prunes the entry.
+    /// **KEYED ON THE `install_id`** (task 5.5, requirement 8.1), in
+    /// `ModelOrganizationStore` beside the model's other metadata. It was the
+    /// path (state#96, because an alias is not unique once a scanned row
+    /// exists) and the path is not stable: a move or a drive reconnecting under
+    /// another name changed it and the level was lost. `mergeScannedModels`
+    /// uniquifies a scanned row's alias, so the id is unique within the list.
+    /// `restoreReasoningPreference` still READS the legacy path and alias
+    /// entries in `modelReasoningDefaults` and re-keys them, so nobody's
+    /// existing preference is forgotten, and `deleteModel` prunes the entry.
     public func setReasoning(_ level: GenerateOptions.Reasoning) {
         self.reasoning = level
-        if let path = selected?.path, !path.isEmpty {
-            modelReasoningDefaults[path] = level.rawValue
-        } else if let alias = selected?.alias {
-            modelReasoningDefaults[alias] = level.rawValue
+        if let selected {
+            ModelOrganizationStore.shared.setReasoningDefault(level.rawValue, for: selected)
         }
         persistSettings()
         updateTokenEstimate()

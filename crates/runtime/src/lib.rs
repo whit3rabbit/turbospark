@@ -5,6 +5,10 @@
 #![forbid(unsafe_code)]
 
 mod config;
+mod dflash_tree;
+mod draft_lattice;
+#[cfg(target_os = "macos")]
+pub mod embedding_probe;
 #[cfg(target_os = "macos")]
 pub mod encoder;
 mod error;
@@ -14,11 +18,16 @@ mod families;
 #[cfg(target_os = "macos")]
 mod ffn_hist;
 #[cfg(target_os = "macos")]
+mod hidden_trunk;
+#[cfg(target_os = "macos")]
 mod kernel_warmup;
 #[cfg(target_os = "macos")]
 mod kv_prefix;
 #[cfg(target_os = "macos")]
 mod kv_write;
+mod lab_hooks;
+#[cfg(target_os = "macos")]
+mod model_dir_read;
 #[cfg(target_os = "macos")]
 mod moe_prefill_pipeline;
 mod pacing;
@@ -59,11 +68,14 @@ mod session_pool;
 #[cfg(target_os = "macos")]
 mod speculation_policy;
 mod speculative;
+mod speculative_adaptive;
 #[cfg(target_os = "macos")]
 mod startup;
 #[cfg(target_os = "macos")]
 mod steering;
 mod token_sink;
+#[cfg(target_os = "macos")]
+mod turn_snapshot;
 mod turn_stream;
 #[cfg(target_os = "macos")]
 pub mod vision;
@@ -79,6 +91,10 @@ pub use qwen3_asr::Qwen3AsrRunner;
 pub use whisper::{WhisperProgress, WhisperRunner, WhisperSegment, WhisperTranscription};
 #[cfg(target_os = "macos")]
 pub mod moonshine;
+#[cfg(target_os = "macos")]
+pub mod multitalker_metal;
+#[cfg(target_os = "macos")]
+pub mod nemotron_diar_metal;
 #[cfg(target_os = "macos")]
 pub mod qwen3_asr;
 #[cfg(target_os = "macos")]
@@ -98,25 +114,37 @@ pub mod qwen3_asr_metal;
 // this is where a reader of the decode engine expects to find them named.
 #[cfg(target_os = "macos")]
 pub use model_io::{
-    committed_breakdown, committed_breakdown_with_residency, committed_bytes, gdn_state_bytes,
-    kv_bytes_for_context, kv_bytes_for_context_with, largest_context_within,
-    largest_context_within_with, resolve_max_context, resolve_max_context_with, session_pool_bytes,
-    session_pool_bytes_with, CommittedBytes, ContextCap, ContextFloorUnmet, ContextOverCap,
-    ContextPlan, ContextRefused, ContextTooLarge, ExpertCacheSlots, ExpertResidency, GuardBudget,
-    KvQuant, LoadGuard, LoadPolicy, MaxContext, ResolvedExpertResidency, CONTEXT_BUDGET_FRACTION,
-    CONTEXT_GRANULARITY, CONTEXT_RESERVE_BYTES, HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES,
-    MAX_SUPPORTED_CONTEXT,
+    committed_breakdown, committed_breakdown_with_residency, committed_breakdown_with_wiring,
+    committed_bytes, gdn_state_bytes, kv_bytes_for_context, kv_bytes_for_context_with,
+    largest_context_within, largest_context_within_with, resolve_max_context,
+    resolve_max_context_with, session_pool_bytes, session_pool_bytes_with, CommittedBytes,
+    ContextCap, ContextFloorUnmet, ContextOverCap, ContextPlan, ContextRefused, ContextTooLarge,
+    ExpertCacheSlots, ExpertResidency, ExpertSlotWiring, GuardBudget, KvQuant, LoadGuard,
+    LoadPolicy, MaxContext, ResolvedExpertResidency, CONTEXT_BUDGET_FRACTION, CONTEXT_GRANULARITY,
+    CONTEXT_RESERVE_BYTES, HEADROOM_FRACTION, HEADROOM_RESERVE_BYTES, MAX_SUPPORTED_CONTEXT,
 };
 
+#[cfg(target_os = "macos")]
+pub use dflash_tree::{
+    dflash_best_first_tree, dflash_tree_accept, dflash_tree_slot_parents, DflashTreeNode,
+};
+pub use draft_lattice::DflashLattice;
 pub use error::RuntimeError;
 #[cfg(target_os = "macos")]
+pub use families::qwen::{chip_is_m4_or_newer, hardware_supports_ane_prefill, AnePrefillMode};
+/// Whether this runtime was built with the `ane-prefill` feature. A host asks
+/// here rather than reading its own feature flag, because cargo feature
+/// unification can turn the runtime's on without the host's.
+pub const ANE_PREFILL_BUILT: bool = cfg!(feature = "ane-prefill");
 pub use families::qwen::{
-    install_has_dflash, install_has_mtp_head, DflashDraftPolicy, DraftPolicies, MtpDraftPolicy,
-    DFLASH_BLOCK, DFLASH_SERVING_BLOCK, MOE_SPECULATION_BLOCKER_MARKER,
-    VISION_SPECULATION_BLOCKER_MARKER,
+    dflash_serving_block, install_has_dflash, install_has_mtp_head, DflashDraftPolicy,
+    DraftPolicies, MtpDraftPolicy, DFLASH_BLOCK, DFLASH_SERVING_BLOCK, DFLASH_SERVING_BLOCK_TILE,
+    MOE_SPECULATION_BLOCKER_MARKER, VISION_SPECULATION_BLOCKER_MARKER,
 };
 #[cfg(target_os = "macos")]
 pub use gpu::MetalCompilationStats;
+#[cfg(target_os = "macos")]
+pub use hidden_trunk::{HiddenTrunk, PrefixSnapshot, TrunkRow};
 pub use power::{
     low_power_mode_enabled, memory_cap, memory_pressure, physical_memory, rate_control_for,
     recommended_max_working_set, resolve_profile, stepped_cap, thermal_cap, thermal_level,
@@ -136,7 +164,11 @@ pub use real_forward::{
     dispatch_profile_report, PhaseCounters, RealForwardError, RealForwardRunner, RollbackPoint,
 };
 #[cfg(target_os = "macos")]
-pub use real_forward_init::{resolve_expert_residency, resolve_expert_residency_for_install};
+pub use real_forward_init::{
+    effective_expert_slot_wiring, mapped_residency_refusal, mapped_residency_supported,
+    resolve_expert_residency, resolve_expert_residency_for_install, set_expert_slot_wiring,
+    ExpertSlotWiringOutcome,
+};
 #[cfg(target_os = "macos")]
 pub use startup::{ExpertPrefetchStats, StartupStats};
 // The drafter/speculation policy, shared by `turbospark-check` and
@@ -149,9 +181,11 @@ pub use speculation_policy::{
     SpeculationPlan, SpeculativeDrafter,
 };
 pub use speculative::{
-    run_raw_completion_speculative, run_raw_completion_speculative_cancellable,
-    DEFAULT_SPECULATION_BLOCK,
+    run_raw_completion_speculative, run_raw_completion_speculative_adaptive,
+    run_raw_completion_speculative_adaptive_cancellable,
+    run_raw_completion_speculative_cancellable, DEFAULT_SPECULATION_BLOCK,
 };
+pub use speculative_adaptive::{AdaptiveDepth, AdaptiveParams};
 #[cfg(target_os = "macos")]
 pub use steering::{family_dispatches_steering, SteeringPolicy, SteeringVector, MAX_STEER_ROWS};
 pub use turn_stream::{TurnEvent, TurnSplitter};
@@ -161,11 +195,19 @@ pub use turn_stream::{TurnEvent, TurnSplitter};
 pub use foundation::TokenId;
 
 #[cfg(target_os = "macos")]
+pub mod fish_drama3;
+#[cfg(target_os = "macos")]
+pub mod fish_drama3_codec;
+#[cfg(target_os = "macos")]
+pub mod fish_drama3_tower;
+#[cfg(target_os = "macos")]
 pub mod kokoro;
 #[cfg(target_os = "macos")]
 pub mod megatts3;
 #[cfg(target_os = "macos")]
 pub mod music3;
+#[cfg(target_os = "macos")]
+pub mod omnivoice;
 #[cfg(target_os = "macos")]
 pub use kokoro::KokoroRunner;
 pub use music3::{DispatchStat, Music3Runner};
@@ -177,3 +219,6 @@ pub mod coreml;
 pub mod heavy;
 #[cfg(target_os = "macos")]
 pub mod native_audio;
+/// Unlimited-OCR-2 on Metal: a whole document read.
+#[cfg(target_os = "macos")]
+pub mod unlimited_ocr2_reader;

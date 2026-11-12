@@ -578,7 +578,6 @@ fn speaker_codes_outside_i32_are_refused_not_wrapped() {
     assert_eq!(ok.expect("in-range code parses").words[0].c1, vec![5]);
 
     let error = Speaker::from_json(&speaker_json_with_c1(serde_json::json!([4294967301i64])))
-        .err()
-        .expect("out-of-range code must be refused");
+        .expect_err("out-of-range code must be refused");
     assert!(error.to_string().contains("i32"), "{error}");
 }

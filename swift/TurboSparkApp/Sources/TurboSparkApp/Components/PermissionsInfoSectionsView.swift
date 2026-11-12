@@ -96,10 +96,15 @@ struct CommandGateSettingsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label { Text("Command Classifier Veto", bundle: .module) } icon: { Image(systemName: "terminal.fill") }
-                    .themedFont(.base, weight: .semibold)
-                Spacer()
+            AppAdaptiveHeader {
+                Label {
+                    Text("Command Classifier Veto", bundle: .module)
+                } icon: {
+                    Image(systemName: "terminal.fill")
+                }
+                .themedFont(.base, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
+            } actions: {
                 Toggle(isOn: $commandVetoEnabled) {
                     Text("Command Classifier Veto", bundle: .module)
                 }
@@ -120,7 +125,7 @@ struct CommandGateSettingsSection: View {
         .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
-                .stroke(.appBorder.opacity(0.4), lineWidth: 1)
+                .stroke(.appBorder, lineWidth: 1)
         )
     }
 }
@@ -138,6 +143,7 @@ struct PermissionsSecurityCallout: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("TurboSpark Safety & Sandbox Guarantee", bundle: .module)
                     .themedFont(.small, weight: .semibold)
+                    .accessibilityAddTraits(.isHeader)
                 Text("Model tools (`FileRead`, `FileWrite`, `FileEdit`, `Terminal`) operate under strict workspace containment checks (`resolveSecurePath`). High-risk operations (e.g., editing files outside project root, deleting directories, or executing destructive terminal commands) require manual user confirmation unless overridden in Project Settings.", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)

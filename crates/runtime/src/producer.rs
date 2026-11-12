@@ -59,6 +59,24 @@ pub trait LogitProducer {
         false
     }
 
+    /// Where this prompt's prefill should stop for one pass so the producer
+    /// can keep its state there for the next turn ([`Self::take_turn_snapshot`]),
+    /// given that `reused` leading tokens are already in the state. `None`,
+    /// the default, leaves the prefill's passes exactly as they were. Only a
+    /// producer that cannot rewind on its own needs this: the real runner on
+    /// a gated-DeltaNet model under `TURBOSPARK_GDN_TURN_SNAPSHOT`
+    /// (`crate::turn_snapshot`). An answer is always strictly between
+    /// `reused` and the prompt's length.
+    fn turn_snapshot_position(&self, _prompt_ids: &[TokenId], _reused: usize) -> Option<usize> {
+        None
+    }
+
+    /// Called by the generation loops when the prefill has fed exactly
+    /// `position` tokens, at the position [`Self::turn_snapshot_position`]
+    /// named and before anything past it. A producer that finds its state
+    /// not covering exactly `position` keeps nothing. Default no-op.
+    fn take_turn_snapshot(&mut self, _position: usize) {}
+
     /// Run one token at `position`, writing FP16 logits into `logits`
     /// (length == vocab size).
     fn produce(
@@ -164,6 +182,14 @@ pub trait SpeculativeProducer: LogitProducer {
         false
     }
 
+    /// The span the speculative loop hands [`Self::prefill_chunk_priming_drafter`]
+    /// at a time. The default is the runtime's default chunk; a producer
+    /// whose prefill only takes a faster path at wider micro-batches (the
+    /// ANE prefill split needs 512 rows or more) asks for more.
+    fn drafter_prefill_chunk(&self) -> usize {
+        foundation::DEFAULT_CHUNK_SIZE as usize
+    }
+
     /// One prompt chunk through the target's chunked prefill, priming the
     /// drafter over every position whose next token is known, the same
     /// pairs the token-at-a-time walk primes with [`Self::prime_drafter`].
@@ -223,6 +249,50 @@ pub trait SpeculativeProducer: LogitProducer {
         Err("this drafter is step-wise; drive it with draft_step".to_string())
     }
 
+    /// Nodes per TREE round (`TURBOSPARK_DFLASH_TREE`), or `None` when this
+    /// producer verifies chains only. A tree round replaces the chain's
+    /// draft and verify with [`Self::draft_tree`] / [`Self::verify_tree`]
+    /// and compacts the accepted path with [`Self::compact_tree`] before
+    /// the round-end helpers, which then run as for a chain.
+    fn tree_nodes(&self) -> Option<usize> {
+        None
+    }
+
+    /// A tree draft anchored at `anchor` (the token at `base`): `tree` gets
+    /// the nodes, parents before children, `tokens` each node's token.
+    fn draft_tree(
+        &mut self,
+        anchor: TokenId,
+        base: usize,
+        nodes: usize,
+        tree: &mut Vec<crate::DflashTreeNode>,
+        tokens: &mut Vec<TokenId>,
+    ) -> Result<(), String> {
+        let _ = (anchor, base, nodes, tree, tokens);
+        Err("this producer verifies chains only".to_string())
+    }
+
+    /// The tree verify: `feed[s]` at slot `s`, whose row continues from
+    /// `parent[s]`'s (`-1` at the anchor's slot 0). Row `s` of `logits` is
+    /// the chain verify's over slot `s`'s root path.
+    fn verify_tree(
+        &mut self,
+        feed: &[TokenId],
+        parent: &[i32],
+        base: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), String> {
+        let _ = (feed, parent, base, logits);
+        Err("this producer verifies chains only".to_string())
+    }
+
+    /// Moves the accepted path's slots (`path[0] == 0`, increasing) to rows
+    /// `0..path.len()`, where the chain's round-end helpers read them.
+    fn compact_tree(&mut self, base: usize, path: &[u32]) -> Result<(), String> {
+        let _ = (base, path);
+        Err("this producer verifies chains only".to_string())
+    }
+
     /// Move the drafter's cursor to `position`, where the accepted prefix
     /// ended.
     fn rewind_drafter(&mut self, position: usize) -> Result<(), String>;
@@ -258,6 +328,26 @@ pub trait SpeculativeProducer: LogitProducer {
     /// how much of it survived, so the loop reports it here after the round.
     /// Default no-op, for every producer without a real KV cache.
     fn record_committed(&mut self, _tokens: &[TokenId], _pos0: usize) {}
+
+    /// Fold the first `keep_rows` rows of the last verify into the target's
+    /// recurrent state. The round-end half of the LAZY verify tape
+    /// (`TURBOSPARK_GDN_LAZY_TAPE`): a verify that records lazily leaves the
+    /// state at the block start, and EVERY round -- full acceptance
+    /// included -- ends by folding exactly its committed rows. `keep_rows`
+    /// is the confirmed token plus every committed proposal, the same count
+    /// [`Self::rollback_retaining`] takes. A no-op by default and whenever
+    /// there is nothing pending (the eager path never defers; a partial
+    /// round's retaining rollback already folded its kept rows), so the
+    /// caller can invoke it unconditionally after the accept decision.
+    fn commit_pending(&mut self, _keep_rows: usize) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Discard any pending verify tape and rewind any speculative uncommitted
+    /// state to where the verify started. Default no-op for producers that do
+    /// not record a lazy tape. Called when an error occurs during a round
+    /// between `verify` and `commit_pending`.
+    fn discard_pending(&mut self) {}
 
     /// Whether [`Self::rollback_retaining`] can run: the producer records
     /// what each verify consumed and can replay an accepted prefix's

@@ -113,6 +113,8 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
     /// explicit width bypasses this and is sent (and refused, if wrong)
     /// unconditionally, the same as any other named request in this app.
     public let supportsKvQuant: Bool
+    /// Whether this model and host hardware support the ANE+Steel prefill split.
+    public let supportsAnePrefill: Bool
     public let hasLinearAttention: Bool
     public let supportsChunkedPrefill: Bool
     public let supportsReasoning: Bool
@@ -186,10 +188,30 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
         }
     }
 
+    /// Whether an install is a mixture-of-experts model: the manifest's own expert
+    /// count when it has one, else the families with a documented MoE architecture.
+    /// The one rule `resolve` and the load gate share, so the badge on a model and
+    /// the speed warning before loading it cannot disagree about what it is.
+    ///
+    /// Reads `manifest.json` from the install (memoized by mtime and size). For a
+    /// model whose manifest cannot be read, only the family can say.
+    static func isMoE(installedModel model: InstalledModel) -> Bool {
+        let facts = model.path.isEmpty ? ManifestFacts() : ManifestFactsCache.facts(forInstallPath: model.path)
+        return isMoE(manifestExperts: facts.experts, family: model.family)
+    }
+
+    static func isMoE(manifestExperts: Int?, family: String) -> Bool {
+        (manifestExperts ?? 0) > 1 || knownMoEFamilies.contains(family.lowercased())
+    }
+
     private static let knownMoEFamilies: Set<String> = [
         "gemma4", "qwen36", "qwen4exp", "qwen3moe", "qwen35moe", "gptoss", "mixtral",
         // deepseek2: 64 experts top-6 plus a fused shared expert.
         "deepseek2",
+        // flint: 256 routed experts top-6 plus one shared expert.
+        "flint",
+        // minimax_m2: routed MoE architecture.
+        "minimax_m2",
     ]
 
     /// True when `lowercasedPath` is a root or lies below one, matched on a path
@@ -240,6 +262,11 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
             fullHeadDim: arch["fullHeadDim"] as? Int,
             fullAttentionLayerMask: arch["fullAttentionLayerMask"] as? [Int],
             numLayers: arch["numLayers"] as? Int)
+    }
+
+    /// The install can use the prefill bank when the runner streams its experts.
+    static func supportsMoEPrefillBank(atInstallPath path: String) -> Bool {
+        !path.isEmpty && ManifestFactsCache.facts(forInstallPath: path).supportsMoEPrefillBank
     }
 
     // MARK: - Resolution
@@ -367,7 +394,7 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
         // has a documented MoE architecture for, matched EXACTLY against
         // the scanner-assigned `family` rather than the free-text alias a
         // side-loaded file can carry anything in.
-        let isMoE = (manifestExperts ?? 0) > 1 || Self.knownMoEFamilies.contains(lFamily)
+        let isMoE = Self.isMoE(manifestExperts: manifestExperts, family: lFamily)
 
         let routingType: RoutingType
         let routingDetails: String
@@ -404,9 +431,11 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
         // family table below is the estimate.
         let isSteeringReady =
             sessionInfo?.steering.supported ?? TurboSparkCapabilities.family(family).steeringSupported
+        let supportsAnePrefill =
+            sessionInfo?.anePrefill?.supported ?? (TurboSparkCapabilities.family(family).anePrefillSupported && TurboSparkCapabilities.chipSupportsAnePrefill)
 
         let hasLinearAttention = lAlias.contains("qwen36") || lFamily == "qwen36" || lFamily == "qwen4exp"
-        let supportsChunkedPrefill = lAlias.contains("gemma") || lFamily.contains("gemma") || lFamily.contains("llama") || lAlias.contains("mistral") || lFamily == "qwen4exp"
+        let supportsChunkedPrefill = lAlias.contains("gemma") || lFamily.contains("gemma") || lFamily.contains("llama") || lAlias.contains("mistral") || lFamily == "qwen4exp" || lFamily == "flint" || lAlias.contains("flint")
         let supportsReasoning = combined.contains("think") || combined.contains("reason") || combined.contains("harmony") || lAlias.contains("gptoss") || lAlias.contains("museglimmer") || lAlias.contains("deepseek") || lAlias.contains("qwen")
         let supportsToolCalls: Bool? = sessionInfo?.toolCalling.native
         let supportsVision = combined.contains("vision") || combined.contains("vlm") || combined.contains("mrope")
@@ -429,6 +458,7 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
             storageSource: source,
             isSteeringReady: isSteeringReady,
             supportsKvQuant: supportsKvQuant,
+            supportsAnePrefill: supportsAnePrefill,
             hasLinearAttention: hasLinearAttention,
             supportsChunkedPrefill: supportsChunkedPrefill,
             supportsReasoning: supportsReasoning,
@@ -458,6 +488,7 @@ struct ManifestFacts: Equatable {
     var experts: Int?
     var topK: Int?
     var supportsKvQuant = false
+    var supportsMoEPrefillBank = false
 
     /// Pure parse of the manifest bytes; an unreadable manifest yields the
     /// all-nil value, matching the old inline behaviour.
@@ -472,6 +503,7 @@ struct ManifestFacts: Equatable {
         facts.vocab = arch["vocabSize"] as? Int
         facts.experts = arch["numExperts"] as? Int
         facts.topK = arch["topKExperts"] as? Int
+        facts.supportsMoEPrefillBank = arch["family"] as? String == "qwen4exp" && (facts.experts ?? 0) > 1
         facts.supportsKvQuant = ModelFeatureDescriptor.kvQuantEligible(
             fullHeadDim: arch["fullHeadDim"] as? Int,
             fullAttentionLayerMask: arch["fullAttentionLayerMask"] as? [Int],

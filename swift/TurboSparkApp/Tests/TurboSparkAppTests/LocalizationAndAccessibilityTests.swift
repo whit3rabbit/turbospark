@@ -159,7 +159,7 @@ final class LocalizationAndAccessibilityTests: XCTestCase {
             "Copy message text", "Copy message", "Select active model", "Adjust reasoning effort",
             "User profile and appearance settings", "Copy or export table",
             "Select comparison branch or commit", "Share conversation", "Skill actions",
-            "Image actions", "Detect Model Libraries", "Move Store..."
+            "Image actions", "Detect Model Libraries"
         ]
 
         for key in requiredKeys {

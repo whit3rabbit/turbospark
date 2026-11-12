@@ -1,5 +1,6 @@
 import AVFoundation
 import AppKit
+import Combine
 import SwiftUI
 import TurboSpark
 import UniformTypeIdentifiers
@@ -24,6 +25,9 @@ struct AudioAPIPaneView: View {
     @State private var consent = false
 
     @State private var installedAudioModels: [AudioInstalledRecord] = []
+    /// Speech installs on a drive that is away (task 6.10): listed so the pane
+    /// does not read "install a model first", never offered for attaching.
+    @State private var offlineSpeechRows: [AudioOfflineInstalls.Row] = []
 
     private var supported: [AudioInstalledRecord] {
         installedAudioModels.filter { ["qwen3_tts", "kokoro", "megatts3"].contains($0.family) }
@@ -86,9 +90,20 @@ struct AudioAPIPaneView: View {
         .onAppear {
             refreshInstalled()
         }
+        .onReceive(installedPathsChanges) { _ in
+            refreshInstalled()
+        }
         .onDisappear {
             stopPlayback()
         }
+    }
+
+    /// Fires when the audio workspace learns of a delete, adopt or download, so a
+    /// deleted model leaves the attach list without leaving and reopening the pane.
+    /// The workspace is not built just to listen: until it exists nothing can change.
+    private var installedPathsChanges: AnyPublisher<[String: String], Never> {
+        guard model.audioWorkspaceCreated else { return Empty().eraseToAnyPublisher() }
+        return model.audioWorkspace.$installedPaths.dropFirst().removeDuplicates().eraseToAnyPublisher()
     }
 
     private var servingPanel: some View {
@@ -108,10 +123,13 @@ struct AudioAPIPaneView: View {
             .appAction(.primary, size: APIControlSize.panel)
             .disabled(model.server == nil || selected == nil || attached != nil || model.serverBusy)
         } content: {
-            if supported.isEmpty {
+            if supported.isEmpty && offlineSpeechRows.isEmpty {
                 Text("Install a supported Qwen3-TTS, Kokoro, or MegaTTS3 model in Audio Studio first.", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
+            }
+            ForEach(offlineSpeechRows, id: \.alias) { row in
+                offlineRow(row)
             }
             APIRowList {
                 if let attached {
@@ -133,6 +151,23 @@ struct AudioAPIPaneView: View {
                 APIRequestPreview(method: "POST", url: info.absoluteString + "/v1/audio/speech", example: exampleBody)
             }
         }
+    }
+
+    /// An install on a drive that is away: its name, a glyph and the statement.
+    /// Nothing here attaches it.
+    private func offlineRow(_ row: AudioOfflineInstalls.Row) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: row.glyph).foregroundStyle(.appSecondary).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: UntrustedText.display(row.alias))
+                    .themedFont(.small, weight: .medium)
+                Text(verbatim: row.statement())
+                    .themedFont(.small)
+                    .foregroundStyle(.appSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 
     private var testPanel: some View {
@@ -193,7 +228,7 @@ struct AudioAPIPaneView: View {
                 }
             }
             if let errorMessage {
-                Text(verbatim: errorMessage).foregroundStyle(.red).textSelection(.enabled)
+                Text(verbatim: errorMessage).foregroundStyle(.appDanger).textSelection(.enabled)
             }
         }
     }
@@ -228,6 +263,7 @@ struct AudioAPIPaneView: View {
         Task {
             if let report = try? AudioCatalog.installed() {
                 self.installedAudioModels = report.installed
+                self.offlineSpeechRows = AudioOfflineInstalls.offlineSpeechRows(in: report)
                 if selectedAlias.isEmpty {
                     selectedAlias = supported.first?.alias ?? ""
                 }

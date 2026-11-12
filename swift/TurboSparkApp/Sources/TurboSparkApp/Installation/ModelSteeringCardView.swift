@@ -6,11 +6,13 @@ import TurboSpark
 /// The existing Settings pane remains the expert surface. This card is the
 /// short path: choose the model, import a vector, enable it, then reload.
 struct ModelSteeringCardView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     let catalogEntry: CatalogEntry?
     let installedModel: InstalledModel?
 
     @State private var showingImport = false
+    @State private var showingExtract = false
 
     private var descriptor: ModelFeatureDescriptor {
         let sessionInfo: SessionInfo? = {
@@ -63,6 +65,11 @@ struct ModelSteeringCardView: View {
                 SteeringVectorImportSheet(model: model, installedModel: installedModel)
             }
         }
+        .sheet(isPresented: $showingExtract) {
+            if let installedModel {
+                SteeringTraitExtractSheet(model: model, installedModel: installedModel)
+            }
+        }
     }
 
     private var header: some View {
@@ -81,6 +88,7 @@ struct ModelSteeringCardView: View {
                 Text("Open Settings", bundle: .module)
             }
             .buttonStyle(.link)
+            .appLinkTint()
             .themedFont(.small)
         }
     }
@@ -115,6 +123,21 @@ struct ModelSteeringCardView: View {
 
             HStack(spacing: 8) {
                 Button {
+                    showingExtract = true
+                } label: {
+                    Label {
+                        Text("Extract from this model", bundle: .module)
+                    } icon: {
+                        Image(systemName: "wand.and.stars")
+                    }
+                }
+                .appAction(.secondary, size: .small)
+                .disabled(model.generating || model.opening)
+                .accessibilityHint(Text(
+                    "Captures this model's own activations against a built-in trait and creates a steering preset from them",
+                    bundle: .module))
+
+                Button {
                     showingImport = true
                 } label: {
                     Label {
@@ -138,6 +161,7 @@ struct ModelSteeringCardView: View {
                     Text("Manage local vectors", bundle: .module)
                 }
                 .buttonStyle(.link)
+                .appLinkTint()
                 .controlSize(.small)
             }
 
@@ -155,7 +179,7 @@ struct ModelSteeringCardView: View {
                 } icon: {
                     Image(systemName: "checkmark.circle.fill")
                 }
-                .foregroundStyle(.green)
+                .foregroundStyle(.appSuccess)
             } else {
                 Label {
                     Text("Steering is off", bundle: .module)
@@ -179,7 +203,7 @@ struct ModelSteeringCardView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .tint(.orange)
+                .tint(theme.warning)
             }
         }
     }
@@ -194,7 +218,7 @@ struct ModelSteeringCardView: View {
 
         return HStack(alignment: .top, spacing: 8) {
             Image(systemName: isEnabled ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(isEnabled ? Color.green : Color.secondary)
+                .foregroundStyle(isEnabled ? AnyShapeStyle(.appSuccess) : AnyShapeStyle(.appSecondary))
                 .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -203,7 +227,7 @@ struct ModelSteeringCardView: View {
                 Text(verbatim: preset.mode.menuLabel + " at " + String(format: "%.2g", preset.scale))
                     .foregroundStyle(.appSecondary)
                 Text(compatibility.summary)
-                    .foregroundStyle(compatibility.allowsEnabling ? Color.secondary : Color.red)
+                    .foregroundStyle(compatibility.allowsEnabling ? AnyShapeStyle(.appSecondary) : AnyShapeStyle(.appDanger))
                     .fixedSize(horizontal: false, vertical: true)
             }
 

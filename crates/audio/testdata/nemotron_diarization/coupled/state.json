@@ -1,0 +1,272 @@
+[
+ {
+  "step": 0,
+  "spkcache": 0,
+  "fifo": 14
+ },
+ {
+  "step": 1,
+  "spkcache": 0,
+  "fifo": 28
+ },
+ {
+  "step": 2,
+  "spkcache": 0,
+  "fifo": 42
+ },
+ {
+  "step": 3,
+  "spkcache": 0,
+  "fifo": 56
+ },
+ {
+  "step": 4,
+  "spkcache": 0,
+  "fifo": 70
+ },
+ {
+  "step": 5,
+  "spkcache": 0,
+  "fifo": 84
+ },
+ {
+  "step": 6,
+  "spkcache": 0,
+  "fifo": 98
+ },
+ {
+  "step": 7,
+  "spkcache": 0,
+  "fifo": 112
+ },
+ {
+  "step": 8,
+  "spkcache": 0,
+  "fifo": 126
+ },
+ {
+  "step": 9,
+  "spkcache": 0,
+  "fifo": 140
+ },
+ {
+  "step": 10,
+  "spkcache": 0,
+  "fifo": 154
+ },
+ {
+  "step": 11,
+  "spkcache": 0,
+  "fifo": 168
+ },
+ {
+  "step": 12,
+  "spkcache": 0,
+  "fifo": 182
+ },
+ {
+  "step": 13,
+  "spkcache": 0,
+  "fifo": 196
+ },
+ {
+  "step": 14,
+  "spkcache": 0,
+  "fifo": 210
+ },
+ {
+  "step": 15,
+  "spkcache": 0,
+  "fifo": 224
+ },
+ {
+  "step": 16,
+  "spkcache": 0,
+  "fifo": 238
+ },
+ {
+  "step": 17,
+  "spkcache": 0,
+  "fifo": 252
+ },
+ {
+  "step": 18,
+  "spkcache": 222,
+  "fifo": 44
+ },
+ {
+  "step": 19,
+  "spkcache": 222,
+  "fifo": 58
+ },
+ {
+  "step": 20,
+  "spkcache": 222,
+  "fifo": 72
+ },
+ {
+  "step": 21,
+  "spkcache": 222,
+  "fifo": 86
+ },
+ {
+  "step": 22,
+  "spkcache": 222,
+  "fifo": 100
+ },
+ {
+  "step": 23,
+  "spkcache": 222,
+  "fifo": 114
+ },
+ {
+  "step": 24,
+  "spkcache": 222,
+  "fifo": 128
+ },
+ {
+  "step": 25,
+  "spkcache": 222,
+  "fifo": 142
+ },
+ {
+  "step": 26,
+  "spkcache": 222,
+  "fifo": 156
+ },
+ {
+  "step": 27,
+  "spkcache": 222,
+  "fifo": 170
+ },
+ {
+  "step": 28,
+  "spkcache": 222,
+  "fifo": 184
+ },
+ {
+  "step": 29,
+  "spkcache": 222,
+  "fifo": 198
+ },
+ {
+  "step": 30,
+  "spkcache": 222,
+  "fifo": 212
+ },
+ {
+  "step": 31,
+  "spkcache": 222,
+  "fifo": 226
+ },
+ {
+  "step": 32,
+  "spkcache": 222,
+  "fifo": 240
+ },
+ {
+  "step": 33,
+  "spkcache": 222,
+  "fifo": 254
+ },
+ {
+  "step": 34,
+  "spkcache": 264,
+  "fifo": 46
+ },
+ {
+  "step": 35,
+  "spkcache": 264,
+  "fifo": 60
+ },
+ {
+  "step": 36,
+  "spkcache": 264,
+  "fifo": 74
+ },
+ {
+  "step": 37,
+  "spkcache": 264,
+  "fifo": 88
+ },
+ {
+  "step": 38,
+  "spkcache": 264,
+  "fifo": 102
+ },
+ {
+  "step": 39,
+  "spkcache": 264,
+  "fifo": 116
+ },
+ {
+  "step": 40,
+  "spkcache": 264,
+  "fifo": 130
+ },
+ {
+  "step": 41,
+  "spkcache": 264,
+  "fifo": 144
+ },
+ {
+  "step": 42,
+  "spkcache": 264,
+  "fifo": 158
+ },
+ {
+  "step": 43,
+  "spkcache": 264,
+  "fifo": 172
+ },
+ {
+  "step": 44,
+  "spkcache": 264,
+  "fifo": 186
+ },
+ {
+  "step": 45,
+  "spkcache": 264,
+  "fifo": 200
+ },
+ {
+  "step": 46,
+  "spkcache": 264,
+  "fifo": 214
+ },
+ {
+  "step": 47,
+  "spkcache": 264,
+  "fifo": 228
+ },
+ {
+  "step": 48,
+  "spkcache": 264,
+  "fifo": 242
+ },
+ {
+  "step": 49,
+  "spkcache": 264,
+  "fifo": 256
+ },
+ {
+  "step": 50,
+  "spkcache": 264,
+  "fifo": 48
+ },
+ {
+  "step": 51,
+  "spkcache": 264,
+  "fifo": 62
+ },
+ {
+  "step": 52,
+  "spkcache": 264,
+  "fifo": 76
+ },
+ {
+  "step": 53,
+  "spkcache": 264,
+  "fifo": 90
+ }
+]

@@ -54,22 +54,24 @@ struct ModelInstallToastView: View {
                     }
                     .appAction(.secondary, size: .small)
                     .disabled(!model.isInstallPaused && !model.canPauseModelDownload)
+                    .help(model.isInstallPaused
+                        ? Text("Resume", bundle: .module)
+                        : (!model.canPauseModelDownload
+                            ? Text("Download cannot be paused at this time.", bundle: .module)
+                            : Text("Pause", bundle: .module)))
                     .fixedSize()
 
-                    Button(role: .destructive, action: model.cancelActiveModelDownload) {
+                    Button(role: .cancel, action: model.cancelActiveModelDownload) {
                         Text("Cancel", bundle: .module)
                     }
-                    .appAction(.destructive, size: .small)
+                    .appAction(.secondary, size: .small)
                     .fixedSize()
                     .accessibilityLabel(Text("Cancel Download", bundle: .module))
                 }
             }
 
             if let fraction = model.installProgressFraction, fraction < 1, !model.opening {
-                ProgressView(value: fraction)
-                    .tint(theme.accent)
-                    .accessibilityLabel(Text(title, bundle: .module))
-                    .accessibilityValue(Text(verbatim: MetricFormat.percent(fraction * 100)))
+                AppProgressBar(value: fraction, label: Text(title, bundle: .module))
 
                 HStack(spacing: 8) {
                     if let downloaded = model.installDownloadedBytes,
@@ -91,14 +93,10 @@ struct ModelInstallToastView: View {
                 .monospacedDigit()
                 .foregroundStyle(.appSecondary)
             } else if model.isInstallPaused {
-                ProgressView(value: model.installProgressFraction ?? 0)
-                    .tint(theme.accent)
-                    .accessibilityLabel(Text("Paused", bundle: .module))
+                AppProgressBar(value: model.installProgressFraction ?? 0, label: Text("Paused", bundle: .module),
+                                animated: false)
             } else {
-                ProgressView()
-                    .progressViewStyle(.linear)
-                    .tint(theme.accent)
-                    .accessibilityLabel(Text(title, bundle: .module))
+                AppProgressBar(value: nil, label: Text(title, bundle: .module))
             }
             if let downloaded = model.installDownloadedBytes,
                model.installTotalBytes == nil || model.installTotalBytes == 0 {
@@ -121,11 +119,11 @@ struct ModelInstallToastView: View {
         .padding(14)
         .foregroundStyle(.appText)
         .background {
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                 .fill(.appPage)
                 .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 4)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 14)
+                    RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                         .stroke(.appBorder, lineWidth: 0.5)
                 }
         }

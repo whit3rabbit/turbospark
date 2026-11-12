@@ -160,6 +160,13 @@ public enum BatchToolExecutor {
                         arguments: item.parameters,
                         category: AppToolCatalog.category(for: item.tool, projectURL: project?.rootDirectoryURL)
                     )
+                    // The caller's tool set (a subagent's allow-list or the
+                    // main turn's profile). A batch is only a transport, so a
+                    // child the caller was never offered is refused here.
+                    if let allows = AppToolRegistry.callerToolFilter, !allows(call.name) {
+                        return (idx, item.tool, refused(
+                            call, reason: "'\(call.name)' is not offered by the active tool profile."))
+                    }
                     let sessionID = chatID?.uuidString ?? "batch"
                     let projectDirectory = project?.rootDirectoryPath
                     let hookDecision = await AppHookExecutionEngine.shared.evaluatePreToolUse(

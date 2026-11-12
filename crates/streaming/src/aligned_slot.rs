@@ -9,6 +9,9 @@ const SLOT_ALIGNMENT: usize = 2 * 1024 * 1024;
 pub struct AlignedSlot {
     ptr: *mut u8,
     len: usize,
+    /// Set by [`AlignedSlot::wire`]; `Drop` unwires before freeing so the
+    /// allocator never gets back pages that are still wired.
+    wired: bool,
 }
 
 // SAFETY: the allocation is plain heap memory; the streamer alone decides
@@ -43,7 +46,26 @@ impl AlignedSlot {
         Ok(Self {
             ptr: raw as *mut u8,
             len: rounded.max(page),
+            wired: false,
         })
+    }
+
+    /// Wires the slot's pages (`mlock`) so the kernel cannot compress or
+    /// swap them. A GPU pass reading a compressed no-copy slot waits for the
+    /// kernel to restore it, which is what made larger qwen4 caches lose
+    /// (docs/QWEN4_EXP.md, "Why larger expert caches lose").
+    pub(crate) fn wire(&mut self) -> std::io::Result<()> {
+        if self.wired {
+            return Ok(());
+        }
+        // SAFETY: `ptr` is a live allocation of `len` bytes owned by self.
+        #[allow(unsafe_code)]
+        let rc = unsafe { libc::mlock(self.ptr as *const std::ffi::c_void, self.len) };
+        if rc != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        self.wired = true;
+        Ok(())
     }
 
     /// Returns a raw const pointer to the slot memory allocation base.
@@ -81,12 +103,61 @@ impl AlignedSlot {
 
 impl Drop for AlignedSlot {
     fn drop(&mut self) {
+        if self.wired {
+            // SAFETY: the same live range `wire` locked. A failure leaves
+            // the pages wired until exit, which is all it can cost.
+            #[allow(unsafe_code)]
+            unsafe {
+                libc::munlock(self.ptr as *const std::ffi::c_void, self.len);
+            }
+        }
         // SAFETY: `ptr` came from posix_memalign and is freed exactly once.
         #[allow(unsafe_code)]
         unsafe {
             libc::free(self.ptr as *mut std::ffi::c_void);
         }
     }
+}
+
+/// The most this process may wire, or `None` when neither limit can be read:
+/// the smaller of `RLIMIT_MEMLOCK` (when finite) and macOS's per-user
+/// `vm.user_wire_limit`. A ceiling, not a promise: other processes' wired
+/// pages count against the same user limit, so a request under it can
+/// still fail at `mlock`, and the caller must handle that too.
+pub fn wire_limit_bytes() -> Option<u64> {
+    let mut limit: Option<u64> = None;
+    let mut rl = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: getrlimit writes one rlimit through a valid pointer.
+    #[allow(unsafe_code)]
+    let rc = unsafe { libc::getrlimit(libc::RLIMIT_MEMLOCK, &mut rl) };
+    if rc == 0 && rl.rlim_cur != libc::RLIM_INFINITY {
+        limit = Some(rl.rlim_cur);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let mut value: u64 = 0;
+        let mut len = std::mem::size_of::<u64>();
+        let name = c"vm.user_wire_limit";
+        // SAFETY: sysctlbyname reads a u64 into a buffer of its size; the
+        // name is NUL-terminated and no new value is written.
+        #[allow(unsafe_code)]
+        let rc = unsafe {
+            libc::sysctlbyname(
+                name.as_ptr(),
+                (&mut value as *mut u64).cast(),
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if rc == 0 && len == std::mem::size_of::<u64>() && value > 0 {
+            limit = Some(limit.map_or(value, |l| l.min(value)));
+        }
+    }
+    limit
 }
 
 fn page_size() -> usize {
@@ -97,5 +168,30 @@ fn page_size() -> usize {
         page as usize
     } else {
         4096
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AlignedSlot;
+
+    #[test]
+    fn wire_limit_is_readable_on_macos() {
+        // The limit the runtime checks before it asks for a wired cache. On
+        // macOS the user wire limit always exists; elsewhere it may not.
+        if cfg!(target_os = "macos") {
+            assert!(super::wire_limit_bytes().is_some_and(|b| b > 0));
+        }
+    }
+
+    #[test]
+    fn wire_locks_once_and_drop_unwires() {
+        let mut slot = AlignedSlot::allocate(3 * 1024 * 1024).unwrap();
+        slot.wire().unwrap();
+        assert!(slot.wired);
+        // A second call is a no-op, not a second lock to undo.
+        slot.wire().unwrap();
+        assert!(slot.wired);
+        drop(slot);
     }
 }

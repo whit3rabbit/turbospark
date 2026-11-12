@@ -60,11 +60,68 @@ fn is_pid_alive(pid: i32) -> bool {
     }
 }
 
+/// The file name the daemon is spawned from (`find_server_binary`), on every
+/// install path: the app bundle, its Homebrew symlink, and a cargo build.
+const SERVER_BINARY_NAME: &str = "turbospark-server";
+
+/// Whether a live pid is the server, judged by its executable's file name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PidIdentity {
+    Server,
+    Other,
+    /// The executable could not be read (another user's process, a zombie,
+    /// or a platform without a lookup). Not proof either way.
+    Unknown,
+}
+
+/// A pid file outlives a crashed daemon or a reboot, and the OS then hands
+/// the pid to an unrelated process. Liveness alone would report, and stop
+/// would signal, that process, so callers also check what it is running.
+fn pid_identity(pid: i32) -> PidIdentity {
+    let Some(exe) = pid_executable(pid) else {
+        return PidIdentity::Unknown;
+    };
+    if exe.file_name().and_then(|n| n.to_str()) == Some(SERVER_BINARY_NAME) {
+        PidIdentity::Server
+    } else {
+        PidIdentity::Other
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn pid_executable(pid: i32) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    extern "C" {
+        // libproc, part of libSystem.
+        fn proc_pidpath(pid: i32, buffer: *mut std::os::raw::c_void, size: u32) -> i32;
+    }
+    // PROC_PIDPATHINFO_MAXSIZE (4 * MAXPATHLEN).
+    let mut buf = vec![0u8; 4096];
+    let len = unsafe { proc_pidpath(pid, buf.as_mut_ptr().cast(), buf.len() as u32) };
+    if len <= 0 {
+        return None;
+    }
+    buf.truncate((len as usize).min(buf.len()));
+    Some(PathBuf::from(std::ffi::OsStr::from_bytes(&buf)))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn pid_executable(pid: i32) -> Option<PathBuf> {
+    fs::read_link(format!("/proc/{pid}/exe")).ok()
+}
+
+#[cfg(not(unix))]
+fn pid_executable(_pid: i32) -> Option<PathBuf> {
+    None
+}
+
 fn get_running_pid() -> Option<i32> {
     let path = pid_file();
     let text = fs::read_to_string(&path).ok()?;
     let pid = text.trim().parse::<i32>().ok()?;
-    if is_pid_alive(pid) {
+    // `Unknown` keeps the file: an unreadable executable is how another
+    // user's live daemon answers too (see `is_pid_alive`'s EPERM note).
+    if is_pid_alive(pid) && pid_identity(pid) != PidIdentity::Other {
         Some(pid)
     } else {
         let _ = fs::remove_file(&path);
@@ -262,6 +319,26 @@ fn extract_api_key(args: &[String]) -> (Vec<String>, Option<String>) {
     (redacted, api_key)
 }
 
+/// Sets what the spawned server needs beyond its inherited environment.
+///
+/// `store_root` goes over as `TURBOSPARK_HOME` because the app's moved store
+/// is a process-local override (`ts_store_root_set`) the child cannot see;
+/// without it the server would resolve aliases against `~/.turbospark` while
+/// the app installs elsewhere. With no override this is the root the child
+/// would derive from the same inherited environment, so setting it is inert.
+fn apply_child_env(
+    cmd: &mut std::process::Command,
+    api_key: Option<String>,
+    store_root: Option<PathBuf>,
+) {
+    if let Some(key) = api_key {
+        cmd.env("TURBOSPARK_API_KEY", key);
+    }
+    if let Some(root) = store_root {
+        cmd.env("TURBOSPARK_HOME", root);
+    }
+}
+
 fn start_daemon_internal(args: &[String]) -> Result<(), String> {
     let run = run_dir();
     fs::create_dir_all(&run)
@@ -291,9 +368,7 @@ fn start_daemon_internal(args: &[String]) -> Result<(), String> {
 
     let mut cmd = std::process::Command::new(&server_bin);
     cmd.args(&args);
-    if let Some(key) = api_key {
-        cmd.env("TURBOSPARK_API_KEY", key);
-    }
+    apply_child_env(&mut cmd, api_key, catalog::default_root());
     cmd.stdout(log_handle.try_clone().map_err(|e| e.to_string())?);
     cmd.stderr(log_handle);
 
@@ -350,6 +425,15 @@ fn stop_daemon_internal() -> Result<(), String> {
         return Ok(());
     };
 
+    // Signal only a pid positively identified as the server. `Unknown` is
+    // refused with the files kept, rather than killing an unverified pid.
+    if pid_identity(pid) != PidIdentity::Server {
+        return Err(format!(
+            "pid {pid} in {} could not be verified as {SERVER_BINARY_NAME}; not signalling it",
+            pid_file().display()
+        ));
+    }
+
     #[cfg(unix)]
     {
         extern "C" {
@@ -364,7 +448,8 @@ fn stop_daemon_internal() -> Result<(), String> {
                 break;
             }
         }
-        if is_pid_alive(pid) {
+        // Re-checked: the pid could have exited and been reused in the wait.
+        if is_pid_alive(pid) && pid_identity(pid) == PidIdentity::Server {
             unsafe {
                 kill(pid, 9); // SIGKILL
             }
@@ -490,6 +575,43 @@ mod api_key_redaction_tests {
         let (redacted, key) = extract_api_key(&args(&["--api-key", "--port", "--port", "9001"]));
         assert_eq!(key.as_deref(), Some("--port"));
         assert_eq!(redacted, args(&["--port", "9001"]));
+    }
+}
+
+#[cfg(test)]
+mod child_env_tests {
+    use super::apply_child_env;
+    use std::ffi::OsStr;
+    use std::path::PathBuf;
+
+    fn env_of(cmd: &std::process::Command, name: &str) -> Option<Option<String>> {
+        cmd.get_envs()
+            .find(|(key, _)| *key == OsStr::new(name))
+            .map(|(_, value)| value.map(|v| v.to_string_lossy().into_owned()))
+    }
+
+    /// A store moved by the app lives only in this process's override. The
+    /// child must be told, or it serves a different store than the app shows.
+    #[test]
+    fn the_store_root_reaches_the_child_as_turbospark_home() {
+        let mut cmd = std::process::Command::new("turbospark-server");
+        apply_child_env(&mut cmd, None, Some(PathBuf::from("/Volumes/Models/ts")));
+        assert_eq!(
+            env_of(&cmd, "TURBOSPARK_HOME"),
+            Some(Some("/Volumes/Models/ts".to_string()))
+        );
+        assert_eq!(env_of(&cmd, "TURBOSPARK_API_KEY"), None);
+    }
+
+    #[test]
+    fn the_api_key_rides_env_and_no_root_sets_nothing() {
+        let mut cmd = std::process::Command::new("turbospark-server");
+        apply_child_env(&mut cmd, Some("sk-secret".to_string()), None);
+        assert_eq!(
+            env_of(&cmd, "TURBOSPARK_API_KEY"),
+            Some(Some("sk-secret".to_string()))
+        );
+        assert_eq!(env_of(&cmd, "TURBOSPARK_HOME"), None);
     }
 }
 

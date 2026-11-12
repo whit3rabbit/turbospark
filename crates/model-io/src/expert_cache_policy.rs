@@ -36,6 +36,66 @@ pub const HEADROOM_RESERVE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 /// the size of this engine can run beside it without the machine swapping.
 pub const HEADROOM_FRACTION: f64 = 0.25;
 
+/// The budget share a WIRED slot cache may take, in place of
+/// [`HEADROOM_FRACTION`]. Wiring is what makes a larger cache pay: on the
+/// REAP-288 qwen4_exp install an unwired 96-slot cache lost to memory
+/// compression while a wired one won 6.7% (128 wired: 16.9%), and wiring at
+/// the quarter budget's 48 slots was noise (docs/QWEN4_EXP.md, "Wired expert
+/// slots"). Half, not more: the pages stay wired for the life of the process.
+pub const WIRED_HEADROOM_FRACTION: f64 = 0.5;
+
+/// Whether the streamed slot cache is wired (`mlock`), as REQUESTED. The
+/// runtime decides whether a request engages (residency, the OS wire limit,
+/// the lock itself), and an environment override wins over this request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExpertSlotWiring {
+    /// Wired for the families measured to gain ([`wiring_default_for`]),
+    /// falling back to an unwired cache at the quarter budget when the lock
+    /// cannot be had.
+    #[default]
+    Auto,
+    /// Wired on every streamed family. A failed lock refuses the open, so a
+    /// measurement that asked for wired slots never runs unwired ones.
+    On,
+    /// Never wired; the quarter budget.
+    Off,
+}
+
+impl ExpertSlotWiring {
+    /// `auto|on|off`, case-insensitive. None so a parser can refuse a typo.
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "auto" => Some(Self::Auto),
+            "on" => Some(Self::On),
+            "off" => Some(Self::Off),
+            _ => None,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::On => "on",
+            Self::Off => "off",
+        }
+    }
+
+    /// Whether this request asks for a wired cache on `family`.
+    pub fn wants_wired(self, family: crate::ModelFamily) -> bool {
+        match self {
+            Self::Auto => wiring_default_for(family),
+            Self::On => true,
+            Self::Off => false,
+        }
+    }
+}
+
+/// The families whose `Auto` wires the slot cache. Only those with a paired
+/// wired-against-unwired measurement belong here.
+pub fn wiring_default_for(family: crate::ModelFamily) -> bool {
+    family == crate::ModelFamily::Qwen4Exp
+}
+
 /// Whether the minimum streamed cache would exceed the memory budget that
 /// `Auto` is allowed to consume. Mapped residency is the conservative escape
 /// hatch for that case: it removes the pinned slot cache while preserving the
@@ -55,6 +115,36 @@ pub fn auto_residency_prefers_mapped(
     let free = physical_bytes.saturating_sub(resident_bytes.saturating_add(HEADROOM_RESERVE_BYTES));
     let budget = (free as f64 * HEADROOM_FRACTION) as u64;
     (DEFAULT_CACHE_SLOTS as u64).saturating_mul(bytes_per_slot) > budget
+}
+
+/// Kept back from Metal's recommended working set when deciding whether
+/// mapped residency fits: the rest of this process's GPU memory (KV cache,
+/// scratch, any model sharing the process) and what other processes have
+/// wired. Measured on one machine, a 36 GiB M4 Max: 5.4 GiB wired at idle, and
+/// the driver unwiring layers once a Fish Audio Drama 3 process (19.3 GiB
+/// mapped, about 2.6 GiB more of its own) neared the 28.1 GiB working set
+/// (`docs/EXPERT_RESIDENCY.md`).
+pub const MAPPED_WIRED_RESERVE_BYTES: u64 = 10 * 1024 * 1024 * 1024;
+
+/// Whether mapped residency's mappings fit what the GPU will keep wired.
+///
+/// The GPU wires every no-copy mapping a command buffer binds, in full and
+/// for as long as the process holds it: the whole expert table and the
+/// resident weights, not just the pages a pass reads. Past what the driver
+/// will keep wired it unwires a layer, and the next pass that binds it
+/// re-wires the whole layer from the page cache or the disk. A decode walks
+/// every layer in order, so every pass misses (70 to 180 times slower,
+/// measured). `working_set_bytes` is `MTLDevice.recommendedMaxWorkingSetSize`.
+/// Zero means unknown and never fits, since the reserve alone exceeds it.
+pub fn mapped_residency_fits(
+    working_set_bytes: u64,
+    resident_bytes: u64,
+    table_bytes: u64,
+) -> bool {
+    resident_bytes
+        .saturating_add(table_bytes)
+        .saturating_add(MAPPED_WIRED_RESERVE_BYTES)
+        <= working_set_bytes
 }
 
 /// Routed-expert cache sizing, as it reaches `runtime::RealForwardRunner`.
@@ -100,16 +190,50 @@ impl ExpertCacheSlots {
     /// A frozen footprint row taken at whatever the machine felt like that
     /// morning is not a row.
     pub fn resolve(self, physical_bytes: u64, resident_bytes: u64, bytes_per_slot: u64) -> usize {
+        self.resolve_wired(physical_bytes, resident_bytes, bytes_per_slot, false)
+    }
+
+    /// [`ExpertCacheSlots::resolve`] for a cache that will be wired: `Auto`
+    /// budgets [`WIRED_HEADROOM_FRACTION`] instead of [`HEADROOM_FRACTION`].
+    /// `Fixed` is unchanged.
+    pub fn resolve_wired(
+        self,
+        physical_bytes: u64,
+        resident_bytes: u64,
+        bytes_per_slot: u64,
+        wired: bool,
+    ) -> usize {
+        let fraction = if wired {
+            WIRED_HEADROOM_FRACTION
+        } else {
+            HEADROOM_FRACTION
+        };
         match self {
             Self::Fixed(n) => n,
-            Self::Auto => auto_slots(physical_bytes, resident_bytes, bytes_per_slot),
+            Self::Auto => auto_slots_at(physical_bytes, resident_bytes, bytes_per_slot, fraction),
         }
     }
 }
 
 /// The `Auto` arm of [`ExpertCacheSlots::resolve`], split out so the policy
 /// can be tested without naming the enum in every case.
+#[cfg(test)]
 fn auto_slots(physical_bytes: u64, resident_bytes: u64, bytes_per_slot: u64) -> usize {
+    auto_slots_at(
+        physical_bytes,
+        resident_bytes,
+        bytes_per_slot,
+        HEADROOM_FRACTION,
+    )
+}
+
+/// [`auto_slots`] at an explicit budget share.
+fn auto_slots_at(
+    physical_bytes: u64,
+    resident_bytes: u64,
+    bytes_per_slot: u64,
+    fraction: f64,
+) -> usize {
     let floor = DEFAULT_CACHE_SLOTS as usize;
     // A dense install has no routed experts, so every slot count describes
     // the same empty cache and the arithmetic below would divide by zero.
@@ -117,7 +241,7 @@ fn auto_slots(physical_bytes: u64, resident_bytes: u64, bytes_per_slot: u64) -> 
         return floor;
     }
     let free = physical_bytes.saturating_sub(resident_bytes.saturating_add(HEADROOM_RESERVE_BYTES));
-    let budget = (free as f64 * HEADROOM_FRACTION) as u64;
+    let budget = (free as f64 * fraction) as u64;
 
     ALLOWED_CACHE_SLOTS
         .iter()
@@ -195,12 +319,89 @@ impl ResolvedExpertResidency {
 mod tests {
     use super::*;
 
+    /// One slot of the qwen4_exp REAP-288 install: 48 layers of expert
+    /// stride, about 133 MB, and its 2.79 GB resident region.
+    const QWEN4_BYTES_PER_SLOT: u64 = 133_000_000;
+    const QWEN4_RESIDENT: u64 = 2_789_176_576;
+
+    #[test]
+    fn wired_budget_doubles_auto_on_the_qwen4_install() {
+        let physical = 36 * 1024 * 1024 * 1024;
+        let unwired =
+            ExpertCacheSlots::Auto.resolve(physical, QWEN4_RESIDENT, QWEN4_BYTES_PER_SLOT);
+        let wired = ExpertCacheSlots::Auto.resolve_wired(
+            physical,
+            QWEN4_RESIDENT,
+            QWEN4_BYTES_PER_SLOT,
+            true,
+        );
+        // The two counts the sweep measured: 48 unwired, 96 wired.
+        assert_eq!((unwired, wired), (48, 96));
+        // Fixed ignores the budget either way.
+        assert_eq!(
+            ExpertCacheSlots::Fixed(32).resolve_wired(physical, 0, QWEN4_BYTES_PER_SLOT, true),
+            32
+        );
+    }
+
+    #[test]
+    fn wiring_auto_engages_only_on_measured_families() {
+        use crate::ModelFamily;
+        assert!(ExpertSlotWiring::Auto.wants_wired(ModelFamily::Qwen4Exp));
+        assert!(!ExpertSlotWiring::Auto.wants_wired(ModelFamily::Gemma4));
+        assert!(ExpertSlotWiring::On.wants_wired(ModelFamily::Gemma4));
+        assert!(!ExpertSlotWiring::Off.wants_wired(ModelFamily::Qwen4Exp));
+        for mode in [
+            ExpertSlotWiring::Auto,
+            ExpertSlotWiring::On,
+            ExpertSlotWiring::Off,
+        ] {
+            assert_eq!(ExpertSlotWiring::parse(mode.as_str()), Some(mode));
+        }
+        assert_eq!(ExpertSlotWiring::parse("ON"), Some(ExpertSlotWiring::On));
+        assert_eq!(ExpertSlotWiring::parse("yes"), None);
+    }
+
     /// One slot of Gemma 4 26B-A4B: 30 layers at ~3.2 MiB of expert stride.
     /// The install whose sweep in `docs/DECODE_BUDGET.md` this policy exists
     /// to act on.
     const GEMMA4_BYTES_PER_SLOT: u64 = 30 * 3_355_443;
     const GEMMA4_RESIDENT: u64 = 13 * 1024 * 1024 * 1024;
     const GIB: u64 = 1024 * 1024 * 1024;
+
+    /// Metal's recommended working set on the 36 GiB M4 Max the mapped
+    /// measurements came from (28.08 GiB).
+    const M4_MAX_36_WORKING_SET: u64 = 30_150_000_000;
+
+    #[test]
+    fn mapped_residency_fits_the_installs_it_was_measured_on() {
+        // Fish Audio Drama 3 and MiniCPM-V 4.7: both thrashed mapped.
+        let drama = (2_558_993_664, 18_124_701_696);
+        let minicpm = (4_874_000_000, 17_115_000_000);
+        for (name, (resident, table)) in [("drama3", drama), ("minicpm", minicpm)] {
+            assert!(
+                !mapped_residency_fits(M4_MAX_36_WORKING_SET, resident, table),
+                "{name} decoded 70 to 180 times slower mapped and must not fit"
+            );
+        }
+        // Gemma 4 26B-A4B's 12.3 GB table decoded faster mapped than streamed.
+        // Its resident size is assumed (2 GiB): that install is no longer here.
+        assert!(mapped_residency_fits(
+            M4_MAX_36_WORKING_SET,
+            2 * GIB,
+            12_300_000_000
+        ));
+    }
+
+    #[test]
+    fn mapped_residency_fits_is_inclusive_and_refuses_an_unknown_working_set() {
+        let ws = 28 * GIB;
+        let room = ws - MAPPED_WIRED_RESERVE_BYTES;
+        assert!(mapped_residency_fits(ws, GIB, room - GIB));
+        assert!(!mapped_residency_fits(ws, GIB, room - GIB + 1));
+        assert!(!mapped_residency_fits(0, 0, 1));
+        assert!(!mapped_residency_fits(ws, u64::MAX, u64::MAX));
+    }
 
     #[test]
     fn a_machine_with_headroom_climbs_to_the_top_of_the_allowed_set() {
@@ -406,7 +607,7 @@ mod tests {
                                               // A machine with plenty of headroom over the install: 128 GiB
                                               // physical against 47 GiB resident. (128 - 47 - 4) * 0.25 = 19.25
                                               // GiB budget; 96 slots costs 11.9 GiB and 128 costs 15.9 GiB, both
-                                              // under budget, so `Auto` reaches the allowed ceiling.
+                                              // under budget, and 192 (23.7 GiB) is not, so `Auto` stops at 128.
         assert_eq!(
             auto_slots(128 * GIB, QWEN4_RESIDENT, QWEN4_BYTES_PER_SLOT),
             128
@@ -419,6 +620,33 @@ mod tests {
         assert_eq!(
             auto_slots(40 * GIB, QWEN4_RESIDENT, QWEN4_BYTES_PER_SLOT),
             DEFAULT_CACHE_SLOTS as usize
+        );
+    }
+
+    /// The 512-expert IQ2_XS `qwen4exp` install the 192 and 256 rungs were
+    /// added for: 48 layers x 1,523,712 B is 69.75 MiB per slot, and its
+    /// resident trunk is `model_weights.bin` (4,546,742,016 B; the n-gram
+    /// table is demand-paged and not resident). Three machines, one per
+    /// rung, so dropping either new rung from the set changes an answer.
+    #[test]
+    fn a_512_expert_install_reaches_the_new_rungs_only_where_memory_allows() {
+        const SWIFT_BYTES_PER_SLOT: u64 = 48 * 1_523_712;
+        const SWIFT_RESIDENT: u64 = 4_546_742_016;
+        // (36 - 4.23 - 4) * 0.25 = 6.94 GiB: 96 slots (6.54) fit, 128 (8.72)
+        // do not. This machine's own answer, unchanged by the new rungs.
+        assert_eq!(
+            auto_slots(36 * GIB, SWIFT_RESIDENT, SWIFT_BYTES_PER_SLOT),
+            96
+        );
+        // 13.94 GiB budget: 192 (13.08) fits, 256 (17.44) does not.
+        assert_eq!(
+            auto_slots(64 * GIB, SWIFT_RESIDENT, SWIFT_BYTES_PER_SLOT),
+            192
+        );
+        // 29.94 GiB budget: 256 fits.
+        assert_eq!(
+            auto_slots(128 * GIB, SWIFT_RESIDENT, SWIFT_BYTES_PER_SLOT),
+            256
         );
     }
 }

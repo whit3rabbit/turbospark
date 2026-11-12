@@ -102,3 +102,32 @@ kernel void copy_strided_rows_fp16(
     const uint c = gid % hidden;
     dst[r * dst_stride + c] = src[r * src_stride + c];
 }
+
+// dst[r] = src[map[r]] for r in 0..rows, in ascending r inside ONE
+// threadgroup with a device barrier between rows. That order is what makes
+// the in-place compaction of a tree verify's accepted path race-free: with
+// map[r] >= r and strictly increasing, row r's source is a slot no earlier
+// row wrote (they wrote slots < r <= map[r]). A flat one-dispatch gather
+// would not be: for path [0, 2, 3], row 1 reads slot 2 while row 2
+// overwrites it. Rows are at most a verify block, so the serialization is
+// free beside the work around it.
+kernel void gather_rows_fp16(
+    device const half* src        [[buffer(0)]],
+    device half*       dst        [[buffer(1)]],
+    constant uint*     map        [[buffer(2)]],
+    constant uint&     rows       [[buffer(3)]],
+    constant uint&     width      [[buffer(4)]],
+    constant uint&     src_stride [[buffer(5)]],
+    constant uint&     dst_stride [[buffer(6)]],
+    uint tid [[thread_index_in_threadgroup]],
+    uint threads [[threads_per_threadgroup]]
+) {
+    for (uint r = 0; r < rows; ++r) {
+        device const half* s = src + map[r] * src_stride;
+        device half* d = dst + r * dst_stride;
+        for (uint c = tid; c < width; c += threads) {
+            d[c] = s[c];
+        }
+        threadgroup_barrier(mem_flags::mem_device);
+    }
+}

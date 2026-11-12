@@ -36,6 +36,10 @@ mod chat;
 #[cfg(target_os = "macos")]
 mod generate;
 
+/// Set to `1` to skip the resolved-request printout. Spelled out again in
+/// `front/models.rs`, the one caller that sets it.
+const HIDE_RESOLVED_REQUEST_ENV: &str = "TURBOSPARK_HIDE_RESOLVED_REQUEST";
+
 fn main() -> ExitCode {
     let tokens: Vec<String> = std::env::args().skip(1).collect();
     let outcome = parse(&tokens);
@@ -53,7 +57,13 @@ fn main() -> ExitCode {
     #[allow(unused_mut)]
     let mut generation_failed = false;
     if let ParseOutcome::Success(request) = &outcome {
-        print_resolved_request(request);
+        // `turbospark run` sets this: its user asked a question, not for a
+        // dump of the request. An environment variable rather than a flag so
+        // the invocation grammar, its usage text and every documented
+        // direct use of this binary stay exactly as they are.
+        if std::env::var_os(HIDE_RESOLVED_REQUEST_ENV).is_none_or(|v| v != "1") {
+            print_resolved_request(request);
+        }
         #[cfg(target_os = "macos")]
         {
             generation_failed = generate::try_generate(request) == generate::Outcome::Failed;

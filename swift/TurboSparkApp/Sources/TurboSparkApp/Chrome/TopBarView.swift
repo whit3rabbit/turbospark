@@ -31,6 +31,9 @@ struct TopBarView: View {
     let isChatSidebarVisible: Bool
     let isInspectorVisible: Bool
     let toggleChatSidebar: () -> Void
+    /// False in rail-only sections: there is no panel to show or hide, and
+    /// a toggle that does nothing there is a control the user cannot read.
+    var showsSidebarToggle = true
     let toggleInspector: () -> Void
     var canPinSummary = false
     var isSummaryVisible = false
@@ -43,7 +46,9 @@ struct TopBarView: View {
     var body: some View {
         HStack(spacing: 8) {
             HStack(spacing: 8) {
-                sidebarToggle
+                if showsSidebarToggle {
+                    sidebarToggle
+                }
                 AudioRecordingBadge(controller: model.audioWorkspace, openWorkspace: { model.activeSection = .audio })
                 GenerationPhaseIndicator(model: model)
                 if let worktree = model.worktree, worktree.isGitRepository {
@@ -55,7 +60,7 @@ struct TopBarView: View {
             // Centre. Fixed-size, so the flexible groups either side keep
             // their own widths and the model loader does not slide when a
             // phase indicator appears.
-            if barWidth >= 760 {
+            if barWidth >= (760 * AppMetrics.textScale(theme)).rounded() {
                 ChromeTelemetryView(model: model).fixedSize()
             }
 
@@ -130,7 +135,7 @@ struct TopBarView: View {
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.9))
         .foregroundStyle(isChatSidebarVisible ? theme.foreground : theme.secondaryText)
-        // No `.keyboardShortcut` here (U7): the "View" menu's "Toggle Chat
+        // No `.keyboardShortcut` here (U7): the "View" menu's "Toggle
         // Sidebar" command already claims Cmd+Ctrl+S, and SwiftUI does not
         // define which of two identical shortcuts on different controls wins.
         .help(helpText(presentation))
@@ -152,7 +157,7 @@ struct TopBarView: View {
         .buttonStyle(TSPressScaleStyle(scale: 0.9))
         .foregroundStyle(isInspectorVisible ? theme.accent : theme.secondaryText)
         .background {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
+            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
                 .fill(isInspectorVisible ? theme.accent.opacity(0.14) : .clear)
         }
         .tsAnimation(TSMotion.hover, value: isInspectorVisible)
@@ -193,7 +198,7 @@ struct TopBarView: View {
         .buttonStyle(TSPressScaleStyle(scale: 0.9))
         .foregroundStyle(model.browserPaneIsOpen ? theme.accent : theme.secondaryText)
         .background {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
+            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
                 .fill(model.browserPaneIsOpen ? theme.accent.opacity(0.14) : .clear)
         }
         .tsAnimation(TSMotion.hover, value: model.browserPaneIsOpen)
@@ -220,20 +225,20 @@ struct TopBarView: View {
                         if worktree.totalAdditions > 0 {
                             Text(verbatim: "+\(worktree.totalAdditions)")
                                 .themedFont(.tiny, weight: .semibold).monospacedDigit()
-                                .foregroundStyle(.green)
+                                .foregroundStyle(theme.accent)
                         }
                         if worktree.totalDeletions > 0 {
                             Text(verbatim: "-\(worktree.totalDeletions)")
                                 .themedFont(.tiny, weight: .semibold).monospacedDigit()
-                                .foregroundStyle(.red)
+                                .foregroundStyle(AppAttention.color)
                         }
                     }
                 }
             }
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
-            .background(TurboSparkTheme.surfaceColor, in: Capsule())
-            .overlay(Capsule().stroke(.appText.opacity(0.08), lineWidth: 0.5))
+            .background(.appSurface, in: Capsule())
+            .overlay(Capsule().stroke(.appBorder, lineWidth: 0.5))
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.97))
         .help(Text("Git: \(worktree.currentBranch) (click to open changes pane)", bundle: .module))
@@ -242,24 +247,43 @@ struct TopBarView: View {
 
     @ViewBuilder
     private var unloadButton: some View {
-        if model.canUnloadModel && model.canUnloadImageModel {
+        let canUnloadText = model.canUnloadModel
+        let canUnloadImage = model.canUnloadImageModel
+        let canUnloadAudio = model.audioWorkspace.canUnloadModel
+        let count = (canUnloadText ? 1 : 0) + (canUnloadImage ? 1 : 0) + (canUnloadAudio ? 1 : 0)
+        if count > 1 {
             Menu {
-                Button {
-                    model.unloadModel()
-                } label: {
-                    Label {
-                        Text("Unload Model", bundle: .module)
-                    } icon: {
-                        Image(systemName: "text.bubble")
+                if canUnloadText {
+                    Button {
+                        model.unloadModel()
+                    } label: {
+                        Label {
+                            Text("Unload Model", bundle: .module)
+                        } icon: {
+                            Image(systemName: "text.bubble")
+                        }
                     }
                 }
-                Button {
-                    model.unloadImageModel()
-                } label: {
-                    Label {
-                        Text("Unload", bundle: .module)
-                    } icon: {
-                        Image(systemName: "photo")
+                if canUnloadImage {
+                    Button {
+                        model.unloadImageModel()
+                    } label: {
+                        Label {
+                            Text("Unload", bundle: .module)
+                        } icon: {
+                            Image(systemName: "photo")
+                        }
+                    }
+                }
+                if canUnloadAudio {
+                    Button {
+                        model.audioWorkspace.unloadModel()
+                    } label: {
+                        Label {
+                            Text("Unload", bundle: .module)
+                        } icon: {
+                            Image(systemName: "waveform")
+                        }
                     }
                 }
             } label: {
@@ -284,9 +308,9 @@ struct TopBarView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(TSPressScaleStyle(scale: 0.9))
-            .foregroundStyle(model.canUnloadAnyModel ? theme.accent : theme.secondaryText.opacity(0.35))
+            .foregroundStyle(model.canUnloadAnyModel ? theme.accent : theme.secondaryText)
             .disabled(!model.canUnloadAnyModel)
-            .help(Text("Unload Model", bundle: .module))
+            .help(model.canUnloadAnyModel ? Text("Unload Model", bundle: .module) : Text("No model loaded.", bundle: .module))
             .accessibilityLabel(Text("Unload Model", bundle: .module))
         }
     }

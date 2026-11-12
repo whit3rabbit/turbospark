@@ -9,10 +9,16 @@ struct PromptModelSelectorPill: View {
     var body: some View {
         Menu {
             Section(header: Text("Installed Models", bundle: .module)) {
-                if model.installed.isEmpty {
-                    Text("No models installed", bundle: .module)
+                // The loadable list only (requirement 3.3).
+                let loadable = model.loadableModels
+                if loadable.isEmpty {
+                    if let statement = model.notConnectedStatement {
+                        Text(verbatim: statement)
+                    } else {
+                        Text("No models installed", bundle: .module)
+                    }
                 } else {
-                    ForEach(model.installed) { installed in
+                    ForEach(loadable) { installed in
                         Button {
                             model.selectModel(installed)
                         } label: {
@@ -54,7 +60,7 @@ struct PromptModelSelectorPill: View {
 
                 Image(systemName: "chevron.up.chevron.down")
                     .font(theme.ui(.micro, weight: .bold))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
             }
         }
         .menuStyle(.borderlessButton)
@@ -91,12 +97,12 @@ struct PromptProjectContextPill: View {
                             if worktree.totalAdditions > 0 {
                                 Text(verbatim: "+\(worktree.totalAdditions)")
                                     .font(theme.ui(.tiny, weight: .bold).monospacedDigit())
-                                    .foregroundStyle(.green)
+                                    .foregroundStyle(.appSuccess)
                             }
                             if worktree.totalDeletions > 0 {
                                 Text(verbatim: "-\(worktree.totalDeletions)")
                                     .font(theme.ui(.tiny, weight: .bold).monospacedDigit())
-                                    .foregroundStyle(.red)
+                                    .foregroundStyle(.appDanger)
                             }
                         }
                     }
@@ -104,9 +110,8 @@ struct PromptProjectContextPill: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
-            .background(.appAccent.opacity(0.1), in: Capsule())
-            .overlay(Capsule().stroke(.appAccent.opacity(0.25), lineWidth: 0.5))
-            .fixedSize()
+            .background(.appElevated, in: Capsule())
+            .overlay(Capsule().stroke(.appBorder, lineWidth: 1))
             .help(Text("Active project: \(project.name)", bundle: .module))
             .accessibilityElement(children: .combine)
             .accessibilityLabel(Text("Active project: \(project.name)", bundle: .module))
@@ -153,11 +158,11 @@ struct PromptReasoningPillControl: View {
             HStack(spacing: 3) {
                 Text(LocalizedStringKey(model.reasoningLabel(for: model.reasoning)), bundle: .module)
                     .font(theme.ui(.small, weight: .medium))
-                    .foregroundStyle(isThinkingActive ? Color.primary : Color.secondary)
+                    .foregroundStyle(isThinkingActive ? AnyShapeStyle(.appText) : AnyShapeStyle(.appSecondary))
 
                 Image(systemName: "chevron.up.chevron.down")
                     .font(theme.ui(.micro, weight: .bold))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
             }
         }
         .menuStyle(.borderlessButton)

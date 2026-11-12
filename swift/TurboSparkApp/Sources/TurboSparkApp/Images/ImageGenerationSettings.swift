@@ -65,7 +65,7 @@ struct ImageGenerationSettings: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Seed", bundle: .module).themedFont(.tiny, weight: .medium)
             TextField(text: $model.imageSeedText) { Text("Random", bundle: .module) }
-                .textFieldStyle(.roundedBorder).frame(width: 130)
+                .textFieldStyle(.roundedBorder).frame(minWidth: 130, maxWidth: 220, alignment: .leading)
                 .accessibilityLabel(Text("Seed", bundle: .module))
         }
     }

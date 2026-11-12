@@ -163,6 +163,22 @@ impl Gpt2Model {
         Self::load_blocks(weights, config, root)
     }
 
+    /// Loads the learned position table from a family root other than
+    /// `model.` onto a model built with
+    /// [`Gpt2Model::from_config_without_tables_at_root`]. The
+    /// chatterbox_turbo T3 needs the positions (the forward adds them
+    /// from the cache offset) but never the token table: its inputs are
+    /// precomputed embeddings and its outputs go through the family
+    /// speech head, so real installs skip the ~200 MB `wte` tensor.
+    pub fn with_position_table_at_root(mut self, weights: &Weights, root: &str) -> Result<Self> {
+        self.wpe = Some(weights.embedding(
+            &format!("{root}wpe"),
+            self.config.n_positions,
+            self.config.n_embd,
+        )?);
+        Ok(self)
+    }
+
     fn load_blocks(weights: &Weights, config: Gpt2Config, root: &str) -> Result<Self> {
         if config.n_embd % config.n_head != 0 {
             return Err(SpeechError::BadConfig {
@@ -194,6 +210,7 @@ impl Gpt2Model {
                 rope: None,
                 window: None,
                 bidirectional: false,
+                exec: None,
             };
             let mlp = Gpt2Mlp {
                 c_fc: weights.linear(&format!("{layer}mlp.c_fc"), dim, 4 * dim, Bias::Required)?,

@@ -101,21 +101,24 @@ struct InteractiveMarkdownTableView: View {
                 }
                 Divider()
                 ForEach(Array(rows.enumerated()), id: \.offset) { displayIndex, entry in
+                    let isSelected = selectedRowIndices.contains(entry.index)
                     rowView(
                         row: entry.row,
-                        isSelected: selectedRowIndices.contains(entry.index))
+                        isSelected: isSelected)
                         .contentShape(Rectangle())
                         .onTapGesture { toggleSelection(entry.index) }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
                     if displayIndex < rows.count - 1 {
-                        Divider().opacity(0.5)
+                        Divider()
                     }
                 }
             }
-            .background(.appElevated.opacity(0.5))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .background(.appElevated)
+            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(.appBorder.opacity(0.4), lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                    .stroke(.appBorder, lineWidth: 0.5)
             )
         }
         .markdownMargin(top: 8, bottom: 12)
@@ -125,12 +128,12 @@ struct InteractiveMarkdownTableView: View {
         HStack(spacing: 8) {
             Text("Table", bundle: .module)
                 .themedCode(.tiny, weight: .semibold)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.appSecondary)
             // Labeled counts rather than "N rows": the fragment format has
             // no plural variants, and a label reads right for any count.
             Text("Rows: \(grid.rowCount), columns: \(grid.columnCount)", bundle: .module)
                 .themedFont(.tiny)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.appSecondary)
             Spacer()
             if !selectedRowIndices.isEmpty {
                 Text("Selected rows: \(selectedRowIndices.count)", bundle: .module)
@@ -157,7 +160,7 @@ struct InteractiveMarkdownTableView: View {
                     Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
                 }
                     .themedFont(.tiny, weight: .medium)
-                    .foregroundStyle(isCopied ? Color.accentColor : Color.secondary)
+                    .foregroundStyle(isCopied ? AnyShapeStyle(theme.accent) : AnyShapeStyle(.appSecondary))
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -186,7 +189,7 @@ struct InteractiveMarkdownTableView: View {
                         : "arrow.up.arrow.down")
                     .themedFont(.micro, weight: .bold)
                     .foregroundStyle(
-                        sortedColumn == column ? TurboSparkTheme.accentColor : Color.secondary.opacity(0.5))
+                        sortedColumn == column ? AnyShapeStyle(theme.accent) : AnyShapeStyle(theme.secondaryText.opacity(0.5)))
                     .accessibilityHidden(true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -210,7 +213,7 @@ struct InteractiveMarkdownTableView: View {
                     .padding(.vertical, 6)
             }
         }
-        .background(isSelected ? TurboSparkTheme.accentColor.opacity(0.12) : Color.clear)
+        .background(isSelected ? theme.selection : Color.clear)
     }
 
     private func toggleSelection(_ originalIndex: Int) {

@@ -154,6 +154,7 @@ fn exact_cached_checkpoints_publish_resolve_verify_and_delete() {
             let receipt = DownloadReceipt {
                 owner_id: plan.owner_id,
                 staging_root: staging_root.clone(),
+                download_cache: Vec::new(),
                 sources: vec![VerifiedSourceGroup {
                     role: plan.sources[0].role.clone(),
                     repo: plan.sources[0].repo.clone(),

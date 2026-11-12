@@ -16,6 +16,9 @@
 
 /// Causal multi-head and multi-query attention compute kernels.
 pub mod attention;
+/// Unlimited-OCR-2's DASH block routing and page2d RoPE (PORT-LOCAL host
+/// arithmetic, pinned to mlx-vlm by `tests/dash_oracle.rs`).
+pub mod dash;
 /// BERT and XLM-RoBERTa encoder compute kernels.
 pub mod encoder;
 /// Gating and activation function compute kernels.
@@ -61,14 +64,23 @@ pub mod rms_norm;
 pub mod rope;
 /// Softmax sampling and logit soft-capping compute kernels.
 pub mod sampling;
+/// LFM3's gated short convolution (PORT-LOCAL).
+pub mod short_conv;
 /// Directional steering of a residual stream row (ablate, add, clamp,
 /// renorm).
 pub mod steering;
+/// Difference-of-means direction extraction and per-layer diagnostics
+/// (trait steering, `turbospark-steer`).
+pub mod steering_extract;
 /// Numerical error measurement and tolerance checking utilities.
 pub mod tolerance;
+/// Unlimited-OCR-2's SAM and CLIP tower references and table builders.
+pub mod uocr2_tower;
 
 /// FP32 reference kernels for the qwen3_5 vision tower (ROADMAP M-V2).
 pub mod vision;
+/// FP32 reference for the Gemma 4 vision tower and projector.
+pub mod vision_gemma4;
 /// FP32 reference kernels for the whisper speech family: conv front end,
 /// Pre-LN encoder blocks, and the incremental decoder with KV cache.
 pub mod whisper;
@@ -147,6 +159,7 @@ pub use rope::{
     yarn_frequencies, YarnSpec,
 };
 pub use sampling::logit_softcap_softmax;
+pub use short_conv::short_conv_reference;
 pub use steering::{
     direction_coefficient, inv_norm, renorm_gamma, steer_in_place, unit_coefficient,
 };

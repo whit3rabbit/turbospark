@@ -215,11 +215,18 @@ pub fn select_blocks(
 
     let chosen_count = block_topk.min(num_complete_blocks);
     let mut ranked: Vec<usize> = (0..num_complete_blocks).collect();
+    // A NaN score (overflowed activations) ranks below every other score
+    // instead of panicking. Non-NaN scores keep `partial_cmp`, not
+    // `total_cmp`, so -0.0 and +0.0 tie by index as in qsa_topk.metal.
     ranked.sort_by(|&a, &b| {
-        scores[b]
-            .partial_cmp(&scores[a])
-            .expect("score must not be NaN")
-            .then(a.cmp(&b))
+        let (sa, sb) = (scores[a], scores[b]);
+        match (sa.is_nan(), sb.is_nan()) {
+            (false, false) => sb.partial_cmp(&sa).unwrap_or(core::cmp::Ordering::Equal),
+            (true, false) => core::cmp::Ordering::Greater,
+            (false, true) => core::cmp::Ordering::Less,
+            (true, true) => core::cmp::Ordering::Equal,
+        }
+        .then(a.cmp(&b))
     });
     for &block in ranked.iter().take(chosen_count) {
         let base = block * compress_ratio;
@@ -485,5 +492,30 @@ mod tests {
         // to consult at all.
         let mask = select_blocks(&[], 3, 4, 512);
         assert_eq!(mask, vec![true, true, true]);
+    }
+
+    #[test]
+    fn a_nan_score_ranks_last_instead_of_panicking() {
+        // Extreme checkpoint weights can overflow a dot product to inf and
+        // then NaN. Selection must not abort; the NaN block loses to every
+        // finite or infinite score, and infinities keep their order.
+        let compress_ratio = 2usize;
+        let visible = 4 * compress_ratio;
+        let scores = vec![f32::NAN, 1.0, f32::INFINITY, f32::NEG_INFINITY];
+        let mask = select_blocks(&scores, visible, compress_ratio, 3);
+        let block_selected = |b: usize| -> bool { mask[b * compress_ratio] };
+        assert!(!block_selected(0));
+        assert!(block_selected(1));
+        assert!(block_selected(2));
+        assert!(block_selected(3));
+    }
+
+    #[test]
+    fn signed_zero_scores_tie_by_index_like_the_gpu_kernel() {
+        // qsa_topk.metal compares with `==`, so -0.0 and +0.0 tie and the
+        // lower index wins. A `total_cmp` sort would rank +0.0 above -0.0.
+        let scores = vec![-0.0f32, 0.0];
+        let mask = select_blocks(&scores, 4, 2, 1);
+        assert_eq!(mask, vec![true, true, false, false]);
     }
 }

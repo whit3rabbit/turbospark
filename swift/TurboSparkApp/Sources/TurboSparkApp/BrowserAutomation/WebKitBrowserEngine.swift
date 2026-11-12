@@ -249,6 +249,9 @@ private final class ManagedBrowserTab {
     /// any origin the agent never received a grant for. Only agent-owned
     /// authorization contributes; user-takeover browsing never enters here.
     var authorizedFrameOrigins = Set<String>()
+    /// Whether `AgentBrowserNetworkRules` is on this webview. An agent tab
+    /// loads nothing until it is, and a user takeover removes it.
+    var networkRulesInstalled = false
 
     init(webView: BrowserTakeoverWebView) {
         self.webView = webView
@@ -293,6 +296,8 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
         )
         self.screenshotSnapshotter = Self.captureWebViewSnapshot
         super.init()
+        // Warm the compile so the first agent navigation rarely waits on it.
+        AgentBrowserNetworkRules.shared.withRules { _ in }
 
         for tab in tabStore.tabs {
             attachWebView(to: tab)
@@ -393,11 +398,40 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
         beginSnapshotNavigation(for: managedTab, origin: destination.origin)
         setNavigationStarted(tabID, destination: destination)
 
+        // An agent tab loads nothing before its private-network rules are on
+        // the webview: the frame gate cannot see subresources, so the first
+        // page would otherwise run its fetches unblocked. Fail closed.
+        if tabStore.tab(id: tabID)?.owner == .agent, !managedTab.networkRulesInstalled {
+            AgentBrowserNetworkRules.shared.withRules { [weak self] rules in
+                guard let self, self.managedTabs[tabID] === managedTab,
+                      managedTab.activeNavigationURL == destination.url.absoluteString else { return }
+                guard let rules else {
+                    self.recordNavigationFailure(
+                        tabID, error: .navigationFailure(reason: .unknown),
+                        message: "Browser network protections could not be loaded.")
+                    return
+                }
+                self.installNetworkRules(rules, on: managedTab)
+                if managedTab.webView.load(URLRequest(url: destination.url)) == nil {
+                    self.recordNavigationFailure(
+                        tabID, error: .navigationFailure(reason: .unknown),
+                        message: "WebKit could not start the navigation.")
+                }
+            }
+            return
+        }
+
         guard managedTab.webView.load(URLRequest(url: destination.url)) != nil else {
             let error = BrowserControlError.navigationFailure(reason: .unknown)
             recordNavigationFailure(tabID, error: error, message: "WebKit could not start the navigation.")
             throw error
         }
+    }
+
+    private func installNetworkRules(_ rules: WKContentRuleList, on managedTab: ManagedBrowserTab) {
+        guard !managedTab.networkRulesInstalled else { return }
+        managedTab.webView.configuration.userContentController.add(rules)
+        managedTab.networkRulesInstalled = true
     }
 
     /// Transfers an agent-owned tab to the user synchronously, before loading a user address.
@@ -418,6 +452,12 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
 
         cancelPendingPolicyGates(for: tabID)
         try? tabStore.transferOwnershipToUser(of: tabID)
+        // User browsing is outside the agent policy, so the private-network
+        // block goes with the agent. Ownership never returns to the agent.
+        if let managedTab = managedTabs[tabID], managedTab.networkRulesInstalled {
+            managedTab.webView.configuration.userContentController.removeAllContentRuleLists()
+            managedTab.networkRulesInstalled = false
+        }
         refreshStoredTabState(tabID)
     }
 
@@ -1018,13 +1058,22 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
 
     private func attachWebView(to tab: BrowserTab) {
         guard managedTabs[tab.id] == nil else { return }
-        let webView = BrowserTakeoverWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        // Agent tabs get their own data store, so an origin grant never
+        // carries the user's cookies and signed-in sessions with it.
+        let configuration = WKWebViewConfiguration()
+        if tab.owner == .agent {
+            configuration.websiteDataStore = AgentBrowserDataStore.store
+        }
+        let webView = BrowserTakeoverWebView(frame: .zero, configuration: configuration)
         webView.onDirectInput = { [weak self] in
             self?.prepareForDirectUserInput(in: tab.id)
         }
         webView.navigationDelegate = self
         webView.uiDelegate = self
         let managedTab = ManagedBrowserTab(webView: webView)
+        if tab.owner == .agent, let rules = AgentBrowserNetworkRules.shared.compiledRules {
+            installNetworkRules(rules, on: managedTab)
+        }
         managedTabs[tab.id] = managedTab
         tabIDsByWebView[ObjectIdentifier(webView)] = tab.id
         tabStates[tab.id] = BrowserEngineTabState(

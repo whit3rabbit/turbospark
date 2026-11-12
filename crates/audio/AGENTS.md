@@ -23,12 +23,12 @@ Unified portable audio crate: DSP primitives (waveform, WAV I/O, resampling, FFT
 
 All models and model families reside under their respective role directories:
 - `src/music/<family>/`: Music generation (e.g. `minimax_music3`)
-- `src/stt/<family>/`: Speech-to-text (e.g. `canary`, `fireredasr2`, `fun_asr_nano`, `glmasr`, `embeddinggemma2` (experiment), `granite_speech`, `granite_speech5_ctc`, `higgs_audio_3`, `mega_asr`, `mms`, `moonshine`, `moss_transcribe_diarize`, `nemotron_asr`, `parakeet`, `phonon`, `qwen3_asr`, `qwen3_forced_aligner`, `sensevoice`, `whisper`)
-- `src/tts/<family>/`: Text-to-speech (e.g. `bailingmm`, `bark`, `breeze_tts`, `confucius4`, `dia`, `echo_tts`, `fish_qwen3_omni`, `higgs_audio`, `higgs_audio_v3`, `indextts`, `kitten_tts`, `kokoro`, `kugelaudio`, `llama`, `longcat_audiodit`, `megatts3`, `melotts`, `moss_tts`, `moss_tts_nano`, `omnivoice`, `outetts`, `pocket_tts`, `qwen3`, `rumik_oss`, `sesame`, `soprano`, `spark`, `zonos2`)
+- `src/stt/<family>/`: Speech-to-text (e.g. `canary`, `fireredasr2`, `fun_asr_nano`, `glmasr`, `embeddinggemma2` (experiment), `granite_speech`, `granite_speech5_ctc`, `higgs_audio_3`, `mega_asr`, `mms`, `moonshine`, `moss_transcribe_diarize`, `multitalker_asr`, `nemotron_asr`, `parakeet`, `phonon`, `qwen3_asr`, `qwen3_forced_aligner`, `sensevoice`, `whisper`)
+- `src/tts/<family>/`: Text-to-speech (e.g. `arktts`, `bailingmm`, `bark`, `breeze_tts`, `chatterbox`, `chatterbox_turbo`, `confucius4`, `dia`, `dramabox`, `echo_tts`, `fish_drama3`, `fish_qwen3_omni`, `higgs_audio`, `higgs_audio_v3`, `indextts`, `irodori_tts`, `kitten_tts`, `kokoro`, `kugelaudio`, `llama`, `longcat_audiodit`, `megatts3`, `melotts`, `moss_tts`, `moss_tts_nano`, `omnivoice`, `outetts`, `pocket_tts`, `qwen3`, `rumik_oss`, `sesame`, `soprano`, `spark`, `tada`, `vibevoice`, `voxcpm`, `voxcpm2`, `voxtral_tts`, `zonos2`)
 - `src/vad/<family>/`: Voice activity detection and diarization (e.g. `silero_vad`, `sortformer`, `nemotron_diarization`)
-- `src/sts/<family>/`: Speech-to-speech and enhancement (e.g. `deepfilternet`)
+- `src/sts/<family>/`: Speech-to-speech and enhancement (e.g. `deepfilternet`, `dialogue_sidon`, `mel_roformer`, `mossformer2_se`, `sam_audio`)
 - `src/codec/<family>/`: Neural audio codecs and vocoders (e.g. `bigvgan`, `dacvae`, `descript`, `ecapa_tdnn`, `encodec`, `fish_s1_dac`, `higgs_audio`, `mimi`, `mimo_audio_tokenizer`, `moss_audio_tokenizer`, `nemotron_voicechat`, `s3`, `snac`, `spark_bicodec`, `stepaudio2`, `vocos`, `wavvae`)
-- `src/lid/<family>/`: Spoken language identification (e.g. `ecapa_tdnn`, `wav2vec2_lid`)
+- `src/lid/`: Spoken language identification (target families `ecapa_tdnn`, `wav2vec2_lid` are planned; no family directories yet, see `lid/README.md`)
 
 Every model family directory contains its implementation code, configuration, weight loader, and a comprehensive markdown document (`README.md`) detailing:
 1. Overview & model description
@@ -50,7 +50,8 @@ Every model family directory contains its implementation code, configuration, we
   `[out, in]` layout; helpers convert the exceptions at load time, not in
   the kernels.
 - MLX-quantized checkpoints are the norm. `quant.rs` dequantizes groupwise
-  affine tensors (2/3/4/6/8-bit). A model module must refuse a quant scheme
+  affine tensors (2/3/4/5/6/8-bit) and rowwise-symmetric int8 rows (the
+  OmniVoice conversion). A model module must refuse a quant scheme
   it has not verified rather than silently mis-decode.
 - Every model module ships op-level parity tests against golden tensors
   produced by the pinned Python reference, plus an end-to-end run for
@@ -71,9 +72,20 @@ Every model family directory contains its implementation code, configuration, we
 - Text frontends (G2P, phonemizers) are part of the model module that needs
   them. They follow the reference implementation's behavior, including its
   fallbacks, and pin their behavior with tests.
-- Composite TTS architectures compose shared neural codecs: `confucius4` over
-  `bigvgan`, `dia` over `descript` DAC, `echo_tts` over `fish_s1_dac`,
-  `omnivoice` over `higgs_audio`, and `megatts3` over `wavvae`.
+- Composite TTS architectures compose shared neural codecs instead of private
+  copies, e.g. `confucius4` over `bigvgan`, `dia` over `descript` DAC,
+  `echo_tts` and `fish_drama3` over `fish_s1_dac`, `omnivoice` over
+  `higgs_audio`, `megatts3` over `wavvae`, `chatterbox` over `s3`, and
+  `bark` over `encodec`.
+- OmniVoice voice cloning takes the reference transcript as an optional
+  input and has no ASR fallback for the reference (the port follows
+  mlx-audio; upstream transcribes the reference itself when none is given):
+  `combine_text` prepends the transcript to the script, and `None` leaves
+  the reference audio with no words. A transcript that no longer matches
+  the reference audio is spoken in place of the script, so a stale
+  transcript is far worse than none. The `omnivoice_reference_transcript`
+  A/B gate in the runtime crate measures the difference; the family README
+  records it.
 - Zero-shot voice cloning (MegaTTS3): caller must acknowledge consent up
   front (`consent = true`) due to unverified community WavVAE encoder
   provenance. Diffusion steps default to 16 (Balanced; Fast=8, Best=32). Metal

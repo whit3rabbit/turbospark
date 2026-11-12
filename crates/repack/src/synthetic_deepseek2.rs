@@ -116,6 +116,7 @@ pub fn tiny_deepseek2_arch(vocab_size: i64, num_layers: i64) -> ArchConfig {
         // yarn rope the real checkpoint does.
         rope_scaling: model_io::deepseek_v2_lite_16b().rope_scaling,
         vision: VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: PleConfig::NONE,
     }
 }

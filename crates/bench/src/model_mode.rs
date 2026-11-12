@@ -148,7 +148,7 @@ pub fn run_model_mode(
         if n > 0 {
             n
         } else if use_dflash {
-            runtime::DFLASH_SERVING_BLOCK
+            runtime::dflash_serving_block()
         } else {
             runtime::DEFAULT_SPECULATION_BLOCK
         }

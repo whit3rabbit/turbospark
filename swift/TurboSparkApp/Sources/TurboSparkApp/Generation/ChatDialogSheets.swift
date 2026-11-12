@@ -22,7 +22,7 @@ struct SessionStatsSheet: View {
                     dismiss()
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.tertiary)
+                .keyboardShortcut(.cancelAction)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -82,7 +82,7 @@ struct SessionStatsSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .frame(width: 460, height: 480)
+        .frame(minWidth: 420, idealWidth: 460, maxWidth: 600, minHeight: 400, idealHeight: 480, maxHeight: 680)
     }
 
     private func statsGroup(
@@ -92,13 +92,14 @@ struct SessionStatsSheet: View {
             Text(title, bundle: bundle)
                 .themedFont(.small, weight: .semibold)
                 .foregroundStyle(.appSecondary)
+                .accessibilityAddTraits(.isHeader)
             VStack(alignment: .leading, spacing: 4) {
                 rows()
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.03))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(.appElevated)
+            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         }
     }
 
@@ -143,7 +144,7 @@ struct HelpSheetView: View {
                     dismiss()
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.tertiary)
+                .keyboardShortcut(.cancelAction)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
@@ -187,7 +188,7 @@ struct HelpSheetView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .frame(width: 520, height: 560)
+        .frame(minWidth: 460, idealWidth: 520, maxWidth: 700, minHeight: 460, idealHeight: 560, maxHeight: 760)
     }
 
     private func helpSection(
@@ -196,13 +197,14 @@ struct HelpSheetView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title, bundle: bundle)
                 .themedFont(.callout, weight: .semibold)
+                .accessibilityAddTraits(.isHeader)
             VStack(alignment: .leading, spacing: 5) {
                 rows()
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.03))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(.appElevated)
+            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         }
     }
 

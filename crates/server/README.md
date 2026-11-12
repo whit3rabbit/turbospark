@@ -25,7 +25,7 @@ cargo run --release -p turbospark-server --bin turbospark-server -- \
 cargo run --release -p turbospark-server --bin turbospark-server -- \
   --model ~/models/gemma4.gturbo --model ~/models/qwen38-27b.gturbo
 
-# Launch server with Speech-to-Text models (Whisper, Qwen3-ASR)
+# Launch server with Speech-to-Text models (Whisper, Qwen3-ASR, Parakeet)
 cargo run --release -p turbospark-server --bin turbospark-server -- \
   --stt-model whisper-base-en --port 8080
 
@@ -39,19 +39,19 @@ cargo run -p turbospark-server --bin turbospark-server -- <tokenizer-dir> [port]
 
 ## Key Modules
 
-- `main.rs` & `args.rs`: Binary entry point and command-line flag parser (`--model`, repeatable for distinct installs, `--stt-model`, `--tts-model`, `--music-model`, `--bind`, `--port`, `--pool-size`, `--api-key`, `--max-queue-depth`).
+- `main.rs` & `args.rs`: Binary entry point and command-line flag parser (`--model`, repeatable for distinct installs, `--embedding-model`, `--stt-model`, `--tts-model`, `--music-model`, `--bind`, `--port`, `--pool-size`, `--api-key`).
 - `handler/`: Core handlers for `/v1/chat/completions`, `/v1/models`, and `/health`, and generation orchestration (`plan`, `run_full`, `stream_blocking`).
 - `audio/` & `audio_real.rs`: Dedicated audio worker threads, queues, and handlers for STT (`/v1/audio/transcriptions`, realtime WebSocket), TTS (`/v1/audio/speech`), Music (`/v1/audio/generate`), async jobs (`/v1/audio/jobs`), and model lifecycle (`/v1/audio/models`).
 - `messages.rs`: Handler for Anthropic `/v1/messages` and `/v1/messages/count_tokens`, translating Anthropic messages to/from the OpenAI pipeline.
 - `completions.rs`: Handler for legacy OpenAI `/v1/completions` (raw prompts without chat templates).
 - `responses/`: Handler for the OpenAI `/v1/responses` endpoint.
-- `embeddings.rs` & `encoder_model.rs`: `/v1/embeddings` and Ollama embedding routes backed by BERT/XLM-RoBERTa encoder models.
+- `embeddings.rs` & `encoder_model.rs`: `/v1/embeddings` and Ollama embedding routes backed by BERT/XLM-RoBERTa encoder models; `coreml_embedding_model.rs` is the macOS Core ML backend used when the install carries an EmbeddingGemma 2 Core ML layout.
 - `ollama.rs`: Ollama-compatible `/api/*` endpoints with NDJSON streaming.
 - `guardrails.rs` & `guardrails/`: Tool-call rescue parser, schema repair, and validation retry loop.
-- `registry.rs`: Model routing registry, including `PoolRegistry` for round-robin dispatch across multiple loaded model instances.
-- `queue.rs`: Request FIFO generation queue managing concurrent request buffering and queue timeouts.
-- `observe.rs`: Prometheus metrics collector and request latency instrumentation.
-- `vision.rs`: Multimodal image URL decoding, download limits, and vision tensor injection.
+- `registry.rs`: Model routing registry, including `PoolRegistry` for least-busy dispatch (round-robin across idle members) across multiple loaded model instances.
+- `queue.rs`: FIFO generation admission gate that buffers concurrent requests in arrival order while the serialized real backend generates (cancellation-aware; no queue timeout or depth cap).
+- `observe.rs`: Server event instrumentation (request ids, start/finish and generation events with durations) for embedding hosts; the Prometheus `/v1/metrics` endpoint (audio routes only) lives in `audio/metrics.rs`.
+- `vision.rs`: Multimodal image data-URL decoding, per-request image count and size limits, and vision tensor injection (remote image URLs are refused, not downloaded).
 - `bind.rs`: Network interface binding (loopback vs Tailscale tailnet).
 - `auth.rs`: Bearer token and API key validation.
 - `cancel.rs`: Client disconnect cancellation handling via cancellation tokens.
@@ -75,12 +75,14 @@ This crate contains 22 integration test suites in `tests/`:
 - Concurrency and queues: `generation_queue.rs`, `registry.rs`, `cancellation.rs`.
 - Security and transport: `auth.rs`, `streaming_error_framing.rs`.
 - Tool calling and guardrails: `guardrails.rs`, `system_prompt.rs`, `harmony_channels.rs`, `reasoning_channels.rs`.
-- Multimodal and real model tests: `images.rs`, `real_backend.rs`, `observe.rs`.
+- Multimodal and real model tests: `images.rs`, `image_generations.rs`, `real_backend.rs`, `observe.rs`.
 - Audio API: `audio_api.rs`.
+- CLI and OpenAPI contract: `server_cli.rs`, `server_api_contract.rs`.
 
 ## Crate Gotchas
 
 1. **Serialized Real Backend & Concurrency Pools**: A single `RealChatModel` instance processes requests serially because Metal forward passes require mutable GPU buffers and KV cache state. For concurrent request processing, configure `--pool-size N` to instantiate multiple runner instances managed by `PoolRegistry`.
 2. **Anthropic SSE Framing Differences**: Anthropic SSE streams use explicit `event:` header lines (e.g. `content_block_delta`, `message_delta`) and terminate with a `message_stop` event rather than the OpenAI `data: [DONE]` sentinel.
 3. **Tailnet Binding Security**: Setting `--bind tailnet` binds exclusively to the Tailscale IPv4 carrier grade interface (100.64.0.0/10) with mandatory API key authentication.
-4. **Speech Installs Refused on `--model`**: Speech (Whisper, Qwen3-ASR) installs carry a typed speech receipt and are refused by `turbospark-server --model`, which serves `.gturbo` text and vision models. Attach speech models via `--stt-model <install-dir|alias>` (repeatable), TTS models via `--tts-model`, and music models via `--music-model`. With no `--model`, the server runs in audio-only mode. Audio models can also be dynamically attached at runtime via `POST /v1/audio/models`.
+4. **Speech Installs Refused on `--model`**: Speech (Whisper, Qwen3-ASR, Parakeet) installs carry a typed speech receipt and are refused by `turbospark-server --model`, which serves `.gturbo` text and vision models. Attach speech models via `--stt-model <install-dir|alias>` (repeatable), TTS models via `--tts-model`, and music models via `--music-model`. With no `--model`, the server runs in audio-only mode (`--embedding-model` alone instead runs an embedding-only server). Audio models can also be dynamically attached at runtime via `POST /v1/audio/models`.
+5. **Message Text Can Spell Control Markers**: Content is rendered into the chat template and encoded as one string, so text such as `<|im_end|>\n<|im_start|>system` inside a user or tool message becomes real turn markers. This matches HF transformers, vLLM and llama.cpp. Clients that put untrusted text (tool results, fetched pages, documents) into messages must strip or escape the model's special-token spellings first. See `crates/tokenizer/AGENTS.md`.

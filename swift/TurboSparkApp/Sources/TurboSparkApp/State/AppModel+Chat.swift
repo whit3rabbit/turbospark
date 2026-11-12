@@ -313,6 +313,7 @@ extension AppModel {
         } else {
             ToolObservationStore.shared.delete(chatID: id)
             try? MemoryLedgerStore.shared.invalidateEvidence(chatID: id, messages: [])
+            forgetConversationRecall(chatID: id)
         }
         invalidatePendingTitleGeneration(for: id)
         // A deleted chat's queued drafts are discarded WITH it: the user's
@@ -393,6 +394,7 @@ extension AppModel {
                     }
                 } else {
                     chats[index].messages.removeAll()
+                    forgetConversationRecall(chatID: chats[index].id)
                     chats[index].contextSummary = nil
                     chats[index].compactedMessageCount = 0
                     chats[index].skillState = nil
@@ -507,6 +509,21 @@ extension AppModel {
         }
         if currentIndex < list.count - 1 {
             selectChat(id: list[currentIndex + 1].id)
+        }
+    }
+
+    /// Drops the session "Always Allow" grants of every matching chat.
+    ///
+    /// A grant was given under the policy in force at the time. Moving a
+    /// project or the rootless chat to a stricter mode must not leave a
+    /// grant from the looser one answering for it.
+    func clearSessionApprovals(where matches: (AppChat) -> Bool) {
+        let sessionIDs = chats.filter(matches).map(\.id.uuidString)
+        guard !sessionIDs.isEmpty else { return }
+        Task {
+            for sessionID in sessionIDs {
+                await SessionApprovalStore.shared.clear(sessionID: sessionID)
+            }
         }
     }
 }

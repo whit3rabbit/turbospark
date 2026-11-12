@@ -10,6 +10,7 @@ import SwiftUI
 /// after they end, because the banner is also the only stop button that does
 /// not require typing `/goal clear`.
 struct GoalBannerView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     @State private var now = Date()
 
@@ -39,7 +40,7 @@ struct GoalBannerView: View {
                     Text("Stop goal", bundle: .module)
                         .themedFont(.tiny, weight: .medium)
                 }
-                .buttonStyle(.link)
+                .appAction(.quiet, size: .small)
                 .accessibilityLabel(Text("Stop goal", bundle: .module))
             }
             Text(GoalPolicy.conditionPreview(goal.condition))
@@ -57,8 +58,8 @@ struct GoalBannerView: View {
 
                 if model.isEvaluatingGoal {
                     HStack(spacing: 4) {
-                        ProgressView()
-                            .controlSize(.mini)
+                        AppProgressBar(value: nil, label: Text("Evaluating", bundle: .module), size: .compact)
+                            .frame(width: 40)
                         Text("Evaluating", bundle: .module)
                             .themedFont(.tiny)
                             .foregroundStyle(.appSecondary)
@@ -97,12 +98,12 @@ struct GoalBannerView: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            Color(nsColor: .controlBackgroundColor).opacity(0.85),
-            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .appSurface,
+            in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                .stroke(theme.border, lineWidth: 1)
         )
         .accessibilityElement(children: .combine)
         .onAppear { now = Date() }

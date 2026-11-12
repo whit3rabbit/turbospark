@@ -262,7 +262,11 @@ pub fn run_raw_completion_cancellable(
     // `produce_prefill` and lets the producer skip its output head.
     // `check_admission` rejected an empty prompt, so this cannot underflow.
     let last = prompt_ids.len() - 1;
+    let cut = producer.turn_snapshot_position(prompt_ids, reused);
     for (i, &token) in prompt_ids.iter().enumerate().skip(reused) {
+        if cut == Some(i) {
+            producer.take_turn_snapshot(i);
+        }
         if i == last {
             producer.produce(token, position, &mut logits)
         } else {

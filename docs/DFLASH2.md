@@ -373,6 +373,37 @@ The honest claim is "identical for the first hundred-odd tokens, then
 divergent at the first near-tie". A caller who needs token-for-token
 reproducibility against a sequential decode should leave speculation off.
 
+**ROOT CAUSE FOUND, 2026-10-23, and it was two things, neither a reduce-order
+floor.** Bisected on `qwen38-27b-mtp` (MTP drafter, the same trunk) with a
+layer cap and per-stage dumps:
+
+1. **A real decode-vs-verify bug in the GDN causal conv.**
+   `gdn_conv_mix_decode` started from the current row's tap and added the
+   three tail taps. `gdn_conv_mix_prefill`, which a verify row runs, started
+   from zero and added the current row's tap last. That is one f32
+   association apart, and it survives the half rounding about once in ten
+   thousand elements. The first divergence was a single `conv_out` element
+   of layer 33. Zero tail rows early in a sequence make the order
+   irrelevant, which is the "onset at three keys" `batched_forward_probe.rs`
+   attributed to attention. The prefill kernel now uses the decode order
+   (`tests/gdn_conv_order_parity.rs`, real width, full tail,
+   mutation-checked). After it, every verify row is bit-identical to the
+   decode step it stands in for (768 of 768 rows over three prompts,
+   teacher-forced).
+2. **The speculative loop's prefill differs from the sequential one.** It
+   primes the drafter through the chunked driver, which uses Steel at 32+
+   rows and is not bit-exact by design (`docs/BENCHMARKS.md`). With the
+   conv fixed and `TURBOSPARK_BATCHED_GEMV=0` on both arms, greedy
+   speculation matches sequential decode for all 256 tokens on all three
+   protocol-shaped prompts at blocks 2 and 4. With either cause left in, the
+   prose prompt departs (166 with the old conv, 154 with chunked prefill).
+
+So the acceptance logic and the verify pass ARE lossless. What still parts
+the default speculative stream from a sequential one is the prefill choice,
+which is a speed trade made on purpose. Whether to keep that trade is an
+open policy question (`docs/INT4_SMALL_M_MMA.md`, "Open questions", item
+1). The DFlash2 arms above were not re-run.
+
 **THE MECHANISM IS THE KERNEL, NOT THE BATCH WIDTH**, and the discriminator
 that says so also refuted the first hypothesis. If the batch WIDTH caused
 the divergence, different M would reassociate differently and the divergence
@@ -503,7 +534,16 @@ there where this port applies it. It costs nothing measurable: block 8
 commits 5.56 per round against block 7's 5.37, and its last position is
 accepted 0.88 of the time. `DFLASH_BLOCK` stays 8 as the widest buildable
 block. But BOTH lose to block 2 on throughput, which is the decision that
-actually matters and is why `DFLASH_SERVING_BLOCK` is 2.
+actually matters and is why `DFLASH_SERVING_BLOCK` was 2.
+
+**Superseded 2026-10-26.** Re-measured on the current engine (lazy GDN tape,
+`Dk = 128` bake, tree verify, chunked prefill), `auto` now serves block 3
+with the 8-row INT4 tile off (+3.7% over block 2, paired A/B) and block 7
+with it on (`dflash_serving_block`). The lazy tape removed the snapshot
+restore that made long blocks lose here; what limits the block without the
+tile is now the verify pass itself, which roughly doubles from 5 rows. The
+table and the A/B ids are in `DFLASH_SERVING_BLOCK`'s doc comment
+(`crates/runtime/src/families/qwen/dflash_state.rs`).
 
 ### What was wrong, and why every instrument said it was fine
 
@@ -872,3 +912,134 @@ FP16 overflow, which no comparison against a BF16 reference could have
 surfaced, because it is a property of this port's storage rather than of
 the model. Read the references to learn what the semantics ARE; measure to
 learn which of your deviations is biting.
+
+### Chunked prefill with the drafter open (2026-10-25)
+
+Until this date a DFlash2 run prefilled token by token: the chunked driver
+did not encode the per-layer aux captures, so `supports_chunked_drafter_prefill`
+answered for the MTP head only, and a DFlash2 install prefilled at 17-23
+tok/s against 142 for the MTP install on the same driver
+(`docs/KAPITSA_KERNELS.md`, lever 10). The driver now has a DFlash2 priming
+variant (`Priming::Dflash`, `families/qwen/prefill.rs`):
+
+- The chunked layer encoders copy each tapped layer's micro-batch rows into
+  the capture buffer, which is sized for the widest micro-batch
+  (`DFLASH_CAPTURE_ROWS`, 64). Only `capture` grew; the context write's
+  intermediates stay at 16 rows.
+- After each micro-batch the context write runs in slices of at most 16
+  rows (`dflash_context_write(first_row, rows)`), because every GEMM in it
+  goes through `encode_gemm_any`, which caps the batch at 16.
+- The micro-batch that ends the prompt writes all but its last row, copies
+  that row's capture to row 0 and notes it alone. That is the token walk's
+  end state exactly: cursor and `capture_base` on the last prompt position,
+  `capture_rows = 1`. The drafter has no other state, so this is the whole
+  handoff to the first round's `dflash_draft_block`.
+
+`TURBOSPARK_DFLASH_CHUNKED_PREFILL=0` keeps the token walk (read once).
+`crates/runtime/tests/real_forward_qwen35_dflash_chunked.rs` holds the
+per-token and scalar batched arms `==` to the walk (trunk logits, handoff
+state, every query row of the first draft) at prompt lengths crossing the
+16-row slice, the 64-row Steel micro-batch and the 128-token chunk, and the
+Steel arm to the chunked MTP suite's bound. Two mutations were applied and
+caught: dropping the slice's capture offset (only the Steel arm reaches a
+second slice, and it fails) and dropping the last-row copy (all three arms
+fail). As with the MTP head, the Steel arm is not bit-exact against the
+walk, so the default speculative stream can part from a sequential one for
+the prefill reason described in section 6.
+
+On the real install (426-token prompt, M4 Max, AC, warm page cache) the
+paired tslab A/B on 2026-10-26 (experiment `kapitsa-quiet-a2`, verdict
+`1793051988452-69657-20`) is a WIN on 3 clean pairs: chunked 158.8-158.9
+tok/s against 23.4-23.5 for the walk, +577%. Through `turbospark-server`
+(block 7, `TURBOSPARK_INT4_MMA8=1`) time to first token is now 0.39 s for a
+62-token prompt and 2.7-2.8 s for 426, against 3.83 s for 62 before the
+change. The conditions and the prefix-reuse caveat are in
+`docs/KAPITSA_KERNELS.md`, lever 10.
+With `TURBOSPARK_BATCHED_GEMV=0` both prefills are bit-identical, which is
+how `crates/bench/tests/dflash_generation_gate.rs` holds the speculative
+stream, chain and tree (`TURBOSPARK_DFLASH_TREE`), to sequential decode.
+
+### Tree verify on a quiet host (2026-10-26)
+
+`TURBOSPARK_DFLASH_TREE=1` (opt-in at the time, `docs/KAPITSA_KERNELS.md`
+lever 4) under
+`TURBOSPARK_INT4_MMA8=1` at block 7, 128 tokens, tslab experiment
+`kapitsa-quiet-c1`, every run clean:
+
+- medium-review: WIN +8.57% decode tok/s (chain 40.2-40.3, tree 43.0-43.9),
+  committed per round 2.98 to 3.28.
+- short-explanation: WIN +3.07% (chain 41.4-41.5, tree 42.6-42.9), committed
+  per round 3.05 to 3.20.
+
+A tree round costs about 1.1 ms (1.5%) more than a chain round. The verify
+itself is only 0.3-0.6 ms dearer. The 4-5 ms read on 2026-10-25 came from
+contended runs. A dispatch profile ranks the extra GPU time as the
+compaction pass (`dflash_tree_compact`, about 0.45 ms, its own command
+buffer) first, then the tree GDN delta kernel (+16% on that kernel). The tree
+attention and the per-row position table cost nothing measurable.
+
+The tree is the default since 2026-10-26, and `TURBOSPARK_DFLASH_TREE=0`
+keeps the chain. In the default configuration (MMA8 off) it wins +9.22% on
+medium-review and +4.32% on short-explanation with under 1 MB more peak
+footprint (experiment `dflash-tree-default-d1`), and `dflash_generation_gate`
+stays lossless with it on and off. Conditions and ids are in
+`docs/KAPITSA_KERNELS.md`, lever 4, "Promotion to the default".
+
+### The ANE prefill split with the drafter open (2026-10-26)
+
+The ANE+Steel prefill split (`families/qwen/ane_split.rs`,
+`docs/SPEEDUP_PLAYBOOK.md`) used to step aside whenever a drafter was open,
+for two reasons. Its micro-batch is 2048 rows and the drafter's capture held
+64, and the split's encoder passed no drafter to the post-FFN copy. A third
+reason sat in the speculative loop: it prefilled in the runtime's default
+128-token spans, so a micro-batch never reached the split's 512-row minimum
+even with the first two fixed.
+
+`TURBOSPARK_ANE_PREFILL_DFLASH=1` (read once, off by default) lifts the
+step-aside for DFlash2:
+
+- The split's encoder copies each tapped layer's rows into the capture, the
+  same copy the Steel arm encodes.
+- The capture widens to 2048 rows the first time a micro-batch at the
+  split's width is planned (`DflashState::ensure_capture_rows`), so an
+  install that never splits never pays the 100 MiB (Qwen3.8-27B's shape,
+  computed). A micro-batch the split declines at that width runs on Steel
+  and captures into the same rows.
+- The context write is unchanged: slices of 16 rows after the micro-batch
+  completes, so a Steel redo after a failed prediction recaptures before
+  anything reads the capture.
+- `SpeculativeProducer::drafter_prefill_chunk` lets the producer ask the
+  loop for 2048-token spans while the split can take the drafter.
+
+The MTP head still keeps the split off. Its batched prime is sized by the
+same scratch, but it is not wired or tested at 2048 rows.
+
+`crates/runtime/tests/real_forward_qwen35_dflash_ane_split.rs` runs the
+split in `break` mode on the synthetic install (a manifest written for the
+fixture's FFN shapes, no Core ML program), holds the trunk bit for bit to the
+plain open under the same split and the first draft to the chunked suite's 1%
+bound against the token walk. Passing no drafter to the split's post-FFN copy
+fails it at 150 tokens, a split length, and not at 100, which the split
+declines. `real_forward_qwen35_dflash_ane_default.rs` holds the default:
+without the switch the loop keeps its 128-token spans.
+
+On the real install (`tslab sweep ane_split_dflash`, qwen38-27b-dflash2,
+protocol long-synthesis, depth 7 with the tile off, M4 Max, AC, 3 clean
+pairs of 3) the split read 233-236 tok/s against 161-162 for Steel priming,
+a WIN at +45.1% median (CI +44.6% to +46.0%; finding
+`qwen35.sweep-ane-split-dflash-2026-10-26` in the lab's qwen35 profile).
+Every split run printed `[engaged] ane_prefill` beside
+`[engaged] dflash_chunked_prefill`. Committed tokens per round read 3.37
+against 3.20 and decode 20.6 against 19.8 tok/s, but the split moves the
+trunk within the dense KL bound, so the arms decode different text and
+neither number is an effect of the change. Peak memory grew 1,689 MiB, the
+split's scratch and planes plus the widened capture. Not a default: the
+pairing owes what the split alone owes (`docs/SPEEDUP_PLAYBOOK.md`).
+
+**The drafter itself on the ANE is a non-goal.** A draft is 3 to 8 rows,
+each Core ML prediction carries about 1.4 ms of fixed cost
+(`docs/SPEEDUP_PLAYBOOK.md`), and at 32 rows the ANE ran at 0.09x Metal's
+speed (`docs/MOE_PRIOR_ART.md`). The drafter's residual stream peaks near
+113,920, past FP16, and the ANE computes in FP16 only (section 6 stores it
+divided by `DFLASH_RESIDUAL_SCALE` on the GPU for the same reason). And round
+n+1's draft needs round n's verify result, so there is little to overlap.

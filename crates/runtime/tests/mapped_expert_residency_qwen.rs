@@ -13,13 +13,22 @@
 //! expensive setup and the same poisoned environment.
 
 use half::f16;
+use model_io::mapped_residency_fits;
 use turbospark_runtime::{
-    DraftPolicies, ExpertCacheSlots, ExpertResidency, KvQuant, LogitProducer, MtpDraftPolicy,
-    RealForwardRunner, SteeringPolicy,
+    recommended_max_working_set, DraftPolicies, ExpertCacheSlots, ExpertResidency, KvQuant,
+    LogitProducer, MtpDraftPolicy, RealForwardRunner, SteeringPolicy,
 };
 
 #[test]
 fn mapped_residency_opens_on_qwen_and_then_refuses_the_batched_verify_by_name() {
+    let working_set_bytes = recommended_max_working_set().map_or(0, |(bytes, _)| bytes);
+    if !mapped_residency_fits(working_set_bytes, 0, 0) {
+        eprintln!(
+            "host Metal working set ({:.2} GiB) does not fit mapped residency reserve (>= 10 GiB); skipping",
+            working_set_bytes as f64 / (1u64 << 30) as f64
+        );
+        return;
+    }
     let dir = std::env::temp_dir().join(format!(
         "turbospark-mapped-residency-qwen-{}",
         std::process::id()

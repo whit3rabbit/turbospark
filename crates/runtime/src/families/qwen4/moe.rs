@@ -112,7 +112,7 @@ pub(crate) fn encode_moe_router(
 /// Returns the cache slots THIS call bound, for the caller to
 /// hand to the next token's `RoutedSlot::protect`.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn encode_moe_layer(
+pub(super) fn encode_moe_layer(
     context: &mut gpu::MetalContext,
     pass: &gpu::PassEncoder,
     weights: &gpu::ResidentGpuWeights,
@@ -137,6 +137,7 @@ pub(crate) fn encode_moe_layer(
     top_k: usize,
     use_silu: bool,
     slot: &RoutedSlot,
+    prefill_bank: Option<&super::prefill_bank::LoadedLayer<'_>>,
 ) -> Result<Vec<usize>, RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
     let rw_off = slot.bank * gpu::MAX_STREAMED_EXPERTS * 2;
@@ -153,7 +154,11 @@ pub(crate) fn encode_moe_layer(
         hist.record(layer, &selected);
     }
     let mapped_active = mapped.buffers.get(layer).is_some_and(Option::is_some);
-    let slots: Vec<usize> = if mapped_active {
+    let slots: Vec<usize> = if prefill_bank.is_some() {
+        // The union read accounts for the bank's requests and misses once.
+        phases.router_nanos += t_router.elapsed().as_nanos() as u64;
+        selected.clone()
+    } else if mapped_active {
         phases.expert_requests += selected.len() as u64;
         phases.expert_hits += selected.len() as u64;
         phases.router_nanos += t_router.elapsed().as_nanos() as u64;
@@ -203,7 +208,12 @@ pub(crate) fn encode_moe_layer(
         &f16_slice_to_le_bytes(&routing16),
     );
 
-    let blob_refs: Vec<(&gpu::MetalBuffer, u64)> = if mapped_active {
+    let blob_refs: Vec<(&gpu::MetalBuffer, u64)> = if let Some(bank) = prefill_bank {
+        ordered
+            .iter()
+            .map(|&(expert, _)| (bank.buffer, expert as u64 * bank.stride))
+            .collect()
+    } else if mapped_active {
         let buffer = mapped.buffers[layer]
             .as_ref()
             .expect("mapped residency checked above");

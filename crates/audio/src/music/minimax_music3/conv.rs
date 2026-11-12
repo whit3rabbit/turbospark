@@ -7,7 +7,7 @@
 //! the two conventions compute the same convolution, which the fixture
 //! parity tests pin.
 
-use super::backend::{ConvShape, Weight};
+use super::backend::{ConvShape, Sequence, Slot, Weight};
 use crate::Result;
 use crate::SpeechError;
 
@@ -111,6 +111,38 @@ impl MlxConv1d {
                 self.weight.output_dtype(input).promote(b.dtype)
             })
     }
+    /// Whether [`Self::forward_sequence`] gives the values of `forward_typed`:
+    /// a device weight, BF16 throughout, and the bias added inside the kernel.
+    pub(crate) fn sequence_ready(&self, input: DType) -> bool {
+        sequence_ready(&self.weight, self.dtype(input), input)
+    }
+    /// `forward_typed` recorded into `sequence`; check [`Self::sequence_ready`] first.
+    pub(crate) fn forward_sequence(
+        &self,
+        sequence: &mut dyn Sequence,
+        x: Slot,
+        input_dtype: DType,
+    ) -> Result<Slot> {
+        let Weight::Device { weight, .. } = &self.weight else {
+            return Err(not_device());
+        };
+        sequence.convolution(
+            x,
+            weight.as_ref(),
+            self.bias.as_deref(),
+            ConvShape {
+                input_channels: self.in_ch,
+                output_channels: self.out_ch,
+                kernel: self.kernel,
+                stride: self.stride,
+                padding: self.padding,
+                dilation: self.dilation,
+                transpose: false,
+            },
+            1,
+            self.weight.output_dtype(input_dtype),
+        )
+    }
     pub(crate) fn forward_typed(
         &self,
         x: &[f32],
@@ -198,16 +230,55 @@ impl MlxConvTranspose1d {
                 self.weight.output_dtype(input).promote(b.dtype)
             })
     }
-    pub(crate) fn forward_typed(
+    /// Output frames for `frames` input frames.
+    pub(crate) fn output_frames(&self, frames: usize) -> usize {
+        ((frames.max(1) - 1) * self.stride + self.kernel).saturating_sub(2 * self.padding)
+    }
+    /// See [`MlxConv1d::sequence_ready`].
+    pub(crate) fn sequence_ready(&self, input: DType) -> bool {
+        sequence_ready(&self.weight, self.dtype(input), input)
+    }
+    /// [`Self::forward_batched`] recorded into `sequence`.
+    pub(crate) fn forward_sequence(
+        &self,
+        sequence: &mut dyn Sequence,
+        x: Slot,
+        input_dtype: DType,
+        batch: usize,
+    ) -> Result<Slot> {
+        let Weight::Device { weight, .. } = &self.weight else {
+            return Err(not_device());
+        };
+        sequence.convolution(
+            x,
+            weight.as_ref(),
+            self.bias.as_deref(),
+            ConvShape {
+                input_channels: self.in_ch,
+                output_channels: self.out_ch,
+                kernel: self.kernel,
+                stride: self.stride,
+                padding: self.padding,
+                dilation: 1,
+                transpose: true,
+            },
+            batch,
+            self.weight.output_dtype(input_dtype),
+        )
+    }
+    /// One element of `batch` inputs that MLX decodes in a single call (the
+    /// vocoder's two stereo halves), so the backend can match MLX's K split.
+    pub(crate) fn forward_batched(
         &self,
         x: &[f32],
         _seq: usize,
         input_dtype: DType,
+        batch: usize,
     ) -> Result<Vec<f32>> {
         let projection_dtype = self.weight.output_dtype(input_dtype);
         let dtype = self.dtype(input_dtype);
         let separate_bias = dtype != projection_dtype;
-        let mut output = self.weight.convolution(
+        let mut output = self.weight.convolution_batched(
             x,
             if separate_bias {
                 None
@@ -223,6 +294,7 @@ impl MlxConvTranspose1d {
                 dilation: 1,
                 transpose: true,
             },
+            batch,
             projection_dtype,
         )?;
         if separate_bias {
@@ -236,6 +308,21 @@ impl MlxConvTranspose1d {
             }
         }
         Ok(output)
+    }
+}
+
+/// The device sequence rounds BF16 only and adds the bias in the kernel, so a
+/// convolution records into one only when the host path would do the same.
+fn sequence_ready(weight: &Weight, output: DType, input: DType) -> bool {
+    matches!(weight, Weight::Device { .. })
+        && input == DType::Bf16
+        && output == DType::Bf16
+        && weight.output_dtype(input) == DType::Bf16
+}
+
+fn not_device() -> SpeechError {
+    SpeechError::Unsupported {
+        why: "sequence convolution needs a device-resident weight".into(),
     }
 }
 

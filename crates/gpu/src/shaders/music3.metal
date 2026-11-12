@@ -330,6 +330,65 @@ kernel void music3_linear_fp_vector(device const uchar *w [[buffer(0)]],
     if(live && lane==0) y[pair]=music_round(music_round(result,p[6])+(p[5] ? bias[uint(pair%out)] : 0),p[6]);
 }
 
+// MLX 0.32's `gemv_wide` (mlx/backend/metal/kernels/gemv.h): out[M, N] = x[M, K] @ w[N, K]^T
+// for 2 to 15 vectors against a dense bf16 or f16 matrix on M3 and later. Each of
+// k_lanes lanes owns every k_lanes-th float4 chunk of K, adds eight chunk dots at a
+// time into a block sum, folds the block sums in order, then reduces the lanes with
+// halving shuffles. The rows of a simdgroup stay separate when k_lanes is 16.
+// The result for one vector does not depend on how vectors are grouped, so only
+// k_lanes (p[14]) matters. Rounds once to the activation dtype.
+inline float4 music_w4(device const ushort *row,uint idx,uint mode) {
+    float4 r;
+    for(uint i=0;i<4;i++) {
+        ushort u=row[idx*4+i];
+        r[i]=mode==2 ? as_type<float>(uint(u)<<16) : float(as_type<half>(u));
+    }
+    return r;
+}
+kernel void music3_gemv_wide(device const uchar *w [[buffer(0)]],
+ device const float *sc [[buffer(1)]],device const float *off [[buffer(2)]],
+ device const uchar *bs [[buffer(3)]],device const float *x [[buffer(4)]],
+ device const float *bias [[buffer(5)]],device float *y [[buffer(6)]],
+ constant uint *p [[buffer(7)]],uint gid [[threadgroup_position_in_grid]],
+ uint simd_gid [[simdgroup_index_in_threadgroup]],uint simd_lid [[thread_index_in_simdgroup]]) {
+    uint mode=p[0],K=p[1],N=p[4],M=p[7],k_lanes=p[14];
+    uint rps=32/k_lanes;
+    uint k_lane=simd_lid%k_lanes,sg_row=simd_lid/k_lanes;
+    uint out_row=gid*(4*rps)+simd_gid*rps+sg_row;
+    uint row=min(out_row,N-1);
+    device const ushort *wr=(device const ushort*)w+ulong(row)*K;
+    uint n_v4=K/4,n_main=n_v4-n_v4%(k_lanes*8);
+    float result[16];
+    for(uint v=0;v<16;v++) result[v]=0;
+    for(uint base=0;base<n_main;base+=k_lanes*8) {
+        float4 wf[8];
+        for(uint i=0;i<8;i++) wf[i]=music_w4(wr,base+i*k_lanes+k_lane,mode);
+        for(uint v=0;v<M;v++) {
+            float acc=0;
+            device const float *xv=x+ulong(v)*K;
+            for(uint i=0;i<8;i++) {
+                uint c=(base+i*k_lanes+k_lane)*4;
+                acc+=dot(wf[i],float4(xv[c],xv[c+1],xv[c+2],xv[c+3]));
+            }
+            result[v]+=acc;
+        }
+    }
+    for(uint idx=n_main+k_lane;idx<n_v4;idx+=k_lanes) {
+        float4 wf=music_w4(wr,idx,mode);
+        for(uint v=0;v<M;v++) {
+            device const float *xv=x+ulong(v)*K;
+            uint c=idx*4;
+            result[v]+=dot(wf,float4(xv[c],xv[c+1],xv[c+2],xv[c+3]));
+        }
+    }
+    for(uint v=0;v<M;v++) {
+        for(ushort o=k_lanes/2;o>=1;o>>=1) result[v]+=simd_shuffle_down(result[v],o);
+    }
+    if(k_lane==0 && out_row<N) {
+        for(uint v=0;v<M;v++) y[ulong(v)*N+out_row]=music_round(result[v],p[6]);
+    }
+}
+
 kernel void music3_embedding(device const uchar *w [[buffer(0)]],
  device const float *sc [[buffer(1)]], device const float *off [[buffer(2)]],
  device const uchar *bs [[buffer(3)]], device const int *ids [[buffer(4)]],
@@ -378,33 +437,40 @@ kernel void music3_conv_tiled(device const uchar *w [[buffer(0)]],device const f
     uint total_k=ic*ksize,oblocks=(oc+TO-1)/TO,t0=(gid/oblocks)*TR,o0=(gid%oblocks)*TO;
     uint simd=tid/32,lane=tid%32,sr=simd/SO,so=simd%SO;
     threadgroup float xs[TR*BK],ws[BK*TO],res[SR*SO*SGE];
+    // p[14] K partitions (1 unless MLX runs this conv as an unfold plus a split-K
+    // GEMM): each is its own float32 chain from zero, summed in order after.
+    uint parts=p[14];
+    float total[PER];
+    for(uint m=0;m<PER;m++) total[m]=0;
+    for(uint part=0;part<parts;part++) {
     simdgroup_float8x8 c[RM][RN];
     for(uint i=0;i<RM;i++) for(uint j=0;j<RN;j++) c[i][j]=simdgroup_float8x8(0.0f);
-    for(uint f0=0;f0<total_k;f0+=BK) {
+    uint begin=part*(total_k/parts),end=begin+total_k/parts;
+    for(uint f0=begin;f0<end;f0+=BK) {
         for(uint idx=tid;idx<TR*BK;idx+=128) {
             uint r=idx%TR,kc=idx/TR,t=t0+r,f=f0+kc,k=f/ic,i=f%ic;
-#ifdef KOKORO_CONTRACTS
-            // The implicit-convolution loader visits taps within each 16-channel chunk.
+            // MLX's implicit-GEMM conv loader visits the taps inside each 16-channel
+            // chunk (its channel jump rewinds the taps), so K runs chunk-major, not
+            // tap-major. p[13] selects it: Kokoro always, Music 3 when the shape
+            // takes MLX's implicit-GEMM path (see the host).
             if(p[13] && !transpose && ic%16==0) { k=(f/16)%ksize;i=(f/(16*ksize))*16+f%16; }
-#endif
-            if(transpose) k=ksize-1-k;
+            // MLX's unfold walks the taps of a transposed conv in ascending weight
+            // order (w[0] first), so no flip: the pairing w[k] with x[(t+pad-k)/stride]
+            // is unchanged, only the summation order.
             int pos=int(t*stride+k*dilation)-int(pad);
-            bool valid=t<outlen && f<total_k;
+            bool valid=t<outlen && f<end;
             if(transpose) {pos=int(t+pad)-int(k);valid=valid && pos>=0 && uint(pos)%stride==0;pos/=int(stride);}
             xs[r*BK+kc]=valid && pos>=0 && uint(pos)<len ? x[ulong(i)*len+uint(pos)] : 0;
         }
         for(uint idx=tid;idx<TO*BK;idx+=128) {
             uint oo=idx%TO,kc=idx/TO,o=o0+oo,ff=f0+kc,kk=ff/ic,ii=ff%ic;
-#ifdef KOKORO_CONTRACTS
             if(p[13] && !transpose && ic%16==0) { kk=(ff/16)%ksize;ii=(ff/(16*ksize))*16+ff%16; }
-#endif
-            if(transpose) kk=ksize-1-kk;
             ulong wi=transpose ? (ulong(ii)*oc+o)*ksize+kk : (ulong(o)*ic+ii)*ksize+kk;
-            ws[kc*TO+oo]=o<oc && ff<total_k ? (p[11]==0 ? ((device const float*)w)[wi] : p[11]==1 ? float(((device const half*)w)[wi]) : as_type<float>(uint(((device const ushort*)w)[wi])<<16)) : 0;
+            ws[kc*TO+oo]=o<oc && ff<end ? (p[11]==0 ? ((device const float*)w)[wi] : p[11]==1 ? float(((device const half*)w)[wi]) : as_type<float>(uint(((device const ushort*)w)[wi])<<16)) : 0;
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
         for(uint kb=0;kb<BK/8;kb++) {
-            if(f0+kb*8>=total_k) break;
+            if(f0+kb*8>=end) break;
             simdgroup_float8x8 a[RM],b[RN];
             for(uint i=0;i<RM;i++) simdgroup_load(a[i],xs+(sr*SGR+i*8)*BK+kb*8,BK);
             for(uint j=0;j<RN;j++) simdgroup_load(b[j],ws+(kb*8)*TO+so*SGO+j*8,TO);
@@ -414,13 +480,73 @@ kernel void music3_conv_tiled(device const uchar *w [[buffer(0)]],device const f
     }
     for(uint i=0;i<RM;i++) for(uint j=0;j<RN;j++) simdgroup_store(c[i][j],res+simd*SGE+i*8*SGO+j*8,SGO);
     threadgroup_barrier(mem_flags::mem_threadgroup);
+    for(uint m=0;m<PER;m++) {
+        float r=res[simd*SGE+(lane+32*m)%SGR*SGO+(lane+32*m)/SGR];
+        total[m]=parts>1 ? total[m]+r : r;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
     // Lanes cover consecutive time steps so the channel-major store is contiguous.
     for(uint m=0;m<PER;m++) {
         uint e=lane+32*m,rr=e%SGR,oo=e/SGR,t=t0+sr*SGR+rr,o=o0+so*SGO+oo;
-        if(t<outlen && o<oc) y[ulong(o)*outlen+t]=music_round(music_round(res[simd*SGE+rr*SGO+oo],p[10])+(p[9] ? bias[o] : 0),p[10]);
+        if(t<outlen && o<oc) y[ulong(o)*outlen+t]=music_round(music_round(total[m],p[10])+(p[9] ? bias[o] : 0),p[10]);
     }
 }
 template [[host_name("music3_conv_tiled_32x32")]] [[kernel]] decltype(music3_conv_tiled<2,2,2,2>) music3_conv_tiled<2,2,2,2>;
+
+// Polyphase form of music3_conv_tiled for a transposed convolution with
+// ic % 8 == 0 and a single K partition. Output t = j*stride + phase only sees
+// the taps k = r0 + stride*m (r0 = (phase+pad) % stride), at input j + c - m;
+// every other tap is a block of exact zero products in music3_conv_tiled
+// (ic % 8 == 0 keeps each 8-wide MMA block inside one tap), and adding an
+// all-zero block leaves the accumulator unchanged. Dropping those blocks and
+// keeping the taps in ascending order therefore gives the same bits for
+// 1/stride of the work. A tile is 32 consecutive j of one phase.
+template <uint SR, uint SO, uint RM, uint RN>
+kernel void music3_convt_phase(device const uchar *w [[buffer(0)]],device const float *x [[buffer(1)]],
+ device const float *bias [[buffer(2)]],device float *y [[buffer(3)]],constant uint *p [[buffer(4)]],
+ uint tid [[thread_index_in_threadgroup]],uint gid [[threadgroup_position_in_grid]]) {
+    constexpr uint SGR=8*RM,SGO=8*RN,SGE=SGR*SGO,PER=SGE/32,TR=SR*SGR,TO=SO*SGO,BK=32;
+    uint ic=p[0],oc=p[1],ksize=p[2],stride=p[3],pad=p[4],len=p[7],outlen=p[8];
+    uint oblocks=(oc+TO-1)/TO,jtiles=((outlen+stride-1)/stride+TR-1)/TR;
+    uint o0=(gid%oblocks)*TO,j0=((gid/oblocks)%jtiles)*TR,phase=gid/(oblocks*jtiles);
+    uint simd=tid/32,lane=tid%32,sr=simd/SO,so=simd%SO;
+    uint r0=(phase+pad)%stride,c=(phase+pad-r0)/stride;
+    uint taps=r0<ksize ? (ksize-r0+stride-1)/stride : 0,total_k=taps*ic;
+    threadgroup float xs[TR*BK],ws[BK*TO],res[SR*SO*SGE];
+    simdgroup_float8x8 acc[RM][RN];
+    for(uint i=0;i<RM;i++) for(uint j=0;j<RN;j++) acc[i][j]=simdgroup_float8x8(0.0f);
+    for(uint q0=0;q0<total_k;q0+=BK) {
+        for(uint idx=tid;idx<TR*BK;idx+=128) {
+            uint r=idx%TR,q=q0+idx/TR,j=j0+r,m=q/ic,i=q%ic;
+            int pos=int(j)+int(c)-int(m);
+            bool valid=q<total_k && j*stride+phase<outlen && pos>=0 && uint(pos)<len;
+            xs[r*BK+idx/TR]=valid ? x[ulong(i)*len+uint(pos)] : 0;
+        }
+        for(uint idx=tid;idx<TO*BK;idx+=128) {
+            uint oo=idx%TO,q=q0+idx/TO,o=o0+oo,m=q/ic,ii=q%ic,kk=r0+stride*m;
+            ulong wi=(ulong(ii)*oc+o)*ksize+kk;
+            ws[(idx/TO)*TO+oo]=o<oc && q<total_k ? (p[11]==0 ? ((device const float*)w)[wi] : p[11]==1 ? float(((device const half*)w)[wi]) : as_type<float>(uint(((device const ushort*)w)[wi])<<16)) : 0;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for(uint kb=0;kb<BK/8;kb++) {
+            if(q0+kb*8>=total_k) break;
+            simdgroup_float8x8 a[RM],b[RN];
+            for(uint i=0;i<RM;i++) simdgroup_load(a[i],xs+(sr*SGR+i*8)*BK+kb*8,BK);
+            for(uint j=0;j<RN;j++) simdgroup_load(b[j],ws+(kb*8)*TO+so*SGO+j*8,TO);
+            for(uint i=0;i<RM;i++) for(uint j=0;j<RN;j++) simdgroup_multiply_accumulate(acc[i][j],a[i],b[j],acc[i][j]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    for(uint i=0;i<RM;i++) for(uint j=0;j<RN;j++) simdgroup_store(acc[i][j],res+simd*SGE+i*8*SGO+j*8,SGO);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for(uint m=0;m<PER;m++) {
+        uint e=lane+32*m,rr=e%SGR,oo=e/SGR,t=(j0+sr*SGR+rr)*stride+phase,o=o0+so*SGO+oo;
+        float total=res[simd*SGE+rr*SGO+oo];
+        if(t<outlen && o<oc) y[ulong(o)*outlen+t]=music_round(music_round(total,p[10])+(p[9] ? bias[o] : 0),p[10]);
+    }
+}
+template [[host_name("music3_convt_phase_32x32")]] [[kernel]] decltype(music3_convt_phase<2,2,2,2>) music3_convt_phase<2,2,2,2>;
 
 // Channel-major activations, PyTorch convolution weight layouts.
 kernel void music3_conv(device const uchar *w [[buffer(0)]],
@@ -663,6 +789,15 @@ kernel void music3_linear_tiled(device const uchar *w [[buffer(0)]],
     threadgroup float xs[TR*BK],ws[BK*TO],res[SR*SO*SGE];
     float total[PER];
     for(uint m=0;m<PER;m++) total[m]=0;
+    // Quantized split-K: MLX's qmm_t_splitk writes each partial in the activation
+    // dtype and sums them with its column reduce. Below 32 partials that kernel
+    // gives each of min(8, parts) threads every 8th row, summed in bf16, then folds
+    // the thread totals in order; at 32 its looped kernel ends in a simd_sum, a
+    // float sum rounded once. `lanes` holds those thread totals. (Kokoro, p[12],
+    // keeps its own sequential fold.)
+    bool mlx_reduce=!p[12];
+    float lanes[8][PER];
+    for(uint t=0;t<8;t++) for(uint m=0;m<PER;m++) lanes[t][m]=0;
     bool quant=p[0]>=3,fast4=p[0]==3 && p[2]==4;
     uint words=(cols*p[2]+31)/32;
     for(uint part=0;part<parts;part++) {
@@ -676,23 +811,39 @@ kernel void music3_linear_tiled(device const uchar *w [[buffer(0)]],
         }
 #endif
         for(uint k0=begin;k0<end;k0+=BK) {
-            for(uint idx=tid;idx<TR*BK;idx+=128) {
-                uint r=idx/BK,kc=idx%BK;
-                xs[idx]=r0+r<rows && k0+kc<end ? x[ulong(r0+r)*cols+k0+kc] : 0;
+            if((cols&3)==0 && (begin&3)==0 && k0+BK<=end) {
+                // Full K chunk with 4-aligned rows: four-wide loads (packed, so
+                // no alignment is assumed beyond a float). Same values as below.
+                for(uint idx=tid;idx<TR*(BK/4);idx+=128) {
+                    uint r=idx/(BK/4),kc=(idx%(BK/4))*4;
+                    float4 v=0;
+                    if(r0+r<rows) v=float4(*((device const packed_float4*)(x+ulong(r0+r)*cols+k0+kc)));
+                    xs[r*BK+kc]=v.x;xs[r*BK+kc+1]=v.y;xs[r*BK+kc+2]=v.z;xs[r*BK+kc+3]=v.w;
+                }
+            } else {
+                for(uint idx=tid;idx<TR*BK;idx+=128) {
+                    uint r=idx/BK,kc=idx%BK;
+                    xs[idx]=r0+r<rows && k0+kc<end ? x[ulong(r0+r)*cols+k0+kc] : 0;
+                }
             }
             if(fast4) {
                 // Eight consecutive four-bit codes share one 32-bit word and
                 // one scale/offset (group % 8 == 0); same per-element value as
-                // music_value. Consecutive lanes take consecutive outputs.
+                // music_value. Consecutive lanes take consecutive outputs. The
+                // word, scale and offset are read once per lane and reused for
+                // all eight codes; each weight is still float(code)*scale+offset.
+                uint gpr=cols/p[3];
                 for(uint idx=tid;idx<TO*(BK/8);idx+=128) {
                     uint oo=idx%TO,q=idx/TO,o=o0+oo,kk=k0+q*8;
+                    bool ok=o<out && kk<end;
+                    uint word=0;float sv=0,ov=0;
+                    if(ok) {
+                        word=((device const uint*)w)[ulong(o)*words+kk/8];
+                        ulong g=ulong(o)*gpr+kk/p[3];
+                        sv=music_sc(sc,g);ov=music_sc(off,g);
+                    }
                     for(uint i=0;i<8;i++) {
-                        float weight=0;
-                        if(o<out && kk<end) {
-                            uint code=((device const uint*)w)[ulong(o)*words+kk/8]>>(4*i)&15u;
-                            ulong g=ulong(o)*(cols/p[3])+kk/p[3];
-                            weight=float(code)*music_sc(sc,g)+music_sc(off,g);
-                        }
+                        float weight=ok ? float((word>>(4*i))&15u)*sv+ov : 0.0f;
                         ws[(q*8+i)*TO+oo]=music_round(weight,p[6]);
                     }
                 }
@@ -718,9 +869,29 @@ kernel void music3_linear_tiled(device const uchar *w [[buffer(0)]],
         threadgroup_barrier(mem_flags::mem_threadgroup);
         for(uint m=0;m<PER;m++) {
             float r=res[simd*SGE+lane+32*m];
-            total[m]=parts>1 ? music_round(total[m]+music_round(r,p[6]),p[6]) : r;
+            // p[13]: dense split-K sums float32 partials in order (MLX's gemm_splitk_accum);
+            // the quantized path stores each partial in the activation dtype first.
+            if(parts==1) total[m]=r;
+            else if(p[13]!=0) total[m]+=r;
+            else if(mlx_reduce) {
+                float rb=music_round(r,p[6]);
+                if(parts==32) lanes[0][m]+=rb;
+                else { uint L=min(8u,parts),t=part%L; lanes[t][m]=part<L ? rb : music_round(lanes[t][m]+rb,p[6]); }
+            }
+            else total[m]=music_round(total[m]+music_round(r,p[6]),p[6]);
         }
         threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if(parts>1 && p[13]==0 && mlx_reduce) {
+        for(uint m=0;m<PER;m++) {
+            if(parts==32) total[m]=music_round(lanes[0][m],p[6]);
+            else {
+                uint L=min(8u,parts);
+                float tot=lanes[0][m];
+                for(uint t=1;t<L;t++) tot=music_round(lanes[t][m]+tot,p[6]);
+                total[m]=tot;
+            }
+        }
     }
     for(uint m=0;m<PER;m++) {
         uint e=lane+32*m,row=r0+sr*SGR+e/SGO,o=o0+so*SGO+e%SGO;

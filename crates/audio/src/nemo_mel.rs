@@ -373,33 +373,35 @@ mod tests {
         let samples: Vec<f32> = (0..640)
             .map(|i| (((i * 29) % 113) as f32 / 113.0 - 0.5) * 0.2)
             .collect();
-        let mut options = NemoMelOptions::default();
-        options.num_mels = 4;
-        options.normalize = NemoMelNormalization::None;
+        let options = NemoMelOptions {
+            num_mels: 4,
+            normalize: NemoMelNormalization::None,
+            ..NemoMelOptions::default()
+        };
         let output =
             nemo_log_mel_spectrogram_with_padding(&samples, &options, StftPaddingMode::Reflect)
                 .unwrap();
         let expected = [
-            -8.06771088,
-            -7.76390409,
-            -4.18426085,
-            -2.82281947,
-            -8.06157589,
-            -7.61776352,
-            -4.23273420,
-            -2.79012704,
-            -8.06308270,
-            -7.61670303,
-            -4.23296833,
-            -2.78991175,
-            -8.05265331,
-            -7.61036158,
-            -4.23228121,
-            -2.79016161,
-            -7.37214661,
-            -7.12100172,
-            -4.13430691,
-            -2.82784700,
+            -8.067_711,
+            -7.763_904,
+            -4.184_261,
+            -2.822_819_5,
+            -8.061_576,
+            -7.617_763_5,
+            -4.232_734,
+            -2.790_127,
+            -8.063_083,
+            -7.616_703,
+            -4.232_968_3,
+            -2.789_911_7,
+            -8.052_653,
+            -7.610_361_6,
+            -4.232_281,
+            -2.790_161_6,
+            -7.372_146_6,
+            -7.121_001_7,
+            -4.134_307,
+            -2.827_847,
         ];
         assert_eq!((output.len(), output[0].len()), (5, 4));
         for (row, expected_row) in output.iter().zip(expected.chunks_exact(4)) {

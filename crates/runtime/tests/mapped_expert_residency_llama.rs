@@ -15,8 +15,11 @@
 //! threadings of the same parameter rather than one function reused.
 
 use half::f16;
+use model_io::mapped_residency_fits;
 use turbospark_repack::build_synthetic_llama_real_install;
-use turbospark_runtime::{ChunkedPrefillRunner, LogitProducer, RealForwardRunner};
+use turbospark_runtime::{
+    recommended_max_working_set, ChunkedPrefillRunner, LogitProducer, RealForwardRunner,
+};
 
 const VOCAB: i64 = 128;
 const LAYERS: i64 = 4;
@@ -25,6 +28,14 @@ const PROMPT: [i32; 11] = [5, 9, 2, 7, 1, 3, 8, 4, 6, 0, 11];
 
 #[test]
 fn mapped_residency_opens_on_llama_and_serves_both_call_sites() {
+    let working_set_bytes = recommended_max_working_set().map_or(0, |(bytes, _)| bytes);
+    if !mapped_residency_fits(working_set_bytes, 0, 0) {
+        eprintln!(
+            "host Metal working set ({:.2} GiB) does not fit mapped residency reserve (>= 10 GiB); skipping",
+            working_set_bytes as f64 / (1u64 << 30) as f64
+        );
+        return;
+    }
     let dir = std::env::temp_dir().join(format!(
         "turbospark-mapped-residency-llama-{}",
         std::process::id()

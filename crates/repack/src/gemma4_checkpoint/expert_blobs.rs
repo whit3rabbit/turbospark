@@ -29,7 +29,11 @@ pub fn expert_stride_from_headers(
     }
     let expert_count = arch.num_experts as u64;
     let mut max_blob = 0u64;
-    for layer in 0..arch.num_layers as usize {
+    // Routed blobs exist only from the first MoE layer on: a dense lead
+    // (`flint`'s two `mlp_only_layers`) has none, and writing them is
+    // positional (blob `k` is layer `lead + k`), matching the GGUF walk.
+    // Zero for every other family, so their loop is unchanged.
+    for layer in arch.num_dense_leading_layers as usize..arch.num_layers as usize {
         let bundle = routed.get(&layer).ok_or_else(|| {
             Gemma4Error::MissingTensor(format!("layer {layer} routed-expert bundle"))
         })?;
@@ -52,13 +56,7 @@ pub fn expert_stride_from_headers(
                 blob += rows * super::mlx_mxfp4::gguf_mxfp4_row_bytes(words as usize * 8) as u64;
                 continue;
             }
-            let bits = quant.bits_for(base);
-            if bits != 4 {
-                return Err(Gemma4Error::UnsupportedDtype {
-                    tensor: name.to_string(),
-                    dtype: format!("{bits}-bit routed expert (kernels are int4-only)"),
-                });
-            }
+            routed_expert_bits(quant, base, name)?;
             for suffix in ["", ".scales", ".biases"] {
                 let full = if suffix.is_empty() {
                     name.to_string()
@@ -79,6 +77,19 @@ pub fn expert_stride_from_headers(
         max_blob = max_blob.max(blob);
     }
     Ok(max_blob.div_ceil(GTURBO_PAGE_BYTES) * GTURBO_PAGE_BYTES)
+}
+
+/// The width of one routed projection, which must be one a routed kernel
+/// pair reads: 4 (`moe_phase*_u16load`/`k8`) or 3 (`moe_phase*_int3`). The
+/// quant parser admits 3 only where a family has those kernels in its flow.
+fn routed_expert_bits(quant: &Gemma4Quant, base: &str, name: &str) -> Result<u32, Gemma4Error> {
+    match quant.bits_for(base) {
+        bits @ (3 | 4) => Ok(bits),
+        bits => Err(Gemma4Error::UnsupportedDtype {
+            tensor: name.to_string(),
+            dtype: format!("{bits}-bit routed expert (routed kernels are 3- and 4-bit)"),
+        }),
+    }
 }
 
 /// Builds one routed layer's per-expert blobs. Blob layout matches the
@@ -124,7 +135,10 @@ pub fn plan_one_expert_layer(
         .map(|r| base_of(r).map(|b| quant.is_mxfp4(b)))
         .collect::<Result<Vec<_>, _>>()?;
     if mxfp4.iter().all(|&m| m) {
-        return plan_mxfp4_expert_layer(shards, bundle, experts, layer, expert_count);
+        let (mut blobs, used) =
+            plan_mxfp4_expert_layer(shards, bundle, experts, layer, expert_count)?;
+        blobs.layer = layer - arch.num_dense_leading_layers as usize;
+        return Ok((blobs, used));
     }
     if mxfp4.iter().any(|&m| m) {
         return Err(Gemma4Error::UnsupportedDtype {
@@ -148,18 +162,46 @@ pub fn plan_one_expert_layer(
             });
         }
         let base = name.strip_suffix(".weight").unwrap_or(name);
-        let bits = quant.bits_for(base);
-        if bits != 4 {
-            return Err(Gemma4Error::UnsupportedDtype {
+        let bits = routed_expert_bits(quant, base, name)? as u64;
+        if (w.shape[2] * 32) % bits != 0 {
+            return Err(Gemma4Error::ShapeMismatch {
                 tensor: name.to_string(),
-                dtype: format!("{bits}-bit routed expert (kernels are int4-only)"),
+                detail: format!(
+                    "{} packed words do not hold whole {bits}-bit codes",
+                    w.shape[2]
+                ),
             });
+        }
+        let in_dim = w.shape[2] * 32 / bits;
+        // Flint is the one family with two routed widths, so the config's
+        // width and the bytes are cross-checked against the architecture: a
+        // 3-bit blob recorded as 4-bit (or the reverse) is caught here rather
+        // than read at the wrong width by the runtime.
+        if arch.family == model_io::ModelFamily::Flint {
+            let want = if role == "down" {
+                arch.moe_intermediate_size
+            } else {
+                arch.hidden_size
+            } as u64;
+            if in_dim != want {
+                return Err(Gemma4Error::ShapeMismatch {
+                    tensor: name.to_string(),
+                    detail: format!(
+                        "{} packed words per row at {bits} bits is {in_dim} inputs, not {want}",
+                        w.shape[2]
+                    ),
+                });
+            }
         }
         let s_name = format!("{base}.scales");
         let b_name = format!("{base}.biases");
         let s = shards.info(&s_name)?;
         let b = shards.info(&b_name)?;
-        if s.dtype != "BF16" || b.dtype != "BF16" {
+        // A DeepSeek-VL2 conversion stores the companions F16; they are
+        // narrowed to the BF16 the routed kernels read (`f16_plane_to_bf16_bytes`).
+        let f16_companions = arch.family == model_io::ModelFamily::Deepseek2;
+        let companion_ok = |dtype: &str| dtype == "BF16" || (f16_companions && dtype == "F16");
+        if !companion_ok(&s.dtype) || !companion_ok(&b.dtype) {
             return Err(Gemma4Error::UnsupportedDtype {
                 tensor: name.to_string(),
                 dtype: format!("{}/{} companions", s.dtype, b.dtype),
@@ -178,8 +220,29 @@ pub fn plan_one_expert_layer(
         }
 
         let w_bytes = shards.read(name)?;
-        let s_bytes = shards.read(&s_name)?;
-        let b_bytes = shards.read(&b_name)?;
+        let mut s_bytes = shards.read(&s_name)?;
+        let mut b_bytes = shards.read(&b_name)?;
+        if s.dtype == "F16" {
+            s_bytes = super::narrow::f16_plane_to_bf16_bytes(&s_name, &s_bytes)?.0;
+        }
+        if b.dtype == "F16" {
+            b_bytes = super::narrow::f16_plane_to_bf16_bytes(&b_name, &b_bytes)?.0;
+        }
+        // FLINT'S FP16 RANGE FIX: `up` is divided by 2^K and `down` multiplied
+        // by it, so the stored `silu(gate) * up` stays inside FP16 and the
+        // result is unchanged. See `crate::flint_rebalance` for why.
+        if arch.family == model_io::ModelFamily::Flint {
+            let swiglu = match role {
+                "up" => Some(crate::flint_rebalance::SwigluRole::Up),
+                "down" => Some(crate::flint_rebalance::SwigluRole::Down),
+                _ => None,
+            };
+            if let Some(swiglu) = swiglu {
+                let delta = swiglu.delta(crate::flint_rebalance::FLINT_SWIGLU_SHIFT);
+                crate::flint_rebalance::shift_bf16_bytes(&mut s_bytes, delta);
+                crate::flint_rebalance::shift_bf16_bytes(&mut b_bytes, delta);
+            }
+        }
         let per = |total: usize, what: &str| -> Result<usize, Gemma4Error> {
             if total % expert_count != 0 {
                 return Err(Gemma4Error::ShapeMismatch {
@@ -210,7 +273,7 @@ pub fn plan_one_expert_layer(
         }
 
         let rows = w.shape[1];
-        let cols = w.shape[2] * 8;
+        let cols = in_dim;
         let comp_shape = |t: &TensorInfo| t.shape[1..].to_vec();
         if role == "down" && blob_used % 4 != 0 {
             return Err(Gemma4Error::ShapeMismatch {
@@ -249,7 +312,20 @@ pub fn plan_one_expert_layer(
         }
         blob_used += (w_per + s_per + b_per) as u64;
     }
-    Ok((LayerBlobs { layer, experts }, blob_used))
+    // BLOB FILES ARE NUMBERED BY POSITION, NOT BY CHECKPOINT LAYER: the
+    // i-th routed layer is `layer_{i:02}.bin`, and a dense lead
+    // (`flint`'s two `mlp_only_layers`) makes the two differ. `layer` above
+    // stays the checkpoint index because it keys the tensor lookup; only the
+    // blob's label is positional. See `gguf_checkpoint/mod.rs`. Zero lead for
+    // every other family, so this is the identity for them.
+    let position = layer - arch.num_dense_leading_layers as usize;
+    Ok((
+        LayerBlobs {
+            layer: position,
+            experts,
+        },
+        blob_used,
+    ))
 }
 
 /// The MLX mxfp4 sibling of the affine walk above: three sub-tensors per

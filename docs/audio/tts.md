@@ -20,8 +20,31 @@ inference module in `crates/audio/src/tts`.
   - Code Reference: [bytedance/MegaTTS3](https://github.com/bytedance/MegaTTS3) (there is no mlx-audio port)
   - Paper: [MegaTTS 3](https://arxiv.org/abs/2502.18924)
 - **Status**: the whole English pipeline is ported and gated against the reference on real weights (prompt aligner, WavVAE encoder and decoder, G2P, duration LM, latent DiT with classifier-free guidance, loudness matching). Voice cloning needs the community WavVAE encoder, which ByteDance withheld; its origin and license are unverified. Weights are converted from the upstream PyTorch checkpoints by `crates/audio/tools/convert_megatts3.py`.
-- **Entry points**: the Voice Clone page in the app, `POST /v1/audio/speech` with `reference_audio` and `consent: true` ([HTTP API](../AUDIO_API.md)), the native audio session (family `megatts3`, reference audio as the job's PCM), and `turbospark-clone speak` ([CLI](../CLI.md)). Every cloning request needs consent. The catalog row `megatts3-f32` installs from the app once its install terms are accepted; every entry point also takes a local converted directory.
+- **Entry points**: the Voice Cloning page in the app, `POST /v1/audio/speech` with `reference_audio` and `consent: true` ([HTTP API](../AUDIO_API.md)), the native audio session (family `megatts3`, reference audio as the job's PCM), and `turbospark-clone speak` ([CLI](../CLI.md)). Every cloning request needs consent. The catalog row `megatts3-f32` installs from the app once its install terms are accepted; every entry point also takes a local converted directory.
 - **Limits**: English only (the English text normalizer is a documented subset), 24 kHz output. On macOS the diffusion transformer and the WavVAE decoder run on Metal by default, about five times faster than the portable CPU path. Steps default to 16 (Balanced), with 8 (Fast) and 32 (Best) as the other presets, and the [step study](../../crates/audio/src/tts/megatts3/README.md#steps-and-quality) found no intelligibility or speaker-similarity loss from 8 steps up.
+
+### Fish Audio Drama 3 (multi-speaker TTS and voice cloning)
+
+- **In-Crate Directory**: [`crates/audio/src/tts/fish_drama3/`](../../crates/audio/src/tts/fish_drama3/) for the prompt, sampler, tower and generation loop, [`crates/runtime/src/fish_drama3.rs`](../../crates/runtime/src/fish_drama3.rs) for the Metal runner
+- **Documentation**: [`docs/FISH_DRAMA3.md`](../FISH_DRAMA3.md) (user guide) and [`docs/FISH_DRAMA3_PHASE0.md`](../FISH_DRAMA3_PHASE0.md) (facts, measurements, refusals)
+- **Upstream URLs**:
+  - Model Hub: [mlx-community/fish-audio-drama-3-4bit](https://huggingface.co/mlx-community/fish-audio-drama-3-4bit), pinned at `cc639e27aba7edb73429d3e3806f471dcd79d316`
+  - Code Reference: [Blaizzy/mlx-audio](https://github.com/Blaizzy/mlx-audio) `fish_drama3`
+- **Status**: runs end to end on Metal. A Qwen 3.6 35B-A3B trunk streams its routed experts from disk, the audio tower and the Fish S1 DAC codec run on the GPU, and the codec decodes on its own thread while generation continues. The memory oracle and leak gate pass on an M4 Max. Teacher-forced parity with mlx-audio is measured separately in the Phase 0 doc.
+- **Entry points**: the Voiceover and Voice Cloning pages in the app, `turbospark-speak` ([CLI](../CLI.md)), `POST /v1/audio/speech` ([HTTP API](../AUDIO_API.md)), and the native audio session (family `fish_drama3`, reference audio as the job's PCM). The catalog profile `fish-drama3-4bit` installs by converting the upstream checkpoint on the Mac, from the app once its license terms are accepted, and `turbospark-model pull-drama3` does the same into a directory you pick. A reference makes the request a clone and needs consent and the reference's transcript. In the app, Voiceover speaks without a reference and Voice Cloning clones.
+- **Limits**: Metal only, 44.1 kHz mono output, no speed control, no instruction text (cues go inline, such as `[whispers]`). Only the 4-bit conversion is supported. It is under the Fish Audio Community License, so a product that uses it shows "Built with Fish Audio".
+
+### OmniVoice (multilingual zero-shot TTS)
+
+- **In-Crate Directory**: [`crates/audio/src/tts/omnivoice/`](../../crates/audio/src/tts/omnivoice/)
+- **Documentation**: [`crates/audio/src/tts/omnivoice/README.md`](../../crates/audio/src/tts/omnivoice/README.md)
+- **Upstream URLs**:
+  - Model Hub: [k2-fsa/OmniVoice](https://huggingface.co/k2-fsa/OmniVoice) and the pinned MLX conversions [mlx-community/OmniVoice-8bit](https://huggingface.co/mlx-community/OmniVoice-8bit) / [OmniVoice-bfloat16](https://huggingface.co/mlx-community/OmniVoice-bfloat16)
+  - Code Reference: [`mlx_audio/tts/models/omnivoice/`](https://github.com/Blaizzy/mlx-audio/tree/e1b19b9054bf163f5d812221a54fcc346f1890e9/mlx_audio/tts/models/omnivoice)
+- **Architecture Overview**: a bidirectional Qwen3-0.6B backbone (causal mask disabled) performing iterative masked-diffusion decoding of 8 HiggsAudioV2 codebooks (1025 vocab with the mask token, 24 kHz at 25 frames per second), decoded through the shared Higgs codec port; voice cloning prepends the reference's code rows and flips the style prefix to `<|denoise|>`.
+- **Status**: the port is fixture-verified and the released checkpoints are gated: cross-engine encode parity is exact against the Python reference on bfloat16 (70 frames x 8 codebooks), the 8-bit rowwise checkpoint generates deterministic, oracle-transcribed speech (3.2 GiB footprint). The engine runs with native Metal acceleration on macOS and transparent CPU fallback.
+- **Entry points**: the native audio session (family `omnivoice`, reference audio as the job's PCM, cloning requires `consent: true`) and `POST /v1/audio/speech` with optional `reference_audio`. The catalog rows `omnivoice-8bit` (default) and `omnivoice-bf16` install from the app once the Boson tokenizer install terms are accepted. The Voice Cloning page in the app natively includes OmniVoice via Metal acceleration (`clonesNatively`), and the Voiceover page speaks with it without a reference.
+- **Limits**: 24 kHz output; steps default to 32 (1 through 100 accepted) and `speed` maps onto the estimated duration (a documented deviation); the file-path reference preprocessing (RMS normalization, silence removal) is not ported, so in-memory PCM encodes directly; long text runs as one utterance (the request validator caps the length); the bundled Higgs audio tokenizer carries Boson AI's community license (attribution and a commercial cap), acknowledged at install.
 
 ### Kokoro (82M)
 
@@ -41,12 +64,25 @@ inference module in `crates/audio/src/tts`.
   - Speed: RTF < 0.20 on Apple Silicon M-series CPUs.
   - Memory: ~180 MiB resident footprint.
 
+### ArkTTS (Audio8 TTS preview)
+
+- **In-Crate Directory**: [`crates/audio/src/tts/arktts/`](../../crates/audio/src/tts/arktts/)
+- **Documentation**: [`crates/audio/src/tts/arktts/README.md`](../../crates/audio/src/tts/arktts/README.md)
+- **Upstream URLs**:
+  - Model Hub: Audio8 TTS Preview 0.1b and 0.6b checkpoints
+  - Code Reference: [`mlx_audio/tts/models/arktts/`](https://github.com/Blaizzy/mlx-audio/tree/e1b19b9054bf163f5d812221a54fcc346f1890e9/mlx_audio/tts/models/arktts) at mlx-audio 0.5.8 (`e1b19b9054bf163f5d812221a54fcc346f1890e9`)
+- **Architecture Overview**: DualAR transformer plus a bundled 44.1 kHz decode-only codec. A slow AR stack predicts one semantic token per audio frame, and a fast AR stack predicts that frame's residual codec codebooks. Two configurations: pure-attention slow stack (0.6b) and hybrid Mamba-2 + attention slow stack via [`crates/audio/src/lm/falcon_h1.rs`](../../crates/audio/src/lm/falcon_h1.rs) (0.1b).
+- **Status**: Fixture-verified against the pinned mlx-audio Python reference on CPU: op-level traces for pure-attention and Falcon slow stacks, fast AR loop, sampling math, and the 44.1 kHz decode-only codec.
+- **Entry points**: Native audio session (family `arktts`), caller-managed prompt construction and Mistral tokenization.
+- **Limits**: 44.1 kHz output; decode-only codec (encoding is refused; callers pass precomputed reference codes); no Metal acceleration.
+
 ## Additional Implemented TTS Family Ports
 
 The full inventory of ported and scaffolded families is maintained in [`crates/audio/MODELS.md`](../../crates/audio/MODELS.md). Family ports in `crates/audio/src/tts/` include:
 
 | Family | Backend / Codec | Status & Documentation |
 |---|---|---|
+| `arktts` | DualAR / Audio8 Codec | [Family port](../../crates/audio/src/tts/arktts/README.md) |
 | `bailingmm` | Audio VAE | [Family port](../../crates/audio/src/tts/bailingmm/README.md) |
 | `bark` | EnCodec 24kHz | [Family port](../../crates/audio/src/tts/bark/README.md) (semantic + coarse + fine transformers) |
 | `breeze_tts` | Qwen3-TTS speech tokenizer | [Family port](../../crates/audio/src/tts/breeze_tts/README.md) |

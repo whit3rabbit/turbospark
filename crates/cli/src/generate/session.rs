@@ -51,6 +51,11 @@ pub(crate) struct Session {
     /// Whether this session drafts ahead, resolved once at open against the
     /// install and the sampling settings. See [`resolve_speculation`].
     pub(crate) speculation: SpeculationPlan,
+    /// Whether the plan's block is a CAP the adaptive controller moves under
+    /// rather than a fixed round size. A separate flag and not a plan variant
+    /// because the server and the C ABI also match on `SpeculationPlan` and
+    /// neither serves adaptive depth yet.
+    pub(crate) adaptive_depth: bool,
     /// The guard tier this session actually opened under (vision memory
     /// sidecar Part B3). Carried so a later `--image`'s pixel-budget clamp
     /// resolves against the SAME tier `--max-context` did, never a second,
@@ -71,6 +76,13 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     // value an opaque string. A path that exists always wins: a bare name
     // that silently preferred an alias would run a DIFFERENT model than the
     // one on the command line, fluently and with no error.
+    // A model on a drive that is not plugged in is named as such, before the
+    // bare alias is tried as a path and fails as a missing manifest (10.7).
+    if let Some(message) =
+        catalog::not_connected_message(&request.model, catalog::ModelModality::Text)
+    {
+        return Err(message);
+    }
     let resolved = catalog::resolve_model_arg(&request.model);
     let model_dir = resolved.as_path();
     reject_image_install(model_dir)?;
@@ -134,11 +146,13 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
     // resolves the slot cache to what THIS open will actually request,
     // rather than `committed_bytes`'s worst case, so the `--load-guard
     // custom` ceiling below is checked against a real allocation.
-    let committed = model_io::committed_breakdown_with_residency(
+    let committed = model_io::committed_breakdown_with_wiring(
         model_dir,
         runtime::physical_memory(),
         expert_cache_slots,
         resolved_residency,
+        // The request the open below reads, environment override included.
+        runtime::effective_expert_slot_wiring(),
     );
     let plan = runtime::resolve_max_context_with(
         match request.max_context {
@@ -274,12 +288,22 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
             .attach_vision_sidecar(dir)
             .map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
         let vision = runner.vision_config();
-        tokenizer
-            .verify_image_markers(
+        // A CLIP tower (LLaVA) has no start token to pair with the marker; a
+        // tower whose template renders a bare placeholder (Muse-Glimmer) wraps it.
+        let verified = if runner.clip_image_ids().is_some()
+            || runner.siglip_image_ids().is_some()
+            || runner.deepseek_ocr_image_ids().is_some()
+        {
+            tokenizer.verify_bare_image_marker(vision.image_token_id as i32)
+        } else if let Some((start, end)) = runner.image_wrap_ids() {
+            tokenizer.verify_bare_image_placeholder(start, vision.image_token_id as i32, end)
+        } else {
+            tokenizer.verify_image_markers(
                 vision.vision_start_token_id as i32,
                 vision.image_token_id as i32,
             )
-            .map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
+        };
+        verified.map_err(|e| format!("--vision-sidecar {}: {e}", dir.display()))?;
         if !request.quiet {
             eprintln!(
                 "vision: sidecar {}{}",
@@ -363,7 +387,15 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
                     runtime::SpeculativeDrafter::Dflash => "dflash2 (block drafter)",
                     _ => "mtp head (step drafter)",
                 };
-                eprintln!("speculative decoding: on, {which}, block {block}");
+                if matches!(asked, runtime::Speculation::Adaptive(_)) {
+                    eprintln!(
+                        "speculative decoding: on, {which}, adaptive depth {}..{block} \
+                         (experimental, constants unmeasured)",
+                        runtime::AdaptiveDepth::DEFAULT_FLOOR
+                    );
+                } else {
+                    eprintln!("speculative decoding: on, {which}, block {block}");
+                }
             }
             // A WARNING and not silence. An install carrying a drafter and
             // decoding one token at a time with nothing said is the exact
@@ -385,6 +417,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         runner,
         shaping,
         speculation,
+        adaptive_depth: matches!(asked, runtime::Speculation::Adaptive(_)),
         rate,
         max_context: plan.resolved,
         load_policy,
@@ -454,6 +487,7 @@ fn map_speculation(speculation: invocation::Speculation) -> runtime::Speculation
         invocation::Speculation::Auto => runtime::Speculation::Auto,
         invocation::Speculation::Off => runtime::Speculation::Off,
         invocation::Speculation::Block(n) => runtime::Speculation::Block(n),
+        invocation::Speculation::Adaptive(n) => runtime::Speculation::Adaptive(n),
     }
 }
 

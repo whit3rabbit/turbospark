@@ -272,7 +272,7 @@ fn parse_launch_flags(args: &[String]) -> Result<LaunchFlags, String> {
 /// GET /health over a hand-rolled HTTP/1.1 request. The server routes
 /// /health outside its auth layer exactly so an unauthenticated liveness
 /// probe can never read as the process being down.
-fn http_health_ok(port: u16) -> bool {
+pub fn http_health_ok(port: u16) -> bool {
     let Ok(mut stream) = TcpStream::connect(("127.0.0.1", port)) else {
         return false;
     };
@@ -353,23 +353,19 @@ fn ensure_server(
         server_args.push("--port".to_string());
         server_args.push(port.to_string());
     }
+    // No daemon of ours is running, so anything answering /health here is a
+    // listener we cannot verify (on a shared machine, another user's
+    // process). The server binds only after opening the model, so without
+    // this check wait_for_server would accept that listener within the first
+    // poll and hand it the agent's prompts and code context. Refuse instead.
+    let port = port_override.unwrap_or(8080);
+    if http_health_ok(port) {
+        return Err(unverified_listener_error(port));
+    }
     if let Err(e) = daemon::start(&server_args) {
-        // The daemon died before its 400ms liveness check only for an
-        // immediate abort; a bind conflict surfaces LATER (the server opens
-        // the model first and binds after), which wait_for_server reports.
-        // But a server we did not start may already hold the port and answer
-        // healthily; using it is better than refusing, said out loud.
-        let port = port_override.unwrap_or(8080);
+        // A listener that appeared after the check above is still not ours.
         if http_health_ok(port) {
-            eprintln!("note: {e}");
-            eprintln!(
-                "a server this launcher did not start is answering on port {port}; \
-                 using it as-is (its served model could not be verified)."
-            );
-            return Ok(ServerTarget {
-                port,
-                model_id: None,
-            });
+            return Err(format!("{e}\n{}", unverified_listener_error(port)));
         }
         return Err(e);
     }
@@ -381,6 +377,14 @@ fn ensure_server(
         port,
         model_id: want.file_name().map(|n| n.to_string_lossy().into_owned()),
     })
+}
+
+fn unverified_listener_error(port: u16) -> String {
+    format!(
+        "a server this launcher did not start is answering on port {port}; \
+         refusing to send the agent's traffic to an unverified listener. \
+         Stop it, or pass --port <free-port>."
+    )
 }
 
 fn wait_for_server(port: u16) -> Result<(), String> {
@@ -464,10 +468,17 @@ fn print_plan(agent: &str, flags: &LaunchFlags, model_path: Option<&Path>) -> Re
                 .and_then(|s| s.model)
                 .and_then(|m| model_id_of(&m))
         });
-    let api_key = std::env::var("TURBOSPARK_API_KEY")
+    let env_key = std::env::var("TURBOSPARK_API_KEY")
         .ok()
-        .filter(|k| !k.is_empty())
-        .unwrap_or_else(|| PLACEHOLDER_KEY.to_string());
+        .filter(|k| !k.is_empty());
+    // Plan output lands in transcripts and CI logs, so a real key is named,
+    // never printed. The placeholder is no secret and is what the agent gets.
+    let key_label = if env_key.is_some() {
+        "<set from env>"
+    } else {
+        PLACEHOLDER_KEY
+    };
+    let api_key = env_key.unwrap_or_else(|| PLACEHOLDER_KEY.to_string());
     let inherited: HashMap<String, String> = std::env::vars().collect();
     let plan = build_launch(agent, &base_url, model_id.as_deref(), &api_key, &inherited);
 
@@ -487,7 +498,7 @@ fn print_plan(agent: &str, flags: &LaunchFlags, model_path: Option<&Path>) -> Re
                 .join(" ");
             println!("  Command:  {} {rendered} [agent args...]", plan.program);
             let key_line = if plan.env.iter().any(|(k, _)| k == "ANTHROPIC_API_KEY") {
-                format!("ANTHROPIC_API_KEY={api_key} (env; skipped when your own credential is exported)")
+                format!("ANTHROPIC_API_KEY={key_label} (env; skipped when your own credential is exported)")
             } else {
                 "using your exported ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN".to_string()
             };
@@ -499,11 +510,11 @@ fn print_plan(agent: &str, flags: &LaunchFlags, model_path: Option<&Path>) -> Re
                 plan.program,
                 plan.args.join(" ")
             );
-            println!("  Env:      TURBOSPARK_API_KEY={api_key}");
+            println!("  Env:      TURBOSPARK_API_KEY={key_label}");
         }
         other => {
             println!("  Command:  {other} [agent args...]");
-            println!("  Env:      OPENAI_BASE_URL={base_url}/v1 OPENAI_API_KEY={api_key}");
+            println!("  Env:      OPENAI_BASE_URL={base_url}/v1 OPENAI_API_KEY={key_label}");
         }
     }
     if which(&plan.program).is_none() {

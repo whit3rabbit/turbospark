@@ -3,6 +3,7 @@ import SwiftUI
 
 /// Modal configuration sheet for editing project metadata, permissions, agent profiles, rules, and MCP servers.
 struct ProjectSettingsSheet: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     let editingProject: AppProject?
     let onDismiss: () -> Void
@@ -19,7 +20,11 @@ struct ProjectSettingsSheet: View {
     @State private var mcpPermission: AppToolPermission = .ask
     @State private var automationPermission: AppToolPermission = .ask
     @State private var browserPermission: AppToolPermission = .ask
+    @State private var computerUsePermission: AppToolPermission = .ask
     @State private var browserOriginAllowlist: [String] = []
+    /// The origins as loaded, to tell an edit in this sheet from a grant an
+    /// approval card made while it was open.
+    @State private var loadedBrowserOriginAllowlist: [String] = []
     @State private var maxAutonomousSteps: Double = 5
     @State private var skillStateEnabled: Bool = false
     @State private var rulePreference: AppRulePreference = .agentsFirst
@@ -56,6 +61,7 @@ struct ProjectSettingsSheet: View {
                                 automationPermission: $automationPermission,
                                 browserPermission: $browserPermission,
                                 browserOriginAllowlist: $browserOriginAllowlist,
+                                computerUsePermission: $computerUsePermission,
                                 guardrailsOption: $guardrailsOption
                             )
                             mcpSection
@@ -87,23 +93,25 @@ struct ProjectSettingsSheet: View {
             Divider()
             footer
         }
-        .frame(width: 580, height: showingAdvancedSettings ? 660 : 390)
+        .frame(minWidth: 540, idealWidth: 580, maxWidth: 640, minHeight: showingAdvancedSettings ? 500 : 360, idealHeight: showingAdvancedSettings ? 660 : 390)
         .background(.appSurface)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 16)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                 .strokeBorder(.appBorder, lineWidth: 1)
                 .allowsHitTesting(false)
         }
         .sheet(isPresented: $showingSkills) {
             VStack {
                 Button { showingSkills = false } label: { Text("Done", bundle: .module) }
+                    .keyboardShortcut(.defaultAction)
                 SkillsSettingsPaneView(model: model, projectID: editingProject?.id)
             }.frame(minWidth: 780, minHeight: 580)
         }
         .sheet(isPresented: $showingPlugins) {
             VStack {
                 Button { showingPlugins = false } label: { Text("Done", bundle: .module) }
+                    .keyboardShortcut(.defaultAction)
                 PluginSettingsPaneView(model: model, projectID: editingProject?.id)
             }.frame(minWidth: 780, minHeight: 580)
         }
@@ -155,9 +163,9 @@ struct ProjectSettingsSheet: View {
                     .textFieldStyle(.plain)
                     .themedFont(.base)
                     .padding(10)
-                    .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+                    .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
                             .strokeBorder(.appBorder, lineWidth: 1)
                             .allowsHitTesting(false)
                     }
@@ -176,9 +184,9 @@ struct ProjectSettingsSheet: View {
                         .textFieldStyle(.plain)
                         .themedFont(.base)
                         .padding(10)
-                        .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+                        .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                         .overlay {
-                            RoundedRectangle(cornerRadius: 8)
+                            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
                                 .strokeBorder(.appBorder, lineWidth: 1)
                                 .allowsHitTesting(false)
                         }
@@ -220,7 +228,7 @@ struct ProjectSettingsSheet: View {
                 .foregroundStyle(.appSecondary)
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+                .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
@@ -255,7 +263,7 @@ struct ProjectSettingsSheet: View {
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+            .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         }
     }
 
@@ -293,7 +301,7 @@ struct ProjectSettingsSheet: View {
                 }
             }
             .padding(12)
-            .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+            .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         }
     }
 
@@ -324,7 +332,7 @@ struct ProjectSettingsSheet: View {
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+                .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             } else if trimmedPath.isEmpty {
                 Text("Set a codebase root directory above to enable indexing.", bundle: .module)
                     .themedFont(.small)
@@ -334,8 +342,12 @@ struct ProjectSettingsSheet: View {
                 let rootURL = URL(fileURLWithPath: trimmedPath)
                 HStack(spacing: 12) {
                     if isIndexing {
-                        ProgressView()
-                            .controlSize(.small)
+                        AppProgressBar(
+                            value: nil,
+                            label: Text("Indexing project codebase...", bundle: .module),
+                            size: .compact
+                        )
+                        .frame(width: 80)
                         Text("Indexing project codebase...", bundle: .module)
                             .themedFont(.small)
                             .foregroundStyle(.appSecondary)
@@ -363,17 +375,17 @@ struct ProjectSettingsSheet: View {
                         }
 
                         if hasSyntextIndex {
-                            Button(role: .destructive) {
+                            Button {
                                 deleteProjectIndex(rootURL: rootURL)
                             } label: { Text("Remove Index", bundle: .module) }
-                            .appAction(.destructive, size: .small)
+                            .appAction(.secondary, size: .small)
                             .accessibilityLabel(Text("Remove project codebase index", bundle: .module))
                         }
                     }
                 }
                 .padding(10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(TurboSparkTheme.surfaceColor, in: RoundedRectangle(cornerRadius: 8))
+                .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             }
         }
     }
@@ -404,17 +416,34 @@ struct ProjectSettingsSheet: View {
             Spacer()
             Button { onDismiss() } label: { Text("Cancel", bundle: .module) }
                 .appAction(.secondary)
+                .keyboardShortcut(.cancelAction)
             Button {
                 save()
             } label: {
                 editingProject == nil ? Text("Create Project", bundle: .module) : Text("Save Changes", bundle: .module)
             }
             .appAction(.primary)
-            .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || model.isRunning || model.submitting || model.pendingToolCall != nil)
+            .keyboardShortcut(.defaultAction)
+            .disabled(isSaveDisabled)
+            .help(saveDisabledReason)
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
+    }
+
+    private var isSaveDisabled: Bool {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || model.isRunning || model.submitting || model.pendingToolCall != nil
+    }
+
+    private var saveDisabledReason: Text {
+        if name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return Text("Enter a project name to save", bundle: .module)
+        }
+        if model.isRunning || model.submitting || model.pendingToolCall != nil {
+            return Text("Cannot save project while generation or tool execution is active", bundle: .module)
+        }
+        return editingProject == nil ? Text("Create Project", bundle: .module) : Text("Save Changes", bundle: .module)
     }
 
     private func populateInitialValues() {
@@ -433,7 +462,9 @@ struct ProjectSettingsSheet: View {
             mcpPermission = editing.permissions.mcp
             automationPermission = editing.permissions.automation
             browserPermission = editing.permissions.browser
+            computerUsePermission = editing.permissions.computerUse
             browserOriginAllowlist = editing.permissions.browserOriginAllowlist
+            loadedBrowserOriginAllowlist = editing.permissions.browserOriginAllowlist
             maxAutonomousSteps = Double(editing.maxAutonomousSteps)
             skillStateEnabled = editing.skillStateEnabled
             guardrailsOption = AppProjectGuardrailsOption.from(optionalBool: editing.forgeGuardrailsEnabled)
@@ -461,6 +492,7 @@ struct ProjectSettingsSheet: View {
             mcpPermission = defaultPerms.mcp
             automationPermission = defaultPerms.automation
             browserPermission = defaultPerms.browser
+            computerUsePermission = defaultPerms.computerUse
             browserOriginAllowlist = defaultPerms.browserOriginAllowlist
             syntextIndexEnabled = false
         }
@@ -581,6 +613,7 @@ struct ProjectSettingsSheet: View {
             mcp: mcpPermission,
             automation: automationPermission,
             browser: browserPermission,
+            computerUse: computerUsePermission,
             browserOriginAllowlist: browserOriginAllowlist
         )
 
@@ -607,8 +640,9 @@ struct ProjectSettingsSheet: View {
             // owns none of those fields.
             if let live = model.projects.first(where: { $0.id == editing.id }) {
                 updated.mcpServers = live.mcpServers
-                updated.permissions.mcpAllowRules = live.permissions.mcpAllowRules
-                updated.permissions.mcpDenyRules = live.permissions.mcpDenyRules
+                updated.permissions = Self.mergedPermissions(
+                    edited: perms, live: live.permissions,
+                    loadedOrigins: loadedBrowserOriginAllowlist)
             }
             model.updateProject(updated)
         } else {
@@ -627,5 +661,25 @@ struct ProjectSettingsSheet: View {
             )
         }
         onDismiss()
+    }
+
+    /// The sheet's edits laid over the live project's permissions.
+    ///
+    /// The sheet edits the mode, the category matrix and the origin list. The
+    /// MCP rules and REPL roots are edited elsewhere (the MCP sheet, the
+    /// approval cards) and always come from `live`. The origins come from
+    /// `live` too unless the sheet changed them, so a grant an approval card
+    /// made while the sheet was open survives a save that never touched them.
+    static func mergedPermissions(
+        edited: AppProjectPermissions, live: AppProjectPermissions, loadedOrigins: [String]
+    ) -> AppProjectPermissions {
+        var merged = edited
+        merged.mcpAllowRules = live.mcpAllowRules
+        merged.mcpDenyRules = live.mcpDenyRules
+        merged.replFileAccessRoots = live.replFileAccessRoots
+        if edited.browserOriginAllowlist == loadedOrigins {
+            merged.browserOriginAllowlist = live.browserOriginAllowlist
+        }
+        return merged
     }
 }

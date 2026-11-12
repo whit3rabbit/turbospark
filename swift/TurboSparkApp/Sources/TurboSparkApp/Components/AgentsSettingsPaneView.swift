@@ -112,7 +112,7 @@ public struct AgentsSettingsPaneView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, SettingsLayout.horizontalInset)
             .padding(.vertical, 8)
-            .background(.appSurface.opacity(0.5))
+            .background(.appSurface)
         }
     }
 
@@ -139,7 +139,7 @@ public struct AgentsSettingsPaneView: View {
             }
             .padding(.horizontal, SettingsLayout.horizontalInset)
             .padding(.vertical, 6)
-            .background(.appSurface.opacity(0.3))
+            .background(.appSurface)
         }
     }
 

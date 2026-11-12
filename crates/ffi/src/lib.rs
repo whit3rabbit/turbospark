@@ -31,6 +31,7 @@ use std::os::raw::{c_char, c_int, c_void};
 pub mod abi;
 /// C ABI entry points organized by domain.
 pub mod api;
+mod embedding_probe;
 mod generate;
 mod heavy;
 mod image_session;

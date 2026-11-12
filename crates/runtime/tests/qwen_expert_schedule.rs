@@ -6,12 +6,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use half::f16;
-use model_io::ArchConfig;
+use model_io::{mapped_residency_fits, ArchConfig};
 use tokenizer::MfTokenizer;
 use turbospark_repack::build_synthetic_qwen_gdn_moe_install;
 use turbospark_runtime::{
-    DraftPolicies, ExpertCacheSlots, ExpertResidency, KvQuant, LogitProducer, PhaseCounters,
-    RealForwardRunner, SteeringPolicy,
+    recommended_max_working_set, DraftPolicies, ExpertCacheSlots, ExpertResidency, KvQuant,
+    LogitProducer, PhaseCounters, RealForwardRunner, SteeringPolicy,
 };
 
 const VOCAB: usize = 128;
@@ -193,6 +193,14 @@ fn zero_projection(dir: &Path, suffix: &str) {
 
 #[test]
 fn scheduling_preserves_bits_across_misses_hits_prefill_reset_and_reopen() {
+    let working_set_bytes = recommended_max_working_set().map_or(0, |(bytes, _)| bytes);
+    if !mapped_residency_fits(working_set_bytes, 0, 0) {
+        eprintln!(
+            "host Metal working set ({:.2} GiB) does not fit mapped residency reserve (>= 10 GiB); skipping",
+            working_set_bytes as f64 / (1u64 << 30) as f64
+        );
+        return;
+    }
     // This binary has one case: all env changes occur sequentially, with
     // options captured when each runner opens and restored even on panic.
     let _env = EnvSnapshot::capture();

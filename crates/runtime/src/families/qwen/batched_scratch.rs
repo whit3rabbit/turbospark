@@ -70,6 +70,58 @@ pub(crate) struct BatchedScratch {
     /// not bit-exact against the one-row kernel, so the drafters' verify
     /// scratch never carries it.
     pub(crate) rows_attention: Option<gpu::GqaRowsScratch>,
+    /// The tree of the verify pass being encoded, `Some` only for the
+    /// duration of a `RealForwardRunner::verify_tree` call on the DFlash2
+    /// verify scratch (`TURBOSPARK_DFLASH_TREE`). Carried here rather than
+    /// threaded through the layer encoders because they are shared with
+    /// the chunked prefill and the MTP verify, which never set it; the
+    /// encoders that read it are the attention core (RoPE positions and the
+    /// ancestor-mapped attention) and the linear core (the tree conv and
+    /// delta kernels).
+    pub(crate) tree: std::cell::RefCell<Option<TreeSpec>>,
+}
+
+/// A tree verify's shape over its `rows` slots: slot 0 is the anchor,
+/// `parent[s] < s` (-1 at the anchor), `depth[s]` the slot's depth below the
+/// anchor and `paths[s]` its root path, anchor first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct TreeSpec {
+    pub(crate) parent: Vec<i32>,
+    pub(crate) depth: Vec<u32>,
+    pub(crate) paths: Vec<Vec<u32>>,
+}
+
+impl TreeSpec {
+    /// Refuses a parent array that is not a tree rooted at slot 0 with
+    /// parents before children.
+    pub(crate) fn new(parent: &[i32]) -> Result<Self, String> {
+        if parent.first() != Some(&-1) {
+            return Err(format!(
+                "a tree's slot 0 is the anchor (parent -1): {parent:?}"
+            ));
+        }
+        let mut depth = Vec::with_capacity(parent.len());
+        let mut paths: Vec<Vec<u32>> = Vec::with_capacity(parent.len());
+        for (s, &p) in parent.iter().enumerate() {
+            if s == 0 {
+                depth.push(0);
+                paths.push(vec![0]);
+                continue;
+            }
+            if p < 0 || p as usize >= s {
+                return Err(format!("slot {s}'s parent {p} must precede it: {parent:?}"));
+            }
+            depth.push(depth[p as usize] + 1);
+            let mut path = paths[p as usize].clone();
+            path.push(s as u32);
+            paths.push(path);
+        }
+        Ok(Self {
+            parent: parent.to_vec(),
+            depth,
+            paths,
+        })
+    }
 }
 
 /// The tape buffers. One `qkv_raw` row set and one `a`/`b` row set per
@@ -79,10 +131,27 @@ pub(crate) struct BatchedScratch {
 /// deliberately not taped: the state advance never reads it (it feeds the
 /// gated norm, whose output feeds the residual, which the next pass
 /// recomputes from embeddings anyway).
+///
+/// With `TURBOSPARK_GDN_LAZY_TAPE` on (the default), the tape is LAZY: the
+/// verify leaves the live state at the block start, and `rank1` carries what
+/// the round-end fold needs instead of a replay -- the post-qk-norm `k`
+/// slice and the per-row fp32 `delta` the verify kernel recorded in
+/// registers. The eager mode (flag `0`) leaves `rank1` absent and replays
+/// over `qkv_raw`/`a`/`b` from a snapshot instead.
 pub(crate) struct BatchedVerifyTape {
     pub(crate) qkv_raw: gpu::MetalBuffer,
     pub(crate) a: gpu::MetalBuffer,
     pub(crate) b: gpu::MetalBuffer,
+    pub(crate) rank1: Option<Rank1Tape>,
+}
+
+/// The lazy tape's rank-1 record, `[linear layer ordinal][row][...]`, k as
+/// FP16 (`Hk * Dk`, the post-norm slice `gdn_delta_step_prefill` consumes)
+/// and delta as FP32 (`Hv * Dv`). `g` is not recorded: the fold recomputes
+/// it from taped `a` with the same expression the delta kernel runs.
+pub(crate) struct Rank1Tape {
+    pub(crate) k: gpu::MetalBuffer,
+    pub(crate) delta: gpu::MetalBuffer,
 }
 
 /// The M-row siblings of the buffers the per-token routed pass
@@ -117,6 +186,10 @@ pub(crate) struct BatchedRoutedScratch {
     /// The wide expert-blob argument buffer, bound once per layer with
     /// every cache slot.
     pub(crate) wide_blobs: gpu::RoutedBlobsWideBuffer,
+    /// A second one, so the routed prefill's read-ahead can bind the next
+    /// sub-batch while the GPU still reads the first
+    /// (`TURBOSPARK_ROUTED_BATCH_OVERLAP`). Unused otherwise.
+    pub(crate) wide_blobs_alt: gpu::RoutedBlobsWideBuffer,
 }
 
 impl BatchedScratch {
@@ -144,10 +217,11 @@ impl BatchedScratch {
         let wide_blobs = if arch.num_experts == 0 {
             None
         } else {
-            Some(gpu::RoutedBlobsWideBuffer::new(
-                context,
-                arch.hidden_activation.contains("silu"),
-            )?)
+            let silu = arch.hidden_activation.contains("silu");
+            Some((
+                gpu::RoutedBlobsWideBuffer::new(context, silu)?,
+                gpu::RoutedBlobsWideBuffer::new(context, silu)?,
+            ))
         };
         let halfs = |n: u64| context.new_output_buffer(n.max(1) * b * 2);
         // One row set per LINEAR layer, addressed by linear-layer ordinal
@@ -157,15 +231,28 @@ impl BatchedScratch {
             let linear_layers = (0..arch.num_layers as usize)
                 .filter(|&l| arch.layer_is_linear(l))
                 .count() as u64;
+            // The lazy tape's extra buffers ride the same per-slot stride as
+            // the row tapes: a slot holds `batch` rows of each record.
+            let rank1 = if crate::real_forward_rollback::gdn_lazy_tape() {
+                let k_width = (qwen_shape.num_k_heads * qwen_shape.key_head_dim) as u64;
+                let delta_width = (qwen_shape.num_v_heads * qwen_shape.value_head_dim) as u64;
+                Some(Rank1Tape {
+                    k: context.new_output_buffer(linear_layers * b * k_width * 2),
+                    delta: context.new_output_buffer(linear_layers * b * delta_width * 4),
+                })
+            } else {
+                None
+            };
             Some(BatchedVerifyTape {
                 qkv_raw: halfs(linear_layers * qkv_dim),
                 a: halfs(linear_layers * v_heads),
                 b: halfs(linear_layers * v_heads),
+                rank1,
             })
         } else {
             None
         };
-        let routed = wide_blobs.map(|wide_blobs| {
+        let routed = wide_blobs.map(|(wide_blobs, wide_blobs_alt)| {
             let top_k = arch.top_k_experts as u64;
             let moe_inter = arch.moe_intermediate_size.max(1) as u64;
             BatchedRoutedScratch {
@@ -179,6 +266,7 @@ impl BatchedScratch {
                 batch_router_logits_f32: context
                     .new_output_buffer(b * arch.num_experts.max(1) as u64 * 4),
                 wide_blobs,
+                wide_blobs_alt,
             }
         });
         Ok(Self {
@@ -211,6 +299,7 @@ impl BatchedScratch {
             verify_tape,
             steel_gemm: false,
             rows_attention: None,
+            tree: std::cell::RefCell::new(None),
         })
     }
 }

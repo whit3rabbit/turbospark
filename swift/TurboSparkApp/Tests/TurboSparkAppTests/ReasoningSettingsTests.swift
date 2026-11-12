@@ -32,56 +32,67 @@ final class ReasoningSettingsTests: XCTestCase {
     @MainActor
     func testAppModelSetReasoningUpdatesModelDefaults() {
         let appModel = AppModel()
+        let alias = "qwen-test-\(UUID().uuidString.prefix(8))"
         let testModel = InstalledModel(
-            alias: "qwen-test",
+            alias: alias,
             repo: "qwen/qwen-test",
-            path: "/path/to/qwen-test.gturbo",
+            path: "/path/to/\(alias).gturbo",
             family: "qwen38",
             installBytes: 1024
         )
+        defer { ModelOrganizationStore.shared.removeMetadata(for: testModel) }
         appModel.selected = testModel
         appModel.setReasoning(.off)
         XCTAssertEqual(appModel.reasoning, .off)
 
-        // **KEYED ON THE PATH, NOT THE ALIAS** (state#96). This case used to
-        // assert the alias key, which is what the code did and is not unique
-        // once a scanned LM Studio or custom-folder row exists -- so two
-        // installs sharing a name shared one remembered level. The alias is
-        // still READ by `restoreReasoningPreference` as a legacy fallback,
-        // which is what keeps an existing preference working.
+        // **KEYED ON THE INSTALL ID** (task 5.5, requirement 8.1). This case
+        // asserted the path key (state#96) and, before that, the alias key.
+        // The path is not stable: a move or a drive that reconnects under
+        // another name changes it, and the remembered level was lost with it.
+        // The level now lives in the organization store next to the model's
+        // other metadata; `modelReasoningDefaults` is only the legacy table
+        // that `restoreReasoningPreference` still READS and retires.
         appModel.setReasoning(.high)
         XCTAssertEqual(appModel.reasoning, .high)
-        XCTAssertEqual(appModel.modelReasoningDefaults["/path/to/qwen-test.gturbo"], "high")
-        XCTAssertNil(appModel.modelReasoningDefaults["qwen-test"])
+        XCTAssertEqual(ModelOrganizationStore.shared.reasoningDefault(for: testModel), "high")
+        XCTAssertNil(appModel.modelReasoningDefaults[testModel.path])
+        XCTAssertNil(appModel.modelReasoningDefaults[alias])
 
         appModel.setReasoning(.xhigh)
         XCTAssertEqual(appModel.reasoning, .xhigh)
-        XCTAssertEqual(appModel.modelReasoningDefaults["/path/to/qwen-test.gturbo"], "xhigh")
+        XCTAssertEqual(ModelOrganizationStore.shared.reasoningDefault(for: testModel), "xhigh")
     }
 
     @MainActor
     func testAppModelRestoresReasoningPreferenceForModel() {
         let appModel = AppModel()
-        appModel.modelReasoningDefaults["qwen38"] = "xhigh"
-        appModel.modelReasoningDefaults["gemma4"] = "low"
-
         let qwenModel = InstalledModel(
-            alias: "qwen38",
+            alias: "qwen38-\(UUID().uuidString.prefix(8))",
             repo: "qwen/qwen38",
             path: "/path/to/qwen38.gturbo",
             family: "qwen38",
             installBytes: 1024
         )
-        appModel.restoreReasoningPreference(for: qwenModel)
-        XCTAssertEqual(appModel.reasoning, .xhigh)
-
         let gemmaModel = InstalledModel(
-            alias: "gemma4",
+            alias: "gemma4-\(UUID().uuidString.prefix(8))",
             repo: "google/gemma4",
             path: "/path/to/gemma4.gturbo",
             family: "gemma4",
             installBytes: 1024
         )
+        defer {
+            ModelOrganizationStore.shared.removeMetadata(for: qwenModel)
+            ModelOrganizationStore.shared.removeMetadata(for: gemmaModel)
+        }
+        // The bare-alias spelling is the oldest legacy key; it must still be
+        // found, and it is re-keyed to the install id as it is read.
+        appModel.modelReasoningDefaults[qwenModel.alias] = "xhigh"
+        appModel.modelReasoningDefaults[gemmaModel.alias] = "low"
+
+        appModel.restoreReasoningPreference(for: qwenModel)
+        XCTAssertEqual(appModel.reasoning, .xhigh)
+        XCTAssertEqual(ModelOrganizationStore.shared.reasoningDefault(for: qwenModel), "xhigh")
+
         appModel.restoreReasoningPreference(for: gemmaModel)
         XCTAssertEqual(appModel.reasoning, .low)
     }

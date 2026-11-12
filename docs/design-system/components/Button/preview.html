@@ -1,0 +1,26 @@
+<!-- @dsCard group="Actions" height=150 -->
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Button</title></head>
+<body>
+<div class="ts-stage">
+  <div class="ts-row">
+    <button class="ts-btn ts-btn-primary is-ready">Load Model</button>
+    <button class="ts-btn">Reload Model</button>
+    <button class="ts-btn ts-btn-quiet">Cancel</button>
+    <button class="ts-btn ts-btn-destructive">Unload Model</button>
+    <button class="ts-btn ts-btn-menu" aria-haspopup="menu">Import</button>
+  </div>
+  <div class="ts-row">
+    <button class="ts-btn ts-btn-small ts-btn-primary">Load</button>
+    <button class="ts-btn ts-btn-small">Eject</button>
+    <button class="ts-btn ts-btn-small ts-btn-quiet">Cancel Download</button>
+    <button class="ts-btn ts-btn-small ts-btn-destructive">Delete</button>
+  </div>
+  <div class="ts-row">
+    <button class="ts-btn ts-btn-primary" disabled aria-describedby="why">Load Model</button>
+    <span class="ts-label" id="why">Choose a model folder first.</span>
+  </div>
+</div>
+</body>
+</html>

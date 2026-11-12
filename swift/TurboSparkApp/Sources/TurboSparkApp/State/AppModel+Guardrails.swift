@@ -58,11 +58,11 @@ extension AppModel {
     /// Takes the TURN's project rather than the selection, for the reason
     /// every other read on this path does (state#30).
     public func guardrailsInertReason(for project: AppProject?) -> String? {
-        if interactionMode != .projects {
+        if interactionMode != .projects && !chatToolsEnabled {
             return "This chat sends no tools, so guardrails has nothing to check. "
-                + "Switch to Projects mode to use tools."
+                + "Enable tools in Chat or switch to Projects mode to use tools."
         }
-        if project == nil {
+        if interactionMode == .projects && project == nil {
             return "This chat has no project, so no tools are offered and guardrails has "
                 + "nothing to check."
         }

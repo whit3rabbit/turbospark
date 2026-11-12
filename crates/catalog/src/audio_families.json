@@ -206,6 +206,20 @@
     "evidence": "crates/audio/src/stt/moss_transcribe_diarize/README.md; historical evidence only, not rerun by capability discovery"
   },
   {
+    "family": "stt/multitalker_asr",
+    "task": "speech_to_text",
+    "operations": [
+      "step",
+      "run"
+    ],
+    "backend": "portable_cpu",
+    "can_run": false,
+    "component": false,
+    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "source": "crates/audio/src/stt/multitalker_asr/mod.rs",
+    "evidence": "crates/audio/src/stt/multitalker_asr/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
     "family": "stt/nemo",
     "task": "speech_to_text",
     "operations": [],
@@ -255,6 +269,19 @@
     "unavailable_reason": null,
     "source": "crates/runtime/src/coreml/parakeet.rs",
     "evidence": "docs/COREML.md and crates/runtime/tests/coreml_parakeet.rs (macOS 15+ only); historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "stt/parakeet_unified_coreml",
+    "task": "speech_to_text",
+    "operations": [
+      "stream_transcribe"
+    ],
+    "backend": "coreml",
+    "can_run": true,
+    "component": false,
+    "unavailable_reason": null,
+    "source": "crates/runtime/src/coreml/parakeet_unified.rs",
+    "evidence": "crates/runtime/tests/coreml_parakeet_unified.rs (macOS 15+ only, English, live streaming through ts_audio_stream_*); historical evidence only, not rerun by capability discovery"
   },
   {
     "family": "stt/phonon",
@@ -420,6 +447,34 @@
     "unavailable_reason": null,
     "source": "crates/audio/src/tts/megatts3/mod.rs",
     "evidence": "crates/audio/src/tts/megatts3/README.md; historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "tts/fish_drama3",
+    "task": "text_to_speech",
+    "operations": [
+      "synthesize",
+      "voice_clone"
+    ],
+    "backend": "metal",
+    "can_run": true,
+    "component": false,
+    "unavailable_reason": null,
+    "source": "crates/runtime/src/fish_drama3.rs",
+    "evidence": "docs/FISH_DRAMA3_PHASE0.md; crates/bench/tests/fish_drama3_memory_oracle.rs and fish_drama3_leak_gate.rs (Metal, real install); historical evidence only, not rerun by capability discovery"
+  },
+  {
+    "family": "tts/omnivoice",
+    "task": "text_to_speech",
+    "operations": [
+        "synthesize",
+        "voice_clone"
+    ],
+    "backend": "metal",
+    "can_run": true,
+    "component": false,
+    "unavailable_reason": null,
+    "source": "crates/audio/src/tts/omnivoice/mod.rs",
+    "evidence": "crates/audio/src/tts/omnivoice/README.md; fixture parity checked in, real-checkpoint gate recorded in the family README"
   },
   {
     "family": "music/minimax_music3",

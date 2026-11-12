@@ -7,7 +7,6 @@ import TurboSpark
 struct ImagesSectionView: View {
     @ObservedObject var model: AppModel
     @Environment(\.appTheme) private var theme
-    @State private var organizing = false
     @State private var importing = false
     @State private var search = ""
     @State private var selecting = false
@@ -16,6 +15,14 @@ struct ImagesSectionView: View {
     @AppStorage("TurboSpark.imageModelRecommendationSeen")
     private var imageModelRecommendationSeen = false
     @State private var showingImageModelRecommendation = false
+    /// The library the user picked for the first download. Nil follows the
+    /// default (requirement 2.2). Per install: not remembered across launches.
+    @State private var downloadDestination: String?
+    @State private var confirmingTrashSelection = false
+
+    /// The mode lives on the model because the panel beside the rail switches
+    /// it (`ImagesSidebarPanel`); this pane has no switcher of its own.
+    private var organizing: Bool { model.imagesMode == .organize }
 
     private var artifacts: [AppArtifact] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -58,11 +65,11 @@ struct ImagesSectionView: View {
             imageModelRecommendationSeen = true
             showingImageModelRecommendation = true
         }
-        .onChange(of: organizing) { selection.removeAll(); selecting = false }
+        .onChange(of: model.imagesMode) { selection.removeAll(); selecting = false }
         .onChange(of: search) { selection.removeAll() }
         .onChange(of: model.generating) {
             if model.generating && model.imageGenerationTask != nil {
-                organizing = false
+                model.imagesMode = .create
                 preview = nil
             }
         }
@@ -71,10 +78,9 @@ struct ImagesSectionView: View {
         }
     }
 
-    /// Title and count on the leading side, the mode switch as the header's
-    /// action. `AppAdaptiveHeader` drops the switch under the title when a
-    /// translation or the largest text size no longer fits one row; the old
-    /// fixed 210pt segmented control truncated its labels instead.
+    /// Title and count. The Create and Organize switch moved to the panel
+    /// beside the rail (`ImagesSidebarPanel`), and the rail's Images menu
+    /// offers both while that panel is hidden.
     private var header: some View {
         AppAdaptiveHeader {
             VStack(alignment: .leading, spacing: 2) {
@@ -85,14 +91,9 @@ struct ImagesSectionView: View {
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         } actions: {
-            Picker(selection: $organizing) {
-                Text("Create", bundle: .module).tag(false)
-                Text("Organize", bundle: .module).tag(true)
-            } label: { Text("Image mode", bundle: .module) }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .fixedSize()
+            EmptyView()
         }
         .padding(.horizontal, 24).padding(.vertical, 18)
     }
@@ -109,7 +110,7 @@ struct ImagesSectionView: View {
                 }
                 .appAction(.secondary)
                 Button(role: .destructive) {
-                    selection.subtract(model.trashGeneratedImages(ids: selection))
+                    confirmingTrashSelection = true
                 } label: {
                     Label { Text("Move to Trash", bundle: .module) } icon: { Image(systemName: "trash") }
                 }
@@ -124,6 +125,20 @@ struct ImagesSectionView: View {
             .disabled(model.savedImageArtifacts.isEmpty)
         }
         .themedFont(.small).padding(.horizontal, 24).padding(.vertical, 12)
+        .confirmationDialog(Text("Move to Trash", bundle: .module), isPresented: $confirmingTrashSelection) {
+            Button(role: .destructive) {
+                selection.subtract(model.trashGeneratedImages(ids: selection))
+            } label: {
+                Text("Move to Trash", bundle: .module)
+            }
+            Button(role: .cancel) {
+                confirmingTrashSelection = false
+            } label: {
+                Text("Cancel", bundle: .module)
+            }
+        } message: {
+            Text("Are you sure you want to move the selected images to the Trash?", bundle: .module)
+        }
     }
 
     @ViewBuilder
@@ -181,8 +196,12 @@ struct ImagesSectionView: View {
                     bundle: .module)
             ) {
                 if model.imageModelPath.isEmpty, let source = model.imageDownloadChoices.first {
+                    // Where the download goes: only when there is a choice (2.1).
+                    InstallDestinationPicker(model: model, selection: $downloadDestination)
                     Button {
-                        model.installImageModel(source)
+                        model.installImageModel(
+                            source,
+                            library: model.installDestinations.libraryForInstall(selection: downloadDestination))
                     } label: {
                         Label {
                             Text("Download", bundle: .module)
@@ -214,9 +233,8 @@ struct ImagesSectionView: View {
                 .themedFont(.small, weight: .medium)
                 .lineLimit(1)
             HStack(spacing: 10) {
-                ProgressView(value: model.imageProgressFraction)
-                    .progressViewStyle(.linear)
-                    .frame(width: 280)
+                AppProgressBar(value: model.imageProgressFraction, label: progressStageLabel)
+                    .frame(minWidth: 160, idealWidth: 280, maxWidth: 320)
                 if let job = model.imageJob, job.total > 0 {
                     Text(verbatim: "\(job.completed)/\(job.total)")
                         .themedFont(.tiny)
@@ -226,16 +244,16 @@ struct ImagesSectionView: View {
             }
         }
         .padding(18)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 12).stroke(.appBorder, lineWidth: 0.75)
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous).stroke(.appBorder, lineWidth: 0.75)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
         .accessibilityElement(children: .combine)
     }
 
-    @ViewBuilder
-    private var progressStageLabel: some View {
+    /// A `Text`, not a view builder, so it also labels the progress bar.
+    private var progressStageLabel: Text {
         switch model.imageJob?.stage {
         case "downloading_model": Text("Downloading model files", bundle: .module)
         case "loading_model": Text("Loading model", bundle: .module)
@@ -257,14 +275,15 @@ struct ImagesSectionView: View {
            let image = NSImage(data: result.png) {
             VStack(alignment: .leading, spacing: 12) {
                 Image(nsImage: image).resizable().scaledToFit().frame(maxHeight: 260)
+                    .accessibilityLabel(Text("Generated image preview", bundle: .module))
                 Text("This image has not been saved.", bundle: .module).themedFont(.small)
                 HStack(spacing: AppMetrics.actionSpacing) {
                     Button { model.saveImage() } label: { Text("Save", bundle: .module) }
                         .appAction(.secondary, size: .small)
-                    Button(role: .destructive) { model.discardUnsavedImage() } label: {
+                    Button { model.discardUnsavedImage() } label: {
                         Text("Remove", bundle: .module)
                     }
-                    .appAction(.destructive, size: .small)
+                    .appAction(.secondary, size: .small)
                 }
                 .disabled(model.imageGenerationTask != nil)
             }
@@ -273,6 +292,6 @@ struct ImagesSectionView: View {
 
     private func reusePrompt(_ artifact: AppArtifact) {
         model.writePromptTextDirectly(artifact.imageRequest?.prompt ?? artifact.title)
-        organizing = false
+        model.imagesMode = .create
     }
 }

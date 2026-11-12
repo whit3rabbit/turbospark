@@ -190,6 +190,9 @@ fn open_real_model(
     if let Some(ref mcp) = args.mcp_config {
         eprintln!("  mcp config: {} (accepted, not honoured)", mcp.display());
     }
+    if let Some(queue) = turbospark_server::ChatModel::generation_queue(&model) {
+        queue.set_max_queued(args.max_queued);
+    }
     Ok(Arc::new(model))
 }
 
@@ -351,6 +354,27 @@ fn open_scripted(tokenizer_dir: &str) -> Result<Arc<dyn turbospark_server::ChatM
     )))
 }
 
+/// Refuses to start while a model named on the command line is on a library
+/// that is not connected, naming the drive to connect (10.7). Run before
+/// anything is opened or bound, so the start fails the same way for a text
+/// model and an audio model, and not as a path that does not exist.
+#[cfg(target_os = "macos")]
+fn refuse_unplugged_models(parsed: &ModelArgs) -> Result<(), String> {
+    use catalog::ModelModality::{Audio, Text};
+    let audio = [&parsed.stt_models, &parsed.tts_models, &parsed.music_models];
+    let named = parsed
+        .models
+        .iter()
+        .map(|name| (name, Text))
+        .chain(audio.into_iter().flatten().map(|name| (name, Audio)));
+    for (name, modality) in named {
+        if let Some(message) = catalog::not_connected_message(name, modality) {
+            return Err(message);
+        }
+    }
+    Ok(())
+}
+
 /// Attaches every `--stt-model` / `--tts-model` / `--music-model`. A model
 /// that fails to open refuses the whole start, like `--model` does: a server
 /// that quietly lacks a requested endpoint is harder to diagnose than one
@@ -447,6 +471,10 @@ async fn main() -> std::process::ExitCode {
             }
             #[cfg(target_os = "macos")]
             {
+                if let Err(e) = refuse_unplugged_models(&parsed) {
+                    eprintln!("{e}");
+                    return std::process::ExitCode::from(2);
+                }
                 let reg = match open_models_registry(&parsed) {
                     Ok(reg) => reg,
                     Err(e) => {
@@ -555,7 +583,7 @@ async fn main() -> std::process::ExitCode {
     if has_audio {
         eprintln!("  POST /v1/audio/transcriptions  (WAV in; json, verbose_json, text, srt, vtt)");
         eprintln!("  GET  /v1/audio/transcriptions/realtime  (WebSocket, commit per utterance)");
-        eprintln!("  POST /v1/audio/speech       (Kokoro or MegaTTS3 cloning, wav or pcm)");
+        eprintln!("  POST /v1/audio/speech       (Kokoro, MegaTTS3, or OmniVoice TTS/cloning, wav or pcm)");
         eprintln!("  POST /v1/audio/generate     (Music 3, wav; async=true for a job)");
         eprintln!("  GET  /v1/audio/jobs/:id     (and /result; DELETE cancels)");
         eprintln!(

@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 #[cfg(target_os = "macos")]
 use std::sync::{Mutex, OnceLock};
 
+use super::libraries::refuse_while_moving;
 use crate::abi::{self, guard_result};
 use crate::strings;
 
@@ -147,8 +148,22 @@ fn with_backend<T>(
     model_path: &str,
     f: impl FnOnce(&EmbeddingBackend) -> Result<T, String>,
 ) -> Result<T, (c_int, String)> {
-    let dir = catalog::resolve_model_arg(model_path);
-    let dir = dir.canonicalize().unwrap_or(dir);
+    let probe = crate::embedding_probe::probe(model_path);
+    let dir = match (probe.runnable, probe.resolved_path) {
+        (true, Some(dir)) => dir,
+        (_, resolved) => {
+            let what = resolved.map_or_else(|| model_path.to_string(), |d| d.display().to_string());
+            return Err((
+                abi::TS_ERR_OPEN,
+                format!(
+                    "failed to open embedding model from {what}: {}",
+                    probe
+                        .refused_because
+                        .unwrap_or_else(|| "not a supported embedding model".into())
+                ),
+            ));
+        }
+    };
     let file_stamps = EmbeddingBackend::stamp_files(&dir).map(|p| file_stamp(&p));
     let mutex = ENCODER_CACHE.get_or_init(|| Mutex::new(None));
     let mut cache = match mutex.lock() {
@@ -300,8 +315,13 @@ pub unsafe extern "C" fn ts_embedding_encode_request_json(
 /// Writes the pinned embedding profiles as a JSON array to `*out`:
 /// `[{"alias", "display_name", "family", "backend", "repository",
 ///   "revision", "license", "modalities", "dimensions", "matryoshka_dims",
-///   "download_bytes", "installed_path", "can_run", "unavailable_reason"}]`.
-/// `installed_path` is null until a verified install exists.
+///   "status", "gates", "download_bytes", "installed_path", "install_state",
+///   "install_problem", "can_run", "unavailable_reason"}]`.
+/// `installed_path` is null until an install verifies against the current
+/// pin. `install_state` is `current`, `stale` (an older pin or damaged; a
+/// download replaces it), `foreign` (a download refuses it) or `absent`,
+/// and `install_problem` says why in words.
+/// `status` is `verified` only when the named `gates` ran on this pin.
 #[no_mangle]
 pub unsafe extern "C" fn ts_embedding_catalog_json(out: *mut *mut c_char) -> c_int {
     guard_result(|| {
@@ -326,10 +346,18 @@ pub unsafe extern "C" fn ts_embedding_catalog_json(out: *mut *mut c_char) -> c_i
                     "modalities": p.modalities,
                     "dimensions": p.dimensions,
                     "matryoshka_dims": p.matryoshka_dims,
+                    "status": p.status.as_str(),
+                    "gates": p.gates,
                     "download_bytes": p.download_bytes(),
                     "installed_path": store
                         .as_ref()
                         .and_then(|s| cat.installed_path(s, &p.alias)),
+                    "install_state": store
+                        .as_ref()
+                        .and_then(|s| cat.install_state(s, &p.alias)),
+                    "install_problem": store
+                        .as_ref()
+                        .and_then(|s| cat.install_problem(s, &p.alias)),
                     "can_run": can_run,
                     "unavailable_reason": reason,
                 })
@@ -340,13 +368,40 @@ pub unsafe extern "C" fn ts_embedding_catalog_json(out: *mut *mut c_char) -> c_i
     })
 }
 
+/// Writes the verdict for one embedding model argument (a pinned alias or a
+/// directory) to `*out`, without loading it:
+/// `{"input", "resolved_path", "runnable", "family", "backend", "verified",
+///   "profile_alias", "refused_because"}`. A catalog alias resolves only to
+/// an install of its current pin. `verified` is true only for the verified
+/// install of a catalog profile whose status is `verified`.
+#[no_mangle]
+pub unsafe extern "C" fn ts_embedding_probe_json(
+    model_path: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        if out.is_null() {
+            return Err((abi::TS_ERR_INVALID_ARGUMENT, "out must not be null".into()));
+        }
+        let model_path = strings::required(model_path, "modelPath")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let json = serde_json::to_string(&crate::embedding_probe::probe(model_path))
+            .map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
 /// Downloads, verifies and installs one pinned embedding profile into the
-/// default store. Progress arrives through `callback` as
-/// `TS_INSTALL_BYTES`; `ts_install_cancel` stops it. Writes
+/// default store. `revision` must be the catalog's current pin for `alias`
+/// (the one the host showed), so a retry never adopts a different pin.
+/// Refuses an install that already verifies and a folder TurboSpark did not
+/// write; replaces an older pin of the same alias. Progress arrives through
+/// `callback` as `TS_INSTALL_BYTES`; `ts_install_cancel` stops it. Writes
 /// `{"alias", "path"}` to `*out`.
 #[no_mangle]
 pub unsafe extern "C" fn ts_embedding_install(
     alias: *const c_char,
+    revision: *const c_char,
     callback: crate::TsInstallCallback,
     userdata: *mut std::ffi::c_void,
     out: *mut *mut c_char,
@@ -358,8 +413,26 @@ pub unsafe extern "C" fn ts_embedding_install(
         *out = std::ptr::null_mut();
         let alias =
             strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        let active = crate::models::ActiveInstall::register();
+        let revision = strings::required(revision, "revision")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        refuse_while_moving()?;
         let cat = catalog::EmbeddingCatalog::embedded().map_err(|e| (abi::TS_ERR_JSON, e))?;
+        let profile = cat.get(alias).ok_or_else(|| {
+            (
+                abi::TS_ERR_INVALID_ARGUMENT,
+                format!("no embedding profile named {alias:?}"),
+            )
+        })?;
+        if profile.revision != revision {
+            return Err((
+                abi::TS_ERR_INVALID_ARGUMENT,
+                format!(
+                    "{alias} is pinned at {}, not {revision}; refresh the model list",
+                    profile.revision
+                ),
+            ));
+        }
+        let active = crate::models::ActiveInstall::register();
         let store =
             catalog::Store::default_store().map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
         let path = cat
@@ -368,6 +441,7 @@ pub unsafe extern "C" fn ts_embedding_install(
                 &catalog::Catalog::embedded().map_err(|e| (abi::TS_ERR_JSON, e))?,
                 &store,
                 alias,
+                revision,
                 &mut |progress| {
                     if let Some(cb) = callback {
                         let stage = progress
@@ -402,7 +476,7 @@ pub unsafe extern "C" fn ts_embedding_install(
 /// Computes the cosine similarity between two float vectors of length `len`.
 /// Both vectors are L2-normalized first, so arbitrary nonzero inputs give a
 /// true cosine in [-1, 1]; a zero vector yields 0.0. Returns 0.0 if either
-/// pointer is null, len is 0, or an internal panic is caught at the boundary
+/// pointer is null or not f32-aligned, len is 0, or an internal panic is caught at the boundary
 /// (read `ts_last_error` to see why; there is no status code here to carry
 /// `TS_ERR_PANIC` through, so the sentinel is the only signal a caller gets,
 /// same as the null/zero-length case).
@@ -418,8 +492,32 @@ pub unsafe extern "C" fn ts_cosine_similarity(a: *const f32, b: *const f32, len:
         if len > isize::MAX as usize / std::mem::size_of::<f32>() {
             return 0.0;
         }
+        // Swift `[Float]` is always aligned, but a C caller can hand in a
+        // pointer into a packed byte buffer; a misaligned slice is UB.
+        if !a.is_aligned() || !b.is_aligned() {
+            return 0.0;
+        }
         let slice_a = std::slice::from_raw_parts(a, len);
         let slice_b = std::slice::from_raw_parts(b, len);
         compute::cosine_similarity(slice_a, slice_b)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ts_cosine_similarity;
+
+    // A C caller can pass a float pointer that is not 4-byte aligned (for
+    // example one carved out of a packed byte buffer). Building a slice from
+    // it is undefined behaviour, so the entry point must refuse it with the
+    // documented 0.0 sentinel instead of reading through it.
+    #[test]
+    fn misaligned_pointer_returns_sentinel() {
+        let buf = [0u32; 8];
+        let base = buf.as_ptr() as *const u8;
+        let misaligned = unsafe { base.add(1) } as *const f32;
+        let aligned = buf.as_ptr() as *const f32;
+        assert_eq!(unsafe { ts_cosine_similarity(misaligned, aligned, 3) }, 0.0);
+        assert_eq!(unsafe { ts_cosine_similarity(aligned, misaligned, 3) }, 0.0);
+    }
 }

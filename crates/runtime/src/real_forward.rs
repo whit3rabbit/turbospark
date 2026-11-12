@@ -146,6 +146,9 @@ pub struct RealForwardRunner {
     /// be read beside the mode -- a mapped row and a streamed row differ by
     /// the entire slot cache.
     pub(crate) resolved_residency: model_io::ResolvedExpertResidency,
+    /// What became of the slot-wiring request at open (`docs/ENV.md`,
+    /// `TURBOSPARK_EXPERT_SLOTS_WIRED`).
+    pub(crate) expert_slot_wiring: crate::real_forward_init::ExpertSlotWiringOutcome,
     /// Blob-relative sub-tensor offsets, ONE ENTRY PER LAYER, and the
     /// reusable argument buffer. Empty when the install does not pack
     /// experts.
@@ -182,6 +185,34 @@ pub struct RealForwardRunner {
     /// speculative round replay the accepted prefix's recurrent state over
     /// recorded row inputs instead of re-running a whole forward pass.
     pub(crate) batched_tape: Option<crate::real_forward_rollback::VerifyTape>,
+    /// Whether the live GDN state provably EQUALS the last committed
+    /// boundary: a fold (`RealForwardRunner::commit_pending`, or the one
+    /// inside a lazy retaining rollback), a restore, or a reset just ran and
+    /// no eager advance (`produce`, a prefill) has happened since. Only
+    /// consulted under `TURBOSPARK_GDN_LAZY_TAPE`: a checkpoint taken while
+    /// clean needs NO snapshot, because the state a rollback returns to is
+    /// still sitting in the live buffers -- that is what removes the
+    /// snapshot blit from every speculative round after the first. Any
+    /// eager advance clears it.
+    pub(crate) gdn_state_clean: bool,
+    /// A ROUND checkpoint (`checkpoint_round`) that skipped its snapshot is
+    /// ALIVE while the live state still equals the state it names. An eager
+    /// advance first takes the snapshot it skipped (`deferred_gdn_snapshot`)
+    /// and retires the flag, so the point stays fully general. A fold or a
+    /// restore that moves the state past it TAINTS it instead: a copy at that
+    /// moment would cost the blit the skip exists to save every round, and
+    /// rolling back past a committed round is not something the speculative
+    /// loop does, so rollback refuses loudly rather than restore nothing.
+    pub(crate) unsnapshotted_checkpoint_alive: bool,
+    pub(crate) unsnapshotted_checkpoint_tainted: bool,
+    /// The snapshot an alive round checkpoint skipped, taken when the first
+    /// eager advance arrived (the live state still equalled the point then).
+    pub(crate) deferred_gdn_snapshot: Option<gpu::GdnSnapshot>,
+    /// The recurrent state a few tokens before the last prompt's end, kept
+    /// so the next turn can rewind a GDN model to it (`crate::turn_snapshot`,
+    /// `TURBOSPARK_GDN_TURN_SNAPSHOT`). `None` unless that switch is on.
+    /// Describes the LIVE session only: every reset and session swap drops it.
+    pub(crate) turn_snapshot: Option<crate::turn_snapshot::TurnSnapshot>,
     /// `scratch.x` row 0's bytes from JUST BEFORE `produce_batched`'s own
     /// trailing copy overwrites them with row `batch - 1`'s residual. Only
     /// set alongside `batched_tape`, and only needed because a
@@ -189,10 +220,19 @@ pub struct RealForwardRunner {
     /// to rebuild row 0 from -- row 0 IS the kept row in that case, and the
     /// trailing copy already clobbered it by the time the rollback runs.
     pub(crate) batched_tape_row0: Option<Vec<u8>>,
+    /// An in-flight non-blocking fold pass from commit_pending or lazy
+    /// rollback_retaining, executed asynchronously on the GPU without blocking
+    /// CPU drafting.
+    pub(crate) pending_gdn_fold: Option<gpu::CommittedPass>,
     /// Present for a `llama`-architecture install (ROADMAP Phase M2), which
     /// is Mixtral-style MoE only; a dense one is refused at build.
     pub(crate) real_llama: Option<crate::families::llama::RealLlamaState>,
     pub(crate) real_deepseek2: Option<crate::families::deepseek2::RealDeepseek2State>,
+    pub(crate) real_unlimited_ocr2: Option<crate::families::unlimited_ocr2::RealUnlimitedOcr2State>,
+    /// Present for a `flint` install. Its own state: sinks, NoPE by layer
+    /// mask, per-head QK norm, a sigmoid router, an ungated shared expert and
+    /// a dense lead are each inside the layer. `docs/FLINT_PHASE0.md`.
+    pub(crate) real_flint: Option<crate::families::flint::RealFlintState>,
     /// Present for a `gpt-oss` install (ROADMAP M5). Its own state rather
     /// than a flag on `real_llama` because all four of this architecture's
     /// differences are inside the layer: a YaRN frequency table, the
@@ -205,6 +245,9 @@ pub struct RealForwardRunner {
     /// QKV row staging and the per-head gate -- are shapes no shared scratch
     /// carries.
     pub(crate) real_spark: Option<crate::families::spark::RealSparkState>,
+    /// Present for an `lfm3` install: the short-conv tails and the in_proj /
+    /// gate staging no shared scratch carries.
+    pub(crate) real_lfm3: Option<crate::families::lfm3::RealLfm3State>,
     /// Present for a `qwen4_exp` install (Phase 3 of its bring-up,
     /// `docs/QWEN4_PHASE0.md`). Its own state rather than a variant of
     /// `real_qwen`: the residual stream is `hc_count` times wider, every
@@ -237,6 +280,13 @@ pub struct RealForwardRunner {
     /// only: a GGUF install is refused by layout when the seam is on,
     /// never silently looped.
     pub(crate) routed_batch_prefill: bool,
+    /// `TURBOSPARK_ROUTED_BATCH_OVERLAP=1`: under the batched routed half,
+    /// plan and `pread` each sub-batch's experts while the previous
+    /// sub-batch runs on the GPU, into slots it does not hold
+    /// (`families/qwen/moe_batch.rs`). Byte-identical either way: the plan
+    /// only moves which slot an expert lands in, and phase 2 reduces over
+    /// ranks. Qwen MoE only; the other routed drivers ignore it.
+    pub(crate) routed_batch_overlap: bool,
     /// Whether the chunked-prefill driver runs its RESIDENT GEMVs -- the
     /// four attention projections and the shared expert's three -- as
     /// M-row GEMMs instead of one dispatch per token
@@ -289,6 +339,11 @@ pub struct RealForwardRunner {
     /// of rows, instead of the one-row kernel per row. On unless
     /// `TURBOSPARK_PREFILL_ROWS_ATTN=0`. Prefill only, like Steel.
     pub(crate) prefill_rows_attention: bool,
+    /// The opt-in ANE+Steel prefill split for the dense qwen family
+    /// (`families/qwen/ane_split.rs`), off unless `TURBOSPARK_ANE_PREFILL`
+    /// or [`Self::set_ane_prefill`] asks for it.
+    #[cfg(feature = "ane-prefill")]
+    pub(crate) ane_prefill: crate::families::qwen::AnePrefill,
     /// Which layout each layer's routed expert blobs use, PER PHASE.
     pub(crate) routed_layouts: Vec<RoutedLayerLayout>,
     /// Per-layer expert-selection histogram, `None` unless
@@ -325,6 +380,38 @@ pub struct RealForwardRunner {
     /// touches. **`None` therefore means "not yet asked for", never "this
     /// install has none"** -- that question is `arch.vision.is_active()`.
     pub(crate) vision: Option<crate::vision::VisionTower>,
+    /// The Gemma 4 tower, lazily opened by
+    /// [`RealForwardRunner::encode_image_gemma4`]. A separate field because
+    /// the two towers share no weights layout or forward pass; `None` means
+    /// "not yet asked for", as with `vision`.
+    pub(crate) gemma4_vision: Option<crate::vision::gemma4::Gemma4VisionTower>,
+    /// The Qwen2.5-VL tower, opened lazily on the first image like the others.
+    pub(crate) qwen25_vision: Option<crate::vision::qwen25::Qwen25VisionTower>,
+    /// The MiniCPM-V tower, lazily opened by `encode_image` on a `minicpm_v`
+    /// install (combined installs only).
+    pub(crate) minicpm_vision: Option<crate::vision::minicpm::MiniCpmVisionTower>,
+    /// The LFM3-VL tower, lazily opened by [`RealForwardRunner::encode_image`]
+    /// on an install whose tower kind is `lfm3_vl`. Separate from `vision` for
+    /// the same reason `gemma4_vision` is: no shared weights layout or
+    /// forward pass.
+    pub(crate) lfm3_vision: Option<crate::vision::lfm3_vl::Lfm3VlVisionTower>,
+    /// The CLIP tower (LLaVA), lazily opened by
+    /// [`RealForwardRunner::encode_image_clip`]; a third field for the same
+    /// reason as the Gemma 4 one.
+    pub(crate) clip_vision: Option<crate::vision::clip::ClipVisionTower>,
+    /// The Muse-Glimmer tower, opened lazily on the first image.
+    pub(crate) muse_vision: Option<crate::vision::muse::MuseVisionTower>,
+    /// The Pixtral tower, opened lazily on the first image.
+    pub(crate) pixtral_vision: Option<crate::vision::pixtral::PixtralVisionTower>,
+    /// The SigLIP tower (DeepSeek-VL2), lazily opened by
+    /// [`RealForwardRunner::encode_image_siglip`].
+    pub(crate) siglip_vision: Option<crate::vision::siglip::SiglipVisionTower>,
+    /// The DeepSeek-OCR tower (SAM + CLIP-L), lazily opened by
+    /// [`RealForwardRunner::encode_image_deepseek_ocr`].
+    pub(crate) deepseek_ocr_vision: Option<crate::vision::deepseek_ocr::DeepseekOcrVisionTower>,
+    /// The LLaVA-OneVision SigLIP tower, lazily opened by
+    /// [`RealForwardRunner::encode_image_clip`].
+    pub(crate) onevision_vision: Option<crate::vision::onevision::OneVisionTower>,
     /// A sidecar tower directory attached after open (vision memory
     /// sidecar, Part A2), via [`RealForwardRunner::attach_vision_sidecar`].
     /// `None` on every session that never called it, which is every session
@@ -360,4 +447,16 @@ pub struct RealForwardRunner {
     /// Everything else, including committing and waiting on the open command
     /// buffer and advancing the KV cache, still runs.
     pub(crate) skip_head: bool,
+    /// One host-supplied input row (`hidden_size` f16 values, little-endian)
+    /// that replaces this pass's embedding lookup. Set per pass by
+    /// [`crate::hidden_trunk::HiddenTrunk`] and cleared after it; `None` for
+    /// every other caller.
+    pub(crate) host_embed: Option<Vec<u8>>,
+    /// Run the final norm and stop there: no head GEMV and no logits
+    /// readback. The caller reads the post-norm hidden state from
+    /// `scratch.normed`. Set per pass by `HiddenTrunk`.
+    pub(crate) hidden_out: bool,
+    /// Opened as a headless trunk (`model_io::trunk_role`): there is no LM
+    /// head, so a pass that is not a `hidden_out` pass is refused.
+    pub(crate) headless: bool,
 }

@@ -81,7 +81,7 @@ private struct UsageDashboardSectionView: View {
                             if dayIndex < weeks[weekIndex].count,
                                 let cell = weeks[weekIndex][dayIndex] {
                                 RoundedRectangle(cornerRadius: 2)
-                                    .fill(Self.heatColor(
+                                    .fill(heatColor(
                                         tokens: cell.day.promptTokens + cell.day.outputTokens,
                                         maxTokens: maxDay))
                                     .frame(width: 11, height: 11)
@@ -177,10 +177,10 @@ private struct UsageDashboardSectionView: View {
         return calendar.component(.weekday, from: date) - 1
     }
 
-    static func heatColor(tokens: Int, maxTokens: Int) -> Color {
-        guard maxTokens > 0, tokens > 0 else { return Color.primary.opacity(0.05) }
+    private func heatColor(tokens: Int, maxTokens: Int) -> Color {
+        guard maxTokens > 0, tokens > 0 else { return theme.surface }
         let fraction = Double(min(tokens, maxTokens)) / Double(maxTokens)
-        return TurboSparkTheme.accentColor.opacity(0.2 + 0.8 * fraction)
+        return theme.accent.opacity(0.2 + 0.8 * fraction)
     }
 }
 

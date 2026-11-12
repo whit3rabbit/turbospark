@@ -1,0 +1,246 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "gptOss",
+  "kind": "text",
+  "title": "gpt-oss MoE: attention sinks, YARN, clamped SwiGLU, 128-token sliding window, MXFP4 experts",
+  "flow": "gptoss",
+  "installs": [
+    {
+      "name": "gpt-oss-20b",
+      "quant": "MXFP4 experts, 11 GB",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [],
+      "note": "no install on this host today"
+    },
+    {
+      "name": "gptoss-20b",
+      "quant": "GGUF MXFP4",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [],
+      "note": "head_dim 64, 64 q over 8 kv, 32 experts top-4, attention sinks; measured 2026-10-29"
+    }
+  ],
+  "recommended": [
+    {
+      "chunk": "128",
+      "when": [],
+      "why": "the chunked driver (Step 1, attention per token) cut a 75-token prefill from 7.56 to 3.79 s with md5-identical output",
+      "findings": [
+        "gptOss.chunked-prefill-2026-09-01"
+      ]
+    },
+    {
+      "knob": "routed_batch",
+      "value": "1",
+      "when": [],
+      "why": "the arm's first A/B won +23.46% prefill (CI +23.10 to +23.57, 3/3 clean) with peak 14.9 MiB LOWER; set it on this family. The runtime default stays opt-in on the qwen36 precedent: a moe_kl-class batched default owes its KL probe and a memory oracle before it flips",
+      "findings": [
+        "gptOss.routed-batch-2026-10-29"
+      ]
+    },
+    {
+      "slots": "16",
+      "when": [],
+      "why": "the every-install row runs 32 experts at 16 slots and 8,192 context",
+      "findings": [
+        "gptOss.every-install-row-2026-10-11"
+      ]
+    }
+  ],
+  "sweeps": [
+    {
+      "id": "routed_batch",
+      "description": "the MXFP4 routed batch arm against one GEMV per route",
+      "when": [
+        "moe"
+      ],
+      "metric": "prefill_tok_s",
+      "exactness": "moe_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "long-synthesis"
+          }
+        ],
+        "decode_tokens": 16
+      },
+      "baseline": "gemv",
+      "candidates": [
+        "batched:routed_batch=1"
+      ]
+    },
+    {
+      "id": "decode_attention",
+      "description": "the GQA-shared kernel against barrier (sinks are served by the barrier path only unless the dispatcher says otherwise)",
+      "when": [
+        "sinks"
+      ],
+      "metric": "decode_tok_s",
+      "exactness": "dense_kl",
+      "workload": {
+        "prompts": [
+          {
+            "protocol": "medium-review"
+          }
+        ],
+        "decode_tokens": 64
+      },
+      "baseline": "default",
+      "candidates": [
+        "gqa:attn_decode_kernel=gqa"
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "gptOss.chunked-prefill-2026-09-01",
+      "date": "2026-09-01",
+      "install": "gpt-oss-20b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "v0.4 era",
+      "workload": "a 75-token prompt, sequential against the chunked driver",
+      "arms": {
+        "sequential": {
+          "chunk": "off"
+        },
+        "chunked": {}
+      },
+      "metric": "prefill_s",
+      "values": {
+        "sequential_s": 7.56,
+        "chunked_s": 3.79
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/BATCHED_PREFILL.md",
+        "heading": "Which families, and in what order"
+      },
+      "conditions": "md5-identical output; a single reading",
+      "note": ""
+    },
+    {
+      "id": "gptOss.every-install-row-2026-10-11",
+      "date": "2026-10-11",
+      "install": "gpt-oss-20b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "v0.5 era",
+      "workload": "the every-install table: short, medium, long protocol prompts, 16 slots, 8,192 context",
+      "arms": {
+        "default": {}
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "decode_tok_s": [
+          22.9,
+          30.4
+        ],
+        "peak_mib": [
+          5417,
+          5421
+        ],
+        "experts": 32
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "doc",
+        "path": "docs/BENCHMARKS.md",
+        "heading": "Every install, side by side"
+      },
+      "conditions": "frozen rows; the llama.cpp cross-engine section holds the same GGUF's comparison",
+      "note": ""
+    },
+    {
+      "id": "gptOss.routed-batch-2026-10-29",
+      "date": "2026-10-29",
+      "install": "gptoss-20b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2026-10-29 release build",
+      "workload": "tslab sweep routed_batch: protocol long-synthesis (2,839 prompt tokens), 16 decode, chunk 128; 3 clean pairs, 0 dirty",
+      "arms": {
+        "gemv": {},
+        "batched": {
+          "env": {
+            "TURBOSPARK_ROUTED_BATCH": "1"
+          }
+        }
+      },
+      "metric": "prefill_tok_s",
+      "values": {
+        "gemv_tok_s": [
+          39.25,
+          39.41
+        ],
+        "batched_tok_s": [
+          48.5,
+          48.51
+        ],
+        "median_improvement": 0.2346,
+        "ci": [
+          0.231,
+          0.2357
+        ],
+        "null_floor": 0.0025,
+        "peak_bytes": {
+          "gemv": 8153096520,
+          "batched": 8138170624
+        }
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "gptoss-sweep-20261029",
+        "record": "1793267289378-32648-16"
+      },
+      "conditions": "prefill null floor 0.25% (record 1793266531513-70729-20), effect floor 2.00%; sweep record 1793267289382-32648-17; moe_kl; the routed lane engaged (arm_env carried TURBOSPARK_ROUTED_BATCH=1, no not-engaged reason); memory PASSED with the batched arm 14.9 MiB lower",
+      "note": "the arm's first A/B answers the profile's open item; the runtime default stays opt-in on the qwen36 precedent (moe_kl defaults owe a KL probe and a memory oracle before they flip) while the recommendation moves to set it"
+    },
+    {
+      "id": "gptOss.gqa-decode-sinks-2026-10-29",
+      "date": "2026-10-29",
+      "install": "gptoss-20b",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "2026-10-29 release build",
+      "workload": "tslab sweep decode_attention: protocol medium-review, 64 decode; 0 clean pairs of 6, every gqa run rejected by the engagement guard",
+      "arms": {
+        "barrier_default": {},
+        "gqa": {
+          "env": {
+            "TURBOSPARK_ATTN_DECODE_KERNEL": "gqa"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "default_median_tok_s": 33.7,
+        "clean_pairs": 0
+      },
+      "verdict": "inconclusive",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "gptoss-sweep-20261029",
+        "record": "1793267568200-32648-46"
+      },
+      "conditions": "every gqa run: not engaged, no [engaged] attn_decode_gqa, and its engaged list shows attn_decode_barrier - the dispatcher keeps the barrier path for this family's sinks (head_dim 64 with 64 q over 8 kv also fails attention_decode_gqa_supported); decode null floor 0.077% (record 1793266697247-20212-16); sweep record 1793267568203-32648-47",
+      "note": "closes the qualification question: the GQA-shared kernel is unreachable on this family, so its decode default stays barrier with no measurement possible through this arm"
+    }
+  ],
+  "open_questions": [
+    "no INT4 bench: the MXFP4 and GGUF expert layouts are not synthesized, so kernel curves come only from the attention and generic shapes",
+    "the GQA-shared decode kernel has no qualification on this family",
+    "a dispatch audit of the sinks attention path (playbook item 4)"
+  ],
+  "traps": [
+    "the attention sinks keep the rows_attn bench off this family",
+    "the chunked driver keeps attention per token: a prefill profile shows the routed half, not a batched attention",
+    "the GQA-shared decode kernel cannot engage here (sinks; head_dim 64 with 64 q over 8 kv): an arm that sets attn_decode_kernel=gqa is a deterministic not-engaged, not a measurement"
+  ],
+  "docs": [
+    "docs/BATCHED_PREFILL.md",
+    "docs/BENCHMARKS.md"
+  ]
+}

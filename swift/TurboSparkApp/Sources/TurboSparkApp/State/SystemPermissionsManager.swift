@@ -13,12 +13,12 @@ public enum FolderAccessStatus: String, Sendable, Equatable {
         self == .granted
     }
 
-    public var statusColor: Color {
+    func statusColor(in theme: ResolvedAppTheme) -> Color {
         switch self {
-        case .granted: return .green
-        case .restricted: return .orange
-        case .notFound: return .secondary
-        case .unknown: return .secondary
+        case .granted: return theme.success
+        case .restricted: return theme.warning
+        case .notFound: return theme.secondaryText
+        case .unknown: return theme.secondaryText
         }
     }
 
@@ -105,6 +105,9 @@ public enum MacPrivacyPane: String, Sendable {
     case filesAndFolders = "Privacy_FilesAndFolders"
     case fullDiskAccess = "Privacy_AllFiles"
     case accessibility = "Privacy_Accessibility"
+    case microphone = "Privacy_Microphone"
+    /// macOS 15 shows this pane as Screen & System Audio Recording.
+    case screenRecording = "Privacy_ScreenCapture"
 
     public var url: URL? {
         URL(string: "x-apple.systempreferences:com.apple.preference.security?\(rawValue)")

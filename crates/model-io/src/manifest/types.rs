@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::arch_config::VisionConfig;
+use crate::arch_config::{VisionConfig, VisionTowerKind};
 
 /// File size and SHA-256 entry in manifest.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -218,6 +218,9 @@ pub struct ManifestArch {
     pub ple_seed: Option<i64>,
     #[serde(default)]
     pub ple_eos_token_id: Option<i64>,
+    /// Gated short-convolution taps (`lfm3`), 0 when absent.
+    #[serde(default)]
+    pub short_conv_kernel_size: Option<i64>,
     /// Hash-routed leading MoE layer count.
     #[serde(default)]
     pub num_hash_routed_layers: Option<i64>,
@@ -290,6 +293,10 @@ pub struct ManifestArch {
     /// resolves silence and explicit-`[]` to the same value.
     #[serde(default)]
     pub vision_deepstack_visual_indexes: Option<Vec<i64>>,
+    /// The tower kind's persisted spelling. Absent means the qwen tower,
+    /// the only one that existed before the key did.
+    #[serde(default)]
+    pub vision_tower: Option<String>,
 }
 
 impl ManifestArch {
@@ -326,6 +333,14 @@ impl ManifestArch {
             deepstack_visual_indexes: self
                 .vision_deepstack_visual_indexes
                 .clone()
+                .unwrap_or_default(),
+            // An unknown spelling resolves to the default HERE and is refused
+            // by `validate_arch`, which compares the raw string. Every path
+            // that reads this also loads the manifest through that check.
+            tower: self
+                .vision_tower
+                .as_deref()
+                .and_then(VisionTowerKind::parse)
                 .unwrap_or_default(),
         }
     }
@@ -426,6 +441,27 @@ pub struct Manifest {
     /// is the correct default: no transform, weights consumed as stored.
     #[serde(default)]
     pub hadamard: Option<ManifestHadamard>,
+    /// Which turbospark build wrote the install. Informational only: the
+    /// loader never refuses on its contents, and it is absent on every
+    /// install written before the field existed.
+    #[serde(default)]
+    pub producer: Option<ManifestProducer>,
+}
+
+/// Provenance of the tool that wrote the install. Read for diagnostics and
+/// bug reports, never for dispatch: a `.gturbo` is described by its
+/// `versionMajor`/`versionMinor` and its contents, not by who wrote it.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManifestProducer {
+    /// Writer crate name, `turbospark-repack` for every install the
+    /// workspace writes.
+    pub tool: String,
+    /// Writer crate version (`CARGO_PKG_VERSION` at build time).
+    pub version: String,
+    /// Source revision of the writer build when the build exposed one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub git_rev: Option<String>,
 }
 
 /// One sign vector of the Hadamard contract: a `width`-long run of +/-1 F32

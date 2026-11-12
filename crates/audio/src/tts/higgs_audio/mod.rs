@@ -480,6 +480,7 @@ impl Model {
                     rope: Some(rope.clone()),
                     window: None,
                     bidirectional: false,
+                    exec: None,
                 },
                 post_attention_layernorm: RmsNorm::new(
                     weights.tensor_absolute(
@@ -907,6 +908,7 @@ fn load_mlp(weights: &lm::Weights, name: &str, hidden: usize, intermediate: usiz
             hidden,
             lm::Bias::None,
         )?,
+        exec: None,
     })
 }
 

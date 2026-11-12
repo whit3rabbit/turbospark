@@ -8,8 +8,9 @@ use std::os::raw::c_char;
 use std::ptr;
 
 use turbospark_ffi::{
-    abi, ts_last_error, ts_ocr_add_page_file, ts_ocr_add_page_rgb, ts_ocr_cancel, ts_ocr_close,
-    ts_ocr_open, ts_ocr_read_json, ts_string_free, TsOcrSession,
+    abi, ts_last_error, ts_ocr_add_page_file, ts_ocr_add_page_rgb, ts_ocr_cancel,
+    ts_ocr_catalog_json, ts_ocr_close, ts_ocr_install, ts_ocr_open, ts_ocr_read_json,
+    ts_string_free, TsOcrSession,
 };
 
 fn c(s: &str) -> CString {
@@ -25,6 +26,52 @@ fn last_error() -> String {
             .to_string_lossy()
             .into_owned()
     }
+}
+
+#[test]
+fn catalog_pins_ocr_and_install_checks_the_revision() {
+    let mut out: *mut c_char = ptr::null_mut();
+    assert_eq!(
+        unsafe { ts_ocr_catalog_json(&mut out) },
+        abi::TS_OK,
+        "{}",
+        last_error()
+    );
+    let rows: serde_json::Value =
+        unsafe { serde_json::from_str(CStr::from_ptr(out).to_str().unwrap()).unwrap() };
+    unsafe { ts_string_free(out) };
+    let row = &rows[0];
+    assert_eq!(row["alias"], "unlimited-ocr-coreml");
+    assert_eq!(row["repository"], "FluidInference/unlimited-ocr-mlx-coreml");
+    assert_eq!(row["revision"], "4568571eacd864e0a253c609b3c9d0e00450cebc");
+
+    let alias = c("unlimited-ocr-coreml");
+    let wrong = c("main");
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe {
+        ts_ocr_install(
+            alias.as_ptr(),
+            wrong.as_ptr(),
+            None,
+            ptr::null_mut(),
+            &mut out,
+        )
+    };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    assert!(last_error().contains("pinned at"), "{}", last_error());
+    let other = c("not-an-ocr-model");
+    let rev = c("4568571eacd864e0a253c609b3c9d0e00450cebc");
+    let code = unsafe {
+        ts_ocr_install(
+            other.as_ptr(),
+            rev.as_ptr(),
+            None,
+            ptr::null_mut(),
+            &mut out,
+        )
+    };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    assert!(out.is_null());
 }
 
 #[test]

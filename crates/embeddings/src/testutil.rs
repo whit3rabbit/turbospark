@@ -85,6 +85,30 @@ pub fn read_npy_u32(family: &str, name: &str) -> (Vec<usize>, Vec<u32>) {
     (shape, data.into_iter().map(|v| v as u32).collect())
 }
 
+/// Rewrites the declared shape of `tensor` in a safetensors file and leaves
+/// its bytes alone. The safetensors parser does not cross-check a shape
+/// against its byte range, so this models a crafted checkpoint header.
+pub fn set_safetensors_shape(path: &std::path::Path, tensor: &str, shape: &[usize]) {
+    let bytes = std::fs::read(path).unwrap();
+    let n = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
+    let mut header: serde_json::Value = serde_json::from_slice(&bytes[8..8 + n]).unwrap();
+    header[tensor]["shape"] = serde_json::json!(shape);
+    let header = serde_json::to_vec(&header).unwrap();
+    let mut out = (header.len() as u64).to_le_bytes().to_vec();
+    out.extend_from_slice(&header);
+    out.extend_from_slice(&bytes[8 + n..]);
+    std::fs::write(path, out).unwrap();
+}
+
+/// A row count whose `rows * cols * 4` (f32 table bytes) wraps a 64-bit
+/// usize back to the true `rows * cols * 4`. `4 * cols` must be a power of
+/// two so that 2^64 divides evenly.
+pub fn wrapping_f32_rows(rows: usize, cols: usize) -> usize {
+    let stride = 4 * cols;
+    assert!(stride.is_power_of_two());
+    rows + ((1u128 << 64) / stride as u128) as usize
+}
+
 /// Largest absolute elementwise difference. Panics on a length mismatch.
 pub fn max_abs_diff(a: &[f32], b: &[f32]) -> f32 {
     assert_eq!(

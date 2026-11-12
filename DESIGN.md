@@ -42,29 +42,47 @@ Code lives in `swift/TurboSparkApp/Sources/TurboSparkApp` (below: `Sources/`).
   family, or point size.
 - **Layouts adapt instead of clipping.** Long translations, the Extra Large
   text size and a narrow window are normal conditions, not edge cases.
+- **Access is asked for, never taken.** The app shows a macOS privacy prompt
+  only after the user chooses to allow access, and declining one permission
+  never blocks a feature that does not need it.
 
 ## 2. The shared control vocabulary
 
 Build from these instead of local variants. They live in
-`Sources/Theme/AppControls.swift`, `Sources/Theme/AppPreferenceOptions.swift`,
-`Sources/Theme/AppStrings.swift` and `Sources/Theme/TurboSparkMotion.swift`.
+`Sources/Theme/AppControls.swift`, `Sources/Theme/AppSurfaces.swift`,
+`Sources/Theme/AppProgressBar.swift`, `Sources/Theme/AppAttention.swift`,
+`Sources/Theme/AppWaveform.swift`, `Sources/Theme/AppPreferenceOptions.swift`,
+`Sources/Theme/AppPillPicker.swift`, `Sources/Theme/AppStrings.swift` and
+`Sources/Theme/TurboSparkMotion.swift`.
 
 | Need | Use |
 | :--- | :--- |
 | An action | `.appAction(.primary / .secondary / .quiet / .destructive, size:)` |
+| The glow under a surface's one primary action | `.appPrimaryGlow(_:)` |
 | Overflow of a crowded header | `Menu { ... } label: { ... }.appMenuAction()` |
 | A pane or workspace header | `AppAdaptiveHeader(leading:actions:compactActions:)` |
 | Search | `AppSearchField(text:prompt:)`, with `focus:` for a field that takes focus |
 | An icon-only action | `AppIconButton(symbol, label: Text(...)) { ... }` |
 | A composer-style toggle chip | `AppChip(Text(...), systemImage:isOn:) { ... }` |
+| Switching one pane between a few modes | `AppPillPicker(selection:items:label:)` with `AppPillItem(value:label:systemImage:liveLabel:)`, two to four short options, inside an `AppAdaptiveHeader` so it reflows to its own row; never wrap it in another `ViewThatFits` |
 | A multi-line editor | `TextEditor(...).appEditorSurface(minHeight:)` |
-| A heading in a scrolling pane | `AppSectionHeader(title:subtitle:)` |
+| A focus glow on an editor with no native ring | `.appFocusGlow(_:radius:halo:)` |
+| A card | `.appCardSurface(padding:)` |
+| A composer-style surface (prompt box, Humanize cards, script editor) | `.appComposerSurface(focused:halo:)` |
+| A heading in a scrolling pane | `AppSectionHeader(title:subtitle:)`; a heading built from a `Label` or `Text` instead (icon headings, `AppAdaptiveHeader` leading content) adds `.accessibilityAddTraits(.isHeader)` itself |
+| A filesystem path in a row | `SettingsPathText(path, size:)` (code font, selectable, middle truncation, full path in `.help`) |
 | An empty list or workspace | `AppEmptyState(systemImage:title:message:) { actions }` |
+| Progress, determinate or not | `AppProgressBar(value:label:valueText:size:animated:)`, `animated: false` while paused |
+| A surface that still needs the user (missing input after they tried to go on) | `.appAttention(_:ping:radius:)` with an `AppAttentionNote` inside; bump `ping` only on the user's attempt |
+| A live input level, or a waveform that fills as work completes | `AppLevelWaveform(levels:)`, `AppFillWaveform(fill:rippling:)` |
 | Mode, Text Size, Language pickers | `AppearanceModeOptions()`, `TextSizeOptions()`, `LanguageOptions()` |
 | A localized `String` value | `AppStrings.localized("Key")` |
+| A section's panel beside the icon rail | `SidebarModePanel(title:groupLabel:selection:)`, or `SidebarPanelList` with `SidebarPanelRow` (`Sources/Chrome/SidebarPanelList.swift`) |
 | An animation from an action | `TSMotion.animate(TSMotion.pane) { ... }` |
 | An animation on a value | `.tsAnimation(TSMotion.hover, value:)` |
-| Radii | `AppMetrics.controlRadius` (fields, chips), `AppMetrics.cardRadius` (cards) |
+| A live indicator (recording, active stage) | `.tsPulse(active:)` |
+| A text-holding frame or a width breakpoint | multiply by `AppMetrics.textScale(theme)` |
+| Radii | `AppMetrics.controlRadius` (fields, chips), `AppMetrics.cardRadius` (cards), `AppMetrics.composerRadius` (composer surfaces) |
 
 If the vocabulary lacks something you need twice, add it to the vocabulary in
 the same change, documented here. A second local copy is how the drift starts.
@@ -75,11 +93,53 @@ the same change, documented here. A second local copy is how the drift starts.
   rest are secondary, quiet (in-row or repeated actions), or destructive.
 - Header actions use `.regular`. Actions inside rows, cards, and inspectors
   use `.small`. Do not mix sizes within one row.
+- `.appAction` and `.appMenuAction` give a `.small` control the `.small`
+  label font and a `.mini` control `.tiny` (`AppMetrics.labelFontStep`).
+  A native button keeps its small bezel but draws the inherited base font,
+  which overflowed it. A font set on the button or its container no longer
+  reaches the label. A site that truly needs another size sets it inside
+  the label, which still wins.
 - Destructive actions use `Button(role: .destructive)` and go through a
   `confirmationDialog` with a localized title, message, and button. The role
   reaches VoiceOver and the dialog, the red label only reaches sighted users.
+- Destructive means data is lost. Removing an entry from a list the user can
+  rebuild (a scan folder, an exclusion) deletes nothing: it is a quiet action
+  with a neutral glyph (`minus.circle`), not a red trash can. A destructive
+  role with no confirmation dialog is always a defect: either the action is
+  not destructive, or the dialog is missing.
 - A disabled control says why, in its tooltip or in adjacent text. The chat
   Send button is the reference.
+- When all that is missing is input the user can still give (a checkbox, a
+  script, a reference), do not leave the primary action dead. Keep it
+  pressable and let the press show what is missing: `.appAttention` on each
+  unfinished card, focus on the first, a VoiceOver announcement. Nothing is
+  flagged before the first attempt. Voice Cloning's Generate speech is the
+  reference. A blocker that is the app's own state (installing, no model, a
+  recording) still disables the button, since a press could not help.
+
+### Asking for macOS access
+
+Microphone and screen recording (which ScreenCaptureKit needs even for audio
+only) are macOS privacy grants. A prompt the user did not ask for reads as
+the app taking access, and macOS shows each prompt only once.
+
+- Never request at launch, on appear, on a toggle, or as a side effect.
+  Reading status never prompts, so show it freely. Requesting does, and so
+  does any ScreenCaptureKit content query while access is missing.
+- Only `RecordingPermissions` calls the prompt APIs, from an Allow button the
+  user pressed after seeing what the access is for. The capture layer checks
+  and throws an error that points to the access sheet. It never asks.
+  `RecordingPermissionsTests` scans `Sources/` to hold this.
+- A control that starts a capture goes through
+  `.recordingAccessGate($request, permissions: RecordingPermissions.shared)`:
+  start directly when nothing is missing, otherwise set a
+  `RecordingAccessRequest`. The Record panel and the voice reference card
+  are the references.
+- Each permission row shows status as glyph plus text and offers one next
+  step: Allow while macOS can still prompt, Open System Settings after.
+- Declining is a supported path. Offer to continue with the allowed sources
+  (Record microphone only), keep Not now one click away, and say what still
+  works without access. Import, transcription, and editing need none.
 
 ## 3. Layout
 
@@ -95,15 +155,27 @@ the same change, documented here. A second local copy is how the drift starts.
   `SettingsWindowFrame`, because the Settings scene ignores ideal sizes.
 - Each Settings pane is shown under a shell that ALREADY renders the pane
   title. A pane never repeats its own title. It starts with a one-line
-  purpose and its actions. Insets come from `SettingsLayout`.
+  purpose (`.themedFont(.small)`, `.appSecondary`, as Files & Permissions
+  and Models & Storage do) and its actions. Insets come from
+  `SettingsLayout`.
+- The same holds one level down: a control directly under a section header
+  that names it keeps its real label for VoiceOver and hides it with
+  `.labelsHidden()` (the inspector's Model picker under "Model").
+- A pane whose sections share a card treatment defines it once (Models &
+  Storage: `modelsSettingsCard()`) and EVERY section uses it, including a
+  card that lives in its own file. An inline copy drifted to its own padding
+  within one release.
 
 ### Headers and rows
 
 - A header never truncates. Use `AppAdaptiveHeader`: one row, then actions
   under the leading content, then a compact set that keeps the primary action
-  visible and folds the rest into a labeled menu.
+  visible and folds the rest into a labeled menu. This includes a section
+  header whose only action is a toggle: a bare `HStack` with a `Spacer`
+  truncates the title under German and Extra Large text.
 - No fixed `.frame(width:)` on a picker, search field, or label in a header or
-  form row. Use `minWidth`/`idealWidth`/`maxWidth`. A fixed width is what
+  form row, nor on a glyph sized with `.themedFont` (it grows with Text
+  Size). Use `minWidth`/`idealWidth`/`maxWidth`. A fixed width is what
   wrapped "Installed model type" into several lines and clipped the Agents
   scope picker.
 - Extension-style panes (MCP, Skills, Agents, Plugins, Hooks) share one
@@ -111,6 +183,10 @@ the same change, documented here. A second local copy is how the drift starts.
   menu, and primary action.
 - List and detail splits are adjustable: `HSplitView`, or a list column with
   min, ideal, and max widths. Never a fixed list width.
+- A workspace that switches between one and two columns sets its breakpoint
+  in points times `AppMetrics.textScale(theme)`, and scales its column widths
+  the same way, so Extra Large text falls back to one column instead of
+  squeezing both. Voice Cloning (`VoiceCloneWorkspaceView`) is the reference.
 
 ### Text in layouts
 
@@ -121,7 +197,7 @@ the same change, documented here. A second local copy is how the drift starts.
   `.help`.
 - `TextEditor` has no intrinsic height, and both obvious ways to give it one
   pick the maximum. Measure with a hidden `Text` instead
-  (`PromptComposerView.editor`, Gotcha 18).
+  (`PromptComposerEditor`, `AudioMeasuredTextEditor`, Gotcha 18).
 
 ### Forms and files
 
@@ -151,14 +227,32 @@ the same change, documented here. A second local copy is how the drift starts.
 - Read the theme from the environment: `@Environment(\.appTheme)` or the
   semantic shape styles `.appPage`, `.appSurface`, `.appElevated`, `.appText`,
   `.appSecondary`, `.appBorder`, `.appAccent`. These resolve per mode and per
-  custom theme.
+  custom theme. `.appAccentText` is the accent where it is text or a glyph
+  (selected rail and sidebar icons, links): light mode darkens it to clear
+  4.5:1, dark modes keep the accent.
 - Never use system colors on a themed surface (`Color(nsColor:
   .separatorColor)`, `.controlBackgroundColor` and friends). They ignore the
   palette, which is how a dark-navy theme drew neutral gray boxes
-  (Gotcha 62).
+  (Gotcha 62). The SwiftUI spellings count too: `Color.accentColor`,
+  `Color.secondary`, `.secondary`, `.tertiary` and `Color.primary.opacity`
+  ignore a custom theme's accent and text colors. Use `.appAccent`,
+  `.appSecondary` and `.appSurface`. In a ternary that mixes two styles, wrap
+  each side in `AnyShapeStyle`.
 - `TurboSparkTheme`'s static accessors are for non-view code only.
   `NSApp.effectiveAppearance` does not move with `.preferredColorScheme`, so
-  a static read in a view draws the wrong mode (Gotcha 36).
+  a static read in a view draws the wrong mode (Gotcha 36). In a view, call
+  the mode-explicit form with the environment's mode
+  (`TurboSparkTheme.barBackgroundColor(isDark: theme.isDark)`) or use the
+  resolved theme (`theme.accent`), never the bare property
+  (`TurboSparkTheme.barBackgroundColor`, `TurboSparkTheme.accentColor`).
+- `DesignTokenRatchetTests` counts the spellings above, hard-coded
+  `.appBorder.opacity(...)` borders, system `NSColor`s on a themed surface,
+  system status colors and color literals, outside `Theme/`. The rules and
+  baselines live in `swift/TurboSparkApp/Tests/TurboSparkAppTests/
+  DesignRules.json`, which `make design-check` and CI's `design` job read too.
+  The counts may only go down: fix a site and lower its baseline in the same
+  change, never raise one. A count below its baseline fails as well, so slack
+  cannot hide a new violation.
 - Every scene injects the theme, locale, and layout direction itself:
   `Window`, `Settings`, and `MenuBarExtra` each call `.appThemed()` and set
   `\.locale` and `\.layoutDirection`. A new scene must too, or it renders the
@@ -166,6 +260,16 @@ the same change, documented here. A second local copy is how the drift starts.
 - Red is the destructive convention. Status is never color alone: pair it
   with a glyph or text (checkmark, triangle, octagon), so it survives color
   blindness and Differentiate Without Color.
+- Status is `.appSuccess`, `.appWarning` and `.appDanger` (`theme.success`,
+  `.warning`, `.danger`), with 14% washes `.appSuccessTint` and friends.
+  Never system `.green`, `.orange` or `.red` for a status: light-mode system
+  red is 3.6:1 on white. `AppAttention.color` is the warning style. A hue that
+  names a category rather than a state (model family, chat label, ANSI,
+  syntax) may stay a fixed color. `DesignTokenRatchetTests` counts the rest.
+  `AppStatusColorTests` pins the ratios (4.5:1, 7:1 under Increase Contrast,
+  4.5:1 on the 14% wash) on every shipped preset. Code with no view in scope
+  takes the theme: `status.color(in: theme)`, not a stored `Color`. Changing
+  a status hex also means `derive_tokens.py` and the design-system README.
 
 ### Type
 
@@ -178,6 +282,15 @@ the same change, documented here. A second local copy is how the drift starts.
 - A size the scale lacks is a new `AppFontStep` case, documented in its doc
   table, with the pinned expectation in `FontPropagationTests` updated
   (Gotcha 63).
+- The factory base is 14pt UI and 12pt code (`AppFontCatalog.factoryUISize`
+  and `factoryCodeSize`), with Hack as the code family. The doc table and the
+  design system list roles at the 16pt design reference
+  (`AppFontCatalog.defaultUISize`), which `textScale` and `ui(fitting:)`
+  divide by. Never change the reference to move the default: it reflows
+  every frame. Change the `factory*` constants instead.
+- Text Size is Small (0.875), Default, Large, Extra Large. Small is below
+  the reference, so `textScale` clamps at 1 and frames keep their designed
+  size while the text shrinks.
 - Font families come from Appearance settings. A site that must look serif
   or monospaced at the default passes `systemDesign:`.
 
@@ -185,11 +298,22 @@ the same change, documented here. A second local copy is how the drift starts.
 
 - Surfaces go through the theme so Reduce Transparency and Increase Contrast
   apply: `surfaceOpacity` forces opaque structural surfaces, and
-  `isHighContrast` raises borders and secondary text (Gotcha 79). Do not
-  hard-code a lower opacity for borders or secondary text than the theme
-  gives.
+  `isHighContrast` raises borders and secondary text (Gotcha 79) and swaps the
+  status colors for a higher-contrast set. Do not hard-code a lower opacity
+  for borders or secondary text than the theme gives.
 - Blur and glass only on floating or navigation chrome where they help
   hierarchy, availability-gated, and opaque under Reduce Transparency.
+- Glows are accent shadows from the vocabulary only: `.appFocusGlow` on an
+  editor with no native focus ring (a `TextField` keeps its system ring) and
+  `.appPrimaryGlow` under the one primary action while it can run. The
+  focus halo is cast by an edge drawn behind the surface, never by a shadow on
+  the view, so text over a see-through surface does not glow. The chat and
+  Humanize composers pass `halo: false` and keep their edge-only focus look.
+  The focused edge is the solid accent, never a partial-opacity one (55% was
+  2.1:1 in light), and falls back to the foreground color when the accent
+  cannot reach 3:1 on the page and the composer
+  (`ResolvedAppTheme.focusEdge`). Under Increase Contrast glows become solid
+  rings or nothing, so never rely on a glow alone to show focus or readiness.
 - Corners are continuous (`style: .continuous`) and use `AppMetrics` radii.
 
 ## 5. Accessibility
@@ -225,8 +349,11 @@ the same change, documented here. A second local copy is how the drift starts.
 
 ### Motion and display settings
 
-- Use the `TSMotion` curves (hover, select, press, pane). No inline
-  durations.
+- Use the `TSMotion` curves (hover, select, press, pane, and sweep, breathe
+  and snap for looping indicators). No inline durations.
+- A looping animation is a `phaseAnimator` inside a modifier that is applied
+  only while the state is live (`tsPulse`, `AppProgressBar`), so it stops with
+  that state. Never a `repeatForever` started from `withAnimation`.
 - Animations honor Reduce Motion through `TSMotion.animate`,
   `.tsAnimation(_:value:)` or `TSMotionContext`. A bare `withAnimation` or
   `.animation(_:value:)` animates even when the user turned motion off
@@ -329,18 +456,26 @@ Before calling a UI change done:
 
 ```sh
 # from the repository root
+make design-check    # about a second, no build: the ratchet rules and the design-system tokens
 make compile-strings
 (cd swift/TurboSparkApp && swift build -Xbuild-tools-swiftc -suppress-warnings)
-(cd swift/TurboSparkApp && swift test --filter 'LocalizationParityTests|LocalizationTests|LocalizationAndAccessibilityTests|FontPropagationTests|KeyboardShortcutCatalogTests|UIAuditFixesTests|SettingsWindowLayoutTests')
+(cd swift/TurboSparkApp && swift test --filter 'LocalizationParityTests|LocalizationTests|LocalizationAndAccessibilityTests|FontPropagationTests|KeyboardShortcutCatalogTests|UIAuditFixesTests|SettingsWindowLayoutTests|DesignTokenRatchetTests|AppStatusColorTests')
 python3 scripts/generate-settings-catalog.py --check
 make swift-test-app
 ```
+
+`make design-check` runs as CI's `design` job and from `.githooks/pre-commit`
+once you opt in with `git config core.hooksPath .githooks`. `make
+design-check-full` adds the contrast and ratchet tests. CI does not run the
+app's `swift test` suite, so the contrast ratios and the rest of this section
+are checked only when you run them. The `design` job skips pushes that touch
+only `docs/**` or `*.md`.
 
 Then look at the change in the running app. A green build proves none of the
 following, and a UI change is not verified until the touched screens have
 been checked against them:
 
-- Default and Extra Large text size.
+- Small, Default, and Extra Large text size.
 - The narrowest window the view allows.
 - Light, dark, and one custom theme.
 - Keyboard only, including sheets and menus.
@@ -355,6 +490,12 @@ result from compilation alone.
 
 ## Related docs
 
+- `docs/design-system/`: tokens for every theme with computed contrast,
+  a guide per vocabulary control, the brand book, and a local preview
+  gallery. Derived from this file and the Swift theme.
+  `python3 docs/design-system/tools/derive_tokens.py --check` fails when it
+  drifts from the shipped presets, and `scripts/check-design.py` fails when
+  its status hexes drift from `Theme/AppStatusColors.swift`.
 - `swift/AGENTS.md`: Swift package, build order, and app rules.
 - `swift/docs/SWIFT_LOCALIZATION.md`: the catalog pipeline and its gates.
 - `swift/docs/KEYBOARD_SHORTCUTS.md`: shortcuts, menus, and VoiceOver

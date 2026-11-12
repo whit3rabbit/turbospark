@@ -1,0 +1,236 @@
+{
+ "commit": "dad2087f790dfe96b07d5aac1405db4b578b411f",
+ "split_text": [
+  {
+   "input": "<|speaker:1|> Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. ",
+   "output": [
+    "<|speaker:1|> Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt.",
+    "<|speaker:1|> Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt. Das ist ein Satz mit Inhalt."
+   ]
+  },
+  {
+   "input": "wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort ",
+   "output": [
+    "wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort",
+    "wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort",
+    "wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort",
+    "wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort wort"
+   ]
+  },
+  {
+   "input": "Hallo. <whisper>leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, </whisper> Ende.",
+   "output": [
+    "Hallo.",
+    "<whisper>leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, leise, </whisper>",
+    "Ende."
+   ]
+  },
+  {
+   "input": "<|speaker:0|> a. <|speaker:1|> b. <|speaker:2|> c. <|speaker:3|> d.",
+   "output": [
+    "<|speaker:0|>  a. \n<|speaker:1|>  b. \n<|speaker:2|>  c. ",
+    "<|speaker:3|>  d."
+   ]
+  },
+  {
+   "input": "hi <|speaker:4|> yo",
+   "output": [
+    "<|speaker:0|> hi \n<|speaker:4|>  yo"
+   ]
+  },
+  {
+   "input": "\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0",
+   "output": [
+    "\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e",
+    "\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c",
+    "\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0\u65e5\u672c\u8a9e\u306e\u6587\u7ae0"
+   ]
+  },
+  {
+   "input": "First sentence here, with a clause; and more. First sentence here, with a clause; and more. First sentence here, with a clause; and more. First sentence here, with a clause; and more. First sentence here, with a clause; and more. First sentence here, with a clause; and more. First sentence here, with a clause; and more. First sentence here, with a clause; and more. First sentence here, with a clause; and more. <|speaker:5|> [sighs] Fine. <whisper>quiet words</whisper> Then 3.5 percent.",
+   "output": [
+    "<|speaker:0|> First sentence here, with a clause; and more. First sentence here, with a clause; and more. First sentence here, with a clause; and more. First sentence here, with a clause; and more. First sentence here, with a clause; and more. First sentence here, with a clause; and more.",
+    "<|speaker:0|> First sentence here, with a clause; and more. First sentence here, with a clause; and more. First sentence here, with a clause; and more.\n<|speaker:5|>  [sighs] Fine. <whisper>quiet words</whisper> Then 3.5 percent."
+   ]
+  },
+  {
+   "input": "   ",
+   "output": []
+  },
+  {
+   "input": "short",
+   "output": [
+    "short"
+   ]
+  },
+  {
+   "input": "<|speaker:2|>",
+   "output": []
+  },
+  {
+   "input": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+   "output": [
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+   ]
+  },
+  {
+   "input": "x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, [long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue ] tail.",
+   "output": [
+    "x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x,",
+    "x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x,",
+    "[long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue long cue ]",
+    "tail."
+   ]
+  },
+  {
+   "input": "<|speaker:0|> one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. <|speaker:1|> two. <|speaker:0|> three.",
+   "output": [
+    "<|speaker:0|> one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one. one.",
+    "<|speaker:0|> one. one. one. one. one. one. one. one. one. one.\n<|speaker:1|>  two. \n<|speaker:0|>  three."
+   ]
+  },
+  {
+   "input": "Zahlen: 1.5, 2.25 und 3.75. Ende! Wirklich? Ja; gut\u2026 fertig\nneue Zeile\u3002\u4e2d\u6587\uff0c\u53e5\u5b50\uff1a\u7ed3\u675f\u3002",
+   "output": [
+    "Zahlen: 1.5, 2.25 und 3.75. Ende! Wirklich? Ja; gut\u2026 fertig\nneue Zeile\u3002\u4e2d\u6587\uff0c\u53e5\u5b50\uff1a\u7ed3\u675f\u3002"
+   ]
+  },
+  {
+   "input": "<|speaker:0|> Are you coming tonight? <|speaker:1|> I don't know yet. <|speaker:0|> Let me know by six.",
+   "output": [
+    "<|speaker:0|>  Are you coming tonight? \n<|speaker:1|>  I don't know yet. \n<|speaker:0|>  Let me know by six."
+   ]
+  }
+ ],
+ "uncuttable": [
+  {
+   "input": "a <|speaker:2|> b [laughs] c <em>x</em> <b-x>y</b-x> <a- x>z</a> <p>open",
+   "output": [
+    "<|speaker:2|>",
+    "[laughs]",
+    "<em>x</em>",
+    "<b-x>y</b-x>",
+    "<a- x>z</a>"
+   ]
+  },
+  {
+   "input": "[open <b>bold",
+   "output": []
+  },
+  {
+   "input": "<|a|b|> <|ok|> [x[y]] <i>nest <i>in</i></i> <\u00fc>u</\u00fc> <a1_b>c</a1_b>",
+   "output": [
+    "<|ok|>",
+    "[y]",
+    "<i>nest <i>in</i>",
+    "<a1_b>c</a1_b>"
+   ]
+  },
+  {
+   "input": "<tag attr='1'>body\nline</tag><tag>",
+   "output": [
+    "<tag attr='1'>body\nline</tag>"
+   ]
+  }
+ ],
+ "validate_text": [
+  {
+   "input": "hi <|im_end|>",
+   "ok": false
+  },
+  {
+   "input": "<|semantic:7|>",
+   "ok": false
+  },
+  {
+   "input": "<|speaker:16|> hi",
+   "ok": false
+  },
+  {
+   "input": "  ",
+   "ok": false
+  },
+  {
+   "input": "\u001c",
+   "ok": true
+  },
+  {
+   "input": "\u3000\u00a0\n",
+   "ok": false
+  },
+  {
+   "input": "<|speaker:01|> a",
+   "ok": false
+  },
+  {
+   "input": "<|speaker:0|> a <|speaker:15|> b",
+   "ok": true
+  },
+  {
+   "input": "<|speaker:x|> a",
+   "ok": false
+  },
+  {
+   "input": "<|speaker a",
+   "ok": false
+  },
+  {
+   "input": "plain text",
+   "ok": true
+  },
+  {
+   "input": "<|voice|>",
+   "ok": false
+  },
+  {
+   "input": "<|interleave|> x",
+   "ok": false
+  }
+ ],
+ "with_speaker_tag": [
+  {
+   "input": "hi",
+   "output": "<|speaker:0|> hi"
+  },
+  {
+   "input": "  <|speaker:3|> hi",
+   "output": "  <|speaker:3|> hi"
+  },
+  {
+   "input": "<|speaker:12|>",
+   "output": "<|speaker:12|>"
+  },
+  {
+   "input": "\n\t<|speaker:1|>x",
+   "output": "\n\t<|speaker:1|>x"
+  },
+  {
+   "input": " plain",
+   "output": "<|speaker:0|>  plain"
+  }
+ ],
+ "reference_transcript": [
+  {
+   "input": "hi",
+   "output": "<|speaker:0|> hi"
+  },
+  {
+   "input": "  <|speaker:3|> hi",
+   "output": "<|speaker:3|>   hi"
+  },
+  {
+   "input": "<|speaker:12|>",
+   "output": "<|speaker:12|>"
+  },
+  {
+   "input": "\n\t<|speaker:1|>x",
+   "output": "<|speaker:1|>\n\tx"
+  },
+  {
+   "input": " plain",
+   "output": "<|speaker:0|>  plain"
+  }
+ ]
+}

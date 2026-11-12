@@ -1,0 +1,518 @@
+{
+  "schema": "turbospark.lab.pinned/1",
+  "id": "kapitsa.verify",
+  "kernel": "the small-batch speculative verify set: the qmvr/qmvr2/qmvr4 multi-row matvec ladder with its rowcache variants, the per-row split-KV attention pair (attn_rows_partial + attn_rows_reduce), the per-row MoE rows kernels, the GDN rollback-tape verify step, and the per-row top-k sampler",
+  "kernel_class": "verify_matmul",
+  "repo": "kapitsa",
+  "summary": "Kapitsa's standard speculative verify pass for the Qwen35 families verifies R token rows (the pending token plus drafts, at consecutive positions pos..pos+R-1; this path refuses tree verifies) against one weight read per projection. It is a set of small-batch kernels, not a multi-row attention kernel: the bulk is the qmvr FMA matvec ladder (rows share one weight pass through threadgroup staging or register reuse), plus per-row split-KV attention, per-row MoE, the GDN tape step and a per-row sampler; the 8-row MMA GEMM (verify8.metal, pinned as kapitsa.verify8) takes over from R >= 3 on dense models and R >= 5 on MoE, and R == 1 routes to the one-row decode matvec, so on dense defaults only R = 2 reaches this file. The attention rows share one chunk grid derived from Lmax = pos + R while each row runs its own online softmax over its own chunks, so a row verified in a batch does not reproduce the one-row decode kernel's floats.",
+  "source": {
+    "url": "https://github.com/nace-ai/kapitsa",
+    "rev": "14d1b03f306032f20426375651c8181a9105857d",
+    "rev_date": "2026-10-25",
+    "license": "Apache-2.0",
+    "files": [
+      "src/kernels/verify.metal",
+      "src/kernels/common.h",
+      "src/kernels/attn.metal",
+      "src/kernels/kflash.h",
+      "src/model/qwen35_spec.cpp",
+      "src/model/qwen35.cpp",
+      "src/model/qwen35.h",
+      "cmake/embed_kernels.cmake",
+      "docs/kflash.md",
+      "LICENSE",
+      "README.md"
+    ],
+    "symbols": [
+      "rows_norm_f32",
+      "mtp_concat_norm",
+      "mtp_concat_norm_post",
+      "qmvr_b4_g64_t1",
+      "qmvr_b4_g64_t2",
+      "qmvr_b4_g64_t3",
+      "qmvr_b4_g64_t4",
+      "qmvr_b8_g64_t1",
+      "qmvr_b8_g64_t2",
+      "qmvr_b8_g64_t3",
+      "qmvr_b8_g64_t4",
+      "qmvr2_b4_g64_t2",
+      "qmvr2_b4_g64_t3",
+      "qmvr2_b4_g64_t4",
+      "qmvr2_b8_g64_t2",
+      "qmvr2_b8_g64_t3",
+      "qmvr2_b8_g64_t4",
+      "qmvrc1_b4",
+      "qmvrc1_b4_add",
+      "qmvrc1_b8",
+      "qmvrc1_b8_add",
+      "qmvrc_b4_r2",
+      "qmvrc_b4_r2_add",
+      "qmvrc_b4_r4",
+      "qmvrc_b8_r2",
+      "qmvrc_b8_r2_add",
+      "qmvr4_b4_t1",
+      "qmvr4_b4_t2",
+      "qmvr4_b4_t3",
+      "qmvr4_b4_t3_v8",
+      "qmvr4_b4_t4_v8",
+      "qmvr4_b8_t1",
+      "qmvr4_b8_t2",
+      "qmvr4_b8_t3",
+      "qmvr4_b8_t4",
+      "qmvm_b4_g64",
+      "qmvm_b8_g64",
+      "qmvm2_b4_g64",
+      "qmvm2_b8_g64",
+      "qmvr_multi_t2",
+      "qmvr_multi_t3",
+      "qmvrc_multi_r2",
+      "qmvht_t3_r4",
+      "qmvhts_t3_r4",
+      "attn_rows_partial",
+      "attn_rows_reduce",
+      "moe_topk256_rows",
+      "moe_unique_rows",
+      "moe_gate_up_rows_g64",
+      "moe_gate_up_rows_g32_s8",
+      "moe_down_rows_g64",
+      "moe_down_rows_g32_s8",
+      "moe_down_rows_g64_w",
+      "moe_gate_up_dedupe_t2",
+      "moe_down_dedupe_t2",
+      "moe_gate_up_dedupe_t3",
+      "moe_down_dedupe_t3",
+      "moe_gate_up_rc",
+      "moe_down_rc",
+      "gdn_prep_verify",
+      "gdn_prep_verify_tree",
+      "gdn_step_verify",
+      "gdn_step_verify_sg",
+      "gdn_step_verify_pidx",
+      "topk_stage1_rows",
+      "topk_stage1_rows_tree",
+      "topk_stage1_rows_sg",
+      "sample_stage2_rows",
+      "sample_stage2_rows_tree",
+      "sample_stage2_rows_sg",
+      "swiglu_f32"
+    ]
+  },
+  "models": [
+    {
+      "name": "Qwen3.8-27B",
+      "quant": "MLX affine 4-bit, group 64, bf16 scales and biases, dense, 20.2 GB pack",
+      "family": "qwen35",
+      "machine": "M4 Pro 48 GB in docs/kflash.md and the README table; M5 Pro 48 GB and M5 Max 128 GB rows in the README",
+      "role": "primary"
+    },
+    {
+      "name": "Qwen3.6-35B-A3B",
+      "quant": "MLX affine 4-bit, group 64, MoE 3B active of 256 experts, 22.1 GB pack",
+      "family": "qwen35",
+      "machine": "M4 Pro 48 GB",
+      "role": "secondary"
+    },
+    {
+      "name": "Qwen3.5-4B",
+      "quant": "MLX affine 4-bit, group 64, dense, 4.6 GB pack",
+      "family": "qwen35",
+      "machine": "M4 Pro 48 GB; M1 Pro 16 GB rows in docs/kflash.md",
+      "role": "secondary"
+    }
+  ],
+  "settings": [
+    {
+      "name": "verify_rows_max",
+      "value": 8,
+      "unit": "rows",
+      "condition": "always for this path; wider tree verifies (16/32 rows) are refused here and need the 8-row MMA path",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35.h:294"
+    },
+    {
+      "name": "small_batch_rows_max",
+      "value": "2 dense, 4 MoE, with default env (NI_V8=1: 1, NI_V8=0: 4)",
+      "unit": "rows",
+      "condition": "the row counts this file's kernels serve: R at or above v8_rows_min (3 dense, 5 MoE, derived from env and cfg.moe) leaves for the 8-row MMA path",
+      "kind": "derived",
+      "source": "src/model/qwen35_spec.cpp:508",
+      "note": "formula: NI_V8=1 gives v8_rows_min 2, else MoE or NI_V8=0 gives 5, else 3; route check at qwen35_spec.cpp:979. Below 5 rows on MoE the comment records why: their verify unions the rows' experts (qwen35_spec.cpp:975)"
+    },
+    {
+      "name": "one_row_decode_route",
+      "value": true,
+      "unit": null,
+      "condition": "R == 1 with q4/q8 weights and contiguous x/y strides runs the one-row decode matvec (qmv2/qmv3), not a verify kernel",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35_spec.cpp:526"
+    },
+    {
+      "name": "qmvr_values_per_lane",
+      "value": 16,
+      "unit": "values",
+      "condition": "always for the qmvr/qmvr2/qmvr4/qmvh ladder (VPL)",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:63"
+    },
+    {
+      "name": "qmvr_weight_group_size",
+      "value": 64,
+      "unit": "inputs",
+      "condition": "always for the g64 kernels; the multi-segment path also requires its segments to share group 64",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:130"
+    },
+    {
+      "name": "qmvr_rows_per_simdgroup",
+      "value": 2,
+      "unit": "weight rows",
+      "condition": "qmvr_b* (v1, x read from device) fallback when NI_QMVR < 2 or R == 1",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:130"
+    },
+    {
+      "name": "qmvr_max_rows_kernel",
+      "value": 4,
+      "unit": "token rows",
+      "condition": "compile-time t1..t4 variants (R is a runtime value clamped into NT); R past 4 needs the 8-row path",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:133",
+      "note": "instantiations qmvr_b4_g64_t1..t4 and qmvr_b8_g64_t1..t4 at src/kernels/verify.metal:130-137"
+    },
+    {
+      "name": "qmvr2_rows_per_simdgroup",
+      "value": 4,
+      "unit": "weight rows",
+      "condition": "qmvr2_b* default fallback (NI_QMVR >= 2, R > 1); x rows staged as half in threadgroup memory with the dequant shared across rows",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:936"
+    },
+    {
+      "name": "qmvr2_x_staging_cap",
+      "value": "R * K halfs staged, xs[NT * 4096]",
+      "unit": null,
+      "condition": "K <= 4096; K above takes the tiled qmvr4 form",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:924"
+    },
+    {
+      "name": "wide_k_staging_tile",
+      "value": 4096,
+      "unit": "inputs",
+      "condition": "qmvr4 tiled staging when L.K > 4096 (attention K/V and GDN projections on the 27B)",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:1488"
+    },
+    {
+      "name": "qmvm_staging_cap",
+      "value": "R * K <= 12288 halfs (xs[12288]) and R * (K / 64) <= 256 fp32 group sums (xg[256])",
+      "unit": null,
+      "condition": "simdgroup-matrix qmvm2 path: NI_QMVR version 3 (the default), R > 2, and env NI_QMVM set",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:1003",
+      "note": "dispatch gate at src/model/qwen35_spec.cpp:594; 8 weight rows per simdgroup (one 8x8 fragment), NI_QMVM1 selects the v1 form"
+    },
+    {
+      "name": "two_row_rows_per_threadgroup",
+      "value": 8,
+      "unit": "weight rows",
+      "condition": "R == 2 (qmvrc1, the dense default at R = 2): 2 simdgroups x 4 weight rows, one single-row threadgroup per (token row, 8-row weight block), token rows in the fastest grid dimension so the pair shares each weight block through the core's cache",
+      "kind": "measured",
+      "source": "src/kernels/verify.metal:1823",
+      "note": "17408x5120 4-bit: 208 us for 1 or 2 rows against 240 us for the 2-rows-in-registers kernel (bench_qmvr, comment at src/model/qwen35_spec.cpp:540)"
+    },
+    {
+      "name": "two_row_threadgroup_threads",
+      "value": 64,
+      "unit": "threads",
+      "condition": "R == 2 qmvrc1 dispatch, grid (R, ceil(N / 8))",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35_spec.cpp:548"
+    },
+    {
+      "name": "three_row_kernel",
+      "value": "qmvht_t3_r4: half inner products with the dequantization shared across rows; Apple10 (M5) takes the shifted-nibble qmvhts_t3_r4",
+      "unit": null,
+      "condition": "R == 3, 4-bit weights, NI_NO_QMVH unset",
+      "kind": "measured",
+      "source": "src/model/qwen35_spec.cpp:555",
+      "note": "the fp32 3-row form is ALU-bound at 1.5x a single row; the half form measured 1.17-1.32x (comment at src/model/qwen35_spec.cpp:552). Apple10's fast-math compiler turns the masked build into half sums that overflow to NaN rows, hence the shifted variant (comment at src/model/qwen35_spec.cpp:553)"
+    },
+    {
+      "name": "fused_projection_rows_per_simdgroup",
+      "value": 4,
+      "unit": "weight rows",
+      "condition": "qmvr_multi_t2/t3: up to 4 projections (q/k/v, GDN qkv/z/b/a, router/shared gate) sharing the input rows, optional per-row RMSNorm folded into the staging",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:1264"
+    },
+    {
+      "name": "fused_projection_max_rows",
+      "value": 3,
+      "unit": "token rows",
+      "condition": "NT <= 3 instantiations (t2, t3); more rows take the 8-row multi-GEMM path",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:1326"
+    },
+    {
+      "name": "fused_projection_max_segments",
+      "value": 4,
+      "unit": "matrices",
+      "condition": "N[4] segment table; segments must share K and group 64",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:1201"
+    },
+    {
+      "name": "fused_projection_x_cap",
+      "value": 2048,
+      "unit": "inputs",
+      "condition": "K <= 2048 for the shared fp32 staging xs[NT * 2048]",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:1317"
+    },
+    {
+      "name": "attention_rows_tile",
+      "value": 16,
+      "unit": "keys",
+      "condition": "K/V staged in threadgroup memory in 16-key half tiles behind 2 barriers per tile (kTile, shared with the attn.metal decode kernel)",
+      "kind": "hardcoded",
+      "source": "src/kernels/attn.metal:84"
+    },
+    {
+      "name": "attention_head_dim",
+      "value": 256,
+      "unit": "dims",
+      "condition": "hardcoded kHD strides in the rows kernel's q/k/v reads and partials; the model loader fatals on any other head_dim",
+      "kind": "hardcoded",
+      "source": "src/kernels/attn.metal:85"
+    },
+    {
+      "name": "attention_rows_simdgroups_per_threadgroup",
+      "value": "G = Hq / Hkv (one query head per simdgroup; simdgroups at or past G idle)",
+      "unit": null,
+      "condition": "always; dispatch is (nchunks, Hkv, R) x 32 * G threads",
+      "kind": "derived",
+      "source": "src/kernels/verify.metal:161",
+      "note": "dispatch at src/model/qwen35_spec.cpp:736; each threadgroup owns one (chunk, kv head, token row)"
+    },
+    {
+      "name": "attention_rows_chunk_min",
+      "value": 64,
+      "unit": "positions",
+      "condition": "split-KV chunk floor: chunk = max(64, ceil(Lmax / core_count)), one chunk per GPU core and kv head",
+      "kind": "derived",
+      "source": "src/model/qwen35_spec.cpp:727",
+      "note": "so the chunk partition is host-dependent (core count) as well as row-count-dependent"
+    },
+    {
+      "name": "attention_rows_chunk_round",
+      "value": 16,
+      "unit": "positions",
+      "condition": "chunk rounded up to a multiple of 16",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35_spec.cpp:728"
+    },
+    {
+      "name": "attention_chunk_grid_shared_across_rows",
+      "value": true,
+      "unit": null,
+      "condition": "one chunk grid derived from Lmax = pos + R serves all R rows; each row's last chunk truncates at its own length L = pos0 + r + 1 and each row runs its own online softmax and its own chunk reduce",
+      "kind": "derived",
+      "source": "src/kernels/verify.metal:163",
+      "note": "the decode kernel derives its grid from Lk = pos + 1 (src/model/qwen35.cpp:2114-2117), so the same position's keys are summed under a different chunk partition and partial count in a verify pass than in a decode step"
+    },
+    {
+      "name": "attention_softmax_exp",
+      "value": "metal::fast::exp in the per-chunk online softmax and in the chunk reduce",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:188",
+      "note": "the reduce's cross-chunk weights also use fast::exp (src/kernels/verify.metal:221)"
+    },
+    {
+      "name": "attention_partials_layout",
+      "value": "part_o [R, Hq, nchunks, D] fp32 plus part_ml [R, Hq, nchunks, 2] (m, l); attn_rows_reduce combines chunks in order per row and applies the sigmoid output gate",
+      "unit": null,
+      "condition": "always; reduce grid (Hq, R) x head_dim threads",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:140"
+    },
+    {
+      "name": "activation_dtype",
+      "value": "fp32 activations on the verify path ([R, K] fp32 rows); qmvr2/qmvh/qmvm stage half copies of x in threadgroup memory, qmvrc2/qmvrch read half x rows",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "src/kernels/common.h:5"
+    },
+    {
+      "name": "sampler_logits_chunk",
+      "value": 2048,
+      "unit": "logits",
+      "condition": "stage 1 top-k: one threadgroup per (2048-logit chunk, row), grid (ceil(V / 2048), R) x 256 threads",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35_spec.cpp:1021"
+    },
+    {
+      "name": "sampler_topk_cap",
+      "value": 32,
+      "unit": "candidates",
+      "condition": "temperature > 0: top_k clamped to 1..32 per row; greedy takes K = 1",
+      "kind": "hardcoded",
+      "source": "src/model/qwen35_spec.cpp:1022"
+    },
+    {
+      "name": "sampler_stage2_candidates_cap",
+      "value": 64,
+      "unit": "candidates",
+      "condition": "stage 2 keeps at most 64 candidates per row (topv[64]/topi[64]) in threadgroup memory, 1024 threads",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:737"
+    },
+    {
+      "name": "sampler_rng_per_row",
+      "value": "row r draws with pcg(seed ^ pcg(step + r)) so a verify row uses the uniform plain decoding draws at its position; a tree row draws with step + node depth so siblings share it",
+      "unit": null,
+      "condition": "always; the tree form (sample_stage2_rows_tree) is reached from the verify8 path's descriptor",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:687"
+    },
+    {
+      "name": "moe_rows_per_simdgroup",
+      "value": 2,
+      "unit": "weight rows",
+      "condition": "moe_gate_up_rows / moe_down_rows: each token row picks its own k experts, one (expert slot, row) per grid column, x staged once per threadgroup (xs[4096])",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:240"
+    },
+    {
+      "name": "moe_expert_staging_cap",
+      "value": "(k + 1) * max(I, SI) <= 4608 staged floats; the wide-expert forms (Qwen3.8-Flash-Next) 7168",
+      "unit": "floats",
+      "condition": "MoE rows down-projection threadgroup buffer hs",
+      "kind": "hardcoded",
+      "source": "src/kernels/verify.metal:343"
+    }
+  ],
+  "gates": [
+    {
+      "condition": "1 <= R <= 8 (kMaxVerify) per verify dispatch, fatal otherwise; a tree verify (v8_tree_) is refused on this path with 'a verify tree needs the 8-row path'",
+      "source": "src/model/qwen35_spec.cpp:974"
+    },
+    {
+      "condition": "R >= v8_rows_min() (3 dense, 5 MoE, NI_V8=1: 2) or the forced-v8 flag leaves this file for encode_verify8; below that this file's kernels run",
+      "source": "src/model/qwen35_spec.cpp:979"
+    },
+    {
+      "condition": "pos + R + 1 must be below the context capacity, else 'context full' is fatal",
+      "source": "src/model/qwen35_spec.cpp:983"
+    },
+    {
+      "condition": "attention rows partials cap: nch * R <= 1024, else 'attention rows: too many chunks' is fatal",
+      "source": "src/model/qwen35_spec.cpp:730"
+    },
+    {
+      "condition": "attention head_dim must be 256 (model-load fatal), which the kHD-strided rows kernel requires",
+      "source": "src/model/qwen35.cpp:893"
+    },
+    {
+      "condition": "GDN linear head dims must be 128 (model-load fatal), which the D = 128 tape step requires",
+      "source": "src/model/qwen35.cpp:892"
+    },
+    {
+      "condition": "R == 2 and not NI_NO_RC1 takes qmvrc1; R == 3, 4-bit, not NI_NO_QMVH takes qmvht(_s)_t3_r4; L.K > 4096 takes the tiled qmvr4; NI_QMVR=3 and R > 2 with R * K <= 12288 and R * (K / 64) <= 256 and NI_QMVM set takes qmvm2; otherwise qmvr2 (or qmvr)",
+      "source": "src/model/qwen35_spec.cpp:542"
+    },
+    {
+      "condition": "MoE router form: experts == 256 and k <= 8 takes the unrolled moe_topk256_rows (one simdgroup per row), else moe_topk_rows",
+      "source": "src/model/qwen35_spec.cpp:755"
+    },
+    {
+      "condition": "MoE expert dedupe and MoE row-cache are opt-in env gates (NI_DEDUPE, NI_RC with R > 1, all-4-bit matrices, D <= 4096); the comment records dedupe measured slower than per-row expert reads on M4 Pro",
+      "source": "src/model/qwen35_spec.cpp:765"
+    }
+  ],
+  "measured": [
+    {
+      "metric": "verify_gpu_ms",
+      "value": [74.4, 70.6, 71.6, 74.3],
+      "model": "Qwen3.8-27B dense 4-bit",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "GPU time of a verify pass of 1, 2, 4, 8 rows via tools/batch_cost on an earlier build, after an 85-token prompt; a plain one-row decode step costs 67.3 ms (c(8) about 1.1)",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash.md:81",
+      "note": "the figure's text says the pass's matrix kernels 'run the pass's rows as one 8-row tile' and cost 'about the same with 1 row as with 8' (docs/kflash.md:67-70), so the curve prices the verify pass as a whole, not this file's small-batch kernels specifically; kapitsa.verify8 records the same numbers"
+    },
+    {
+      "metric": "moe_cycle_gpu_ms",
+      "value": [14.8, 16.4, 18.0, 19.1, 19.5, 21.2, 22.3, 23.1],
+      "model": "Qwen3.6-35B-A3B 4-bit",
+      "machine": "M4 Pro 48 GB",
+      "conditions": "whole cycle (drafting and verify) with 1 to 8 live rows, from the budget's measured cost table; 1.56x from 1 row to 8, because each row brings in experts the others did not pick",
+      "provenance": "upstream_reported",
+      "source": "docs/kflash.md:75",
+      "note": "on MoE this file's kernels serve R = 2..4 at this rev's defaults, so the low-row end of the curve is the regime this file runs in"
+    },
+    {
+      "metric": "two_row_gemv_us",
+      "value": 208,
+      "model": "unspecified (bench_qmvr shape 17408x5120 4-bit)",
+      "machine": "unspecified",
+      "conditions": "1 or 2 rows through the row-cache pair kernel qmvrc1; the 2-rows-in-registers kernel took 240 us, so verifying 2 rows costs about 1 row",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35_spec.cpp:540"
+    },
+    {
+      "metric": "three_row_half_vs_one_row",
+      "value": "1.17-1.32x a single row (the fp32 3-row form: 1.5x, ALU-bound)",
+      "model": "unspecified",
+      "machine": "unspecified",
+      "conditions": "bench_qmvr A/B recorded in the dispatch comment; the reason the 3-row case takes the half-precision qmvht kernel",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35_spec.cpp:552"
+    },
+    {
+      "metric": "fma_verify_rows_cost",
+      "value": "1.2-1.9x a decode step from 3 rows on",
+      "model": "Qwen3.5-4B dense 4-bit (MTP depth 2 117.7 -> 138.3 tok/s when verifies moved to the 8-row tile)",
+      "machine": "unspecified",
+      "conditions": "the dispatch comment's own characterization of these FMA kernels against the 8-row MMA path, which reads the weights once for up to 8 rows at about 1.1-1.25x a decode step",
+      "provenance": "upstream_reported",
+      "source": "src/model/qwen35_spec.cpp:975"
+    }
+  ],
+  "lab_mapping": [
+    {
+      "setting": "verify_rows_max",
+      "maps_to": "tslab kernel --bench int4_matmul --rows N",
+      "env": null,
+      "note": "our rows axis (1, 2, 4, 8, 9) matches the row-count regime; kapitsa's standard verify tops out at 8 rows and its dense default only reaches this file at R = 2, which is the shape our GEMV-vs-GEMM crossover questions sit at"
+    },
+    {
+      "setting": "small_batch_rows_max",
+      "maps_to": "workload speculation.block field (a block of B drafts verifies B + 1 rows)",
+      "env": null,
+      "note": "block 1 stays inside this file's kernels on kapitsa's dense defaults; block 2 and up cross the v8_rows_min threshold into the verify8 tile, the same c(M) cliff our MTP block sweep measures"
+    },
+    {
+      "setting": "attention_chunk_grid_shared_across_rows",
+      "maps_to": "TURBOSPARK_ATTN_DECODE_KERNEL (barrier vs gqa)",
+      "env": "TURBOSPARK_ATTN_DECODE_KERNEL",
+      "note": "kapitsa's rows attention shares only the chunk grid, not the softmax, and its grid depends on R, so it does not reproduce the decode kernel's floats; our docs decline the multi-row variant for verify for exactly this reason (decode would have to run it too)"
+    },
+    {
+      "setting": "activation_dtype",
+      "maps_to": "TURBOSPARK_GDN_LAZY_TAPE",
+      "env": "TURBOSPARK_GDN_LAZY_TAPE",
+      "note": "the GDN rollback-tape design here (fold pending rows into the committed state, verify new rows without committing, replay accepted rows next pass) is what our adopted lazy tape item implements; the GDN kernels themselves are pinned in kapitsa.gdn"
+    }
+  ],
+  "docs": [
+    "docs/KAPITSA_KERNELS.md#where-we-were-already-ahead-not-adopted-do-not-re-propose",
+    "docs/KAPITSA_KERNELS.md#what-makes-the-headline-numbers-fast-and-what-applies-here",
+    "docs/KAPITSA_KERNELS.md#measured-kapitsa-on-this-machine-2026-10-22",
+    "docs/KAPITSA_KERNELS.md#kflash-tree-verify"
+  ],
+  "notes": "Doc checks. (1) Our KAPITSA_KERNELS.md 'Where we were already ahead' claims kapitsa's multi-row attention sharing chunk boundaries is not bit-exact, and this file is that kernel: attn_rows_partial/attn_rows_reduce are the verify path's attention (Qwen35::enc_attn_rows). The source is consistent with the claim, with one refinement: rows share the chunk GRID (one chunk size and count derived from Lmax = pos + R, rounded to 16, floor 64, host core count in the formula), not any softmax work; each row runs its own online softmax over its own chunks and its own reduce, with fast::exp in both. The source never states 'not bit-exact'; what it shows is that the decode kernel derives its grid from Lk = pos + 1 (qwen35.cpp:2114-2117), so a row's key range is partitioned differently between a verify pass and a decode step and the partials are combined in a different grouping. Kapitsa's own doc concedes the neighboring fact in prose: 'A multi-row pass rounds a little differently from a one-row step' (docs/kflash.md:138) and 'a pass of 2+ rows rounds differently from decode steps' (docs/kflash.md:490). (2) Our decision table and KFlash section attribute the flat verify cost curve to the 8-row MMA tile; at this rev that tile (verify8.metal) takes over from R >= 3 dense / R >= 5 MoE, so this file is the pre-tile verify that survives at R = 2 dense (qmvrc1) and R = 2..4 MoE, plus R == 1 with non-contiguous strides. The kflash.md curve was taken with tools/batch_cost on an earlier build whose matrix kernels already ran the rows as one 8-row tile, so it is not a measurement of this file's kernels specifically; this file's own recorded numbers are the bench_qmvr comment values cited under measured. (3) Scope overlaps by design: the GDN tape kernels in this file (gdn_prep_verify, gdn_step_verify and the tree/pidx forms) are also pinned in kapitsa.gdn, and the 3-row half kernels qmvh_t3_r4 / qmvht_t3_r4 / qmvhts_t3_r4 also appear in kapitsa.qmv; the fused two-row qmvf path is tried before enc_qmvr for R <= 2 when enabled and lives in qmvf.metal (kapitsa.qmv). (4) Several instantiations in the file are not dispatched by model or bench code at this rev (the qmvr3_* set, qmvrc2_*, qmvrch_*, qmvsg_*, qmvh_t4_r4); tools/bench_qmvr.cpp can drive the qmvrc2/qmvrch/qmvsg forms. The qmvrc_b* and qmvr4_b* names are built by string at dispatch time (rows per threadgroup and the _v8 suffix depend on shape and env), so they are reachable: qmvrc_b4_r4 when NI_RC is set and L.N >= 65536, qmvr4_b4_t4_v8 and qmvr4_b8_t4 at R == 4 with K > 4096. The undispatched ones are experiment variants kept in the library, and their settings are not recorded here. (5) Tree-verify determinism machinery that kflash.md describes (tree-zone attention with fixed 128-key chunks, row-independent expert numerics, pinned GDN update order, and the recorded determinism gap past 16,256 positions where the tree zone's chunk size follows KV capacity growth) lives on the verify8 path, not here; this file's plain chain verify has no invariance machinery in source beyond per-row chunked softmax, and its chunk size varies with host core count. (6) common.h uses fast::exp for silu/sigmoid and precise::rsqrt for norms throughout; the sampled-verify exactness convention is the per-row RNG draw (sampler_rng_per_row), with tree rows drawing by node depth so siblings share the plain-decode uniform. (7) Timing numbers in source comments (the 208 us pair, the 1.17-1.32x half kernel) name no machine or run count; treat them as indicative and re-run tools/bench_qmvr for anything load-bearing."
+}

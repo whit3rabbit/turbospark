@@ -1,0 +1,16 @@
+{
+  "name": "spec-depth",
+  "description": "speculative depth from measured costs: chain capture, MTP arms at two blocks with round stats (round_cost records), then depth replay priced from those records",
+  "vars": {"prompt": "protocol:long-synthesis"},
+  "steps": [
+    {"id": "chain_capture", "command": "chain-capture", "when": ["mtp"],
+     "args": {"model": "{model}", "experiment": "{experiment}", "tokens": 512}},
+    {"id": "round_costs", "command": "profile", "when": ["mtp"],
+     "args": {"model": "{model}", "experiment": "{experiment}", "prompt": "{prompt}", "decode": "256", "rounds": 2,
+              "arm": ["mtp2~mtp:2:spec_stats=1", "mtp4~mtp:4:spec_stats=1"]}},
+    {"id": "depth_replay", "command": "depth-replay", "needs": ["chain_capture", "round_costs"],
+     "args": {"experiment": "{experiment}", "costs": "flag_off,ledger:{experiment}"}},
+    {"id": "report", "command": "report",
+     "args": {"experiment": "{experiment}", "html": "{lab}/{experiment}/report.html", "force": true}}
+  ]
+}

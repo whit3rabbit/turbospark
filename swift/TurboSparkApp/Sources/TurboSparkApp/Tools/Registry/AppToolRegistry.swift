@@ -29,6 +29,15 @@ public enum AppToolRegistry {
         call: AppToolCall, in project: AppProject?, chatID: UUID? = nil, subagentDepth: Int = 0,
         webToolsEnabled: Bool = true, fallbackMode: AppPermissionMode? = nil
     ) async -> AppToolResult {
+        // Scope the rootless mode over everything this call reaches, so the
+        // nested gates that call `evaluate` without one inherit it.
+        if let fallbackMode, ToolPermissionContext.fallbackMode != fallbackMode {
+            return await ToolPermissionContext.$fallbackMode.withValue(fallbackMode) {
+                await execute(
+                    call: call, in: project, chatID: chatID, subagentDepth: subagentDepth,
+                    webToolsEnabled: webToolsEnabled, fallbackMode: fallbackMode)
+            }
+        }
         let startTime = Date()
 
         let appAllowsWebTools = await webToolsEnabledProvider?() ?? true
@@ -38,6 +47,22 @@ public enum AppToolRegistry {
             return AppToolResult(
                 callID: call.id,
                 output: "Error: '\(call.name)' is disabled. Enable Web Search in the chat composer to use web tools.",
+                isError: true,
+                durationSeconds: Date().timeIntervalSince(startTime)
+            )
+        }
+
+        // Block all, enforced at execution as well as at approval: a web
+        // tool with no URL (a search provider call) has no host for the
+        // destination validator to refuse. URL tools are refused per host by
+        // `HttpRequestDestinationValidator`, which keeps localhost reachable.
+        if !AppNetworkPolicyStore.current.permitsOutboundTraffic,
+           category(for: call.name, projectURL: project?.rootDirectoryURL) == .web,
+           ToolApprovalPreviewSummary.httpURL(call.arguments) == nil
+        {
+            return AppToolResult(
+                callID: call.id,
+                output: "Error: '\(call.name)' is blocked. Network access for tools is set to Block all in Settings > Network.",
                 isError: true,
                 durationSeconds: Date().timeIntervalSince(startTime)
             )
@@ -187,7 +212,7 @@ public enum AppToolRegistry {
                 if let targetURL = try? resolveSecurePath(relPath: relPath, rootURL: rootURL) {
                     producedFiles.append(ArtifactRegistrar.ProducedFile(
                         url: targetURL, toolCallID: call.id, toolName: call.name, origin: .fileWrite))
-                    Task { await SyntextIndexManager.shared.notifyChange(at: targetURL, rootURL: rootURL) }
+                    await SyntextIndexManager.shared.notifyChange(at: targetURL, rootURL: rootURL)
                 }
 
             case _ where editFileAliases.contains(lowerName):
@@ -225,7 +250,7 @@ public enum AppToolRegistry {
                 if let targetURL = try? resolveSecurePath(relPath: relPath, rootURL: rootURL) {
                     producedFiles.append(ArtifactRegistrar.ProducedFile(
                         url: targetURL, toolCallID: call.id, toolName: call.name, origin: .fileWrite))
-                    Task { await SyntextIndexManager.shared.notifyChange(at: targetURL, rootURL: rootURL) }
+                    await SyntextIndexManager.shared.notifyChange(at: targetURL, rootURL: rootURL)
                 }
 
             case "apply_patch", "applypatch":
@@ -234,18 +259,30 @@ public enum AppToolRegistry {
                 }
                 let result = try await ApplyPatchExecutor.apply(patchText: patchText, rootURL: rootURL)
                 output = result.summary
-                for op in result.applied where op.type != "delete" {
+                for op in result.applied {
                     let fileURL = URL(fileURLWithPath: op.target)
+                    // A deleted file has to leave the index too, or searches
+                    // keep returning lines from it.
+                    if op.type == "delete" {
+                        await SyntextIndexManager.shared.notifyDelete(at: fileURL, rootURL: rootURL)
+                        continue
+                    }
                     producedFiles.append(ArtifactRegistrar.ProducedFile(
                         url: fileURL, toolCallID: call.id, toolName: call.name,
                         origin: .fileWrite))
-                    if syntextIndexingEnabled {
-                        Task { await SyntextIndexManager.shared.notifyChange(at: fileURL, rootURL: rootURL) }
-                    }
+                    await SyntextIndexManager.shared.notifyChange(at: fileURL, rootURL: rootURL)
                 }
 
             case "multiedit", "multi_edit":
                 output = try await MultiEditExecutor.execute(arguments: call.arguments, rootURL: rootURL)
+                // The edits parsed again only for their paths; `execute`
+                // already validated and applied them.
+                let editedPaths = Set(((try? MultiEditExecutor.parseEdits(from: call.arguments)) ?? []).map(\.filePath))
+                for relPath in editedPaths {
+                    if let targetURL = try? resolveSecurePath(relPath: relPath, rootURL: rootURL) {
+                        await SyntextIndexManager.shared.notifyChange(at: targetURL, rootURL: rootURL)
+                    }
+                }
 
             case "search_code", "grep", "search", "grep_search":
                 guard let pattern = call.arguments["pattern"]
@@ -284,29 +321,43 @@ public enum AppToolRegistry {
                 let caseSensitive = ["true", "1", "yes"].contains(
                     (call.arguments["case_sensitive"] ?? call.arguments["caseSensitive"])?.lowercased() ?? ""
                 )
-                let contextLines = Int(call.arguments["context_lines"] ?? call.arguments["contextLines"] ?? call.arguments["context"] ?? "") ?? 2
-                let maxResults = Int(call.arguments["max_results"] ?? call.arguments["maxResults"] ?? call.arguments["head_limit"] ?? "") ?? 50
+                // Clamped for both paths: the indexed one had no cap at all.
+                let contextLines = max(0, min(
+                    Int(call.arguments["context_lines"] ?? call.arguments["contextLines"] ?? call.arguments["context"] ?? "") ?? 2,
+                    SyntextCodeSearchTool.maxContextLines))
+                let maxResults = max(1, min(
+                    Int(call.arguments["max_results"] ?? call.arguments["maxResults"] ?? call.arguments["head_limit"] ?? "") ?? 50,
+                    SyntextCodeSearchTool.maxResultsCap))
 
-                let syntextEnabled = syntextIndexingEnabled && project?.syntextIndexEnabled == true
+                // Re-read the project so turning its index off during a turn
+                // holds for that turn's next search, as the MCP path does. The
+                // captured copy re-activated (and could rebuild) the index the
+                // user had just switched off.
+                let currentProject = project.flatMap { captured in
+                    AppProjectFileStore.load().projects.first { $0.id == captured.id } ?? captured
+                }
+                let syntextEnabled = syntextIndexingEnabled && currentProject?.syntextIndexEnabled == true
                 if syntextEnabled, resolvedRoot != nil {
+                    // Resolved before the indexed attempt so an escaping or
+                    // absolute path is an error here too. It used to become a
+                    // nil scope, which searched the whole repository.
+                    let scope = try syntextPathScope(relPath: relPath, rootURL: rootURL)
                     do {
                         let searchTool = await SyntextIndexManager.shared.tool(for: rootURL)
-                        // The index searches the whole repo; scope it to `path`
-                        // via a directory-prefix filter unless the caller gave
-                        // an explicit filter (the index takes only one).
-                        let scopedFilter = pathFilter
-                            ?? syntextPathScope(relPath: relPath, rootURL: rootURL)
-                        output = try await searchTool.grep(
+                        output = compactOutput(try await searchTool.grep(
                             query: pattern,
-                            pathFilter: scopedFilter,
+                            pathFilter: pathFilter,
+                            scope: scope,
                             fileTypes: fileTypes,
                             caseSensitive: caseSensitive,
                             literalSearch: literalSearch,
                             wordMatch: false,
                             contextLines: contextLines,
                             maxResults: maxResults
-                        )
+                        ))
                     } catch {
+                        // Not ready (still building), unavailable, or failed:
+                        // the unindexed scan answers this call.
                         output = try searchCode(
                             pattern: pattern, relPath: relPath, rootURL: rootURL,
                             literal: literalSearch, caseSensitive: caseSensitive,
@@ -497,6 +548,35 @@ public enum AppToolRegistry {
                     ])
                 case .invalidInput(let reason), .unavailable(let reason), .failed(let reason):
                     throw NSError(domain: "TurboSparkTool", code: 46, userInfo: [
+                        NSLocalizedDescriptionKey: reason,
+                    ])
+                }
+
+            case _ where ComputerUseToolDefinitions.toolNames.contains(lowerName):
+                guard let runtime = await computerUseToolRuntimeProvider?(call, chatID) else {
+                    throw NSError(domain: "TurboSparkTool", code: 47, userInfo: [
+                        NSLocalizedDescriptionKey: "Computer use is off, the helper is not running, or the loaded model has no vision.",
+                    ])
+                }
+                switch await ComputerUseToolExecutor.execute(call: call, runtime: runtime) {
+                case .cancelled:
+                    throw CancellationError()
+                case .completed(let text, let media):
+                    output = text
+                    if let media {
+                        mediaDisposition = media.disposition
+                        if let reference = media.reference {
+                            mediaReferences = [reference]
+                        } else {
+                            mediaWasRefused = true
+                        }
+                    }
+                case .denied(let reason):
+                    throw NSError(domain: "TurboSparkTool", code: 48, userInfo: [
+                        NSLocalizedDescriptionKey: "Computer action was denied: \(reason)",
+                    ])
+                case .invalidInput(let reason), .unavailable(let reason), .failed(let reason):
+                    throw NSError(domain: "TurboSparkTool", code: 49, userInfo: [
                         NSLocalizedDescriptionKey: reason,
                     ])
                 }
@@ -728,6 +808,7 @@ public enum AppToolRegistry {
                    let targetURL = try? resolveSecurePath(relPath: relPath, rootURL: rootURL) {
                     producedFiles.append(ArtifactRegistrar.ProducedFile(
                         url: targetURL, toolCallID: call.id, toolName: call.name, origin: .fileWrite))
+                    await SyntextIndexManager.shared.notifyChange(at: targetURL, rootURL: rootURL)
                 }
 
             case "snip", "extract_snippet":

@@ -530,7 +530,7 @@ impl ConvFrontend {
         let mut x = self.conv1.forward(&x);
         ops::gelu_erf(&mut x);
         let seq1 = x.len() / self.conv1.out_ch;
-        let len1 = (mel_len + 2 - 1 * (3 - 1) - 1) / self.stride + 1;
+        let len1 = (mel_len + 2 - (3 - 1) - 1) / self.stride + 1;
         for d in 0..self.conv2.in_ch {
             for t in len1.min(seq1)..seq1 {
                 x[d * seq1 + t] = 0.0;
@@ -538,7 +538,7 @@ impl ConvFrontend {
         }
         let mut x = self.conv2.forward(&x);
         ops::gelu_erf(&mut x);
-        let len2 = (len1 + 2 - 1 * (3 - 1) - 1) / 2 + 1;
+        let len2 = (len1 + 2 - (3 - 1) - 1) / 2 + 1;
         let seq2 = x.len() / self.conv2.out_ch;
         let mut row_major = vec![0.0f32; x.len()];
         for d in 0..self.conv2.out_ch {
@@ -785,8 +785,8 @@ impl S3TokenizerV1 {
             }
         }
         let mut key_bias = vec![0.0f32; seq];
-        for t in len..seq {
-            key_bias[t] = -1.0e10;
+        for bias in key_bias.iter_mut().skip(len) {
+            *bias = -1.0e10;
         }
         for block in &self.blocks {
             block.forward(&mut x, seq, &key_bias, None, None);
@@ -979,7 +979,7 @@ fn open_checkpoint_file(dir: &Path) -> Result<SafetensorsFile> {
         })?
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().map_or(false, |ext| ext == "safetensors"))
+        .filter(|p| p.extension().is_some_and(|ext| ext == "safetensors"))
         .collect();
     match entries.len() {
         1 => SafetensorsFile::open(entries.remove(0).as_path()).map_err(SpeechError::from),

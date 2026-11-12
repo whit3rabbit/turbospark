@@ -304,6 +304,21 @@ pub(crate) fn run_turn(
         // `SpeculativeProducer` has an associated type and cannot be
         // reached through a `&mut dyn LogitProducer`.
         #[cfg(target_os = "macos")]
+        (Engine::Real(runner), Some(cap)) if session.speculation_adaptive => {
+            runtime::run_raw_completion_speculative_adaptive_cancellable(
+                runner.as_mut(),
+                &session.tokenizer,
+                &prompt_ids,
+                &config,
+                session.max_context,
+                vocab_size,
+                cap,
+                runtime::AdaptiveDepth::DEFAULT_FLOOR,
+                &predicate,
+                &mut on_progress,
+            )
+        }
+        #[cfg(target_os = "macos")]
         (Engine::Real(runner), Some(block)) => runtime::run_raw_completion_speculative_cancellable(
             runner.as_mut(),
             &session.tokenizer,

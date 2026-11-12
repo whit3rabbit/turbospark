@@ -3,22 +3,27 @@ import SwiftUI
 @MainActor
 struct AudioLibraryView: View {
     @ObservedObject var controller: AudioWorkspaceController
-    @State private var favoritesOnly = false
-    @State private var editingItem: AudioLibraryItem?
-    @State private var editingCollection = false
-    @State private var editedName = ""
-    @State private var deletingItem: AudioLibraryItem?
+    @Environment(\.appTheme) private var theme
+    @State private var filter: AudioLibraryFilter = .all
+    @State private var collection: String?
+    @State private var tag: String?
+
+    private var scale: CGFloat { AppMetrics.textScale(theme) }
 
     private var visibleItems: [AudioLibraryItem] {
-        controller.filteredItems.filter { !favoritesOnly || $0.favorite }
+        AudioLibraryOrganizer.filter(controller.filteredItems, by: filter, collection: collection, tag: tag)
     }
 
     var body: some View {
         GeometryReader { geometry in
-            if geometry.size.width > 850 {
+            if geometry.size.width > (850 * scale).rounded() {
                 HSplitView {
-                    library.frame(minWidth: 260, idealWidth: 310, maxWidth: 400)
-                    detail.frame(minWidth: 360)
+                    library.frame(
+                        minWidth: (260 * scale).rounded(),
+                        idealWidth: (310 * scale).rounded(),
+                        maxWidth: (400 * scale).rounded()
+                    )
+                    detail.frame(minWidth: (360 * scale).rounded())
                 }
             } else {
                 ScrollView {
@@ -31,15 +36,6 @@ struct AudioLibraryView: View {
                 }
             }
         }
-        .sheet(item: $editingItem) { item in
-            AudioNameSheet(title: editingCollection ? "Collection" : "Rename", value: $editedName,
-                           allowEmpty: editingCollection) {
-                if editingCollection { controller.organize(item, collection: editedName) }
-                else { controller.rename(item, title: editedName) }
-                editingItem = nil
-            }
-        }
-        .modifier(AudioDeleteConfirmation(controller: controller, item: $deletingItem))
     }
 
     private var library: some View {
@@ -47,9 +43,7 @@ struct AudioLibraryView: View {
             Text("Audio library", bundle: .module)
                 .themedFont(.title2, weight: .semibold).accessibilityAddTraits(.isHeader)
             AppSearchField(text: $controller.search, prompt: Text("Search recordings and takes", bundle: .module), maxWidth: .infinity)
-            Toggle(isOn: $favoritesOnly) {
-                Label { Text("Favorites", bundle: .module) } icon: { Image(systemName: "star") }
-            }.toggleStyle(.checkbox)
+            AudioLibraryFilterBar(controller: controller, filter: $filter, collection: $collection, tag: $tag)
             HStack {
                 Button { controller.importAudio() } label: {
                     Label { Text("Import audio", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
@@ -61,21 +55,31 @@ struct AudioLibraryView: View {
                 }
                 .appAction(.secondary, size: .small)
             }
-            if visibleItems.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("No recordings or takes found", bundle: .module).themedFont(.base, weight: .semibold)
-                    Text("Reopen recordings and takes, or start with an audio file.", bundle: .module)
-                        .foregroundStyle(.appSecondary)
-                }.padding(.vertical, 20)
+            if !controller.search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                AudioSearchResultsView(controller: controller, search: controller.librarySearch)
+            } else if visibleItems.isEmpty {
+                AppEmptyState(
+                    systemImage: "waveform",
+                    title: Text("No recordings or takes found", bundle: .module),
+                    message: Text("Reopen recordings and takes, or start with an audio file.", bundle: .module)
+                ) {
+                    Button { controller.importAudio() } label: {
+                        Label { Text("Import audio", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
+                    }
+                    .appAction(.secondary, size: .small)
+                    .disabled(controller.isBusy || controller.hasRecordingActivity)
+                }
+                .padding(.vertical, 20)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 8) {
-                        ForEach(visibleItems) { item in libraryRow(item) }
-                    }
+                    AudioLibraryList(controller: controller, items: visibleItems)
                 }.frame(minHeight: 180)
             }
             Spacer(minLength: 0)
-        }.padding(20)
+        }
+        .padding(20)
+        .onChange(of: controller.search) { _, query in controller.librarySearch.run(query, controller: controller) }
+        .task { controller.librarySearch.scheduleIndexing(controller) }
     }
 
     @ViewBuilder private var detail: some View {
@@ -85,66 +89,14 @@ struct AudioLibraryView: View {
                     .padding(24).frame(maxWidth: 900, alignment: .leading).frame(maxWidth: .infinity)
             }
         } else {
-            VStack(spacing: 12) {
-                Image(systemName: "waveform").themedFont(.hero).foregroundStyle(.appSecondary)
-                Text("Choose a recording or take", bundle: .module).themedFont(.title2, weight: .semibold)
-                Text("Audio and edits are saved in your encrypted profile.", bundle: .module)
-                    .foregroundStyle(.appSecondary).multilineTextAlignment(.center)
-            }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
+            AppEmptyState(
+                systemImage: "waveform",
+                title: Text("Choose a recording or take", bundle: .module),
+                message: Text("Audio and edits are saved in your encrypted profile.", bundle: .module)
+            )
+            .padding(24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-    }
-
-    private func libraryRow(_ item: AudioLibraryItem) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Button { controller.select(item) } label: {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(item.title).themedFont(.base, weight: .medium).lineLimit(2)
-                    HStack {
-                        Text(item.createdAt, format: .dateTime.month(.abbreviated).day())
-                        if item.hasPlayableAudio { Text(audioTime(item.duration)).monospacedDigit() }
-                    }.themedFont(.small).foregroundStyle(.appSecondary)
-                    if !item.collection.isEmpty { Text(item.collection).themedFont(.small).foregroundStyle(.appSecondary) }
-                    if item.status != .completed {
-                        Label { Text(LocalizedStringKey(item.status.audioTitle), bundle: .module) }
-                            icon: { Image(systemName: item.status.audioSymbol) }
-                            .themedFont(.small)
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityAddTraits(controller.selectedID == item.id ? .isSelected : [])
-            .accessibilityAction(named: Text("Favorite", bundle: .module)) { controller.toggleFavorite(item) }
-            .accessibilityAction(named: Text("Rename", bundle: .module)) { beginEditing(item, collection: false) }
-            .accessibilityAction(named: Text("Delete", bundle: .module)) { deletingItem = item }
-            VStack(spacing: 8) {
-                Button { controller.toggleFavorite(item) } label: {
-                    Image(systemName: item.favorite ? "star.fill" : "star")
-                }.buttonStyle(.plain)
-                    .accessibilityLabel(Text(item.favorite ? "Remove favorite" : "Favorite", bundle: .module))
-                Menu {
-                    Button { beginEditing(item, collection: false) } label: { Text("Rename", bundle: .module) }
-                    Button { beginEditing(item, collection: true) } label: { Text("Collection", bundle: .module) }
-                    Button { controller.select(item); controller.duplicateSelected() } label: {
-                        Text("Duplicate with changes", bundle: .module)
-                    }
-                    Divider()
-                    Button(role: .destructive) { deletingItem = item } label: { Text("Delete", bundle: .module) }
-                } label: { Image(systemName: "ellipsis") }
-                .menuStyle(.borderlessButton).fixedSize()
-                .accessibilityLabel(Text("Audio actions", bundle: .module))
-                .disabled(controller.hasRecordingActivity || controller.isBusy)
-                AudioDeleteButton(controller: controller, item: item, compact: true)
-            }
-        }
-        .padding(12)
-        .background(.appSurface, in: RoundedRectangle(cornerRadius: 10))
-        .overlay { RoundedRectangle(cornerRadius: 10).stroke(controller.selectedID == item.id ? .appAccent : .appBorder, lineWidth: controller.selectedID == item.id ? 2 : 1) }
-    }
-
-    private func beginEditing(_ item: AudioLibraryItem, collection: Bool) {
-        editingCollection = collection
-        editedName = collection ? item.collection : item.title
-        editingItem = item
     }
 }
 
@@ -152,6 +104,14 @@ struct AudioLibraryView: View {
 struct AudioItemDetailView: View {
     @ObservedObject var controller: AudioWorkspaceController
     let item: AudioLibraryItem
+
+    enum DetailViewTab: String, CaseIterable, Identifiable {
+        case transcript = "Transcript"
+        case notes = "Notes & Summary"
+        var id: String { rawValue }
+    }
+
+    @State private var selectedTab: DetailViewTab = .transcript
 
     private var comparisonItems: [AudioLibraryItem] {
         controller.items.filter { $0.id != item.id && !$0.clips.isEmpty }
@@ -165,6 +125,7 @@ struct AudioItemDetailView: View {
                         .accessibilityAddTraits(.isHeader)
                     Text(item.createdAt, format: .dateTime.month(.wide).day().year().hour().minute())
                         .themedFont(.small).foregroundStyle(.appSecondary)
+                    AudioTagEditor(controller: controller, item: item).padding(.top, 4)
                 }
                 Spacer()
             }
@@ -187,8 +148,7 @@ struct AudioItemDetailView: View {
             itemActions
             if !item.markers.isEmpty { markers }
             if item.clips.count > 1 { clips }
-            if !item.transcripts.isEmpty { AudioTranscriptEditorView(controller: controller, item: item) }
-            if item.preferredTranscript != nil { meetingSummary }
+            if !item.transcripts.isEmpty { detailContentSwitcher }
             DisclosureGroup {
                 VStack(alignment: .leading, spacing: 8) {
                     if let modelID = item.recipe.modelID { Text(modelID).textSelection(.enabled) }
@@ -213,28 +173,14 @@ struct AudioItemDetailView: View {
         }
     }
 
-    private var meetingSummary: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let summary = item.summary {
-                Text("Meeting summary", bundle: .module)
-                    .themedFont(.base, weight: .semibold).accessibilityAddTraits(.isHeader)
-                Text(summary.text).textSelection(.enabled)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 90), alignment: .leading)], alignment: .leading) {
-                    ForEach(Array(summary.sourceTimes.enumerated()), id: \.offset) { _, time in
-                        Button { controller.seek(to: time) } label: {
-                            Label { Text(audioTime(time)).monospacedDigit() } icon: { Image(systemName: "play.circle") }
-                        }.disabled(item.clips.isEmpty || controller.hasRecordingActivity)
-                    }
-                }
-            }
-            Button { controller.summarizeMeeting() } label: {
-                Text("Summarize meeting", bundle: .module)
-            }
-            .appAction(.secondary, size: .small)
-            .disabled(!controller.canSummarizeMeeting || controller.isBusy || controller.hasRecordingActivity)
-            if !controller.canSummarizeMeeting && !controller.isBusy {
-                Text("Load a local chat model to summarize this transcript.", bundle: .module)
-                    .themedFont(.small).foregroundStyle(.appSecondary)
+    private var detailContentSwitcher: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            AudioDetailModeSwitcher(selection: $selectedTab, hasSummary: item.summary != nil)
+
+            if selectedTab == .transcript {
+                AudioTranscriptEditorView(controller: controller, item: item)
+            } else {
+                AudioMeetingNotesView(controller: controller, item: item)
             }
         }
     }
@@ -304,163 +250,26 @@ struct AudioItemDetailView: View {
     }
 }
 
+/// Switches an item's detail between its transcript and its meeting notes.
+/// An `AppPillPicker`, which never shrinks: the labeled segmented picker this
+/// replaces was squeezed to 280 pt and wrapped "Detail View" one or two
+/// letters per line.
 @MainActor
-struct AudioTranscriptEditorView: View {
-    @ObservedObject var controller: AudioWorkspaceController
-    let item: AudioLibraryItem
-    @State private var editingID: UUID?
-    @State private var revisionID: UUID?
-    @State private var segments: [AudioLibrarySegment] = []
-    @State private var savedSegments: [AudioLibrarySegment] = []
-    @State private var dirty = false
+struct AudioDetailModeSwitcher: View {
+    @Binding var selection: AudioItemDetailView.DetailViewTab
+    let hasSummary: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            transcriptHeader
-            if item.preferredTranscript?.source == .draft {
-                Label { Text("Draft transcript", bundle: .module) } icon: { Image(systemName: "pencil") }
-                    .foregroundStyle(.appSecondary)
-            }
-            LazyVStack(alignment: .leading, spacing: 16) {
-                ForEach($segments) { $segment in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Button { controller.seek(to: segment.start) } label: {
-                                Text(audioTime(segment.start)).monospacedDigit()
-                            }.disabled(item.clips.isEmpty || controller.hasRecordingActivity)
-                            TextField(text: Binding(
-                                get: { segment.speaker ?? "" },
-                                set: { segment.speaker = $0.isEmpty ? nil : $0; stageEdits() }
-                            )) { Text("Speaker", bundle: .module) }
-                            .textFieldStyle(.roundedBorder)
-                            .accessibilityLabel(Text("Speaker", bundle: .module))
-                            if segment.timing == "clip" || segment.timing == "window" {
-                                Text("Approximate timing", bundle: .module).themedFont(.small).foregroundStyle(.appSecondary)
-                            }
-                        }
-                        TextEditor(text: Binding(
-                            get: { segment.text },
-                            set: { segment.text = $0; stageEdits() }
-                        )).themedFont(.base)
-                            .frame(minHeight: 72)
-                            .accessibilityLabel(Text("Transcript text", bundle: .module))
-                            .padding(6).overlay { RoundedRectangle(cornerRadius: 6).stroke(.appBorder) }
-                    }
-                    .accessibilityElement(children: .contain)
-                }
-            }
-            .accessibilityRotor(Text("Speakers", bundle: .module)) {
-                ForEach(segments.filter { $0.speaker != nil }) { segment in
-                    AccessibilityRotorEntry((segment.speaker ?? "") + ", " + audioTime(segment.start), id: segment.id)
-                }
-            }
-            if let data = item.transcripts.first(where: { $0.id == revisionID })?.nativeResult,
-               let result = String(data: data, encoding: .utf8) {
-                DisclosureGroup {
-                    Text(result).themedCode(.small).textSelection(.enabled).padding(.top, 8)
-                } label: { Text("Advanced result details", bundle: .module) }
-            }
-        }
-        .onAppear { load(item) }
-        .onChange(of: item.id) { _, _ in flushEdits(); load(item) }
-        .onChange(of: item.preferredTranscript?.id) { _, _ in
-            if !dirty || item.preferredTranscript?.segments == segments { load(item) }
-        }
-        .onChange(of: segments) { _, _ in dirty = segments != savedSegments }
-        .onDisappear { flushEdits() }
-    }
-
-    private var transcriptHeader: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack { revisionPicker; saveButton }
-            VStack(alignment: .leading) { revisionPicker; saveButton }
-        }
-    }
-
-    private var revisionPicker: some View {
-        Picker(selection: Binding(get: { revisionID }, set: { id in
-            guard flushEdits() else { return }
-            if let revision = item.transcripts.first(where: { $0.id == id }) { loadRevision(revision) }
-        })) {
-            ForEach(item.transcripts) { revision in
-                HStack {
-                    Text(LocalizedStringKey(revision.source.audioTitle), bundle: .module)
-                    Text(revision.createdAt, format: .dateTime.hour().minute().second())
-                }.tag(Optional(revision.id))
-            }
-        } label: { Text("Transcript revision", bundle: .module) }
-    }
-
-    private var saveButton: some View {
-        Button { flushEdits() } label: { Text("Save edits", bundle: .module) }
-            .appAction(.secondary, size: .small)
-            .disabled(!dirty)
-    }
-
-    private func load(_ value: AudioLibraryItem) {
-        editingID = value.id
-        if let revision = value.preferredTranscript { loadRevision(revision) }
-        else { savedSegments = []; segments = []; revisionID = nil; dirty = false }
-        if let pending = controller.transcriptDraft(for: value.id) {
-            segments = pending
-            dirty = segments != savedSegments
-        }
-    }
-
-    private func loadRevision(_ revision: AudioTranscriptRevision) {
-        revisionID = revision.id
-        savedSegments = revision.segments
-        segments = revision.segments
-        dirty = false
-    }
-
-    private func stageEdits() {
-        dirty = segments != savedSegments
-        guard let editingID else { return }
-        // Stage reversions too, so a pending autosave cannot restore text the user undid.
-        controller.stageTranscriptEdits(segments, for: editingID)
-    }
-
-    @discardableResult private func flushEdits() -> Bool {
-        guard dirty, let editingID else { return true }
-        if controller.saveTranscript(segments, for: editingID) {
-            savedSegments = segments
-            dirty = false
-            return true
-        }
-        return false
-    }
-}
-
-private extension AudioLibraryItem.Status {
-    var audioTitle: String {
-        switch self {
-        case .draft: return "Draft"
-        case .recording: return "Recording"
-        case .processing: return "Processing"
-        case .completed: return "Completed"
-        case .interrupted: return "Interrupted"
-        case .failed: return "Failed"
-        }
-    }
-    var audioSymbol: String {
-        switch self {
-        case .draft: return "pencil"
-        case .recording: return "record.circle"
-        case .processing: return "hourglass"
-        case .completed: return "checkmark.circle"
-        case .interrupted: return "pause.circle"
-        case .failed: return "exclamationmark.triangle"
-        }
-    }
-}
-
-private extension AudioTranscriptRevision.Source {
-    var audioTitle: String {
-        switch self {
-        case .draft: return "Draft"
-        case .final: return "Final"
-        case .user: return "Edited"
-        }
+        AppPillPicker(
+            selection: $selection,
+            items: [
+                AppPillItem(value: .transcript, label: Text("Transcript", bundle: .module)),
+                AppPillItem(
+                    value: .notes,
+                    label: Text("Notes & Summary", bundle: .module),
+                    systemImage: hasSummary ? "checkmark.circle.fill" : nil),
+            ],
+            label: Text("Detail View", bundle: .module)
+        )
     }
 }

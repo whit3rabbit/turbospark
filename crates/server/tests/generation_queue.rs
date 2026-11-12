@@ -325,3 +325,91 @@ async fn a_request_disconnected_while_queued_never_generates() {
          sanity request): the disconnected request must not have started"
     );
 }
+
+/// The queue-depth contract: once `--max-queued` requests are
+/// waiting, a new request is refused with 429 and `Retry-After` BEFORE any
+/// response starts, streaming or not, in each wire format, and the refused
+/// request never generates. A refusal must not leak a place in the queue.
+#[tokio::test]
+async fn a_full_queue_refuses_with_429_before_any_response_starts() {
+    let held = Held::new();
+    held.queue.set_max_queued(1);
+    let base = serve_held(held.clone()).await;
+    let client = reqwest::Client::new();
+
+    let outcome = tokio::time::timeout(Duration::from_secs(30), async {
+        let r0 = tokio::spawn(fire_streaming(base.clone()));
+        wait_until("request 0's generation starts", || {
+            held.started.load(Ordering::SeqCst) == 1
+        })
+        .await;
+        let r1 = tokio::spawn(fire_streaming(base.clone()));
+        wait_until("request 1 is queued behind the gate", || {
+            held.queue.queued() == 1
+        })
+        .await;
+
+        let chat = |stream: bool| {
+            client
+                .post(format!("{base}/v1/chat/completions"))
+                .json(&serde_json::json!({
+                    "model": "held",
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "max_tokens": 4,
+                    "temperature": 0.0,
+                    "stream": stream,
+                }))
+                .send()
+        };
+        let messages = client
+            .post(format!("{base}/v1/messages"))
+            .json(&serde_json::json!({
+                "model": "held",
+                "max_tokens": 4,
+                "stream": true,
+                "messages": [{"role": "user", "content": "hi"}],
+            }))
+            .send();
+        let refused = [
+            chat(true).await.expect("connects"),
+            chat(false).await.expect("connects"),
+            messages.await.expect("connects"),
+        ];
+        let mut bodies = Vec::new();
+        for response in refused {
+            assert_eq!(response.status(), reqwest::StatusCode::TOO_MANY_REQUESTS);
+            assert_eq!(
+                response
+                    .headers()
+                    .get("retry-after")
+                    .and_then(|v| v.to_str().ok()),
+                Some("2")
+            );
+            bodies.push(response.text().await.expect("error body"));
+        }
+        assert_eq!(held.queue.queued(), 1, "a refusal took no queue place");
+
+        held.release();
+        for handle in [r0, r1] {
+            let response = handle.await.expect("request task lives");
+            response.bytes().await.expect("body completes");
+        }
+        // The queue drained, so a new request is admitted again.
+        let after = chat(false).await.expect("connects");
+        assert_eq!(after.status(), reqwest::StatusCode::OK);
+        (bodies, held.started.load(Ordering::SeqCst))
+    })
+    .await;
+
+    let (bodies, started) = outcome.expect("the gate must not deadlock");
+    assert!(
+        bodies[0].contains("generation queue is full"),
+        "{}",
+        bodies[0]
+    );
+    assert!(bodies[2].contains("rate_limit_error"), "{}", bodies[2]);
+    assert_eq!(
+        started, 3,
+        "only the holder, the queued request and the post-drain request generate"
+    );
+}

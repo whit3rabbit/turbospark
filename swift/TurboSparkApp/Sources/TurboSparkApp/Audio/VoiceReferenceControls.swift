@@ -7,23 +7,20 @@ struct VoiceReferenceControls: View {
     @ObservedObject var controller: AudioWorkspaceController
 
     private func trim(_ path: WritableKeyPath<AudioVoiceReference, Double>) -> Binding<Double> {
-        Binding(get: { controller.speechSettings.reference?[keyPath: path] ?? 0 }, set: {
-            controller.stopReferencePreview()
-            controller.speechSettings.reference?[keyPath: path] = $0
-            // A transcript of a different region is invalid conditioning.
-            controller.speechSettings.referenceText = ""
-        })
+        Binding(get: { controller.speechSettings.reference?[keyPath: path] ?? 0 },
+                set: { controller.setVoiceReferenceTrim(path, to: $0) })
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Reference voice", bundle: .module).themedFont(.base, weight: .semibold)
+            AppSectionHeader(title: Text("Reference voice", bundle: .module))
             HStack {
                 Button { controller.importAudio(asVoiceReference: true) } label: {
                     Label { Text("Import audio", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
                 }
                 .appAction(.secondary, size: .small)
                 .disabled(controller.importTask != nil)
+                .help(controller.importTask != nil ? Text("Importing audio", bundle: .module) : Text("Import audio", bundle: .module))
                 Menu {
                     ForEach(controller.items.filter { $0.hasPlayableAudio && $0.status == .completed }) { item in
                         Button { controller.setVoiceReference(item) } label: { Text(verbatim: item.title) }
@@ -56,6 +53,7 @@ struct VoiceReferenceControls: View {
                     }
                     .appAction(.secondary, size: .small)
                     .disabled(!reference.isValid)
+                    .help(controller.referencePlaying ? Text("Stop preview", bundle: .module) : Text("Preview reference audio", bundle: .module))
                     Button { controller.clearVoiceReference() } label: { Text("Remove", bundle: .module) }
                         .appAction(.secondary, size: .small)
                 }

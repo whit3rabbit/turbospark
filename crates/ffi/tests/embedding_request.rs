@@ -7,7 +7,10 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;
 
-use turbospark_ffi::{abi, ts_embedding_encode_request_json, ts_last_error, ts_string_free};
+use turbospark_ffi::{
+    abi, ts_embedding_catalog_json, ts_embedding_encode_request_json, ts_embedding_install,
+    ts_embedding_probe_json, ts_last_error, ts_string_free,
+};
 
 fn c(s: &str) -> CString {
     CString::new(s).unwrap()
@@ -103,4 +106,136 @@ fn embeds_text_image_and_audio_in_one_request() {
     // A Matryoshka size the model does not declare is refused.
     let (code, _) = call(&dir, r#"{"texts": ["a"], "dimensions": 300}"#);
     assert_eq!(code, abi::TS_ERR_GENERATE);
+}
+
+fn take_json(out: *mut c_char) -> serde_json::Value {
+    assert!(!out.is_null());
+    let v = unsafe { serde_json::from_str(CStr::from_ptr(out).to_str().unwrap()).unwrap() };
+    unsafe { ts_string_free(out) };
+    v
+}
+
+fn probe(arg: &str) -> serde_json::Value {
+    let a = c(arg);
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_embedding_probe_json(a.as_ptr(), &mut out) };
+    assert_eq!(code, abi::TS_OK, "{}", last_error());
+    take_json(out)
+}
+
+struct Tmp(std::path::PathBuf);
+impl Drop for Tmp {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn encoder_dir(model_type: &str) -> Tmp {
+    let d = std::env::temp_dir().join(format!(
+        "ts-ffi-embed-probe-{model_type}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&d).unwrap();
+    std::fs::write(
+        d.join("config.json"),
+        format!(r#"{{"model_type":"{model_type}"}}"#),
+    )
+    .unwrap();
+    std::fs::write(d.join("model.safetensors"), b"x").unwrap();
+    std::fs::write(d.join("tokenizer.json"), b"{}").unwrap();
+    Tmp(d)
+}
+
+#[test]
+fn probe_reports_family_verdicts_without_loading() {
+    let mut out: *mut c_char = ptr::null_mut();
+    assert_eq!(
+        unsafe { ts_embedding_probe_json(ptr::null(), &mut out) },
+        abi::TS_ERR_INVALID_ARGUMENT
+    );
+    let a = c("x");
+    assert_eq!(
+        unsafe { ts_embedding_probe_json(a.as_ptr(), ptr::null_mut()) },
+        abi::TS_ERR_INVALID_ARGUMENT
+    );
+
+    let gte = encoder_dir("gte");
+    let v = probe(gte.0.to_str().unwrap());
+    assert_eq!(v["runnable"], false);
+    assert_eq!(v["verified"], false);
+    #[cfg(target_os = "macos")]
+    {
+        assert_eq!(v["family"], "gte");
+        assert!(v["refused_because"].as_str().unwrap().contains("gte"));
+
+        let bert = encoder_dir("bert");
+        let v = probe(bert.0.to_str().unwrap());
+        assert_eq!(v["runnable"], true, "{v}");
+        assert_eq!(v["family"], "bert");
+        assert_eq!(v["backend"], "encoder");
+        // Runnable, but no catalog pin vouches for these bytes.
+        assert_eq!(v["verified"], false);
+        assert!(v["profile_alias"].is_null());
+    }
+
+    // The encode path applies the same verdict: a refused family never
+    // reaches a loader.
+    let (code, _) = call(gte.0.to_str().unwrap(), r#"{"texts":["hi"]}"#);
+    #[cfg(target_os = "macos")]
+    {
+        assert_eq!(code, abi::TS_ERR_OPEN);
+        assert!(last_error().contains("gte"), "{}", last_error());
+    }
+    #[cfg(not(target_os = "macos"))]
+    assert_eq!(code, abi::TS_ERR_UNSUPPORTED);
+}
+
+#[test]
+fn catalog_rows_carry_status_and_install_checks_the_revision() {
+    let mut out: *mut c_char = ptr::null_mut();
+    assert_eq!(
+        unsafe { ts_embedding_catalog_json(&mut out) },
+        abi::TS_OK,
+        "{}",
+        last_error()
+    );
+    let rows = take_json(out);
+    let row = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["alias"] == "embeddinggemma-2-coreml")
+        .expect("pinned profile");
+    assert_eq!(row["status"], "verified");
+    assert!(!row["gates"].as_array().unwrap().is_empty());
+    assert!(
+        ["current", "stale", "foreign", "absent"].contains(&row["install_state"].as_str().unwrap()),
+        "{row}"
+    );
+    assert_eq!(row["revision"].as_str().unwrap().len(), 40);
+
+    // A revision the catalog does not pin is refused before any download.
+    let alias = c("embeddinggemma-2-coreml");
+    let wrong = c("main");
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe {
+        ts_embedding_install(
+            alias.as_ptr(),
+            wrong.as_ptr(),
+            None,
+            ptr::null_mut(),
+            &mut out,
+        )
+    };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    assert!(last_error().contains("pinned at"), "{}", last_error());
+    assert!(out.is_null());
+    let code = unsafe {
+        ts_embedding_install(alias.as_ptr(), ptr::null(), None, ptr::null_mut(), &mut out)
+    };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
 }

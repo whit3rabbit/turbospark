@@ -35,8 +35,11 @@ const AUDIO_FRAMES: usize = 1_000;
 /// same): it may be too short to produce a token.
 const AUDIO_MIN_TAIL: usize = AUDIO_SAMPLE_RATE as usize / 2;
 
-const PATCH: usize = 16;
-const POOL: usize = 3;
+// The resize and patchify are shared with the LM vision path, which needs
+// them without Core ML.
+use turbospark_vision_io::{
+    gemma4_resize_dims, Gemma4Patches as ImagePatches, GEMMA4_PATCH as PATCH, GEMMA4_POOL as POOL,
+};
 const POSITION_ROWS: usize = 1024;
 
 /// Mel frames that hold only real audio in a window of `samples` samples:
@@ -62,93 +65,6 @@ pub(crate) fn audio_windows(len: usize) -> Vec<usize> {
         starts.pop();
     }
     starts
-}
-
-/// `(height, width)` the image is resized to for `max_patches` patches:
-/// transformers `get_aspect_ratio_preserving_size`, line for line.
-pub(crate) fn gemma4_resize_dims(
-    height: usize,
-    width: usize,
-    max_patches: usize,
-) -> Result<(usize, usize), String> {
-    if height == 0 || width == 0 {
-        return Err("image has a zero dimension".into());
-    }
-    let total = (height * width) as f64;
-    let target_px = (max_patches * PATCH * PATCH) as f64;
-    let factor = (target_px / total).sqrt();
-    let side = POOL * PATCH;
-    let mut h = ((factor * height as f64) / side as f64).floor() as usize * side;
-    let mut w = ((factor * width as f64) / side as f64).floor() as usize * side;
-    if h == 0 && w == 0 {
-        return Err("image would resize to 0 x 0".into());
-    }
-    let max_side = (max_patches / (POOL * POOL)) * side;
-    if h == 0 {
-        h = side;
-        w = ((width / height) * side).min(max_side);
-    } else if w == 0 {
-        w = side;
-        h = ((height / width) * side).min(max_side);
-    }
-    if (h * w) as f64 > target_px {
-        return Err(format!(
-            "resizing {height}x{width} to {h}x{w} exceeds {max_patches} patches"
-        ));
-    }
-    Ok((h, w))
-}
-
-/// Patch inputs for one image at a given budget.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct ImagePatches {
-    /// `[n_patches, 768]`, each patch `[16 rows][16 cols][RGB]` in `[0, 1]`.
-    pub pixels: Vec<f32>,
-    /// `(x, y)` patch coordinates.
-    pub positions: Vec<(usize, usize)>,
-    pub grid_w: usize,
-    pub grid_h: usize,
-}
-
-impl ImagePatches {
-    pub fn from_rgb(rgb: &[u8], width: usize, height: usize) -> Result<Self, String> {
-        if width % (POOL * PATCH) != 0 || height % (POOL * PATCH) != 0 {
-            return Err(format!("{width}x{height} is not a multiple of 48 px"));
-        }
-        let (gw, gh) = (width / PATCH, height / PATCH);
-        let mut pixels = Vec::with_capacity(gw * gh * PATCH * PATCH * 3);
-        let mut positions = Vec::with_capacity(gw * gh);
-        for py in 0..gh {
-            for px in 0..gw {
-                for r in 0..PATCH {
-                    let row = (py * PATCH + r) * width + px * PATCH;
-                    for c in 0..PATCH {
-                        for ch in 0..3 {
-                            pixels.push(f32::from(rgb[(row + c) * 3 + ch]) / 255.0);
-                        }
-                    }
-                }
-                positions.push((px, py));
-            }
-        }
-        Ok(Self {
-            pixels,
-            positions,
-            grid_w: gw,
-            grid_h: gh,
-        })
-    }
-
-    /// Soft token each patch pools into: `Gemma4VisionPooler`'s
-    /// `x / 3 + (grid_w / 3) * (y / 3)`.
-    pub fn pool_index(&self, i: usize) -> usize {
-        let (x, y) = self.positions[i];
-        x / POOL + (self.grid_w / POOL) * (y / POOL)
-    }
-
-    pub fn soft_tokens(&self) -> usize {
-        self.positions.len() / (POOL * POOL)
-    }
 }
 
 /// One vision function: its soft-token budget and patch count.
@@ -359,9 +275,9 @@ impl EmbeddingGemma2CoreMl {
                 .find(|f| f.tokens == b)
                 .ok_or_else(|| format!("image budget {b} is not one of the vision functions"))?,
         };
-        let (h, w) = gemma4_resize_dims(height, width, f.patches)?;
+        let (h, w) = gemma4_resize_dims(height, width, f.patches).map_err(|e| e.to_string())?;
         let resized = turbospark_vision_io::resize::resize_bicubic_pil(rgb, width, height, w, h);
-        let patches = ImagePatches::from_rgb(&resized, w, h)?;
+        let patches = ImagePatches::from_rgb(&resized, w, h).map_err(|e| e.to_string())?;
         let n = patches.positions.len();
         if n > f.patches || patches.grid_w > POSITION_ROWS || patches.grid_h > POSITION_ROWS {
             return Err(format!(
@@ -517,48 +433,5 @@ mod tests {
         assert_eq!(audio_windows(AUDIO_WINDOW + 7_999), vec![0]);
         assert_eq!(audio_windows(AUDIO_WINDOW + 8_000), vec![0, AUDIO_WINDOW]);
         assert_eq!(audio_windows(2 * AUDIO_WINDOW), vec![0, AUDIO_WINDOW]);
-    }
-
-    #[test]
-    fn resize_matches_transformers_examples() {
-        // Worked by hand from get_aspect_ratio_preserving_size, budget 280
-        // (2520 patches, 645120 px): a 640x480 photo has factor ~1.4491.
-        assert_eq!(gemma4_resize_dims(480, 640, 2520).unwrap(), (672, 912));
-        // A square at budget 70 (630 patches): 401.6 -> 384 per side.
-        assert_eq!(gemma4_resize_dims(1000, 1000, 630).unwrap(), (384, 384));
-        // A very wide strip rounds the short side to zero and clamps.
-        assert_eq!(gemma4_resize_dims(10, 4000, 630).unwrap(), (48, 3360));
-        for (h, w, p) in [
-            (480, 640, 2520),
-            (1000, 1000, 630),
-            (10, 4000, 630),
-            (333, 777, 1260),
-        ] {
-            let (rh, rw) = gemma4_resize_dims(h, w, p).unwrap();
-            assert_eq!(rh % 48, 0);
-            assert_eq!(rw % 48, 0);
-            assert!((rh / 16) * (rw / 16) <= p);
-        }
-    }
-
-    #[test]
-    fn patches_are_row_major_and_pool_by_3x3_blocks() {
-        // A 96x48 image: a 6x3 patch grid, two soft tokens side by side.
-        let (w, h) = (96, 48);
-        let rgb: Vec<u8> = (0..w * h).flat_map(|i| [(i % 251) as u8, 0, 255]).collect();
-        let p = ImagePatches::from_rgb(&rgb, w, h).unwrap();
-        assert_eq!((p.grid_w, p.grid_h), (6, 3));
-        assert_eq!(p.positions[0], (0, 0));
-        assert_eq!(p.positions[1], (1, 0));
-        assert_eq!(p.positions[6], (0, 1));
-        assert_eq!(p.soft_tokens(), 2);
-        assert_eq!(p.pool_index(0), 0);
-        assert_eq!(p.pool_index(2), 0);
-        assert_eq!(p.pool_index(3), 1);
-        assert_eq!(p.pool_index(17), 1);
-        // Patch 1 starts at pixel (0, 16); channel order is RGB.
-        let patch1 = &p.pixels[768..768 + 3];
-        assert_eq!(patch1, &[16.0 / 255.0, 0.0, 1.0]);
-        assert!(ImagePatches::from_rgb(&rgb[..3 * 50 * 48], 50, 48).is_err());
     }
 }

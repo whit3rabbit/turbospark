@@ -257,6 +257,18 @@ extension AppModel {
         }
 
         guard let project else {
+            if interactionMode == .chat && chatToolsEnabled {
+                let contextBudget: Int? = maxContextTokens > 0 ? maxContextTokens : nil
+                let toolsPrompt = AppToolCatalog.systemPromptAddendum(
+                    for: .general,
+                    projectURL: nil,
+                    contextTokens: contextBudget,
+                    availableAgents: [],
+                    webToolsEnabled: webSearchEnabled,
+                    availableTools: availableTools,
+                    nativeToolCalling: nativeToolCalling)
+                sections.append((.tools, toolsPrompt))
+            }
             return sections
         }
 
@@ -392,7 +404,7 @@ extension AppModel {
     ///   project-scoped custom tool resolvable when its category is
     ///   classified (state#71).
     public func extractToolCalls(from text: String, project: AppProject?) -> [AppToolCall] {
-        guard interactionMode == .projects, project != nil else { return [] }
+        guard (interactionMode == .projects && project != nil) || (interactionMode == .chat && chatToolsEnabled) else { return [] }
         return ToolCallParser.parse(from: text, projectURL: project?.rootDirectoryURL)
     }
 
@@ -460,9 +472,17 @@ extension AppModel {
                 self.toolExecutionTask = nil
             }
             if alwaysAllowSession {
-                await SessionApprovalStore.shared.allowTool(sessionID: sessionID, toolName: toolName)
-                if let cmd {
+                // A shell call grants its COMMAND, never the shell tool's
+                // name. The name grant also covered every other allowlisted
+                // command (`git push`, `make`, `npm install`), so one Always
+                // Allow on `ls` in an Ask project ran them all unasked.
+                // A URL tool grants its HOST for the same reason.
+                if let host = AppNetworkPolicy.host(forWebCall: call) {
+                    await SessionApprovalStore.shared.allowHost(sessionID: sessionID, host: host)
+                } else if let cmd {
                     await SessionApprovalStore.shared.allowCommandPrefix(sessionID: sessionID, prefix: cmd)
+                } else {
+                    await SessionApprovalStore.shared.allowTool(sessionID: sessionID, toolName: toolName)
                 }
             }
 

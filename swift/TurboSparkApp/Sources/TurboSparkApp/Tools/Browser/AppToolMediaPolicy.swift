@@ -128,7 +128,8 @@ public enum AppToolMediaPolicy {
     public static func storeScreenshot(
         pngData: Data?,
         capability: AppToolMediaCapability,
-        assetStore: ManagedAssetStore = .shared
+        assetStore: ManagedAssetStore = .shared,
+        fileName: String = "browser-screenshot.png"
     ) -> AppToolMediaProcessingOutcome {
         guard case .prepared(let image) = prepareScreenshotPNG(pngData, capability: capability) else {
             return AppToolMediaProcessingOutcome(reference: nil, disposition: .refused)
@@ -136,7 +137,7 @@ public enum AppToolMediaPolicy {
         do {
             let asset = try assetStore.store(
                 data: image.data,
-                fileName: "browser-screenshot.png",
+                fileName: fileName,
                 mimeType: UTType.png.preferredMIMEType ?? "image/png")
             let reference = AppToolMediaReference(
                 assetReference: asset.storedReference,

@@ -10,15 +10,16 @@ extension AudioTask {
     /// Whether the native runtime can open a session for this task.
     ///
     /// `ts_audio_session_open` deserializes the runtime's own task enum
-    /// (`crates/runtime/src/native_audio.rs`), which has exactly these three
-    /// variants. The other cases exist in Swift for catalog and capability
+    /// (`crates/runtime/src/native_audio.rs`), which has exactly these four
+    /// variants. Diarization returns speaker turns as transcript segments
+    /// with empty text and speakers `S1`, `S2`, ... The other cases exist in Swift for catalog and capability
     /// rows that describe model families the engine has code for but no
     /// session entry point yet; opening one is refused by name. A host should
     /// not offer a control for a task that is not runnable.
     public var isRunnable: Bool {
         switch self {
-        case .speechToText, .textToSpeech, .music: return true
-        case .enhancement, .separation, .alignment, .diarization, .speechDetection,
+        case .speechToText, .textToSpeech, .music, .diarization: return true
+        case .enhancement, .separation, .alignment, .speechDetection,
             .codec, .languageIdentification:
             return false
         }
@@ -49,13 +50,25 @@ public struct AudioCapabilities: Codable, Sendable, Equatable {
     public let cancellation: String
     public let canRun: Bool
     public let unavailableReason: String?
+    /// Measured Core ML placement at the pinned revision: `ane`, `gpu`,
+    /// `cpu`, or `mixed`. Nil off Core ML and in older payloads.
+    public let compute: String?
+    /// False when only this app can run the profile, so the HTTP server
+    /// refuses it. Nil in older payloads, which predate app-only profiles.
+    public let httpApi: Bool?
+    public let maxContextTokens: Int?
+    public let maxAudioFrames: Int?
+    public let frameRateHz: Int?
     public init(languages: [String] = [], voices: [String] = [], maxInputSeconds: Int? = nil,
                 supportsLyrics: Bool = false, operations: [String], timing: String? = nil,
-                backend: String, cancellation: String, canRun: Bool, unavailableReason: String? = nil) {
+                backend: String, cancellation: String, canRun: Bool, unavailableReason: String? = nil,
+                compute: String? = nil, httpApi: Bool? = nil,
+                maxContextTokens: Int? = nil, maxAudioFrames: Int? = nil, frameRateHz: Int? = nil) {
         self.languages = languages; self.voices = voices; self.maxInputSeconds = maxInputSeconds
         self.supportsLyrics = supportsLyrics; self.operations = operations; self.timing = timing
         self.backend = backend; self.cancellation = cancellation; self.canRun = canRun
-        self.unavailableReason = unavailableReason
+        self.unavailableReason = unavailableReason; self.compute = compute; self.httpApi = httpApi
+        self.maxContextTokens = maxContextTokens; self.maxAudioFrames = maxAudioFrames; self.frameRateHz = frameRateHz
     }
     /// The engine clones a voice from reference audio carried as the job's PCM.
     public var supportsVoiceClone: Bool { operations.contains("voice_clone") }
@@ -91,17 +104,21 @@ public struct AudioProfile: Codable, Sendable, Identifiable, Equatable {
     /// Absent from older payloads; `requiredAcknowledgments` reads it.
     public let acknowledgments: [AudioAcknowledgment]?
     public var requiredAcknowledgments: [AudioAcknowledgment] { acknowledgments ?? [] }
+    /// Folder under the install root that holds the assets, for loaders that
+    /// read a fixed layout. Nil when the assets sit at the install root.
+    public let installSubdir: String?
     /// Local-only descriptions need no invented repository revision or install plan.
     /// Use empty identity source fields and do not pass them to catalog mutation APIs.
     public init(identity: AudioProfileIdentity, family: String, displayName: String,
                 capabilities: AudioCapabilities, pcmFormat: AudioPCMFormat,
                 downloadBytes: UInt64 = 0, residentMemoryBytes: UInt64 = 0,
                 residentMemoryEvidence: String = "unknown", readiness: String, evidence: [String] = [],
-                acknowledgments: [AudioAcknowledgment] = []) {
+                acknowledgments: [AudioAcknowledgment] = [], installSubdir: String? = nil) {
         self.identity = identity; self.family = family; self.displayName = displayName
         self.capabilities = capabilities; self.pcmFormat = pcmFormat; self.downloadBytes = downloadBytes
         self.residentMemoryBytes = residentMemoryBytes; self.residentMemoryEvidence = residentMemoryEvidence
         self.readiness = readiness; self.evidence = evidence; self.acknowledgments = acknowledgments
+        self.installSubdir = installSubdir
     }
 }
 public struct AudioInstalledRecord: Codable, Sendable, Equatable, Identifiable {
@@ -111,6 +128,14 @@ public struct AudioInstalledRecord: Codable, Sendable, Equatable, Identifiable {
     public let family: String
     public let status: String
     public let installBytes: UInt64
+    /// The holding library's id. Absent for a This Mac row an older engine
+    /// wrote, and for a row the registry keeps without one.
+    public let library: String?
+    /// The library's name, raw and untrusted. Only an install result carries
+    /// it; a report row names its library through `AudioNotConnectedInstall`.
+    public let libraryName: String?
+    /// `<library>:audio/<alias>`. Only an install result carries it.
+    public let installId: String?
 }
 public struct AudioLegacyInstall: Codable, Sendable, Equatable {
     public let record: AudioInstalledRecord
@@ -119,13 +144,45 @@ public struct AudioLegacyInstall: Codable, Sendable, Equatable {
 public struct AudioIncompatibleInstall: Codable, Sendable, Equatable {
     public let record: AudioInstalledRecord
     public let identity: AudioProfileIdentity?
+    /// An engine message that can echo a library name and a mount path from a
+    /// drive: show it through `UntrustedText.display`.
     public let error: String
+}
+/// An audio install whose library's drive is not connected. It is a state to
+/// show ("Not connected", naming the drive), never an error, and it is not in
+/// `incompatible`.
+public struct AudioNotConnectedInstall: Codable, Sendable, Equatable {
+    /// The registry row as recorded. Its `path` is where the install was last
+    /// found, under the drive's mount point at that time.
+    public let record: AudioInstalledRecord
+    public let identity: AudioProfileIdentity?
+    /// The library to connect. Raw and untrusted; the engine's resolve
+    /// sentence can lose its call to action when this is very long, so build
+    /// your own statement from this name rather than showing that sentence.
+    public let libraryName: String
 }
 public struct AudioInstalledReport: Codable, Sendable, Equatable {
     public let installed: [AudioInstalledRecord]
     public let needsAdoption: [AudioLegacyInstall]
     public let incompatible: [AudioIncompatibleInstall]
     public let otherAudio: [AudioInstalledRecord]
+    /// Installs in a library that is not connected. Empty from an engine
+    /// that predates model libraries.
+    public let notConnected: [AudioNotConnectedInstall]
+
+    private enum CodingKeys: String, CodingKey {
+        case installed, needsAdoption, incompatible, otherAudio, notConnected
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        installed = try values.decode([AudioInstalledRecord].self, forKey: .installed)
+        needsAdoption = try values.decode([AudioLegacyInstall].self, forKey: .needsAdoption)
+        incompatible = try values.decode([AudioIncompatibleInstall].self, forKey: .incompatible)
+        otherAudio = try values.decode([AudioInstalledRecord].self, forKey: .otherAudio)
+        notConnected = try values.decodeIfPresent(
+            [AudioNotConnectedInstall].self, forKey: .notConnected) ?? []
+    }
 }
 public struct AudioFamilyCapability: Codable, Sendable, Identifiable, Equatable {
     public var id: String { family }
@@ -184,10 +241,16 @@ public enum AudioCatalog {
     /// Blocking transfer; call off the main actor. Existing Catalog install controls apply.
     /// `acknowledged` lists the ids of the profile's `requiredAcknowledgments`
     /// the user accepted; a missing one is refused before any download.
+    /// `library` is the `ModelLibrary.id` to install into (nil or `internal`
+    /// is This Mac). A destination the engine refuses fails before the first
+    /// request with a `TurboSparkError` whose `libraryFault` is `notConnected`,
+    /// `libraryReadOnly`, `unknownLibrary` or `aliasElsewhere`, or `busy` while
+    /// a move runs. The result carries `library`, `libraryName` and `installId`.
     public static func install(_ identity: AudioProfileIdentity, acknowledged: [String] = [],
+                               library: String? = nil,
                                progress: @escaping @Sendable (AudioDownloadProgress) -> Void = { _ in }) throws -> AudioInstalledRecord {
         let json = try audioEncode(identity)
-        let options = try audioEncode(AudioInstallOptions(acknowledged: acknowledged))
+        let options = try audioEncode(AudioInstallOptions(acknowledged: acknowledged, library: library))
         let box = AudioDownloadBox(progress)
         let context = Unmanaged.passUnretained(box).toOpaque()
         return try audioDecode(AudioInstalledRecord.self, takeString { out in json.withCString { identity in options.withCString { options in
@@ -200,7 +263,13 @@ public enum AudioCatalog {
         } } })
     }
 }
-private struct AudioInstallOptions: Encodable { let acknowledged: [String] }
+/// Internal rather than private so a test can pin the wire keys. `library` is
+/// omitted when nil, so a call with no destination sends the bytes it sent
+/// before libraries.
+struct AudioInstallOptions: Encodable {
+    let acknowledged: [String]
+    let library: String?
+}
 public struct AudioDownloadProgress: Sendable {
     public let path: String?
     public let completedBytes: UInt64
@@ -259,7 +328,10 @@ public struct AudioRequest: Codable, Sendable, Equatable {
     public var caption = ""
     public var lyrics = ""
     public var durationSeconds: Double? = 10
-    public var steps: Int? = 30
+    public var maxFrames: Int?
+    public var contextSize: Int?
+    /// For Music 3, nil lets checkpoint metadata choose its recommended steps.
+    public var steps: Int?
     public var seed: UInt64? = 0
     public var instruction: String?
     public var referenceText: String?
@@ -326,7 +398,23 @@ public struct AudioResult: Codable, Sendable, Equatable {
     public let transcript: AudioTranscript?
     public let pcm: AudioPCM?
     public let seed: UInt64?
-    public init(transcript: AudioTranscript? = nil, pcm: AudioPCM? = nil, seed: UInt64? = nil) { self.transcript = transcript; self.pcm = pcm; self.seed = seed }
+    /// Drama 3: the take likely stopped speaking before its text ended (a
+    /// chunk hit its frame cap, or a silence no completed take has). The
+    /// words were never generated, so another seed is the remedy. False for
+    /// every other model.
+    public let stoppedEarly: Bool
+    public init(transcript: AudioTranscript? = nil, pcm: AudioPCM? = nil, seed: UInt64? = nil, stoppedEarly: Bool = false) {
+        self.transcript = transcript; self.pcm = pcm; self.seed = seed; self.stoppedEarly = stoppedEarly
+    }
+    private enum CodingKeys: String, CodingKey { case transcript, pcm, seed, stoppedEarly }
+    /// A result encoded before `stoppedEarly` existed decodes as not stopped.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        transcript = try c.decodeIfPresent(AudioTranscript.self, forKey: .transcript)
+        pcm = try c.decodeIfPresent(AudioPCM.self, forKey: .pcm)
+        seed = try c.decodeIfPresent(UInt64.self, forKey: .seed)
+        stoppedEarly = try c.decodeIfPresent(Bool.self, forKey: .stoppedEarly) ?? false
+    }
 }
 public struct AudioProgress: Codable, Sendable, Equatable {
     public let stage: String
@@ -336,11 +424,11 @@ public struct AudioProgress: Codable, Sendable, Equatable {
         self.stage = stage; self.completed = completed; self.total = total
     }
 }
-private func audioEncode<T: Encodable>(_ value: T) throws -> String {
+func audioEncode<T: Encodable>(_ value: T) throws -> String {
     let encoder = JSONEncoder(); encoder.keyEncodingStrategy = .convertToSnakeCase
     return String(decoding: try encoder.encode(value), as: UTF8.self)
 }
-private func audioDecode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
+func audioDecode<T: Decodable>(_ type: T.Type, _ json: String) throws -> T {
     let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
     return try decoder.decode(type, from: Data(json.utf8))
 }
@@ -349,8 +437,10 @@ private struct AudioWireResult: Decodable {
     let pcmFormat: AudioPCMFormat?
     let sampleCount: Int
     let seed: UInt64?
+    /// Absent from a library older than the field.
+    let stoppedEarly: Bool?
 }
-private final class AudioCallbackBox {
+final class AudioCallbackBox {
     var samples: [Float] = []
     let progress: @Sendable (AudioProgress) -> Void
     let onPCM: (@Sendable ([Float]) -> Void)?
@@ -424,7 +514,7 @@ public final class AudioOpenToken: @unchecked Sendable {
     /// Runs `body` with the native token, holding the lock so `deinit` cannot
     /// free it underneath. Cancellation does not take this lock for the
     /// duration of the call (see `cancel`), so it works while an open runs.
-    fileprivate func withRaw<T>(_ body: (OpaquePointer?) throws -> T) rethrows -> T {
+    func withRaw<T>(_ body: (OpaquePointer?) throws -> T) rethrows -> T {
         lock.lock(); let handle = raw; lock.unlock()
         return try withExtendedLifetime(self) { try body(handle) }
     }
@@ -547,12 +637,12 @@ public final class AudioSession: @unchecked Sendable {
         }
         let wire = try audioDecode(AudioWireResult.self, result)
         guard wire.sampleCount == box.samples.count else { throw TurboSparkError(code: .invalidArgument, message: "Native audio output count mismatch") }
-        return AudioResult(transcript: wire.transcript, pcm: wire.pcmFormat.map { AudioPCM(format: $0, samples: box.samples) }, seed: wire.seed)
+        return AudioResult(transcript: wire.transcript, pcm: wire.pcmFormat.map { AudioPCM(format: $0, samples: box.samples) }, seed: wire.seed, stoppedEarly: wire.stoppedEarly ?? false)
     }
 }
 /// The one C callback for audio jobs and cancellable opens: kind 1 is
 /// progress JSON, kind 2 is borrowed PCM (copied before this returns).
-private let audioProgressTrampoline: @convention(c) (
+let audioProgressTrampoline: @convention(c) (
     UnsafeMutableRawPointer?, Int32, UnsafePointer<CChar>?, Int, UnsafePointer<Float>?, Int
 ) -> Void = { userdata, kind, json, length, samples, count in
     guard let userdata else { return }

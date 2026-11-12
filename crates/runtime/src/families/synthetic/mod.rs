@@ -81,6 +81,15 @@ impl RealForwardRunner {
         position: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), RealForwardError> {
+        // EVERY per-token advance funnels here, including callers that bypass
+        // the trait's `produce` (hidden_trunk's step reads the normed hidden
+        // through this). The state is about to move eagerly: it is no longer
+        // a committed boundary a lazy round checkpoint could skip
+        // snapshotting, and any outstanding snapshot-less round checkpoint
+        // gets its deferred snapshot now. (Found by
+        // `restoring_a_snapshot_replays_bit_identically`, whose step path
+        // bypassed the trait guard.)
+        self.note_eager_advance();
         if self.real_qwen4.is_some() {
             return self.produce_real_qwen4(token, position, logits);
         }
@@ -93,14 +102,23 @@ impl RealForwardRunner {
         if self.real_deepseek2.is_some() {
             return self.produce_real_deepseek2(token, position, logits);
         }
+        if self.real_unlimited_ocr2.is_some() {
+            return self.produce_real_unlimited_ocr2(token, position, logits);
+        }
         if self.real_gpt_oss.is_some() {
             return self.produce_real_gpt_oss(token, position, logits);
+        }
+        if self.real_flint.is_some() {
+            return self.produce_real_flint(token, position, logits);
         }
         if self.real_muse.is_some() {
             return self.produce_real_muse(token, position, logits);
         }
         if self.real_spark.is_some() {
             return self.produce_real_spark(token, position, logits);
+        }
+        if self.real_lfm3.is_some() {
+            return self.produce_real_lfm3(token, position, logits);
         }
         if self.real.is_some() {
             return self.produce_real_gemma4(token, position, logits);

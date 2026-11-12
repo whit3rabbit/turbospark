@@ -357,6 +357,12 @@ fn run_partial_round(
             .expect("the shortened replay verify runs");
         batch_logits[..keep * vocab].copy_from_slice(&replay);
     }
+    // The round-end commit the speculative loop performs every round: a
+    // no-op on the eager path, and on the lazy path it folds the kept rows
+    // (the retain arm already did inside the rollback; the re-verify arm
+    // leaves them pending). Both arms then hold the same folded state the
+    // produce below observes.
+    runner.commit_pending(keep).expect("the round-end commit");
 
     // The bonus comes from row `keep - 1` -- the last kept row -- and both
     // arms then feed it through the target at the same position, whose
@@ -451,19 +457,181 @@ fn a_stale_tape_refuses_the_retaining_rollback() {
         .expect_err("an empty tape must refuse");
     assert!(err.contains("tape"), "wrong refusal: {err}");
 
-    // A verify records, the next produce consumes the tape, and a second
-    // ask against the pre-produce checkpoint refuses again.
+    // A verify records, the next trunk step consumes the record, and a
+    // second ask against the pre-consume checkpoint refuses again. WHAT the
+    // consuming step is depends on the tape mode: eagerly a produce simply
+    // overwrites the scratch (the state was already advanced), while under
+    // the lazy tape a produce with a pending record is REFUSED by name and
+    // the round-end commit is the consumer.
+    let lazy = std::env::var("TURBOSPARK_GDN_LAZY_TAPE").as_deref() != Ok("0");
     let feed = [next, 13];
     let mut batch = vec![LogitValue::from_f32(0.0); 2 * vocab];
     runner.verify(&feed, base, &mut batch).expect("verify");
     let point = runner.checkpoint();
-    runner
-        .produce(13, base + feed.len(), &mut logits)
-        .expect("produce");
+    if lazy {
+        let err = runner
+            .produce(13, base + feed.len(), &mut logits)
+            .expect_err("a produce must refuse a pending lazy tape");
+        assert!(err.contains("lazy"), "wrong refusal: {err}");
+        runner
+            .commit_pending(1)
+            .expect("the commit consumes the tape");
+    } else {
+        runner
+            .produce(13, base + feed.len(), &mut logits)
+            .expect("produce");
+    }
     let err = runner
         .rollback_retaining(&point, 1)
         .expect_err("a consumed tape must refuse");
     assert!(err.contains("tape"), "wrong refusal: {err}");
+}
+
+/// Primes a runner on `PROMPT`, verifies and commits a two-row round so the
+/// GDN state is CLEAN (a fold just ran), and returns the next position. The
+/// state a lazy `checkpoint_round` may skip its snapshot on.
+fn runner_with_a_clean_state(dir: &std::path::Path) -> (RealForwardRunner, usize) {
+    let vocab = VOCAB as usize;
+    let mut runner = open(dir, 2);
+    let mut logits = vec![LogitValue::from_f32(0.0); vocab];
+    for (i, &token) in PROMPT.iter().enumerate() {
+        runner.produce(token, i, &mut logits).expect("produce");
+        if i + 1 < PROMPT.len() {
+            runner.prime_drafter(PROMPT[i + 1], i).expect("prime");
+        }
+    }
+    let base = PROMPT.len();
+    let feed = [argmax(&logits), 13];
+    let mut batch = vec![LogitValue::from_f32(0.0); 2 * vocab];
+    runner.verify(&feed, base, &mut batch).expect("verify");
+    runner.commit_pending(2).expect("the round-end commit");
+    (runner, base + 2)
+}
+
+/// A round checkpoint that skipped its snapshot must stay a general restore
+/// point: eager `produce` steps after it, then `rollback`, replays
+/// bit-identically. (Under the first lazy design this PANICKED on every
+/// clean-state checkpoint; `HiddenTrunk::snapshot` -> `step` -> `restore`
+/// took that path.) Under the eager tape the checkpoint always snapshots and
+/// the test is the plain rollback contract.
+#[test]
+fn a_round_checkpoint_stays_a_general_restore_point() {
+    let dir = build();
+    let vocab = VOCAB as usize;
+    let (mut runner, pos) = runner_with_a_clean_state(&dir);
+    let point = runner.checkpoint_round();
+    let mut logits = vec![LogitValue::from_f32(0.0); vocab];
+    let mut run = |runner: &mut RealForwardRunner| -> Vec<String> {
+        let mut out = Vec::new();
+        for (i, token) in [13, 17, 19].into_iter().enumerate() {
+            runner
+                .produce(token, pos + i, &mut logits)
+                .expect("produce");
+            out.push(digest(&logits));
+        }
+        out
+    };
+    let first = run(&mut runner);
+    runner.rollback(&point);
+    let second = run(&mut runner);
+    assert_eq!(first, second, "the restored GDN state must replay exactly");
+}
+
+/// The other side of the skip: a fold that commits the state PAST a
+/// snapshot-less round checkpoint makes it unanswerable, so a rollback to it
+/// must refuse loudly rather than restore nothing while the KV rewinds.
+/// Only meaningful under the lazy tape (the eager checkpoint holds a real
+/// snapshot and the rollback is legitimate).
+#[test]
+fn rolling_back_past_a_committed_round_refuses_a_snapshotless_checkpoint() {
+    if std::env::var("TURBOSPARK_GDN_LAZY_TAPE").as_deref() == Ok("0") {
+        return;
+    }
+    let dir = build();
+    let vocab = VOCAB as usize;
+    let (mut runner, pos) = runner_with_a_clean_state(&dir);
+    let point = runner.checkpoint_round();
+    let mut batch = vec![LogitValue::from_f32(0.0); 2 * vocab];
+    runner.verify(&[13, 17], pos, &mut batch).expect("verify");
+    runner.commit_pending(2).expect("the round-end commit");
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runner.rollback(&point);
+    }));
+    assert!(result.is_err(), "the stale round checkpoint must refuse");
+}
+
+/// An uncommitted lazy tape left by an error or abandoned round can be
+/// discarded via `discard_pending()`, rewinding the KV cache to the verify
+/// start position and clearing the tape so subsequent trunk passes run without
+/// refusing.
+#[test]
+fn pending_tape_on_error_can_be_discarded_cleanly() {
+    let dir = build();
+    let vocab = VOCAB as usize;
+    let (mut runner, pos) = runner_with_a_clean_state(&dir);
+    let mut batch = vec![LogitValue::from_f32(0.0); 2 * vocab];
+    runner.verify(&[13, 17], pos, &mut batch).expect("verify");
+    if std::env::var("TURBOSPARK_GDN_LAZY_TAPE").as_deref() != Ok("0") {
+        assert!(runner.refuse_uncommitted_lazy_tape().is_err());
+        let mut logits = vec![LogitValue::from_f32(0.0); vocab];
+        assert!(
+            runner.produce(19, pos, &mut logits).is_err(),
+            "trunk pass must refuse while lazy tape is pending"
+        );
+    }
+    runner.discard_pending();
+    assert!(runner.refuse_uncommitted_lazy_tape().is_ok());
+    let mut logits = vec![LogitValue::from_f32(0.0); vocab];
+    runner
+        .produce(19, pos, &mut logits)
+        .expect("produce succeeds cleanly after discard");
+}
+
+/// A round checkpoint that skipped its snapshot remains reusable for
+/// multiple rollbacks before a commit occurs, replaying bit-identically each
+/// time. Once committed past, `is_valid_rollback_point` reports false and
+/// `try_rollback` returns an Err rather than panicking.
+#[test]
+fn a_round_checkpoint_is_reusable_before_commit_and_validates_safely() {
+    let dir = build();
+    let vocab = VOCAB as usize;
+    let (mut runner, pos) = runner_with_a_clean_state(&dir);
+    let point = runner.checkpoint_round();
+    assert!(runner.is_valid_rollback_point(&point));
+
+    let mut logits = vec![LogitValue::from_f32(0.0); vocab];
+    let mut run = |runner: &mut RealForwardRunner| -> Vec<String> {
+        let mut out = Vec::new();
+        for (i, token) in [13, 17, 19].into_iter().enumerate() {
+            runner
+                .produce(token, pos + i, &mut logits)
+                .expect("produce");
+            out.push(digest(&logits));
+        }
+        out
+    };
+
+    let first = run(&mut runner);
+    runner.rollback(&point);
+    let second = run(&mut runner);
+    assert_eq!(first, second, "first replay matches");
+
+    // Second rollback to the same round checkpoint before commit:
+    runner.rollback(&point);
+    let third = run(&mut runner);
+    assert_eq!(first, third, "second replay matches");
+
+    // Now verify and commit:
+    let mut batch = vec![LogitValue::from_f32(0.0); 2 * vocab];
+    runner
+        .verify(&[23, 29], pos + 3, &mut batch)
+        .expect("verify");
+    runner.commit_pending(2).expect("commit");
+
+    if std::env::var("TURBOSPARK_GDN_LAZY_TAPE").as_deref() != Ok("0") {
+        assert!(!runner.is_valid_rollback_point(&point));
+        assert!(runner.try_rollback(&point).is_err());
+    }
 }
 
 /// The speculative loop's reuse contract, at the runner level: a

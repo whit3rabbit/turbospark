@@ -21,6 +21,11 @@
         256,
         128
       ],
+      "status": "verified",
+      "gates": [
+        "coreml_embeddinggemma2",
+        "pinned_coreml_installs_network"
+      ],
       "assets": [
         {
           "path": "EmbeddingGemma2Audio.mlpackage/Data/com.apple.CoreML/model.mlmodel",

@@ -852,6 +852,9 @@ fn head_major(x: &[f32], rows: usize, heads: usize, dim: usize) -> Vec<f32> {
     out
 }
 
+// Built once per model and held for its life, a handful of values. Boxing
+// the large variant would only add a pointer chase to every forward call.
+#[allow(clippy::large_enum_variant)]
 enum FeedForward {
     Dense {
         /// Fused `w_in`: rows `[0..inter]` are the value half, rows

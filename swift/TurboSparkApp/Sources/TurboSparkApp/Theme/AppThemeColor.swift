@@ -16,7 +16,10 @@ extension ResolvedAppTheme {
 
 /// Environment-aware styles work even in leaves without an explicit theme property.
 public struct AppThemeColor: ShapeStyle {
-    enum Role { case page, surface, elevated, text, secondary, border, accent }
+    enum Role {
+        case page, surface, elevated, text, secondary, border, accent, accentText
+        case success, warning, danger, successTint, warningTint, dangerTint
+    }
     var role: Role
     var alpha: Double = 1
     public func opacity(_ value: Double) -> AppThemeColor { var copy = self; copy.alpha *= value; return copy }
@@ -31,11 +34,19 @@ public struct AppThemeColor: ShapeStyle {
         case .secondary: color = theme.secondaryText
         case .border: color = theme.border
         case .accent: color = theme.accent
+        case .accentText: color = theme.accentText
+        case .success: color = theme.success
+        case .warning: color = theme.warning
+        case .danger: color = theme.danger
+        case .successTint: color = theme.successTint
+        case .warningTint: color = theme.warningTint
+        case .dangerTint: color = theme.dangerTint
         }
         switch role {
         case .page, .surface, .elevated:
             return color.opacity(theme.surfaceOpacity(alpha))
-        case .text, .secondary, .border, .accent:
+        case .text, .secondary, .border, .accent, .accentText, .success, .warning, .danger,
+             .successTint, .warningTint, .dangerTint:
             return color.opacity(alpha)
         }
     }
@@ -49,4 +60,13 @@ public extension ShapeStyle where Self == AppThemeColor {
     static var appSecondary: AppThemeColor { .init(role: .secondary) }
     static var appBorder: AppThemeColor { .init(role: .border) }
     static var appAccent: AppThemeColor { .init(role: .accent) }
+    /// The accent where it is text or a glyph. Light mode darkens it to clear 4.5:1.
+    static var appAccentText: AppThemeColor { .init(role: .accentText) }
+    static var appSuccess: AppThemeColor { .init(role: .success) }
+    static var appWarning: AppThemeColor { .init(role: .warning) }
+    static var appDanger: AppThemeColor { .init(role: .danger) }
+    /// 14% washes for a status badge or row background.
+    static var appSuccessTint: AppThemeColor { .init(role: .successTint) }
+    static var appWarningTint: AppThemeColor { .init(role: .warningTint) }
+    static var appDangerTint: AppThemeColor { .init(role: .dangerTint) }
 }

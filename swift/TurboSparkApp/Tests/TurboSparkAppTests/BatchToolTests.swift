@@ -1,7 +1,7 @@
 import XCTest
 @testable import TurboSparkApp
 
-final class BatchToolTests: XCTestCase {
+final class BatchToolTests: NetworkPolicyPinnedTestCase {
     func testBatchExecutionExecutesCallsConcurrently() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -167,5 +167,61 @@ final class BatchToolTests: XCTestCase {
             in: nil, fallbackMode: .ask)
 
         XCTAssertTrue(result.output.contains("Nested call requires separate approval"), result.output)
+    }
+
+    /// The APPROVED path: a user approves one `batch` card in a projectless
+    /// Ask chat. `executeApprovedTool` passed no mode, so its children ran
+    /// under the rootless Auto default.
+    @MainActor
+    func testApprovedProjectlessBatchChildHonorsTheChatsAskMode() async throws {
+        let appModel = AppModel()
+        appModel.activePermissionMode = .ask
+        let batchArgs = [
+            "tool_calls": """
+            [{"tool":"web_fetch","parameters":{"url":"https://example.invalid/"}}]
+            """
+        ]
+        let executed = await appModel.executeApprovedTool(
+            AppToolCall(name: "batch", arguments: batchArgs, category: .automation),
+            project: nil, chatID: UUID(), webToolsEnabled: true)
+
+        XCTAssertTrue(
+            executed.result.output.contains("Nested call requires separate approval"),
+            executed.result.output)
+    }
+
+    /// A profile that offers `batch` but not the shell must not run the shell
+    /// as a batch child. The profile only narrowed what the model was SHOWN.
+    @MainActor
+    func testBatchChildOutsideTheActiveProfileIsRefused() async throws {
+        let appModel = AppModel()
+        appModel.toolProfileOverride = AppToolProfile(
+            name: "batch only", allowedTools: ["batch", "read"], includesMcpAndCustom: false)
+        let batchArgs = [
+            "tool_calls": """
+            [{"tool":"run_command","parameters":{"command":"ls"}}]
+            """
+        ]
+        let executed = await appModel.executeApprovedTool(
+            AppToolCall(name: "batch", arguments: batchArgs, category: .automation),
+            project: nil, chatID: UUID(), webToolsEnabled: true)
+
+        XCTAssertTrue(
+            executed.result.output.contains("is not offered by the active tool profile"),
+            executed.result.output)
+    }
+
+    /// Nested gates call `evaluate` with no mode and must inherit the
+    /// rootless mode the registry scoped.
+    func testEvaluateWithoutAModeReadsTheScopedRootlessMode() {
+        let call = AppToolCall(
+            name: "web_fetch", arguments: ["url": "https://example.com/"], category: .web)
+        XCTAssertEqual(AppToolPermissionEngine.evaluate(call: call, project: nil), .allow)
+        let scoped = ToolPermissionContext.$fallbackMode.withValue(.ask) {
+            AppToolPermissionEngine.evaluate(call: call, project: nil)
+        }
+        guard case .ask = scoped else {
+            return XCTFail("A scoped Ask mode must reach a nested evaluate, got \(scoped)")
+        }
     }
 }

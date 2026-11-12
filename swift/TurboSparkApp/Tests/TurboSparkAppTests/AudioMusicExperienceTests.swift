@@ -71,6 +71,8 @@ final class AudioMusicExperienceTests: XCTestCase {
         defer { controller.shutdown() }
         while controller.isRefreshingModels { try await Task.sleep(for: .milliseconds(10)) }
         controller.profiles = try AudioCatalog.profiles()
+        // The model menu lists installed models, and a page selects only one of those.
+        controller.installedPaths = Dictionary(uniqueKeysWithValues: controller.profiles.map { ($0.identity.alias, "/test/\($0.identity.alias)") })
         controller.selectPage(.music)
         try await body(controller, library)
     }
@@ -128,6 +130,20 @@ final class AudioMusicExperienceTests: XCTestCase {
             controller.isBusy = false
             controller.receiveProgress(try self.event("ar", 99, 100), runID: runID, token: controller.epoch)
             XCTAssertEqual(controller.progress, 0.1)
+        }
+    }
+
+    @MainActor func testEngineStageIdsNeverReachTheMusicStatus() async throws {
+        try await withController { controller, _ in
+            controller.isBusy = true
+            let runID = UUID(); controller.activeRunID = runID
+            controller.generationProgress = AudioGenerationProgress()
+            // Every native job starts with "running"; the second id is unknown.
+            for stage in ["running", "vocoder_pass"] {
+                controller.receiveProgress(try self.event(stage, 0), runID: runID, token: controller.epoch)
+                XCTAssertEqual(controller.status, AppStrings.localized("Encoding prompt"), stage)
+            }
+            controller.isBusy = false
         }
     }
 

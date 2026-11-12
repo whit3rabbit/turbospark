@@ -95,6 +95,14 @@ final class ServerStatusRowsTests: XCTestCase {
         XCTAssertNil(AppModel.serverAPIKey(from: "\n\t "))
     }
 
+    /// #150: a launch start with no key refuses instead of serving keyless.
+    func testAutoStartRefusesWithoutAKeyAndRunsWithOne() {
+        XCTAssertTrue(AppModel.autoStartNeedsKey(apiKeyInput: ""))
+        XCTAssertTrue(AppModel.autoStartNeedsKey(apiKeyInput: "  \n"))
+        XCTAssertFalse(AppModel.autoStartNeedsKey(apiKeyInput: "sk-test"))
+        XCTAssertFalse(AppModel.autoStartNeedsKey(apiKeyInput: "  sk-test "))
+    }
+
     /// **THE WHOLE CHAIN THE AUTH ROW EXISTS FOR, in one case.** A field
     /// holding nothing but spaces resolves to no key, which starts an
     /// unauthenticated server, which reports `authEnabled: false`, which the

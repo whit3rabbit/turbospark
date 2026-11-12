@@ -19,6 +19,8 @@ public struct SafetySettingsPaneView: View {
 
     @State private var showingEditor = false
     @State private var editingPreset: AppSteeringPreset?
+    @State private var presetToDelete: AppSteeringPreset?
+    @State private var isConfirmingDeletePreset = false
 
     public init(model: AppModel) {
         self.model = model
@@ -52,6 +54,22 @@ public struct SafetySettingsPaneView: View {
                     model.selectSteeringPreset(saved.id)
                 }
             }
+        }
+        .confirmationDialog(
+            Text("Delete Preset", bundle: .module),
+            isPresented: $isConfirmingDeletePreset,
+            presenting: presetToDelete
+        ) { preset in
+            Button(role: .destructive) {
+                model.deleteSteeringPreset(preset.id)
+            } label: {
+                Text("Delete '\(preset.displayName)'", bundle: .module)
+            }
+            Button(role: .cancel) {} label: {
+                Text("Cancel", bundle: .module)
+            }
+        } message: { preset in
+            Text("Are you sure you want to delete '\(preset.displayName)' from disk? This action cannot be undone.", bundle: .module)
         }
     }
 
@@ -129,31 +147,46 @@ public struct SafetySettingsPaneView: View {
     private var presetsSection: some View {
         Section(header: Text("Directions", bundle: .module)) {
             if model.steeringPresets.isEmpty {
-                Text("No directions registered.", bundle: .module)
-                    .foregroundStyle(.appSecondary)
-            }
-            ForEach(model.steeringPresets) { preset in
-                SteeringPresetRow(
-                    preset: preset,
-                    compatibility: AppSteeringPolicy.compatibility(
-                        preset: preset,
-                        modelHidden: model.selectedModelHiddenSize,
-                        modelLayers: model.selectedModelLayerCount
-                    ),
-                    onEdit: {
-                        editingPreset = preset
+                AppEmptyState(
+                    systemImage: "arrow.triangle.swap",
+                    title: Text("No directions registered.", bundle: .module),
+                    message: Text("Directional steering applies a rank-1 edit to the model's residual stream at every layer, while it generates. Nothing is written to the model files and the edit is reversible between two turns.", bundle: .module)
+                ) {
+                    Button {
+                        editingPreset = nil
                         showingEditor = true
-                    },
-                    onDelete: { model.deleteSteeringPreset(preset.id) }
-                )
+                    } label: {
+                        Label { Text("Add a direction", bundle: .module) } icon: { Image(systemName: "plus") }
+                    }
+                    .appAction(.primary, size: .small)
+                }
+            } else {
+                ForEach(model.steeringPresets) { preset in
+                    SteeringPresetRow(
+                        preset: preset,
+                        compatibility: AppSteeringPolicy.compatibility(
+                            preset: preset,
+                            modelHidden: model.selectedModelHiddenSize,
+                            modelLayers: model.selectedModelLayerCount
+                        ),
+                        onEdit: {
+                            editingPreset = preset
+                            showingEditor = true
+                        },
+                        onDelete: {
+                            presetToDelete = preset
+                            isConfirmingDeletePreset = true
+                        }
+                    )
+                }
+                Button {
+                    editingPreset = nil
+                    showingEditor = true
+                } label: {
+                    Label { Text("Add a direction", bundle: .module) } icon: { Image(systemName: "plus") }
+                }
+                .appAction(.secondary, size: .small)
             }
-            Button {
-                editingPreset = nil
-                showingEditor = true
-            } label: {
-                Label { Text("Add a direction", bundle: .module) } icon: { Image(systemName: "plus") }
-            }
-            .appAction(.secondary, size: .small)
         }
         .settingsControl("Directions", pane: .safety, timing: .nextTurn)
     }
@@ -225,15 +258,14 @@ struct SteeringPresetRow: View {
                 Button(action: onEdit) { Text("Edit", bundle: .module) }
                     .appAction(.quiet, size: .small)
                 Button(role: .destructive, action: onDelete) { Text("Delete", bundle: .module) }
-                    .appAction(.quiet, size: .small)
-                    .foregroundStyle(.red)
+                    .appAction(.destructive, size: .small)
             }
             detailLine
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
             Label { SteeringText.compatibility(compatibility) } icon: { Image(systemName: compatibilityIcon) }
                 .themedFont(.small)
-                .foregroundStyle(compatibility.allowsEnabling ? Color.secondary : Color.red)
+                .foregroundStyle(compatibility.allowsEnabling ? AnyShapeStyle(.appSecondary) : AnyShapeStyle(AppAttention.color))
         }
         .padding(.vertical, 2)
     }

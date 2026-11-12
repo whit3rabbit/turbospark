@@ -43,7 +43,7 @@ struct ServerConnectionView: View {
             // `ServerPortInput` keeps English messages (its tests assert
             // them); they are a closed set, so they are looked up here.
             if let portError {
-                Text(LocalizedStringKey(portError), bundle: .module).foregroundStyle(.red).themedFont(.small)
+                Text(LocalizedStringKey(portError), bundle: .module).foregroundStyle(.appDanger).themedFont(.small)
             }
             Text("Stop the server to edit. Leave the port blank for automatic assignment.", bundle: .module)
                 .themedFont(.small).foregroundStyle(.appSecondary)

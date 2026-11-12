@@ -6,6 +6,7 @@ import TurboSpark
 // macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 @MainActor
 struct InspectorView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
     var body: some View {
@@ -48,7 +49,10 @@ struct InspectorView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: AppChromeLayout.topBarHeight)
-        .background(TurboSparkTheme.barBackgroundColor)
+        // Mode from the environment, not the static accessor: that one reads
+        // NSApp.effectiveAppearance, which does not follow
+        // `.preferredColorScheme` (DESIGN.md section 4, Gotcha 36).
+        .background(TurboSparkTheme.barBackgroundColor(isDark: theme.isDark))
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(.appBorder)
@@ -56,5 +60,6 @@ struct InspectorView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(Text("Model Settings", bundle: .module))
+        .accessibilityAddTraits(.isHeader)
     }
 }

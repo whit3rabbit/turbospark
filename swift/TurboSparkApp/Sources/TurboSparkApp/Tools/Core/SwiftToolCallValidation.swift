@@ -134,16 +134,19 @@ public struct TurnAvailableTools: Equatable, Sendable {
     }
 
     public func validate(toolName: String, argumentsJSON: String) -> ToolCallValidationResult {
-        guard let tool = definitions.first(where: { $0.function.name == toolName }) else {
+        // `resolvedDefinition` is exact-match first, then the model's other
+        // spellings of a tool this turn DID offer (`ToolCallNormalization`).
+        guard let tool = resolvedDefinition(for: toolName) else {
             return .refused(.unavailableTool(name: toolName))
         }
         guard let data = argumentsJSON.data(using: .utf8),
               let value = try? JSONDecoder().decode(ToolCallJSONValue.self, from: data) else {
             return .refused(.malformedJSON)
         }
-        guard case .object(let arguments) = value else {
+        guard case .object(let sentArguments) = value else {
             return .refused(.nonObjectArguments)
         }
+        let arguments = canonicalizedArguments(sentArguments, for: tool)
         if let issue = unsupportedSchemaIssue(tool.function.parameters) {
             return .refused(.unsupportedSchema(
                 toolName: toolName, path: issue.path, reason: issue.reason))

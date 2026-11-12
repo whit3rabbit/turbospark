@@ -283,6 +283,13 @@ impl NgramTableLayout {
         if self.head_vocab_sizes.iter().any(|v| *v <= 0) {
             return bad("a head vocabulary size is not positive".to_string());
         }
+        // The reference builds each multiplier as `2h + 1` with `h >= 0`. A
+        // non-positive one makes a negative hash term whose XOR can set the
+        // sign bit, which `ple_ngram_rows` casts to `u64`: a wrong row on
+        // every token, with no error.
+        if self.multipliers.iter().any(|m| *m <= 0) {
+            return bad("a hash multiplier is not positive".to_string());
+        }
         // Every offset must be non-negative -- `ple_ngram_rows` casts it
         // straight to `u64` with no check of its own, so a negative value
         // would wrap into a huge row index rather than erroring -- and the
@@ -313,6 +320,26 @@ impl NgramTableLayout {
         }
         Ok(())
     }
+
+    /// Refuses multipliers that would overflow `ple_ngram_rows`'s i64 hash
+    /// term for some token id in `0..=max_token_id`.
+    ///
+    /// The reference guarantees `(vocab_size - 1) * max(multiplier) < 2^63`
+    /// by construction, and `ple_ngram_rows` panics when that breaks, on every
+    /// decode step. `validate()` cannot check it because the header carries no
+    /// vocabulary, so the loader calls this with the largest id it will hash
+    /// (the vocabulary's last id, or EOS if a config put it past that).
+    pub fn check_hash_bound(&self, max_token_id: i64) -> Result<(), ModelError> {
+        let max_mult = self.multipliers.iter().copied().max().unwrap_or(0);
+        if max_token_id < 0 || max_mult.checked_mul(max_token_id).is_none() {
+            return Err(ModelError::IndexCorrupt {
+                detail: format!(
+                    "n-gram multiplier {max_mult} times token id {max_token_id} overflows i64"
+                ),
+            });
+        }
+        Ok(())
+    }
 }
 
 /// Reads and validates `<dir>/ngram_table/header.json`.
@@ -338,10 +365,19 @@ pub fn load_ngram_table_layout(dir: &Path) -> Result<Option<NgramTableLayout>, M
             ),
         });
     }
-    let raw = std::fs::read_to_string(&path).map_err(|e| ModelError::IoFailed {
+    let io_failed = |e: &dyn std::fmt::Display| ModelError::IoFailed {
         call: "read".to_string(),
         detail: format!("{}: {e}", path.display()),
-    })?;
+    };
+    let bytes = crate::bounded_read::read_capped(&path, NGRAM_HEADER_MAX_BYTES)
+        .map_err(|e| io_failed(&e))?
+        .ok_or_else(|| ModelError::IndexCorrupt {
+            detail: format!(
+                "{} is past the {NGRAM_HEADER_MAX_BYTES} ceiling",
+                path.display()
+            ),
+        })?;
+    let raw = String::from_utf8(bytes).map_err(|e| io_failed(&e))?;
     let layout: NgramTableLayout =
         serde_json::from_str(&raw).map_err(|e| ModelError::IndexCorrupt {
             detail: format!("{}: {e}", path.display()),

@@ -57,10 +57,11 @@ pub(crate) fn encode_hyper_connection(
     let wide_dim = hidden * hc_count;
     let name = |suffix: &str| format!("{name_prefix}.{suffix}");
 
-    // GGUF stores the already-shifted scale for hc_norm, so apply weight
-    // directly after reducing each hidden-width residual stream.
+    // One RMS per hidden-width residual stream, with the install's weight
+    // convention (`super::rms_norm_grouped`).
     let hc_norm_w = norm_view(weights, index, &name("hc_norm.weight"), wide_dim)?;
-    gpu::encode_rms_norm_bf16w_grouped(
+    super::rms_norm_grouped(
+        qwen4.norms_centered,
         context,
         pass,
         wide,

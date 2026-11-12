@@ -22,9 +22,9 @@ use foundation::LogitValue;
 use selection::ShapingConfig;
 use tokenizer::MfTokenizer;
 use turbospark_runtime::{
-    run_raw_completion, run_raw_completion_speculative, run_raw_completion_speculative_cancellable,
-    GenerationConfig, LogitProducer, RawDecodeProgress, RawDecodeResult, RuntimeError,
-    SpeculativeProducer, StopReason,
+    run_raw_completion, run_raw_completion_speculative, run_raw_completion_speculative_adaptive,
+    run_raw_completion_speculative_cancellable, GenerationConfig, LogitProducer, RawDecodeProgress,
+    RawDecodeResult, RuntimeError, SpeculativeProducer, StopReason,
 };
 
 fn load_tokenizer() -> MfTokenizer {
@@ -110,6 +110,12 @@ struct ScriptedTarget {
     /// row-only `prime_drafter` steps.
     draft_step_calls: Cell<usize>,
     recorded_committed: Cell<Vec<(Vec<i32>, usize)>>,
+    /// `turn_snapshot_position`'s answer, and every `take_turn_snapshot`
+    /// as (position, target cursor, drafter cursor).
+    turn_cut: Option<usize>,
+    turn_snapshots: Cell<Vec<(usize, usize, usize)>>,
+    /// Take the prompt through `prefill_chunk_priming_drafter`.
+    chunked_prefill: bool,
 }
 
 impl ScriptedTarget {
@@ -131,7 +137,20 @@ impl ScriptedTarget {
             headless_prefill_calls: Cell::new(0),
             draft_step_calls: Cell::new(0),
             recorded_committed: Cell::new(Vec::new()),
+            turn_cut: None,
+            turn_snapshots: Cell::new(Vec::new()),
+            chunked_prefill: false,
         }
+    }
+
+    fn with_turn_cut(mut self, cut: usize) -> Self {
+        self.turn_cut = Some(cut);
+        self
+    }
+
+    fn with_chunked_prefill(mut self) -> Self {
+        self.chunked_prefill = true;
+        self
     }
 
     fn with_block_drafter(mut self) -> Self {
@@ -239,6 +258,16 @@ impl LogitProducer for ScriptedTarget {
         self.headless_prefill_calls
             .set(self.headless_prefill_calls.get() + 1);
         self.produce(token, position, logits)
+    }
+
+    fn turn_snapshot_position(&self, _prompt_ids: &[i32], _reused: usize) -> Option<usize> {
+        self.turn_cut
+    }
+
+    fn take_turn_snapshot(&mut self, position: usize) {
+        let mut taken = self.turn_snapshots.take();
+        taken.push((position, self.cursor, self.drafter_cursor));
+        self.turn_snapshots.set(taken);
     }
 }
 
@@ -418,6 +447,33 @@ impl SpeculativeProducer for ScriptedTarget {
 
     fn supports_retaining_rollback(&self) -> bool {
         self.supports_retaining
+    }
+
+    fn supports_chunked_drafter_prefill(&self) -> bool {
+        self.chunked_prefill
+    }
+
+    /// The chunk's positions through the target, and the drafter primed
+    /// over every one whose next token is known: all of them, or all but
+    /// the last when the chunk ends the prompt.
+    fn prefill_chunk_priming_drafter(
+        &mut self,
+        tokens: &[i32],
+        start_position: usize,
+        logits: &mut [LogitValue],
+        next_token: Option<i32>,
+    ) -> Result<(), String> {
+        assert_eq!(start_position, self.cursor, "chunk fed out of order");
+        assert_eq!(
+            start_position, self.drafter_cursor,
+            "drafter not primed up to the chunk"
+        );
+        self.cursor += tokens.len();
+        self.drafter_cursor += tokens.len() - usize::from(next_token.is_none());
+        self.high_water.set(self.high_water.get().max(self.cursor));
+        let id = self.truth_at(self.cursor - 1);
+        self.write_one_hot(id, logits);
+        Ok(())
     }
 
     fn rollback_retaining(
@@ -1263,5 +1319,203 @@ fn record_committed_captures_accepted_feed_prefixes() {
             *pos0 >= prompt.len(),
             "committed tokens start at or after prompt"
         );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_adaptive(
+    tokenizer: &MfTokenizer,
+    truth: &[i32],
+    prompt: &[i32],
+    config: &GenerationConfig,
+    vocab: usize,
+    drafter: Drafter,
+    cap: usize,
+    floor: usize,
+) -> (RawDecodeResult, Vec<i32>, ScriptedTarget) {
+    let mut producer = ScriptedTarget::new(vocab, truth.to_vec(), drafter);
+    let mut events = Vec::new();
+    let result = run_raw_completion_speculative_adaptive(
+        &mut producer,
+        tokenizer,
+        prompt,
+        config,
+        4096,
+        vocab,
+        cap,
+        floor,
+        |e| events.push(e),
+    )
+    .expect("adaptive run");
+    // The same cursor police the fixed loop is held to: a controller that
+    // changes the round size must not leave the engine ahead of the stream.
+    assert_eq!(producer.cursor, result.kv_position);
+    assert_eq!(result.kv_backed_token_ids.len(), result.kv_position);
+    (result, collect_tokens(&events), producer)
+}
+
+/// The controller moves the round size and nothing else, so the committed
+/// stream must equal the sequential one for every drafter quality.
+#[test]
+fn adaptive_depth_is_lossless_against_sequential() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let truth = plain_truth(&tokenizer);
+    let prompt = tokenizer.encode("hi", false);
+    let config = greedy_config(120);
+    let (_, reference) = run_sequential(&tokenizer, &truth, &prompt, &config, vocab);
+
+    for drafter in [Drafter::Perfect, Drafter::Useless, Drafter::Alternating] {
+        let (result, tokens, _) =
+            run_adaptive(&tokenizer, &truth, &prompt, &config, vocab, drafter, 8, 2);
+        assert_eq!(tokens, reference, "{drafter:?}: stream diverged");
+        assert_eq!(result.new_tokens, 120, "{drafter:?}");
+    }
+}
+
+/// A perfect drafter must be allowed to climb: the same 120 tokens take
+/// fewer verify passes than fixed block 2, which is the entire point.
+#[test]
+fn adaptive_depth_climbs_on_a_perfect_drafter() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let truth = plain_truth(&tokenizer);
+    let prompt = tokenizer.encode("hi", false);
+    let config = greedy_config(120);
+
+    let (_, _, fixed_calls) = run_speculative(
+        &tokenizer,
+        &truth,
+        &prompt,
+        &config,
+        vocab,
+        Drafter::Perfect,
+        2,
+    );
+    let (_, _, adaptive) = run_adaptive(
+        &tokenizer,
+        &truth,
+        &prompt,
+        &config,
+        vocab,
+        Drafter::Perfect,
+        8,
+        2,
+    );
+    assert!(
+        adaptive.verify_calls.get() < fixed_calls,
+        "adaptive took {} verifies against fixed block 2's {fixed_calls}",
+        adaptive.verify_calls.get()
+    );
+}
+
+/// A drafter that is always wrong must pin the controller at the floor, so
+/// the run costs exactly what fixed block 2 costs and no deep round is paid
+/// for.
+#[test]
+fn adaptive_depth_stays_at_the_floor_on_a_useless_drafter() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let truth = plain_truth(&tokenizer);
+    let prompt = tokenizer.encode("hi", false);
+    let config = greedy_config(120);
+
+    let mut fixed = ScriptedTarget::new(vocab, truth.clone(), Drafter::Useless);
+    run_raw_completion_speculative(
+        &mut fixed,
+        &tokenizer,
+        &prompt,
+        &config,
+        4096,
+        vocab,
+        2,
+        |_| {},
+    )
+    .expect("fixed run");
+    let (_, _, adaptive) = run_adaptive(
+        &tokenizer,
+        &truth,
+        &prompt,
+        &config,
+        vocab,
+        Drafter::Useless,
+        8,
+        2,
+    );
+    // Rows, not just calls: a controller that climbed and fell back would
+    // match the call count and still have paid for deeper verifies.
+    assert_eq!(adaptive.verify_calls.get(), fixed.verify_calls.get());
+    assert_eq!(adaptive.verify_rows.get(), fixed.verify_rows.get());
+}
+
+/// Rounds shortened by the budget must not feed the controller and must
+/// still never write past the admitted window.
+#[test]
+fn adaptive_depth_respects_the_window_it_was_admitted_under() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let truth = plain_truth(&tokenizer);
+    let prompt = tokenizer.encode("hi", false);
+    let max_new = 40u32;
+    let max_context = (prompt.len() + max_new as usize) as u32;
+    let config = greedy_config(max_new);
+
+    let mut producer = ScriptedTarget::new(vocab, truth, Drafter::Perfect);
+    let result = run_raw_completion_speculative_adaptive(
+        &mut producer,
+        &tokenizer,
+        &prompt,
+        &config,
+        max_context,
+        vocab,
+        8,
+        2,
+        |_| {},
+    )
+    .expect("fits the admitted window");
+    assert_eq!(result.new_tokens, max_new as usize);
+    assert!(producer.high_water.get() <= max_context as usize);
+}
+
+/// The GDN turn snapshot (`crate::turn_snapshot`) as the speculative loop
+/// drives it: the prefill stops at the cut once, with the target AND the
+/// drafter both covering exactly the cut (the drafter's row `cut - 1` holds
+/// the token at `cut`, which is what makes the point restorable), and the
+/// stream is the one the same run without a cut produces.
+#[test]
+fn the_turn_snapshot_cut_sees_both_cursors_at_the_cut_in_both_walks() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let truth = plain_truth(&tokenizer);
+    let prompt: Vec<i32> = (0..12).map(|i| truth[i % truth.len()]).collect();
+    let config = greedy_config(16);
+    for chunked in [false, true] {
+        let run = |cut: Option<usize>| {
+            let mut producer = ScriptedTarget::new(vocab, truth.clone(), Drafter::Alternating);
+            if let Some(cut) = cut {
+                producer = producer.with_turn_cut(cut);
+            }
+            if chunked {
+                producer = producer.with_chunked_prefill();
+            }
+            let mut events = Vec::new();
+            run_raw_completion_speculative(
+                &mut producer,
+                &tokenizer,
+                &prompt,
+                &config,
+                4096,
+                vocab,
+                2,
+                |e| events.push(e),
+            )
+            .expect("speculative run");
+            (collect_tokens(&events), producer.turn_snapshots.take())
+        };
+        let (plain, none) = run(None);
+        let (cut, taken) = run(Some(9));
+        assert!(none.is_empty(), "chunked={chunked}");
+        assert_eq!(taken, vec![(9, 9, 9)], "chunked={chunked}");
+        assert_eq!(cut, plain, "chunked={chunked}: the cut changed the stream");
     }
 }

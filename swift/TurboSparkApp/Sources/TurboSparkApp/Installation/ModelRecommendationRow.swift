@@ -5,6 +5,9 @@ import TurboSpark
 struct ModelRecommendationRow: View {
     let recommendation: ModelRecommendation
     @ObservedObject var model: AppModel
+    /// The library the install goes into (nil is This Mac). The list above the
+    /// rows owns the menu that chose it.
+    var library: String? = nil
 
     private var isMoE: Bool {
         ModelRecommendationRow.isMoEModel(recommendation)
@@ -93,7 +96,7 @@ struct ModelRecommendationRow: View {
 
             // Install Button
             Button {
-                model.installModel(alias: recommendation.alias)
+                model.installModel(alias: recommendation.alias, library: library)
             } label: {
                 Label { Text("Install & Start", bundle: .module) } icon: { Image(systemName: "arrow.down.circle.fill") }
             }
@@ -146,8 +149,8 @@ struct RecommendationVerdictBadge: View {
             .themedFont(.tiny, weight: .semibold)
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
-            .background(Color.green.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
-            .foregroundStyle(.green)
+            .background(.appSuccessTint, in: RoundedRectangle(cornerRadius: 4))
+            .foregroundStyle(.appSuccess)
             .help(verdictHelp)
         case .streams:
             HStack(spacing: 3) {
@@ -171,8 +174,8 @@ struct RecommendationVerdictBadge: View {
             .themedFont(.tiny, weight: .semibold)
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
-            .background(Color.orange.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
-            .foregroundStyle(.orange)
+            .background(.appWarningTint, in: RoundedRectangle(cornerRadius: 4))
+            .foregroundStyle(.appWarning)
             .help(verdictHelp)
         case .refused:
             HStack(spacing: 3) {
@@ -183,8 +186,8 @@ struct RecommendationVerdictBadge: View {
             .themedFont(.tiny, weight: .semibold)
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
-            .background(Color.red.opacity(0.18), in: RoundedRectangle(cornerRadius: 4))
-            .foregroundStyle(.red)
+            .background(.appDangerTint, in: RoundedRectangle(cornerRadius: 4))
+            .foregroundStyle(.appDanger)
             .help(verdictHelp)
         case .unknown:
             EmptyView()

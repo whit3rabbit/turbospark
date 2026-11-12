@@ -27,6 +27,11 @@ struct InspectorEssentialsSection: View {
             ContextLadderPicker(model: model)
         }
         .disabled(model.isRunning || model.isInstallingModel)
+        .help(model.isRunning
+            ? Text("Controls cannot be changed while a generation is running.", bundle: .module)
+            : (model.isInstallingModel
+                ? Text("Controls cannot be changed while a model is installing.", bundle: .module)
+                : Text("Essentials", bundle: .module)))
     }
 }
 
@@ -60,7 +65,7 @@ private struct ThinkingLevelControl: View {
                         .foregroundStyle(.appSecondary)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 4))
+                        .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                         .help(Text("These levels were read from the loaded checkpoint's chat template at open, not from a per-family table.", bundle: .module))
                 }
             }
@@ -107,7 +112,7 @@ private struct ThinkingLevelControl: View {
         HStack(alignment: .firstTextBaseline, spacing: 7) {
             Image(systemName: model.session == nil ? "arrow.down.circle" : "minus.circle")
                 .themedFont(.small)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.appSecondary)
                 .accessibilityHidden(true)
             Group {
                 if model.session == nil {
@@ -208,7 +213,7 @@ struct ContextLadderPicker: View {
         }
         .onAppear { syncIsCustom() }
         .onChange(of: model.maxContextTokens) { _, _ in syncIsCustom() }
-        .tsAnimation(.smooth(duration: 0.2), value: isCustom)
+        .tsAnimation(TSMotion.select, value: isCustom)
     }
 
     private var customSizeRow: some View {
@@ -230,7 +235,7 @@ struct ContextLadderPicker: View {
                 .accessibilityValue(Text("\(model.maxContextTokens.formatted()) tokens", bundle: .module))
                 Text(verbatim: "\(model.maxContextTokens.formatted())")
                     .themedFont(.small).monospacedDigit()
-                    .frame(width: 55, alignment: .trailing)
+                    .frame(minWidth: 55, alignment: .trailing)
             }
         } label: {
             Text("Custom Size", bundle: .module)

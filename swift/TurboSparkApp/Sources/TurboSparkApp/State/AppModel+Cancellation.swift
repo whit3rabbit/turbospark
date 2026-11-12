@@ -226,13 +226,68 @@ extension AppModel {
     /// notification either way.
     public func stopAll() {
         cancel()
-        for (id, state) in backgroundAgentRuns where state.status == "running" {
-            killedBackgroundAgentIDs.insert(id)
-            backgroundAgentTasks[id]?.cancel()
-        }
+        cancelRunningBackgroundAgents()
         killAllBackgroundShells()
         if hasActiveModelDownload {
             cancelActiveModelDownload()
         }
+    }
+
+    /// The agent arm of Stop All: every running background agent is marked
+    /// killed and its task cancelled, so the completion watcher reports it as
+    /// `killed`. The task entry stays; that watcher removes it.
+    func cancelRunningBackgroundAgents() {
+        for (id, state) in backgroundAgentRuns where state.status == "running" {
+            killedBackgroundAgentIDs.insert(id)
+            backgroundAgentTasks[id]?.cancel()
+        }
+    }
+
+    /// Cancels the work that keeps the chat session alive without being a
+    /// turn, which `cancel()` deliberately does not reach (see its note):
+    /// title generation, memory capture and every running background agent.
+    /// Each holds the session strongly until it ends, so releasing the app's
+    /// own reference frees nothing while one of them runs (the drive stays
+    /// busy). Background agents go through the Stop All path, not a new kill.
+    ///
+    /// Returns true while any of it is still running, so a caller can poll
+    /// and cancel again: a cancelled title task starts the next queued one
+    /// from its tail.
+    @discardableResult
+    func cancelSessionBoundWork() -> Bool {
+        titleGenerationTask?.cancel()
+        memoryCaptureTask?.cancel()
+        cancelRunningBackgroundAgents()
+        return titleGenerationTask != nil || memoryCaptureTask != nil || !backgroundAgentTasks.isEmpty
+    }
+
+    /// One step of stopping everything that holds the chat session: the turn
+    /// if one is started (`cancel()`), then title generation, memory capture
+    /// and the background agents. Returns true while any of it is still
+    /// running, so a caller polls it until it is quiet.
+    ///
+    /// The turn counts too: a turn that ends can be replaced in the same hop
+    /// by the next one (a queued prompt, a parked notification), and a caller
+    /// that waited for `generating` to drop once saw the replacement as the
+    /// old turn still winding down.
+    @discardableResult
+    func cancelTurnAndSessionBoundWork() -> Bool {
+        if generating || submitting || pendingToolCall != nil { cancel() }
+        let helpersRunning = cancelSessionBoundWork()
+        return helpersRunning || generating || submitting || pendingToolCall != nil
+    }
+
+    /// Whether a release for an eject is in progress. While it is, nothing may
+    /// start a model turn on the chat session (`canInjectChatInput`).
+    var isEjecting: Bool { ejectHoldCount > 0 }
+
+    /// Counted, not a flag: a surprise removal can release while a requested
+    /// eject is under way. Balanced by the coordinator on every exit.
+    func beginEjectHold() {
+        ejectHoldCount += 1
+    }
+
+    func endEjectHold() {
+        ejectHoldCount = max(0, ejectHoldCount - 1)
     }
 }

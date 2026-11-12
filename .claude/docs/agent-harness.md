@@ -45,7 +45,7 @@ download at all.
 
 This repository uses Syntext as its indexed code search engine (see `swift/docs/SYNTEXT.md` and `swift/docs/SWIFT_TOOLS.md`).
 
-- **Default search tool**: Use `grep_search` for code discovery, symbol lookup, and pattern matching. It uses the project's Syntext index for sub-millisecond regex and literal search with line numbers and context lines in ripgrep format.
+- **Default search tool**: Use `grep_search` for code discovery, symbol lookup, and pattern matching. It uses the project's Syntext index when the project is opted in (an unindexed scan otherwise) for regex and literal search with line numbers and context lines in ripgrep format.
 - **Do not shell out for searching**: Never shell out to `grep`, `find`, or `ripgrep` via Bash or terminal execution when `grep_search` or `Glob` is available.
 - **File locating and reading**: Use `Glob` (`list_directory`) for file path patterns and `FileRead` (`read_file`) for inspecting specific files or line ranges.
 - **Explore subagent contract**:

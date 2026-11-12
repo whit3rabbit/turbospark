@@ -1,0 +1,1 @@
+{"reference_commit": "e1b19b9054bf163f5d812221a54fcc346f1890e9", "mel_frames": 16, "phase_shape": [8], "sine_noise_shape": [9, 7680], "wav_len": 7620, "wav_abs_max": 0.017398985102772713, "source_noise_discarded": true}

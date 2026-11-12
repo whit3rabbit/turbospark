@@ -53,6 +53,8 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
   cargo test -p turbospark-bench --test quality_gate --release -- --ignored --nocapture
 TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
   cargo test -p turbospark-bench --test qwen36_quality_gate --release -- --ignored --nocapture
+TURBOSPARK_QWEN36_INSTALL_DIR=~/models/qwen36.gturbo \
+  cargo test -p turbospark-bench --test qwen36_prefill_arm_probe --release -- --ignored --nocapture
 TURBOSPARK_QWEN3MOE_INSTALL_DIR=~/models/qwen3moe-gguf.gturbo \
   cargo test -p turbospark-bench --test qwen3moe_quality_gate --release -- --ignored --nocapture
 

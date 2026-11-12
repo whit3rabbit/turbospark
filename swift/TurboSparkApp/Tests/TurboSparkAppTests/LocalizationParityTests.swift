@@ -571,11 +571,71 @@ final class LocalizationParityTests: XCTestCase {
         for size in AppTextSize.allCases {
             values.append(("AppTextSize.label", size.label))
         }
+        for tab in APIWorkspaceTab.allCases {
+            values.append(("APIWorkspaceTab.title", tab.title))
+        }
+        for mode in ImagesWorkspaceMode.allCases {
+            values.append(("ImagesWorkspaceMode.title", mode.title))
+        }
+        for option in AppExpertSlotsWiringOption.allCases {
+            values.append(("AppExpertSlotsWiringOption.menuLabel", option.menuLabel))
+        }
+        for option in AppExpertResidencyOption.allCases {
+            values.append(("AppExpertResidencyOption.menuLabel", option.menuLabel))
+        }
+        for option in AppSpeculationOption.allCases {
+            values.append(("AppSpeculationOption.menuLabel", option.menuLabel))
+        }
+        for kind in InstalledModelKind.allCases {
+            values.append(("InstalledModelKind.title", kind.title))
+        }
+        for mode in WorktreeTabMode.allCases {
+            values.append(("WorktreeTabMode.title", mode.title))
+        }
+        // Audio model pickers render the engine name and its tooltip as keys.
+        for label in AudioEngineLabel.allCases {
+            values.append(("AudioEngineLabel.title", label.title))
+            values.append(("AudioEngineLabel.tooltip", label.tooltip))
+        }
         for section in KeyboardShortcutCatalog.sections {
             values.append(("KeyboardShortcutSection.title", section.title))
             for row in section.rows {
                 values.append(("KeyboardShortcutRow.label", row.label))
             }
+        }
+        // The Audio library and Record page render these titles as keys.
+        for preset in AudioRecordingPreset.allCases {
+            values.append(("AudioRecordingPreset.titleKey", preset.titleKey))
+        }
+        // The Speech-to-Text pill renders each mode's title as a key.
+        for mode in SpeechToTextMode.allCases {
+            values.append(("SpeechToTextMode.titleKey", mode.titleKey))
+            // The models popover and Installed name each job per mode.
+            for job in SpeechToTextJob.allCases {
+                values.append(("SpeechToTextMode.titleKey(for:)", mode.titleKey(for: job)))
+            }
+        }
+        for job in SpeechToTextJob.allCases {
+            values.append(("SpeechToTextJob.hintKey", job.hintKey))
+        }
+        // Installed > Audio renders each list section header as a key.
+        for group in AudioInstalledEntry.Group.allCases {
+            values.append(("AudioInstalledEntry.Group.titleKey", group.titleKey))
+        }
+        for group in AudioDiscoverCatalog.Group.allCases {
+            values.append(("AudioDiscoverCatalog.Group.titleKey", group.titleKey))
+        }
+        for status in [AudioLibraryItem.Status.draft, .recording, .processing, .completed, .interrupted, .failed] {
+            values.append(("AudioLibraryItem.Status.audioTitle", status.audioTitle))
+        }
+        for filter in AudioLibraryFilter.allCases {
+            values.append(("AudioLibraryFilter.titleKey", filter.titleKey))
+        }
+        for group in AudioDateGroup.allCases {
+            values.append(("AudioDateGroup.titleKey", group.titleKey))
+        }
+        for lane in AudioSearchLane.allCases {
+            values.append(("AudioSearchLane.titleKey", lane.titleKey))
         }
         // The composer's Add menu renders each command summary as a key.
         for command in BuiltInSlashCommand.all {
@@ -584,6 +644,45 @@ final class LocalizationParityTests: XCTestCase {
         // Settings search renders each generated entry's title as a key.
         for entry in SettingsControlCatalog.entries {
             values.append(("SettingsControlCatalog.title", entry.title))
+        }
+        // The libraries section (tasks 6.1 and 6.2): a library's status and
+        // the actions on its row render their titles as keys.
+        for status in LibraryRowStatus.allCases {
+            values.append(("LibraryRowStatus.title", status.title))
+        }
+        for action in LibraryRowAction.allCases {
+            values.append(("LibraryRowAction.title", action.title))
+        }
+        // The Installed Models list (tasks 6.4 and 6.5): the status words of an
+        // offline or missing row, and the group modes the sort menu renders as
+        // keys (a new mode is easy to add as an enum case and forget as a key).
+        for status in InstalledRowStatus.allCases {
+            values.append(("InstalledRowStatus.title", status.title))
+        }
+        for option in ModelManagerView.GroupOption.allCases {
+            values.append(("ModelManagerView.GroupOption.rawValue", option.rawValue))
+        }
+        // The move sheet (task 6.11): the phase line under the progress bar.
+        for phase in MoveProgress.Phase.allCases {
+            values.append(("MoveProgress.Phase.title", phase.title))
+        }
+        for category in AppToolCategory.allCases {
+            values.append(("AppToolCategory.label", category.label))
+        }
+        // Trait steering: the extract sheet and the composer's steering menu
+        // render each trait's title and summary as keys, and the sheet's
+        // trait rows render the pack's mode through its menu label.
+        for trait in SteeringTrait.allCases {
+            values.append(("SteeringTrait.title", trait.title))
+            values.append(("SteeringTrait.summary", trait.summary))
+        }
+        for mode in AppSteeringModeOption.allCases {
+            values.append(("AppSteeringModeOption.menuLabel", mode.menuLabel))
+        }
+        for isPinned in [false, true] {
+            values.append((
+                "MessageActionBarView.standingInstructionName",
+                MessageActionBarView.standingInstructionName(isPinned: isPinned)))
         }
         let missing = values.filter { strings[$0.value] == nil }
             .map { "\($0.source): \($0.value)" }

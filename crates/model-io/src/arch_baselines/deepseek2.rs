@@ -110,10 +110,77 @@ pub fn deepseek_v2_lite_16b() -> ArchConfig {
             mscale: 0.707,
         },
         vision: VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: PleConfig::NONE,
         // Layer 0's dense FFN: `intermediate_size` at 10944 against the
         // shared expert's 2816 above. Zero means "no dense lead".
         dense_lead_intermediate_size: 10944,
+        num_dense_leading_layers: 1,
+    }
+}
+
+/// The `deepseek2` family's SECOND shape: the DeepSeek-VL2-tiny language
+/// model (`mlx-community/deepseek-vl2-tiny-4bit`,
+/// `docs/DEEPSEEK_VL2_VISION_PHASE0.md`).
+///
+/// **Same family, different attention.** The checkpoint declares
+/// `use_mla: false`: plain multi-head attention (10 heads over 10 KV heads,
+/// head dim 128, no biases, full NeoX rope at theta 10000, no q/k norm) in
+/// front of the SAME DeepSeekMoE tail the V2-Lite shape runs (a dense lead,
+/// 64 routed experts with a softmax over all of them and top-6 with no
+/// renormalization, a fused shared expert). The flow switches on
+/// `arch.mla.is_active()`, so no family was added: every layer is mask 1,
+/// and the standard KV layout applies.
+///
+/// `intermediate_size` is the fused shared expert, 1792 = 2 x 896, and the
+/// dense lead's 6848 travels in `dense_lead_intermediate_size`, exactly as in
+/// the V2-Lite baseline. The config states no `rope_theta`, `rms_norm_eps`
+/// or `scoring_func`; the reference's defaults (10000, 1e-6, softmax) are the
+/// format's answer.
+pub fn deepseek_vl2_tiny() -> ArchConfig {
+    ArchConfig {
+        hidden_size: 1280,
+        intermediate_size: 1792,
+        moe_intermediate_size: 896,
+        num_heads: 10,
+        num_kv_heads: 10,
+        num_full_kv_heads: 10,
+        head_dim: 128,
+        full_head_dim: 128,
+        vocab_size: 129_280,
+        sliding_window: 0,
+        final_logit_softcap: 0.0,
+        rope_theta: 10_000.0,
+        full_rope_theta: 10_000.0,
+        partial_rotary_factor: 1.0,
+        num_layers: 12,
+        num_experts: 64,
+        top_k_experts: 6,
+        tie_word_embeddings: false,
+        attention_k_eq_v: false,
+        full_attention_layer_mask: vec![1u8; 12],
+        hidden_activation: "silu".to_string(),
+        family: ModelFamily::Deepseek2,
+        attn_output_gate: false,
+        attention_scale: 0.088_388_347_648_318_44,
+        embedding_scaled_by_sqrt_hidden: false,
+        router_scaled: false,
+        ffn_sandwich_norms: false,
+        shared_expert_gated: false,
+        rope_neox_subdim: true,
+        linear_attention: LinearAttentionConfig::NONE,
+        mla: MlaConfig::NONE,
+        compressed_attention: CompressedAttentionConfig::NONE,
+        hyper_connections: HyperConnectionConfig::NONE,
+        num_hash_routed_layers: 0,
+        router_scoring_func: "softmax".to_string(),
+        routed_scaling_factor: 1.0,
+        swiglu_limit: 0.0,
+        rope_scaling: RopeScalingConfig::NONE,
+        vision: VisionConfig::NONE,
+        short_conv_kernel_size: 0,
+        ple: PleConfig::NONE,
+        dense_lead_intermediate_size: 6848,
         num_dense_leading_layers: 1,
     }
 }

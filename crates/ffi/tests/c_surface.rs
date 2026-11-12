@@ -28,9 +28,10 @@ use turbospark_ffi::{
     abi, session_for_testing, session_for_testing_named, ts_cosine_similarity,
     ts_embedding_encode_json, ts_generate, ts_hf_endpoint_get, ts_hf_endpoint_set,
     ts_hf_token_clear, ts_hf_token_get, ts_hf_token_set, ts_hf_token_validate_json,
-    ts_image_buffer_free, ts_image_session_open, ts_last_error, ts_model_delete, ts_probe_json,
-    ts_recommend_json, ts_recommend_progress_json, ts_repo_variants_json,
-    ts_server_attach_audio_model, ts_server_attach_embedding_model, ts_server_attach_session,
+    ts_hub_check_json, ts_hub_search_json, ts_image_buffer_free, ts_image_session_open,
+    ts_last_error, ts_model_delete, ts_probe_json, ts_recommend_json, ts_recommend_progress_json,
+    ts_repo_variants_json, ts_server_attach_audio_model, ts_server_attach_embedding_model,
+    ts_server_attach_session, ts_server_complete_audio_speech_request,
     ts_server_detach_audio_model, ts_server_detach_model, ts_server_info_json,
     ts_server_poll_events_json, ts_server_set_idle_unload, ts_server_start, ts_server_stop,
     ts_session_cancel, ts_session_count_text_tokens, ts_session_count_tokens,
@@ -199,6 +200,8 @@ fn session_info_is_json_the_swift_side_can_decode() {
     let json: serde_json::Value = serde_json::from_str(&unsafe { take(out) }).unwrap();
     // camelCase, so a Codable needs no CodingKeys.
     assert_eq!(json["maxContext"], 4096);
+    assert_eq!(json["moePrefillBankSupported"], false);
+    assert_eq!(json["moePrefillBankEnabled"], false);
     assert!(json["vocabSize"].as_u64().unwrap() > 0);
     assert!(json.get("reasoningSupport").is_some());
     // The menu a GUI draws. Non-empty and opening at "off" on every install:
@@ -761,6 +764,65 @@ fn a_malformed_repository_is_rejected_before_any_network_call() {
     }
 }
 
+/// The two Hub entry points fail a malformed call from the header alone, with
+/// no request: a NULL or too-short query, an unknown option spelling, a bad
+/// repository shape and an out-of-set slot count. (A short query returning a
+/// "no results" success would read as the Hub having nothing for "a".)
+#[test]
+fn the_hub_entry_points_refuse_a_malformed_call_before_any_network_call() {
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_hub_search_json(ptr::null(), ptr::null(), &mut out) };
+    assert_eq!(
+        code,
+        abi::TS_ERR_INVALID_ARGUMENT,
+        "a NULL query is refused"
+    );
+
+    for short in ["", " ", "a"] {
+        let query = c(short);
+        let mut out: *mut c_char = ptr::null_mut();
+        let code = unsafe { ts_hub_search_json(query.as_ptr(), ptr::null(), &mut out) };
+        assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT, "{short:?} is too short");
+        assert!(last_error().contains("at least 2"), "{:?}", last_error());
+    }
+
+    let query = c("qwen");
+    for (options, needle) in [
+        (r#"{"sort":"newest"}"#, "sort"),
+        (r#"{"format":"onnx"}"#, "format"),
+    ] {
+        let options = c(options);
+        let mut out: *mut c_char = ptr::null_mut();
+        let code = unsafe { ts_hub_search_json(query.as_ptr(), options.as_ptr(), &mut out) };
+        assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT, "{needle}");
+        assert!(last_error().contains(needle), "{:?}", last_error());
+    }
+
+    for bad in ["nameonly", "too/many/parts", "/leading", "trailing/"] {
+        let repo = c(bad);
+        let mut out: *mut c_char = ptr::null_mut();
+        let code = unsafe { ts_hub_check_json(repo.as_ptr(), ptr::null(), &mut out) };
+        assert_eq!(code, abi::TS_ERR_JSON, "{bad} should be refused");
+        assert!(last_error().contains("owner/name"), "{:?}", last_error());
+    }
+
+    // A bad hint is the same shape error, and a bad slot count is refused
+    // before the repository is read.
+    let repo = c("owner/name");
+    let hint = c(r#"{"sidecarHint":"nameonly"}"#);
+    let mut out: *mut c_char = ptr::null_mut();
+    let code = unsafe { ts_hub_check_json(repo.as_ptr(), hint.as_ptr(), &mut out) };
+    assert_eq!(code, abi::TS_ERR_JSON);
+    let slots = c(r#"{"expertCacheSlots":12}"#);
+    let code = unsafe { ts_hub_check_json(repo.as_ptr(), slots.as_ptr(), &mut out) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT, "{:?}", last_error());
+    assert!(
+        last_error().contains("expertCacheSlots"),
+        "{:?}",
+        last_error()
+    );
+}
+
 /// **AN OUT-OF-SET SLOT COUNT IS AN ERROR AND NOT A PANIC, ON EVERY ENTRY
 /// POINT THAT TAKES ONE.** The setters panic outside `ALLOWED_CACHE_SLOTS`
 /// (`crates/core` Gotcha 1) and this engine is linked INTO its host, so an
@@ -1202,6 +1264,47 @@ fn the_server_guardrails_option_is_read_rather_than_ignored() {
         assert!(server.is_null(), "a refused start must write no handle");
         let err = last_error();
         assert!(err.contains("guardrails"), "{bad}: {err}");
+    }
+}
+
+/// **THE `prefixReuse` OPTION IS ACCEPTED, AND A WRONG-typed VALUE IS
+/// REFUSED rather than silently dropped.** Same reasoning as the guardrails
+/// test above: acceptance alone cannot tell a wired field from a declared
+/// one, because serde drops an unknown key without complaint and the server
+/// would start happily either way. The refusal is the observable that can
+/// only happen if the key reached the parser at all.
+///
+/// Both spellings matter because the two directions are the two postures:
+/// `false` is the one a multi-client server needs (and the one no host could
+/// previously reach on the in-process path, since `ts_session_open` resolves
+/// to on), and `true` is the single-trusted-client case.
+#[test]
+fn the_server_prefix_reuse_option_is_wired_rather_than_ignored() {
+    let session = endless_session(fixture(), "h", 4);
+
+    for good in [
+        "{}",
+        r#"{"prefixReuse":true}"#,
+        r#"{"prefixReuse":false}"#,
+        r#"{"prefixReuse":null}"#,
+    ] {
+        let server = unsafe { start_server(&session, good) };
+        unsafe { ts_server_stop(server) };
+    }
+
+    // A JSON string here is the shape a host writing `"false"` (the CLI's
+    // spelling) would produce. Accepting it would silently invert the
+    // setting's meaning for exactly the caller this field exists to serve.
+    for bad in [
+        r#"{"prefixReuse":"false"}"#,
+        r#"{"prefixReuse":"on"}"#,
+        r#"{"prefixReuse":1}"#,
+    ] {
+        let opts = c(bad);
+        let mut server: *mut Server = ptr::null_mut();
+        let code = unsafe { ts_server_start(&session, opts.as_ptr(), &mut server) };
+        assert_ne!(code, abi::TS_OK, "{bad} must be refused");
+        assert!(server.is_null(), "a refused start must write no handle");
     }
 }
 
@@ -2720,4 +2823,73 @@ fn fitting_with_tools_keeps_less_than_fitting_without() {
     assert!(
         with["retained"].as_array().unwrap().len() < without["retained"].as_array().unwrap().len()
     );
+}
+
+/// The speech completion copies `sample_count` samples out of Swift's buffer,
+/// so the count is bounded before the slice exists. The buffers here really
+/// hold the claimed samples, so the oversized call stays well defined before
+/// the fix: it copies and then fails on the unknown request id, which is
+/// what the bound assertion catches.
+#[test]
+fn server_complete_audio_speech_refuses_a_count_over_the_output_limit() {
+    // runtime::native_audio::MAX_OUTPUT_SAMPLES, the in-process speech cap.
+    const MAX: usize = 44_100 * 2 * 360;
+    let mut server_ptr: *mut Server = ptr::null_mut();
+    let opts = CString::new(r#"{"port":0}"#).unwrap();
+    let code = unsafe { ts_server_start(ptr::null(), opts.as_ptr(), &mut server_ptr) };
+    assert_eq!(code, abi::TS_OK);
+    let pcm = vec![0.0f32; MAX + 1];
+
+    let code = unsafe {
+        ts_server_complete_audio_speech_request(
+            server_ptr,
+            7,
+            pcm.as_ptr(),
+            MAX + 1,
+            24_000,
+            ptr::null(),
+        )
+    };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    let why = last_error();
+    assert!(why.contains("limit"), "must fail on the bound, got: {why}");
+
+    // The largest legal count passes the bound and fails on the request id,
+    // so a bound off by one would report the limit here.
+    let code = unsafe {
+        ts_server_complete_audio_speech_request(
+            server_ptr,
+            7,
+            pcm.as_ptr(),
+            MAX,
+            24_000,
+            ptr::null(),
+        )
+    };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    let why = last_error();
+    assert!(why.contains("no longer active"), "got: {why}");
+
+    unsafe { ts_server_stop(server_ptr) };
+}
+
+/// Every other open-style entry point nulls `*out` before it can fail, so a
+/// caller that reuses one out variable across attempts never reads the
+/// previous attempt's handle back after a failure and frees it twice. The
+/// seeded value is a dangling sentinel that nothing dereferences.
+#[test]
+fn a_failed_session_open_clears_a_seeded_out_handle() {
+    let seeded = ptr::NonNull::<Session>::dangling().as_ptr();
+
+    let mut session: *mut Session = seeded;
+    let code = unsafe { ts_session_open(ptr::null(), ptr::null(), &mut session) };
+    assert_eq!(code, abi::TS_ERR_INVALID_ARGUMENT);
+    assert!(session.is_null(), "a refused argument must clear *out");
+
+    // Past argument parsing: the open itself fails on a missing directory.
+    let missing = CString::new("/nonexistent/turbospark-ffi-06-model").unwrap();
+    let mut session: *mut Session = seeded;
+    let code = unsafe { ts_session_open(missing.as_ptr(), ptr::null(), &mut session) };
+    assert_ne!(code, abi::TS_OK);
+    assert!(session.is_null(), "a failed open must clear *out");
 }

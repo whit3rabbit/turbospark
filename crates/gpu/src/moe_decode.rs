@@ -264,15 +264,83 @@ pub fn encode_moe_phase1(
     top_k: u32,
     use_silu: bool,
 ) -> Result<(), GpuError> {
+    encode_moe_phase1_named(
+        context,
+        pass,
+        "moe_phase1_gate_up_act_u16load",
+        routed,
+        offsets,
+        x,
+        acts,
+        d_dim,
+        f_dim,
+        top_k,
+        use_silu,
+    )
+}
+
+/// [`encode_moe_phase1`] over MLX affine INT3 expert blobs
+/// (`moe_phase1_gate_up_act_int3`): the same dispatch shape, offsets and
+/// activation, reading 3-bit codes (8 per 3 bytes, element `j` at bits
+/// `[3j, 3j+3)` of the row's little-endian bitstream) with group-64 BF16
+/// scales and biases. Weight offsets need no alignment: the kernel reads
+/// bytes.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_moe_phase1_int3(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    routed: &RoutedBlobsBuffer,
+    offsets: &MoeExpertOffsets,
+    x: (&metal::Buffer, u64),
+    acts: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+    use_silu: bool,
+) -> Result<(), GpuError> {
+    encode_moe_phase1_named(
+        context,
+        pass,
+        "moe_phase1_gate_up_act_int3",
+        routed,
+        offsets,
+        x,
+        acts,
+        d_dim,
+        f_dim,
+        top_k,
+        use_silu,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_moe_phase1_named(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    function: &'static str,
+    routed: &RoutedBlobsBuffer,
+    offsets: &MoeExpertOffsets,
+    x: (&metal::Buffer, u64),
+    acts: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+    use_silu: bool,
+) -> Result<(), GpuError> {
     assert_eq!(d_dim % 64, 0);
     assert!(top_k as usize <= MAX_STREAMED_EXPERTS);
     let pipeline = context.pipeline(
         SOURCE,
-        "moe_phase1_gate_up_act_u16load",
+        function,
         &moe_function_constants(use_silu),
         &constants_key(use_silu),
     )?;
-    let rows = (top_k * f_dim) as u64;
+    // The kernel indexes rows in u32, so a product past u32 is refused
+    // rather than widened: wrapped, it would shrink the grid silently.
+    let rows = top_k
+        .checked_mul(f_dim)
+        .ok_or_else(|| GpuError::InvalidInput("moe phase1 top_k * f_dim overflows u32".into()))?
+        as u64;
     pass.encode_threadgroups(
         &pipeline,
         &[(routed.buffer(), 0, 0), (x.0, 2, x.1), (acts.0, 3, acts.1)],
@@ -315,11 +383,79 @@ pub fn encode_moe_phase2(
     top_k: u32,
     use_silu: bool,
 ) -> Result<(), GpuError> {
+    encode_moe_phase2_named(
+        context,
+        pass,
+        "moe_phase2_down_reduce_k8",
+        routed,
+        offsets,
+        acts,
+        routing_w,
+        residual,
+        y,
+        d_dim,
+        f_dim,
+        top_k,
+        use_silu,
+    )
+}
+
+/// [`encode_moe_phase2`] over MLX affine INT3 down blobs
+/// (`moe_phase2_down_reduce_int3`): same dispatch width (`top_k`
+/// simdgroups), same residual-first reduce in slot order.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_moe_phase2_int3(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    routed: &RoutedBlobsBuffer,
+    offsets: &MoeExpertOffsets,
+    acts: (&metal::Buffer, u64),
+    routing_w: (&metal::Buffer, u64),
+    residual: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+    use_silu: bool,
+) -> Result<(), GpuError> {
+    encode_moe_phase2_named(
+        context,
+        pass,
+        "moe_phase2_down_reduce_int3",
+        routed,
+        offsets,
+        acts,
+        routing_w,
+        residual,
+        y,
+        d_dim,
+        f_dim,
+        top_k,
+        use_silu,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn encode_moe_phase2_named(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    function: &'static str,
+    routed: &RoutedBlobsBuffer,
+    offsets: &MoeExpertOffsets,
+    acts: (&metal::Buffer, u64),
+    routing_w: (&metal::Buffer, u64),
+    residual: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+    use_silu: bool,
+) -> Result<(), GpuError> {
     assert_eq!(f_dim % 64, 0);
     assert!((1..=MAX_STREAMED_EXPERTS as u32).contains(&top_k));
     let pipeline = context.pipeline(
         SOURCE,
-        "moe_phase2_down_reduce_k8",
+        function,
         &moe_function_constants(use_silu),
         &constants_key(use_silu),
     )?;

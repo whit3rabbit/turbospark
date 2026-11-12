@@ -317,7 +317,8 @@ pub fn kv_bytes_for_context_with(arch: &ArchConfig, context: u32, quant: KvQuant
 
     let mut bytes = 0u64;
     for (layer, &mask) in arch.full_attention_layer_mask.iter().enumerate() {
-        if mask == 2 {
+        // No KV on linear (2) or short-conv (6) layers.
+        if mask == 2 || mask == 6 {
             continue;
         }
         let capacity = if mask == 0 {
@@ -353,6 +354,20 @@ pub fn gdn_state_bytes(arch: &ArchConfig) -> u64 {
     linear_layers.saturating_mul(state_bytes.saturating_add(conv_tail_bytes))
 }
 
+/// Bytes one session's gated short-convolution tails cost (`lfm3`): an FP16
+/// `[short_conv_kernel_size - 1, hidden]` window per mask-6 layer, FIXED-size
+/// regardless of context, and zero for every family without one.
+pub fn short_conv_state_bytes(arch: &ArchConfig) -> u64 {
+    let rows = (arch.short_conv_kernel_size.max(1) - 1) as u64;
+    let per_layer = rows * arch.hidden_size.max(0) as u64 * FP16_SIZE;
+    let conv_layers = arch
+        .full_attention_layer_mask
+        .iter()
+        .filter(|&&mask| mask == 6)
+        .count() as u64;
+    conv_layers.saturating_mul(per_layer)
+}
+
 /// Bytes per FP32 element, mirroring `GdnStateManager::new`'s state buffer.
 const FP32_SIZE: u64 = 4;
 
@@ -378,7 +393,9 @@ pub fn session_pool_bytes_with(
 ) -> u64 {
     let extra_slots = u64::from(session_slots.saturating_sub(1));
     extra_slots.saturating_mul(
-        kv_bytes_for_context_with(arch, context, quant).saturating_add(gdn_state_bytes(arch)),
+        kv_bytes_for_context_with(arch, context, quant)
+            .saturating_add(gdn_state_bytes(arch))
+            .saturating_add(short_conv_state_bytes(arch)),
     )
 }
 
@@ -658,6 +675,10 @@ impl CommittedBytes {
 /// cache, matching [`ExpertCacheSlots::resolve`]'s own dense case.
 ///
 /// [`ExpertCacheSlots::resolve`]: crate::ExpertCacheSlots::resolve
+/// The cap for the `manifest.json` read that names the family when sizing
+/// a wired cache; the same 4 MiB the manifest tests peek with.
+const MANIFEST_PEEK_MAX_BYTES: u64 = 4 * 1024 * 1024;
+
 pub fn committed_breakdown(
     model_dir: &Path,
     physical: u64,
@@ -694,6 +715,32 @@ pub fn committed_breakdown_with_residency(
     slots: crate::ExpertCacheSlots,
     residency: crate::ResolvedExpertResidency,
 ) -> CommittedBytes {
+    committed_breakdown_with_wiring(
+        model_dir,
+        physical,
+        slots,
+        residency,
+        crate::ExpertSlotWiring::Auto,
+    )
+}
+
+/// [`committed_breakdown_with_residency`] for an explicit wiring request.
+/// A request that wants a wired cache on this install's family sizes `Auto`
+/// at [`crate::WIRED_HEADROOM_FRACTION`], matching what the open allocates
+/// when the lock engages. When the open falls back to an unwired cache (the
+/// OS wire limit, a failed lock) it allocates less than this, so the budget
+/// errs toward a smaller context, never a larger one.
+pub fn committed_breakdown_with_wiring(
+    model_dir: &Path,
+    physical: u64,
+    slots: crate::ExpertCacheSlots,
+    residency: crate::ResolvedExpertResidency,
+    wiring: crate::ExpertSlotWiring,
+) -> CommittedBytes {
+    let wired = residency == crate::ResolvedExpertResidency::Streamed
+        && crate::peek_family(model_dir, MANIFEST_PEEK_MAX_BYTES)
+            .map(|family| wiring.wants_wired(family))
+            .unwrap_or(false);
     let resident = std::fs::metadata(model_dir.join("model_weights.bin"))
         .map(|m| m.len())
         .unwrap_or(0);
@@ -706,7 +753,7 @@ pub fn committed_breakdown_with_residency(
                 let bytes_per_slot: u64 = layout.layers.iter().map(|l| l.expert_stride).sum();
                 let experts_per_layer = layout.experts_per_layer.max(1);
                 let resolved = slots
-                    .resolve(physical, resident, bytes_per_slot)
+                    .resolve_wired(physical, resident, bytes_per_slot, wired)
                     .min(experts_per_layer);
                 bytes_per_slot.saturating_mul(resolved as u64)
             })

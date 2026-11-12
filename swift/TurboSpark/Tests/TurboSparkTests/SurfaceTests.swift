@@ -152,6 +152,35 @@ final class SurfaceTests: XCTestCase {
         }
     }
 
+    /// The adaptive spellings are the CLI's, and the engine agrees on them.
+    ///
+    /// Encoding is pinned here and the Rust side's parse is pinned in
+    /// `open_tests.rs`; only this pair together says the two sides meet.
+    func testAdaptiveSpeculationEncodesAsTheCLISpelling() throws {
+        let encoded = try JSONEncoder().encode([
+            OpenOptions.Speculation.adaptive(), .adaptive(cap: 12),
+        ])
+        XCTAssertEqual(
+            String(decoding: encoded, as: UTF8.self), #"["adaptive","adaptive:12"]"#)
+    }
+
+    /// A cap with no room above the floor is refused by name, before the
+    /// install is touched.
+    func testAnAdaptiveCapWithNoHeadroomIsRefusedByName() async throws {
+        var options = OpenOptions()
+        options.speculation = .adaptive(cap: 2)
+        do {
+            _ = try await TurboSparkSession(
+                modelPath: "/nonexistent/model.gturbo", options: options)
+            XCTFail("an adaptive cap of 2 should throw")
+        } catch let error as TurboSparkError {
+            XCTAssertTrue(
+                error.message.contains("adaptive") && error.message.contains("speculation"),
+                "expected the option and the value, got \(error.message)")
+            XCTAssertFalse(error.message.contains("/nonexistent"))
+        }
+    }
+
     /// Tests that a drafter name the engine does not know is refused.
     func testAnUnknownDrafterIsRefusedRatherThanDefaulted() async throws {
         // The enum cannot produce this, so it is built by hand: the point
@@ -938,6 +967,7 @@ final class SurfaceTests: XCTestCase {
             """
         let info = try JSONDecoder().decode(ServerInfo.self, from: Data(json.utf8))
         XCTAssertEqual(info.models, ["gemma4.gturbo"])
+        XCTAssertEqual(info.embeddingModels, [])
         XCTAssertEqual(info.uptimeSeconds, 0)
         XCTAssertEqual(info.baseURL?.absoluteString, "http://127.0.0.1:8080")
     }
@@ -1329,6 +1359,52 @@ final class SurfaceTests: XCTestCase {
         XCTAssertEqual(r.rawText, "<PAGE>a")
         XCTAssertEqual(r.promptTokens, 3)
         XCTAssertTrue(r.stoppedAtEos)
+    }
+
+    /// The pinned catalog row carries its tested status from Rust, and an
+    /// install at a revision other than the pin is refused before any
+    /// download.
+    func testEmbeddingCatalogCarriesStatusAndInstallChecksRevision() throws {
+        let profiles = try EmbeddingCatalog.profiles()
+        let gemma = try XCTUnwrap(profiles.first { $0.alias == "embeddinggemma-2-coreml" })
+        XCTAssertTrue(gemma.isVerified)
+        XCTAssertFalse(gemma.gates.isEmpty)
+        XCTAssertEqual(gemma.revision.count, 40)
+        XCTAssertThrowsError(try EmbeddingCatalog.install(alias: gemma.alias, revision: "main"))
+    }
+
+    /// The probe refuses a family the runtime cannot run and accepts a
+    /// supported one as runnable but not verified.
+    func testEmbeddingProbeReportsFamilyVerdicts() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ts-swift-embed-probe-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        func dir(_ modelType: String) throws -> String {
+            let d = root.appendingPathComponent(modelType)
+            try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+            try Data(#"{"model_type":"\#(modelType)"}"#.utf8).write(to: d.appendingPathComponent("config.json"))
+            try Data("x".utf8).write(to: d.appendingPathComponent("model.safetensors"))
+            try Data("{}".utf8).write(to: d.appendingPathComponent("tokenizer.json"))
+            return d.path
+        }
+        let gte = try EmbeddingCatalog.probe(try dir("gte"))
+        XCTAssertFalse(gte.runnable)
+        XCTAssertEqual(gte.family, "gte")
+        XCTAssertNotNil(gte.refusedBecause)
+        let bert = try EmbeddingCatalog.probe(try dir("bert"))
+        XCTAssertTrue(bert.runnable)
+        XCTAssertFalse(bert.verified)
+        XCTAssertEqual(bert.backend, "encoder")
+        XCTAssertFalse(try EmbeddingCatalog.probe("/nonexistent/model/path").runnable)
+    }
+
+    /// The OCR repository is pinned in the catalog and its install checks
+    /// the revision too.
+    func testOcrCatalogPinsTheTestedRevision() throws {
+        let ocr = try XCTUnwrap(try OcrCatalog.profiles().first { $0.alias == "unlimited-ocr-coreml" })
+        XCTAssertEqual(ocr.repository, "FluidInference/unlimited-ocr-mlx-coreml")
+        XCTAssertEqual(ocr.revision, "4568571eacd864e0a253c609b3c9d0e00450cebc")
+        XCTAssertThrowsError(try OcrCatalog.install(alias: ocr.alias, revision: "main"))
     }
 
     func testServerAttachEmbeddingModelRefusesMissingPath() throws {

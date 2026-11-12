@@ -1,0 +1,24 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "qwen3_asr",
+  "kind": "audio",
+  "title": "Qwen3-ASR speech to text (audio tower on the CPU, decoder on Metal)",
+  "flow": "transcribe",
+  "installs": [],
+  "recommended": [],
+  "sweeps": [],
+  "findings": [
+    {"id": "qwen3_asr.cpu-vs-metal-2026-10-11", "date": "2026-10-11",
+     "install": "qwen3-asr", "machine": "Apple M4 Max 36 GB", "power": "ac", "rev": "v0.5 era",
+     "workload": "one clip, median of the runs the page records",
+     "arms": {"cpu": {}, "metal": {}},
+     "metric": "audio_run_s", "values": {"cpu_median_ms": 10159.63, "cpu_mib": 3080.4, "metal_median_ms": 5411.69, "metal_mib": 2073.9},
+     "verdict": "reading",
+     "provenance": {"kind": "doc", "path": "docs/SPEECH_TO_TEXT.md", "heading": "Evidence recorded from real runs"},
+     "conditions": "the audio tower still runs on the CPU in the Metal arm",
+     "note": "the playbook names the tower as the lever"}
+  ],
+  "open_questions": ["the audio tower on Metal"],
+  "traps": ["TURBOSPARK_QWEN3_ASR_PROFILE=1 makes a run unquotable"],
+  "docs": ["docs/SPEECH_TO_TEXT.md"]
+}

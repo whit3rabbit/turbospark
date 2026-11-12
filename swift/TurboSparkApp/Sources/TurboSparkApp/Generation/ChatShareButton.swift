@@ -17,13 +17,13 @@ struct ChatShareButton: View {
         } label: {
             Label { Text("Share", bundle: .module) } icon: { Image(systemName: "square.and.arrow.up") }
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .themedFont(.small)
+        .appMenuAction(size: .small)
         .disabled(model.selectedChat.isGhost || !model.hasOutputTranscript)
         .help(model.selectedChat.isGhost
               ? Text("Temporary chats cannot be exported.", bundle: .module)
-              : Text("Save a local copy of this conversation", bundle: .module))
+              : (!model.hasOutputTranscript
+                 ? Text("The current chat has no messages to export.", bundle: .module)
+                 : Text("Save a local copy of this conversation", bundle: .module)))
         .accessibilityLabel(Text("Share conversation", bundle: .module))
         .onChange(of: model.selectedChatID) { _, _ in options = .init() }
     }

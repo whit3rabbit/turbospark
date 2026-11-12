@@ -217,6 +217,10 @@ pub(crate) const EXECUTABLE_GGUF_DTYPES: [u8; 15] = [
 pub(crate) enum RoutedBlobLayout {
     /// The INT4-affine planes the vendored `moe.metal` pair reads.
     Affine,
+    /// MLX affine INT3 planes (group 64, BF16 companions), the routed experts
+    /// of `mlx-community/flint-mixed-3-4bit`. Same nine sub-tensors as
+    /// [`Self::Affine`]; only the weight runs are 3/8 byte per element.
+    AffineInt3,
     /// GGUF Q8_0 blocks (Gemma 4's published GGUF is Q8_0 throughout).
     GgufQ8_0,
     /// GGUF Q4_K superblocks (Qwen 3.6's Q4_K_M puts its experts here).
@@ -290,7 +294,10 @@ impl RoutedBlobLayout {
     /// picks which reflection the shared argument buffer is built from.
     pub(crate) fn source_function(self) -> (&'static str, &'static str) {
         match self {
-            RoutedBlobLayout::Affine => {
+            // INT3 reflects the INT4 kernel on purpose: same library, same
+            // `RoutedBlobs` struct (pinned by `moe_decode_int3.rs`), so one
+            // argument buffer serves a mixed-width install.
+            RoutedBlobLayout::Affine | RoutedBlobLayout::AffineInt3 => {
                 (gpu::moe_decode_source(), "moe_phase1_gate_up_act_u16load")
             }
             RoutedBlobLayout::GgufQ8_0
@@ -376,6 +383,36 @@ fn require_ascending_layers(
     Ok(())
 }
 
+/// The affine width of one routed sub-tensor, from its byte sizes.
+///
+/// Every affine routed blob is group 64 with BF16 companions (`validate_quant`
+/// admits no other affine shape on `routedExpert`), so a `[rows, cols]` run at
+/// `b` bits is `rows*cols*b/8` bytes against `rows*cols/32` scale bytes: the
+/// ratio is `4*b`. The writer spells every affine weight run `"u32"`, so the
+/// sizes are the only structural record of the width. Anything but 3 or 4 is
+/// refused rather than read as INT4, which a 2-bit blob would otherwise be.
+fn affine_layout_of(
+    subs: &std::collections::BTreeMap<String, model_io::SubTensorEntry>,
+    role: &str,
+    layer: usize,
+) -> Result<RoutedBlobLayout, RealForwardError> {
+    let size = |name: &str| -> Result<u64, RealForwardError> {
+        subs.get(name)
+            .map(|e| e.size)
+            .ok_or_else(|| RealForwardError::MissingTensor(format!("expert blob {name}")))
+    };
+    let (weight, scales) = (size(role)?, size(&format!("{role}_scales"))?);
+    let bits = (scales > 0 && weight % (4 * scales) == 0).then(|| weight / (4 * scales));
+    match bits {
+        Some(4) => Ok(RoutedBlobLayout::Affine),
+        Some(3) => Ok(RoutedBlobLayout::AffineInt3),
+        _ => Err(RealForwardError::Unsupported(format!(
+            "layer {layer} routed {role} is {weight} weight bytes against {scales} scale bytes, \
+             which is not 3- or 4-bit affine at group 64; no routed kernel reads it"
+        ))),
+    }
+}
+
 pub(crate) fn routed_layouts_from_layout(
     layout: &model_io::PackedExpertsLayout,
     family: model_io::ModelFamily,
@@ -394,9 +431,18 @@ pub(crate) fn routed_layouts_from_layout(
                 })?
                 .sub_tensors;
             if subs.contains_key("gate_scales") {
+                let width = |role: &str| affine_layout_of(subs, role, l.layer);
+                let (gate, up) = (width("gate")?, width("up")?);
+                if gate != up {
+                    return Err(RealForwardError::Unsupported(format!(
+                        "layer {} packs a {gate:?} gate against a {up:?} up; one phase-1 \
+                         kernel reads both, so they cannot differ",
+                        l.layer
+                    )));
+                }
                 return Ok(RoutedLayerLayout {
-                    phase1: RoutedBlobLayout::Affine,
-                    phase2: RoutedBlobLayout::Affine,
+                    phase1: gate,
+                    phase2: width("down")?,
                     mxfp4_activation,
                 });
             }
@@ -638,6 +684,85 @@ mod tests {
                     sub_tensors,
                 }],
             }],
+        }
+    }
+
+    /// An affine blob at Flint's routed shape (`[512, 2048]` gate/up,
+    /// `[2048, 512]` down, group 64, BF16 companions) with each run's weight
+    /// bytes at `bits` per element.
+    fn affine_layout(gate_up_bits: u64, down_bits: u64) -> PackedExpertsLayout {
+        let (rows, cols) = (512u64, 2048u64);
+        let scales = rows * cols / 64 * 2;
+        let mut sub_tensors = BTreeMap::new();
+        let mut offset = 0u64;
+        for (role, bits) in [
+            ("gate", gate_up_bits),
+            ("up", gate_up_bits),
+            ("down", down_bits),
+        ] {
+            for (name, size) in [
+                (role.to_string(), rows * cols * bits / 8),
+                (format!("{role}_scales"), scales),
+                (format!("{role}_biases"), scales),
+            ] {
+                sub_tensors.insert(
+                    name,
+                    SubTensorEntry {
+                        offset,
+                        size,
+                        dtype: if size == scales { "bf16" } else { "u32" }.to_string(),
+                    },
+                );
+                offset += size;
+            }
+        }
+        PackedExpertsLayout {
+            expert_stride: offset,
+            num_layers: 1,
+            experts_per_layer: 1,
+            layers: vec![LayerLayout {
+                layer: 0,
+                file: "layer_00.bin".to_string(),
+                expert_stride: offset,
+                experts: vec![ExpertEntry {
+                    expert: 0,
+                    offset: 0,
+                    size: offset,
+                    sub_tensors,
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn affine_routed_width_resolves_from_blob_sizes() {
+        let flint = model_io::ModelFamily::Flint;
+        let routed = routed_layouts_from_layout(&affine_layout(4, 4), flint).expect("int4");
+        assert_eq!(routed[0].phase1, RoutedBlobLayout::Affine);
+        assert_eq!(routed[0].phase2, RoutedBlobLayout::Affine);
+        let routed = routed_layouts_from_layout(&affine_layout(3, 3), flint).expect("int3");
+        assert_eq!(routed[0].phase1, RoutedBlobLayout::AffineInt3);
+        assert_eq!(routed[0].phase2, RoutedBlobLayout::AffineInt3);
+        // The phases are independent kernels, so a mixed blob resolves per phase.
+        let routed = routed_layouts_from_layout(&affine_layout(4, 3), flint).expect("mixed");
+        assert_eq!(routed[0].phase1, RoutedBlobLayout::Affine);
+        assert_eq!(routed[0].phase2, RoutedBlobLayout::AffineInt3);
+    }
+
+    /// A 2-bit (or 8-bit) affine blob has no routed kernel here. It used to
+    /// resolve to `Affine` and be read as INT4: finite, ordered, wrong.
+    #[test]
+    fn affine_routed_widths_without_kernels_are_refused() {
+        for bits in [2, 8] {
+            let err = routed_layouts_from_layout(
+                &affine_layout(bits, bits),
+                model_io::ModelFamily::Flint,
+            )
+            .expect_err("no kernel at this width");
+            assert!(
+                matches!(&err, RealForwardError::Unsupported(m) if m.contains("not 3- or 4-bit")),
+                "{bits}-bit: {err:?}"
+            );
         }
     }
 

@@ -1,0 +1,315 @@
+{
+  "schema": "turbospark.lab.pinned/1",
+  "id": "omlx.gdn_pipelined",
+  "kernel": "the GatedDeltaNet prefill recurrence, software-pipelined blocked form (Kernel P, mx.fast.metal_kernel source string named omlx_gdn_pipelined_tb12): the exact sequential gated delta rule S = S*g; p = S.k; delta = (v - p)*beta; S = S + k*delta; y = S.q run over 12-token blocks with fp32 register state fragments",
+  "kernel_class": "gdn",
+  "repo": "omlx",
+  "summary": "omlx's default production GDN prefill for the qwen3_5 language model (Qwen3.5/3.6/3.8): a rebound gated_delta_update routes scalar-gated prefill with T >= 64 and Dk = Dv = 128 to gated_delta_pipelined. One 128-thread threadgroup owns 16 value rows and holds the fp32 state as four float4 granules per lane; the next 12-token block is prefetched into registers while the current one computes, and inside a block step t+1's operands are read before step t's cross-lane reductions. The two 128-wide dots sum in a different fp32 order than the stock per-token kernel, so the form is not bit-identical; layouts the shape predicate rejects fall back to gated_delta_blocked_seq.",
+  "source": {
+    "url": "https://github.com/jundot/omlx",
+    "rev": "78fa08bc1aef7290c93c83bb70811547763ebf33",
+    "rev_date": "2026-10-25",
+    "license": "Apache-2.0",
+    "files": [
+      "LICENSE",
+      "README.md",
+      "omlx/custom_kernels/attention/gated_delta.py",
+      "omlx/engine/vlm.py",
+      "omlx/patches/qwen35_gdn_chunked.py",
+      "pyproject.toml",
+      "tests/test_qwen35_gdn_prefill.py"
+    ],
+    "symbols": [
+      "gated_delta_pipelined",
+      "gated_delta_pipelined_supported",
+      "_pipelined_source",
+      "_pipe_step",
+      "_pipe_reduce_q",
+      "_pipe_reduce_q4",
+      "_get_kernel_p",
+      "apply_qwen35_gdn_prefill_patch",
+      "gated_delta_update_metal"
+    ]
+  },
+  "models": [
+    {
+      "name": "Qwen3.8 GDN layers, 16 key heads and 48 value heads, Dk = Dv = 128",
+      "quant": "any (the upstream A/B docstring does not tie the timing to a quant)",
+      "family": "qwen3_5",
+      "machine": "M5 Ultra (the machine the docstring A/B names)",
+      "role": "primary"
+    },
+    {
+      "name": "Qwen3.5 / Qwen3.6 series, dense and MoE (qwen3_5 language model)",
+      "quant": "any checkpoint with q/k/v in bfloat16, float16 or float32; g, beta and state are forced fp32",
+      "family": "qwen3_5",
+      "machine": "unspecified (route has no hardware probe beyond Metal availability)",
+      "role": "primary"
+    }
+  ],
+  "settings": [
+    {
+      "name": "pipeline_block_tokens",
+      "value": 12,
+      "unit": "tokens",
+      "condition": "always (constexpr TB in the generated source; the kernel name carries it as omlx_gdn_pipelined_tb12)",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:625"
+    },
+    {
+      "name": "value_rows_per_threadgroup",
+      "value": 16,
+      "unit": "rows",
+      "condition": "always (constexpr DB; one threadgroup covers 16 value rows of one v-head)",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:626"
+    },
+    {
+      "name": "lanes_per_value_row",
+      "value": 8,
+      "unit": "lanes",
+      "condition": "always (rg = tid / 8 picks the row, seg = tid % 8 the lane)",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:752"
+    },
+    {
+      "name": "threadgroup_threads",
+      "value": 128,
+      "unit": "threads",
+      "condition": "always (dispatched as threadgroup=(128, 1, 1))",
+      "kind": "derived",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:627",
+      "note": "_PIPE_THREADS = _PIPE_DB * 8, i.e. 16 rows x 8 lanes; the dispatch binding is gated_delta.py:930"
+    },
+    {
+      "name": "grid_layout",
+      "value": "(128 * Dv/16, Hv, B) threadgroups; the x split gives Dv/16 value-row blocks per head, so 8 x Hv threadgroups per batch at Dv = 128",
+      "unit": null,
+      "condition": "always",
+      "kind": "derived",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:929"
+    },
+    {
+      "name": "state_fragment",
+      "value": "fp32, 16 channels per lane held in registers as four float4 granules at columns seg + 8*i for i = 0..3 (float4 st[4]); the 8 lanes of a row cover one 128-wide state row",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:770",
+      "note": "the load that pins the strided layout is gated_delta.py:774; the module comment at 607-610 calls the granule placement bank-conflict-free"
+    },
+    {
+      "name": "state_dtype",
+      "value": "fp32 in and fp32 out",
+      "unit": null,
+      "condition": "always (state defaults to zeros in fp32, is cast to float32 at dispatch, and output_dtypes keeps it fp32)",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:917"
+    },
+    {
+      "name": "gate_input_cast",
+      "value": "g and beta are cast to float32 before dispatch",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:923"
+    },
+    {
+      "name": "input_dtypes",
+      "value": ["bfloat16", "float16", "float32"],
+      "unit": null,
+      "condition": "always (q, k and v must all be the same one of these)",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:878"
+    },
+    {
+      "name": "key_head_dim",
+      "value": 128,
+      "unit": "elements",
+      "condition": "always for the pipelined path (Dk == 128 in gated_delta_pipelined_supported)",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:886"
+    },
+    {
+      "name": "value_head_dim_multiple",
+      "value": 16,
+      "unit": "elements",
+      "condition": "always for the pipelined path (Dv % 16 == 0 in gated_delta_pipelined_supported)",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:887"
+    },
+    {
+      "name": "group_head_relation",
+      "value": "Hv % Hk == 0; each v-head reads the k/q rows of hk = hv / (Hv / Hk)",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:889"
+    },
+    {
+      "name": "y_output_dtype",
+      "value": "input dtype",
+      "unit": null,
+      "condition": "always (output_dtypes=[in_dtype, float32])",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:932"
+    },
+    {
+      "name": "template_constants",
+      "value": "InT (input dtype), Dk, Dv, Hk and Hv are Metal template constants per shape; T is a runtime scalar input",
+      "unit": null,
+      "condition": "always",
+      "kind": "derived",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:928"
+    },
+    {
+      "name": "prefetch_depth_blocks",
+      "value": 1,
+      "unit": "blocks",
+      "condition": "always when a next block exists (GDN_PIPE_FETCH(t0 + TB) is issued right behind the staging barrier, before the current block's steps run)",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:838"
+    },
+    {
+      "name": "q_reduce_group_steps",
+      "value": 4,
+      "unit": "steps",
+      "condition": "full blocks only (the q.S partials of steps s0..s0+3 are reduced by one xor reduce-scatter every 4 steps; the tail block falls back to a per-step reduction)",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:731",
+      "note": "_pipe_reduce_q4 is at gated_delta.py:651; its docstring says the result is bit-identical to reducing every step on its own (gated_delta.py:656)"
+    },
+    {
+      "name": "reduction_order",
+      "value": "both 128-wide dots accumulate as float2 partials (xy then zw fma per float4 granule) with one horizontal add each; the k.S dot is all-reduced over the 8 lanes with simd_shuffle_xor 4/2/1; y uses the same pairwise tree (per-step shuffle_down 4/2/1, or the four-step reduce-scatter)",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:707",
+      "note": "the module comment at 620-622 states the float2 accumulation and xor all-reduce; the per-step tree is gated_delta.py:643-646"
+    },
+    {
+      "name": "intra_block_pipeline",
+      "value": "step t+1's k/g/beta/v are read from threadgroup memory into registers at the top of step t, before step t's decay FMA and the pending q.S reductions",
+      "unit": null,
+      "condition": "always inside a block (the nxt load at the top of _pipe_step)",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:681"
+    },
+    {
+      "name": "threadgroup_staging",
+      "value": "the current block's k and q rows in input dtype and v, g, beta in fp32 are staged in threadgroup memory (k_s[TB][Dk], q_s[TB][Dk], v_s[TB][16], g_s[TB], b_s[TB]); y is buffered per block as y_s[TB][16]",
+      "unit": null,
+      "condition": "always",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:755"
+    },
+    {
+      "name": "tail_block_form",
+      "value": "a dynamic loop with per-step q reduction (t read as a C expression, reduce_prev=None) when the final block has fewer than 12 tokens",
+      "unit": null,
+      "condition": "T % 12 != 0 on the last block",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:734"
+    },
+    {
+      "name": "y_store_width",
+      "value": "vec<InT,4> stores, 8 bytes per store at bf16/fp16",
+      "unit": null,
+      "condition": "always (the per-block y_s buffer is flushed as 4-element vectors)",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:846"
+    },
+    {
+      "name": "route_default",
+      "value": "pipelined",
+      "unit": null,
+      "condition": "always (module global _IMPL; the chunked and blocked_seq routes are opt-in edits)",
+      "kind": "hardcoded",
+      "source": "omlx/patches/qwen35_gdn_chunked.py:30"
+    },
+    {
+      "name": "min_routed_tokens",
+      "value": 64,
+      "unit": "tokens",
+      "condition": "always at the patch route (q.shape[1] >= _MIN_T)",
+      "kind": "hardcoded",
+      "source": "omlx/patches/qwen35_gdn_chunked.py:32"
+    },
+    {
+      "name": "gating_mode",
+      "value": "scalar per-head gating only (a.ndim == 3)",
+      "unit": null,
+      "condition": "always (masked, vector-gated, cache-owned and state-stepped calls keep the original mlx-vlm kernel)",
+      "kind": "hardcoded",
+      "source": "omlx/patches/qwen35_gdn_chunked.py:107"
+    },
+    {
+      "name": "fallback_kernel",
+      "value": "gated_delta_blocked_seq (Kernel S: 32-token blocks, 32 dv rows per threadgroup, 256 threads, Dv/32 split, per-step shuffle_down reductions, no barrier in the token loop)",
+      "unit": null,
+      "condition": "when gated_delta_pipelined_supported rejects the layout",
+      "kind": "hardcoded",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:911"
+    }
+  ],
+  "gates": [
+    {
+      "condition": "Pipelined kernel accepts: Dk == 128 and Dv % 16 == 0 and Hk > 0 and Hv % Hk == 0 and T > 0 and q/k/v all the same dtype in (bfloat16, float16, float32); otherwise gated_delta_pipelined falls back to gated_delta_blocked_seq",
+      "source": "omlx/custom_kernels/attention/gated_delta.py:886"
+    },
+    {
+      "condition": "Patch route engages only when Metal is available and use_kernel and mask is None and T >= 64 and q.shape[-1] == 128 and v.shape[-1] == 128 and a.ndim == 3 (and no cache or state_steps argument); otherwise the original mlx-vlm gated_delta_update runs. The exact-128 gate replaced an earlier multiple-of-16/32 gate that could silently misbehave on other head dims",
+      "source": "omlx/patches/qwen35_gdn_chunked.py:105"
+    },
+    {
+      "condition": "The engine applies the patch for the qwen3_5 GDN models unless the model setting gdn_prefill_enabled (legacy gdn_chunked_prefill_enabled) is False; default on",
+      "source": "omlx/engine/vlm.py:2712"
+    }
+  ],
+  "measured": [
+    {
+      "metric": "prefill_gdn_recurrence_ms",
+      "value": 3.0,
+      "model": "Qwen3.8, 16 key heads and 48 value heads (Dk = Dv = 128)",
+      "machine": "M5 Ultra",
+      "conditions": "T=8191, per layer call; the same docstring sentence reports 4.9 ms for gated_delta_blocked_seq on the same shape",
+      "provenance": "upstream_reported",
+      "source": "omlx/patches/qwen35_gdn_chunked.py:7"
+    },
+    {
+      "metric": "blocked_seq_state_rel_err",
+      "value": 5e-08,
+      "model": "qwen3_5 GDN layers",
+      "machine": "unspecified",
+      "conditions": "the fallback kernel gated_delta_blocked_seq, described as fp32-exact state in the patch docstring",
+      "provenance": "upstream_reported",
+      "source": "omlx/patches/qwen35_gdn_chunked.py:10"
+    }
+  ],
+  "lab_mapping": [
+    {
+      "setting": "value_rows_per_threadgroup",
+      "maps_to": "our stock GDN prefill has no Dv split: encode_gdn_delta_prefill in crates/gpu/src/gdn.rs dispatches gdn_delta_step_prefill at (Hv, Dv/4) threadgroups; crates/gpu/tests/gdn_prefill_share_bench.rs exists to size exactly the share that omlx's Dv/16 staging and 8x smaller threadgroup count address",
+      "env": null,
+      "note": "omlx quantifies the stock form as 32x redundant k/q device traffic, about 13 GB per 16k-token layer (gated_delta.py:420), the same sentence our bench header quotes"
+    },
+    {
+      "setting": "pipeline_block_tokens",
+      "maps_to": "none yet: our prefill recurrence runs one step per dispatch with no blocked staging or register-prefetch arm to sweep against",
+      "env": null,
+      "note": "a 12-token block with fp32 register fragments is the natural first variant if that arm is ever built"
+    },
+    {
+      "setting": "reduction_order",
+      "maps_to": "exactness discipline: upstream tests bound the pipelined form at y max abs err 2e-2 in bf16 against the stock kernel while a split prefill stays array-equal (tests/test_qwen35_gdn_prefill.py:401 and :437), so a port here would need a drifted-exactness arm, not a BitExact knob row like TURBOSPARK_GDN_LAZY_TAPE",
+      "env": null,
+      "note": "matches our docs: the pipelined GDN is listed among kernels that are not bit-identical to the chain they replace"
+    }
+  ],
+  "docs": [
+    "docs/MLX_SERVE_KERNELS.md#what-srckernels-is-file-by-file",
+    "docs/MLX_SERVE_KERNELS.md#gdn-three-prefill-kernels-and-a-two-dispatch-decode"
+  ],
+  "notes": "Everything our docs claim about this kernel checks out at this rev: 12-token blocks, 16 value rows per 128-thread threadgroup, fp32 register state, next-block register prefetch, two-level pipelining, and a different fp32 summation order for the two 128-wide dots (the module docstring says the per-step math is otherwise identical to mlx_lm's stock kernel and Kernel S, gated_delta.py:600-601). Three nuances. (1) Our doc's state fragment description, a value row with a contiguous 16-wide segment, is true of the blocked Kernel S (d0 = seg * 16, gated_delta.py:443); the pipelined kernel's lane instead holds four float4 granules strided by 8 columns (seg, seg+8, seg+16, seg+24) for bank-conflict-free staging reads. (2) The NAX-only switch our docs mention is mlx-serve's gate; omlx applies no hardware gate beyond Metal availability (qwen35_gdn_chunked.py:39), so its own default routes every qualifying prefill to this kernel on any Apple GPU, and its A/B machine M5 Ultra is a NAX part. (3) Our doc's no-barrier-in-the-token-loop claim describes Kernel S; the pipelined kernel does take one threadgroup barrier per block after staging (gated_delta.py:837) and another before the y write (gated_delta.py:845), with none inside the unrolled 12-step body. Caveats the repo records: the pipelined form is not bit-identical to the stock per-token kernel (upstream test bounds: y max abs err < 2e-2 bf16, state rel err < 1e-5, tests/test_qwen35_gdn_prefill.py:401-402), but a split prefill is array-equal to a one-shot call because every step runs the same order (tests/test_qwen35_gdn_prefill.py:437); the four-step q reduce-scatter is documented as bit-identical to the per-step reduction (gated_delta.py:656); the 3.0 vs 4.9 ms docstring A/B names no date, prompt or quant; fp32 inputs drop the blocked fallback to 16-token blocks because TB=32 exceeds Metal's 32 KiB threadgroup-memory limit (gated_delta.py:536-538), which does not affect the pipelined kernel; decode at T==1 and masked or vector-gated calls never take this route (qwen35_gdn_chunked.py:18-19)."
+}

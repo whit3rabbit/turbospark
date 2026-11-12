@@ -266,4 +266,30 @@ final class ModelFitAndInstallGateTests: XCTestCase {
             installBytes: 1_000_000, freeDiskBytes: 0)
         XCTAssertEqual(d, .confirm(d.reason ?? ""))
     }
+
+    // MARK: - A destination that is not connected
+
+    /// An offline destination blocks with the drive's name instead of passing on
+    /// a free-space number that belongs to another disk. A probe refusal still
+    /// outranks it: connecting a drive does not give a model a decode flow.
+    ///
+    /// (This replaced the Move Store case, which read a retired store root and
+    /// is gone with the feature. The per-destination cases are in
+    /// `InstallDestinationGateTests`.)
+    func testAnUnconnectedDestinationBlocksAndNamesTheDrive() throws {
+        let d = ModelInstallGate.decide(
+            probeRunnable: true, refusedBecause: nil, verdict: .tight,
+            installBytes: 18_000_000_000, freeDiskBytes: 20_000_000_000,
+            destinationName: "T7", unconnectedDestination: "T7")
+        XCTAssertTrue(d.isBlocked)
+        let reason = try XCTUnwrap(d.reason)
+        XCTAssertTrue(reason.contains("T7"), "got \(reason)")
+        XCTAssertFalse(reason.contains("free"), "a boot-disk number must not show: \(reason)")
+
+        let why = "no decode flow here"
+        let refused = ModelInstallGate.decide(
+            probeRunnable: false, refusedBecause: why, verdict: nil,
+            installBytes: nil, freeDiskBytes: nil, destinationName: "T7", unconnectedDestination: "T7")
+        XCTAssertEqual(refused.reason, why)
+    }
 }

@@ -36,7 +36,7 @@ extension InspectorView {
                     if t.lowPowerMode {
                         Text("Enabled", bundle: .module)
                             .themedFont(.small)
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(.appWarning)
                     } else {
                         Text("Disabled", bundle: .module)
                             .themedFont(.small)
@@ -48,7 +48,7 @@ extension InspectorView {
                 LabeledContent {
                     Self.thermalLevelText(t.thermalLevel)
                         .themedFont(.small)
-                        .foregroundStyle(t.thermalLevel == "nominal" ? Color.secondary : Color.orange)
+                        .foregroundStyle(t.thermalLevel == "nominal" ? AnyShapeStyle(.appSecondary) : AnyShapeStyle(.appWarning))
                 } label: {
                     Text("Thermal Level", bundle: .module)
                 }
@@ -86,7 +86,7 @@ extension InspectorView {
                 if info.pastTrainedContext {
                     Text("Warning: Context window exceeds trained context", bundle: .module)
                         .themedFont(.small)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(.appWarning)
                 }
                 LabeledContent {
                     Text(verbatim: "\(info.expertCacheSlots)")

@@ -1,7 +1,7 @@
 import XCTest
 @testable import TurboSparkApp
 
-final class ToolPermissionsTests: XCTestCase {
+final class ToolPermissionsTests: NetworkPolicyPinnedTestCase {
     // MARK: - Benign Terminal Commands (Unsloth Auto Mode Parity)
 
     let benignCommands = [
@@ -141,6 +141,33 @@ final class ToolPermissionsTests: XCTestCase {
         XCTAssertFalse(ToolRiskClassifier.isSensitivePath("README.md"))
         XCTAssertFalse(ToolRiskClassifier.isSensitivePath("Package.swift"))
         XCTAssertFalse(ToolRiskClassifier.isSensitivePath("Cargo.toml"))
+    }
+
+    /// Private keys and credential stores are matched by extension or dotfile
+    /// name, and the match ignores case and directory.
+    func testSensitivePathCoversKeyFilesAndCredentialStores() {
+        for path in [
+            "server.pem", "/etc/ssl/ca-bundle.pem", "deploy/TLS/Server.PEM",
+            "tls/prod.key", "/Users/user/certs/Client.KEY",
+            ".npmrc", "/Users/user/project/.npmrc", ".NPMRC",
+            ".netrc", "/Users/user/.netrc"
+        ] {
+            XCTAssertTrue(ToolRiskClassifier.isSensitivePath(path), path)
+        }
+
+        // `.key` is also Keynote's extension. The classifier cannot tell the two
+        // apart by name, so a Keynote file is treated as sensitive. This pins that
+        // accepted cost so a future change has to choose it again.
+        XCTAssertTrue(ToolRiskClassifier.isSensitivePath("Q3 review.key"))
+
+        // The match is the final extension or the whole dotfile name, not a
+        // substring, so look-alikes stay readable.
+        for path in [
+            "keys.md", "monkey.txt", "pem.txt", "notes.pem.md", "backup.key.md",
+            "npmrc.md", "my.npmrc.md", "netrc", "README.netrc.txt", "src/keyboard.swift"
+        ] {
+            XCTAssertFalse(ToolRiskClassifier.isSensitivePath(path), path)
+        }
     }
 
     func testReadFileOnSensitivePathPromptsHighRisk() {
@@ -518,13 +545,14 @@ final class ToolPermissionsTests: XCTestCase {
         let fetchAllowDecision = AppToolPermissionEngine.evaluate(call: fetchCall, project: allowProject)
         XCTAssertEqual(fetchAllowDecision, .allow)
 
-        // 4. High-risk web call (private/metadata host) must still ask even if web=.allow
+        // 4. Cloud metadata is refused outright even when web=.allow: the
+        // network policy denies it in every mode, so there is nothing to ask.
         let privateFetchCall = AppToolCall(name: "WebFetch", arguments: ["url": "http://169.254.169.254/latest/meta-data"], category: .web)
         let privateDecision = AppToolPermissionEngine.evaluate(call: privateFetchCall, project: allowProject)
-        if case .ask(let assessment, _) = privateDecision {
-            XCTAssertTrue(assessment.isHighRisk, "Fetching private/metadata host must be classified as high risk.")
+        if case .deny(let reason) = privateDecision {
+            XCTAssertTrue(reason.contains("always blocked"), reason)
         } else {
-            XCTFail("Private host fetch must force .ask even when web=.allow, got \(privateDecision)")
+            XCTFail("Metadata host fetch must be denied even when web=.allow, got \(privateDecision)")
         }
     }
 
@@ -544,6 +572,47 @@ final class ToolPermissionsTests: XCTestCase {
         let termCall = AppToolCall(name: "Terminal", arguments: ["command": "rm -rf test.tmp"], category: .terminal)
         let decision = AppToolPermissionEngine.evaluate(call: termCall, project: fullAccessProject)
         XCTAssertEqual(decision, .allow)
+    }
+
+    /// The projectless chat's mode survives a relaunch. It reset to Auto,
+    /// so a user who chose Ask or Read Only lost it silently.
+    func testRootlessPermissionModeRoundTripsAndDefaultsToAuto() throws {
+        var settings = MacAppSettings()
+        XCTAssertEqual(settings.rootlessPermissionMode, "auto")
+        settings.rootlessPermissionMode = AppPermissionMode.readOnly.rawValue
+
+        let restored = try JSONDecoder().decode(
+            MacAppSettings.self, from: try JSONEncoder().encode(settings))
+        XCTAssertEqual(restored.rootlessPermissionMode, AppPermissionMode.readOnly.rawValue)
+
+        let legacy = try JSONDecoder().decode(
+            MacAppSettings.self, from: Data(#"{"contextTokens":0}"#.utf8))
+        XCTAssertEqual(legacy.rootlessPermissionMode, "auto")
+    }
+
+    /// Full Access drops prompts and the risk ceiling, never an explicit refusal.
+    func testFullAccessStillHonorsCategoryDenyAndMcpDenyRules() {
+        var perms = AppProjectPermissions.fullAccess
+        perms.terminal = .deny
+        perms.mcpDenyRules = ["mcp__github__delete_repository"]
+        let project = AppProject(name: "FullAccessDeny", permissions: perms)
+
+        let termCall = AppToolCall(
+            name: "run_command", arguments: ["command": "ls"], category: .terminal)
+        guard case .deny = AppToolPermissionEngine.evaluate(call: termCall, project: project) else {
+            return XCTFail("A Terminal category set to Deny must refuse under Full Access.")
+        }
+
+        let mcpCall = AppToolCall(
+            name: "mcp__github__delete_repository", arguments: [:], category: .mcp)
+        guard case .deny = AppToolPermissionEngine.evaluate(call: mcpCall, project: project) else {
+            return XCTFail("A persisted MCP deny rule must refuse under Full Access.")
+        }
+
+        // A category left at Allow still runs high-risk work unprompted.
+        let writeCall = AppToolCall(
+            name: "write_file", arguments: ["path": "/etc/hosts", "content": "x"], category: .fileWrite)
+        XCTAssertEqual(AppToolPermissionEngine.evaluate(call: writeCall, project: project), .allow)
     }
 }
 

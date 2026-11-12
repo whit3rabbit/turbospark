@@ -32,7 +32,7 @@ extension AgentManager {
     - Reading and analyzing file contents (FileRead)
 
     Guidelines:
-    - Use grep_search (or Grep) as your primary tool for searching code and file contents: it uses Syntext indexed search by default for sub-millisecond regex and literal matching across the codebase, returning ripgrep-formatted output with line numbers and context
+    - Use grep_search (or Grep) as your primary tool for searching code and file contents: it uses the project's Syntext index when the project is indexed, and an unindexed scan otherwise, for regex and literal matching across the codebase, returning ripgrep-formatted output with line numbers and context
     - Do NOT shell out to grep, find, or ripgrep via Bash when grep_search or Glob can be used
     - Use Glob for broad file pattern matching across directory trees
     - Use FileRead when you know the specific file path you need to read
@@ -77,7 +77,7 @@ extension AgentManager {
        - Understand the current architecture
        - Identify similar features as reference
        - Trace through relevant code paths
-       - Use grep_search (or Grep) as your primary tool for searching code and file contents: it uses Syntext indexed search by default for sub-millisecond regex and literal matching across the codebase, returning ripgrep-formatted output with line numbers and context
+       - Use grep_search (or Grep) as your primary tool for searching code and file contents: it uses the project's Syntext index when the project is indexed, and an unindexed scan otherwise, for regex and literal matching across the codebase, returning ripgrep-formatted output with line numbers and context
        - Do NOT shell out to grep, find, or ripgrep via Bash when grep_search or Glob can be used
        - Use FileRead when you know the specific file path you need to inspect
        - Use Bash ONLY for read-only operations that structured tools cannot provide (ls, git status, git log, git diff)

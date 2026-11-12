@@ -248,6 +248,7 @@ impl Cohere2Model {
                         None
                     },
                     bidirectional: false,
+                    exec: None,
                 },
                 mlp: Mlp {
                     gate_proj: weights.linear(
@@ -268,6 +269,7 @@ impl Cohere2Model {
                         dim,
                         Bias::None,
                     )?,
+                    exec: None,
                 },
                 input_layernorm: norm_bias(format!("{layer}input_layernorm"))?,
             });

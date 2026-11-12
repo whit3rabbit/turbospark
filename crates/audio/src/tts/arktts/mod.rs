@@ -96,8 +96,9 @@ struct Norm {
 
 impl Norm {
     fn load(weights: &Weights, name: &str, width: usize, epsilon: f32) -> Result<Self> {
+        // `tensor` loads `{name}.weight` itself; callers pass the base.
         Ok(Self {
-            weight: weights.tensor(&format!("{name}.weight"), &[width])?,
+            weight: weights.tensor(name, &[width])?,
             epsilon,
         })
     }
@@ -263,6 +264,9 @@ struct Block {
     n_head: usize,
     n_local_heads: usize,
     head_dim: usize,
+    /// The model rope base; the reference builds both the slow and the fast
+    /// table with `config.rope_base`.
+    rope_base: f32,
     /// Static full-buffer KV cache `[local_heads, max_len, head_dim]`,
     /// `None` outside generation.
     cache: Option<(Vec<f32>, Vec<f32>)>,
@@ -281,12 +285,22 @@ impl Block {
         let q_width = self.n_head * self.head_dim;
         let kv_width = self.n_local_heads * self.head_dim;
         let qkv = self.wqkv.forward(x, frames);
-        let q = &qkv[..frames * q_width];
-        let k = &qkv[frames * q_width..frames * (q_width + kv_width)];
-        let v = &qkv[frames * (q_width + kv_width)..];
-        let mut qh = head_major(q, frames, self.n_head, self.head_dim);
-        let mut kh = head_major(k, frames, self.n_local_heads, self.head_dim);
-        let vh = head_major(v, frames, self.n_local_heads, self.head_dim);
+        // Split row-wise into PACKED [frames, width] buffers: the flat qkv
+        // rows keep the full fused stride, and head_major indexes a packed
+        // `[frames, heads, dim]` layout.
+        let total_row = q_width + 2 * kv_width;
+        let mut q = Vec::with_capacity(frames * q_width);
+        let mut k = Vec::with_capacity(frames * kv_width);
+        let mut v = Vec::with_capacity(frames * kv_width);
+        for row in 0..frames {
+            let row_values = &qkv[row * total_row..(row + 1) * total_row];
+            q.extend_from_slice(&row_values[..q_width]);
+            k.extend_from_slice(&row_values[q_width..q_width + kv_width]);
+            v.extend_from_slice(&row_values[q_width + kv_width..]);
+        }
+        let mut qh = head_major(&q, frames, self.n_head, self.head_dim);
+        let mut kh = head_major(&k, frames, self.n_local_heads, self.head_dim);
+        let vh = head_major(&v, frames, self.n_local_heads, self.head_dim);
         if let (Some(q_norm), Some(k_norm)) = (&self.q_norm, &self.k_norm) {
             q_norm.apply(&mut qh, self.n_head * frames);
             k_norm.apply(&mut kh, self.n_local_heads * frames);
@@ -297,7 +311,7 @@ impl Block {
         let mut sin = vec![0.0f32; frames * half];
         for (row, &position) in positions.iter().enumerate() {
             for d in 0..half {
-                let freq = 1.0 / (10000.0f32.powf(2.0 * d as f32 / self.head_dim as f32));
+                let freq = 1.0 / (self.rope_base.powf(2.0 * d as f32 / self.head_dim as f32));
                 let angle = round_bf16((position as f32 * freq).cos());
                 cos[row * half + d] = angle;
                 sin[row * half + d] = round_bf16((position as f32 * freq).sin());
@@ -313,7 +327,6 @@ impl Block {
             &sin,
         );
 
-        let cached = self.cache.is_some();
         let (keys, values): (&[f32], &[f32]) = match &mut self.cache {
             Some((keys, values)) => {
                 let stride = self.head_dim;
@@ -341,7 +354,10 @@ impl Block {
                     [(head * frames + t) * self.head_dim..(head * frames + t + 1) * self.head_dim];
                 let mut max = f32::NEG_INFINITY;
                 for j in 0..total {
-                    let causal = cached || j <= t;
+                    // Causal in ABSOLUTE positions: the query sits at
+                    // cache_start + t, so the multi-frame prefill stays
+                    // causal and a decode step attends every written slot.
+                    let causal = j <= cache_start + t;
                     let allowed = causal && key_mask.get(j).copied().unwrap_or(false);
                     if !allowed {
                         scores[j] = f32::NEG_INFINITY;
@@ -433,7 +449,8 @@ pub struct ArkttsModel {
     pub config: ModelConfig,
     codebook_embeddings: Vec<f32>,
     falcon: Option<FalconH1Model>,
-    /// Pure-attention flavor: text embedding table + slow blocks + norm.
+    /// The text embedding table: `model.embeddings` for the pure-attention
+    /// flavor, `model.slow.embed_tokens` for the falcon flavor.
     embeddings: Option<Vec<f32>>,
     layers: Vec<Block>,
     norm: Option<Norm>,
@@ -476,15 +493,24 @@ impl ArkttsModel {
             let model = FalconH1Model::load_without_embed_table(
                 weights,
                 falcon_h1::from_json(&falcon_json(config)?)?,
-                "model.slow",
+                // The prefix covers the layer tensors and carries the
+                // trailing dot (`load_impl` joins it directly).
+                "model.slow.",
             )?;
+            // The slow stack's text table lives INSIDE FalconSlowStack
+            // (`model.slow.embed_tokens`): the composite embedding sums the
+            // codebook rows into it before the stack runs, and the
+            // reference sanitize deliberately does not fold the embedding
+            // multiplier into it.
+            let embeddings =
+                weights.embedding("model.slow.embed_tokens", config.vocab_size, config.dim)?;
             let head = weights.linear(
                 "model.semantic_output",
                 config.dim,
                 config.codebook_size + 1,
                 Bias::None,
             )?;
-            (Some(model), None, Vec::new(), None, Some(head))
+            (Some(model), Some(embeddings), Vec::new(), None, Some(head))
         } else {
             let embeddings =
                 weights.embedding("model.embeddings", config.vocab_size, config.dim)?;
@@ -502,6 +528,7 @@ impl ArkttsModel {
                     config.attention_o_bias,
                     config.attention_qk_norm,
                     config.norm_eps,
+                    config.rope_base,
                 )?);
             }
             let norm = Norm::load(weights, "model.norm", config.dim, config.norm_eps)?;
@@ -537,6 +564,7 @@ impl ArkttsModel {
                 config.fast_attention_o_bias,
                 config.fast_attention_qk_norm,
                 config.norm_eps,
+                config.rope_base,
             )?);
         }
         let fast_norm = Norm::load(weights, "model.fast_norm", config.fast_dim, config.norm_eps)?;
@@ -587,12 +615,17 @@ impl ArkttsModel {
     fn text_embeddings(&self) -> &[f32] {
         self.embeddings
             .as_deref()
-            .expect("the pure-attention flavor owns the text embedding table")
+            .expect("both flavors own a text embedding table")
     }
 
     /// Prefill over the full prompt column stack; returns the last-position
     /// semantic logits and the last hidden state (fast-AR input).
-    fn slow_prefill(&mut self, prompt: &[Vec<i32>], frames: usize) -> Result<(Vec<f32>, Vec<f32>)> {
+    fn slow_prefill(
+        &mut self,
+        prompt: &[Vec<i32>],
+        frames: usize,
+        caches: Option<&mut Vec<falcon_h1::FalconLayerCache>>,
+    ) -> Result<(Vec<f32>, Vec<f32>)> {
         let rows: Vec<Vec<i32>> = (0..frames)
             .map(|t| {
                 let mut row = Vec::with_capacity(prompt.len());
@@ -611,7 +644,13 @@ impl ArkttsModel {
             for value in hidden.iter_mut() {
                 *value *= self.config.embedding_multiplier;
             }
-            let normalized = self.falcon.as_mut().unwrap().forward_stack(&hidden, None)?;
+            // The reference prefill runs WITH the fresh cache like every
+            // other step (`_setup_generation_caches` runs before the first
+            // `_slow_step`).
+            let normalized = match self.falcon.as_mut() {
+                Some(falcon) => falcon.forward_stack(&hidden, caches)?,
+                None => unreachable!("the falcon branch runs on the falcon flavor"),
+            };
             let last = &normalized[(frames - 1) * self.config.dim..frames * self.config.dim];
             let logits = self.semantic_output.as_ref().unwrap().forward(last, 1);
             return Ok((logits, last.to_vec()));
@@ -626,21 +665,40 @@ impl ArkttsModel {
         let key_mask: Vec<bool> = vec![true; frames];
         let mut current = hidden;
         for layer in &mut self.layers {
-            current = layer.forward(&current, frames, &positions, &key_mask, 0, frames)?;
+            // total_len must be the FULL cache stride (max_seq_len), or the
+            // per-head cache rows are written compacted and the decode
+            // steps read head 1 from an all-zero region.
+            current = layer.forward(
+                &current,
+                frames,
+                &positions,
+                &key_mask,
+                0,
+                self.config.max_seq_len,
+            )?;
         }
+        // The generation prefill runs through the reference `_slow_step`,
+        // which feeds the NORMALIZED last hidden to the fast AR under
+        // `norm_fastlayer_input` (the standalone parity `__call__` returns
+        // the raw hidden, but the generation loop never uses it).
+        let raw_last = current[(frames - 1) * width..frames * width].to_vec();
         let norm = self.norm.as_ref().unwrap();
         norm.apply(&mut current, frames);
-        let last = &current[(frames - 1) * width..frames * width];
+        let last_normalized = &current[(frames - 1) * width..frames * width];
         // Tied head: logits = normalized @ embeddings.T
         let logits = ops::linear(
-            last,
+            last_normalized,
             self.embeddings.as_ref().unwrap(),
             None,
             1,
             width,
             self.config.vocab_size,
         );
-        let fast_hidden = last.to_vec();
+        let fast_hidden = if self.config.norm_fastlayer_input {
+            last_normalized.to_vec()
+        } else {
+            raw_last
+        };
         Ok((logits, fast_hidden))
     }
 
@@ -655,20 +713,16 @@ impl ArkttsModel {
     ) -> Result<(Vec<f32>, Vec<f32>)> {
         let width = self.config.dim;
         let hidden_unscaled = self.embed(&[semantic], books);
-        if self.falcon.is_some() {
+        if let Some(falcon) = self.falcon.as_mut() {
             let mut hidden = hidden_unscaled;
             for value in hidden.iter_mut() {
                 *value *= self.config.embedding_multiplier;
             }
-            let normalized = self
-                .falcon
-                .as_mut()
-                .unwrap()
-                .forward_stack(&hidden, falcon_step.map(|c| &mut *c))?;
+            let normalized = falcon.forward_stack(&hidden, falcon_step.map(|c| &mut *c))?;
             let logits = self
                 .semantic_output
                 .as_ref()
-                .unwrap()
+                .expect("the falcon flavor owns the semantic head")
                 .forward(&normalized, 1);
             return Ok((logits, normalized));
         }
@@ -730,7 +784,7 @@ impl ArkttsModel {
             (semantic - config.semantic_begin_id as i32).clamp(0, config.codebook_size as i32 - 1)
         };
         let mut current = codes[0];
-        for position in 1..config.num_codebooks {
+        for (position, slot) in codes.iter_mut().enumerate().skip(1) {
             let h = self.fast_embeddings
                 [current as usize * config.fast_dim..(current as usize + 1) * config.fast_dim]
                 .to_vec();
@@ -752,17 +806,22 @@ impl ArkttsModel {
             self.fast_norm.apply(&mut h, 1);
             let scores = self.fast_output.forward(&h, 1);
             let processed = legacy_top_k_top_p(&scores, params.top_k, params.top_p);
+            let processed: Vec<f32> = processed
+                .iter()
+                .map(|&s| s / params.temperature.max(1e-5))
+                .collect();
             current = if params.do_sample {
-                exponential_race(&processed, uniforms.next())
+                exponential_race(&processed, &uniforms.next_n(processed.len()))
             } else {
                 argmax(&processed) as i32
             };
-            codes[position] = current;
+            *slot = current;
         }
         codes
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn load_block(
     weights: &Weights,
     base: &str,
@@ -775,6 +834,7 @@ fn load_block(
     o_bias: bool,
     qk_norm: bool,
     norm_eps: f32,
+    rope_base: f32,
 ) -> Result<Block> {
     let total = (n_head + 2 * n_local_heads) * head_dim;
     let wqkv = weights.linear(
@@ -838,6 +898,7 @@ fn load_block(
         n_head,
         n_local_heads,
         head_dim,
+        rope_base,
         cache: None,
     })
 }
@@ -920,8 +981,10 @@ impl Default for SamplingParams {
 }
 
 /// Uniform draws in generation order (recorded streams in fixtures; the
-/// crate RNG in production). The reference consumes two draws per frame on
-/// the semantic path (normal + RAS-high) and one per codebook.
+/// crate RNG in production). Each exponential race consumes one uniform per
+/// vocabulary entry, so a frame takes two full-width semantic streams
+/// (normal + RAS-high) plus one codebook-width stream per remaining
+/// codebook position.
 pub struct Uniforms {
     draws: std::collections::VecDeque<f32>,
     fallback: music_rng::Rng,
@@ -939,11 +1002,13 @@ impl Uniforms {
         self.draws.extend(values.iter().copied());
     }
 
-    fn next(&mut self) -> f32 {
-        match self.draws.pop_front() {
-            Some(value) => value,
-            None => self.fallback.next_f32(),
-        }
+    fn next_n(&mut self, count: usize) -> Vec<f32> {
+        (0..count)
+            .map(|_| match self.draws.pop_front() {
+                Some(value) => value,
+                None => self.fallback.next_f32(),
+            })
+            .collect()
     }
 }
 
@@ -970,8 +1035,9 @@ mod music_rng {
     }
 }
 
-/// The reference `_legacy_top_k_top_p`: filter BEFORE temperature. Keeps
-/// the first token always.
+/// The reference `_legacy_top_k_top_p`: filter BEFORE temperature. The
+/// removal test is an INCLUSIVE cumulative softmax (`mx.cumsum` counts the
+/// current entry), and rank 0 always survives.
 fn legacy_top_k_top_p(scores: &[f32], top_k: usize, top_p: f32) -> Vec<f32> {
     let vocab = scores.len();
     let mut order: Vec<usize> = (0..vocab).collect();
@@ -989,9 +1055,9 @@ fn legacy_top_k_top_p(scores: &[f32], top_k: usize, top_p: f32) -> Vec<f32> {
     let mut cumulative = 0.0f32;
     let mut keep_sorted = vec![false; vocab];
     for (rank, &p) in probs.iter().enumerate() {
+        cumulative += p;
         let remove = (cumulative > top_p) || (rank >= top_k);
         keep_sorted[rank] = !remove || rank == 0;
-        cumulative += p;
     }
     let mut out = vec![f32::NEG_INFINITY; vocab];
     for (rank, &index) in order.iter().enumerate() {
@@ -1002,15 +1068,21 @@ fn legacy_top_k_top_p(scores: &[f32], top_k: usize, top_p: f32) -> Vec<f32> {
     out
 }
 
-/// The reference `_sample`: exponential race, `argmax(softmax / -ln(u))`.
-fn exponential_race(scores: &[f32], uniform: f32) -> i32 {
+/// The reference `_sample`: exponential race, `argmax(softmax / -ln u)` with
+/// ONE uniform per vocabulary entry (`mx.random.uniform(shape=probabilities.shape)`),
+/// so the draw order is the vocabulary index order. Ties keep the first
+/// index like `mx.argmax`.
+fn exponential_race(scores: &[f32], uniforms: &[f32]) -> i32 {
+    assert_eq!(scores.len(), uniforms.len(), "one uniform per entry");
     let max = scores.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
     let exps: Vec<f32> = scores.iter().map(|&s| (s - max).exp()).collect();
     let sum: f32 = exps.iter().sum();
-    let noise = -uniform.max(1e-7).ln();
     let mut best = 0usize;
     let mut best_score = f32::NEG_INFINITY;
-    for (index, &e) in exps.iter().enumerate() {
+    for (index, (&e, &uniform)) in exps.iter().zip(uniforms).enumerate() {
+        // The reference applies -ln(u) unguarded; u == 0 maps to an
+        // infinite noise and a zero ratio exactly like mx.log would.
+        let noise = -uniform.ln();
         let ratio = (e / sum) / noise;
         if ratio > best_score {
             best_score = ratio;
@@ -1021,8 +1093,9 @@ fn exponential_race(scores: &[f32], uniform: f32) -> i32 {
 }
 
 /// Prompt assembly (`_prepare_prompt`): semantic row = prefix [+ reference
-/// semantic codes] + suffix; the codebook columns carry the reference codes
-/// aligned after the prefix.
+/// semantic codes] + suffix; codebook column `book + 1` carries reference
+/// code row `book` (row 0 is the semantic book, expressed raw here and
+/// offset in the semantic row), aligned after the prefix.
 pub fn prepare_prompt(
     config: &ModelConfig,
     prefix: &[i32],
@@ -1033,8 +1106,8 @@ pub fn prepare_prompt(
     let mut semantic_row: Vec<i32> = prefix.to_vec();
     if let Some(codes) = reference_codes {
         let length = reference_length.min(codes[0].len());
-        for t in 0..length {
-            semantic_row.push(codes[0][t] + config.semantic_begin_id as i32);
+        for &code in codes[0].iter().take(length) {
+            semantic_row.push(code + config.semantic_begin_id as i32);
         }
     }
     semantic_row.extend_from_slice(suffix);
@@ -1044,8 +1117,8 @@ pub fn prepare_prompt(
     if let Some(codes) = reference_codes {
         let length = reference_length.min(codes[0].len());
         for (book, row) in prompt.iter_mut().skip(1).enumerate() {
-            for t in 0..length {
-                row[prefix.len() + t] = codes[book + 1][t];
+            for (offset, slot) in row[prefix.len()..].iter_mut().enumerate().take(length) {
+                *slot = codes[book][offset];
             }
         }
     }
@@ -1053,13 +1126,34 @@ pub fn prepare_prompt(
     (prompt, mask)
 }
 
+/// True when the text already carries a `<|speaker:N|>` tag (the reference
+/// checks the regex `<\|speaker:\d+\|>`; only the prepend decision depends
+/// on it).
+fn has_speaker_tag(text: &str) -> bool {
+    let mut rest = text;
+    while let Some(position) = rest.find("<|speaker:") {
+        let after = &rest[position + "<|speaker:".len()..];
+        let digits = after.chars().take_while(|c| c.is_ascii_digit()).count();
+        if digits > 0 && after[digits..].starts_with("|>") {
+            return true;
+        }
+        rest = &rest[position + "<|speaker:".len()..];
+    }
+    false
+}
+
 /// The exact tokenizer-independent prompt strings the reference builds
-/// (`_prompt_segments`); the caller encodes them with the checkpoint's
-/// Mistral BPE tokenizer.
-pub fn prompt_segments(text: &str, reference_text: Option<&str>) -> (Vec<String>, String) {
+/// (`_prompt_segments`): the PREFIX and SUFFIX segment lists (empty suffix
+/// without a reference voice). The caller encodes each segment with the
+/// checkpoint's Mistral BPE tokenizer (`add_special_tokens=False`) and
+/// concatenates the ids per side.
+pub fn prompt_segments(
+    text: &str,
+    reference_text: Option<&str>,
+) -> (Vec<String>, Vec<String>, String) {
     let clean = |raw: &str| raw.split_whitespace().collect::<Vec<_>>().join(" ");
     let target = clean(text);
-    let mut parts = vec![
+    let prefix = vec![
         "<|im_start|>system\n".to_owned(),
         "convert the provided text to speech".to_owned(),
         "<|im_end|>\n".to_owned(),
@@ -1068,23 +1162,30 @@ pub fn prompt_segments(text: &str, reference_text: Option<&str>) -> (Vec<String>
         "<|im_end|>\n".to_owned(),
         "<|im_start|>assistant\n<|voice|>".to_owned(),
     ];
-    if let Some(reference) = reference_text {
-        let formatted = if reference.contains("<|speaker:0|>") {
-            clean(reference)
-        } else {
-            format!("<|speaker:0|>{}", clean(reference))
-        };
-        parts = vec![
+    let Some(reference) = reference_text else {
+        return (prefix, Vec::new(), target);
+    };
+    let formatted = if has_speaker_tag(&clean(reference)) {
+        clean(reference)
+    } else {
+        format!("<|speaker:0|>{}", clean(reference))
+    };
+    (
+        vec![
             "<|im_start|>system\n".to_owned(),
-            "convert the provided text to speech".to_owned(),
+            "convert the provided text to speech reference to the following:\n\nText:\n".to_owned(),
+            formatted,
+            "\n\nSpeech:\n".to_owned(),
+        ],
+        vec![
             "<|im_end|>\n".to_owned(),
             "<|im_start|>user\n".to_owned(),
-            formatted,
-            "<|audio|>\n".to_owned(),
+            target.clone(),
+            "<|im_end|>\n".to_owned(),
             "<|im_start|>assistant\n<|voice|>".to_owned(),
-        ];
-    }
-    (parts, target)
+        ],
+        target,
+    )
 }
 
 /// Generation output: the 10-book code grid `[num_codebooks][T]`.
@@ -1094,6 +1195,9 @@ pub struct Generation {
 
 impl ArkttsModel {
     /// `generate_codes` (batch 1). Returns the code grid for the codec.
+    /// Sampled draws come from the crate RNG seeded with `seed`; fixture
+    /// replays pass recorded streams through
+    /// [`ArkttsModel::generate_codes_with_uniforms`].
     pub fn generate_codes(
         &mut self,
         prefix: &[i32],
@@ -1102,6 +1206,28 @@ impl ArkttsModel {
         reference_length: usize,
         params: &SamplingParams,
         seed: u64,
+    ) -> Result<Generation> {
+        let mut uniforms = Uniforms::new(seed);
+        self.generate_codes_with_uniforms(
+            prefix,
+            suffix,
+            reference_codes,
+            reference_length,
+            params,
+            &mut uniforms,
+        )
+    }
+
+    /// [`ArkttsModel::generate_codes`] with an explicit uniform stream: each
+    /// exponential race consumes one uniform per vocabulary entry.
+    pub fn generate_codes_with_uniforms(
+        &mut self,
+        prefix: &[i32],
+        suffix: &[i32],
+        reference_codes: Option<&[Vec<i32>]>,
+        reference_length: usize,
+        params: &SamplingParams,
+        uniforms: &mut Uniforms,
     ) -> Result<Generation> {
         let config = self.config.clone();
         let (prompt, _mask) =
@@ -1123,9 +1249,6 @@ impl ArkttsModel {
         };
 
         // Set up caches.
-        if let Some(falcon) = &self.falcon {
-            let _ = falcon;
-        }
         let mut falcon_caches = self.falcon.as_mut().map(|f| f.make_cache());
         for layer in &mut self.layers {
             layer.cache = Some((
@@ -1140,17 +1263,16 @@ impl ArkttsModel {
             ));
         }
 
-        let mut uniforms = Uniforms::new(seed);
-        let (mut logits, mut slow_hidden) = self.slow_prefill(&prompt, prompt_width)?;
+        let (mut logits, mut slow_hidden) =
+            self.slow_prefill(&prompt, prompt_width, falcon_caches.as_mut())?;
         let mut previous: Option<Vec<i32>> = None;
         let mut frames: Vec<Vec<i32>> = Vec::new();
 
         for step in 0..max_new_tokens {
-            let semantic =
-                self.sample_semantic(&logits, &params, previous.as_deref(), &mut uniforms);
+            let semantic = sample_semantic(&config, &logits, params, previous.as_deref(), uniforms);
             let codebooks = {
                 let hidden = slow_hidden.clone();
-                self.generate_codebooks(&hidden, semantic, params, &mut uniforms)
+                self.generate_codebooks(&hidden, semantic, params, uniforms)
             };
             if semantic != eos_index as i32 {
                 frames.push(codebooks.clone());
@@ -1199,55 +1321,61 @@ impl ArkttsModel {
         }
         Ok(Generation { codes: frames })
     }
+}
 
-    fn sample_semantic(
-        &self,
-        logits: &[f32],
-        params: &SamplingParams,
-        previous: Option<&[i32]>,
-        uniforms: &mut Uniforms,
-    ) -> i32 {
-        let config = &self.config;
-        let filtered = if config.uses_falcon_slow() {
-            logits.to_vec()
-        } else {
-            let mut filtered = vec![f32::NEG_INFINITY; logits.len()];
-            for id in config.semantic_begin_id..=config.semantic_end_id {
-                filtered[id] = logits[id];
+/// The reference `_sample_semantic`: semantic-range filter, legacy top-k /
+/// top-p, THEN temperature; greedy argmax or the exponential race with the
+/// RAS repetition rescue (a repeated semantic inside the window switches to
+/// the ras_top_p / ras_temperature draw).
+fn sample_semantic(
+    config: &ModelConfig,
+    logits: &[f32],
+    params: &SamplingParams,
+    previous: Option<&[i32]>,
+    uniforms: &mut Uniforms,
+) -> i32 {
+    let filtered = if config.uses_falcon_slow() {
+        logits.to_vec()
+    } else {
+        let mut filtered = vec![f32::NEG_INFINITY; logits.len()];
+        for (id, value) in filtered.iter_mut().enumerate() {
+            let semantic = (config.semantic_begin_id..=config.semantic_end_id).contains(&id);
+            let eos = id == config.eos_token_id;
+            if semantic || eos {
+                *value = logits[id];
             }
-            filtered[config.eos_token_id] = logits[config.eos_token_id];
-            filtered
-        };
-        let regular = legacy_top_k_top_p(&filtered, params.top_k, params.top_p);
-        let regular: Vec<f32> = regular
-            .iter()
-            .map(|&s| s / params.temperature.max(1e-5))
-            .collect();
-        if !params.do_sample {
-            return argmax(&regular) as i32;
         }
-        let normal = exponential_race(&regular, uniforms.next());
-        let high_scores = legacy_top_k_top_p(&filtered, params.top_k, config.ras_top_p);
-        let high_scores: Vec<f32> = high_scores
-            .iter()
-            .map(|&s| s / config.ras_temperature.max(1e-5))
-            .collect();
-        let high = exponential_race(&high_scores, uniforms.next());
-        let previous = match previous {
-            Some(window) => window,
-            None => return normal,
-        };
-        let repeated = previous.iter().any(|&id| id == normal);
-        let semantic_hit = if config.uses_falcon_slow() {
-            normal < config.codebook_size as i32
-        } else {
-            normal >= config.semantic_begin_id as i32 && normal <= config.semantic_end_id as i32
-        };
-        if repeated && semantic_hit {
-            high
-        } else {
-            normal
-        }
+        filtered
+    };
+    let regular = legacy_top_k_top_p(&filtered, params.top_k, params.top_p);
+    let regular: Vec<f32> = regular
+        .iter()
+        .map(|&s| s / params.temperature.max(1e-5))
+        .collect();
+    if !params.do_sample {
+        return argmax(&regular) as i32;
+    }
+    let normal = exponential_race(&regular, &uniforms.next_n(regular.len()));
+    let high_scores = legacy_top_k_top_p(&filtered, params.top_k, config.ras_top_p);
+    let high_scores: Vec<f32> = high_scores
+        .iter()
+        .map(|&s| s / config.ras_temperature.max(1e-5))
+        .collect();
+    let high = exponential_race(&high_scores, &uniforms.next_n(high_scores.len()));
+    let previous = match previous {
+        Some(window) => window,
+        None => return normal,
+    };
+    let repeated = previous.contains(&normal);
+    let semantic_hit = if config.uses_falcon_slow() {
+        normal < config.codebook_size as i32
+    } else {
+        normal >= config.semantic_begin_id as i32 && normal <= config.semantic_end_id as i32
+    };
+    if repeated && semantic_hit {
+        high
+    } else {
+        normal
     }
 }
 
@@ -1299,8 +1427,18 @@ impl Model {
                 why: "no audio generated (immediate end of speech)".into(),
             });
         }
-        self.codec.decode(&generation.codes)
+        // The codec consumes book-major rows; the generation grid is
+        // frame-major.
+        let frames = generation.codes.len();
+        let mut book_major = vec![Vec::with_capacity(frames); self.config.num_codebooks];
+        for row in &generation.codes {
+            for (book, code) in row.iter().enumerate() {
+                book_major[book].push(*code);
+            }
+        }
+        self.codec.decode(&book_major)
     }
 }
 
+#[cfg(test)]
 mod tests;

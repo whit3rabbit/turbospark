@@ -25,6 +25,9 @@ pub struct Plan<'a> {
     /// layer -> role-bearing source tensors.
     pub routed: BTreeMap<usize, Vec<RoutedSource<'a>>>,
     pub ignored: Vec<String>,
+    /// `lfm3`'s `rope_freqs.weight`, verified by value before any write
+    /// (`rope_freqs::verify_zero_tail`).
+    pub rope_freqs: Option<&'a str>,
 }
 
 /// The block index of a `blk.<n>.` tensor that sits ABOVE the trunk, or
@@ -57,6 +60,7 @@ pub fn classify<'a>(
         ngram: None,
         routed: BTreeMap::new(),
         ignored: Vec::new(),
+        rope_freqs: None,
     };
     for name in header.tensors.keys() {
         if family == ModelFamily::Qwen4Exp && name == "per_layer_token_embd.weight" {
@@ -109,6 +113,13 @@ pub fn classify<'a>(
             }
             GgufMapping::Ignored { reason } => {
                 plan.ignored.push(format!("{name} ({reason})"));
+            }
+            GgufMapping::ZeroTailRopeFreqs => {
+                plan.rope_freqs = Some(name.as_str());
+                plan.ignored.push(format!(
+                    "{name} (zero-tail partial rotary, carried as partial_rotary_factor \
+                     once its values are verified)"
+                ));
             }
         }
     }
@@ -230,13 +241,36 @@ pub fn expert_stride(
     }
     let mut max_blob = 0u64;
     for sources in plan.routed.values() {
-        let mut blob = 0u64;
-        for s in sources {
-            blob += per_expert_bytes(header, s, arch)?;
-        }
-        max_blob = max_blob.max(blob);
+        max_blob = max_blob.max(per_expert_blob_bytes(header, sources, arch)?);
     }
-    Ok(max_blob.div_ceil(crate::GTURBO_PAGE_BYTES) * crate::GTURBO_PAGE_BYTES)
+    page_align(max_blob)
+}
+
+/// Refusal for a header-derived byte count past u64. Release builds carry no
+/// overflow checks, so an unchecked sum would wrap to a small, wrong stride.
+fn size_overflow() -> GgufRepackError {
+    GgufRepackError::ShapeMismatch {
+        tensor: "routed experts".into(),
+        detail: "byte count overflow".into(),
+    }
+}
+
+/// Checked sum of one layer's per-expert bytes across its routed sources.
+fn per_expert_blob_bytes(
+    header: &GgufHeader,
+    sources: &[RoutedSource<'_>],
+    arch: &ArchConfig,
+) -> Result<u64, GgufRepackError> {
+    sources.iter().try_fold(0u64, |acc, s| {
+        acc.checked_add(per_expert_bytes(header, s, arch)?)
+            .ok_or_else(size_overflow)
+    })
+}
+
+fn page_align(bytes: u64) -> Result<u64, GgufRepackError> {
+    bytes
+        .checked_next_multiple_of(crate::GTURBO_PAGE_BYTES)
+        .ok_or_else(size_overflow)
 }
 
 /// Build one layer's per-expert blobs. Returns the blobs and the per-expert
@@ -290,13 +324,9 @@ pub fn layer_file_bytes(
         .ok_or_else(|| GgufRepackError::MissingTensor {
             name: format!("layer {layer} routed experts"),
         })?;
-    let mut used = 0u64;
-    for s in sources {
-        used += per_expert_bytes(header, s, arch)?;
-    }
-    let stride =
-        (used.div_ceil(crate::GTURBO_PAGE_BYTES) * crate::GTURBO_PAGE_BYTES).min(max_stride);
-    Ok(stride * experts)
+    let used = per_expert_blob_bytes(header, sources, arch)?;
+    let stride = page_align(used)?.min(max_stride);
+    stride.checked_mul(experts).ok_or_else(size_overflow)
 }
 
 fn plan_one_layer_inner(
@@ -385,4 +415,84 @@ fn plan_one_layer_inner(
         },
         used,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gguf_header::GgufTensorInfo;
+
+    /// A header-only routed layer whose tensors each fit u64 on their own.
+    /// The sizes come straight off an untrusted header, so a sum or a
+    /// stride-times-experts product can still pass u64::MAX; release builds
+    /// have no overflow checks and would wrap to a small, wrong stride.
+    fn routed_layer(hidden: u64, inter: u64, experts: u64) -> (GgufHeader, ArchConfig) {
+        let mut arch = crate::tiny_deepseek2_arch(16, 1);
+        arch.hidden_size = hidden as i64;
+        arch.moe_intermediate_size = inter as i64;
+        arch.num_experts = experts as i64;
+        let f16 = |dims: Vec<u64>| GgufTensorInfo {
+            ggml_type: 1,
+            dims,
+            offset: 0,
+        };
+        let mut tensors = BTreeMap::new();
+        tensors.insert("g".to_string(), f16(vec![hidden, inter, experts]));
+        tensors.insert("u".to_string(), f16(vec![hidden, inter, experts]));
+        tensors.insert("d".to_string(), f16(vec![inter, hidden, experts]));
+        let header = GgufHeader {
+            version: 3,
+            metadata: BTreeMap::new(),
+            tensors,
+            alignment: 32,
+            data_region_start: 0,
+        };
+        (header, arch)
+    }
+
+    fn plan_of(header: &GgufHeader) -> Plan<'_> {
+        let src = |name: &str, role: &'static str| RoutedSource {
+            name: header.tensors.get_key_value(name).unwrap().0.as_str(),
+            roles: vec![role],
+        };
+        let mut routed = BTreeMap::new();
+        routed.insert(0, vec![src("g", "gate"), src("u", "up"), src("d", "down")]);
+        Plan {
+            resident: Vec::new(),
+            ngram: None,
+            routed,
+            ignored: Vec::new(),
+            rope_freqs: None,
+        }
+    }
+
+    fn is_overflow(r: Result<u64, GgufRepackError>) -> bool {
+        matches!(r, Err(GgufRepackError::ShapeMismatch { ref detail, .. }) if detail.contains("overflow"))
+    }
+
+    #[test]
+    fn per_expert_sum_overflow_is_refused() {
+        // One expert, three 2^63-byte F16 tensors: each fits, the sum does not.
+        let (header, arch) = routed_layer(1 << 31, 1 << 31, 1);
+        let plan = plan_of(&header);
+        assert!(is_overflow(expert_stride(&header, &arch, &plan)));
+        assert!(is_overflow(layer_file_bytes(
+            &header,
+            &arch,
+            &plan,
+            0,
+            u64::MAX
+        )));
+    }
+
+    #[test]
+    fn layer_file_product_overflow_is_refused() {
+        // Four experts: the per-expert sum (3 * 2^61) fits, times four does not.
+        let (header, arch) = routed_layer(1 << 30, 1 << 30, 4);
+        let plan = plan_of(&header);
+        let stride = expert_stride(&header, &arch, &plan).expect("per-expert sum fits");
+        assert!(is_overflow(layer_file_bytes(
+            &header, &arch, &plan, 0, stride
+        )));
+    }
 }

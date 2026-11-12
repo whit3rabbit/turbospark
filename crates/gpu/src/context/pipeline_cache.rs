@@ -45,6 +45,11 @@ pub(super) struct PipelineDiskCache {
 }
 
 impl PipelineDiskCache {
+    /// Trust boundary: archives are loaded without content verification. The
+    /// cache is opt-in and lives in a directory the current user owns, so any
+    /// writer there already runs as this user; a digest stored beside the
+    /// archive would be rewritten by the same writer. Do not point
+    /// TURBOSPARK_METAL_CACHE_DIR at a directory other users can write.
     pub(super) fn from_environment(device: &Device) -> Option<Self> {
         if std::env::var("TURBOSPARK_METAL_PIPELINE_CACHE").as_deref() != Ok("1") {
             return None;

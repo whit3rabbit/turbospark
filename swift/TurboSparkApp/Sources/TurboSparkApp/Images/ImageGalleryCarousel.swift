@@ -7,6 +7,7 @@ struct ImageGalleryCarousel: View {
     let reuse: (AppArtifact) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var selectedID: UUID
+    @State private var confirmingTrash = false
 
     init(model: AppModel, initialID: UUID, reuse: @escaping (AppArtifact) -> Void) {
         self.model = model
@@ -20,20 +21,23 @@ struct ImageGalleryCarousel: View {
 
     var body: some View {
         VStack(spacing: 18) {
-            HStack {
-                Text("Preview", bundle: .module).themedFont(.title3, weight: .semibold)
-                Spacer()
+            AppAdaptiveHeader {
+                Text("Preview", bundle: .module)
+                    .themedFont(.title3, weight: .semibold)
+                    .accessibilityAddTraits(.isHeader)
+            } actions: {
                 if let artifact {
                     Menu {
-                        ImageGalleryActions(model: model, artifact: artifact) {
+                        ImageGalleryActions(model: model, artifact: artifact, reuse: {
                             reuse(artifact); dismiss()
-                        }
+                        }, requestTrash: { confirmingTrash = true })
                     } label: {
                         Label { Text("Image actions", bundle: .module) } icon: { Image(systemName: "ellipsis") }
                             .labelStyle(.iconOnly)
                     }
                     .appMenuAction()
                     .help(Text("Image actions", bundle: .module))
+                    .accessibilityLabel(Text("Image actions", bundle: .module))
                 }
                 Button { dismiss() } label: { Text("Done", bundle: .module) }
                     .appAction(.secondary)
@@ -43,7 +47,8 @@ struct ImageGalleryCarousel: View {
                 if let url = artifact.url, let image = NSImage(contentsOf: url) {
                     Image(nsImage: image).resizable().scaledToFit()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
+                        .accessibilityLabel(Text(verbatim: artifact.imageRequest?.prompt ?? artifact.title))
                 } else {
                     ContentUnavailableView {
                         Label { Text("Image unavailable", bundle: .module) } icon: { Image(systemName: "photo") }
@@ -51,6 +56,7 @@ struct ImageGalleryCarousel: View {
                 }
                 Text(verbatim: artifact.imageRequest?.prompt ?? artifact.title)
                     .themedFont(.base).textSelection(.enabled).lineLimit(4)
+                    .help(Text(verbatim: artifact.imageRequest?.prompt ?? artifact.title))
                 if let request = artifact.imageRequest {
                     HStack {
                         Text(verbatim: "\(request.width) x \(request.height)")
@@ -87,6 +93,23 @@ struct ImageGalleryCarousel: View {
                 let previous = old.firstIndex(of: selectedID) ?? 0
                 selectedID = new[min(previous, new.count - 1)]
             }
+        }
+        .confirmationDialog(Text("Move to Trash", bundle: .module), isPresented: $confirmingTrash) {
+            Button(role: .destructive) {
+                if let artifact {
+                    model.trashGeneratedImages(ids: [artifact.id])
+                    dismiss()
+                }
+            } label: {
+                Text("Move to Trash", bundle: .module)
+            }
+            Button(role: .cancel) {
+                confirmingTrash = false
+            } label: {
+                Text("Cancel", bundle: .module)
+            }
+        } message: {
+            Text("Are you sure you want to move this image to the Trash?", bundle: .module)
         }
     }
 }

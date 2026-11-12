@@ -337,13 +337,10 @@ fn merge_counters(object: &mut serde_json::Value, g: &Generated) {
 /// something WAS about to be sent. Without this, a client that closes the
 /// connection mid-prefill on a long prompt leaves the generation running to
 /// completion for nobody.
-fn ndjson(
-    lines: tokio::sync::mpsc::UnboundedReceiver<String>,
-    cancel: crate::cancel::Cancel,
-) -> Response {
+fn ndjson(lines: tokio::sync::mpsc::Receiver<String>, cancel: crate::cancel::Cancel) -> Response {
     use futures::StreamExt;
     let stream = crate::cancel::CancelOnDrop::new(
-        tokio_stream::wrappers::UnboundedReceiverStream::new(lines),
+        tokio_stream::wrappers::ReceiverStream::new(lines),
         cancel,
     )
     .map(|line| Ok::<_, std::convert::Infallible>(axum::body::Bytes::from(line)));
@@ -454,14 +451,24 @@ async fn run(
     let effort = model.default_reasoning();
     let cancel = crate::cancel::new_cancel();
     let _ = &state;
+    // Reserved before either arm: a streaming 200 cannot turn into a 429.
+    let ticket = match crate::queue::reserve(model.as_ref()) {
+        Ok(ticket) => ticket,
+        Err(crate::queue::QueueFull) => {
+            return crate::queue::with_retry_after(error_response(
+                StatusCode::TOO_MANY_REQUESTS,
+                crate::queue::QUEUE_FULL_MESSAGE.to_string(),
+            ))
+        }
+    };
 
     if !streaming {
         // The FIFO gate's acquisition point for the non-streaming arm
         // (`queue.rs`'s closed set); the streaming arm below acquires
         // through `run_gated`. Acquired per arm rather than once above the
         // fork so the permit is moved into exactly the arm that runs.
-        let gate = match model.generation_queue() {
-            Some(queue) => match queue.acquire(&cancel).await {
+        let gate = match ticket {
+            Some(ticket) => match ticket.acquire(&cancel).await {
                 Some(permit) => Some(permit),
                 // Cancelled while queued: the same `done` object a
                 // mid-generation cancel would have produced, into a
@@ -513,23 +520,20 @@ async fn run(
         };
     }
 
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let (tx, rx) = tokio::sync::mpsc::channel::<String>(crate::cancel::STREAM_BACKLOG);
     let cancel_for_task = cancel.clone();
-    // The FIFO gate's acquisition point for the streaming arm. See
-    // `handler::stream_response`'s longer note.
-    let gate = model.generation_queue();
+    // The FIFO gate's acquisition point for the streaming arm, on the
+    // ticket reserved above. See `handler::stream_response`'s longer note.
+    let gate = ticket;
     let cancel_for_gate = cancel.clone();
     tokio::spawn(async move {
         let _ = crate::queue::run_gated(gate, &cancel_for_gate, move || {
             let send = |object: serde_json::Value| -> bool {
                 // A failed send is the client having gone. Setting the flag here
                 // is the fast detector; nothing else watches this body, so unlike
-                // the SSE paths there is no `CancelOnDrop` behind it.
-                if tx.send(format!("{object}\n")).is_err() {
-                    cancel_for_task.store(true, std::sync::atomic::Ordering::Relaxed);
-                    return false;
-                }
-                true
+                // the SSE paths there is no `CancelOnDrop` behind it. A full
+                // backlog (client connected but not reading) cancels too.
+                crate::cancel::send_or_cancel(&tx, format!("{object}\n"), &cancel_for_task)
             };
             let flag = crate::cancel::as_cancel_flag(&cancel_for_task);
             let mut emit = |piece: Piece| {

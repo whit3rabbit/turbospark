@@ -10,6 +10,17 @@ use crate::real_forward_layout::{
 };
 use crate::real_forward_types::{DecodeScratch, PhaseCounters, RealForwardError, ROUTED_BANKS};
 
+/// What an open is for. Every public entry point opens [`OpenRole::Chat`];
+/// only `HiddenTrunk::open` opens a [`OpenRole::HeadlessTrunk`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OpenRole {
+    /// An install with its own head, producing logits.
+    Chat,
+    /// A trunk marked headless (`model_io::trunk_role`), producing hidden
+    /// states for the model that owns it.
+    HeadlessTrunk,
+}
+
 impl RealForwardRunner {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn open_inner(
@@ -23,6 +34,35 @@ impl RealForwardRunner {
         session_slots: usize,
         kv_quant: KvQuant,
         residency: model_io::ExpertResidency,
+    ) -> Result<Self, RealForwardError> {
+        Self::open_inner_with_role(
+            dir,
+            expecting,
+            max_context,
+            expert_cache_slots,
+            fp16_ring_capacity_override,
+            speculation,
+            steering,
+            session_slots,
+            kv_quant,
+            residency,
+            OpenRole::Chat,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn open_inner_with_role(
+        dir: &Path,
+        expecting: ArchConfig,
+        max_context: usize,
+        expert_cache_slots: ExpertCacheSlots,
+        fp16_ring_capacity_override: Option<usize>,
+        speculation: crate::families::qwen::DraftPolicies,
+        steering: crate::steering::SteeringPolicy,
+        session_slots: usize,
+        kv_quant: KvQuant,
+        residency: model_io::ExpertResidency,
+        role: OpenRole,
     ) -> Result<Self, RealForwardError> {
         let open_started = std::time::Instant::now();
         let phase_started = open_started;
@@ -40,6 +80,33 @@ impl RealForwardRunner {
                  and call RealForwardRunner::attach_vision_sidecar instead",
                 dir.display()
             )));
+        }
+        // A headless trunk has no LM head: a chat open would fail late on a
+        // missing tensor, or, on a build that ignored the marker and met a
+        // tied manifest, decode with the embedding table as its head. Refused
+        // here, by name, on the marker's presence alone (a corrupt marker
+        // still refuses).
+        let headless = role == OpenRole::HeadlessTrunk;
+        if !headless && model_io::trunk_role::has_marker(dir) {
+            return Err(RealForwardError::Unsupported(format!(
+                "{} is a headless trunk ({}): it has no LM head and is driven by the model \
+                 that owns it, so it cannot be opened as a chat model",
+                dir.display(),
+                model_io::trunk_role::TRUNK_ROLE_FILE
+            )));
+        }
+        if headless {
+            model_io::trunk_role::read(dir).map_err(RealForwardError::Model)?;
+            if expecting.family != model_io::ModelFamily::QwenGdnMoe
+                || expecting.tie_word_embeddings
+            {
+                return Err(RealForwardError::Unsupported(format!(
+                    "a headless trunk must be an untied {} trunk, got {} (tied {})",
+                    model_io::ModelFamily::QwenGdnMoe.as_str(),
+                    expecting.family.as_str(),
+                    expecting.tie_word_embeddings
+                )));
+            }
         }
         if expert_cache_slots == ExpertCacheSlots::Fixed(0) {
             return Err(RealForwardError::Unsupported(
@@ -172,7 +239,7 @@ impl RealForwardRunner {
             max_context,
             true,
             None,
-            MAX_PREFILL_CHUNK_TOKENS,
+            kv_ring_chunk_tokens(&expecting),
             fp16_ring_capacity_override,
             kv_quant,
         )
@@ -181,16 +248,23 @@ impl RealForwardRunner {
         startup_stats.kv_scratch_ms = phase_started.elapsed().as_secs_f64() * 1000.0;
         let phase_started = std::time::Instant::now();
 
-        let (streamers, slot_buffers, experts_layout, resolved_slots, resolved_residency, mapped) =
-            crate::real_forward_init::open_expert_streamers(
-                dir,
-                &expecting,
-                expert_cache_slots,
-                residency,
-                index.header.resident_size,
-                PACKED_LAYOUT_MAX_BYTES,
-                &mut context,
-            )?;
+        let (
+            streamers,
+            slot_buffers,
+            experts_layout,
+            resolved_slots,
+            resolved_residency,
+            mapped,
+            expert_slot_wiring,
+        ) = crate::real_forward_init::open_expert_streamers(
+            dir,
+            &expecting,
+            expert_cache_slots,
+            residency,
+            index.header.resident_size,
+            PACKED_LAYOUT_MAX_BYTES,
+            &mut context,
+        )?;
 
         let use_silu = expecting.hidden_activation.contains("silu");
         let (moe_offsets, routed_layouts, routed_blobs, routed_blobs_banks) = match &experts_layout
@@ -258,6 +332,7 @@ impl RealForwardRunner {
             slot_buffers,
             expert_cache_slots: resolved_slots,
             resolved_residency,
+            expert_slot_wiring,
             streamers,
             mapped,
             moe_offsets,
@@ -268,9 +343,18 @@ impl RealForwardRunner {
             real_mtp: None,
             real_dflash: None,
             batched_tape: None,
+            // Fresh open: zeroed state, the committed boundary of position 0.
+            gdn_state_clean: true,
+            unsnapshotted_checkpoint_alive: false,
+            unsnapshotted_checkpoint_tainted: false,
+            deferred_gdn_snapshot: None,
+            turn_snapshot: None,
             batched_tape_row0: None,
+            pending_gdn_fold: None,
             real_llama: None,
             real_deepseek2: None,
+            real_unlimited_ocr2: None,
+            real_flint: None,
             real_gpt_oss: None,
             real_muse: None,
             real_qwen4: None,
@@ -278,12 +362,16 @@ impl RealForwardRunner {
             shared_cb_overlap: std::env::var("TURBOSPARK_SHARED_CB").as_deref() != Ok("0"),
             routed_pipeline: std::env::var("TURBOSPARK_ROUTED_PIPELINE").as_deref() != Ok("0"),
             routed_batch_prefill: std::env::var("TURBOSPARK_ROUTED_BATCH").as_deref() == Ok("1"),
+            routed_batch_overlap: std::env::var("TURBOSPARK_ROUTED_BATCH_OVERLAP").as_deref()
+                == Ok("1"),
             batched_gemv_prefill: std::env::var("TURBOSPARK_BATCHED_GEMV").as_deref() == Ok("1"),
             batched_gemv_prefill_auto: std::env::var_os("TURBOSPARK_BATCHED_GEMV").is_none(),
             prefill_steel: std::env::var("TURBOSPARK_PREFILL_STEEL").as_deref() != Ok("0"),
             mtp_batched_prime: std::env::var("TURBOSPARK_MTP_BATCHED_PRIME").as_deref() != Ok("0"),
             prefill_rows_attention: std::env::var("TURBOSPARK_PREFILL_ROWS_ATTN").as_deref()
                 != Ok("0"),
+            #[cfg(feature = "ane-prefill")]
+            ane_prefill: crate::families::qwen::AnePrefill::from_env(),
             routed_layouts,
             router_hist,
             ffn_hist,
@@ -292,10 +380,24 @@ impl RealForwardRunner {
             steering: None,
             install_dir: dir.to_path_buf(),
             vision: None,
+            gemma4_vision: None,
+            qwen25_vision: None,
+            minicpm_vision: None,
+            lfm3_vision: None,
+            clip_vision: None,
+            muse_vision: None,
+            pixtral_vision: None,
+            siglip_vision: None,
+            deepseek_ocr_vision: None,
+            onevision_vision: None,
             vision_sidecar_dir: None,
             prompt_vision: None,
             skip_head: false,
+            host_embed: None,
+            hidden_out: false,
+            headless,
             real_spark: None,
+            real_lfm3: None,
         };
         match runner.arch.family {
             model_io::ModelFamily::Gemma4 => {
@@ -331,6 +433,7 @@ impl RealForwardRunner {
                     &runner.index,
                     &runner.arch,
                     hadamard,
+                    headless,
                 )?);
                 // The speculative drafter, and it builds NOTHING unless a
                 // depth was asked for -- so an install that has a head is
@@ -450,6 +553,41 @@ impl RealForwardRunner {
                     "the DeepSeek-V4-Flash family has no decode flow yet".to_string(),
                 ));
             }
+            // Its own flow: short-conv layers, zero-tail per-class rope and
+            // sandwich norms are each inside the layer, and a neighbour's flow
+            // would decode fluently and wrongly (`docs/LFM3_PHASE0.md`).
+            model_io::ModelFamily::Lfm3 => {
+                runner.real_lfm3 = Some(crate::families::lfm3::RealLfm3State::build(
+                    &mut runner.context,
+                    &runner.index,
+                    &runner.arch,
+                )?);
+            }
+            // Its own flow: sinks, NoPE by layer mask, per-head QK norm, a
+            // sigmoid router, an ungated shared expert and a dense lead are
+            // each inside the layer, so a neighbour's flow would decode
+            // fluently and wrongly. `docs/FLINT_PHASE0.md`.
+            model_io::ModelFamily::Flint => {
+                runner.real_flint = Some(crate::families::flint::RealFlintState::build(
+                    &mut runner.context,
+                    &runner.weights,
+                    &runner.index,
+                    &runner.arch,
+                )?);
+            }
+            // Its own flow: DASH routing and page2d angles are host state read
+            // inside the attention half, which no neighbour's flow has.
+            model_io::ModelFamily::UnlimitedOcr2 => {
+                runner.real_unlimited_ocr2 = Some(
+                    crate::families::unlimited_ocr2::RealUnlimitedOcr2State::build(
+                        &mut runner.context,
+                        &runner.weights,
+                        &runner.index,
+                        &runner.arch,
+                        dir,
+                    )?,
+                );
+            }
             model_io::ModelFamily::Deepseek2 => {
                 runner.real_deepseek2 =
                     Some(crate::families::deepseek2::RealDeepseek2State::build(
@@ -477,6 +615,13 @@ impl RealForwardRunner {
                     dir,
                     max_context,
                     runner.expert_cache_slots,
+                    // GGUF intake (`scheme: "gguf"`) stores llama.cpp's
+                    // unit-folded norm scales; the MLX intake keeps Hugging
+                    // Face's offsets from unity.
+                    manifest
+                        .quant
+                        .as_ref()
+                        .is_none_or(|quant| quant.attention.scheme != "gguf"),
                 )?);
             }
             // A FIFTH FLOW, not a sixth family on an existing one: all four
@@ -551,7 +696,7 @@ impl RealForwardRunner {
                 max_context,
                 true,
                 None,
-                MAX_PREFILL_CHUNK_TOKENS,
+                kv_ring_chunk_tokens(&runner.arch),
                 fp16_ring_capacity_override,
                 kv_quant,
             )
@@ -624,5 +769,22 @@ impl RealForwardRunner {
         }
         runner.startup_stats.total_open_ms = open_started.elapsed().as_secs_f64() * 1000.0;
         Ok(runner)
+    }
+}
+
+/// Tokens of look-ahead the sliding-window KV ring holds beyond the window.
+///
+/// The prefill chunk budget for every install, except one that declares a
+/// Gemma 4 vision tower: an image span writes all its rows' keys before any
+/// row attends (`families/gemma4/vision_prefill.rs`), so the ring must hold
+/// `window + span - 1`. Sized for the default soft-token budget, so a
+/// default image fits; a larger budget is refused at
+/// `set_prompt_vision_gemma4` rather than wrapping the ring. A text-only
+/// install keeps the old ring byte for byte.
+fn kv_ring_chunk_tokens(arch: &model_io::ArchConfig) -> usize {
+    if arch.vision.is_active() && arch.vision.tower == model_io::VisionTowerKind::Gemma4 {
+        MAX_PREFILL_CHUNK_TOKENS.max(turbospark_vision_io::GEMMA4_DEFAULT_SOFT_TOKENS)
+    } else {
+        MAX_PREFILL_CHUNK_TOKENS
     }
 }

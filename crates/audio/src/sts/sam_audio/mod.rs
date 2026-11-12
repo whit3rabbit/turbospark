@@ -1514,6 +1514,7 @@ impl SamAudio {
     }
 
     /// One midpoint ODE step.
+    #[allow(clippy::too_many_arguments)]
     fn ode_step_midpoint(
         &self,
         t: f32,

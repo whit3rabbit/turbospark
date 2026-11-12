@@ -20,6 +20,7 @@ struct BrowserPermissionApprovalView: View {
                     .textSelection(.enabled)
             }
             .lineLimit(1)
+            .help(request.origin.canonicalString)
 
             Text("This action requires your confirmation to execute.", bundle: .module)
                 .themedFont(.small)
@@ -53,17 +54,17 @@ struct BrowserPermissionApprovalView: View {
                 if refusal == .limitReached {
                     Text("Project limit reached (256 origins). Remove one before adding another.", bundle: .module)
                         .themedFont(.tiny)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(AppAttention.color)
                 } else if refusal == .invalidOrigin {
                     Text("Enter a valid HTTP(S) origin.", bundle: .module)
                         .themedFont(.tiny)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(AppAttention.color)
                 }
             }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.appElevated.opacity(0.45), in: RoundedRectangle(cornerRadius: 8))
+        .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     private func handle(_ result: BrowserPermissionApprovalActionResult) {

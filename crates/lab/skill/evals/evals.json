@@ -1,0 +1,93 @@
+[
+  {
+    "skills": [
+      "tslab"
+    ],
+    "query": "Does setting a decode knob speed up decode on ~/models/qwen38-27b-dflash2.gturbo? Measure it and tell me.",
+    "files": [],
+    "expected_behavior": [
+      "Runs scripts/preflight.sh, or checks AC power and competing processes, before measuring",
+      "Runs `tslab ab --null` for the workload before the paired `ab`, with the same --prompt and --decode",
+      "Picks the knob from `tslab knobs` and passes it as `--candidate on:KNOB=V` with `--baseline off`, adding --json",
+      "Reports the verdict, median and interval with the ledger id, model, workload, chip, power source and page-cache class",
+      "If the verdict is NOISE, reports no effect and does not rerun until it wins"
+    ]
+  },
+  {
+    "skills": [
+      "tslab"
+    ],
+    "query": "My ab run exited 4 and every pair is marked eligible: false with 'foreign CPU over 150%'. Revert the change, it clearly did not work.",
+    "files": [],
+    "expected_behavior": [
+      "Explains that exit 4 is INCONCLUSIVE from a busy host and says nothing about the change",
+      "Refuses to revert on it",
+      "Finds and stops the foreign load (a build, an editor check, Spotlight), then reruns the same command",
+      "Does not pass a looser --max-foreign-cpu to get a number out of the busy host"
+    ]
+  },
+  {
+    "skills": [
+      "tslab"
+    ],
+    "query": "I only have the tslab skill zip, no checkout. Run the kernel gate on my attention change and then update the decode row in docs/BENCHMARKS.md.",
+    "files": [],
+    "expected_behavior": [
+      "Says `gate`, `run-experiment` and `confirm` need the TurboSpark source tree and refuse from the zip",
+      "Offers a zip-compatible alternative such as `tslab kernel --bench attn_decode --hash` or `ab` on binaries built from the change",
+      "Declines to edit docs/BENCHMARKS.md and says freezing a row is a human decision",
+      "Notes the zip's binaries measure the build in BUILD.txt, not the user's change"
+    ]
+  },
+  {
+    "skills": [
+      "tslab"
+    ],
+    "query": "What settings does mlx-serve pin for its verify matmul lanes, and where in its source?",
+    "files": [],
+    "expected_behavior": [
+      "Runs `tslab pinned --repo mlx-serve --class verify_matmul`, or reads the matching file under crates/lab/pinned/mlx-serve/",
+      "Reports the settings with the entry's source file, symbol and pinned revision",
+      "Does not start a measuring run or take the machine lock for this lookup"
+    ]
+  },
+  {
+    "skills": [
+      "tslab"
+    ],
+    "query": "What speculation block should I run on ~/models/qwen38-27b-mtp.gturbo, and has anyone measured it?",
+    "files": [],
+    "expected_behavior": [
+      "Runs `tslab family --model M` (or `--findings`) and reads the profile's recommended entries instead of guessing from memory",
+      "Reports MTP block 2 as the recorded best with the finding id and its conditions (install, machine, power source, date)",
+      "Says which findings are tslab verdicts (ledger provenance) and which are doc readings",
+      "Offers `tslab sweep --sweep spec_block` to re-measure on this install rather than quoting a reading as a new result"
+    ]
+  },
+  {
+    "skills": [
+      "tslab"
+    ],
+    "query": "Sweep expert cache slots 16, 32 and 64 on my Flint install and tell me which wins.",
+    "files": [],
+    "expected_behavior": [
+      "Runs preflight and a null calibration for the workload first",
+      "Uses one `tslab sweep` with `--baseline` and repeated `--candidate` arms (or the profile's `slots` sweep), not three separate `ab` runs",
+      "Reads the `sweep` record's `best` and per-candidate verdicts; reports `best: none` when no candidate is a WIN rather than picking the largest median",
+      "Reports exit 4 as a busy host, not as a result"
+    ]
+  },
+  {
+    "skills": [
+      "tslab"
+    ],
+    "query": "I just made GQA decode attention the default for my family. Confirm it is still faster than barrier on decode with tslab.",
+    "files": [],
+    "expected_behavior": [
+      "Passes --metric decode_tok_s to both the null run and the ab, since ab defaults to prefill_tok_s",
+      "Uses baseline default and candidate barrier:attn_decode_kernel=barrier, and reads a LOSS as confirming the default",
+      "Checks each run record's engaged list: attn_decode_gqa on the default arm with no env set, attn_decode_barrier on the candidate",
+      "Reads the metric named in the ab header line before quoting the number"
+    ]
+  }
+]

@@ -130,6 +130,61 @@
       }
     },
     {
+      "alias": "minimax-music3-turbo-4bit-8step",
+      "assets": [
+        {
+          "path": "LICENSE",
+          "size": 7373,
+          "sha256": "b21d12df2adae59dad3fcf80c1d81492654c662342f497d9a9770198c9317e58"
+        },
+        {
+          "path": "README.md",
+          "size": 3902,
+          "sha256": "45414e1f365593e089fd86b3a25b2a3faf256ddacb2ccc1740be0bbf3f0c998e"
+        },
+        {
+          "path": "config.json",
+          "size": 1999,
+          "sha256": "ed768eb48ad013bc71f7e765e3ea864315cb5f4e3153f3dd0241bf5246717d48"
+        },
+        {
+          "path": "model.safetensors.index.json",
+          "size": 142575,
+          "sha256": "52b7d128135f6914f7530e75db168dd910eee4fa1e0cc6fc8591ad5ff41744fb"
+        },
+        {
+          "path": "model-turbospark-01.safetensors",
+          "size": 5352618720,
+          "sha256": "e3f16d01e4315126be1e89636df270c8158191c80c94278d331b2b36052ef0b2"
+        },
+        {
+          "path": "model-turbospark-02.safetensors",
+          "size": 7319353204,
+          "sha256": "d424794589b6ffd4d74a119a8e88430143d774649e59f94487efb38dd2c55e5e"
+        },
+        {
+          "path": "scheduler/scheduler_config.json",
+          "size": 483,
+          "sha256": "b544466124aab333da4874417da0168610067e9c9ff95fcb63d749e4bf891d99"
+        },
+        {
+          "path": "tokenizer/chat_template.jinja",
+          "size": 4168,
+          "sha256": "a55ee1b1660128b7098723e0abcd92caa0788061051c62d51cbe87d9cf1974d8"
+        },
+        {
+          "path": "tokenizer/tokenizer.json",
+          "size": 11423801,
+          "sha256": "b1537fa9e59a537276ecbc2e12d0438edff635a1f4a4948e679774b5feb3e610"
+        },
+        {
+          "path": "tokenizer/tokenizer_config.json",
+          "size": 377,
+          "sha256": "1689852cc9c45010de040c8302a8acdc0d2c4c6c740dd7e9dd0a8c704e16eada"
+        }
+      ]
+    },
+    {
       "alias": "minimax-music3-4bit",
       "assets": [
         {
@@ -834,6 +889,1655 @@
         ],
         "voices": [],
         "max_input_seconds": 1800
+      }
+    },
+    {
+      "alias": "parakeet-ultra-coreml",
+      "assets": [
+        {
+          "path": "Decoder.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "fe92b6cfaa012abd5248c0bc877832f19807015abffc60d87b8ccc8ccb48b3b5"
+        },
+        {
+          "path": "Decoder.mlmodelc/coremldata.bin",
+          "size": 560,
+          "sha256": "3b06e66768f0df7e21795f50e2b29300e33eeb1a2579dc42c695279c2d308497"
+        },
+        {
+          "path": "Decoder.mlmodelc/model.mil",
+          "size": 13110,
+          "sha256": "956f600207f88396017ca5c96cfa3acd5bfee60835a5b44b762e033a8fb28955"
+        },
+        {
+          "path": "Decoder.mlmodelc/weights/weight.bin",
+          "size": 23604992,
+          "sha256": "02a0d219f281b9665bc10c8768649403b2eebbbf4b44c627041d948e0de11bb4"
+        },
+        {
+          "path": "Encoder.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "d87101d824d6723cf95304da33755c3c60e762663b9ef2b0c4bd0aa166a09a0d"
+        },
+        {
+          "path": "Encoder.mlmodelc/coremldata.bin",
+          "size": 514,
+          "sha256": "397a84a4062f563cbc5f56077c674f09a61d85be5090f61d2f1932afb92ac0fe"
+        },
+        {
+          "path": "Encoder.mlmodelc/model.mil",
+          "size": 1002653,
+          "sha256": "f5d601568a4171d99a314c0fe3f6bc67715da2623732a3fb566e050ea83e5848"
+        },
+        {
+          "path": "Encoder.mlmodelc/weights/weight.bin",
+          "size": 594211328,
+          "sha256": "315ba01f33cadbf601d43ac7f5c86208b7aa75fdaa34705c9869d5abe3521c9b"
+        },
+        {
+          "path": "JointDecisionv3.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "68d38ca646aebafa7a9329e2efda50f5767c49e89fdb5f77f212072bb66f97c4"
+        },
+        {
+          "path": "JointDecisionv3.mlmodelc/coremldata.bin",
+          "size": 592,
+          "sha256": "5e3af5a4ce686f6c237cadbd9284e10d333bc0e1546633cd0e430e6194044bc4"
+        },
+        {
+          "path": "JointDecisionv3.mlmodelc/model.mil",
+          "size": 11777,
+          "sha256": "791b3c3cf3eb2079c84623fc880f6bba008d1366e5f8b03e9a8ed8bd4d7194a0"
+        },
+        {
+          "path": "JointDecisionv3.mlmodelc/weights/weight.bin",
+          "size": 12642764,
+          "sha256": "3f310b85b82341c53ec383025ab094a4e462ee1c592e1ad7c6bfe39cff66ca25"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "c9beeb989c8d66f8be11df59bc6df277ec76cee404f6865b46243835ef562f6d"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/coremldata.bin",
+          "size": 486,
+          "sha256": "dbde3f2300842c1fd51ef3ff948a0bcffe65ffd2dca10707f2509f32c1d65b1d"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/metadata.json",
+          "size": 2841,
+          "sha256": "2a98699e22d279dd37fa1d238aeb1c6db1df0d6fad687775324157689d8f3acf"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/model.mil",
+          "size": 28181,
+          "sha256": "4b8518a956450fec57f06c2a21bdffc26973f7f1fa6842fb38fe917f896b6b93"
+        },
+        {
+          "path": "Preprocessor.mlmodelc/weights/weight.bin",
+          "size": 491072,
+          "sha256": "129b76e3aeafa8afa3ea76d995b964b145fe83700d579f6ff42c4c38fa0968ea"
+        },
+        {
+          "path": "config.json",
+          "size": 414,
+          "sha256": "965c69bf500c7be18958df6438dc1ba897721690ae412937ca7c91e28cec1870"
+        },
+        {
+          "path": "parakeet_vocab.json",
+          "size": 151122,
+          "sha256": "7ec60e05f1b24480736ec0eed40900f4626bce1fa9a60fd700ec7e2a59198735"
+        }
+      ],
+      "source": {
+        "repository": "FluidInference/parakeet-ultra-coreml",
+        "revision": "95eaa59a39d4394f047a4dc5cce480388a60d1b6"
+      },
+      "metadata": {
+        "task": "speech_to_text",
+        "family": "parakeet_tdt",
+        "display_name": "Parakeet Ultra (Core ML)",
+        "required_files": [
+          "Decoder.mlmodelc/analytics/coremldata.bin",
+          "Decoder.mlmodelc/coremldata.bin",
+          "Decoder.mlmodelc/model.mil",
+          "Decoder.mlmodelc/weights/weight.bin",
+          "Encoder.mlmodelc/analytics/coremldata.bin",
+          "Encoder.mlmodelc/coremldata.bin",
+          "Encoder.mlmodelc/model.mil",
+          "Encoder.mlmodelc/weights/weight.bin",
+          "JointDecisionv3.mlmodelc/analytics/coremldata.bin",
+          "JointDecisionv3.mlmodelc/coremldata.bin",
+          "JointDecisionv3.mlmodelc/model.mil",
+          "JointDecisionv3.mlmodelc/weights/weight.bin",
+          "Preprocessor.mlmodelc/analytics/coremldata.bin",
+          "Preprocessor.mlmodelc/coremldata.bin",
+          "Preprocessor.mlmodelc/metadata.json",
+          "Preprocessor.mlmodelc/model.mil",
+          "Preprocessor.mlmodelc/weights/weight.bin",
+          "config.json",
+          "parakeet_vocab.json"
+        ],
+        "sample_rate": 16000,
+        "channels": 1,
+        "languages": [
+          "auto",
+          "multilingual"
+        ],
+        "voices": [],
+        "max_input_seconds": 1800
+      }
+    },
+    {
+      "alias": "parakeet-unified-en-coreml",
+      "assets": [
+        {
+          "path": "config.json",
+          "size": 1355,
+          "sha256": "6cbe6c76445410c5c6debf3d44c8c3b75e9966bf09bba5cd138c2378c62120f6"
+        },
+        {
+          "path": "metadata.json",
+          "size": 1046,
+          "sha256": "2b26a96b76fe1f7a04d3e867f50c75d6ce5dd1650d0dbcd4c35b591b22305f0e"
+        },
+        {
+          "path": "parakeet_unified_decoder.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "9ae70f6559989f88b856b326e59315798f9f0d08207a19fcc2dd3287a30088a5"
+        },
+        {
+          "path": "parakeet_unified_decoder.mlmodelc/coremldata.bin",
+          "size": 560,
+          "sha256": "ce99c4488840fc463d59f8d4d6d2a9e8ceae8138ead51e3c265dde4d2ba4a0e9"
+        },
+        {
+          "path": "parakeet_unified_decoder.mlmodelc/model.mil",
+          "size": 13102,
+          "sha256": "6e60965b89c93943aa2be2d991c2461108145851fde05e1d048223a32d4cb20d"
+        },
+        {
+          "path": "parakeet_unified_decoder.mlmodelc/weights/weight.bin",
+          "size": 14429952,
+          "sha256": "96f990461a5986d5e7309ad1a0f36084fbf0f4b28aec35948f8b8d0dcbf8599e"
+        },
+        {
+          "path": "parakeet_unified_encoder_streaming_70_7_7_int8.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "2e1831ca50902be65664ab7dd1182f0d096eaef387e424b135f8cf896ffcec2e"
+        },
+        {
+          "path": "parakeet_unified_encoder_streaming_70_7_7_int8.mlmodelc/coremldata.bin",
+          "size": 513,
+          "sha256": "5f174a7cf6b1a9dd77fb479194f8a286e99d4375b67a86ffc66a42fb36e4d0dc"
+        },
+        {
+          "path": "parakeet_unified_encoder_streaming_70_7_7_int8.mlmodelc/model.mil",
+          "size": 935329,
+          "sha256": "ce508730f3ea72cc8459ac491a8afd3477cee7f88b13d2eb5628ea60eef94f22"
+        },
+        {
+          "path": "parakeet_unified_encoder_streaming_70_7_7_int8.mlmodelc/weights/weight.bin",
+          "size": 589979840,
+          "sha256": "f145c8da6226eb2ad1c312d1a44c7757c97b0b941c73725b36b28ff17d12285b"
+        },
+        {
+          "path": "parakeet_unified_joint_decision_single_step.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "163877ad14af97ec4107cd854fd1c6d336ee5d40ad25a657cc764fb763f452f5"
+        },
+        {
+          "path": "parakeet_unified_joint_decision_single_step.mlmodelc/coremldata.bin",
+          "size": 556,
+          "sha256": "68a081570a48b52ec9379e153bd56748a5408a50be16767601563f231eaeff03"
+        },
+        {
+          "path": "parakeet_unified_joint_decision_single_step.mlmodelc/model.mil",
+          "size": 9611,
+          "sha256": "03c21096090bcd0b71c896c5ae0eb815db31a91c6676f572a7868eee4299abe3"
+        },
+        {
+          "path": "parakeet_unified_joint_decision_single_step.mlmodelc/weights/weight.bin",
+          "size": 3446978,
+          "sha256": "06831afa6d1beb0c0b10350ebf7886bc37638e951d14e738d7e06fbd2a05012f"
+        },
+        {
+          "path": "vocab.json",
+          "size": 15088,
+          "sha256": "e1a7bff4f5df133c0f4ad47b8e43c96f6bf1865d99126a4c4725ef51d0108bec"
+        }
+      ],
+      "source": {
+        "repository": "FluidInference/parakeet-unified-en-0.6b-coreml",
+        "revision": "d32e972dd4315f1dc3f6be28fb2aab0ab3e80358"
+      },
+      "metadata": {
+        "task": "speech_to_text",
+        "family": "parakeet_unified",
+        "display_name": "Parakeet Unified EN (Core ML, live)",
+        "required_files": [
+          "config.json",
+          "metadata.json",
+          "parakeet_unified_decoder.mlmodelc/analytics/coremldata.bin",
+          "parakeet_unified_decoder.mlmodelc/coremldata.bin",
+          "parakeet_unified_decoder.mlmodelc/model.mil",
+          "parakeet_unified_decoder.mlmodelc/weights/weight.bin",
+          "parakeet_unified_encoder_streaming_70_7_7_int8.mlmodelc/analytics/coremldata.bin",
+          "parakeet_unified_encoder_streaming_70_7_7_int8.mlmodelc/coremldata.bin",
+          "parakeet_unified_encoder_streaming_70_7_7_int8.mlmodelc/model.mil",
+          "parakeet_unified_encoder_streaming_70_7_7_int8.mlmodelc/weights/weight.bin",
+          "parakeet_unified_joint_decision_single_step.mlmodelc/analytics/coremldata.bin",
+          "parakeet_unified_joint_decision_single_step.mlmodelc/coremldata.bin",
+          "parakeet_unified_joint_decision_single_step.mlmodelc/model.mil",
+          "parakeet_unified_joint_decision_single_step.mlmodelc/weights/weight.bin",
+          "vocab.json"
+        ],
+        "sample_rate": 16000,
+        "channels": 1,
+        "languages": [
+          "en"
+        ],
+        "voices": [],
+        "max_input_seconds": null
+      }
+    },
+    {
+      "alias": "speaker-diarization-coreml",
+      "assets": [
+        {
+          "path": "Embedding.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "8d6706436639b53830b4dbe8aaf9c9a843f7f582d63e16f3cb8bb7c6ccd58682"
+        },
+        {
+          "path": "Embedding.mlmodelc/coremldata.bin",
+          "size": 704,
+          "sha256": "4a705bac27d151d9642f37609296042a15602a42253039e0921dc9e75da7e004"
+        },
+        {
+          "path": "Embedding.mlmodelc/metadata.json",
+          "size": 2818,
+          "sha256": "1854371eb6b438fb8aeac96afb45c999af7902581c06afdfcd7ff3cb1ce66be5"
+        },
+        {
+          "path": "Embedding.mlmodelc/model.mil",
+          "size": 78432,
+          "sha256": "22fa958aef72a561c21f874a07cbdcd30fdf40ee961c0bc2fb67c119273b46d3"
+        },
+        {
+          "path": "Embedding.mlmodelc/weights/weight.bin",
+          "size": 13412288,
+          "sha256": "99356b2985b8d43880a657024d941d450b38820451ccff903f76ed4e52d1868b"
+        },
+        {
+          "path": "FBank.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "0e8bd3a8b82ac123580989f490e4d9245127c535857630b543311268accc3f0a"
+        },
+        {
+          "path": "FBank.mlmodelc/coremldata.bin",
+          "size": 853,
+          "sha256": "57ac436bb0671cbb5527a339134d695f752eb77f7a18966b93c6835335595759"
+        },
+        {
+          "path": "FBank.mlmodelc/metadata.json",
+          "size": 3409,
+          "sha256": "2623785f5d186893b82d01e84aa33a7704ef763c3309e02055f22dc9d871ce9a"
+        },
+        {
+          "path": "FBank.mlmodelc/model.mil",
+          "size": 15667,
+          "sha256": "27aaeb21569e81bdbe2eef87789f50a37cfea800039bd134448a9417de2f30ed"
+        },
+        {
+          "path": "FBank.mlmodelc/weights/weight.bin",
+          "size": 1776896,
+          "sha256": "9e83fdd3ea78064b078069e4d9141603c61c47a27fd19e7e3142ff7476f8db36"
+        },
+        {
+          "path": "LICENSE",
+          "size": 19759,
+          "sha256": "736763bf08829e36266b8a3bebcc041ac68575424e976490671a7e6b43a525cf"
+        },
+        {
+          "path": "NOTICE.md",
+          "size": 4247,
+          "sha256": "d8e53d399c5345cabc4763732ba096e7e18ff42c861d57b73edb73b0c9ce9356"
+        },
+        {
+          "path": "PldaRho.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "8940ea6044dbcbefa22da8cc41e0b485e1fb5ed89aecaf37c6e0c483a97ddcd7"
+        },
+        {
+          "path": "PldaRho.mlmodelc/coremldata.bin",
+          "size": 763,
+          "sha256": "4d9741477f721c79b09fcdfe455110c4b7d4272e2de3496bf1729d966d3ee418"
+        },
+        {
+          "path": "PldaRho.mlmodelc/metadata.json",
+          "size": 2749,
+          "sha256": "b314cf25a93e46b4076883a6f5a2f8848b73c3851bd9d36074d067f35a1c7945"
+        },
+        {
+          "path": "PldaRho.mlmodelc/model.mil",
+          "size": 7613,
+          "sha256": "83aee2e5310d19b5f202aea97d07a0e12102556d1b32ef3ed08b36f7f9725041"
+        },
+        {
+          "path": "PldaRho.mlmodelc/weights/weight.bin",
+          "size": 200192,
+          "sha256": "80f7d229202636d372428c90596f11a91545f07da77259f07153aaf225914a36"
+        },
+        {
+          "path": "Segmentation.mlmodelc/analytics/coremldata.bin",
+          "size": 243,
+          "sha256": "64265f8e7ad41a5f68d630c15288c2499cca5892ad49e20096819cdeac004cdb"
+        },
+        {
+          "path": "Segmentation.mlmodelc/coremldata.bin",
+          "size": 812,
+          "sha256": "ea51481b8bd3e496ad3cf16f066ddaa37f20e8772eaac76b3393c28de20e06bc"
+        },
+        {
+          "path": "Segmentation.mlmodelc/metadata.json",
+          "size": 3410,
+          "sha256": "88dbf0b07208fe142e1729c2b4c974ad3599fcb2ae5d5f18fce782b225384124"
+        },
+        {
+          "path": "Segmentation.mlmodelc/model.mil",
+          "size": 43063,
+          "sha256": "d37e4ce30b406a6b34f765f769b9baed3178cc0c2b2e299c641daa43a052dd3f"
+        },
+        {
+          "path": "Segmentation.mlmodelc/weights/weight.bin",
+          "size": 5959360,
+          "sha256": "c3189a64946c75bc24fcb98afe89ad78c52bdbadfdf65e857fb1b81e2cc9fbb2"
+        },
+        {
+          "path": "plda-parameters.json",
+          "size": 89416,
+          "sha256": "38ee28d4269c076cef254ee760bbd811f0738a92e0f01f9699ad372828c5de8f"
+        }
+      ],
+      "source": {
+        "repository": "FluidInference/speaker-diarization-coreml",
+        "revision": "7eab74f3463c736418d0eb10296261ae581146c9"
+      },
+      "metadata": {
+        "task": "diarization",
+        "family": "pyannote_community1",
+        "display_name": "Speaker Diarization (Core ML)",
+        "required_files": [
+          "Embedding.mlmodelc/analytics/coremldata.bin",
+          "Embedding.mlmodelc/coremldata.bin",
+          "Embedding.mlmodelc/metadata.json",
+          "Embedding.mlmodelc/model.mil",
+          "Embedding.mlmodelc/weights/weight.bin",
+          "FBank.mlmodelc/analytics/coremldata.bin",
+          "FBank.mlmodelc/coremldata.bin",
+          "FBank.mlmodelc/metadata.json",
+          "FBank.mlmodelc/model.mil",
+          "FBank.mlmodelc/weights/weight.bin",
+          "LICENSE",
+          "NOTICE.md",
+          "PldaRho.mlmodelc/analytics/coremldata.bin",
+          "PldaRho.mlmodelc/coremldata.bin",
+          "PldaRho.mlmodelc/metadata.json",
+          "PldaRho.mlmodelc/model.mil",
+          "PldaRho.mlmodelc/weights/weight.bin",
+          "Segmentation.mlmodelc/analytics/coremldata.bin",
+          "Segmentation.mlmodelc/coremldata.bin",
+          "Segmentation.mlmodelc/metadata.json",
+          "Segmentation.mlmodelc/model.mil",
+          "Segmentation.mlmodelc/weights/weight.bin",
+          "plda-parameters.json"
+        ],
+        "sample_rate": 16000,
+        "channels": 1,
+        "languages": [],
+        "voices": [],
+        "max_input_seconds": 1800
+      }
+    },
+    {
+      "alias": "omnivoice-8bit",
+      "assets": [
+        {
+          "path": "config.json",
+          "size": 2238,
+          "sha256": "5e359117e13b420c5e0c925d4aba650d624767131f1d1746928f8b850d5dc372"
+        },
+        {
+          "path": "mlx_manifest.json",
+          "size": 32666,
+          "sha256": "2ba9c13f59366dfcd1536c7bb71e225733c67794a42af311045596eb34c4043e"
+        },
+        {
+          "path": "model.safetensors",
+          "size": 631840520,
+          "sha256": "6ff9d1a74a6d8c07700627661d2254968e5a322a63a8d5759c0906e1818f1000"
+        },
+        {
+          "path": "tokenizer.json",
+          "size": 11423986,
+          "sha256": "408f669b7e2b045fdf54201d815bd364e6667dbd845115da81239c40bc6dcfd1"
+        },
+        {
+          "path": "audio_tokenizer/LICENSE",
+          "size": 9171,
+          "sha256": "ac933dc084d119bd20401956b90d11ae87c248b2da62622cd580d82cdf2fa049"
+        },
+        {
+          "path": "audio_tokenizer/config.json",
+          "size": 2531,
+          "sha256": "eefb20806f7104e77c9a5277c9df0f9bb8826b08eb1d4e8ab2b9829b6ef9fac1"
+        },
+        {
+          "path": "audio_tokenizer/model.safetensors",
+          "size": 805665628,
+          "sha256": "fe7c5e8785e0a05833e1bfc3e002ec7f55af21e306b2e7154a448c1f54ccfb0d"
+        }
+      ],
+      "source": {
+        "repository": "mlx-community/OmniVoice-8bit",
+        "revision": "b222e4d82e7bc20323be736ef05fcfc50defb71b"
+      },
+      "metadata": {
+        "task": "text_to_speech",
+        "family": "omnivoice",
+        "display_name": "OmniVoice multilingual TTS (8-bit)",
+        "required_files": [
+          "config.json",
+          "mlx_manifest.json",
+          "model.safetensors",
+          "tokenizer.json",
+          "audio_tokenizer/LICENSE",
+          "audio_tokenizer/config.json",
+          "audio_tokenizer/model.safetensors"
+        ],
+        "sample_rate": 24000,
+        "channels": 1,
+        "languages": [
+          "en",
+          "zh",
+          "ja",
+          "ko",
+          "de",
+          "fr",
+          "es",
+          "it",
+          "pt",
+          "ru",
+          "ar",
+          "hi",
+          "nl",
+          "pl",
+          "tr",
+          "vi",
+          "th",
+          "id",
+          "uk",
+          "sv",
+          "fa",
+          "cs",
+          "el",
+          "he"
+        ],
+        "voices": [],
+        "max_input_seconds": 30,
+        "acknowledgments": [
+          {
+            "id": "omnivoice_higgs_tokenizer",
+            "summary": "The bundled Higgs audio tokenizer is Boson AI's community-licensed model, not the Apache-2.0 OmniVoice backbone: it requires attribution and caps commercial use above 100,000 annual active users. Only clone voices you have the right to use."
+          }
+        ]
+      }
+    },
+    {
+      "alias": "omnivoice-bf16",
+      "assets": [
+        {
+          "path": "config.json",
+          "size": 2238,
+          "sha256": "5e359117e13b420c5e0c925d4aba650d624767131f1d1746928f8b850d5dc372"
+        },
+        {
+          "path": "mlx_manifest.json",
+          "size": 568,
+          "sha256": "bf83bf7f2b66591ab4afd2f4611be26ee18755d8bfd48cf0860616dfb991e8c1"
+        },
+        {
+          "path": "model.safetensors",
+          "size": 1225189510,
+          "sha256": "56431e08b3cda725358b507e795955188e9a669833cc05ff1ecbe7cec06a78d3"
+        },
+        {
+          "path": "tokenizer.json",
+          "size": 11423986,
+          "sha256": "408f669b7e2b045fdf54201d815bd364e6667dbd845115da81239c40bc6dcfd1"
+        },
+        {
+          "path": "audio_tokenizer/LICENSE",
+          "size": 9171,
+          "sha256": "ac933dc084d119bd20401956b90d11ae87c248b2da62622cd580d82cdf2fa049"
+        },
+        {
+          "path": "audio_tokenizer/config.json",
+          "size": 2531,
+          "sha256": "eefb20806f7104e77c9a5277c9df0f9bb8826b08eb1d4e8ab2b9829b6ef9fac1"
+        },
+        {
+          "path": "audio_tokenizer/model.safetensors",
+          "size": 805665628,
+          "sha256": "fe7c5e8785e0a05833e1bfc3e002ec7f55af21e306b2e7154a448c1f54ccfb0d"
+        }
+      ],
+      "source": {
+        "repository": "mlx-community/OmniVoice-bfloat16",
+        "revision": "6119f7072580cc30c3cbdf496269216b03ad9742"
+      },
+      "metadata": {
+        "task": "text_to_speech",
+        "family": "omnivoice",
+        "display_name": "OmniVoice multilingual TTS (bfloat16)",
+        "required_files": [
+          "config.json",
+          "mlx_manifest.json",
+          "model.safetensors",
+          "tokenizer.json",
+          "audio_tokenizer/LICENSE",
+          "audio_tokenizer/config.json",
+          "audio_tokenizer/model.safetensors"
+        ],
+        "sample_rate": 24000,
+        "channels": 1,
+        "languages": [
+          "en",
+          "zh",
+          "ja",
+          "ko",
+          "de",
+          "fr",
+          "es",
+          "it",
+          "pt",
+          "ru",
+          "ar",
+          "hi",
+          "nl",
+          "pl",
+          "tr",
+          "vi",
+          "th",
+          "id",
+          "uk",
+          "sv",
+          "fa",
+          "cs",
+          "el",
+          "he"
+        ],
+        "voices": [],
+        "max_input_seconds": 30,
+        "acknowledgments": [
+          {
+            "id": "omnivoice_higgs_tokenizer",
+            "summary": "The bundled Higgs audio tokenizer is Boson AI's community-licensed model, not the Apache-2.0 OmniVoice backbone: it requires attribution and caps commercial use above 100,000 annual active users. Only clone voices you have the right to use."
+          }
+        ]
+      }
+    },
+    {
+      "alias": "fish-drama3-4bit",
+      "assets": [
+        {
+          "path": "config.json",
+          "size": 53444,
+          "sha256": "e980dfd9128edeb5f5d066fd7c322a2dfc08fedcbea58019d8d2e8e5cf7b50d5"
+        },
+        {
+          "path": "LICENSE",
+          "size": 19685,
+          "sha256": "733a32442087acbda12ecafe8e71eb8ee5890c89b50ce7ac4ea3777faa3c823e"
+        },
+        {
+          "path": "NOTICE",
+          "size": 910,
+          "sha256": "d2dc9c9fd71c2faf01b825f69797b20e1eca961505aa9ba2a3c5004b99262d73"
+        },
+        {
+          "path": "tokenizer.json",
+          "size": 20791070,
+          "sha256": "0e9b9db76b2f0389b04b6ef057a2ac3b89100b7e96f2dd7034d19580a09654d6"
+        },
+        {
+          "path": "codec.safetensors",
+          "size": 1572080341,
+          "sha256": "6ff9d6f07920b2155e3a48ada21956004b96df9114d255ed9f0788484ba73040"
+        }
+      ],
+      "source": {
+        "repository": "mlx-community/fish-audio-drama-3-4bit",
+        "revision": "cc639e27aba7edb73429d3e3806f471dcd79d316"
+      },
+      "metadata": {
+        "task": "text_to_speech",
+        "family": "fish_drama3",
+        "display_name": "Fish Audio Drama 3 (4-bit)",
+        "required_files": [
+          "config.json",
+          "LICENSE",
+          "NOTICE",
+          "tokenizer.json",
+          "codec.safetensors"
+        ],
+        "sample_rate": 44100,
+        "channels": 1,
+        "languages": [],
+        "voices": [],
+        "max_input_seconds": null,
+        "acknowledgments": [
+          {
+            "id": "fish_audio_community_license",
+            "summary": "Fish Audio Drama 3 is licensed under the Fish Audio Community License 1.0. It is free for research and non-commercial use. Commercial use is allowed only while your annual revenue is under USD 500,000. A hosted service (an API or app whose main purpose is text to speech for third parties) needs a separate license from Fish Audio. Every copy you distribute carries LICENSE and NOTICE, and a product that uses the model shows \"Built with Fish Audio\". Installing converts the 22 GB checkpoint on this Mac, needs about 25 GiB free and takes tens of minutes. Only clone voices you have the right to use."
+          }
+        ]
+      }
+    },
+    {
+      "alias": "parakeet-ja-coreml",
+      "assets": [
+        {
+          "path": "Decoderv2.mlmodelc/analytics/coremldata.bin",
+          "sha256": "86795f3f612cf5bceb5d3ccb62353e7b249ec0d947de2d92f3a493b41c61cfc3",
+          "size": 243
+        },
+        {
+          "path": "Decoderv2.mlmodelc/coremldata.bin",
+          "sha256": "aba05a4a882fb8149c0229b0eb36e24269fb9f008e65f302eef37b1f6c982ed3",
+          "size": 493
+        },
+        {
+          "path": "Decoderv2.mlmodelc/metadata.json",
+          "sha256": "345b75575b055563b6adc5a6adb39d3bdd8b5bf06b171fcc8a07229113dfc8c5",
+          "size": 3316
+        },
+        {
+          "path": "Decoderv2.mlmodelc/model.mil",
+          "sha256": "dd9367a6dac8128d6cbb22a2bf8c7da48fa15494f04b6a4ef7be091f55bedf73",
+          "size": 13106
+        },
+        {
+          "path": "Decoderv2.mlmodelc/weights/weight.bin",
+          "sha256": "a56d792edf3b88e30466c0b992bb7e316fa743c90f8809c2be9d2ecb8ffbd48e",
+          "size": 17051392
+        },
+        {
+          "path": "Encoder.mlmodelc/analytics/coremldata.bin",
+          "sha256": "64d086974fa873a29bac8face69e71df44f678e8591dc848650fdfbd4110730d",
+          "size": 243
+        },
+        {
+          "path": "Encoder.mlmodelc/coremldata.bin",
+          "sha256": "6e24d36005b89f97ab672596f94215883b19008f556ac1874500385994bd885f",
+          "size": 507
+        },
+        {
+          "path": "Encoder.mlmodelc/metadata.json",
+          "sha256": "d06e8b6e3e305b9d15fad119e9b31d05229c00b532655d120c317e990d633511",
+          "size": 2930
+        },
+        {
+          "path": "Encoder.mlmodelc/model.mil",
+          "sha256": "151eca4da087e17fa187834f2e15ae84e91a866299f2eecd5f184ff3ee738a3a",
+          "size": 1086104
+        },
+        {
+          "path": "Encoder.mlmodelc/weights/weight.bin",
+          "sha256": "257685d3fdb578c5d6d7f0a5460c778f6104bcf2f264e4ae704b885c69ad6dda",
+          "size": 593943616
+        },
+        {
+          "path": "Jointerv2.mlmodelc/analytics/coremldata.bin",
+          "sha256": "7dcee73505a75e1264f5d2c40f3767fe528768c00ed73b3937b354d10b41e779",
+          "size": 243
+        },
+        {
+          "path": "Jointerv2.mlmodelc/coremldata.bin",
+          "sha256": "98c853843c56998e061a2749365c0b1e0bfd5b03f2f54465e843f3de83e8c148",
+          "size": 521
+        },
+        {
+          "path": "Jointerv2.mlmodelc/metadata.json",
+          "sha256": "192a4656ca8744e9e27317a9008ebde4b664dbaf46011aec85ae27b9715b9697",
+          "size": 3464
+        },
+        {
+          "path": "Jointerv2.mlmodelc/model.mil",
+          "sha256": "0e4fb7f1307d2e8fc15542118856cd34ed589134cbb84f0bcd60387aba6ef17d",
+          "size": 11774
+        },
+        {
+          "path": "Jointerv2.mlmodelc/weights/weight.bin",
+          "sha256": "d6f24519c7c6959e8ec6fb078e8c05d912d292fcb57720c63fdc9291b1db122d",
+          "size": 6078924
+        },
+        {
+          "path": "Preprocessor.mlmodelc/analytics/coremldata.bin",
+          "sha256": "315309121ac09c8fb7ed9f8dab20a30e440530b527401af5abcf6d0cf959e495",
+          "size": 243
+        },
+        {
+          "path": "Preprocessor.mlmodelc/coremldata.bin",
+          "sha256": "de3624dd8335b3b0391be95da73b59577916f3ac7d1c6d30a66fd16369af7cb8",
+          "size": 512
+        },
+        {
+          "path": "Preprocessor.mlmodelc/metadata.json",
+          "sha256": "6c12ff477a63450f41ca2b52451d767a9bfc91d70311788c04265786bab43d3e",
+          "size": 2837
+        },
+        {
+          "path": "Preprocessor.mlmodelc/model.mil",
+          "sha256": "cd35cb142ca4db597e99b0cb8d3d68f087e7a9d3e330ce46c8c20d55ab0b1c59",
+          "size": 27152
+        },
+        {
+          "path": "Preprocessor.mlmodelc/weights/weight.bin",
+          "sha256": "6512ba5d1acc3ffe6f322089c0ece5466f93c7ac77c267dd851a1fb517c637f9",
+          "size": 807968
+        },
+        {
+          "path": "vocab.json",
+          "sha256": "9db0aa7ab1f5d2714c20a7880cb452d753da91cb10de88cb289cda4fd473d50a",
+          "size": 29658
+        }
+      ],
+      "source": {
+        "repository": "FluidInference/parakeet-0.6b-ja-coreml",
+        "revision": "2952296ff1da4a6d6a7aec545e226367db80c612"
+      },
+      "metadata": {
+        "task": "speech_to_text",
+        "family": "fluidaudio_parakeet_ja",
+        "display_name": "Parakeet Japanese",
+        "required_files": [
+          "Decoderv2.mlmodelc/analytics/coremldata.bin",
+          "Decoderv2.mlmodelc/coremldata.bin",
+          "Decoderv2.mlmodelc/metadata.json",
+          "Decoderv2.mlmodelc/model.mil",
+          "Decoderv2.mlmodelc/weights/weight.bin",
+          "Encoder.mlmodelc/analytics/coremldata.bin",
+          "Encoder.mlmodelc/coremldata.bin",
+          "Encoder.mlmodelc/metadata.json",
+          "Encoder.mlmodelc/model.mil",
+          "Encoder.mlmodelc/weights/weight.bin",
+          "Jointerv2.mlmodelc/analytics/coremldata.bin",
+          "Jointerv2.mlmodelc/coremldata.bin",
+          "Jointerv2.mlmodelc/metadata.json",
+          "Jointerv2.mlmodelc/model.mil",
+          "Jointerv2.mlmodelc/weights/weight.bin",
+          "Preprocessor.mlmodelc/analytics/coremldata.bin",
+          "Preprocessor.mlmodelc/coremldata.bin",
+          "Preprocessor.mlmodelc/metadata.json",
+          "Preprocessor.mlmodelc/model.mil",
+          "Preprocessor.mlmodelc/weights/weight.bin",
+          "vocab.json"
+        ],
+        "sample_rate": 16000,
+        "channels": 1,
+        "languages": [
+          "ja"
+        ],
+        "voices": [],
+        "max_input_seconds": 1800
+      }
+    },
+    {
+      "alias": "paraformer-zh-coreml",
+      "assets": [
+        {
+          "path": "ParaformerCifAlphas.mlmodelc/analytics/coremldata.bin",
+          "sha256": "eab07ffe1555c52bf453304c7440181d05cb813c507f7d2b9dc690f893daee7f",
+          "size": 243
+        },
+        {
+          "path": "ParaformerCifAlphas.mlmodelc/coremldata.bin",
+          "sha256": "1fdc3a31784fdd4ce76d8f6662cc1d5266a4bcb9f8ebff1f7364e4af9b9bfb1b",
+          "size": 358
+        },
+        {
+          "path": "ParaformerCifAlphas.mlmodelc/model.mil",
+          "sha256": "7d1b26300097a8e9d227528395ecceb789478f89fee98be5679c7c5f8714c673",
+          "size": 5291
+        },
+        {
+          "path": "ParaformerCifAlphas.mlmodelc/weights/weight.bin",
+          "sha256": "ca67890e3fd418ca1f3a227001ba4f1300d5523b8a49470bf3791eaba836bbee",
+          "size": 1575168
+        },
+        {
+          "path": "ParaformerDecoder_int8.mlmodelc/analytics/coremldata.bin",
+          "sha256": "544bf35b7e52b54f0a84b9ece9ad6b0416a07a4cc707f5dd67e1f6027b3e1697",
+          "size": 243
+        },
+        {
+          "path": "ParaformerDecoder_int8.mlmodelc/coremldata.bin",
+          "sha256": "744496100b6309842b94410d0ddd1dce65b3da773e308f86da010f86967161d8",
+          "size": 370
+        },
+        {
+          "path": "ParaformerDecoder_int8.mlmodelc/model.mil",
+          "sha256": "2c2dea30cc84c5669d4baf547eafa2f40274a22fdc1e6732a3cdb2b192389bab",
+          "size": 309868
+        },
+        {
+          "path": "ParaformerDecoder_int8.mlmodelc/weights/weight.bin",
+          "sha256": "1794d31522563f29357c6fdb5eb61bdb0cfe1cb9c1734265ae0cc5b154f702f6",
+          "size": 57440104
+        },
+        {
+          "path": "ParaformerEncoder_int8.mlmodelc/analytics/coremldata.bin",
+          "sha256": "2ccb1ebd14f683926c047f44c52097b17ab7264f0d3be7f624a8e321e3770f5d",
+          "size": 243
+        },
+        {
+          "path": "ParaformerEncoder_int8.mlmodelc/coremldata.bin",
+          "sha256": "09cc778f64866a7c25d454816c7da566d96fb7d0a9ea13d070276c9828150e0b",
+          "size": 387
+        },
+        {
+          "path": "ParaformerEncoder_int8.mlmodelc/model.mil",
+          "sha256": "219bc0334ca64d84b232f7320c900794149b612152b1594739a2e9e9cbccd9a3",
+          "size": 806287
+        },
+        {
+          "path": "ParaformerEncoder_int8.mlmodelc/weights/weight.bin",
+          "sha256": "e5a808ac41b0beade91c443ad13ee7aa8be85f94318bddc0d515f2334e147bef",
+          "size": 158884352
+        },
+        {
+          "path": "ParaformerPreprocessor.mlmodelc/analytics/coremldata.bin",
+          "sha256": "5ab78c2dbf08223650a6ebbd3d501e34700b86ddf6e099a4c7a9fe947c1d3412",
+          "size": 243
+        },
+        {
+          "path": "ParaformerPreprocessor.mlmodelc/coremldata.bin",
+          "sha256": "998336618c499cb44a66c39dcee7b37eff07a67e351de07beaf5563c11c7122d",
+          "size": 330
+        },
+        {
+          "path": "ParaformerPreprocessor.mlmodelc/model.mil",
+          "sha256": "1b9b18be0a35b11165269b1ca071a30af736deb314d8bd82d9540c769137a70e",
+          "size": 15008
+        },
+        {
+          "path": "ParaformerPreprocessor.mlmodelc/weights/weight.bin",
+          "sha256": "69c630a115da5e4db36ec41662f0b776c0ef33ec6776d86f8cdaaba022518396",
+          "size": 3037504
+        },
+        {
+          "path": "vocab.json",
+          "sha256": "14fcd6164b074459896831d6845b1c45d8832dc50c754c8cf4375481125f8ea2",
+          "size": 60058
+        }
+      ],
+      "source": {
+        "repository": "FluidInference/paraformer-large-zh-coreml",
+        "revision": "9b4faaa06e476f38ab4a6e011a4467629df09059"
+      },
+      "metadata": {
+        "task": "speech_to_text",
+        "family": "fluidaudio_paraformer_zh",
+        "display_name": "Paraformer Large Chinese",
+        "required_files": [
+          "ParaformerCifAlphas.mlmodelc/analytics/coremldata.bin",
+          "ParaformerCifAlphas.mlmodelc/coremldata.bin",
+          "ParaformerCifAlphas.mlmodelc/model.mil",
+          "ParaformerCifAlphas.mlmodelc/weights/weight.bin",
+          "ParaformerDecoder_int8.mlmodelc/analytics/coremldata.bin",
+          "ParaformerDecoder_int8.mlmodelc/coremldata.bin",
+          "ParaformerDecoder_int8.mlmodelc/model.mil",
+          "ParaformerDecoder_int8.mlmodelc/weights/weight.bin",
+          "ParaformerEncoder_int8.mlmodelc/analytics/coremldata.bin",
+          "ParaformerEncoder_int8.mlmodelc/coremldata.bin",
+          "ParaformerEncoder_int8.mlmodelc/model.mil",
+          "ParaformerEncoder_int8.mlmodelc/weights/weight.bin",
+          "ParaformerPreprocessor.mlmodelc/analytics/coremldata.bin",
+          "ParaformerPreprocessor.mlmodelc/coremldata.bin",
+          "ParaformerPreprocessor.mlmodelc/model.mil",
+          "ParaformerPreprocessor.mlmodelc/weights/weight.bin",
+          "vocab.json"
+        ],
+        "sample_rate": 16000,
+        "channels": 1,
+        "languages": [
+          "zh"
+        ],
+        "voices": [],
+        "max_input_seconds": 1800,
+        "acknowledgments": [
+          {
+            "id": "funasr_model_license",
+            "summary": "Paraformer is released under Alibaba's FunASR Model Open Source License 1.1. You may use, modify and share it if you credit the source and keep the model name. Alibaba can revise the license, and it ends for anyone who disparages the model."
+          }
+        ]
+      }
+    },
+    {
+      "alias": "silero-vad-coreml",
+      "assets": [
+        {
+          "path": "silero-vad-unified-256ms-v6.2.1.mlmodelc/analytics/coremldata.bin",
+          "sha256": "8067594eb3126ab8318af507f0c00cabfed40d5fedb8a0ee5075dd02e903d909",
+          "size": 243
+        },
+        {
+          "path": "silero-vad-unified-256ms-v6.2.1.mlmodelc/coremldata.bin",
+          "sha256": "7db35a4fd995222a7fb0129713473b15d1462572ab4a2e5e4d56bcaad9e40f41",
+          "size": 625
+        },
+        {
+          "path": "silero-vad-unified-256ms-v6.2.1.mlmodelc/metadata.json",
+          "sha256": "2740be542c611e1ba358e1849b4e265c65cdf0b17192767e1e5de86a31ac94d6",
+          "size": 3335
+        },
+        {
+          "path": "silero-vad-unified-256ms-v6.2.1.mlmodelc/model.mil",
+          "sha256": "c6a9d1bf22d413265da0a07a1d14151c3ea2fad296b3aa5859275b33ef1c3270",
+          "size": 176918
+        },
+        {
+          "path": "silero-vad-unified-256ms-v6.2.1.mlmodelc/weights/weight.bin",
+          "sha256": "53ecc8b5081146140ab654c89109cf001f2183abddd7a2411c5081feeffff063",
+          "size": 882304
+        }
+      ],
+      "source": {
+        "repository": "FluidInference/silero-vad-coreml",
+        "revision": "b419383c55c110e2c9271fa6ee0ea83d03c70d96"
+      },
+      "metadata": {
+        "task": "speech_detection",
+        "family": "fluidaudio_silero_vad",
+        "display_name": "Silero VAD (Core ML)",
+        "required_files": [
+          "silero-vad-unified-256ms-v6.2.1.mlmodelc/analytics/coremldata.bin",
+          "silero-vad-unified-256ms-v6.2.1.mlmodelc/coremldata.bin",
+          "silero-vad-unified-256ms-v6.2.1.mlmodelc/metadata.json",
+          "silero-vad-unified-256ms-v6.2.1.mlmodelc/model.mil",
+          "silero-vad-unified-256ms-v6.2.1.mlmodelc/weights/weight.bin"
+        ],
+        "sample_rate": 16000,
+        "channels": 1,
+        "languages": [],
+        "voices": [],
+        "max_input_seconds": 1800
+      }
+    },
+    {
+      "alias": "kokoro-82m-ane-coreml",
+      "assets": [
+        {
+          "path": "ANE/KokoroAlbert.mlmodelc/analytics/coremldata.bin",
+          "sha256": "14a61873d8759a38b79c93f9021ae865f408f56301209a0168dbfc2283265ccd",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroAlbert.mlmodelc/coremldata.bin",
+          "sha256": "70b6d2f8429229f6800dda9480341669f7ac0eabf05a82934d8632ab2b4b63a6",
+          "size": 433
+        },
+        {
+          "path": "ANE/KokoroAlbert.mlmodelc/metadata.json",
+          "sha256": "fe1d005481f646707a948267ac089dfb2cd2ccea7d5827a14c28587eb4c89930",
+          "size": 2480
+        },
+        {
+          "path": "ANE/KokoroAlbert.mlmodelc/model.mil",
+          "sha256": "2038154d06a20e399a8ae35ec5c9242702cb23db8dd24dde7679cd53708e4eae",
+          "size": 101485
+        },
+        {
+          "path": "ANE/KokoroAlbert.mlmodelc/weights/weight.bin",
+          "sha256": "36089a39359b800d3e2c60e5e8ac9217d8f2d1010a8b9273192290e621f1fabc",
+          "size": 5718848
+        },
+        {
+          "path": "ANE/KokoroAlignment.mlmodelc/analytics/coremldata.bin",
+          "sha256": "f6074d1039a9151d0f97dc6ec9ee0cd9c7b865f1af646d718ab38b659fa84f3f",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroAlignment.mlmodelc/coremldata.bin",
+          "sha256": "9a0fb4a536f665a052914d7f17b0e6ac80a3614f702e4be87ac0302c1143a4ea",
+          "size": 484
+        },
+        {
+          "path": "ANE/KokoroAlignment.mlmodelc/metadata.json",
+          "sha256": "6f610d23b9f93c7f1a968d6a861efa99725a191de696bf1c3be334ead39b7f00",
+          "size": 3021
+        },
+        {
+          "path": "ANE/KokoroAlignment.mlmodelc/model.mil",
+          "sha256": "eb3a618bda0cdf95cdffab586ef5c76333d0d0a1dcb881190b3ef414f3421b3e",
+          "size": 8194
+        },
+        {
+          "path": "ANE/KokoroAlignment.mlmodelc/weights/weight.bin",
+          "sha256": "2e7d69128b59d615fc3d3cf85637a687235fc086b1eb136359adb11a61615f6b",
+          "size": 4128
+        },
+        {
+          "path": "ANE/KokoroNoise.mlmodelc/analytics/coremldata.bin",
+          "sha256": "de1b584b3959d91905a458b20fc3fb6bd26b68d1eac0b4576aeccd1a7235b133",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroNoise.mlmodelc/coremldata.bin",
+          "sha256": "6e675b07b45f7586222870758a1edfc7f5b87cd639c06acdb7191db09783283f",
+          "size": 440
+        },
+        {
+          "path": "ANE/KokoroNoise.mlmodelc/metadata.json",
+          "sha256": "eb3102217532d952479c6f1b04d26d7ac4cdbc59875b6a23e8aae86e5e02c2bc",
+          "size": 3020
+        },
+        {
+          "path": "ANE/KokoroNoise.mlmodelc/model.mil",
+          "sha256": "5af26daba7b289a1e635846ea3ad8400d346e3aee9f05b5a8912ae97db286bb0",
+          "size": 91698
+        },
+        {
+          "path": "ANE/KokoroNoise.mlmodelc/weights/weight.bin",
+          "sha256": "5da4ccb85b789bdf0ac634cf817171c428853c39d8bc81f29b864f0eba3aa0d0",
+          "size": 4580160
+        },
+        {
+          "path": "ANE/KokoroNoise_v2.mlmodelc/analytics/coremldata.bin",
+          "sha256": "53af6bf61482f6002bdb6e3a62f30774cde6e96411aebd888222a34b369f3d04",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroNoise_v2.mlmodelc/coremldata.bin",
+          "sha256": "9911047f924b41f8b92811c32c50b7c718bd7b0c14842b3bc1b66b9ffe341a19",
+          "size": 440
+        },
+        {
+          "path": "ANE/KokoroNoise_v2.mlmodelc/metadata.json",
+          "sha256": "eb3102217532d952479c6f1b04d26d7ac4cdbc59875b6a23e8aae86e5e02c2bc",
+          "size": 3020
+        },
+        {
+          "path": "ANE/KokoroNoise_v2.mlmodelc/model.mil",
+          "sha256": "60233949d896f15ef38aea19afda558935d7569fa77a3ca4babddd3ffe845a36",
+          "size": 93152
+        },
+        {
+          "path": "ANE/KokoroNoise_v2.mlmodelc/weights/weight.bin",
+          "sha256": "1102fc2d31dfcfe3de3978a4c78b65202ff8b0a4d55a9304213bd4e8bda66bc2",
+          "size": 4580160
+        },
+        {
+          "path": "ANE/KokoroPostAlbert.mlmodelc/analytics/coremldata.bin",
+          "sha256": "6640044c875505382edbc361cdd56f3f1c30f082953e0f9473a31ae3f71e6c43",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroPostAlbert.mlmodelc/coremldata.bin",
+          "sha256": "86de3ab0c1e8c6f8842b57bc24695a5099590c49b864e3fa2737b1fb5b15ba3b",
+          "size": 556
+        },
+        {
+          "path": "ANE/KokoroPostAlbert.mlmodelc/metadata.json",
+          "sha256": "2e3be1af412a76e340120a01cd04a502666371ada86b1fdaf5a622896e0bf979",
+          "size": 4171
+        },
+        {
+          "path": "ANE/KokoroPostAlbert.mlmodelc/model.mil",
+          "sha256": "450b73a3b179e1702e7b2210bad008eac20d58b2d6076e3c2de76290a66e5fef",
+          "size": 60047
+        },
+        {
+          "path": "ANE/KokoroPostAlbert.mlmodelc/weights/weight.bin",
+          "sha256": "e4f300a23cc2e05d38680d9fc94681cc722d445076d1d248f83255122ba091c8",
+          "size": 13806464
+        },
+        {
+          "path": "ANE/KokoroProsody.mlmodelc/analytics/coremldata.bin",
+          "sha256": "7708aab83deabd72539512acd850447fa955187608d9710a828943aa8498c6b8",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroProsody.mlmodelc/coremldata.bin",
+          "sha256": "d65d87f246a6546c0fb7af6efe020106c38604e5c2b9ca00a78561c115dda33e",
+          "size": 421
+        },
+        {
+          "path": "ANE/KokoroProsody.mlmodelc/metadata.json",
+          "sha256": "a780887a790fe54e2ad14d26b2d936eca4fc6ab9f727e60f7e01f0c208163eef",
+          "size": 2721
+        },
+        {
+          "path": "ANE/KokoroProsody.mlmodelc/model.mil",
+          "sha256": "e6b332f1ed1b22178a406a16c9767c0eed2d64b7f0c17c86ccb2b6abf863b1ed",
+          "size": 79705
+        },
+        {
+          "path": "ANE/KokoroProsody.mlmodelc/weights/weight.bin",
+          "sha256": "d3c2670eb0c528802f0815d917dcb77bf17faf063bd2bc09cfd0970e2bc1444c",
+          "size": 8454272
+        },
+        {
+          "path": "ANE/KokoroProsody_v2.mlmodelc/analytics/coremldata.bin",
+          "sha256": "804d7d2e9a8fed345cedb57da61bd27fdd95db22a070cfa7d42ccd4f8e80a443",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroProsody_v2.mlmodelc/coremldata.bin",
+          "sha256": "db8776a4896f690fd254cdb68a4551c168411c9b3fb98219630215bc3c357986",
+          "size": 421
+        },
+        {
+          "path": "ANE/KokoroProsody_v2.mlmodelc/model.mil",
+          "sha256": "e6acad9f44d70b1dba0aea6a5d25ee4edf68fe8f2933399ee81f70ace61cbc8b",
+          "size": 73353
+        },
+        {
+          "path": "ANE/KokoroProsody_v2.mlmodelc/weights/weight.bin",
+          "sha256": "70eea4cd2523992fa1fea840e31ab6f4fdd69c1598e220985a2ae6ea5da1e944",
+          "size": 8513664
+        },
+        {
+          "path": "ANE/KokoroTail.mlmodelc/analytics/coremldata.bin",
+          "sha256": "7dd3d6b8cfbcdcac37b46f6eb1312b842b972dc75f7cb9968f349fedfc0d77db",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroTail.mlmodelc/coremldata.bin",
+          "sha256": "f28f17e4217d7ec1bed48bff4c65287169daa9198315f6fffb00a1483831f5d3",
+          "size": 392
+        },
+        {
+          "path": "ANE/KokoroTail.mlmodelc/metadata.json",
+          "sha256": "7708ecc145eecf8e3ef5ef8979ea7a4f77d04c8da787454c6d9190e5300fc50b",
+          "size": 1872
+        },
+        {
+          "path": "ANE/KokoroTail.mlmodelc/model.mil",
+          "sha256": "b0b8fd573bac76ba7eb85730eeb25538fc7f1c666ecbf939fd4b3a4ad4495ad7",
+          "size": 7014
+        },
+        {
+          "path": "ANE/KokoroTail.mlmodelc/weights/weight.bin",
+          "sha256": "2d4877b5d2725a9f017653e391638bee1262d1877a080bce09726aae128fecb2",
+          "size": 81088
+        },
+        {
+          "path": "ANE/KokoroTail_v2.mlmodelc/analytics/coremldata.bin",
+          "sha256": "a06e4b91c2b8a8be3ff701558a5f1f6484921f948202663fe6df78f248d42222",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroTail_v2.mlmodelc/coremldata.bin",
+          "sha256": "527271f6df56cc308a5f89374c92108aef7b837ab15f0ba4900d555588dbd905",
+          "size": 392
+        },
+        {
+          "path": "ANE/KokoroTail_v2.mlmodelc/metadata.json",
+          "sha256": "7708ecc145eecf8e3ef5ef8979ea7a4f77d04c8da787454c6d9190e5300fc50b",
+          "size": 1872
+        },
+        {
+          "path": "ANE/KokoroTail_v2.mlmodelc/model.mil",
+          "sha256": "b0b8fd573bac76ba7eb85730eeb25538fc7f1c666ecbf939fd4b3a4ad4495ad7",
+          "size": 7014
+        },
+        {
+          "path": "ANE/KokoroTail_v2.mlmodelc/weights/weight.bin",
+          "sha256": "8ede31ec20df7d86a124287ac12d13507651e2a693e9d4f35f0e7f92cba422c7",
+          "size": 81088
+        },
+        {
+          "path": "ANE/KokoroVocoder.mlmodelc/analytics/coremldata.bin",
+          "sha256": "1cc4f1e6436597c6d458a845570d9d0ace458813ff90f225d08e0e713496b463",
+          "size": 243
+        },
+        {
+          "path": "ANE/KokoroVocoder.mlmodelc/coremldata.bin",
+          "sha256": "71bac80d2f2f077fefc0d66cdc39c0faaa96540b3a6149093ef29de01b1f8764",
+          "size": 626
+        },
+        {
+          "path": "ANE/KokoroVocoder.mlmodelc/metadata.json",
+          "sha256": "a8e768f151225a52476d35f6ab90805ae00f1f78b83be4ca21327029c800c183",
+          "size": 4331
+        },
+        {
+          "path": "ANE/KokoroVocoder.mlmodelc/model.mil",
+          "sha256": "52f2febec45094e78a5948a3a47f023be8fc57cfd48cc99e8d4c358a13674ef2",
+          "size": 309000
+        },
+        {
+          "path": "ANE/KokoroVocoder.mlmodelc/weights/weight.bin",
+          "sha256": "6d1f96eb50218ab687b12d6d862d2ae854c12b7165c3cd9b6b5cef261ef02ff1",
+          "size": 48889920
+        },
+        {
+          "path": "ANE/LICENSE",
+          "sha256": "f29080b0389b53eb15c81fd882c3c71dcbf92b99c5d94ea51df9d7d877fd9fe4",
+          "size": 11339
+        },
+        {
+          "path": "ANE/af_heart.bin",
+          "sha256": "d583ccff3cdca2f7fae535cb998ac07e9fcb90f09737b9a41fa2734ec44a8f0b",
+          "size": 522240
+        },
+        {
+          "path": "ANE/vocab.json",
+          "sha256": "8d65b0188b77eafc60751dac42bbac7ab5f5685074af44db91d1877b42dc1d7c",
+          "size": 1416
+        }
+      ],
+      "source": {
+        "repository": "FluidInference/kokoro-82m-coreml",
+        "revision": "e61d9ee79a01ad4ebf6b3d8bcfe2a03f6b8da105"
+      },
+      "metadata": {
+        "task": "text_to_speech",
+        "family": "fluidaudio_kokoro_ane",
+        "display_name": "Kokoro 82M (Neural Engine)",
+        "required_files": [
+          "ANE/KokoroAlbert.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroAlbert.mlmodelc/coremldata.bin",
+          "ANE/KokoroAlbert.mlmodelc/metadata.json",
+          "ANE/KokoroAlbert.mlmodelc/model.mil",
+          "ANE/KokoroAlbert.mlmodelc/weights/weight.bin",
+          "ANE/KokoroAlignment.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroAlignment.mlmodelc/coremldata.bin",
+          "ANE/KokoroAlignment.mlmodelc/metadata.json",
+          "ANE/KokoroAlignment.mlmodelc/model.mil",
+          "ANE/KokoroAlignment.mlmodelc/weights/weight.bin",
+          "ANE/KokoroNoise.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroNoise.mlmodelc/coremldata.bin",
+          "ANE/KokoroNoise.mlmodelc/metadata.json",
+          "ANE/KokoroNoise.mlmodelc/model.mil",
+          "ANE/KokoroNoise.mlmodelc/weights/weight.bin",
+          "ANE/KokoroNoise_v2.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroNoise_v2.mlmodelc/coremldata.bin",
+          "ANE/KokoroNoise_v2.mlmodelc/metadata.json",
+          "ANE/KokoroNoise_v2.mlmodelc/model.mil",
+          "ANE/KokoroNoise_v2.mlmodelc/weights/weight.bin",
+          "ANE/KokoroPostAlbert.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroPostAlbert.mlmodelc/coremldata.bin",
+          "ANE/KokoroPostAlbert.mlmodelc/metadata.json",
+          "ANE/KokoroPostAlbert.mlmodelc/model.mil",
+          "ANE/KokoroPostAlbert.mlmodelc/weights/weight.bin",
+          "ANE/KokoroProsody.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroProsody.mlmodelc/coremldata.bin",
+          "ANE/KokoroProsody.mlmodelc/metadata.json",
+          "ANE/KokoroProsody.mlmodelc/model.mil",
+          "ANE/KokoroProsody.mlmodelc/weights/weight.bin",
+          "ANE/KokoroProsody_v2.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroProsody_v2.mlmodelc/coremldata.bin",
+          "ANE/KokoroProsody_v2.mlmodelc/model.mil",
+          "ANE/KokoroProsody_v2.mlmodelc/weights/weight.bin",
+          "ANE/KokoroTail.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroTail.mlmodelc/coremldata.bin",
+          "ANE/KokoroTail.mlmodelc/metadata.json",
+          "ANE/KokoroTail.mlmodelc/model.mil",
+          "ANE/KokoroTail.mlmodelc/weights/weight.bin",
+          "ANE/KokoroTail_v2.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroTail_v2.mlmodelc/coremldata.bin",
+          "ANE/KokoroTail_v2.mlmodelc/metadata.json",
+          "ANE/KokoroTail_v2.mlmodelc/model.mil",
+          "ANE/KokoroTail_v2.mlmodelc/weights/weight.bin",
+          "ANE/KokoroVocoder.mlmodelc/analytics/coremldata.bin",
+          "ANE/KokoroVocoder.mlmodelc/coremldata.bin",
+          "ANE/KokoroVocoder.mlmodelc/metadata.json",
+          "ANE/KokoroVocoder.mlmodelc/model.mil",
+          "ANE/KokoroVocoder.mlmodelc/weights/weight.bin",
+          "ANE/LICENSE",
+          "ANE/af_heart.bin",
+          "ANE/vocab.json"
+        ],
+        "sample_rate": 24000,
+        "channels": 1,
+        "languages": [
+          "en-US"
+        ],
+        "voices": [
+          "af_heart"
+        ],
+        "max_input_seconds": null,
+        "install_subdir": "kokoro-82m-coreml"
+      }
+    },
+    {
+      "alias": "pocket-tts-coreml",
+      "assets": [
+        {
+          "path": "v2.1/english/cond_prefill.mlmodelc/analytics/coremldata.bin",
+          "sha256": "324406d83f9685577c6665f231fdfa02518b8addceb54a780feaa968a04c33df",
+          "size": 243
+        },
+        {
+          "path": "v2.1/english/cond_prefill.mlmodelc/coremldata.bin",
+          "sha256": "12714da8d2ebae282e353e6785d4472ff5b87f656661d60eff769c584969f415",
+          "size": 1151
+        },
+        {
+          "path": "v2.1/english/cond_prefill.mlmodelc/model.mil",
+          "sha256": "7a93a23c94ec90b583531b6f9edf32aa34edb1de7564bcbef9354b8069f2d140",
+          "size": 228662
+        },
+        {
+          "path": "v2.1/english/cond_prefill.mlmodelc/weights/weight.bin",
+          "sha256": "3a40a5ef3158ef91bfbf932be1c6ee44daca10a856fbb30b9a6720ad9424df8c",
+          "size": 133237248
+        },
+        {
+          "path": "v2.1/english/constants_bin/alba.safetensors",
+          "sha256": "69c32db63ca56843d994f81f343f62e0bf2d73f7e4c9bc73e44bb1110b1d8845",
+          "size": 6194424
+        },
+        {
+          "path": "v2.1/english/constants_bin/anna.safetensors",
+          "sha256": "5ea82f78db006c9fd34e32ddd5aae82674b5b32646097977436458d00af80dfa",
+          "size": 7816440
+        },
+        {
+          "path": "v2.1/english/constants_bin/azelma.safetensors",
+          "sha256": "9f3e69f29075f991fd47774566865ef0e0e637cb5a35992c9919761b5b84b1de",
+          "size": 7963896
+        },
+        {
+          "path": "v2.1/english/constants_bin/bill_boerst.safetensors",
+          "sha256": "75610127d44e0b05b442154f80f89f993df235aecc6cad7070f11000d006c188",
+          "size": 6735096
+        },
+        {
+          "path": "v2.1/english/constants_bin/bos_before_voice.bin",
+          "sha256": "6ac530a104e3f3d2b2ff15f3fad63540f2619b31db78b159c0595a108f142caf",
+          "size": 4096
+        },
+        {
+          "path": "v2.1/english/constants_bin/bos_emb.bin",
+          "sha256": "52f1a157fa35fc100213e6e0fafa74703be99db8faa42de3e99feda607ac7b63",
+          "size": 128
+        },
+        {
+          "path": "v2.1/english/constants_bin/caro_davy.safetensors",
+          "sha256": "a5961b63a2e7a5cfd7edc383aa9042fb70fd14a9dee6310cdc633881a7f2449a",
+          "size": 5260536
+        },
+        {
+          "path": "v2.1/english/constants_bin/charles.safetensors",
+          "sha256": "299edc20182eeccfbf94e308626f259da4fbf339daa8d5905218f2b1774639b8",
+          "size": 6194424
+        },
+        {
+          "path": "v2.1/english/constants_bin/eponine.safetensors",
+          "sha256": "bda3b76a384ff355fe0350736387765946304ae8ca16e59f60ea3296a1c99cc6",
+          "size": 6931704
+        },
+        {
+          "path": "v2.1/english/constants_bin/estelle.safetensors",
+          "sha256": "ccebef7f51762c7fc08870f5ecf268e8713551ae2c9f7984ddaec0c1e1c77153",
+          "size": 8258808
+        },
+        {
+          "path": "v2.1/english/constants_bin/eve.safetensors",
+          "sha256": "ea9c2faf862a6c9d2cb61910fdf02842ae56940382cc8c1000fdb1b43269692b",
+          "size": 6538488
+        },
+        {
+          "path": "v2.1/english/constants_bin/fantine.safetensors",
+          "sha256": "51a8a4355d7f912d4959e4b1918314fda85ad47eba0a33a1d78a4a505d3465f5",
+          "size": 6538488
+        },
+        {
+          "path": "v2.1/english/constants_bin/george.safetensors",
+          "sha256": "0c1c6c57c55a98d81254b33728150c7776f40647fe95258d1a6c1a02780b5d02",
+          "size": 6243576
+        },
+        {
+          "path": "v2.1/english/constants_bin/giovanni.safetensors",
+          "sha256": "a5ee718157ec1c6fd9c1e66a7733c7e6337d474a74a7da756455d27717885c59",
+          "size": 4621552
+        },
+        {
+          "path": "v2.1/english/constants_bin/jane.safetensors",
+          "sha256": "37386227ca8ec5bf1b8e516c13d132ce5ff5437a304fe90129a1c62f41d9a008",
+          "size": 7374072
+        },
+        {
+          "path": "v2.1/english/constants_bin/javert.safetensors",
+          "sha256": "0ae88e03ca4e76a0e16cbf321a807428febda9d9e9bc0358c02e7f9c9e2c263b",
+          "size": 6194424
+        },
+        {
+          "path": "v2.1/english/constants_bin/juergen.safetensors",
+          "sha256": "e74d67b38339fc01118e3bbe2c90d6d40e601b161dbf7be906421956ba80a532",
+          "size": 6243576
+        },
+        {
+          "path": "v2.1/english/constants_bin/lola.safetensors",
+          "sha256": "34972e86b07b17272a8061460054a08119399cace9454979052b9e2d96664e8c",
+          "size": 5948664
+        },
+        {
+          "path": "v2.1/english/constants_bin/marius.safetensors",
+          "sha256": "04f84efcb77a0547ba582c058db496f7ff4920891d49d37b9950d128422582a8",
+          "size": 6194424
+        },
+        {
+          "path": "v2.1/english/constants_bin/mary.safetensors",
+          "sha256": "a8f2adf260cab966fe0a113d6b549d6efdeaa79de544ae0ff34b5b6a41445a59",
+          "size": 6194424
+        },
+        {
+          "path": "v2.1/english/constants_bin/michael.safetensors",
+          "sha256": "8937f724ac4719b9aa51ea0ba1f18f9de0af7a663ad6263558266c1a53c9722d",
+          "size": 7275768
+        },
+        {
+          "path": "v2.1/english/constants_bin/paul.safetensors",
+          "sha256": "ed7a019168f94dfe77009f1b0de59387abc6fbb0db954d38ce722ecb77da61aa",
+          "size": 6980856
+        },
+        {
+          "path": "v2.1/english/constants_bin/peter_yearsley.safetensors",
+          "sha256": "dd977a6e15591e347c9a23fa7cc09e35a65b462917f5eeb162baff6dc9e3f685",
+          "size": 3736816
+        },
+        {
+          "path": "v2.1/english/constants_bin/rafael.safetensors",
+          "sha256": "ac19f099f6cd839875a629c3e2e91e0dfc2c197acf2875db168d0ae244fb58bd",
+          "size": 6194424
+        },
+        {
+          "path": "v2.1/english/constants_bin/stuart_bell.safetensors",
+          "sha256": "5a49da7ca5df05d02587ec4a0981c0d318e045f68e24423c4203ce474d9b33dc",
+          "size": 5260536
+        },
+        {
+          "path": "v2.1/english/constants_bin/text_embed_table.bin",
+          "sha256": "2512f9edd82ab0c68bb42a5fcd329a371eaf63ee6fb5275dfb1bc9536592bb0e",
+          "size": 16388096
+        },
+        {
+          "path": "v2.1/english/constants_bin/tokenizer.model",
+          "sha256": "d461765ae179566678c93091c5fa6f2984c31bbe990bf1aa62d92c64d91bc3f6",
+          "size": 59339
+        },
+        {
+          "path": "v2.1/english/constants_bin/vera.safetensors",
+          "sha256": "4bf50ddd957b5d218b264fdcf18efbbc7384d12da3eca98ca19b9e8dd6976acc",
+          "size": 6735096
+        },
+        {
+          "path": "v2.1/english/flow_decoder_fused.mlmodelc/analytics/coremldata.bin",
+          "sha256": "17cf344fd2be66e934982944a7a252da17087efbc9daac0d3dfb4e8e95797264",
+          "size": 243
+        },
+        {
+          "path": "v2.1/english/flow_decoder_fused.mlmodelc/coremldata.bin",
+          "sha256": "69ff9affa07e38b1a511ac8d71c594eeeb236389ddbe74f4fabdfa45db4edf7a",
+          "size": 413
+        },
+        {
+          "path": "v2.1/english/flow_decoder_fused.mlmodelc/model.mil",
+          "sha256": "0257898b9a6ce06c961959aae993bb27c558f509fbea7407d094b879f872ec3f",
+          "size": 333331
+        },
+        {
+          "path": "v2.1/english/flow_decoder_fused.mlmodelc/weights/weight.bin",
+          "sha256": "f28a1bd0af940a195802e9d702c9e050f3e69d265e582f3d0fdf4001709eb30c",
+          "size": 19012608
+        },
+        {
+          "path": "v2.1/english/flowlm_step.mlmodelc/analytics/coremldata.bin",
+          "sha256": "fcc771807d303b09425871201b9c20fd82b92bdb869ca567e9011402b6b844b3",
+          "size": 243
+        },
+        {
+          "path": "v2.1/english/flowlm_step.mlmodelc/coremldata.bin",
+          "sha256": "4cf9fcee17a690def93f29ebdffbe3fd4cbfda442666e282f2bc8673947c1707",
+          "size": 1191
+        },
+        {
+          "path": "v2.1/english/flowlm_step.mlmodelc/model.mil",
+          "sha256": "9f3d6b3d0441d083f39e293d8878c58a53b8156e0d1e434c123d325dcc8c9030",
+          "size": 236884
+        },
+        {
+          "path": "v2.1/english/flowlm_step.mlmodelc/weights/weight.bin",
+          "sha256": "5f63c2466dd9c1a29b074c467cc32b1fe47d77afa745e86f03ae7e862ac05aa7",
+          "size": 152186240
+        },
+        {
+          "path": "v2.1/english/manifest.json",
+          "sha256": "f8ee44b3d8bfbb1a56698e9a313944dabda530f9c5d809f0a0135ad64ffad3a8",
+          "size": 739
+        },
+        {
+          "path": "v2.1/english/mimi_decoder.mlmodelc/analytics/coremldata.bin",
+          "sha256": "be4199b44838e2fb199bb44b7649531d28fe847a1a6633fd9f8ca89576c5a7f8",
+          "size": 243
+        },
+        {
+          "path": "v2.1/english/mimi_decoder.mlmodelc/coremldata.bin",
+          "sha256": "9d8644e2caad1513153ac28f1ba8090fcd2facdbd5d2621bf8016186fa932bf8",
+          "size": 1777
+        },
+        {
+          "path": "v2.1/english/mimi_decoder.mlmodelc/metadata.json",
+          "sha256": "aaca1b55b078095e72ee4826a94297fc070526d9f4cd3507464e7f2afaa73376",
+          "size": 16844
+        },
+        {
+          "path": "v2.1/english/mimi_decoder.mlmodelc/model.mil",
+          "sha256": "f7176b3b3d800de308ac01cb83d1f3e9b555e70b44d299efd4a21c9c27eecc16",
+          "size": 107403
+        },
+        {
+          "path": "v2.1/english/mimi_decoder.mlmodelc/weights/weight.bin",
+          "sha256": "c93d182f9ad8c1042ec8302093aabb4e310d76616932dd12720e03b5d07f7c64",
+          "size": 41768256
+        }
+      ],
+      "source": {
+        "repository": "FluidInference/pocket-tts-coreml",
+        "revision": "91748676fe3c8b2eb3007b3125253bcd898202c3"
+      },
+      "metadata": {
+        "task": "text_to_speech",
+        "family": "fluidaudio_pocket_tts",
+        "display_name": "PocketTTS (Core ML)",
+        "required_files": [
+          "v2.1/english/cond_prefill.mlmodelc/analytics/coremldata.bin",
+          "v2.1/english/cond_prefill.mlmodelc/coremldata.bin",
+          "v2.1/english/cond_prefill.mlmodelc/model.mil",
+          "v2.1/english/cond_prefill.mlmodelc/weights/weight.bin",
+          "v2.1/english/constants_bin/alba.safetensors",
+          "v2.1/english/constants_bin/anna.safetensors",
+          "v2.1/english/constants_bin/azelma.safetensors",
+          "v2.1/english/constants_bin/bill_boerst.safetensors",
+          "v2.1/english/constants_bin/bos_before_voice.bin",
+          "v2.1/english/constants_bin/bos_emb.bin",
+          "v2.1/english/constants_bin/caro_davy.safetensors",
+          "v2.1/english/constants_bin/charles.safetensors",
+          "v2.1/english/constants_bin/eponine.safetensors",
+          "v2.1/english/constants_bin/estelle.safetensors",
+          "v2.1/english/constants_bin/eve.safetensors",
+          "v2.1/english/constants_bin/fantine.safetensors",
+          "v2.1/english/constants_bin/george.safetensors",
+          "v2.1/english/constants_bin/giovanni.safetensors",
+          "v2.1/english/constants_bin/jane.safetensors",
+          "v2.1/english/constants_bin/javert.safetensors",
+          "v2.1/english/constants_bin/juergen.safetensors",
+          "v2.1/english/constants_bin/lola.safetensors",
+          "v2.1/english/constants_bin/marius.safetensors",
+          "v2.1/english/constants_bin/mary.safetensors",
+          "v2.1/english/constants_bin/michael.safetensors",
+          "v2.1/english/constants_bin/paul.safetensors",
+          "v2.1/english/constants_bin/peter_yearsley.safetensors",
+          "v2.1/english/constants_bin/rafael.safetensors",
+          "v2.1/english/constants_bin/stuart_bell.safetensors",
+          "v2.1/english/constants_bin/text_embed_table.bin",
+          "v2.1/english/constants_bin/tokenizer.model",
+          "v2.1/english/constants_bin/vera.safetensors",
+          "v2.1/english/flow_decoder_fused.mlmodelc/analytics/coremldata.bin",
+          "v2.1/english/flow_decoder_fused.mlmodelc/coremldata.bin",
+          "v2.1/english/flow_decoder_fused.mlmodelc/model.mil",
+          "v2.1/english/flow_decoder_fused.mlmodelc/weights/weight.bin",
+          "v2.1/english/flowlm_step.mlmodelc/analytics/coremldata.bin",
+          "v2.1/english/flowlm_step.mlmodelc/coremldata.bin",
+          "v2.1/english/flowlm_step.mlmodelc/model.mil",
+          "v2.1/english/flowlm_step.mlmodelc/weights/weight.bin",
+          "v2.1/english/manifest.json",
+          "v2.1/english/mimi_decoder.mlmodelc/analytics/coremldata.bin",
+          "v2.1/english/mimi_decoder.mlmodelc/coremldata.bin",
+          "v2.1/english/mimi_decoder.mlmodelc/metadata.json",
+          "v2.1/english/mimi_decoder.mlmodelc/model.mil",
+          "v2.1/english/mimi_decoder.mlmodelc/weights/weight.bin"
+        ],
+        "sample_rate": 24000,
+        "channels": 1,
+        "languages": [
+          "en"
+        ],
+        "voices": [
+          "alba",
+          "anna",
+          "azelma",
+          "bill_boerst",
+          "caro_davy",
+          "charles",
+          "eponine",
+          "estelle",
+          "eve",
+          "fantine",
+          "george",
+          "giovanni",
+          "jane",
+          "javert",
+          "juergen",
+          "lola",
+          "marius",
+          "mary",
+          "michael",
+          "paul",
+          "peter_yearsley",
+          "rafael",
+          "stuart_bell",
+          "vera"
+        ],
+        "max_input_seconds": null,
+        "install_subdir": "Models/pocket-tts"
       }
     }
   ]

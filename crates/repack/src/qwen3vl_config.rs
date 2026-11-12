@@ -220,6 +220,7 @@ pub fn parse_qwen3_vl_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
         swiglu_limit: 0.0,
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
+        short_conv_kernel_size: 0,
         ple: PleConfig::NONE,
     })
 }

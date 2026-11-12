@@ -68,7 +68,7 @@ struct BlockDtypes {
 }
 
 impl BlockDtypes {
-    fn all(&self, dtype: DType) -> bool {
+    fn all(&self, allowed: impl Fn(DType) -> bool) -> bool {
         [
             self.norm,
             self.attention,
@@ -78,8 +78,8 @@ impl BlockDtypes {
             self.ff_out,
             self.output,
         ]
-        .iter()
-        .all(|d| *d == dtype)
+        .into_iter()
+        .all(allowed)
     }
 }
 
@@ -124,6 +124,10 @@ pub(crate) struct FlowMatchingTransformer {
     post_conv: MlxConv1d,
     backend: Option<Rc<dyn ComputeBackend>>,
     dims: DitDims,
+    /// F32 blocks may run as one device submission. Their gated SiLU then
+    /// uses the device `exp`, so this is set only with the store's tiled F32
+    /// linears, where the per-operation path is not a reference either.
+    f32_sequence: bool,
 }
 
 impl FlowMatchingTransformer {
@@ -246,6 +250,7 @@ impl FlowMatchingTransformer {
             post_conv,
             backend: store.backend(),
             dims,
+            f32_sequence: store.tiled_f32(),
         })
     }
 
@@ -462,8 +467,9 @@ impl FlowMatchingTransformer {
     /// device kernels in the same order, with the host rotary, residual adds,
     /// and gated activation replaced by device forms that reproduce host
     /// BF16 rounding. `None` when the backend has no sequences, a stage is
-    /// not BF16, a bias would be added on the host, or the device met a case
-    /// it cannot round like the host; the caller then runs `block_forward`.
+    /// not BF16 (or F32, with `f32_sequence`), a bias would be added on the
+    /// host, or the device met a case it cannot round like the host; the
+    /// caller then runs `block_forward`.
     fn block_sequence(
         &self,
         block: &DiTBlock,
@@ -479,8 +485,11 @@ impl FlowMatchingTransformer {
         let t = block.dtypes(input_dtype);
         let dims = &self.dims;
         let inner = dims.heads * dims.head_dim;
-        if input_dtype != DType::Bf16
-            || !t.all(DType::Bf16)
+        // A Turbo block mixes them (its first norm is BF16, later stages
+        // F32), and each sequence op runs at its own stage's dtype.
+        let allowed = |d: DType| d == DType::Bf16 || (self.f32_sequence && d == DType::F32);
+        if !allowed(input_dtype)
+            || !t.all(allowed)
             || !backend::bias_in_kernel(&block.ff_in_w, Some(&block.ff_in_b), t.post_norm)
             || !backend::bias_in_kernel(&block.ff_out_w, Some(&block.ff_out_b), t.ff)
         {
