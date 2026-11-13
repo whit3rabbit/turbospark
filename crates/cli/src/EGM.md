@@ -6,15 +6,15 @@ Library-side modules of `turbospark-cli`: the `turbospark-check` generation bina
 ## Interface
 - [main.rs] `turbospark-check` entry; declares `chat` and `generate` on macOS only.
 - [chat.rs] interactive `--chat` loop (`chat::run`).
-- [daemon.rs:start], [daemon.rs:stop], [daemon.rs:restart], [daemon.rs:get_running_pid], [daemon.rs:running_server], [daemon.rs:log_file], [daemon.rs:log_tail], [daemon.rs:find_server_binary], [daemon.rs:is_pid_alive].
+- [daemon.rs:start], [daemon.rs:stop], [daemon.rs:restart], [daemon.rs:get_running_pid], [daemon.rs:live_pid], [daemon.rs:running_server], [daemon.rs:log_file], [daemon.rs:log_tail], [daemon.rs:find_server_binary], [daemon.rs:is_pid_alive].
 - [agent.rs:is_agent], [agent.rs:http_health_ok]: launching external coding agents against the local server.
 - Children: [bin](./bin/EGM.md), [front](./front/EGM.md), [generate](./generate/EGM.md), [ui](./ui/EGM.md).
 
 ## Invariants
 - `start` and `stop` refuse the CWD-relative fallback root [daemon.rs:require_root].
 - A daemon lock serializes start [daemon.rs:acquire_daemon_lock].
-- Pid and meta files are mode 0600 and the run dir 0700 [daemon.rs:write_private_file], [daemon.rs:create_private_run_dir]. The log file is opened with plain create+append and is not made private [daemon.rs:start].
-- `get_running_pid` deletes the pid and meta files when the recorded process is dead, so `status` and `ps` can mutate state [daemon.rs:get_running_pid].
+- Pid and meta files are mode 0600 and the run dir 0700 [daemon.rs:write_private_file], [daemon.rs:create_private_run_dir]. The log file is created 0600 too (an existing looser file is tightened) [daemon.rs:open_private_log].
+- `get_running_pid` deletes the pid and meta files when the recorded process is dead, so only `start`, `stop` and the agent launcher call it. `live_pid` and `running_server` are read-only (a stale pid file is left alone), and `status` and `ps` use them [daemon.rs:live_pid], [daemon.rs:get_running_pid].
 - `start` strips `--api-key VALUE` from the server argv and passes it as `TURBOSPARK_API_KEY` in the child environment [daemon.rs:server_args_and_api_key].
 
 ## Side Effects
