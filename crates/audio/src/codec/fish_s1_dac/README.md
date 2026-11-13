@@ -67,7 +67,7 @@ folds at load from the torch-layout `weight_g (dim0, 1, 1)` /
   transformers' `freqs_cis` tables and causal masks are derived state
   and are recomputed, never loaded.
 - **Real checkpoint**: opt-in gate via `TURBOSPARK_FISH_S1_DAC_MODEL`
-  (model.safetensors; config.json optional, geometry defaults to
+  (model.safetensors; config.json optional when absent, geometry defaults to
   `build_ae()`). Skipped when unset; not run on this machine.
 
 ## Scope and Divergences
