@@ -1,6 +1,7 @@
 //! Chunked-prefill planning: splitting a prompt into fixed-size spans, and
 //! tracking whether a chunked prefill runner has left uncommitted KV rows
-//! behind. Ported from `Runtime/Prefill/PrefillRuntimeConfig.swift`.
+//! behind. Originally ported from the upstream Swift Mference
+//! `Runtime/Prefill/PrefillRuntimeConfig.swift`, which was never in this repo.
 //!
 //! This is pure span/state bookkeeping. The GPU-side scratch buffer sizing
 //! this feeds is `crates/gpu`'s `PrefillChunkScratchLayout`/`Buffers`
