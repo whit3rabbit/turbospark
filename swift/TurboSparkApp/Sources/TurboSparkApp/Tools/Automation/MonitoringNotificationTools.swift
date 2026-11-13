@@ -132,11 +132,14 @@ public struct ReadNotificationsOutput: Codable, Sendable, Equatable {
 public struct PushNotificationInput: Codable, Sendable, Equatable {
     /// Message body text displayed in the notification.
     public var message: String
+    /// Optional notification title. The executor defaults it to "TurboSpark Notice".
+    public var title: String?
     /// Notification status classification.
     public var status: String
 
-    public init(message: String, status: String = "proactive") {
+    public init(message: String, title: String? = nil, status: String = "proactive") {
         self.message = message
+        self.title = title
         self.status = status
     }
 }
@@ -222,6 +225,7 @@ public enum MonitoringNotificationDefinitions {
         parameters: .object(
             properties: [
                 "message": .string(description: "Notification text body."),
+                "title": .string(description: "Optional notification title (defaults to 'TurboSpark Notice')."),
                 "status": .string(description: "Status type: 'proactive'.")
             ],
             required: ["message", "status"]
