@@ -155,7 +155,7 @@ value, never the raw tool results.
   captures them. Revisit if codemode ever shares a context across runs.
 - **No `image()`** -- this app's tool results are text.
 - **No host globals, no Lark grammar.** The `// @options:` line is parsed
-  leniently; there is no grammar-constrained decoding in this app.
+  strictly (unknown fields and malformed lines throw a source error); there is no grammar-constrained decoding in this app.
 - **MCP tools only.** pi's example exposes the same surface to scripts and
   the model; here scripts reach exactly the granted deferred MCP catalog.
 - **Timers.** None, like pi -- and the same consequence: a script awaiting
