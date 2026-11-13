@@ -16,7 +16,7 @@
 //!   parameter and nonzero values are refused (no MLX RNG parity).
 //! - Only plain F32/F16 linear weights and 8-bit group-64 affine
 //!   quantization are accepted; other schemes are refused.
-//! - Segmented (>20 s) and chunked (>60 s) reassembly follow the
+//! - Segmented (strictly >20 s) and chunked (>=60 s) reassembly follow the
 //!   reference index math but are pinned by invariant tests only; the
 //!   full path carries fixture and checkpoint parity.
 
@@ -1339,7 +1339,7 @@ impl MossFormer2Se {
     }
 
     /// As [`enhance`](Self::enhance) with an explicit chunked override
-    /// (`Some(true)` forces the >60 s chunked path regardless of
+    /// (`Some(true)` forces the chunked path (>= 60 s by default) regardless of
     /// duration, `Some(false)` disables it).
     pub fn enhance_with_mode(&self, audio: &[f32], chunked: Option<bool>) -> Result<Vec<f32>> {
         let original_len = audio.len();

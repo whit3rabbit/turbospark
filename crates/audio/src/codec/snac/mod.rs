@@ -445,13 +445,18 @@ impl Snac {
 
     /// Loads the model from a parsed config and a safetensors file.
     pub fn load(config: SnacConfig, file: &SafetensorsFile) -> Result<Snac> {
-        if config.attn_window_size.is_some() {
+        if let Some(window) = config.attn_window_size {
+            // from_json maps a missing key to Some(32) (the upstream default),
+            // so say so: a config that omits the key is refused here too.
             return Err(SpeechError::Unsupported {
-                why: "attn_window_size is enabled; the pinned reference's \
-                      LocalMHA is shape-broken in the encoder/decoder flow and \
-                      the deployed SNAC checkpoints disable it (null). Refusing \
-                      rather than silently decoding with the wrong architecture."
-                    .to_string(),
+                why: format!(
+                    "attn_window_size is {window} (a config.json without the key \
+                     defaults to 32 upstream; set it to null to disable attention). \
+                     Local attention (LocalMHA) is not implemented: the pinned \
+                     reference's LocalMHA is shape-broken in the encoder/decoder \
+                     flow and the deployed SNAC checkpoints store null. Refusing \
+                     rather than decoding with the wrong architecture."
+                ),
             });
         }
         if config.vq_strides.is_empty() {

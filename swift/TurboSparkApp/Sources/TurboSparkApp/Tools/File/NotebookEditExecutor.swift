@@ -14,7 +14,11 @@ public enum NotebookEditExecutor {
         let cellIndexStr = arguments["cell_index"] ?? arguments["cellIndex"] ?? arguments["index"]
         let cellIndex = cellIndexStr.flatMap { Int($0) }
         let newSource = arguments["new_source"] ?? arguments["newSource"] ?? arguments["content"] ?? arguments["source"] ?? ""
-        let cellType = arguments["cell_type"] ?? arguments["cellType"] ?? "code"
+        // nil means "keep the cell's current type" on replace. Defaulting to
+        // "code" converted markdown cells to code and wiped their outputs.
+        let explicitCellType = arguments["cell_type"] ?? arguments["cellType"]
+        // Insert has no existing cell to inherit from.
+        let cellType = explicitCellType ?? "code"
         let editMode = arguments["edit_mode"] ?? arguments["editMode"] ?? arguments["action"] ?? "replace"
 
         let targetURL = try AppToolRegistry.resolveSecurePath(relPath: relPath, rootURL: rootURL)
@@ -28,6 +32,22 @@ public enum NotebookEditExecutor {
             )
         }
 
+        if let size = AppFileReadLimits.fileSize(of: targetURL), size > AppFileReadLimits.maximumBytes {
+            throw NSError(
+                domain: "TurboSparkTool",
+                code: 101,
+                userInfo: [NSLocalizedDescriptionKey: "Notebook '\(relPath)' is \(size / 1_024 / 1_024) MB, over the \(AppFileReadLimits.maximumBytes / 1_024 / 1_024) MB limit for NotebookEdit."]
+            )
+        }
+        // Same gate as MultiEdit: refuse to rewrite a notebook that changed
+        // on disk since it was last read or written by a tool.
+        if await FileSnapshotStore.shared.isStale(url: targetURL) {
+            throw NSError(
+                domain: "TurboSparkTool",
+                code: 43,
+                userInfo: [NSLocalizedDescriptionKey: "Notebook '\(relPath)' has been modified on disk since it was last read. Please re-read before editing."]
+            )
+        }
         let data = try Data(contentsOf: targetURL)
         guard var json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               var cells = json["cells"] as? [[String: Any]] else {
@@ -120,10 +140,15 @@ public enum NotebookEditExecutor {
                 oldContent = prevSourceStr
             }
             cell["source"] = sourceLines
-            cell["cell_type"] = cellType
-            if cellType == "code" {
+            let finalType = explicitCellType ?? (cell["cell_type"] as? String) ?? "code"
+            cell["cell_type"] = finalType
+            if finalType == "code" {
                 cell["outputs"] = [Any]()
                 cell["execution_count"] = NSNull()
+            } else {
+                // Markdown and raw cells carry neither field.
+                cell["outputs"] = nil
+                cell["execution_count"] = nil
             }
             cells[idx] = cell
             modified = true

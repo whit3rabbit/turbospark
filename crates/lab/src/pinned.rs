@@ -638,6 +638,30 @@ mod tests {
         }
     }
 
+    // primary_model() falls back to the first model when no role starts
+    // with "primary", so a set missing the prefix silently picks whatever
+    // is listed first. Hold every mlx-serve set to exactly one primary.
+    #[test]
+    fn every_mlx_serve_set_has_exactly_one_primary_model() {
+        let on_disk = PinnedSet::load_dir(&source_dir()).expect("pinned dir loads");
+        let sets = on_disk.by_repo("mlx-serve");
+        assert!(!sets.is_empty(), "no mlx-serve pinned sets found");
+        for entry in sets {
+            let primaries: Vec<&str> = entry
+                .models
+                .iter()
+                .filter(|m| m.role.starts_with("primary"))
+                .map(|m| m.name.as_str())
+                .collect();
+            assert_eq!(
+                primaries.len(),
+                1,
+                "{} must have exactly one model whose role starts with \"primary\", found {primaries:?}",
+                entry.id
+            );
+        }
+    }
+
     #[test]
     fn an_overlay_entry_replaces_the_same_id() {
         let mut tweaked = PinnedSet::embedded().expect("embedded set parses");

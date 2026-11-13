@@ -15,7 +15,7 @@ Live streaming transcription sessions that sit beside the batch `AudioSession` i
 - One call at a time: `try_lock` on the stream, compare-exchange on `busy`; a second caller gets "stream is busy" [stream.rs:lock, multitalker_stream.rs:call]
 - `cancel` is terminal; later calls return an error because a cancelled step leaves the model mid-window [stream.rs:cancel, multitalker_stream.rs:cancel]
 - Multitalker `append` accepts 1 to `MAX_PCM_CHUNK` samples [multitalker_stream.rs:append]
-- Multitalker `finish` closes the session; Unified `finish` restarts the stream at time zero [multitalker_stream.rs:finish, stream.rs:finish]
+- After Multitalker `finish` the inner `LiveSession` is `Finished` and every later `append` or `finish` returns an error ("live session was finished; open a new one"); the worker thread and channel stay up until `Drop`, so the session is spent rather than torn down. Unified `finish` instead restarts the stream at time zero [multitalker_stream.rs:finish, stream.rs:finish]
 - The exact error string "cancelled" is the ABI's cancelled-status marker [multitalker_stream.rs:work]
 - Models and `LiveSession` live on one worker; a panic ends the worker, and `Drop` cancels, closes the channel and joins it [multitalker_stream.rs:work, Drop]
 - Admission estimates: Unified is 3x compiled weights plus 256 MiB; Multitalker is safetensors bytes plus a quarter plus 512 MiB, an unmeasured estimate [stream.rs:open, multitalker_stream.rs:open]

@@ -90,9 +90,11 @@ characters, `speed` 0.5 to 2.0. Voice cloning fields:
   prefix is accepted). MegaTTS3 requires 1 to 30 seconds and uses at most 28.
   OmniVoice accepts 1 to 30 seconds of 24 kHz mono and encodes the whole clip.
   A model that cannot clone (Kokoro) refuses it.
-- `consent`: MegaTTS3 always requires `true`; OmniVoice requires it whenever
-  `reference_audio` is present (without a reference it speaks with the model's
-  auto voice). It is the caller's statement that they have the right to use
+- `consent`: MegaTTS3 always requires `true`; OmniVoice and Qwen3-TTS
+  require it whenever `reference_audio` is present (without a reference
+  OmniVoice speaks with the model's auto voice and Qwen3-TTS with its built-in
+  or designed voice). Qwen3-TTS clones without `reference_text` too, from the
+  speaker embedding alone. It is the caller's statement that they have the right to use
   the reference voice.
 - `steps` (1 to 100): MegaTTS3 defaults to 16 (the app's Fast, Balanced and
   Best are 8, 16 and 32); OmniVoice defaults to 32 diffusion steps. `seed`

@@ -441,4 +441,87 @@ final class CustomToolsTests: XCTestCase {
         XCTAssertTrue(compacted.contains("lines truncated"))
         XCTAssertTrue(compacted.contains("Line 200:"))
     }
+
+    // MARK: - B6b: an HTTP error status is a failing tool call
+
+    private func httpTool(path: String) -> CustomToolDefinition {
+        CustomToolDefinition(
+            name: "hook", toolDescription: "posts", category: .web,
+            execution: CustomToolExecution(
+                type: .http, httpURL: "https://custom-tool-stub.invalid\(path)", timeoutSeconds: 5))
+    }
+
+    func testAnHTTPErrorStatusThrowsWithTheStatusAndABoundedBody() async throws {
+        URLProtocol.registerClass(CustomToolHTTPStubProtocol.self)
+        defer { URLProtocol.unregisterClass(CustomToolHTTPStubProtocol.self) }
+        let root = FileManager.default.temporaryDirectory
+        do {
+            _ = try await CustomToolExecutor.execute(
+                tool: httpTool(path: "/status/500"), arguments: [:], projectRootURL: root)
+            XCTFail("a 500 response was returned as a successful result")
+        } catch let error as NSError {
+            XCTAssertEqual(error.domain, "TurboSparkTool")
+            XCTAssertEqual(error.code, 39)
+            XCTAssertTrue(error.localizedDescription.contains("HTTP 500"), error.localizedDescription)
+            XCTAssertTrue(error.localizedDescription.contains("boom"), error.localizedDescription)
+        }
+        // One huge line: compactOutput bounds lines, so the excerpt must also
+        // bound characters or the whole body lands in the error.
+        do {
+            _ = try await CustomToolExecutor.execute(
+                tool: httpTool(path: "/status/404/huge"), arguments: [:], projectRootURL: root)
+            XCTFail("a 404 response was returned as a successful result")
+        } catch let error as NSError {
+            XCTAssertEqual(error.code, 39)
+            XCTAssertTrue(error.localizedDescription.contains("HTTP 404"))
+            XCTAssertLessThan(error.localizedDescription.count, 10_000)
+        }
+    }
+
+    func testAnHTTPSuccessStatusIsStillAResult() async throws {
+        URLProtocol.registerClass(CustomToolHTTPStubProtocol.self)
+        defer { URLProtocol.unregisterClass(CustomToolHTTPStubProtocol.self) }
+        let output = try await CustomToolExecutor.execute(
+            tool: httpTool(path: "/status/201"), arguments: [:],
+            projectRootURL: FileManager.default.temporaryDirectory)
+        XCTAssertEqual(output, "HTTP 201:\nboom")
+    }
+
+    // MARK: - B6c: an http tool keeps a riskier declared category
+
+    func testAnHTTPToolKeepsADeclaredCategoryAtLeastAsRiskyAsWeb() {
+        func effective(_ declared: AppToolCategory) -> AppToolCategory {
+            CustomToolDefinition(
+                name: "t", toolDescription: "d", category: declared,
+                execution: CustomToolExecution(type: .http, httpURL: "https://example.invalid"))
+                .effectiveCategory
+        }
+        for kept in [AppToolCategory.terminal, .fileWrite, .mcp, .automation] {
+            XCTAssertEqual(effective(kept), kept, "\(kept) was lowered to \(effective(kept))")
+        }
+        for raised in [AppToolCategory.fileRead, .web, .browser, .computerUse] {
+            XCTAssertEqual(effective(raised), .web, "\(raised)")
+        }
+    }
+}
+
+/// Answers custom-tool-stub.invalid itself: `/status/<code>[/huge]`, body
+/// "boom" or 200 KB on one line.
+private final class CustomToolHTTPStubProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool {
+        request.url?.host == "custom-tool-stub.invalid"
+    }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let url = request.url!
+        let parts = url.path.split(separator: "/")
+        let status = parts.count > 1 ? Int(parts[1]) ?? 200 : 200
+        let body = parts.last == "huge" ? String(repeating: "x", count: 200_000) : "boom"
+        let response = HTTPURLResponse(
+            url: url, statusCode: status, httpVersion: nil, headerFields: nil)!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(body.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
 }

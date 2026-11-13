@@ -423,8 +423,9 @@ fn refuse_while_libraries_exist(home: &Path) -> Result<(), String> {
 ///
 /// Retired: the app no longer offers moving the store, model libraries replace
 /// it, and this refuses once any library is listed (see
-/// [`refuse_while_libraries_exist`]). It stays for callers of the C export
-/// `ts_store_relocate` that have no library.
+/// [`refuse_while_libraries_exist`]). Its C export `ts_store_relocate` and the
+/// Swift wrapper were removed, so no FFI or app path reaches it; it stays as a
+/// Rust API with its own tests.
 pub fn relocate_default_store(
     destination: &Path,
     mut on_progress: impl FnMut(u64, u64),

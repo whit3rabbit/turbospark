@@ -21,12 +21,12 @@
 //!
 //! ## Shared neural tensor ops and quantization
 //! - [`ops`]: portable f32 tensor kernels (linear, norms, rope, attention pieces, convolutions).
-//! - [`quant`]: MLX groupwise affine dequantization (2/3/4/6/8-bit) for U32-packed safetensors.
+//! - [`quant`]: MLX groupwise affine dequantization (2/3/4/5/6/8-bit) for U32-packed safetensors.
 //!
 //! ## Audio models organized by role
 //! - [`music`]: Music generation (e.g. MiniMax Music 0.5 flow-matching DiT).
 //! - [`stt`]: Speech-to-text (Whisper, Moonshine, Parakeet, MMS, Granite Speech, Qwen3 ASR, Nemotron ASR).
-//! - [`tts`]: Text-to-speech (Kokoro).
+//! - [`tts`]: Text-to-speech (Kokoro, KittenTTS, Qwen3-TTS, MegaTTS3, Spark-TTS, Higgs Audio, and many more families; see `tts/README.md`).
 //! - [`vad`]: Voice activity detection & diarization (Silero VAD, Sortformer, Nemotron Diarization).
 //! - [`sts`]: Speech-to-speech & audio enhancement (DeepFilterNet).
 //! - [`codec`]: Audio codecs, vocoders, and neural tokenizers.

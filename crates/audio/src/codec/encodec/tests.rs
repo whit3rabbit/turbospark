@@ -331,3 +331,22 @@ fn lstm_forward_matches_original_over_many_steps_bitwise() {
         }
     }
 }
+
+/// `encode_with_scale` returns the RMS scale `decode_codes` needs for a
+/// normalizing config, `None` otherwise, and the same codes as `encode`.
+#[test]
+fn encode_with_scale_reports_the_normalize_scale() {
+    let mut model = load_tiny();
+    let traces = read_json("traces.json");
+    let wave = floats(&traces["a_wave"]);
+    assert!(!model.config.normalize);
+    let (codes, scale) = model.encode_with_scale(&wave, None).unwrap();
+    assert_eq!(scale, None);
+    assert_eq!(codes, model.encode(&wave, None).unwrap());
+
+    model.config.normalize = true;
+    let (codes, scale) = model.encode_with_scale(&wave, None).unwrap();
+    let rms = (wave.iter().map(|v| v * v).sum::<f32>() / wave.len() as f32).sqrt() + 1e-8;
+    assert_eq!(scale, Some(rms));
+    assert_eq!(codes, model.encode(&wave, None).unwrap());
+}

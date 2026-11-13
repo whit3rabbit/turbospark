@@ -83,6 +83,11 @@ pub(crate) struct GenerationConfig {
 pub(crate) enum EosTokenIds {
     One(i64),
     Many(Vec<i64>),
+    /// A list longer than [`MAX_EOS_TOKEN_IDS`], holding its length. The list
+    /// is dropped (as if `eos_token_id` were absent) rather than failing the
+    /// whole `generation_config.json` parse, and rather than truncated: a
+    /// truncated stop set would silently pick which stops survive.
+    TooMany(usize),
 }
 
 pub(crate) const MAX_EOS_TOKEN_IDS: usize = 256;
@@ -98,10 +103,7 @@ impl<'de> serde::Deserialize<'de> for EosTokenIds {
             type Value = EosTokenIds;
 
             fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(
-                    formatter,
-                    "an integer or at most {MAX_EOS_TOKEN_IDS} integers"
-                )
+                write!(formatter, "an integer or a list of integers")
             }
 
             fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
@@ -125,7 +127,13 @@ impl<'de> serde::Deserialize<'de> for EosTokenIds {
                     Vec::with_capacity(seq.size_hint().unwrap_or(0).min(MAX_EOS_TOKEN_IDS));
                 while let Some(id) = seq.next_element()? {
                     if ids.len() == MAX_EOS_TOKEN_IDS {
-                        return Err(serde::de::Error::custom("too many EOS token ids"));
+                        // Count the rest without storing it, so the cap still
+                        // bounds memory; the 1 MiB file cap bounds the count.
+                        let mut count = ids.len() + 1;
+                        while seq.next_element::<serde::de::IgnoredAny>()?.is_some() {
+                            count += 1;
+                        }
+                        return Ok(EosTokenIds::TooMany(count));
                     }
                     ids.push(id);
                 }
@@ -145,7 +153,7 @@ impl GenerationConfig {
                 .iter()
                 .filter_map(|&id| i32::try_from(id).ok())
                 .collect(),
-            None => Vec::new(),
+            Some(EosTokenIds::TooMany(_)) | None => Vec::new(),
         }
     }
 }
@@ -187,6 +195,28 @@ mod embedded_template_tests {
     fn a_named_list_without_a_default_takes_the_first_entry() {
         let config = parse(r#"{"chat_template": [{"name": "rag", "template": "R"}]}"#);
         assert_eq!(config.chat_template_source().as_deref(), Some("R"));
+    }
+
+    // An over-cap EOS list used to fail the whole generation_config parse.
+    // Only the list is dropped now; the rest of the file still deserializes.
+    #[test]
+    fn an_over_cap_eos_list_drops_only_the_list() {
+        let ids = std::iter::repeat_n("7", 300).collect::<Vec<_>>().join(",");
+        let json = format!(r#"{{"eos_token_id": [{ids}], "temperature": 1.0}}"#);
+        let config: GenerationConfig =
+            serde_json::from_str(&json).expect("over-cap list does not fail the file");
+        assert!(matches!(
+            config.eos_token_id,
+            Some(EosTokenIds::TooMany(300))
+        ));
+        assert!(config.eos_ids().is_empty());
+
+        let ids = std::iter::repeat_n("7", MAX_EOS_TOKEN_IDS)
+            .collect::<Vec<_>>()
+            .join(",");
+        let config: GenerationConfig =
+            serde_json::from_str(&format!(r#"{{"eos_token_id": [{ids}]}}"#)).unwrap();
+        assert_eq!(config.eos_ids().len(), MAX_EOS_TOKEN_IDS);
     }
 
     #[test]

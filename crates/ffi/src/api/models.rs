@@ -41,44 +41,6 @@ pub unsafe extern "C" fn ts_store_root_set(root: *const c_char) -> c_int {
     })
 }
 
-/// Relocates the managed store and activates the destination on success.
-///
-/// Retired: refused while any model library is listed, because it deletes the
-/// home's install records (see `catalog::relocate_default_store`).
-#[no_mangle]
-pub unsafe extern "C" fn ts_store_relocate(
-    destination: *const c_char,
-    cb: TsInstallCallback,
-    userdata: *mut c_void,
-    result_json: *mut *mut c_char,
-) -> c_int {
-    guard_result(|| {
-        if result_json.is_null() {
-            return Err((
-                abi::TS_ERR_INVALID_ARGUMENT,
-                "resultJson must not be null".to_string(),
-            ));
-        }
-        let destination = strings::required(destination, "destination")
-            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        // Checked before any copy starts. Not atomic against an install that
-        // begins afterwards, so the app must also stop queueing installs
-        // while it relocates.
-        models::refuse_while_installing().map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        let relocation = catalog::relocate_default_store(Path::new(destination), |done, total| {
-            if let Some(f) = cb {
-                unsafe {
-                    f(userdata, TS_INSTALL_BYTES, std::ptr::null(), 0, done, total);
-                }
-            }
-        })
-        .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
-        let json =
-            serde_json::to_string(&relocation).map_err(|e| (abi::TS_ERR_JSON, e.to_string()))?;
-        strings::emit(&json, result_json).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
-    })
-}
-
 /// The catalog, as a JSON array, each row carrying an `installed` flag.
 #[no_mangle]
 pub unsafe extern "C" fn ts_catalog_json(out: *mut *mut c_char) -> c_int {

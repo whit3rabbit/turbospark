@@ -23,19 +23,33 @@ public struct ApplyPatchInput: Codable, Sendable, Equatable {
         self.validateTimeoutMs = validateTimeoutMs
     }
 
+    private struct AlternateKey: CodingKey {
+        let stringValue: String
+        var intValue: Int? { nil }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+
     /// Custom decoder supporting `patch_text`, `patchText`, or wrapped dictionary structures.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         if let text = try container.decodeIfPresent(String.self, forKey: .patchText) {
             self.patchText = text
         } else {
-            let dynamic = try decoder.singleValueContainer()
-            if let dict = try? dynamic.decode([String: String].self),
-               let text = dict["patchText"] ?? dict["patch_text"] ?? dict["patch"] {
-                self.patchText = text
-            } else {
-                self.patchText = ""
+            // Look the alternate spellings up key by key. Decoding the whole
+            // object as [String: String] failed on any non-string sibling
+            // (for example `validate_timeout_ms` as an Int) and left the
+            // patch empty.
+            let any = try decoder.container(keyedBy: AlternateKey.self)
+            var found = ""
+            for name in ["patchText", "patch"] {
+                if let key = AlternateKey(stringValue: name),
+                   let text = try? any.decodeIfPresent(String.self, forKey: key) {
+                    found = text
+                    break
+                }
             }
+            self.patchText = found
         }
         self.validateCommand = try container.decodeIfPresent(String.self, forKey: .validateCommand)
         self.validateTimeoutMs = try container.decodeIfPresent(Int.self, forKey: .validateTimeoutMs)

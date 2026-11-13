@@ -4,7 +4,7 @@
 Generation path for `turbospark-check`: opens a model session, renders prompts through the chat template, streams turns, and attaches vision inputs.
 
 ## Interface
-- [mod.rs:try_generate], [mod.rs:Outcome]: entry point and Completed/Failed result. It dispatches on mode to [mod.rs:run_prompt], [mod.rs:run_messages_file], [mod.rs:run_humanize] (`--humanize-file`) and [chat.rs:run].
+- [mod.rs:try_generate], [mod.rs:Outcome]: entry point and Completed/Failed result. It dispatches on mode to [mod.rs:run_prompt], [mod.rs:run_messages_file], [mod.rs:run_humanize] (`--humanize-file`, reached by the `turbospark humanize MODEL DRAFT` wrapper, which passes the model first and the draft as `--humanize-file`, `-` reads stdin) [bin/turbospark.rs:handle_humanize] and [chat.rs:run].
 - [mod.rs:render_prompt], [mod.rs:clamp_max_new], [mod.rs:stream_turn]: crate-internal prompt and streaming helpers.
 - [session.rs:Session], [session.rs:open_session]: model, tokenizer, sampling config, resolved context.
 - [format.rs:print_phases], [format.rs:print_footer], [format.rs:parse_messages_file], [format.rs:map_reasoning_effort], [format.rs:parse_role], [format.rs:role_name].

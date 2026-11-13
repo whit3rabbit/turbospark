@@ -37,6 +37,20 @@ fn gemma_rejects_unknown_tool() {
     assert_eq!(err, ToolCallParserError::UnknownTool("evil".to_string()));
 }
 
+// Gemma used to check only `allowed_tools`, so a name every other dialect
+// refuses (non-ASCII, over 64 bytes) passed when the caller allow-listed it.
+#[test]
+fn gemma_rejects_invalid_function_name_even_when_allowed() {
+    let parser = GemmaToolCallParser::new();
+    let long = "a".repeat(65);
+    for name in ["caf\u{e9}", long.as_str()] {
+        let err = parser
+            .parse(&format!("call:{name}{{}}"), &tools(&[name]), "id1")
+            .unwrap_err();
+        assert_eq!(err, ToolCallParserError::Malformed, "{name}");
+    }
+}
+
 #[test]
 fn gemma_rejects_malformed_call() {
     let parser = GemmaToolCallParser::new();

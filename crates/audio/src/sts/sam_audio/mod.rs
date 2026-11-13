@@ -25,6 +25,16 @@ type Result<T> = std::result::Result<T, SpeechError>;
 
 const ROPE_THETA_BASE: f32 = 10000.0;
 
+/// DiT self-attention RoPE base. The pinned reference
+/// (mlx-audio sam_audio/transformer.py, `DiT.__init__`) builds its
+/// `RotaryEmbedding` with `theta=max(10000, 2 * config.max_positions)`,
+/// so the base follows the config's `max_positions` (reference default
+/// 10000, giving 20000). The tiny fixture uses 1024, where both a fixed
+/// 10000 and this formula agree, so fixture parity cannot pin it.
+fn dit_rope_theta(max_positions: usize) -> f32 {
+    ROPE_THETA_BASE.max(2.0 * max_positions as f32)
+}
+
 /// Sanity bound on layer counts read from an untrusted `config.json`.
 /// Shipped configs use 12 and 22.
 const MAX_LAYERS: usize = 1024;
@@ -679,6 +689,8 @@ pub struct DiT {
     freq_embedding_dim: usize,
     /// exp(-ln(10000) * i / half) per frequency slot.
     t_freqs: Vec<f32>,
+    /// Self-attention RoPE base from `dit_rope_theta(max_positions)`.
+    rope_theta: f32,
 }
 
 impl DiT {
@@ -697,11 +709,7 @@ impl DiT {
         let half = self.head_dim / 2;
         let mut cos = vec![0.0f32; seq * half];
         let mut sin = vec![0.0f32; seq * half];
-        // The config `max_positions` is NOT read here: the 1024 is fixed, so
-        // theta is always ROPE_THETA_BASE (10000). Wiring `max_positions`
-        // would change theta for the default 10000 and the numerics, so it
-        // is left unchanged until checked against the reference.
-        let theta = ROPE_THETA_BASE.max(2.0 * 1024.0);
+        let theta = self.rope_theta;
         for t in 0..seq {
             for i in 0..half {
                 let freq = 1.0 / theta.powf(2.0 * i as f32 / self.head_dim as f32);
@@ -1373,6 +1381,7 @@ impl SamAudio {
             dim,
             head_dim,
             freq_embedding_dim: tc.frequency_embedding_dim,
+            rope_theta: dit_rope_theta(tc.max_positions),
             t_freqs: (0..tc.frequency_embedding_dim / 2)
                 .map(|i| {
                     (-ROPE_THETA_BASE.ln() * i as f32 / (tc.frequency_embedding_dim / 2) as f32)

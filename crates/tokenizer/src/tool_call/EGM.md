@@ -9,7 +9,7 @@ Tool-call body parsers per dialect, each turning model-emitted markup into [mod.
 
 ## Invariants
 - A tool-call body is capped at 256 KiB [mod.rs:MAXIMUM_BYTES].
-- Function names must be non-empty, at most 64 bytes, ASCII alphanumeric plus `_` and `-` [mod.rs:is_valid_function_name]. Gemma is the exception: it does not call it and only checks the name against `allowed_tools` (`UnknownTool`) [gemma.rs:GemmaToolCallParser].
+- Function names must be non-empty, at most 64 bytes, ASCII alphanumeric plus `_` and `-` [mod.rs:is_valid_function_name]. Every dialect applies it, Gemma included: an invalid Gemma name is `Malformed` even when allow-listed, and a valid name not in `allowed_tools` is `UnknownTool` [gemma.rs:GemmaToolCallParser].
 - Grammars are read off each checkpoint's own chat template (GLM-4.7-Flash, Kimi-K2.5) [glm.rs], [kimi.rs] (module docs).
 - Parse failures return `ToolCallParserError` [error.rs:ToolCallParserError].
 

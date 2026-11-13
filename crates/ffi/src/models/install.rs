@@ -34,19 +34,13 @@ pub(crate) fn cancel_active_installs() -> usize {
     active.len()
 }
 
-/// Refuses a model-store move while any install walk (text, image or audio)
-/// is registered. A walk resolves its destination root once and keeps
-/// writing there, so a relocation that deletes the old tree under it would
-/// fail the walk or publish into a directory that was just removed.
-pub(crate) fn refuse_while_installing() -> Result<(), String> {
-    refuse_while_installing_for("move the model store")
-}
-
-/// [`refuse_while_installing`] for another change that must not race a walk,
-/// worded for it: `action` completes "cannot ... while N install(s) are
-/// running". Library changes use it (4.1), so one registry of running walks
-/// answers for both. A running model move (4.4) refuses the same changes,
-/// worded for the move.
+/// Refuses `action` while any install walk (text, image or audio) is
+/// registered. A walk resolves its destination root once and keeps writing
+/// there, so a change that moves or deletes that tree under it would fail the
+/// walk or publish into a directory that was just removed. `action` completes
+/// "cannot ... while N install(s) are running". Library changes use it (4.1),
+/// so one registry of running walks answers for all of them. A running model
+/// move (4.4) refuses the same changes, worded for the move.
 pub(crate) fn refuse_while_installing_for(action: &str) -> Result<(), String> {
     // Installs first, then the move: the one lock order every caller uses.
     let installs = ACTIVE_INSTALLS.lock().unwrap_or_else(|p| p.into_inner());
@@ -547,11 +541,13 @@ mod cancel_tests {
         let image = ActiveInstall::register_image();
         assert_eq!(unsafe { crate::ts_install_pause() }, 0);
         assert_eq!(unsafe { crate::ts_install_resume() }, 0);
-        // A store move must refuse while any walk is registered, image
+        // A registry change must refuse while any walk is registered, image
         // walks included, and succeed to proceed once they are gone.
-        assert!(refuse_while_installing().unwrap_err().contains("install"));
+        assert!(refuse_while_installing_for("change model libraries")
+            .unwrap_err()
+            .contains("install"));
         drop(image);
-        assert!(refuse_while_installing().is_ok());
+        assert!(refuse_while_installing_for("change model libraries").is_ok());
 
         let before = installs_finished();
         let active = ActiveInstall::register();

@@ -177,8 +177,15 @@ public enum MultiEditExecutor {
         // Phase 3: Apply changes to disk with rollback on failure
         var successfullyWrittenURLs: [URL] = []
         do {
-            // Write each unique file's final updated content
-            for (targetURL, finalContent) in currentFileContents {
+            // Write each unique file's final content in the order the edits
+            // named them, so which files a mid-write failure leaves to roll
+            // back is deterministic (dictionary order is not).
+            var writeOrder: [URL] = []
+            for planned in plannedEdits where !writeOrder.contains(planned.targetURL) {
+                writeOrder.append(planned.targetURL)
+            }
+            for targetURL in writeOrder {
+                guard let finalContent = currentFileContents[targetURL] else { continue }
                 try finalContent.write(to: targetURL, atomically: true, encoding: .utf8)
                 successfullyWrittenURLs.append(targetURL)
                 await FileSnapshotStore.shared.recordSnapshot(url: targetURL, content: finalContent)
@@ -190,6 +197,12 @@ public enum MultiEditExecutor {
                     try? orig.write(to: writtenURL, atomically: true, encoding: .utf8)
                     await FileSnapshotStore.shared.recordSnapshot(url: writtenURL, content: orig)
                 }
+            }
+            // The rollback restored the pre-transaction bytes, so the phase 2
+            // backups describe no edit: drop them or undo_edit would offer a
+            // restore for an edit that never landed.
+            for url in originalDiskContents.keys {
+                await FileSnapshotStore.shared.discardBackup(url: url)
             }
             throw NSError(
                 domain: "TurboSparkTool",

@@ -1049,6 +1049,66 @@ async fn speech_voice_cloning_rules() {
     assert_eq!(r.status(), 200);
 }
 
+/// Qwen3-TTS clones only when a reference is sent, so a reference needs
+/// consent. Its transcript is optional: without one the engine clones from
+/// the speaker embedding alone.
+#[tokio::test]
+async fn speech_qwen3_tts_reference_needs_consent() {
+    let fake = Fake::new();
+    fake.models.lock().unwrap().push(AudioModelInfo {
+        id: "qwen3-test".into(),
+        task: AudioTask::TextToSpeech,
+        family: Some("qwen3_tts".into()),
+    });
+    let base = spawn(&fake).await;
+    let reference = "UklGRg==";
+    for (name, body) in [
+        (
+            "reference without consent",
+            serde_json::json!({"model": "qwen3-test", "input": "a", "reference_audio": reference}),
+        ),
+        (
+            "reference with consent false",
+            serde_json::json!({"model": "qwen3-test", "input": "a", "reference_audio": reference,
+                               "reference_text": "t", "consent": false}),
+        ),
+    ] {
+        let (status, body) = error_of(post_json(&base, "/v1/audio/speech", body).await).await;
+        assert_eq!(status, 400, "{name}: {body}");
+        assert_eq!(body["error"]["param"], "consent", "{name}: {body}");
+    }
+    assert!(
+        fake.spoken.lock().unwrap().is_empty(),
+        "refusals must not reach the provider"
+    );
+
+    // With consent the clone reaches the provider, with or without a transcript.
+    for body in [
+        serde_json::json!({"model": "qwen3-test", "input": "a", "reference_audio": reference,
+                           "consent": true}),
+        serde_json::json!({"model": "qwen3-test", "input": "a", "reference_audio": reference,
+                           "reference_text": "t", "consent": true}),
+    ] {
+        let r = post_json(&base, "/v1/audio/speech", body).await;
+        assert_eq!(r.status(), 200);
+        let spoken = fake.spoken.lock().unwrap().pop().unwrap();
+        assert!(spoken.consent);
+        assert_eq!(spoken.reference_audio.as_deref(), Some(reference));
+    }
+
+    // Plain speech (no reference) needs no consent.
+    let r = post_json(
+        &base,
+        "/v1/audio/speech",
+        serde_json::json!({"model": "qwen3-test", "input": "a", "instruction": "calm"}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let spoken = fake.spoken.lock().unwrap().pop().unwrap();
+    assert!(!spoken.consent);
+    assert!(spoken.reference_audio.is_none());
+}
+
 #[tokio::test]
 async fn speech_drama3_reports_44100_and_forwards_the_sampler() {
     let fake = Fake::new();

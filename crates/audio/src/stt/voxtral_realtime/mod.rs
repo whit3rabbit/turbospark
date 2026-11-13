@@ -13,8 +13,9 @@
 //! summed per position with the `[BOS] + STREAMING_PAD` prompt embeddings,
 //! prefilled through the 26-layer Mistral-style decoder, and greedily
 //! decoded until EOS (or until the audio positions run out), then decoded
-//! with the Tekken BPE. The real-time chunked `StreamingSession` with its
-//! delay and commit semantics is refused; see the family README.
+//! with the Tekken BPE. The real-time chunked streaming session with its
+//! delay and commit semantics is not ported (no such type exists here, so
+//! there is no runtime refusal); see the family README.
 //!
 //! The pinned checkpoint quantizes the encoder and decoder linears to
 //! 4-bit affine groups of 64; the conv stem, adapter projection, norms, and

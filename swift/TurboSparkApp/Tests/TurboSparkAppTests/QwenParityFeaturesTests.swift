@@ -323,6 +323,39 @@ final class QwenParityFeaturesTests: XCTestCase {
             "a fired one-shot removes itself")
     }
 
+    func testMissedOneShotIsKeptDisabledAndNeverFiresAgain() async throws {
+        // A missed delivery (target chat gone) used to delete the one-shot,
+        // so the user's job vanished with only a "missed" record nobody saw.
+        let scheduler = makeIsolatedScheduler()
+        var attempts = 0
+        scheduler.fireHandler = { _ in
+            attempts += 1
+            return false
+        }
+        defer { scheduler.fireHandler = nil }
+
+        let wakeup = scheduler.createOneShot(
+            fireAt: Date().addingTimeInterval(-1), prompt: "missed wake", chatID: UUID())
+        let cronOnce = try scheduler.create(
+            cron: "* * * * *", prompt: "missed cron", recurring: false, chatID: UUID())
+        await scheduler.fireDueJobs(now: Date().addingTimeInterval(120))
+        XCTAssertEqual(attempts, 2)
+
+        for id in [wakeup.id, cronOnce.id] {
+            let kept = try XCTUnwrap(
+                scheduler.list().first { $0.id == id }, "a missed one-shot is kept")
+            XCTAssertFalse(kept.enabled, "a missed one-shot is disabled")
+            XCTAssertNil(kept.nextFireAt)
+            XCTAssertEqual(kept.recentRuns.map(\.status), ["missed"])
+        }
+
+        // A later poll does not fire the disabled job, and CronList shows it paused.
+        await scheduler.fireDueJobs(now: Date().addingTimeInterval(240))
+        XCTAssertEqual(attempts, 2)
+        XCTAssertTrue(CronScheduler.executeList(arguments: [:], scheduler: scheduler)
+            .contains("(paused)"))
+    }
+
     func testCronOneShotIsUnmovedByAStaleJobInAnotherStore() async {
         // The exact leak this isolation is for: a due "wake word" one-shot
         // left behind somewhere else must not reach this case.

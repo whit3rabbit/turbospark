@@ -747,7 +747,17 @@ impl DeepFilterNet {
         let nb_df = num("nb_df", 96);
         let df_order = num("df_order", 5);
         let df_lookahead = num("df_lookahead", 0);
-        let sample_rate = num("sample_rate", 48_000) as u32;
+        let sample_rate = num("sample_rate", 48_000);
+        // The 960/480 STFT, the ERB bank, and the trained filters are
+        // full-band 48 kHz; `enhance` takes no rate, so refuse any other
+        // config rate here instead of silently mis-enhancing.
+        if sample_rate != 48_000 {
+            return Err(SpeechError::BadConfig {
+                field: "sample_rate".to_string(),
+                why: format!("{sample_rate} Hz is not supported; DeepFilterNet runs only 48000 Hz"),
+            });
+        }
+        let sample_rate = sample_rate as u32;
         let enc_concat = config
             .get("enc_concat")
             .and_then(|v| v.as_bool())
@@ -1267,6 +1277,22 @@ mod tests {
             out[t * h..(t + 1) * h].copy_from_slice(&hidden);
         }
         out
+    }
+
+    /// The STFT geometry, ERB bank, and norm smoothing are trained for
+    /// 48 kHz; `open` refuses any other config rate before reading weights.
+    #[test]
+    fn open_refuses_non_48k_sample_rate() {
+        let dir = std::env::temp_dir().join(format!("turbospark_dfn_rate_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.json"), r#"{"sample_rate": 16000}"#).unwrap();
+        let result = DeepFilterNet::open(&dir);
+        let _ = std::fs::remove_dir_all(&dir);
+        match result {
+            Err(SpeechError::BadConfig { field, .. }) => assert_eq!(field, "sample_rate"),
+            Err(other) => panic!("expected BadConfig(sample_rate), got {other:?}"),
+            Ok(_) => panic!("expected BadConfig(sample_rate), got a loaded model"),
+        }
     }
 
     #[test]

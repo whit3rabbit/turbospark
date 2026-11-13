@@ -14,7 +14,7 @@
 //! **The manifest cannot say "this is a tower, not a model", and that is
 //! why [`SidecarRecord`] exists as a separate file.** `load_manifest` refuses
 //! an unknown `manifest.flags` key (`crate::manifest::known_flags`), and
-//! `is_production_arch` keys off `(num_layers, hidden_size)` alone, so there
+//! `is_production_arch` keys off family and arch shape alone, so there
 //! is no manifest-native place to stamp a "kind" marker without inventing a
 //! new flag every OTHER loader would then have to ignore. `vision_sidecar.json`
 //! carries what the manifest structurally cannot: the marker itself

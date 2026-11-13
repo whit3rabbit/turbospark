@@ -22,6 +22,10 @@ public enum AskUserQuestionExecutor {
     /// One parked execution per chat key. `submitAnswer` resumes it with the
     /// user's reply; cancellation resumes it with the dismissed note.
     private static var answerContinuations: [String: CheckedContinuation<String, Never>] = [:]
+    /// Keys whose dismissal arrived before `waitForAnswer` parked its
+    /// continuation. Without it that cancel was a no-op and the question then
+    /// parked forever on a card the user had already stopped.
+    private static var earlyDismissals: Set<String> = []
 
     public static func parseQuestions(from arguments: [String: String]) throws -> [UserQuestionItem] {
         if let jsonRaw = arguments["questions"], let data = jsonRaw.data(using: .utf8) {
@@ -120,6 +124,9 @@ public enum AskUserQuestionExecutor {
         let key = chatID?.uuidString ?? "default"
         lock.withLock {
             pendingQuestions[key] = items
+            // A dismissal left over from an earlier, finished question must
+            // not dismiss this one.
+            earlyDismissals.remove(key)
         }
 
         let answer = await withTaskCancellationHandler {
@@ -131,6 +138,7 @@ public enum AskUserQuestionExecutor {
         }
         lock.withLock {
             pendingQuestions[key] = nil
+            earlyDismissals.remove(key)
         }
         return answer
     }
@@ -144,6 +152,7 @@ public enum AskUserQuestionExecutor {
         let key = chatID?.uuidString ?? "default"
         lock.lock()
         let continuation = answerContinuations.removeValue(forKey: key)
+        if continuation == nil, dismissed { earlyDismissals.insert(key) }
         lock.unlock()
         guard let continuation else { return }
         if dismissed {
@@ -165,6 +174,11 @@ public enum AskUserQuestionExecutor {
     ) {
         let key = chatID?.uuidString ?? "default"
         lock.lock()
+        if earlyDismissals.remove(key) != nil {
+            lock.unlock()
+            continuation.resume(returning: "The user dismissed the questions without answering.")
+            return
+        }
         let previous = answerContinuations.updateValue(continuation, forKey: key)
         lock.unlock()
         // A stale continuation for the same key means an earlier question
@@ -317,12 +331,20 @@ public enum ProposeSkillsExecutor {
 
         var savedCount = 0
         var skippedExisting: [String] = []
+        var skippedInvalid: [String] = []
         for p in proposals {
             let sanitizedName = p.name.trimmingCharacters(in: .whitespacesAndNewlines)
                 .replacingOccurrences(of: "/", with: "-")
                 .replacingOccurrences(of: "\\", with: "-")
                 .lowercased()
             guard !sanitizedName.isEmpty, sanitizedName != ".", sanitizedName != ".." else { continue }
+            // An empty draft would create a SKILL.md that loads as a skill with
+            // no instructions (and, being a never-overwrite target, blocks a
+            // later real proposal of the same name).
+            guard !p.skillMd.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                skippedInvalid.append(sanitizedName)
+                continue
+            }
             let skillFolder = skillsDir.appendingPathComponent(sanitizedName, isDirectory: true)
             let mdFile = skillFolder.appendingPathComponent("SKILL.md")
             // A proposal must never silently replace a skill the user already
@@ -338,11 +360,30 @@ public enum ProposeSkillsExecutor {
         }
 
         SkillManager.shared.invalidateResolutionCache()
+        // Nothing written is a failure, not "Successfully saved 0".
+        guard savedCount > 0 else {
+            var reasons: [String] = []
+            if !skippedExisting.isEmpty {
+                reasons.append("a skill with that name already exists (never overwritten): " + skippedExisting.joined(separator: ", "))
+            }
+            if !skippedInvalid.isEmpty {
+                reasons.append("empty skillMd: " + skippedInvalid.joined(separator: ", "))
+            }
+            if reasons.isEmpty { reasons.append("no proposal had a usable name") }
+            throw NSError(
+                domain: "TurboSparkTool",
+                code: 120,
+                userInfo: [NSLocalizedDescriptionKey: "No proposed skill was saved. " + reasons.joined(separator: "; ") + "."]
+            )
+        }
         var message = "Successfully saved \(savedCount) proposed skill(s) to \(scopeLabel)."
         if !skippedExisting.isEmpty {
             message += " Not saved because a skill with that name already exists: "
                 + skippedExisting.joined(separator: ", ")
                 + ". Existing skills are never overwritten by a proposal."
+        }
+        if !skippedInvalid.isEmpty {
+            message += " Not saved because skillMd was empty: " + skippedInvalid.joined(separator: ", ") + "."
         }
         return message
     }

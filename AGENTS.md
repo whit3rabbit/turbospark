@@ -209,10 +209,12 @@ additional gates documented in [verification](.claude/docs/verification.md)
 and [model gates](.claude/docs/model-gates.md).
 
 Judge a chat checkpoint only through its template: `--messages-file` or
-`--chat`. `--prompt` and the `turbospark run <model> "text"` shorthand encode
-the text verbatim, so an instruction-tuned model continues the user's message
-and reads as a broken forward pass. The `--messages-file` banner says `chat
-template applied`, and `TURBOSPARK_DEBUG_PROMPT_IDS=1` prints the ids.
+`--chat`. `--prompt` encodes the text verbatim, so an instruction-tuned model
+continues the user's message and reads as a broken forward pass. The
+`turbospark run <model> "text"` shorthand applies the chat template (one user
+turn through `--messages-file`) unless `--raw` is given. The
+`--messages-file` banner says `chat template applied`, and
+`TURBOSPARK_DEBUG_PROMPT_IDS=1` prints the ids.
 
 ## Change boundaries
 

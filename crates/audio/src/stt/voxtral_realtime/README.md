@@ -22,8 +22,10 @@ Offline buffered transcription path:
    to EOS.
 5. Tekken (byte-level BPE) decode skips special tokens and joins bytes.
 
-The real-time chunked `StreamingSession` (delay/commit semantics in
-streaming.py) is out of scope and refused with a reason; the offline path
+The real-time chunked streaming session (delay/commit semantics in
+streaming.py) is not ported: no streaming session type or entry point
+exists in this crate, so there is nothing to call and no runtime refusal;
+the offline path
 shares the same encoder, decoder, and window semantics (the ring cache
 evicts only what no future query can see, verified bit-exact against the
 unwindowed causal path inside the window and against a cache-free windowed

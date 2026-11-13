@@ -63,7 +63,7 @@
       "quant": "4-bit pack, late attention layers nvfp4 and the rest affine per their decode-attn-quant profile (exact mix not stated in the probe and fusion sections)",
       "family": "laguna",
       "machine": "M4 Max",
-      "role": "dispatch probe model (40 layers) and the router, SwiGLU and down-tail A/B host"
+      "role": "primary: dispatch probe model (40 layers) and the router, SwiGLU and down-tail A/B host"
     },
     {
       "name": "Qwen3.8 Flash-Next",

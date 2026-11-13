@@ -18,7 +18,7 @@ use std::path::Path;
 
 use tokenizers::Tokenizer;
 
-use self::config::{GenerationConfig, TokenizerConfig};
+use self::config::{EosTokenIds, GenerationConfig, TokenizerConfig, MAX_EOS_TOKEN_IDS};
 pub(crate) use self::resolve::{
     DEEPSEEK_BOS_MARK, DEEPSEEK_EOS_MARK, GLM_SOP_MARK, HARMONY_END_MARK, HARMONY_MESSAGE_MARK,
     HARMONY_START_MARK, KIMI_IM_ASSISTANT_MARK, KIMI_IM_END_MARK, KIMI_IM_MIDDLE_MARK,
@@ -76,7 +76,18 @@ fn read_chat_template_json(path: &Path) -> Option<String> {
 }
 
 fn read_generation_config(path: &Path) -> Option<GenerationConfig> {
-    serde_json::from_slice(&read_capped(path, MAX_GENERATION_CONFIG_BYTES)?).ok()
+    let config: GenerationConfig =
+        serde_json::from_slice(&read_capped(path, MAX_GENERATION_CONFIG_BYTES)?).ok()?;
+    // Dropping the stop list changes generation, so say so once at load
+    // rather than letting it pass silently.
+    if let Some(EosTokenIds::TooMany(count)) = config.eos_token_id {
+        eprintln!(
+            "warning: {} declares {count} eos_token_id entries, over the cap of \
+             {MAX_EOS_TOKEN_IDS}; ignoring its EOS list",
+            path.display()
+        );
+    }
+    Some(config)
 }
 
 /// Chat framing dialect, resolved from the loaded tokenizer's special

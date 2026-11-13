@@ -4,8 +4,9 @@
 //! shape and applies the rules that depend only on the family. Voice cloning
 //! (`reference_audio`, a base64 WAV) is refused for a family that cannot
 //! clone, and MegaTTS3 requires both the reference and `consent: true`, the
-//! caller's statement that it has the right to use the voice. OmniVoice and
-//! Drama 3 clone only when a reference is sent; Drama 3 also needs the
+//! caller's statement that it has the right to use the voice. OmniVoice,
+//! Qwen3-TTS and Drama 3 clone only when a reference is sent, and then need
+//! consent too; Drama 3 also needs the
 //! reference's transcript (`reference_text`) and takes the four sampler
 //! fields, which every other family refuses.
 //! `wav` is the default (OpenAI defaults to mp3, which this server cannot
@@ -189,9 +190,13 @@ pub(crate) async fn speech(
                 );
             }
         }
-        // OmniVoice speaks without a reference too; a reference makes the
-        // request a clone, which needs consent.
-        if family == Some("omnivoice") && input.reference_audio.is_some() && input.consent != Some(true)
+        // OmniVoice and Qwen3-TTS speak without a reference too; a reference
+        // makes the request a clone, which needs consent. Qwen3-TTS clones
+        // without a transcript (speaker embedding only), so reference_text
+        // stays optional. Nothing past this route checks Qwen3-TTS consent.
+        if matches!(family, Some("omnivoice" | "qwen3_tts"))
+            && input.reference_audio.is_some()
+            && input.consent != Some(true)
         {
             return error(
                 StatusCode::BAD_REQUEST,

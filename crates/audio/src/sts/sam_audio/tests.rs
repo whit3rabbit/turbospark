@@ -600,3 +600,10 @@ fn dit_stage_traces_match_reference() {
     }
     eprintln!("patched row0[:4]: {:?}", &h[0..4]);
 }
+
+#[test]
+fn dit_rope_theta_follows_max_positions() {
+    // Reference: theta = max(10000, 2 * max_positions).
+    assert_eq!(super::dit_rope_theta(1024), 10000.0);
+    assert_eq!(super::dit_rope_theta(10000), 20000.0);
+}

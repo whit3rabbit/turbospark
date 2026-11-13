@@ -313,7 +313,7 @@ starts at the answer.
 | `--min-auto-context` | non-negative integer | `0` | refuse to open when `--max-context auto` resolves below this. Says nothing about an explicit `--max-context`: a caller naming a number has decided how to spend their own machine |
 | `--temperature` | float | `0.2` | sampling temperature; `0.0` is greedy |
 | `--top-k` | integer, `0`-`256` | `64` | rank-based candidate count, `0` disables |
-| `--top-p` | float, `(0, 1]` | `0.95` | cumulative-probability threshold (sub-1.0 threshold requires `--top-k > 0`) |
+| `--top-p` | float, `(0, 1]` | `0.95` | cumulative-probability threshold |
 | `--repetition-penalty` | float `> 0` | `1.0` | repetition penalty factor |
 | `--seed` | non-negative integer | unset | determinism seed |
 | `--stop` | text, repeatable | none | extra stop string, in addition to the tokenizer's own stop set |

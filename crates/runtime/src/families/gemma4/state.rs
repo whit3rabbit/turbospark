@@ -132,6 +132,29 @@ pub(crate) struct BatchedPrefillScratch {
     pub(crate) batch_ffn_act: gpu::MetalBuffer,
 }
 
+/// Refuses any arch this flow does not run. The family check comes first
+/// because decode flow is selected by `ArchConfig.family`, never by flags or
+/// tensor names: a non-Gemma arch that happened to carry sandwich norms and
+/// a scaled router would otherwise decode fluently through the wrong graph.
+/// `ModelFamily::Gemma4` (MoE and dense, split on `num_experts`) is the only
+/// family `real_forward_open` routes here.
+fn check_gemma_flow(arch: &ArchConfig) -> Result<(), RealForwardError> {
+    if arch.family != model_io::ModelFamily::Gemma4 {
+        return Err(RealForwardError::Unsupported(format!(
+            "the real-checkpoint Gemma flow runs only family gemma4, not {}",
+            arch.family.as_str()
+        )));
+    }
+    if !arch.ffn_sandwich_norms || !arch.router_scaled {
+        return Err(RealForwardError::Unsupported(
+            "real-checkpoint flow currently implements Gemma 4 only \
+             (ffn_sandwich_norms + router_scaled)"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
 impl RealGemmaState {
     pub(crate) fn build(
         context: &mut gpu::MetalContext,
@@ -139,13 +162,7 @@ impl RealGemmaState {
         index: &ResidentIndex,
         arch: &ArchConfig,
     ) -> Result<Self, RealForwardError> {
-        if !arch.ffn_sandwich_norms || !arch.router_scaled {
-            return Err(RealForwardError::Unsupported(
-                "real-checkpoint flow currently implements Gemma 4 only \
-                 (ffn_sandwich_norms + router_scaled)"
-                    .to_string(),
-            ));
-        }
+        check_gemma_flow(arch)?;
         // The dense/MoE switch, keyed on the arch field and never on tensor
         // names. A dense install keeps the family's sandwich norms and
         // `layer_scalar` (the real dense carrier carries both) and drops
@@ -307,5 +324,39 @@ impl RealGemmaState {
         self.batched
             .as_ref()
             .expect("prefill_chunk_real_gemma4 calls ensure_batched before any layer runs")
+    }
+}
+
+#[cfg(test)]
+mod flow_check_tests {
+    use super::*;
+    use model_io::{known_architecture, ModelFamily};
+
+    #[test]
+    fn gemma4_moe_and_dense_pass_the_flow_check() {
+        check_gemma_flow(&known_architecture(ModelFamily::Gemma4)).unwrap();
+        check_gemma_flow(&model_io::gemma4_12b_dense()).unwrap();
+    }
+
+    #[test]
+    fn a_non_gemma_family_with_gemma_flags_is_refused() {
+        let mut arch = known_architecture(ModelFamily::Gemma4);
+        arch.family = ModelFamily::Llama;
+        match check_gemma_flow(&arch) {
+            Err(RealForwardError::Unsupported(detail)) => {
+                assert!(detail.contains("only family gemma4"), "{detail}")
+            }
+            other => panic!("expected Unsupported, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn gemma4_without_its_flags_is_still_refused() {
+        let mut arch = known_architecture(ModelFamily::Gemma4);
+        arch.router_scaled = false;
+        assert!(matches!(
+            check_gemma_flow(&arch),
+            Err(RealForwardError::Unsupported(_))
+        ));
     }
 }

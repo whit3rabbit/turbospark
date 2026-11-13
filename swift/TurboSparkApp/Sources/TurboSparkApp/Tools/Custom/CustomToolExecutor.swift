@@ -133,6 +133,19 @@ public enum CustomToolExecutor {
             // A multi-megabyte body would otherwise land whole in the model context.
             let body = AppToolRegistry.compactOutput(String(decoding: data, as: UTF8.self))
             if let http = response as? HTTPURLResponse {
+                // A 4xx/5xx returned as a normal result read as success, the
+                // same defect failIfUnsuccessful fixed for process tools.
+                guard (200..<300).contains(http.statusCode) else {
+                    // compactOutput bounds lines only; one huge line would
+                    // otherwise land whole in the error.
+                    let limit = 2_000
+                    let excerpt = body.count > limit ? String(body.prefix(limit)) + "\n... [truncated]" : body
+                    throw NSError(
+                        domain: "TurboSparkTool", code: 39,
+                        userInfo: [NSLocalizedDescriptionKey:
+                            "Custom tool '\(tool.name)' returned HTTP \(http.statusCode)"
+                                + (excerpt.isEmpty ? "" : ":\n\(excerpt)")])
+                }
                 return "HTTP \(http.statusCode):\n\(body)"
             }
             return body

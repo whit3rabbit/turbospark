@@ -58,6 +58,11 @@ impl<'a> MfDetokenizer<'a> {
     }
 
     /// Flushes any pending byte fallback tokens and returns all remaining text.
+    ///
+    /// At end of stream an incomplete trailing UTF-8 sequence is emitted as
+    /// U+FFFD (lossy decode) rather than withheld or dropped. That is
+    /// deliberate: no further bytes can complete it, and the replacement
+    /// character makes the truncation visible instead of silently losing it.
     pub fn flush(&mut self) -> String {
         let stable_text = if self.stable_ids.is_empty() {
             String::new()

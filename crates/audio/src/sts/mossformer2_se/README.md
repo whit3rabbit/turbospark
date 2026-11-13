@@ -81,9 +81,11 @@ catalog, FFI, Swift gates. Compilation and parity do not establish quality.
 - Synthesis: Hamming-windowed STFT (center=False) masked, then iSTFT
   overlap-add normalized by the window-squared sum floored at 1e-10
   (`ISTFTCache.istft`).
-- Enhance wrapper: full path below 20 s, segmented 4 s windows at 75 %
-  stride discarding (window-stride)/2 edge samples at 20 s and above,
-  chunked 4 s chunks at 25 % overlap above the 60 s threshold.
+- Enhance wrapper: full path up to and including 20 s, segmented 4 s
+  windows at 75 % stride discarding (window-stride)/2 edge samples
+  strictly above 20 s (`len > rate * one_time_decode_length`), chunked 4 s
+  chunks at 25 % overlap from 60 s inclusive (`duration >=
+  auto_chunk_threshold`).
 
 ## Parameters and checkpoint notes
 

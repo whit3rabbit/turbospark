@@ -34,8 +34,8 @@ use turbospark_ffi::{
     ts_embedding_install, ts_image_install, ts_install, ts_install_cancel,
     ts_install_repo_with_options, ts_installed_json, ts_last_error, ts_libraries_json,
     ts_library_add, ts_library_remove, ts_library_set_default, ts_model_forget, ts_model_move,
-    ts_model_move_cancel, ts_store_import_moved_root, ts_store_relocate, ts_store_root_set,
-    ts_string_free, TS_INSTALL_BYTES,
+    ts_model_move_cancel, ts_store_import_moved_root, ts_store_root_set, ts_string_free,
+    TS_INSTALL_BYTES,
 };
 
 /// More free space than any fixture needs.
@@ -1035,18 +1035,6 @@ fn library_changes_installs_and_other_moves_are_refused_while_a_move_runs() {
     for refused in &installs {
         assert_busy(refused, "model move");
     }
-    // A store relocation would pull the home from under the move.
-    let relocated = reply(|out| unsafe {
-        let to = c(fx.base.join("elsewhere").to_str().unwrap());
-        ts_store_relocate(to.as_ptr(), None, ptr::null_mut(), out)
-    });
-    assert_ne!(relocated.code, abi::TS_OK);
-    assert!(
-        relocated.error.contains("model move"),
-        "{}",
-        relocated.error
-    );
-    assert!(!fx.base.join("elsewhere").exists());
     // Nothing changed behind the refusals; reading is never refused.
     assert_eq!(fx.recorded(), before);
     assert_eq!(
