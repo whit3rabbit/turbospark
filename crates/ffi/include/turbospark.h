@@ -345,6 +345,14 @@ void ts_string_free(char *s);
  *                       one engine's cache is shared by every client), or to
  *                       measure a cold prefill. Reported back as
  *                       sessionInfo.prefixReuse.
+ *   anePrefill        "auto" | "split" | "off" | "break" | null (default
+ *                       auto). The ANE+Steel prefill split for dense Qwen;
+ *                       auto enables it on Apple Silicon M4 or newer and
+ *                       degrades to Steel otherwise. A misspelling is refused.
+ *                       The resolved outcome is reported as
+ *                       sessionInfo.anePrefill.
+ *   anePrefillDir     string | null. Directory to load compiled ANE prefill
+ *                       programs from.
  *
  * Opening is expensive: it maps gigabytes and compiles Metal pipelines.
  * Open once and keep the handle.
@@ -576,6 +584,11 @@ void ts_image_buffer_free(uint8_t *bytes, size_t len);
  * speculation there is no auto-detect to report here: a named width either
  * opens this session or ts_session_open() fails, so what a caller asked for
  * and what this session runs at are always the same value.
+ *
+ * anePrefill is the RESOLVED ANE+Steel prefill split:
+ *   { "active": bool, "mode": "split" | "off" | "break", "supported": bool,
+ *     "reason": null | "...", "programsDir": null | "..." }
+ * "reason" says why `supported` is false or the split is inactive.
  */
 int32_t ts_session_info_json(const TsSession *s, char **out);
 
