@@ -1,5 +1,5 @@
 //! Audio model implementations organized by task family:
-//! - [`music`][crate::music]: Music Generation (MiniMax Music 0.5)
+//! - [`music`][crate::music]: Music Generation (MiniMax Music 3)
 //! - [`stt`][crate::stt]: Speech-to-Text (Whisper, Moonshine, Parakeet, MMS, Granite Speech, Qwen3 ASR, Nemotron ASR)
 //! - [`tts`][crate::tts]: Text-to-Speech (Kokoro)
 //! - [`vad`][crate::vad]: Voice Activity Detection & Diarization (Silero VAD, Sortformer, Nemotron Diarization)

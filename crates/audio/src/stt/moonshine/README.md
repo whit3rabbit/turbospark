@@ -9,6 +9,10 @@ The CPU reference follows `mlx_audio/stt/models/moonshine/` from mlx-audio
 | Same revision | Same revision | `config.json` | `df40d71949d4b3460993b3e7ab743fe957b1a3c3272257c58f373c34dd30177a` |
 | Same revision | Same revision | `tokenizer.json` | `6579793438bc4fbafffacf699169ff53e3769c5a0a0f5e71cdee8853e8130deb` |
 
+The revision and SHA-256 values above are informational: `Moonshine::open`
+does not hold them as a constant and does not check them, so any directory with
+the three files loads.
+
 The local `~/models/moonshine-tiny` witness has matching weights and tokenizer,
 but its `config.json` is modified: it adds `pad_token_id` and
 `pad_head_dim_to_multiple_of`, and changes `max_position_embeddings` from 512
