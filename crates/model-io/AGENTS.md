@@ -15,7 +15,11 @@ Checkpoint manifests, tensor metadata, mappings, and resident buffers.
   in resident buffers and safetensors intake, plus the single `statvfs`
   free-space call in `disk_space`.
 - Decode family validation is structural. Resolve the family before applying
-  family defaults, and reject missing or mismatched manifest fields.
+  family defaults, and reject missing or mismatched manifest fields. One
+  known exception: a manifest with no `arch.family` is read as Gemma4
+  (`peek_family`, `validate_arch`) because installs written before the field
+  existed are Gemma installs, and `tests/manifest.rs` pins it. Rejecting it
+  would orphan those installs, so that is an open decision, not a settled rule.
 - Keep on-disk names, canonical family strings, ArchConfig fields, and
   manifest serialization synchronized.
 - The index layout constants (`HEADER_BYTES`, `ENTRY_BYTES`, `TRAILER_BYTES`,

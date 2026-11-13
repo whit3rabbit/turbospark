@@ -19,7 +19,7 @@ Port of the KugelAudio (VibeVoice derivative) text-to-speech model from mlx-audi
 - The argmax is constrained to the four speech tokens [mod.rs:VALID_SPEECH_TOKENS]
 - One extra latent is generated when speech_end wins within the logit margin [mod.rs:should_append_final_latent]
 - Latents are unscaled unless the scaling factor is NaN; output is peak-normalized to 0.95 only if peak exceeds 1.0 [mod.rs:Model::generate_impl]
-- Scheduler accepts the names `cosine`, `scaled_linear` and `squaredcos_cap_v2`, but always builds the cosine betas whatever the name, and accepts only epsilon/v_prediction/sample types; noise length must match the sample [scheduler.rs:SDEDpmSolver::new] [scheduler.rs:SDEDpmSolver::step]
+- Scheduler accepts only the names `cosine` and `squaredcos_cap_v2` (both build the cosine betas) and refuses `scaled_linear` and anything else as Unsupported; accepts only epsilon/v_prediction/sample types; noise length must match the sample [scheduler.rs:SDEDpmSolver::new] [scheduler.rs:SDEDpmSolver::step]
 - Decoder upsample needs stride >= 1 and kernel >= stride; latent length must equal frames * vae_dim [acoustic_decoder.rs:check_conv_transpose_geometry] [acoustic_decoder.rs:AcousticDecoder::forward]
 - Diffusion head input shapes must match the batch [diffusion_head.rs:DiffusionHead]
 - The backbone weight prefix is detected as `language_model.` or `model.language_model.` [mod.rs:open_backbone_weights]

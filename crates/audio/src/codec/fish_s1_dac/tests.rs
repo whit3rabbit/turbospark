@@ -596,3 +596,21 @@ fn device_exec_routes_the_heavy_operations() {
     let (got, got_len) = model.encode_on(&exec, &samples).unwrap();
     assert_eq!((got, got_len), (want, want_len), "encode on the device");
 }
+
+#[test]
+fn present_but_unparsable_config_is_refused() {
+    let dir = std::env::temp_dir().join(format!("fish-s1-dac-badcfg-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::copy(
+        testdata("tiny_weights.safetensors"),
+        dir.join("model.safetensors"),
+    )
+    .unwrap();
+    std::fs::write(dir.join("config.json"), b"{ not json").unwrap();
+    let err = FishS1Dac::open(&dir).err().expect("must refuse");
+    std::fs::remove_dir_all(&dir).ok();
+    assert!(
+        matches!(&err, crate::error::SpeechError::BadConfig { field, .. } if field == "config.json"),
+        "got {err}"
+    );
+}

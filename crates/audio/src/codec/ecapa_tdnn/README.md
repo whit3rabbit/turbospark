@@ -35,7 +35,7 @@ Attentive Statistics Pooling (ASP):
    Self-attention weights -> weighted mean + weighted standard deviation
    |
    v
-Dense Linear + BatchNorm -> 192-dimensional Speaker Embedding
+Dense Linear + BatchNorm -> Speaker Embedding
 ```
 
 ### Architecture Specifications
@@ -44,7 +44,7 @@ Dense Linear + BatchNorm -> 192-dimensional Speaker Embedding
 |---|---|
 | Input features | 80-channel log mel filterbank |
 | Intermediate channels | 512 or 1024 (config-driven) |
-| Output embedding | 192 dimensions |
+| Output embedding | `embed_dim`, default 256 dimensions |
 | Res2Net scale | 8 sub-bands |
 | Squeeze-and-Excitation | 128 bottleneck channels |
 | Attentive pooling | Attentive mean + std concatenation |

@@ -306,21 +306,11 @@ struct EncoderStage {
 
 impl EncoderStage {
     fn forward(&self, x: Vec<f32>, seq: usize, in_ch: usize) -> (Vec<f32>, usize) {
-        let debug = std::env::var("LC_DEBUG").is_ok();
         let mut cur = x.clone();
-        for (u, unit) in self.units.iter().enumerate() {
+        for unit in &self.units {
             cur = unit.forward(cur, seq);
-            if debug {
-                eprintln!(
-                    "[stage] unit {u} first20 {}",
-                    cur.iter().take(20).sum::<f32>()
-                );
-            }
         }
         self.snake.apply(&mut cur);
-        if debug {
-            eprintln!("[stage] snake first20 {}", cur.iter().take(20).sum::<f32>());
-        }
         let mut h = conv1d(
             &cur,
             seq,
@@ -333,17 +323,8 @@ impl EncoderStage {
             self.stride,
             self.padding,
         );
-        if debug {
-            eprintln!("[stage] conv first20 {}", h.iter().take(20).sum::<f32>());
-        }
         if self.shortcut {
             let sc = downsample_shortcut(&x, seq, in_ch, self.out_ch, self.stride);
-            if debug {
-                eprintln!(
-                    "[stage] shortcut first20 {}",
-                    sc.iter().take(20).sum::<f32>()
-                );
-            }
             for (dst, src) in h.iter_mut().zip(&sc) {
                 *dst += src;
             }
@@ -369,16 +350,6 @@ struct DecoderStage {
 
 impl DecoderStage {
     fn forward(&self, x: Vec<f32>, seq: usize, in_ch: usize) -> (Vec<f32>, usize) {
-        let debug = std::env::var("LC_DEBUG").is_ok();
-        let mut cur = x.clone();
-        self.snake.apply(&mut cur);
-        if debug {
-            eprintln!(
-                "[dec] snake full {:.4} first6 {:?}",
-                cur.iter().sum::<f32>(),
-                &cur[..6]
-            );
-        }
         let mut cur = x.clone();
         self.snake.apply(&mut cur);
         let upsampled = conv_transpose1d(
@@ -712,13 +683,6 @@ impl AudioDiTVae {
                 _ => unreachable!("decoder starts with the stem conv"),
             };
             let mut combined = shortcut;
-            if std::env::var("LC_DEBUG").is_ok() {
-                eprintln!(
-                    "[dec] stem+h full {:.4} first6 {:?}",
-                    combined.iter().sum::<f32>(),
-                    &combined[..6]
-                );
-            }
             for (dst, src) in combined.iter_mut().zip(&stem) {
                 *dst += src;
             }

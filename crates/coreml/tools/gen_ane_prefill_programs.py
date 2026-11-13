@@ -42,9 +42,9 @@ import json
 import os
 import sys
 
-import coremltools as ct
-from coremltools.converters.mil import Builder as mb
-from coremltools.converters.mil.mil import types
+# coremltools is imported in main() after argument parsing, so `--help` and
+# argument errors work on an interpreter that lacks it.
+ct = mb = types = None
 
 CHUNK = 2048
 FORMAT = 1
@@ -123,6 +123,11 @@ def main():
     ap.add_argument("--tokens", default="1024,2048")
     ap.add_argument("--rows", action="append", default=[])
     args = ap.parse_args()
+
+    global ct, mb, types
+    import coremltools as ct
+    from coremltools.converters.mil import Builder as mb
+    from coremltools.converters.mil.mil import types
 
     preset = PRESET["classes"]
     classes = list(preset) if args.classes == "all" else parse_list(args.classes)

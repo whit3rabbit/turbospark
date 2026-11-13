@@ -14,7 +14,7 @@ Non-autoregressive speech-to-text for the pinned MLX conversion of Granite Speec
 - Config needs architecture `GraniteSpeechNarForASR` and `scale_projected_embeddings == true`, else `BadConfig` or `Unsupported` [mod.rs:from_json].
 - `hidden_dim == num_heads * dim_head`, `block_size % downsample_rate == 0`, `hidden_size % num_heads == 0`, and `num_heads % num_kv_heads == 0` are enforced [mod.rs:from_json].
 - `encoder_layer_indices` is non-empty, negative values resolve against `num_layers + 1`, none exceed `num_layers`, and count equals `projector.num_encoder_layers` [mod.rs:from_json].
-- The encoder hardcodes a 348-wide character vocabulary for self-conditioning softmax and blank probability (index 0). `encoder.out` output_dim is only checked to be positive, but the slicing assumes 348, so another value would slice the wrong width or panic [mod.rs:ConformerEncoder::forward].
+- The encoder hardcodes a 348-wide character vocabulary (`CHAR_VOCAB`) for the self-conditioning softmax and blank probability (index 0). `from_json` rejects any `encoder_config.output_dim` other than 348 with `BadConfig` [mod.rs:char_vocab] [mod.rs:ConformerEncoder::forward].
 - `self_conditioning_layer` must be reached by a block, else `BadConfig` [mod.rs:ConformerEncoder::forward].
 - Frontend: non-empty finite input, 512 FFT, hop 160, 80 mels, frames truncated to `2 * (n / 320)`, floor is peak minus 8 dB [mod.rs:compute_features] [mod.rs:N_MELS] [mod.rs:LOG_FLOOR_DB].
 - Pooling weights are `(1 - p_blank)` normalized per window with denominator floor 1e-6 [mod.rs:ConformerEncoder::forward].

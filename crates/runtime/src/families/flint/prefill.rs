@@ -13,7 +13,7 @@
 //! cb1 (per layer): for each of M tokens, in order
 //!     input norm -> attention (per token: sinks, window, NoPE) -> residual add
 //!     -> post-attention norm into moe_x[t]
-//!     dense lead (layers 0, 1): SwiGLU -> residual add, still inside cb1
+//!     dense lead (layers 0..L, 0 and 1 for the published checkpoint): SwiGLU -> residual add, still inside cb1
 //!     MoE layers:               INT8 router GEMV into router_logits[t]
 //! commit + wait cb1                       (MoE layers only)
 //! routed loop, per token, pipelined across two banks:

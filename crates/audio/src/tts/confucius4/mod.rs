@@ -13,8 +13,10 @@
 //! `w2v_stats.npz` (mean/std for the condition vector),
 //! `fbank_filters.npz` (the precomputed mel matrix + povey window).
 //! The reference reads those with `mx.load`/`np.load`; the port opens
-//! the safetensors files directly and the npz archives through the
-//! model_io npz reader.
+//! the safetensors files directly and reads same-key safetensors copies
+//! of the two npz archives (`w2v_stats.safetensors`,
+//! `fbank_filters.safetensors`) that the conversion writes alongside them.
+//! No npz or zip reader is involved.
 //!
 //! Caller-owned intake: the text tokenizer (a `tokenizers` JSON file in
 //! the checkpoint) and the reference-audio decode are caller concerns;
@@ -291,8 +293,6 @@ impl Model {
             &open("bigvgan_mlx.safetensors")?,
         )?;
         let campplus = CampPlus::load(&open("campplus.safetensors")?, config.campplus.clone())?;
-        // w2v_stats.npz + fbank_filters.npz: minimal npz readers over
-        // the model_io zip reader.
         // The reference reads `w2v_stats.npz` and `fbank_filters.npz`;
         // the port reads the same-key safetensors files the conversion
         // writes alongside them (no zip reader in the portable crate).

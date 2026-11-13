@@ -7,9 +7,12 @@
 //! EmbeddingGemma2, Unlimited OCR) live in `turbospark-runtime`; this crate
 //! knows nothing about any model.
 //!
-//! On targets other than macOS every entry point returns
-//! [`CoreMlError::UnsupportedPlatform`], so the crate stays in the portable
-//! cross-target check. All unsafe code is in `sys` (see `AGENTS.md`).
+//! On targets other than macOS a `stub` module keeps the same API so the crate
+//! stays in the portable cross-target check. Fallible entry points (load,
+//! open, compile, predict, compute plan) return
+//! [`CoreMlError::UnsupportedPlatform`]; `supports` is false, `os_version` is
+//! `(0, 0, 0)`, and the model's `inputs`, `outputs`, `states` and `path` are
+//! empty. All unsafe code is in `sys` (see `AGENTS.md`).
 
 #![deny(unsafe_code)]
 // The marshalling helpers are only reachable through `sys` on macOS.

@@ -85,7 +85,10 @@ impl BertConfig {
             }
         }
         // ACT2FN["gelu"] is torch's exact erf GELU. The tanh variants
-        // (gelu_new, gelu_pytorch_tanh) are not exercised by any pin.
+        // (gelu_new, gelu_pytorch_tanh) are not exercised by any pin. An
+        // ABSENT hidden_act is refused too, although HF's BertConfig default
+        // is "gelu": every pin writes it explicitly, so a missing key more
+        // likely means a truncated config than the default.
         match v.get("hidden_act").and_then(Value::as_str) {
             Some("gelu") => {}
             other => {

@@ -103,6 +103,22 @@ fn positive(value: &Value, key: &str) -> Result<usize> {
         .ok_or_else(|| bad_config(key, "must be a positive integer"))
 }
 
+/// Width of the encoder's character vocabulary (`encoder.out` output_dim).
+/// The self-conditioning softmax and blank-probability read are written for
+/// exactly this row width, so any other value is refused at config time.
+const CHAR_VOCAB: usize = 348;
+
+fn char_vocab(encoder_json: &Value) -> Result<usize> {
+    let dim = positive(encoder_json, "output_dim")?;
+    if dim != CHAR_VOCAB {
+        return Err(bad_config(
+            "output_dim",
+            format!("must be {CHAR_VOCAB} (the encoder's character vocabulary), got {dim}"),
+        ));
+    }
+    Ok(dim)
+}
+
 fn number(value: &Value, key: &str) -> Result<f32> {
     value
         .get(key)
@@ -137,7 +153,7 @@ impl GraniteSpeechNarConfig {
             num_heads: positive(encoder_json, "num_heads")?,
             dim_head: positive(encoder_json, "dim_head")?,
             input_dim: positive(encoder_json, "input_dim")?,
-            output_dim: positive(encoder_json, "output_dim")?,
+            output_dim: char_vocab(encoder_json)?,
             bpe_output_dim: positive(encoder_json, "bpe_output_dim")?,
             bpe_pooling_window: positive(encoder_json, "bpe_pooling_window")?,
             conv_kernel_size: positive(encoder_json, "conv_kernel_size")?,
@@ -937,12 +953,12 @@ impl ConformerEncoder {
                 let logits = self.out.forward(&hidden, steps);
                 let mut probabilities = logits.clone();
                 for row in 0..steps {
-                    let row_slice = &mut probabilities[row * 348..(row + 1) * 348];
+                    let row_slice = &mut probabilities[row * CHAR_VOCAB..(row + 1) * CHAR_VOCAB];
                     ops::softmax_row(row_slice);
                 }
                 blank_probs = Some(
                     (0..steps)
-                        .map(|row| probabilities[row * 348])
+                        .map(|row| probabilities[row * CHAR_VOCAB])
                         .collect::<Vec<_>>(),
                 );
                 let projected = self.out_mid.forward(&probabilities, steps);
@@ -1742,7 +1758,7 @@ mod tests {
                 "num_heads": 2,
                 "dim_head": 2,
                 "input_dim": 80,
-                "output_dim": 4,
+                "output_dim": 348,
                 "bpe_output_dim": 8,
                 "bpe_pooling_window": 1,
                 "conv_kernel_size": 3,
@@ -1799,6 +1815,21 @@ mod tests {
             config["encoder_layer_indices"] = indices;
 
             assert!(GraniteSpeechNarConfig::from_json(&config).is_err());
+        }
+    }
+
+    #[test]
+    fn config_rejects_encoder_output_dim_other_than_the_char_vocabulary() {
+        // The self-conditioning softmax is hardwired to a 348-wide row, so any
+        // other `output_dim` would slice the wrong width or panic in forward.
+        for dim in [1, 4, 347, 349] {
+            let mut config = valid_config();
+            config["encoder_config"]["output_dim"] = json!(dim);
+
+            assert!(
+                GraniteSpeechNarConfig::from_json(&config).is_err(),
+                "output_dim {dim} must be rejected"
+            );
         }
     }
 

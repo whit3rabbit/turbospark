@@ -6,7 +6,8 @@
 //! ```
 //! `--references` defaults to the committed `testdata/frozen_e/references.json`.
 
-use std::path::PathBuf;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use turbospark_bench::meeting::{
@@ -29,6 +30,18 @@ fn main() -> ExitCode {
             eprintln!("{USAGE}");
             ExitCode::from(2)
         }
+    }
+}
+
+/// Reads the frozen counts, returning an empty map plus the reason when the
+/// file is missing or malformed instead of swallowing the error.
+fn frozen_counts_or_warning(path: &Path) -> (BTreeMap<String, (usize, usize)>, Option<String>) {
+    match read_frozen_counts(path) {
+        Ok(map) => (map, None),
+        Err(e) => (
+            BTreeMap::new(),
+            Some(format!("cannot read frozen counts: {e}")),
+        ),
     }
 }
 
@@ -55,7 +68,13 @@ fn score(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         "matched6" => MATCHED_SIX.to_vec(),
         list => list.split(',').filter(|s| !s.is_empty()).collect(),
     };
-    let frozen = read_frozen_counts(&frozen_e_dir().join("frozen_counts.json")).unwrap_or_default();
+    let (frozen, frozen_warning) =
+        frozen_counts_or_warning(&frozen_e_dir().join("frozen_counts.json"));
+    if let Some(warning) = &frozen_warning {
+        // Scoring is still valid without the comparison column, but a blank
+        // column must not look like "no frozen errors recorded".
+        eprintln!("meeting_eval: warning: {warning}; frozen_errors column will show `-`");
+    }
     let panel = score_panel(&clips, read_seglst(&seglst)?, &ids)?;
     println!("clip errors ref_tokens cpwer ref_spk hyp_spk frozen_errors");
     for row in &panel.clips {
@@ -87,4 +106,36 @@ fn score(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
         frozen_total.map_or_else(|| "-".to_owned(), |e| e.to_string())
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // `.unwrap_or_default()` hid a missing or malformed file entirely.
+    #[test]
+    fn missing_or_malformed_frozen_counts_produce_a_warning() {
+        let dir = std::env::temp_dir().join(format!("tsp_frozen_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (map, warning) = frozen_counts_or_warning(&dir.join("absent.json"));
+        assert!(map.is_empty());
+        assert!(warning.is_some(), "missing file must warn");
+
+        let bad = dir.join("bad.json");
+        std::fs::write(&bad, "{not json").unwrap();
+        let (map, warning) = frozen_counts_or_warning(&bad);
+        assert!(map.is_empty());
+        assert!(warning.is_some(), "malformed file must warn");
+
+        let good = dir.join("good.json");
+        std::fs::write(
+            &good,
+            r#"{"clips":{"a":{"cpwer_errors":3,"reference_tokens":10}}}"#,
+        )
+        .unwrap();
+        let (map, warning) = frozen_counts_or_warning(&good);
+        assert_eq!(map.get("a"), Some(&(3, 10)));
+        assert!(warning.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

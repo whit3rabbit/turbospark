@@ -43,7 +43,7 @@ cargo test -p turbospark-tokenizer
 
 ## Tests
 
-This crate includes 18 comprehensive test suites in `tests/`:
+This crate includes 25 comprehensive test suites in `tests/`:
 - Dialect parity: `chatml_dialect.rs`, `deepseek_dialect.rs`, `flint_dialect.rs`, `glm_dialect.rs`, `harmony_dialect.rs`, `kimi_dialect.rs`, `llama3_dialect.rs`, `minimax_dialect.rs`.
 - Chat templates: `installed_template.rs`, `jinja_chat_template.rs`.
 - Streaming and stop conditions: `generation_config_eos.rs`, `harmony_channels.rs`, `vision_markers.rs`.

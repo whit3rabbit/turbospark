@@ -215,7 +215,7 @@ struct BandGeometry {
 }
 
 impl BandGeometry {
-    fn build(config: &MelRoFormerConfig) -> Self {
+    fn build(config: &MelRoFormerConfig) -> Result<Self> {
         let freq_bins = config.freq_bins();
         let bank = mel_filterbank_cached(
             config.num_bands,
@@ -225,7 +225,12 @@ impl BandGeometry {
             None,
             MelScale::Slaney,
         )
-        .expect("slaney filterbank");
+        // `validate` only bounds the rate by u32; the DSP layer has the
+        // tighter limits, so surface its refusal instead of panicking.
+        .map_err(|e| SpeechError::BadConfig {
+            field: "num_bands/n_fft/sample_rate".into(),
+            why: format!("slaney filterbank: {e}"),
+        })?;
         // Binarize the support; force the DC and Nyquist bins into the
         // first and last band (the reference assigns them explicitly).
         let mut support: Vec<bool> = bank.weights.iter().map(|&w| w > 0.0).collect();
@@ -257,12 +262,12 @@ impl BandGeometry {
         for value in num_bands_per_freq.iter_mut() {
             *value = (*value).max(1.0);
         }
-        Self {
+        Ok(Self {
             freq_indices,
             band_dims,
             num_bands_per_freq,
             freq_bins,
-        }
+        })
     }
 }
 
@@ -586,7 +591,7 @@ impl MelRoFormer {
     /// Loads weights in the MLX (post-sanitize) key layout.
     pub fn load(config: MelRoFormerConfig, file: &SafetensorsFile) -> Result<Self> {
         config.validate()?;
-        let geometry = BandGeometry::build(&config);
+        let geometry = BandGeometry::build(&config)?;
         let dim = config.dim;
 
         let f32_tensor = |name: &str| -> Result<Vec<f32>> {

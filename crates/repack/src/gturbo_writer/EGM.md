@@ -8,7 +8,7 @@ Assembles a byte-exact `.gturbo` install directory: `packed_experts/layer_NN.bin
 - `write_gturbo_install` [layers.rs:write_gturbo_install]: full install with an empty resident index around raw tensor bytes
 - `write_gturbo_install_with_resident_index_and_experts` [layers.rs]: caller-supplied complete `model_weights.bin` plus expert layers (streamed MoE)
 - `write_gturbo_install_with_resident_index` [layers.rs]: real resident index, zero expert layers
-- `write_packed_vision` [layers.rs:write_packed_vision]: `packed_vision/{blobs.bin,layout.json}`, vision tower as one layer of `blocks.experts.len()` blocks (not checked against `arch.vision.depth`)
+- `write_packed_vision` [layers.rs:write_packed_vision]: `packed_vision/{blobs.bin,layout.json}`, vision tower as one layer of `blocks.experts.len()` blocks; the caller passes `expected_depth` (`arch.vision.depth`) and a mismatch returns `WriterError::WrongVisionBlockCount` before anything is created
 - `LayerBlobs`, `ExpertBlob`, `SubTensor` [types.rs]: in-memory blob model
 - `WriterError` [types.rs:WriterError]: Io, ExpertOversized, WrongExpertCount
 - `build_layer_file`, `build_manifest_json`, `build_empty_resident_index` [layers.rs, manifest.rs]: crate-private builders

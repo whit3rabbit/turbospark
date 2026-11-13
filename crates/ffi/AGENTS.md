@@ -12,7 +12,9 @@ The C ABI used by the Swift package and macOS app.
 
 - Unsafe code is expected here because the ABI receives raw pointers. Every
   exported entry point must stay inside the ABI guard and must not unwind across
-  `extern "C"`.
+  `extern "C"`. The two deliberate exceptions are `ts_last_error` (it must not
+  clear the slot it reads) and `ts_peak_footprint_bytes` (nothing in it can
+  fail), both unguarded in `api/core.rs`; add no third.
 - Keep the handwritten `turbospark.h` synchronized with the Rust wire
   contract. Rust tests alone do not validate the copied Swift header.
 - Trace enum strings and capability predicates through both Rust and Swift.
@@ -25,7 +27,9 @@ The C ABI used by the Swift package and macOS app.
   are shared by every client and are not partitioned by API key. Apply
   `prefixReuse` at attach on both attach paths: `ts_server_start` sets it
   before attaching the startup session, so no request sees the session's own
-  default, and `Server::attach` applies it again at the attach point both
+  default (which is reuse on: `open.rs` uses `prefix_reuse.unwrap_or(true)`,
+  the opposite of the standalone server's off default), and
+  `Server::attach` applies it again at the attach point both
   paths share. A JSON `null` leaves the session's open-time decision alone; a
   wrong-typed value is refused by `ts_server_start` (`tests/c_surface.rs`),
   never dropped.

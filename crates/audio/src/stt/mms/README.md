@@ -67,8 +67,10 @@ generate the fixture with the same `../mlx-audio` checkout used for the port,
 then run the checkpoint test:
 
 ```sh
-export TURBOSPARK_MMS_CACHE=/tmp/turbospark-mms-hf-cache
-export TURBOSPARK_MMS_DIR="$(../mlx-audio/.venv/bin/python -c 'from huggingface_hub import snapshot_download; print(snapshot_download("facebook/mms-1b-fl102", revision="d483345545bea550895b1aa0c6ba40236b9f1e22", cache_dir="/tmp/turbospark-mms-hf-cache"))')"
+# MMS_HF_CACHE is a shell variable for this snippet only; no TurboSpark code reads it.
+# The only variable the test reads is TURBOSPARK_MMS_DIR, the snapshot directory.
+export MMS_HF_CACHE=/tmp/turbospark-mms-hf-cache
+export TURBOSPARK_MMS_DIR="$(../mlx-audio/.venv/bin/python -c 'import os; from huggingface_hub import snapshot_download; print(snapshot_download("facebook/mms-1b-fl102", revision="d483345545bea550895b1aa0c6ba40236b9f1e22", cache_dir=os.environ["MMS_HF_CACHE"]))')"
 ../mlx-audio/.venv/bin/python crates/audio/scripts/generate_mms_fixture.py \
   --model-dir "$TURBOSPARK_MMS_DIR" \
   --audio crates/audio/testdata/qwen3_forced_aligner_reference.wav \
@@ -77,7 +79,7 @@ CARGO_TARGET_DIR=/tmp/turbospark-audio-mms-target CARGO_BUILD_JOBS=1 \
   cargo test --release -p turbospark-audio --lib \
   models::stt::mms::tests::pinned_english_checkpoint_matches_mlx_reference \
   -- --ignored --nocapture --test-threads=1
-python3 -c 'from pathlib import Path; import shutil; shutil.rmtree(Path("/tmp/turbospark-mms-hf-cache"), ignore_errors=False)'
+python3 -c 'import os, shutil; shutil.rmtree(os.environ["MMS_HF_CACHE"], ignore_errors=False)'
 ```
 
 The Rust path is a CPU implementation; this command does not qualify Metal

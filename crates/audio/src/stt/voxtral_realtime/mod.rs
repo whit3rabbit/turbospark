@@ -84,6 +84,13 @@ const STREAMING_PAD_TOKEN_ID: i32 = 32;
 /// Max generated tokens (upstream `max_tokens` default).
 const MAX_NEW_TOKENS: usize = 4096;
 
+/// True once `generated_len` recorded entries (the push already done) reach
+/// the cap. `>=` so exactly `MAX_NEW_TOKENS` entries are kept; the old `>`
+/// let a 4097th entry through.
+fn cap_reached(generated_len: usize) -> bool {
+    generated_len >= MAX_NEW_TOKENS
+}
+
 /// Parsed and pinned checkpoint configuration.
 #[derive(Debug, Clone, PartialEq)]
 pub struct VoxtralRealtimeConfig {
@@ -683,7 +690,7 @@ impl VoxtralRealtime {
         let mut broke = false;
         for pos in prompt_len..prepared.n_audio_total {
             generated.push(next);
-            if next == EOS_TOKEN_ID || generated.len() > MAX_NEW_TOKENS {
+            if next == EOS_TOKEN_ID || cap_reached(generated.len()) {
                 broke = true;
                 break;
             }
@@ -814,6 +821,15 @@ mod tests {
     use std::path::Path;
 
     const FIXTURE: &str = include_str!("../../../testdata/voxtral_realtime_reference.json");
+
+    // The check runs after the push, so the cap must trip at exactly
+    // MAX_NEW_TOKENS recorded entries, not one more.
+    #[test]
+    fn generation_cap_keeps_exactly_max_new_tokens() {
+        assert!(!super::cap_reached(super::MAX_NEW_TOKENS - 1));
+        assert!(super::cap_reached(super::MAX_NEW_TOKENS));
+        assert!(super::cap_reached(super::MAX_NEW_TOKENS + 1));
+    }
 
     fn load_fixture() -> Value {
         serde_json::from_str(FIXTURE).expect("valid voxtral_realtime reference fixture")
@@ -1374,7 +1390,7 @@ mod tests {
             let computed = log_softmax_top(&logits, next as usize);
             measurements.push(("step_logprob", (computed - reference_top).abs(), 5.0e-2));
             generated.push(next);
-            if next == super::EOS_TOKEN_ID as i64 || generated.len() > super::MAX_NEW_TOKENS {
+            if next == super::EOS_TOKEN_ID as i64 || super::cap_reached(generated.len()) {
                 broke = true;
                 break;
             }

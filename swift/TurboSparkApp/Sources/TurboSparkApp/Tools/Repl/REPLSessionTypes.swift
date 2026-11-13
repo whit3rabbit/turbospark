@@ -1,11 +1,21 @@
 import Foundation
 
+/// Enforced today: `maximumOutputCharacters`, `maximumImageBytes` and
+/// `maximumRequestBytes`. RESERVED, NOT ENFORCED: `defaultTimeout`,
+/// `maximumTimeout` and `footprintGrowthBudgetBytes` are carried over the
+/// wire but nothing reads them. The only deadline in force is the fixed
+/// 30 s top-level-await settlement wait
+/// (`REPLWorkerContext.defaultSettlementDeadline`), and no supervisor kills
+/// a call for time or memory. Do not rely on them until a caller reads them.
 struct REPLLimits: Sendable, Equatable, Codable {
+    /// Reserved, not enforced (see the type comment).
     var defaultTimeout: TimeInterval
+    /// Reserved, not enforced (see the type comment).
     var maximumTimeout: TimeInterval
     var maximumOutputCharacters: Int
     var maximumImageBytes: Int
     var maximumRequestBytes: Int
+    /// Reserved, not enforced (see the type comment).
     var footprintGrowthBudgetBytes: Int
 
     init(
@@ -53,9 +63,16 @@ struct REPLCallResult: Sendable, Codable {
         case failed
         case parseError
         case unsupportedSyntax
+        /// Produced only when a top-level-await program fails to settle
+        /// within the fixed settlement deadline. Not produced for a
+        /// synchronous infinite loop or a per-call `REPLLimits` timeout.
         case timedOut
+        /// Reserved, not produced yet. No cancellation path exists.
         case cancelled
+        /// Reserved, not produced yet. `footprintGrowthBudgetBytes` is not enforced.
         case memoryLimit
+        /// Reserved, not produced yet. The supervisor serializes callers
+        /// through a FIFO mailbox instead of refusing a concurrent call.
         case busy
     }
 

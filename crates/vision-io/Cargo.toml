@@ -17,7 +17,7 @@ path = "src/lib.rs"
 foundation = { package = "turbospark-core", path = "../core", version = "0.8.0" }
 # Image decode. MIT OR Apache-2.0. `default-features = false` plus an explicit
 # codec list keeps this to the PURE-RUST decoders, which is what lets this
-# crate stay checkable for a non-macOS target (AGENTS.md Gotcha 8): the
+# crate stay checkable for a non-macOS target (.claude/docs/engineering-gotchas.md Gotcha 8): the
 # default feature set pulls in codecs with C build dependencies.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 # JSON. MIT OR Apache-2.0. Reads `preprocessor_config.json`.

@@ -23,7 +23,11 @@ OpenAI, Anthropic, Ollama-compatible, and scripted server surfaces.
   partitioned by API key or client, so a prefix match against another
   client's prompt is observable in response timing. `--session-slots` above 1
   requires it. The in-process FFI host reaches the same posture through
-  `ServerOptions.prefixReuse`.
+  `ServerOptions.prefixReuse`. The off default belongs to this binary only:
+  a bare FFI session opens with reuse on (`OpenOptions.prefixReuse` null means
+  true, `crates/ffi/src/open.rs`), so an FFI host that serves several clients
+  must pass `prefixReuse: false` in `ServerOptions`. Whether the FFI open
+  default should match this one is an open question, not a settled rule.
 - Keep scripted and real backends separate. Scripted tests do not establish
   real model behavior.
 - Tool guardrails buffer tool-bearing requests when a whole-turn verdict is

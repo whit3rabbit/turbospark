@@ -1,6 +1,6 @@
 //! PIL's `Image.resize(..., Image.BICUBIC)`, reproduced bit for bit on RGB8.
 //!
-//! Adapted from the sconce vision crate's PIL variant (see `NOTICE`). Only the
+//! Adapted from the sconce vision crate's PIL variant (see `NOTICE` at the repository root). Only the
 //! PIL spelling is ported. sconce carries a second one for torchvision, which
 //! differs solely in the fixed-point coefficient precision, and a third
 //! unclamped f64 path for resampling learned parameters; neither is reachable

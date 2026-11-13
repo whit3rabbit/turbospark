@@ -19,7 +19,7 @@ Nari Labs Dia 1.6B dialogue TTS, port of mlx-audio `dia` pinned at one commit [m
 - Logits keep codes 0..=1024; PAD and BOS are masked [mod.rs:KEEP_VOCAB]
 - Self-cache capacity is prompt_frames + max_tokens + 1, overflow-checked; max_tokens must be positive [mod.rs:self_cache_capacity] [mod.rs:Model::generate_segment]
 - KV store asserts on prefill or append past capacity [layers.rs:KvStore::prefill] [layers.rs:KvStore::update]
-- Negative embedding ids wrap from the end; ids >= rows yield an empty row (zero contribution in the decoder sums, matches pinned MLX). The encoder copies the row into a fixed-width slice, so an out-of-range source byte id panics there [model.rs:embed_lookup]
+- Negative embedding ids wrap from the end; ids >= rows yield an empty row (zero contribution in the decoder sums, matches pinned MLX). The encoder checks the row width and returns `SpeechError::Input` for an out-of-range source byte id instead of panicking [model.rs:embed_lookup, model.rs:Encoder::forward]
 - Masked attention uses additive -1e9 [mod.rs:MASK_DENIED]
 
 ## Side Effects

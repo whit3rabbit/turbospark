@@ -67,9 +67,11 @@ public struct GrepInput: Codable, Sendable, Equatable {
     public var type: String?
     /// Maximum count of results returned.
     public var headLimit: Int?
-    /// Pagination offset.
+    /// Pagination offset. Decoded only: the grep executor ignores it, so the
+    /// schema does not advertise it.
     public var offset: Int?
-    /// Multiline match support.
+    /// Multiline match support. Decoded only: the grep executor ignores it,
+    /// so the schema does not advertise it.
     public var multiline: Bool?
 
     enum CodingKeys: String, CodingKey {

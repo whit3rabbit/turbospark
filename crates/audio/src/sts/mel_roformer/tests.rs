@@ -272,3 +272,12 @@ fn mask_and_merge_match_reference() {
     eprintln!("full mask diff {diff}");
     assert!(diff < 1e-4, "full mask diff {diff}");
 }
+
+#[test]
+fn unsupported_filterbank_geometry_is_an_error_not_a_panic() {
+    // 1 MHz passes `validate` (bounded only by u32) but the DSP layer caps
+    // sample rates at 768 kHz.
+    let config =
+        MelRoFormerConfig::from_json(&serde_json::json!({ "sample_rate": 1_000_000 })).unwrap();
+    assert!(super::BandGeometry::build(&config).is_err());
+}

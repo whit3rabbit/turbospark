@@ -115,11 +115,21 @@ pub fn write_packed_vision(
     dir: &Path,
     blocks: &LayerBlobs,
     block_stride: u64,
+    expected_depth: usize,
 ) -> Result<(), WriterError> {
+    // Checked before any file is created: the block count is written into the
+    // layout as `expertsPerLayer`, so a tower whose count disagrees with
+    // `arch.vision.depth` would otherwise install and fail only at load.
+    let blocks_per_tower = blocks.experts.len();
+    if blocks_per_tower != expected_depth {
+        return Err(WriterError::WrongVisionBlockCount {
+            expected: expected_depth,
+            actual: blocks_per_tower,
+        });
+    }
     let subdir = dir.join(model_io::PACKED_VISION_DIR);
     std::fs::create_dir_all(&subdir).map_err(|e| io_err(dir, e))?;
 
-    let blocks_per_tower = blocks.experts.len();
     let (file_bytes, entry) =
         build_layer_file(blocks, block_stride, blocks_per_tower, "blobs.bin")?;
     let blobs_path = subdir.join("blobs.bin");
@@ -291,4 +301,29 @@ pub fn write_gturbo_install_with_resident_index(
     .map_err(|e| io_err(&manifest_path, e))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A tower whose block count disagrees with the declared depth used to be
+    // written with no complaint.
+    #[test]
+    fn write_packed_vision_rejects_block_count_mismatch() {
+        let dir = std::env::temp_dir().join(format!("tsp_vision_depth_{}", std::process::id()));
+        let blocks = LayerBlobs {
+            layer: 0,
+            experts: Vec::new(),
+        };
+        let err = write_packed_vision(&dir, &blocks, 64, 27).unwrap_err();
+        assert_eq!(
+            err,
+            WriterError::WrongVisionBlockCount {
+                expected: 27,
+                actual: 0
+            }
+        );
+        assert!(!dir.exists(), "nothing may be created on a refused tower");
+    }
 }

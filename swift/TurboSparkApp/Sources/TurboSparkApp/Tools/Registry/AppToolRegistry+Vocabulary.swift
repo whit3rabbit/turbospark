@@ -180,7 +180,7 @@ extension AppToolRegistry {
         "batch",
         "codesearch", "code_search",
         "multiedit", "multi_edit",
-        "stop_agent", "agentstop", "kill_agent",
+        "stop_agent", "agentstop", "kill_agent", "stopagent",
         "askuserquestion", "ask_user_question", "ask_question", "question",
         "enterplanmode", "enter_plan_mode", "plan_mode", "plan",
         "exitplanmode", "exit_plan_mode",
@@ -218,6 +218,11 @@ extension AppToolRegistry {
 
     /// Tool names whose handler resolves a filesystem path or spawns a
     /// process, and therefore cannot run without a project root.
+    ///
+    /// `memory_search` and `memory_explain` are deliberately NOT here: they
+    /// read the profile-scoped ledger and work in a projectless chat (only
+    /// `scope: project` needs a root, and the executor answers that itself).
+    /// `memory` is here because its project-scope write resolves a root.
     ///
     /// The complement of this set inside `supportedToolNames` is the group
     /// that works in a projectless chat (`skill`, `todowrite`, `agent`).

@@ -1311,16 +1311,33 @@ impl FishDecoderBlock {
 }
 
 impl FishS1Dac {
-    /// Opens a checkpoint directory (`config.json` optional; the
-    /// geometry comes from `build_ae()` unless the config overrides
-    /// the flat fields).
+    /// Opens a checkpoint directory (`config.json` optional when
+    /// absent; the geometry comes from `build_ae()` unless the config
+    /// overrides the flat fields. A present but unreadable or invalid
+    /// `config.json` is refused).
     pub fn open(dir: &Path) -> Result<Self> {
         let file =
             SafetensorsFile::open(&dir.join("model.safetensors")).map_err(SpeechError::from)?;
         let mut config = FishS1DacConfig::build_ae();
-        if let Ok(text) = std::fs::read_to_string(dir.join("config.json")) {
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+        // Only an absent config.json means "use build_ae"; an unreadable or
+        // unparsable one is refused so a typo cannot silently pick the
+        // default geometry.
+        match std::fs::read_to_string(dir.join("config.json")) {
+            Ok(text) => {
+                let value = serde_json::from_str::<serde_json::Value>(&text).map_err(|e| {
+                    SpeechError::BadConfig {
+                        field: "config.json".to_string(),
+                        why: format!("not valid JSON: {e}"),
+                    }
+                })?;
                 config = FishS1DacConfig::from_json(&value)?;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                return Err(SpeechError::BadConfig {
+                    field: "config.json".to_string(),
+                    why: format!("unreadable: {e}"),
+                })
             }
         }
         Self::load(config, &file)

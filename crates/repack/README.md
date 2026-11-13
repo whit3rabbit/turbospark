@@ -53,7 +53,7 @@ cargo test -p turbospark-repack --test hf_checkpoint_network --release -- --igno
 
 ## Tests
 
-This crate contains 83 integration test files in `tests/`:
+This crate contains 91 integration test files in `tests/`:
 - Checkpoint conversion: `gemma4_checkpoint.rs`, `gguf_checkpoint.rs`, `hf_checkpoint.rs`, `mtp_graft.rs`.
 - Flint intake: `flint_config.rs`, `flint_header.rs`, `synthetic_flint.rs`.
 - GGUF parsing and normalization: `gguf_header.rs`, `gguf_config.rs`, `gguf_names.rs`, `gguf_set.rs`, `gguf_llama_rope_patch.rs`, `gguf_qwen_convention_patch.rs`.
