@@ -87,7 +87,8 @@ host:     [--max-foreign-cpu 150] [--max-single-cpu 90] [--allow-battery]
 --base REV: the commit the experiment's diff is checked against (default: main).
   An experiment tree that merges in the lab itself needs --base <that merge commit>.
 exit codes (run-experiment, confirm): 0 keep, 3 discard, 4 inconclusive (do not revert),
-  1 error, 2 usage.
+  1 error (an unknown command or a bad flag is an error), 2 no arguments (usage printed;
+  --help exits 0).
 --json (any command, anywhere on the line): stdout is exactly one tslab/1 envelope
   {schema, command, ok, exit_code, decision?, records, result, warnings, error?};
   tables and progress go to stderr.
