@@ -1,6 +1,6 @@
 //! Patch-row extraction in merge-window order.
 //!
-//! Adapted from the sconce vision crate's `extract_patches` (see `NOTICE`),
+//! Adapted from the sconce vision crate's `extract_patches` (see `NOTICE` at the repository root),
 //! with ONE deliberate difference: the inner feature order. See
 //! [`patch_rows`].
 
