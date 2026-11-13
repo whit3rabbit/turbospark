@@ -73,7 +73,7 @@ TURBOSPARK_PROBE_INSTALL_DIR=~/models/qwen38-27b.gturbo \
 
 ## Tests
 
-This crate contains 81 test files in `tests/` (plus shared helper module
+This crate contains 91 test files in `tests/` (plus shared helper module
 directories such as `oracle_common/` and `quality_common/`):
 - Memory oracles (verifying peak physical memory ceilings and allocation stability):
   `memory_oracle.rs` (Gemma 4), `bonsai_memory_oracle.rs`, `bonsai2_memory_oracle.rs`, `dsv2_memory_oracle.rs`, `fish_drama3_memory_oracle.rs`, `fish_drama3_leak_gate.rs`, `gptoss_memory_oracle.rs`, `humanizer_memory_oracle.rs`, `minicpm_v47_memory_oracle.rs`, `minimax_memory_oracle.rs`, `mistral_memory_oracle.rs`, `spark_memory_oracle.rs`, `ternary_memory_oracle.rs`, `museglimmer_memory_oracle.rs`, `ornith9b_memory_oracle.rs`, `ornith35b_memory_oracle.rs`, `qwen2_dense_memory_oracle.rs`, `qwen3moe_memory_oracle.rs`, `qwen3_dense_memory_oracle.rs`, `qwen3vl_memory_oracle.rs`, `qwen36_memory_oracle.rs`, `qwen38_memory_oracle.rs`, `qwen4exp_memory_oracle.rs`, `qwen4exp_swift_memory_oracle.rs`, `tinyllama_memory_oracle.rs`, `vision_memory_oracle.rs`, `vision_sidecar_memory_oracle.rs`.
