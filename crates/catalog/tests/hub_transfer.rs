@@ -381,8 +381,13 @@ fn a_snapshot_shares_eight_range_workers_between_files() {
     let cancel = CancelFlag::new();
     let server_cancel = cancel.clone();
     let fixture = thread::spawn(move || {
+        // A liveness wait, not the property under test (that is the 100 ms
+        // ninth-request check below). next.bin is only requested after the
+        // first batch publishes and verifies: the 16 MiB shard is hashed for
+        // the range cache and again on verify, which in an unoptimized test
+        // build took about 5 s on an M4 Max, so 3 s failed every run.
         let receive = || {
-            receive_request(&listener, Duration::from_secs(3)).unwrap_or_else(|| {
+            receive_request(&listener, Duration::from_secs(30)).unwrap_or_else(|| {
                 server_cancel.cancel();
                 panic!("expected another concurrent snapshot request");
             })
