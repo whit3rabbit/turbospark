@@ -706,6 +706,44 @@ fn hf_token_storage_and_lifecycle() {
     assert!(store.get_hf_token().is_none());
 }
 
+#[cfg(unix)]
+#[test]
+fn hf_token_write_replaces_rather_than_writes_through() {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    let root = temp_root("hf-token-atomic");
+    let store = Store::new(&root);
+    std::fs::create_dir_all(&root).unwrap();
+
+    // A symlink planted at `hf_token` must be replaced, not followed.
+    let victim = root.join("victim.txt");
+    std::fs::write(&victim, "original").unwrap();
+    symlink(&victim, store.hf_token_path()).unwrap();
+    store.set_hf_token("hf_secret_value").unwrap();
+    assert_eq!(std::fs::read_to_string(&victim).unwrap(), "original");
+    assert_eq!(store.get_hf_token().as_deref(), Some("hf_secret_value"));
+
+    // A looser pre-existing file ends at 0600 and leaves no temp file.
+    std::fs::remove_file(store.hf_token_path()).unwrap();
+    std::fs::write(store.hf_token_path(), "old").unwrap();
+    std::fs::set_permissions(
+        store.hf_token_path(),
+        std::fs::Permissions::from_mode(0o644),
+    )
+    .unwrap();
+    store.set_hf_token("hf_second").unwrap();
+    let mode = std::fs::metadata(store.hf_token_path())
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600);
+    let stray: Vec<_> = std::fs::read_dir(&root)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with(".hf_token.tmp"))
+        .collect();
+    assert!(stray.is_empty(), "temp file left behind: {stray:?}");
+}
+
 #[test]
 fn hf_token_resolution_order() {
     use turbospark_catalog::{resolve_hf_token_with_source, HfTokenSource};

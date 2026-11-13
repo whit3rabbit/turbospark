@@ -36,6 +36,8 @@ struct Fake {
     transcribed: Mutex<Vec<TranscribeRequest>>,
     generated: Mutex<Vec<GenerateRequest>>,
     spoken: Mutex<Vec<SpeechRequest>>,
+    /// Every alias that reached `AudioProvider::load`.
+    load_attempts: Mutex<Vec<String>>,
     /// `*-slow` models wait for a permit before answering.
     gate: Semaphore,
     started: AtomicUsize,
@@ -72,6 +74,7 @@ impl Fake {
             transcribed: Mutex::default(),
             generated: Mutex::default(),
             spoken: Mutex::default(),
+            load_attempts: Mutex::default(),
             gate: Semaphore::new(0),
             started: AtomicUsize::new(0),
             dropped: Arc::new(AtomicBool::new(false)),
@@ -163,6 +166,7 @@ impl AudioProvider for Fake {
 
     fn load(&self, alias: String) -> Fut<'_, Result<AudioModelInfo, AudioError>> {
         Box::pin(async move {
+            self.load_attempts.lock().unwrap().push(alias.clone());
             if alias != "installed-stt" {
                 return Err(AudioError::NotFound(format!(
                     "{alias:?} is not an installed audio model"
@@ -1795,4 +1799,30 @@ async fn every_listed_audio_route_is_actually_routed() {
         // JSON error, a body, or 405 for a POST-only route.
         assert!(!(status == 404 && body.is_empty()), "{path} is not routed");
     }
+}
+
+/// The route validates the alias itself, so a provider that accepts any
+/// string never sees a path-shaped or dotfile name.
+#[tokio::test]
+async fn load_route_refuses_path_shaped_aliases_before_the_provider() {
+    let fake = Fake::new();
+    let base = spawn(&fake).await;
+    for bad in ["/etc", "../models/x", "a/b", ".hidden", "name with space"] {
+        let r = post_json(
+            &base,
+            "/v1/audio/models",
+            serde_json::json!({"model_id": bad}),
+        )
+        .await;
+        assert_eq!(r.status(), 404, "{bad:?}");
+    }
+    assert!(fake.load_attempts.lock().unwrap().is_empty());
+    let r = post_json(
+        &base,
+        "/v1/audio/models",
+        serde_json::json!({"model_id": "installed-stt"}),
+    )
+    .await;
+    assert_eq!(r.status(), 201);
+    assert_eq!(*fake.load_attempts.lock().unwrap(), ["installed-stt"]);
 }

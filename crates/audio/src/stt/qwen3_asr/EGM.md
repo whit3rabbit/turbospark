@@ -4,7 +4,7 @@
 Portable CPU implementation of Qwen3-ASR: a Whisper-style 128-band log-mel frontend, a chunked convolutional plus transformer audio encoder, and a Qwen3 GQA text decoder with affine-quantized weights and greedy generation over a per-layer KV cache. The decoder and greedy loop are shared by other Qwen3-backbone families (Higgs Audio v3, MOSS-Music, Granite via `TokenDecoder`), and the encoder is also reused by Qwen3-ForcedAligner. `checkpoint.rs` is a descriptor-only validator used before an install receipt is written.
 
 ## Interface
-- `Qwen3Asr` with `load`, `transcribe` (fixed `max_tokens` 512), `transcribe_with_options`, `transcribe_with_details` [mod.rs:Qwen3Asr]
+- `Qwen3Asr` with `load`, `transcribe` (fixed `max_tokens` 512; long audio can be silently cut at that cap, use `transcribe_with_options` to choose it), `transcribe_with_options`, `transcribe_with_details` [mod.rs:Qwen3Asr]
 - `Qwen3AsrTranscription`, `Qwen3AsrProfile`, `QWEN3_ASR_06B_8BIT` (pinned repo and revision) [mod.rs:QWEN3_ASR_06B_8BIT]
 - `extract_language`, `reported_language`, `logprob_summary`, `prompt_token_ids`, `transcript_from_tokens`, `load_tokenizer` [mod.rs:prompt_token_ids]
 - `pub use` of `Qwen3Config` and `compute_selected_logprob` [mod.rs:Qwen3Config] [decoder.rs:compute_selected_logprob]

@@ -301,7 +301,12 @@ fn write_gemma4_install_streamed_in_place(
     // manifest hashes the file rather than the bytes in hand.
     let ingest_vision = vision::vision_should_ingest(arch, &plan.vision_bases);
     if let Some(tower) = &tower {
-        crate::gturbo_writer::write_packed_vision(dir, &tower.blocks, tower.block_stride)?;
+        crate::gturbo_writer::write_packed_vision(
+            dir,
+            &tower.blocks,
+            tower.block_stride,
+            arch.vision.depth as usize,
+        )?;
         progress(&format!(
             "vision tower packed ({} blocks, {} bytes/block)",
             tower.blocks.experts.len(),
@@ -502,7 +507,12 @@ pub fn write_gemma4_install(
     // has the same two lines and the same ordering constraint; see its
     // comment for why both writers carry this rather than one.
     if let Some(tower) = &out.vision {
-        crate::gturbo_writer::write_packed_vision(dir, &tower.blocks, tower.block_stride)?;
+        crate::gturbo_writer::write_packed_vision(
+            dir,
+            &tower.blocks,
+            tower.block_stride,
+            arch.vision.depth as usize,
+        )?;
     }
     // THE N-GRAM TABLE, and this arm exists HERE as well as in
     // `write_gemma4_install_streamed` for that function's reason: the table
@@ -901,7 +911,12 @@ pub fn write_vision_sidecar(
                 .to_string(),
         )));
     }
-    crate::gturbo_writer::write_packed_vision(out_dir, &read.blocks, read.block_stride)?;
+    crate::gturbo_writer::write_packed_vision(
+        out_dir,
+        &read.blocks,
+        read.block_stride,
+        vision.depth as usize,
+    )?;
 
     let arch = model_io::sidecar_arch(family, vision.out_hidden_size, vision);
     let writer = crate::gturbo_writer::StreamingGturboWriter::new(out_dir, 0, 0)?;

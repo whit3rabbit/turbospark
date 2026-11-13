@@ -24,9 +24,10 @@ half = "2"
 sha2 = "0.10"
 
 # The Objective-C stack is macOS-only so the crate stays checkable for a
-# non-macOS target as a stub (AGENTS.md Gotcha 8). All MIT, from the objc2
-# project. objc2 looks classes up at runtime, which is why every macOS 15 API
-# is gated by a respondsToSelector check in `sys::availability`.
+# non-macOS target as a stub (.claude/docs/engineering-gotchas.md Gotcha 8).
+# All MIT, from the objc2 project. objc2 looks classes up at runtime, which is
+# why newer macOS APIs are gated by the `available!` checks in
+# `sys::supports`.
 [target.'cfg(target_os = "macos")'.dependencies]
 # No `exception` feature: its Objective-C helper adds a fourth personality
 # routine to the app link, which compact unwind cannot encode (see sys.rs).

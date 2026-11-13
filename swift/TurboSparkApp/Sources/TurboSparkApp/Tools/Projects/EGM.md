@@ -18,7 +18,7 @@ Tool schemas and payload types for three project-adjacent capabilities (Artifact
 - `ExitWorktree` with `action: remove` requires a `path` (or `worktree_path`), because nothing tracks which worktree was created (error 73, nothing removed). `discard_changes` ("true" or "1") adds `--force`. Any other action leaves the worktree in place and says so. Removal failure is error 71 [WorktreeExecutor.swift:exit].
 - All git runs go through `HardenedGit.run` with a 15 s timeout, because repository config is attacker-influenceable. Do not call `git` through a plain shell here [WorktreeExecutor.swift:runGit].
 - Error codes under domain `TurboSparkTool`: 70 create failed, 71 remove failed, 72 invalid branch name, 73 remove without path.
-- The `ExitWorktree` schema advertises `path` but `ExitWorktreeInput` has no `path` field; the executor reads `arguments` directly [ArtifactWorktreeTools.swift, WorktreeExecutor.swift].
+- `ExitWorktreeInput.path` matches the advertised `path` (the executor also accepts an unadvertised `worktree_path` alias). The `EnterWorktree` `path` is where the worktree is created (it must not exist), not an existing worktree; `ToolSchemaCodeAgreementTests` pins both [ArtifactWorktreeTools.swift, WorktreeExecutor.swift].
 
 ## Side Effects
 - Process spawn: git subprocesses via `HardenedGit.run` (`check-ref-format`, `worktree add`, `worktree remove`) in the project root [WorktreeExecutor.swift].

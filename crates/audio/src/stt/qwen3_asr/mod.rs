@@ -112,6 +112,10 @@ impl Qwen3Asr {
 
     /// Transcribes mono PCM already sampled at 16 kHz, allowing the model to
     /// detect the spoken language.
+    ///
+    /// Decoding is capped at 512 new tokens, so a long clip can yield a
+    /// transcript cut off at the cap with no error. Call
+    /// [`Self::transcribe_with_options`] to choose the cap.
     pub fn transcribe(&self, samples: &[f32]) -> Result<String> {
         self.transcribe_with_options(samples, None, 512)
     }

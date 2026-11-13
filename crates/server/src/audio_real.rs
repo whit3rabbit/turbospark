@@ -26,6 +26,9 @@ use crate::audio::{
     AudioError, AudioModelInfo, AudioProvider, AudioTask, GenerateRequest, GeneratedAudio,
     SpeechRequest, SpeechStream, TranscribeRequest, TranscribedSegment, Transcription,
 };
+// The route checks this too; the provider keeps its own check so a direct
+// caller of `load` is held to the same rule.
+use crate::audio::valid_alias;
 
 type Fut<'a, T> = std::pin::Pin<Box<dyn std::future::Future<Output = T> + Send + 'a>>;
 
@@ -429,17 +432,6 @@ fn spawn_worker(id: &str, task: AudioTask, dir: PathBuf) -> Result<Arc<Worker>, 
         },
         tx,
     }))
-}
-
-/// A catalog alias is a plain file name. Refusing separators and dots keeps
-/// HTTP callers inside the store's audio directory.
-fn valid_alias(alias: &str) -> bool {
-    !alias.is_empty()
-        && alias.len() <= 128
-        && !alias.starts_with('.')
-        && alias
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
 /// What an installed alias does, from the bundled catalogs. Aliases the

@@ -207,16 +207,22 @@ public struct EnterWorktreeOutput: Codable, Sendable, Equatable {
 public struct ExitWorktreeInput: Codable, Sendable, Equatable {
     /// Action ("keep" to preserve worktree, "remove" to delete branch/worktree).
     public var action: String
+    /// Worktree folder to remove. Required when `action` is "remove": nothing
+    /// tracks which worktree EnterWorktree created. The executor also accepts
+    /// `worktree_path` as an alias, which the schema does not advertise.
+    public var path: String?
     /// Whether uncommitted changes should be discarded if removing.
     public var discardChanges: Bool?
 
     enum CodingKeys: String, CodingKey {
         case action
+        case path
         case discardChanges = "discard_changes"
     }
 
-    public init(action: String, discardChanges: Bool? = nil) {
+    public init(action: String, path: String? = nil, discardChanges: Bool? = nil) {
         self.action = action
+        self.path = path
         self.discardChanges = discardChanges
     }
 }
@@ -277,11 +283,11 @@ public enum ArtifactWorktreeDefinitions {
 
     public static let enterWorktree = OpenAITool.function(
         name: "EnterWorktree",
-        description: "Create or switch to an isolated git worktree branch for safe modifications.",
+        description: "Create an isolated git worktree and branch. The tool root does not move: file and shell tools keep acting on the main checkout, so address the worktree by explicit path.",
         parameters: .object(
             properties: [
                 "name": .string(description: "Optional name for the worktree branch."),
-                "path": .string(description: "Path to an existing git worktree.")
+                "path": .string(description: "Optional folder (relative to the project root) to create the worktree in. Defaults to .turbospark/worktrees/<name>. It must not already exist.")
             ],
             required: []
         )
@@ -289,7 +295,7 @@ public enum ArtifactWorktreeDefinitions {
 
     public static let exitWorktree = OpenAITool.function(
         name: "ExitWorktree",
-        description: "Leave current git worktree and return to main repository root.",
+        description: "Keep or remove a git worktree created with EnterWorktree. The tool root never changed, so there is nothing to return from; action 'remove' needs the worktree path.",
         parameters: .object(
             properties: [
                 "action": .string(description: "'keep' to retain worktree, 'remove' to clean up."),

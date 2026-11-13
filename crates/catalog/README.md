@@ -50,7 +50,7 @@ catalog = { package = "turbospark-catalog", path = "../catalog" }
 - `gguf_source.rs`: Handles split multi-file GGUF shard discovery and URL construction.
 - `quant.rs`: Filename-derived GGUF quantization labels and logical file-set grouping.
 - `install.rs`: Walk driver orchestrating probe validation, tokenizer sidecar downloads, weight streaming, install receipt creation, and stale sidecar pruning.
-- `stream.rs`: GGUF and MLX streaming and shard-writing helpers driven by `install.rs`, including shard discovery for repos that ship no `model.safetensors.index.json` and the flint safetensors intake (`write_flint_install_streamed`).
+- `stream.rs`: GGUF and MLX streaming and shard-writing helpers driven by `install.rs`, including shard discovery for repos that ship no `model.safetensors.index.json` and the flint safetensors intake (which calls `write_flint_install_streamed`, defined in `crates/repack/src/gemma4_checkpoint/mod.rs`).
 - `store.rs`: `Store` managing `~/.turbospark` layout, `installed.json`, and alias/path resolution (`resolve_model_arg`).
 
 ## Development & Test Commands

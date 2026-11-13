@@ -837,6 +837,15 @@ fn check_alias(alias: &str) -> Result<(), Error> {
     Ok(())
 }
 
+/// [`check_alias`] for a positional catalog alias, worded for that form.
+fn check_row_alias(alias: &str) -> Result<(), Error> {
+    check_alias(alias).map_err(|_| {
+        Error::Usage(
+            "a catalog alias must contain only ASCII letters, digits, '.', '_' or '-'".to_string(),
+        )
+    })
+}
+
 /// Read `pull`'s two argument forms, without the probe a `--repo` pull
 /// plans from.
 fn pull_source(
@@ -878,6 +887,10 @@ fn pull_source(
         }
         (None, 1) => {
             let alias = aliases[0];
+            // The curated rows pass this (tested below), but a row merged
+            // from the user's `models.json` is not curated, and its alias
+            // becomes the same folder name and raw printed text as `--alias`.
+            check_row_alias(alias)?;
             catalog
                 .get(alias)
                 .map(|entry| PullSource::Row(InstallPlan::from_entry(entry)))
@@ -1067,5 +1080,39 @@ fn machine(options: &Options) -> catalog::Machine {
         working_set_bytes: None,
         load_guard: options.load_guard,
         chip: std::env::var("TURBOSPARK_TEST_CHIP").unwrap_or_default(),
+    }
+}
+
+#[cfg(test)]
+mod alias_tests {
+    use super::*;
+
+    /// Every curated row must pass the positional check, or `pull <alias>`
+    /// would refuse a model the catalog ships.
+    #[test]
+    fn every_curated_alias_passes_the_positional_check() {
+        let catalog = Catalog::embedded().expect("embedded catalog");
+        let mut seen = 0;
+        for entry in catalog.entries() {
+            seen += 1;
+            assert!(
+                check_row_alias(&entry.alias).is_ok(),
+                "curated alias {:?} would be refused",
+                entry.alias
+            );
+        }
+        assert!(seen > 0);
+    }
+
+    #[test]
+    fn a_path_shaped_positional_alias_is_a_usage_error() {
+        let catalog = Catalog::embedded().expect("embedded catalog");
+        let options = Options::default();
+        for bad in ["../x", "a/b", "", "bad name"] {
+            let err = pull_source(&catalog, &[bad.to_string()], &options)
+                .err()
+                .unwrap_or_else(|| panic!("{bad:?} was accepted"));
+            assert!(matches!(err, Error::Usage(_)), "{bad:?}");
+        }
     }
 }

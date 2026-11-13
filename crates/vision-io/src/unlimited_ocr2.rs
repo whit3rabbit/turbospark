@@ -164,6 +164,9 @@ pub struct Uocr2ImageIds {
 /// `<image>` puts every page first, one expands to all of them, and N pair one
 /// to one. A marker is written even where the template did not, because page2d
 /// needs one per page. Any other count is refused rather than guessed at.
+///
+/// Unlike the rest of this crate, the error type is a plain `String`, not
+/// `VisionIoError`. Kept as is so the public signature does not change.
 pub fn uocr2_expand_prompt(
     rendered: &[i32],
     pages: &[Uocr2Page],

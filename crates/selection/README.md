@@ -16,7 +16,7 @@ selection = { package = "turbospark-selection", path = "../selection" }
 ## Safety
 
 - The crate contains no `unsafe` code, but `lib.rs` does not set `#![forbid(unsafe_code)]`, so the compiler does not enforce this.
-- Pure CPU computation with zero device-specific assembly or external side effects.
+- Pure CPU computation with zero device-specific assembly or external side effects, given a seed. With `seed: None` the draw reads the wall clock (`derive.rs:derive_step_value`), so it is not reproducible.
 
 ## Key Modules
 
@@ -36,7 +36,7 @@ cargo test -p turbospark-selection
 
 ## Tests
 
-This crate contains 11 integration test files in `tests/`:
+This crate contains 12 integration test files in `tests/`:
 - `determinism.rs`: Validates deterministic sampling repeatability across fixed seeds.
 - `distribution.rs`: Tests deterministic-selection behavior and temperature spread across candidates.
 - `domain_guards.rs`: Verifies rejection of non-finite score entries and empty candidate domains, plus oversized top-k and extreme penalty saturation.
@@ -44,6 +44,7 @@ This crate contains 11 integration test files in `tests/`:
 - `min_p.rs`: Tests min-p candidate truncation relative to top token probability.
 - `penalty.rs` & `presence_frequency.rs`: Verifies repetition, presence, and frequency penalty mathematics.
 - `rank_top_k.rs`: Validates partial-sorting top-k algorithms without full array sorting.
+- `reference_drift.rs`: Cross-checks the live `shape_candidates` support (via `shaped_distribution`) against the reference `truncation.rs` helpers on synthetic distributions, so the two copies cannot drift silently.
 - `rejection_sampling.rs`: Tests the distributions rejection sampling consumes, verifying draw-for-draw consistency with `select`.
 - `shaping_validation.rs`: Validates `ShapingConfig` constructor boundary constraints.
 - `truncation_order.rs`: Verifies the truncation composition order: probability-mass truncation first against the full distribution, then the rank-based cap.
@@ -51,5 +52,5 @@ This crate contains 11 integration test files in `tests/`:
 ## Crate Gotchas
 
 1. **Logits Input Contract**: `selection::select` accepts raw unnormalized LOGITS and computes softmax internally. Passing pre-normalized probabilities collapses the distribution toward uniform when temperatures differ from 1.0.
-2. **Deterministic Step Seeding**: Selection uses a deterministic pseudorandom generator seeded per generation step. This guarantees bit-exact reproducible token sequences across identical runs.
+2. **Deterministic Step Seeding**: Selection uses a deterministic pseudorandom generator seeded per generation step. With `seed: Some`, this guarantees bit-exact reproducible token sequences across identical runs. With `seed: None` the draw value comes from the wall clock and varies between runs.
 3. **Hot-Path Partial Ranking**: In models with large vocabularies (e.g. Gemma 4 with V=262,144), full sorting of logits would dominate decode latency. `truncation.rs` uses partial ranking, a sequential kth-largest cut followed by sorting only the admitted set, to extract top-k candidates without a full sort.

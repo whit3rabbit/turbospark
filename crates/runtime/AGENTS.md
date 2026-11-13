@@ -121,7 +121,8 @@ policy.
   still check reset, finiteness and sizes. Do not widen the tolerance or chase
   it in the quantized kernels (explicit `fma` changed nothing). Details:
   `docs/audio/minimax_music3.md`.
-- `TURBOSPARK_QWEN_FUSED_FFN=1` activates fused INT4 FFN dispatches (gate+up+act
+- `TURBOSPARK_QWEN_FUSED_FFN` (default on, `=0` is the kill switch, read once in
+  `families/qwen/mod.rs:fused_ffn`) selects fused INT4 FFN dispatches (gate+up+act
   GEMV and down+epilogue GEMV) for Qwen dense and MoE shared expert decode.
   Must remain bit-exact with the sequential separate GEMV and activation dispatches.
 - `TURBOSPARK_INT4_MMA8` (opt-in, experimental, read once) routes INT4
@@ -129,9 +130,13 @@ policy.
   GEMM: `1` in both decode and verify, `verify` in batched calls only. Decode
   and verify stay bit-exact against each other, but decode numerics change, so
   frozen digests do not hold. `TURBOSPARK_INT4_MMA8_MIN_ROWS` overrides the
-  row threshold for tests. Only qwen35 dense is gated. See
+  row threshold for tests. The gate is shape-based (`int4_mma8_takes` in
+  `real_forward_dispatch.rs`), not family-based: the Qwen dense and MoE shared
+  expert fused FFN, the GDN in-proj and the DFlash serving block size all
+  consult it. See
   `docs/INT4_SMALL_M_MMA.md`.
-- `TURBOSPARK_GDN_LAZY_TAPE=1` records rank-1 conv and delta updates during
+- `TURBOSPARK_GDN_LAZY_TAPE` (default on, `=0` is the kill switch, read once in
+  `real_forward_rollback.rs`) records rank-1 conv and delta updates during
   speculative verify and folds them asynchronously at round commit, bypassing
   recurrent state snapshots on clean state. `checkpoint_round` snapshots recurrent
   state only when the trunk was dirtied. Eager advances take deferred snapshots.

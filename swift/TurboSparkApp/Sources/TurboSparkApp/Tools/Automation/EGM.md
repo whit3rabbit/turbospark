@@ -25,6 +25,7 @@ Tools that let the model act over time or reach the user outside the turn: a per
 - `CronCreate` and `ScheduleWakeup` require an active chat id. `ScheduleWakeup` clamps delay to 60...3600 s, and `stop` reports that no wakeup loop exists instead of pretending to stop one [CronScheduler.swift:executeCreate, executeScheduleWakeup].
 - `humanSchedule` and `describe()` stay English because CronList returns them to the model and tests pin them. Use `localizedHumanSchedule` for the UI [CronScheduler.swift:describe].
 - `Config` is read-only: `set` throws and changes nothing. Do not make it report success for a no-op [AutomationExecutors.swift:ConfigToolExecutor].
+- `PushNotification` advertises an optional `title` (default "TurboSpark Notice"), which the executor reads [AutomationExecutors.swift].
 - `Sleep` clamps to 0.1...300 s; `PushNotification` reports the true delivery outcome (system notification only when running from an `.app` bundle with a bundle id and permission granted, else in-app only) [AutomationExecutors.swift].
 - `CronCreateInput.durable`, `CronJobItem.durable`, and `MonitorInput` fields are schema-level only; the scheduler always persists jobs.
 - Error codes under domain `TurboSparkTool`: 60-64 cron (60 invalid or missing cron, 61 missing prompt, 62 no active chat, 63 CronDelete, 64 ScheduleWakeup); 65 PushNotification missing message, 66 Config unknown action, 67 Config set unsupported. `ToolErrorCodeUniquenessTests` fails if two source files reuse a code.

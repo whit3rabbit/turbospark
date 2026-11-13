@@ -82,6 +82,9 @@ pub struct SidonDiffusionConfig {
 
 #[derive(Debug, Clone)]
 pub struct SidonConfig {
+    /// Parsed from `config.json` (default 24000) but not read by the model
+    /// code: the 16 kHz frontend is fixed and the decoder rate comes from
+    /// the DAC tree's own config, so this value is neither used nor validated.
     pub sample_rate: usize,
     pub latent_dim: usize,
     pub encoder: SidonEncoderConfig,

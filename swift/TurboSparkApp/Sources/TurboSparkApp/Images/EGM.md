@@ -21,7 +21,7 @@ The Image Generation section of the app: a gallery of saved images with Create a
   - `MLXImageGenerationSession` (Z-Image via `ZImagePipeline`) [MLXImageGenerationSession.swift:MLXImageGenerationSession]
   - `QwenImageGenerationSession` (Qwen-Image 2.1 via `QwenImage21Pipeline`) and `QwenImageSessionError` [QwenImageGenerationSession.swift:QwenImageGenerationSession]
   - `MLXKernelLibrary` (`locate`, `locateForCurrentProcess`, `requireForCurrentProcess`) and `MLXKernelLibraryError` [MLXKernelLibrary.swift:MLXKernelLibrary]
-- Krea 2 manifest validation: `Krea2RAMQuantization.load(modelRoot:)`, `width(for:)`, `Krea2RAMQuantizationError`. Nothing inside this directory calls it, so its callers are elsewhere [Krea2RAMQuantization.swift:Krea2RAMQuantization].
+- Krea 2 manifest validation: `Krea2RAMQuantization.load(modelRoot:)`, `width(for:)`, `Krea2RAMQuantizationError`. Nothing in `Sources` calls it yet: only `Krea2RAMQuantizationTests` does. It is intake scaffolding for Krea 2 (added in 848c29a6) and is kept until the Krea 2 session lands [Krea2RAMQuantization.swift:Krea2RAMQuantization].
 - Subdirectories: none.
 
 ## Invariants

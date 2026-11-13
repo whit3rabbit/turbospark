@@ -53,7 +53,7 @@ Snake + WnConv1d(k7) -> tanh -> reconstructed waveform
 | Property | Value |
 |---|---|
 | Sample rate | 16 kHz, 24 kHz, or 44.1 kHz depending on checkpoint |
-| Strides | [2, 4, 8, 8] (44.1 kHz) or [2, 4, 8, 8] / [8, 5, 4, 2] |
+| Strides | Config-driven; defaults are encoder [2, 4, 5, 8] and decoder [8, 5, 4, 2] |
 | Codebooks | Up to 32 levels x 1024 entries x 8 dims |
 | Activations | Snake with learned alpha parameter |
 | Normalization | weight_norm on all convolutions |

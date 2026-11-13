@@ -36,7 +36,8 @@ measure, so a convenient approximation is still a broken row.
 - The flint intake keeps its own arms in `probe/safetensors.rs` and
   `stream.rs`: the config parses through `repack::parse_flint_config`, the
   INT8 embedding comes from `repack::parse_flint_quantization` (it lives in
-  `mlx_export`, not `quantization`), and each shard header is canonicalized
+  `crates/repack/src/flint_config.rs`, reads the `mlx_export` block, and admits
+  4 or 8 bits), and each shard header is canonicalized
   before the shared walk. Do not fold these into the generic safetensors path.
 - An existing directory argument wins over an alias. Preserve that CLI
   compatibility.

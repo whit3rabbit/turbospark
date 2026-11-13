@@ -16,7 +16,7 @@ Port of mlx-audio `tts/models/vibevoice` (streaming). A split Qwen2 decoder (`la
 - `ddpm_steps == Some(0)` rejected [mod.rs:Model::generate]
 - Loaded voice layer counts must match the model [mod.rs:Model::generate]
 - Type ids must be 0 or 1 [mod.rs:Model::type_embed]
-- Scheduler gate accepts `cosine`, `scaled_linear`, `squaredcos_cap_v2` and epsilon/v_prediction/sample, but always builds cosine betas, so `scaled_linear` runs cosine silently [scheduler.rs:DpmSolver::new]
+- Scheduler accepts only `cosine` and `squaredcos_cap_v2` (both build the cosine betas) and epsilon/v_prediction/sample; `scaled_linear` and other names are refused as Unsupported [scheduler.rs:DpmSolver::new]
 ## Side Effects
 - Reads `config.json` and safetensors from the checkpoint dir [mod.rs:Model::open]
 - Reads a voice safetensors file [mod.rs:Model::load_voice]

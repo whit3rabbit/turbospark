@@ -69,6 +69,13 @@ pub(crate) async fn load_model(
                 Some("model_id"),
             );
         }
+        // 404 like the real provider's own refusal: a malformed name is just
+        // an alias nothing installed answers to.
+        if !super::valid_alias(&alias) {
+            return audio_error(super::AudioError::NotFound(format!(
+                "{alias:?} is not an installed audio model alias"
+            )));
+        }
         match audio.provider.load(alias).await {
             Ok(info) => (StatusCode::CREATED, Json(model_json(&info))).into_response(),
             Err(e) => audio_error(e),

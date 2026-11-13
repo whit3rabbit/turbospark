@@ -27,7 +27,7 @@ Model install layout for `turbospark-model-io`: manifest and architecture valida
 - Reads manifests, receipts, indexes and safetensors from the install directory; memory-maps weight files [resident_buffer.rs:ResidentBuffer] [safetensors.rs:SafetensorsFile]
 - Writes `speech` receipt, DASH sidecar and trunk role marker files [speech_receipt.rs:SpeechInstallReceipt::write_to_dir] [dash_config.rs:DashConfig::write_sidecar] [trunk_role.rs:write_headless]
 - Calls `statvfs` and `sysconf` through libc [disk_space.rs:available_bytes] [resident_buffer.rs:page_size_bytes]
-- Reads `/sys/fs/cgroup/memory.max` and `memory.high` on any platform (no cfg gate; absent files give `None`) [cgroup.rs:probe_self]
+- Reads `/sys/fs/cgroup/memory.max` and `memory.high` only on Linux (`probe_for_os` gate; absent files give `None`, every other platform always `None`) [cgroup.rs:probe_self]
 
 ## Verification
 - Run: `cargo test -p turbospark-model-io`

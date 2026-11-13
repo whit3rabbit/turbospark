@@ -124,7 +124,7 @@ impl PreprocessParams {
     /// Parse a checkpoint's `preprocessor_config.json`.
     ///
     /// THREE READING DECISIONS, each a claim about what silence means
-    /// (AGENTS.md Gotcha 39), and each made the way the reference processor
+    /// (.claude/docs/engineering-gotchas.md Gotcha 39), and each made the way the reference processor
     /// makes it rather than by picking a plausible default:
     ///
     /// - The pixel budget has TWO spellings and the file that ships with these
@@ -154,7 +154,7 @@ impl PreprocessParams {
     ///   (`processing_qwen3_vl.py:162`), so `1/255` is what the format's
     ///   SILENCE means rather than a guess: it is the universal 0-255 to 0-1
     ///   conversion, where the generic pixel budget is wrong for this family
-    ///   by a factor of 16. AGENTS.md Gotcha 39's rule -- reach for the
+    ///   by a factor of 16. `.claude/docs/engineering-gotchas.md` Gotcha 39's rule -- reach for the
     ///   FORMAT's default when a key is optional, and refuse only where the
     ///   format has none.
     pub fn from_preprocessor_config_json(json: &str) -> Result<Self, VisionIoError> {

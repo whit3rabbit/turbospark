@@ -21,15 +21,18 @@
 //!                                                       // window 513 on sliding layers
 //! x      = x + a @ o_proj                               // RAW, no sandwich norm
 //! m      = rms_norm(x, post_attention_layernorm)
-//! i < 2  : x = x + down(silu(gate m) * up m)            // dense, width 6144
-//! i >= 2 : r = top6 by logit of (m @ router), weights = sigmoid(logit) / sum(sigmoid over
+//! i < L  : x = x + down(silu(gate m) * up m)            // dense, width 6144
+//! i >= L : r = top6 by logit of (m @ router), weights = sigmoid(logit) / sum(sigmoid over
 //!          the 6)                                        // INT8 router, no bias
 //!          x = x + shared(m) + sum(r_w * expert(m))     // shared ungated, width 1024
 //! ```
 //!
 //! Then a final norm and an UNTIED INT4 head returning raw logits, no softcap.
-//! Layers 0 and 1 are dense AND full-attention NoPE: the two properties are
-//! independent and this file ties neither to the other.
+//! L is `num_dense_leading_layers` (2 for the published checkpoint, validated
+//! as `1..num_layers` in `RealFlintState::build`; no code hard-codes two).
+//! Layers 0 and 1 of the published checkpoint are dense AND full-attention
+//! NoPE: the two properties are independent (dense is `layer < L`, NoPE is the
+//! layer mask) and this file ties neither to the other.
 //!
 //! Not wired, and recorded rather than half-built: chunked and batched
 //! prefill (the sequential `produce` path serves prefill), mapped expert

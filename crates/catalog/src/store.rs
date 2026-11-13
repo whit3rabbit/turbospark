@@ -1066,14 +1066,15 @@ impl Store {
             .filter(|t| !t.is_empty())
     }
 
-    /// Write the Hugging Face token to this store's `hf_token` file, at mode
-    /// 0600 from the moment it exists (Unix): the file is created with that
-    /// mode already set, rather than written at the process umask and
-    /// tightened afterward, so there is no window -- however brief -- where
-    /// a secret sits world-readable on a shared machine. A failure to apply
-    /// the mode is a hard error rather than an ignored one, since silently
-    /// leaving the file at the default mode is exactly the outcome this
-    /// exists to prevent.
+    /// Write the Hugging Face token to this store's `hf_token` file.
+    ///
+    /// The token goes to a sibling temp file created with `create_new` at
+    /// mode 0600 (Unix), fsynced, then renamed over `hf_token`. Creating at
+    /// 0600 means the secret is never world-readable at the umask. The
+    /// rename means a crash cannot leave a truncated token, a looser
+    /// pre-existing file is replaced rather than reused, and a symlink or
+    /// hard link at `hf_token` is replaced instead of written through. The
+    /// token is never included in an error message.
     pub fn set_hf_token(&self, token: &str) -> Result<(), String> {
         let trimmed = token.trim();
         if trimmed.is_empty() {
@@ -1082,34 +1083,27 @@ impl Store {
         std::fs::create_dir_all(&self.root)
             .map_err(|e| format!("creating store directory {}: {e}", self.root.display()))?;
         let path = self.hf_token_path();
-        #[cfg(unix)]
-        {
+        let tmp = self
+            .root
+            .join(format!(".hf_token.tmp.{}", std::process::id()));
+        // A leftover from a crashed earlier call with the same pid.
+        let _ = std::fs::remove_file(&tmp);
+        let write = || -> std::io::Result<()> {
             use std::io::Write;
-            use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o600)
-                .open(&path)
-                .map_err(|e| format!("opening {} at mode 0600: {e}", path.display()))?;
-            // `mode()` above only takes effect when this call is what
-            // CREATES the file; a token file left over from a build before
-            // this fix would otherwise keep its old, more permissive mode
-            // untouched. Setting it again here operates on the already-open
-            // handle rather than the path, so there is no reopen and no
-            // window between checking and acting on it either.
-            file.set_permissions(std::fs::Permissions::from_mode(0o600))
-                .map_err(|e| format!("restricting {} to mode 0600: {e}", path.display()))?;
-            file.write_all(format!("{trimmed}\n").as_bytes())
-                .map_err(|e| format!("writing Hugging Face token to {}: {e}", path.display()))?;
-        }
-        #[cfg(not(unix))]
-        {
-            std::fs::write(&path, format!("{trimmed}\n"))
-                .map_err(|e| format!("writing Hugging Face token to {}: {e}", path.display()))?;
-        }
-        Ok(())
+            let mut opts = std::fs::OpenOptions::new();
+            opts.write(true).create_new(true);
+            #[cfg(unix)]
+            std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+            let mut file = opts.open(&tmp)?;
+            file.write_all(format!("{trimmed}\n").as_bytes())?;
+            file.sync_all()?;
+            drop(file);
+            std::fs::rename(&tmp, &path)
+        };
+        write().map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            format!("writing Hugging Face token to {}: {e}", path.display())
+        })
     }
 
     /// Delete the stored Hugging Face token file.

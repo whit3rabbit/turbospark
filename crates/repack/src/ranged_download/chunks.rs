@@ -134,6 +134,12 @@ where
         return Ok(());
     }
 
+    // Dispatch in ascending index order (`pop` takes from the back). Every
+    // chunk taken after a failure therefore has a higher index than every
+    // chunk already dispatched, so stopping then cannot change which failure
+    // is the lowest-indexed one.
+    jobs.reverse();
+    let failed = std::sync::atomic::AtomicBool::new(false);
     let queue = std::sync::Mutex::new(jobs);
     let failures = std::sync::Mutex::new(Vec::<(usize, DownloadError)>::new());
     let workers = concurrency.clamp(1, chunks.len());
@@ -141,6 +147,11 @@ where
         for _ in 0..workers {
             scope.spawn(|| {
                 loop {
+                    // Stop taking new chunks once any chunk has failed: the
+                    // read is lost already and the rest is wasted transfer.
+                    if failed.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
                     // A `while let` condition would hold the lock through
                     // the fetch, making every other worker wait.
                     let Some((index, start, end_exclusive, dst)) =
@@ -149,6 +160,7 @@ where
                         break;
                     };
                     if let Err(err) = fetch(start, end_exclusive, dst) {
+                        failed.store(true, std::sync::atomic::Ordering::Relaxed);
                         failures
                             .lock()
                             .expect("chunk failure lock")
@@ -247,6 +259,26 @@ mod tests {
         })
         .expect_err("two chunks fail");
         assert_eq!(err, DownloadError::Request("boom at 70".to_string()));
+    }
+
+    /// After the first failure no further chunk may be started. Serial
+    /// (one worker) makes the count exact: chunks 0, 1 and 2 run, 2 fails,
+    /// and the other seven are never fetched.
+    #[test]
+    fn a_failure_stops_dispatching_further_chunks() {
+        let chunks = chunk_ranges(0, 100, 10);
+        let mut out = vec![0u8; 100];
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        let err = fill_chunks(&mut out, &chunks, 1, |start, _end, _dst| {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if start == 20 {
+                return Err(DownloadError::Request("boom at 20".to_string()));
+            }
+            Ok(())
+        })
+        .expect_err("chunk 2 fails");
+        assert_eq!(err, DownloadError::Request("boom at 20".to_string()));
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 
     /// `fetch_gguf_header` calls `read_range` once per growth step and every
