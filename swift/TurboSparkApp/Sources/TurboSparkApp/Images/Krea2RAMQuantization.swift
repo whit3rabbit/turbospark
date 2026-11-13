@@ -1,6 +1,8 @@
 import Foundation
 import ZImage
 
+/// Krea 2 intake scaffolding. No production caller yet (only
+/// `Krea2RAMQuantizationTests`); kept for the planned Krea 2 session.
 struct Krea2RAMQuantization: Sendable {
     static let supportedWidths: Set<Int> = [4, 5, 6, 8]
 

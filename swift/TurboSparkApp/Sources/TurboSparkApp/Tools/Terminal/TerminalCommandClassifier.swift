@@ -351,20 +351,4 @@ public enum TerminalCommandClassifier {
 
         return false
     }
-
-    /// Interprets a process termination status code.
-    public static func interpretExitCode(_ code: Int32) -> String {
-        switch code {
-        case 0:
-            return "success"
-        case 124, 137, 143:
-            return "terminated by timeout/signal"
-        case 127:
-            return "command not found"
-        case 126:
-            return "command invoked cannot execute"
-        default:
-            return "exit code \(code)"
-        }
-    }
 }
