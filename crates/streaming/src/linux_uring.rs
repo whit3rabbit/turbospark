@@ -30,9 +30,11 @@
 //! AND user buffer be sector-aligned, which the [`AlignedSlot`] allocator
 //! already guarantees for the buffer and the chunk plan for the rest.
 //!
-//! `Mode` is selected once per process from `TURBOSPARK_LINUX_IO`:
-//! `auto` (the default, and `pread` until proven otherwise), `pread`, or
-//! `uring`. An unknown spelling is an ERROR rather than a fallback -- a
+//! `Mode` is meant to be selected once per process from
+//! `TURBOSPARK_LINUX_IO`, but today the variable is parsed and not
+//! consumed: `Mode::from_env` has no production caller (only unit tests),
+//! so setting it changes nothing. The spellings are `auto` (the default,
+//! and `pread` until proven otherwise), `pread`, or `uring`. An unknown spelling is an ERROR rather than a fallback -- a
 //! caller who typed a selector measured nothing, and a silent default would
 //! measure the wrong source and report it as the selected one.
 
@@ -48,6 +50,11 @@ pub enum Mode {
 
 impl Mode {
     /// Reads `TURBOSPARK_LINUX_IO`. Unknown spellings are refused by name.
+    ///
+    /// NOT YET CONSUMED: no production path calls this, so the variable
+    /// does not select an I/O source today. Setting `uring` has no effect
+    /// on any streamer until one is wired to the ring (see the module
+    /// header).
     pub fn from_env() -> Result<Self, String> {
         Self::parse(
             std::env::var("TURBOSPARK_LINUX_IO")

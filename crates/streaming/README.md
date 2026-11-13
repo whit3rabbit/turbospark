@@ -1,6 +1,6 @@
 # turbospark-streaming
 
-Routed-expert weight streaming engine (`PreadExpertStreamer`) for loading MoE expert weights on demand via `pread`, coupled with a per-layer slot cache (`ExpertCache`), a parked worker thread pool for parallel chunk reading (`read_pool.rs`), kernel readahead advice (`rdadvice.rs`), memory-mapped in-place expert reading (`mapped_experts.rs`), and a Linux `io_uring` + `O_DIRECT` read source (`linux_uring.rs`; the ring is proven by a Linux-only test, and nothing selects it yet).
+Routed-expert weight streaming engine (`PreadExpertStreamer`) for loading MoE expert weights on demand via `pread`, coupled with a per-layer slot cache (`ExpertCache`), a parked worker thread pool for parallel chunk reading (`read_pool.rs`), kernel readahead advice (`rdadvice.rs`), memory-mapped in-place expert reading (`mapped_experts.rs`), and a Linux `io_uring` + `O_DIRECT` read source (`linux_uring.rs`; the ring is proven by a Linux-only test, and nothing selects it yet; `TURBOSPARK_LINUX_IO` is parsed but not consumed by any production path, so setting it has no effect).
 
 Downstream workspace crates import this package via the `streaming` alias:
 
