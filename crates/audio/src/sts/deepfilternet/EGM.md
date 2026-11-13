@@ -9,7 +9,7 @@ DeepFilterNet speech enhancement (ERB + deep filtering).
 
 ## Invariants
 - Bad config or tensor shapes surface as `SpeechError` (Audio, BadConfig, Tensor) at load or call time, not as panics [mod.rs:open].
-- `enhance` expects 48 kHz mono input and neither checks nor resamples; config `sample_rate` is read only in `open`, where it feeds the normalization smoothing constant [mod.rs:open].
+- `open` refuses a config `sample_rate` other than 48000 with `BadConfig` before reading weights [mod.rs:open]. `enhance` takes no rate argument: it expects 48 kHz mono input and neither checks nor resamples [mod.rs:enhance].
 - Inference is CPU f32 over host `Vec<f32>` buffers; no GPU state is held here.
 
 ## Side Effects
