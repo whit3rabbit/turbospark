@@ -3,7 +3,7 @@
 //!
 //! A direct port of `_smart_resize_image` in mlx-vlm's
 //! `processing_qwen3_vl.py`, which is itself HF's `smart_resize`. Adapted from
-//! the sconce vision crate (see `NOTICE`), with sconce's extra final clamp
+//! the sconce vision crate (see `NOTICE` at the repository root), with sconce's extra final clamp
 //! dropped -- see [`resized_dims`].
 
 use crate::error::VisionIoError;

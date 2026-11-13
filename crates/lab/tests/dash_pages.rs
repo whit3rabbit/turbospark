@@ -420,6 +420,12 @@ async fn the_loopback_router_refuses_a_foreign_host() {
     // A rebound DNS name arrives with its own Host and is refused.
     let r = app.clone().oneshot(get("evil.example")).await.unwrap();
     assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    // The refusal is hardened like any other response.
+    assert_eq!(r.headers()["x-content-type-options"], "nosniff");
+    assert!(r.headers()["content-security-policy"]
+        .to_str()
+        .unwrap()
+        .contains("default-src 'none'"));
     let r = app.clone().oneshot(get("evil.example:7878")).await.unwrap();
     assert_eq!(r.status(), StatusCode::FORBIDDEN);
     // Text after a bracketed IPv6 literal other than a port is not loopback,

@@ -9,11 +9,13 @@
 //! the format contract and the field rules this module enforces.
 //!
 //! The verified baseline is embedded into the binary at compile time
-//! ([`PinnedSet::embedded`]), so it travels with `tslab`. A sweep layers
-//! tweaked copies over it through [`PinnedSet::load_dir`] and
-//! [`PinnedSet::with_overlay`]: copy an entry, change the fields the sweep
-//! varies, load the directory, and the colliding id replaces the embedded
-//! baseline for that process.
+//! ([`PinnedSet::embedded`]), so it travels with `tslab`. A tweaked copy can
+//! be layered over it through [`PinnedSet::load_dir`] and
+//! [`PinnedSet::with_overlay`]: copy an entry, change the fields, load the
+//! directory, and the colliding id replaces the embedded baseline for that
+//! process. Today only `tslab pinned --dir` loads a directory, and
+//! `with_overlay` has no caller outside tests: `tslab sweep` does not read
+//! pinned sets.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;

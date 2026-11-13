@@ -21,7 +21,7 @@ Port of mlx-audio Voxtral Mini 3B speech understanding: a Whisper-large-v3 style
 - Linear loads check `[output, input]` shape; projectors must carry no bias [mod.rs:Linear::load] [mod.rs:Voxtral::load]
 - Tower output steps must divide by 4 (FRAMES_PER_MERGE) and the prompt must contain exactly `groups` audio-token ids, else `SpeechError::Input` [mod.rs:Voxtral::transcribe]
 - Decoding is greedy, capped at 128 tokens, stops on token id <= 2; no max_tokens parameter [mod.rs:Voxtral::transcribe]
-- No empty or finite-sample check on input audio [mod.rs:compute_features]
+- `Voxtral::transcribe` refuses empty and non-finite audio with `SpeechError::Input` [mod.rs:validate_samples]; the public `compute_features` itself does not check (callers using it directly must)
 - Audio tower attention applies no mask and no RoPE; query is pre-scaled [mod.rs:AudioAttention::forward]
 
 ## Side Effects

@@ -1,9 +1,15 @@
 //! Rescue strategies for tool-call dialects [`forge_guardrails`] does not
 //! know, tried BEFORE its own strategies.
 //!
-//! Four families emit calls in markup that neither this engine's native
-//! per-dialect parsers nor forge's four strategies (bare JSON, rehearsal,
-//! Qwen XML, Mistral bracket) match. Grammars verified 2026-09-06 against
+//! Four families (GLM, MiniMax, Kimi K2, Longcat) emit calls in markup that
+//! neither this engine's native per-dialect parsers nor forge's four
+//! strategies (bare JSON, rehearsal, Qwen XML, Mistral bracket) match.
+//! `rescue` tries five strategies in order: `parse_glm`,
+//! `parse_invoke_parameters` (MiniMax), `parse_qwen_xml`, `parse_gemma`, and
+//! `parse_kimi`. The Qwen XML and Gemma strategies are not one of the four
+//! families below: they catch those two dialects' call forms when they reach
+//! the rescue tier as plain text (see their own docs). Longcat has no
+//! strategy here (see its entry). Grammars verified 2026-09-06 against
 //! each checkpoint's published `chat_template.jinja`, not against the
 //! compressed table OLMX keeps (which also mislabels Gemma's real format --
 //! this repo's `GemmaToolCallParser` is checked against the real installed

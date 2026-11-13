@@ -20,13 +20,16 @@
 //!
 //! # Two orders that must not be confused
 //!
-//! Every per-patch sequence in this crate -- patch rows, pos-embed entries,
-//! rope frequency rows -- is emitted in **merge-window order**: the patch grid
+//! On the Qwen path, every per-patch sequence -- patch rows, pos-embed
+//! entries, rope frequency rows -- is emitted in **merge-window order**: the
+//! patch grid
 //! is cut into `merge_size x merge_size` windows and one whole window is
 //! emitted before the next, `(t, wy, wx, ly, lx)`. That is the order the
-//! spatial-merge step reads.
+//! spatial-merge step reads. Muse emits raster order with `(T, C, P_h, P_w)`
+//! rows (`muse.rs`) and Gemma 4 emits row-major `[16][16][RGB]` rows with no
+//! temporal axis (`gemma4.rs`); neither uses merge-window order.
 //!
-//! Inside one patch row the feature order is **`(T, P_h, P_w, C)`**, and this
+//! Inside one Qwen patch row the feature order is **`(T, P_h, P_w, C)`**, and this
 //! is where this crate DIFFERS from the reference. mlx-vlm's `pixel_values`
 //! ship `(C, T, P_h, P_w)`. The tower's `patch_embed.proj.weight` is stored
 //! `[1152, 2, 16, 16, 3]`, i.e. `[out, T, P, P, C]`, so emitting `(T,P,P,C)`

@@ -56,7 +56,6 @@ def main() -> None:
 
     clips = json.loads(a.manifest.read_text())
     checked = set()
-    failures = []
     for clip in clips:
         meeting = clip["meeting"]
         src = a.ami.expanduser() / f"{meeting}.Mix-Headset.wav"
@@ -81,9 +80,10 @@ def main() -> None:
         ok = got == clip["audio_sha256"]
         print(("OK  " if ok else "BAD ") + clip["id"], got)
         if not ok:
-            failures.append(clip["id"])
-    if failures:
-        raise SystemExit(f"{len(failures)} clip(s) do not match the frozen sha256: {failures}")
+            # Stop at the first mismatch, as the docstring says, and do not
+            # leave the wrong WAV where a later run could pick it up.
+            dest.unlink()
+            raise SystemExit(f"{clip['id']}: sha256 {got} != frozen {clip['audio_sha256']}")
     print(f"all {len(clips)} clips match the frozen manifest")
 
 

@@ -13,7 +13,9 @@ pub enum VisionIoError {
     /// The image bytes could not be decoded. `detail` is the decoder's own
     /// message, which names the format it tried.
     Decode { detail: String },
-    /// A decoded image exceeds the per-side cap.
+    /// A decoded image exceeds the per-side cap. Declared but never
+    /// constructed today: oversize images are refused earlier by the image
+    /// decoder's `Limits` and surface as [`VisionIoError::Decode`].
     ImageTooLarge {
         width: u32,
         height: u32,

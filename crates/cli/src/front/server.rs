@@ -19,7 +19,7 @@ struct Snapshot {
 }
 
 fn snapshot() -> Option<Snapshot> {
-    let pid = daemon::get_running_pid()?;
+    let pid = daemon::live_pid()?;
     let server = daemon::running_server()?;
     Some(Snapshot {
         pid,

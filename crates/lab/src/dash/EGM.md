@@ -14,7 +14,7 @@ A read-only, server-rendered dashboard over the lab dir: experiments table, char
 ## Invariants
 - GET-only: only `get(...)` routes are registered [src/dash/mod.rs:router].
 - On a loopback bind, a non-loopback Host header gets 403 (DNS rebinding defense) [src/dash/mod.rs:hardening] [src/dash/mod.rs:host_is_loopback].
-- Every response that reaches a route carries `nosniff` and a CSP with `default-src 'none'`; the 403 Host refusal returns first and carries neither [src/dash/mod.rs:hardening].
+- Every response, including the 403 Host refusal, carries `nosniff` and a CSP with `default-src 'none'` [src/dash/mod.rs:hardening].
 - A non-loopback `--bind` turns the Host check off and the dashboard has no authentication; `serve_cmd` prints a warning [src/dash/mod.rs:serve_cmd].
 - The index is rebuilt only when a ledger's size or mtime moves [src/dash/index.rs:LabIndex].
 

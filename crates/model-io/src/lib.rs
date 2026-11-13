@@ -4,8 +4,10 @@
 //! buffer wrapping, which belongs to the `gpu` crate in a later phase).
 //!
 //! Unlike the earlier phases, this crate is allowed a narrow amount of
-//! `unsafe` (the `mmap` call in `resident_buffer` and the `statvfs` call in
-//! `disk_space`) and platform assumptions (4 KiB pages), per the workspace's
+//! `unsafe` (the `mmap` call and the `sysconf(_SC_PAGESIZE)` query in
+//! `resident_buffer`, and the `statvfs` call in `disk_space`) and platform
+//! assumptions (the manifest check floors expert-stride alignment at 4 KiB
+//! while the mmap path queries the real page size), per the workspace's
 //! cross-cutting rule that model I/O and streaming are where that trade-off
 //! is made.
 
