@@ -138,7 +138,7 @@ Front end routing commands to peer binaries:
 
 ```sh
 turbospark run gemma4                         # Alias for turbospark-check --chat
-turbospark run gemma4 "hello"                 # Alias for turbospark-check --prompt
+turbospark run gemma4 "hello"                 # Alias for turbospark-check with the chat template (--raw: --prompt)
 turbospark image --prompt "mars"              # Alias for turbospark-image
 turbospark serve                              # Launches turbospark-server
 turbospark serve --stt-model whisper-base-en  # Serves STT alongside chat or standalone
