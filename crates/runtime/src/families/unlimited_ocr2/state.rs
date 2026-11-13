@@ -127,7 +127,7 @@ impl RealUnlimitedOcr2State {
         }
         let lead = validate_dense_lead(arch)?;
         let num_layers = arch.num_layers as usize;
-        let top_k = validate_top_k(arch)?;
+        validate_top_k(arch)?;
         let head_dim = arch.head_dim as usize;
         let hidden = arch.hidden_size as usize;
         let dash =
