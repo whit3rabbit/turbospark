@@ -11,7 +11,7 @@ Tokenizer wrapper and chat-dialect resolution. The dialect decides special-token
 ## Invariants
 - A dialect that lacks a special token resolves its id to `NO_SUCH_TOKEN_ID` rather than failing, so markup flows as text [mod.rs:NO_SUCH_TOKEN_ID].
 - Required tokens missing from a vocabulary raise `MissingSpecialToken` [resolve.rs:required_id].
-- A generation_config EOS list over 256 ids is rejected, not truncated: the parse error makes [mod.rs:read_generation_config] return `None`, so the whole file is ignored and no extra EOS ids are added [config.rs:MAX_EOS_TOKEN_IDS]. Accepted lists are filtered to the vocabulary range before joining `stop_token_ids` [config.rs:MAX_EOS_TOKEN_IDS], [mod.rs:MfTokenizer].
+- A generation_config EOS list over 256 ids is dropped, not truncated: it parses as `EosTokenIds::TooMany(count)`, contributes no extra EOS ids (as if `eos_token_id` were absent), and [mod.rs:read_generation_config] prints one stderr warning naming the count and cap. The rest of the file still parses [config.rs:MAX_EOS_TOKEN_IDS], [config.rs:EosTokenIds]. Accepted lists are filtered to the vocabulary range before joining `stop_token_ids` [config.rs:MAX_EOS_TOKEN_IDS], [mod.rs:MfTokenizer].
 - Dialect resolution decides ids and stops only; framing is the checkpoint template's job [mod.rs] (module doc).
 
 ## Side Effects

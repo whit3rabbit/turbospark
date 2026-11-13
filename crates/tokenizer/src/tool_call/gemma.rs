@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{ParsedToolCall, MAXIMUM_BYTES};
+use super::{is_valid_function_name, ParsedToolCall, MAXIMUM_BYTES};
 use crate::error::ToolCallParserError;
 use crate::json_value::{JsonValue, MAXIMUM_DEPTH};
 
@@ -37,6 +37,11 @@ impl GemmaToolCallParser {
         let mut parser = Parser::new(text);
         parser.consume("call:")?;
         let name = parser.identifier()?;
+        // The identifier grammar admits Unicode alphanumerics and any length,
+        // so apply the shared name check like every other dialect does.
+        if !is_valid_function_name(&name) {
+            return Err(ToolCallParserError::Malformed);
+        }
         if !allowed_tools.contains(&name) {
             return Err(ToolCallParserError::UnknownTool(name));
         }
