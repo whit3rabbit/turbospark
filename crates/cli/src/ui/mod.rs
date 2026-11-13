@@ -5,7 +5,9 @@
 //! marks are `+`, `>`, `!` and `*`, and color carries the emphasis. Color is
 //! decided per stream, so `turbospark ls | less` stays plain while its
 //! stderr notes stay styled, and it is off under `NO_COLOR` and `TERM=dumb`.
-//! `CLICOLOR_FORCE` turns it on for a pager that understands it.
+//! `CLICOLOR_FORCE` (any non-empty value other than `0`) is checked first, so
+//! it turns color on for a pager that understands it even when `NO_COLOR` or
+//! `TERM=dumb` is set, and on a stream that is not a terminal.
 //!
 //! Nothing here decides anything. A view computes its rows and hands them
 //! over; a `--json` view never comes through this module at all.
@@ -23,6 +25,8 @@ pub enum Stream {
 }
 
 /// Whether `stream` gets ANSI styling, from the environment and the stream.
+/// Precedence: `CLICOLOR_FORCE` (non-empty, not `0`) wins over everything,
+/// then `NO_COLOR`, then `TERM=dumb`, then whether the stream is a terminal.
 pub fn color_enabled(stream: Stream) -> bool {
     let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
     if var("CLICOLOR_FORCE").is_some_and(|v| v != "0") {

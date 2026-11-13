@@ -40,8 +40,9 @@ they share: pooling, L2 and Matryoshka normalization, cosine and ColVision
 - Shape-check every load (`weights::Weights::load`). A config that
   disagrees with the checkpoint must fail at load.
 - MLX affine checkpoints dequantize at load. Quantized embedding tables
-  stay packed and dequantize per gathered row. Refuse any quantization
-  mode other than affine.
+  stay packed and dequantize per gathered row. Refuse any explicit
+  quantization mode other than affine. An absent `mode` key is read as
+  affine (older MLX configs omit it).
 - Refuse config values a family has not implemented (activation, pooling
   mode, fusion, softcapping) instead of ignoring them.
 - One cargo feature per family, all default. Shared modules must build with

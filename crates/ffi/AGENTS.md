@@ -12,7 +12,9 @@ The C ABI used by the Swift package and macOS app.
 
 - Unsafe code is expected here because the ABI receives raw pointers. Every
   exported entry point must stay inside the ABI guard and must not unwind across
-  `extern "C"`.
+  `extern "C"`. The two deliberate exceptions are `ts_last_error` (it must not
+  clear the slot it reads) and `ts_peak_footprint_bytes` (nothing in it can
+  fail), both unguarded in `api/core.rs`; add no third.
 - Keep the handwritten `turbospark.h` synchronized with the Rust wire
   contract. Rust tests alone do not validate the copied Swift header.
 - Trace enum strings and capability predicates through both Rust and Swift.

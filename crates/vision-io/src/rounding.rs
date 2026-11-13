@@ -1,6 +1,6 @@
 //! Python's `round()` convention.
 //!
-//! Adapted from the sconce vision crate (see `NOTICE`).
+//! Adapted from the sconce vision crate (see `NOTICE` at the repository root).
 
 /// Round half to even ("banker's rounding"), which is what Python's built-in
 /// `round()` does and what `f64::round` does NOT.

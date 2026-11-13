@@ -552,6 +552,23 @@ fn channels_first(x: &[f32], steps: usize, channels: usize) -> Vec<f32> {
     out
 }
 
+/// Refuse input the frontend would turn into a confident-looking transcript
+/// of nothing: empty audio (all padding) and NaN or infinite samples (which
+/// poison the peak and every mel value).
+fn validate_samples(samples: &[f32]) -> Result<()> {
+    if samples.is_empty() {
+        return Err(SpeechError::Input {
+            why: "empty audio".to_string(),
+        });
+    }
+    if let Some(i) = samples.iter().position(|v| !v.is_finite()) {
+        return Err(SpeechError::Input {
+            why: format!("non-finite sample at index {i}"),
+        });
+    }
+    Ok(())
+}
+
 /// Whisper feature extractor: zero-pad to the 30 s window, centered reflect
 /// STFT (400/160, full Hann frame), power, Slaney 128-band mel, drop the
 /// trailing frame, log10 clamp, peak - 8 floor, `(x + 4) / 4`.
@@ -697,6 +714,7 @@ impl Voxtral {
 
     /// Transcribe one mono 16 kHz waveform.
     pub fn transcribe(&self, samples: &[f32], prompt_ids: &[i32]) -> Result<String> {
+        validate_samples(samples)?;
         let (features, frames) = compute_features(samples)?;
         let tower_out = self.tower.forward(&features, frames)?;
         let steps = tower_out.len() / self.config.d_model;
@@ -1069,5 +1087,23 @@ mod tests {
             .collect();
         eprintln!("voxtral gated test: transcript {transcript:?}");
         let _ = expected_generated;
+    }
+
+    #[test]
+    fn empty_and_non_finite_audio_are_refused() {
+        use super::validate_samples;
+        assert!(matches!(
+            validate_samples(&[]),
+            Err(crate::SpeechError::Input { .. })
+        ));
+        assert!(matches!(
+            validate_samples(&[0.0, f32::NAN]),
+            Err(crate::SpeechError::Input { .. })
+        ));
+        assert!(matches!(
+            validate_samples(&[f32::INFINITY]),
+            Err(crate::SpeechError::Input { .. })
+        ));
+        assert!(validate_samples(&[0.0, 0.5, -1.0]).is_ok());
     }
 }

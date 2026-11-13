@@ -111,7 +111,8 @@ impl fmt::Display for ModelError {
             }
             ModelError::ExpertStrideNotPageAligned { stride, page_size } => write!(
                 f,
-                "expertStride {stride} is not a multiple of page size {page_size}"
+                "expertStride {stride} is not a multiple of {page_size} (the minimum alignment \
+                 this check enforces; Apple Silicon pages and the writer use 16 KiB)"
             ),
             ModelError::MissingFile { name } => {
                 write!(f, "model.gturbo is missing required file {name}")

@@ -75,7 +75,13 @@ def main():
     by_id = {c["id"]: c for c in clips}
     groups = defaultdict(list)
     for seg in json.loads(a.seglst.read_text()):
-        groups[str(seg["session_id"])].append(seg)
+        sid = str(seg["session_id"])
+        # Same guard as seglst::group_by_session in the Rust scorer: a segment
+        # for a session that is not a manifest clip is a cross-clip
+        # attribution mistake, never silently dropped.
+        if sid not in by_id:
+            raise SystemExit(f"unexpected SegLST session id {sid!r}")
+        groups[sid].append(seg)
     tot_e = tot_d = 0
     for cid in wanted:
         e, d, nr, nh = cpwer(by_id[cid]["reference_words"], groups.get(cid, []))

@@ -9,7 +9,8 @@ Dev-only Python helpers for the Frozen E meeting-scoring fixtures: derive the co
 - `frozen_e_score.py`: reference cpWER scorer (`tokens`, `edit`, `cpwer`) copied from the frozen notebook [frozen_e_score.py:cpwer].
 
 ## Invariants
-- Source Mix-Headset WAVs must match `MEETING_SHA256` before cutting, or the script stops at once. An output clip that mismatches prints BAD, the remaining clips are still cut, and the exit is non-zero only at the end [prepare_frozen_e_clips.py:sha256, prepare_frozen_e_clips.py:main].
+- Source Mix-Headset WAVs must match `MEETING_SHA256` before cutting, or the script stops at once. An output clip that mismatches prints BAD, its WAV is deleted, and the script stops at that clip with a non-zero exit [prepare_frozen_e_clips.py:sha256, prepare_frozen_e_clips.py:main].
+- `frozen_e_score.py` refuses (`SystemExit`) any SegLST `session_id` that is not a manifest clip, matching `seglst::group_by_session`; a manifest clip with no segments still scores as all-deleted [frozen_e_score.py:main].
 - Scorer logic is unchanged from the frozen notebook; the Rust scorer in [../src/meeting/EGM.md](../src/meeting/EGM.md) must agree with it [frozen_e_score.py:cpwer].
 - No audio is written by the import script [import_frozen_e_evidence.py:main].
 - Dependencies: `frozen_e_score.py` needs numpy and scipy; `prepare_frozen_e_clips.py` needs soundfile (its header says to use the pinned venv `crates/audio/scripts/nemo_218d0b4`); `import_frozen_e_evidence.py` is stdlib only [frozen_e_score.py:cpwer, prepare_frozen_e_clips.py:main].

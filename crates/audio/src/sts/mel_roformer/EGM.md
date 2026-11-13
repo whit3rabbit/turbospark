@@ -10,7 +10,7 @@ Mel-Band RoFormer source separation model.
 - `MelRoFormer::forward`
 
 ## Invariants
-- Bad config or tensor shapes surface as `SpeechError` (BadConfig, Input, Tensor, Unsupported) at load or call time [mod.rs:load]. Exception: `BandGeometry::build` `.expect`s the Slaney filterbank, so a rejected band/FFT combination panics in `load` [mod.rs:BandGeometry::build].
+- Bad config or tensor shapes surface as `SpeechError` (BadConfig, Input, Tensor, Unsupported) at load or call time [mod.rs:load]. A filterbank the DSP layer rejects (for example a sample rate above 768 kHz, which `validate` allows) returns `BadConfig` from `BandGeometry::build` instead of panicking [mod.rs:BandGeometry::build].
 - Inference is CPU f32 over host `Vec<f32>` buffers; no GPU state is held here.
 
 ## Side Effects

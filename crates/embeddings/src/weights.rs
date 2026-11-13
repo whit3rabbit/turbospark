@@ -304,6 +304,9 @@ pub fn quant_scheme(config: &serde_json::Value) -> Result<Option<QuantScheme>, E
             crate::error::bad_config(&format!("quantization.{k}"), "missing or not an integer")
         })
     };
+    // An absent `mode` is read as affine on purpose: older MLX configs (and
+    // the in-repo tiny_xlmr_mlx_q6 fixture) omit it, and affine is the MLX
+    // default. Only an explicit non-affine mode is refused.
     if let Some(mode) = q.get("mode").and_then(serde_json::Value::as_str) {
         if mode != "affine" {
             return Err(EmbeddingError::Unsupported {

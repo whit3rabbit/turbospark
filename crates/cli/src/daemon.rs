@@ -110,18 +110,31 @@ pub fn is_pid_alive(_pid: i32) -> bool {
     false
 }
 
-/// Read the PID file, verifying whether the recorded process is alive.
-pub fn get_running_pid() -> Option<i32> {
-    let path = pid_file();
-    let text = fs::read_to_string(&path).ok()?;
+/// Read the pid file at `path` and report the pid only if that process is
+/// alive. Never touches the filesystem beyond the read, so read-only commands
+/// (`status`, `ps`) can use it without changing state.
+fn live_pid_at(path: &Path) -> Option<i32> {
+    let text = fs::read_to_string(path).ok()?;
     let pid = text.trim().parse::<i32>().ok()?;
-    if is_pid_alive(pid) {
-        Some(pid)
-    } else {
-        let _ = fs::remove_file(&path);
+    is_pid_alive(pid).then_some(pid)
+}
+
+/// The running daemon's pid, or `None`, WITHOUT cleaning up a stale pid file.
+/// Use this from read-only commands.
+pub fn live_pid() -> Option<i32> {
+    live_pid_at(&pid_file())
+}
+
+/// Read the PID file, verifying whether the recorded process is alive. A dead
+/// pid deletes the pid and meta files, so only mutating paths (`start`,
+/// `stop`, the launcher) call this; read-only paths use [`live_pid`].
+pub fn get_running_pid() -> Option<i32> {
+    let pid = live_pid();
+    if pid.is_none() && pid_file().exists() {
+        let _ = fs::remove_file(pid_file());
         let _ = fs::remove_file(meta_file());
-        None
     }
+    pid
 }
 
 fn extract_port(args: &[String]) -> u16 {
@@ -163,12 +176,11 @@ pub struct RunningServer {
     pub model: Option<String>,
 }
 
-/// The running daemon, or `None` when no pid file survives liveness (a dead
-/// pid cleans up its own pid and meta files, matching [`get_running_pid`]).
+/// The running daemon, or `None` when no pid file survives liveness. Read-only:
+/// a stale pid file is left for `start`/`stop` to clean up, so `status` and
+/// `ps` do not change state.
 pub fn running_server() -> Option<RunningServer> {
-    // The call itself is the gate: a dead pid cleans up its own pid and
-    // meta files and returns None.
-    get_running_pid()?;
+    live_pid()?;
     let text = fs::read_to_string(meta_file()).ok()?;
     let value = serde_json::from_str::<serde_json::Value>(&text).ok()?;
     let port = value["port"].as_u64()? as u16;
@@ -229,6 +241,26 @@ fn private_open_options() -> OpenOptions {
     options
 }
 
+/// Open the server log for append, owner-only (the log can carry prompts and
+/// request detail). The mode applies at creation and a file left by an older
+/// build with default permissions is tightened.
+fn open_private_log(path: &Path) -> Result<fs::File, std::io::Error> {
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let file = options.open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(file)
+}
+
 fn write_private_file(path: PathBuf, contents: &[u8]) -> Result<(), std::io::Error> {
     use std::io::Write;
 
@@ -271,10 +303,7 @@ pub fn start(args: &[String]) -> Result<(), String> {
         .map_err(|e| format!("creating logs directory {}: {e}", logs.display()))?;
 
     let log_path = log_file();
-    let log_handle = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
+    let log_handle = open_private_log(&log_path)
         .map_err(|e| format!("opening log file {}: {e}", log_path.display()))?;
 
     let server_bin = find_server_binary();
@@ -452,6 +481,51 @@ mod tests {
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600
         );
+        fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn server_log_is_owner_only_even_when_it_already_exists() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = std::env::temp_dir().join(format!(
+            "turbospark-private-log-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let _ = fs::remove_file(&path);
+        fs::write(&path, b"old\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        drop(open_private_log(&path).unwrap());
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600);
+        fs::remove_file(&path).unwrap();
+
+        // Fresh creation gets 0600 whatever the umask says.
+        drop(open_private_log(&path).unwrap());
+        assert_eq!(mode(&path), 0o600);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn live_pid_lookup_leaves_a_stale_pid_file_alone() {
+        let path = std::env::temp_dir().join(format!(
+            "turbospark-stale-pid-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead = child.id() as i32;
+        child.wait().unwrap();
+        fs::write(&path, format!("{dead}\n")).unwrap();
+
+        assert_eq!(live_pid_at(&path), None);
+        assert!(path.exists(), "a read-only lookup must not delete state");
+
+        fs::write(&path, format!("{}\n", std::process::id())).unwrap();
+        assert_eq!(live_pid_at(&path), Some(std::process::id() as i32));
         fs::remove_file(path).unwrap();
     }
 }
