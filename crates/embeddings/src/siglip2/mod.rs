@@ -216,6 +216,12 @@ impl Siglip2 {
     }
 
     /// The 64 ids the reference processor feeds the text tower.
+    ///
+    /// The `TEXT_MAX_LENGTH` versus `max_position_embeddings` check runs
+    /// here, on the first call, and not in [`Siglip2::load`]. That is
+    /// deliberate: a checkpoint with a shorter text tower still serves
+    /// [`Siglip2::embed_ids`] with caller-supplied ids, so refusing it at
+    /// load would lose a working path. The pinned checkpoint holds 64.
     pub fn tokenize(&self, text: &str) -> Result<Vec<u32>> {
         let tok = self
             .tokenizer

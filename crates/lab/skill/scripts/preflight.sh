@@ -22,14 +22,24 @@ else
     bad "not on AC power: plug in, or pass --allow-battery to tslab and say so"
 fi
 
-# Processes the guard counts as foreign (host.rs MODEL_PROCESS_NAMES and the
-# rustc check), plus cargo and xctrace, which start them. Matched on the
-# first word of the command line's basename, so a path containing "cargo" does
-# not match. `comm` is cut to 16 characters on macOS, so it cannot be used.
-busy=$(ps -axwwo command= 2>/dev/null | awk '{print $1}' | sed 's|.*/||' | sort | uniq -c | awk '
-    $2 ~ /^(rustc|cargo|xctrace|tslab|mlx_lm|mlx-lm|llama-server|llama-cli|mference|ollama|kapitsa|turbospark-server|turbospark-bench|turbospark-check|turbospark-startup-probe|tslab-worker|memory_oracle|quality_gate)$/ {
-        printf "%s x%s ", $2, $1
-    }')
+# Processes the guard counts as foreign (host.rs MODEL_MARKERS and the rustc
+# check), plus cargo, xctrace and tslab, which start them. Like the guard, this
+# reads `comm` (the full executable path on macOS, not truncated) and flags any
+# path containing a MODEL_MARKERS fragment, lowercased, so test binaries such
+# as target/debug/deps/x_gate-<hash> are caught. The list below is a copy of
+# host.rs MODEL_MARKERS: tests/preflight_script.rs fails when the two differ.
+MODEL_MARKERS='mlx_lm mlx-lm llama-server llama-cli mference ollama kapitsa turbospark-server turbospark-bench turbospark-check turbospark-startup-probe tslab-worker memory_oracle quality_gate _probe- _gate- _oracle- _bench-'
+busy=$(ps -axwwo comm= 2>/dev/null | awk -v markers="$MODEL_MARKERS" '
+    BEGIN { n = split(markers, frag, " ") }
+    {
+        base = $0
+        sub(/.*\//, "", base)
+        hit = (base ~ /^(rustc|cargo|xctrace|tslab)$/)
+        lower = tolower($0)
+        for (i = 1; i <= n && !hit; i++) if (index(lower, frag[i]) > 0) hit = 1
+        if (hit) count[base]++
+    }
+    END { for (b in count) printf "%s x%s ", b, count[b] }')
 if [ -z "$busy" ]; then
     ok "no build, trace or other model process running"
 else

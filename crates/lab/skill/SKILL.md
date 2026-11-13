@@ -64,7 +64,8 @@ names the metric it used (`metric DecodeTokS`); read it before quoting. In
 zsh, hold `W` in an array (`W=(--prompt protocol:long-synthesis --decode
 128)`, then `$W`): a plain string reaches tslab as one argument.
 
-Exit codes: 0 ok or keep, 1 error, 2 usage, 3 discard, 4 inconclusive. On 4
+Exit codes: 0 ok or keep, 1 error (including an unknown command or bad
+flag), 2 bare `tslab` with no arguments, 3 discard, 4 inconclusive. On 4
 the host was busy: fix it and rerun the same command. Never revert on 4, and
 never rerun a NOISE verdict until it wins.
 
