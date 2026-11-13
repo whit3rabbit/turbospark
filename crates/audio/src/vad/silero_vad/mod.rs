@@ -442,9 +442,9 @@ pub struct SileroVad {
 }
 
 impl SileroVad {
-    /// Loads from a directory holding `model.safetensors` (and an
-    /// optional `config.json`; the branch shapes are validated against
-    /// the weights themselves).
+    /// Loads from a directory holding `model.safetensors`. No
+    /// `config.json` is opened or required (a present one is ignored);
+    /// the branch shapes are validated against the weights themselves.
     pub fn load(dir: &std::path::Path) -> Result<Self> {
         let file = SafetensorsFile::open(&dir.join("model.safetensors"))?;
         let vad_16k = Branch::load(&file, "vad_16k")?;
