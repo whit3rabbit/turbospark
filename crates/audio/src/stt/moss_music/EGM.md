@@ -27,7 +27,6 @@ Lyrics transcription for the pinned MOSS-Music 8B Thinking 4-bit checkpoint. The
 ## Side Effects
 - Reads `config.json` and opens `model.safetensors` from the supplied model dir, tokenizer loaded via `load_tokenizer` [mod.rs:MossMusic::load]
 - Dequantizes weights to f32 in memory (large resident footprint, the ignored test notes about 40 GiB) [mod.rs:Linear::load_plain] [mod.rs:GatedMlp::load]
-- `strip_thinking` leaks one heap string per call when a closed `<think>` block is removed (`Box::leak`) [mod.rs:strip_thinking]
 - No env vars, threads, GPU use, or global statics in non-test code, the gated test reads `TURBOSPARK_MOSS_MUSIC_MODEL_DIR` [mod.rs:tests]
 
 ## Verification

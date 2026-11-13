@@ -840,7 +840,7 @@ public enum AppToolRegistry {
                 output = try TaskManager.executeStop(arguments: call.arguments, chatID: chatID)
 
             case "taskoutput", "task_output":
-                output = try TaskManager.executeOutput(arguments: call.arguments)
+                output = try await TaskManager.executeOutput(arguments: call.arguments)
 
             case "croncreate", "cron_create":
                 output = try CronScheduler.executeCreate(arguments: call.arguments, chatID: chatID)

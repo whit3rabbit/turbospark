@@ -4,7 +4,7 @@
 Subcommand implementations for the `turbospark-model` binary. Each module prints or drives something that the `catalog` crate decides. This layer picks column widths, prompts, progress bars and exit errors. It does not own verdict or install logic.
 
 ## Interface
-- [mod.rs:list_speech], [mod.rs:list], [mod.rs:info], [mod.rs:probe], [mod.rs:path], [mod.rs:remove], [mod.rs:pull], [mod.rs:pull_image], [mod.rs:pull_vision]: catalog listing, probe, and install entry points.
+- [mod.rs:list_speech], [mod.rs:list], [mod.rs:info], [mod.rs:probe], [mod.rs:path], [mod.rs:remove], [mod.rs:pull], [mod.rs:pull_image], [mod.rs:pull_vision], [mod.rs:recommend]: catalog listing, probe, and install entry points.
 - [mod.rs:INTERRUPTED] and [mod.rs:install_sigint_handler]: Ctrl-C flag shared by audio pull, drama3 pull and move.
 - [audio.rs:list_audio], [audio.rs:pull_audio], [audio.rs:path_audio], [audio.rs:remove_audio]: audio model install management.
 - [auth.rs:auth]: Hugging Face token inspect, set (stdin), and clear.

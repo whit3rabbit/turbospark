@@ -14,6 +14,9 @@ Pure command-line grammar for the engine: option table, parser, validated reques
 ## Invariants
 - A value-taking option consumes the very next token whatever its text; a help token short-circuits ahead of all whole-invocation checks; those checks run in one fixed order and only the first failure is reported [parser.rs:parse].
 - Help and Version are distinct outcomes, both exit 0 on stdout [parser.rs:ParseOutcome].
+- `--help` and `--version` act only when the scan reaches them: an earlier unknown option, missing value or invalid value wins over a later help or version token [parser.rs:parse].
+- `--system` values are joined with a newline in supplied order. `--stop`, `--image` and the steering lists are repeatable and order-preserving: the i-th knob value pairs with the i-th `--steering` path, and a shorter knob list extends by its last value [parser.rs:parse, request.rs:steering_knob].
+- `--vision-sidecar` is an opaque path; the literal `auto` is read as a path, not a keyword. A sub-1.0 `--top-p` with `--top-k 0` is accepted [parser.rs:parse].
 - Only two exit statuses: Success is 0 and InvalidInvocation is 2 [diagnostics.rs:ExitStatus].
 - `DEFAULT_MAX_CONTEXT`, the adaptive-cap bounds, `ALLOWED_SPECULATION_BLOCKS`, `SteeringMode`, the accepted sets `ALLOWED_CACHE_SLOTS` and `ALLOWED_CHUNK_SIZES`, and the prefill-chunk default `DEFAULT_CHUNK_SIZE` come from `foundation` (the turbospark-core crate); the other defaults are literals in this crate. Keep the literals in step with the CLI docs [request.rs:DEFAULT_MAX_NEW].
 - Mode and pairing: `--model` is required (MissingRequired). Exactly one of `--prompt`, `--messages-file`, `--humanize-file` or `--chat` is required (NoModeSelected), and any two are MutuallyExclusive. `--system` is accepted only in chat mode (InvalidValue) [parser.rs:parse].

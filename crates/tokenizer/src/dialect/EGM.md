@@ -5,13 +5,13 @@ Tokenizer wrapper and chat-dialect resolution. The dialect decides special-token
 
 ## Interface
 - [mod.rs:ChatDialect] (Gemma, ChatMl, Deepseek, Mistral, Harmony, MuseGlimmer, and more; `tool_call_support`, `tool_call_unsupported_reason`), [mod.rs:ToolCallSupport], [mod.rs:NO_SUCH_TOKEN_ID].
-- [mod.rs:MfTokenizer]: `load_from_dir`, `encode`, `decode`, `token_to_id`, `id_to_token`. Consumers also read its public fields: `dialect`, `bos_id`, `eos_id`, `pad_id`, `stop_token_ids`, `vocab_size`, and the optional special-token ids such as `think_end_id`.
+- [mod.rs:MfTokenizer]: `load_from_dir`, `encode`, `decode`, `token_to_id`, `id_to_token`. Consumers also read its public fields: `dialect`, `bos_id`, `eos_id`, `pad_id`, `stop_token_ids`, `vocab_size`, and the optional special-token ids such as `end_of_turn_id`, `think_start_id` and `think_end_id`.
 - Crate-private: [config.rs:TokenizerConfig], [config.rs:TokenRef] (config and embedded template loading); [resolve.rs:special_token_id], [resolve.rs:required_id], [resolve.rs:Resolved]; per-dialect resolvers [resolvers.rs:resolve_gemma], [resolvers.rs:resolve_harmony], [resolvers.rs:resolve_mistral]; [minimax.rs] (MiniMax uses checkpoint framing, EOS also serves as padding).
 
 ## Invariants
 - A dialect that lacks a special token resolves its id to `NO_SUCH_TOKEN_ID` rather than failing, so markup flows as text [mod.rs:NO_SUCH_TOKEN_ID].
 - Required tokens missing from a vocabulary raise `MissingSpecialToken` [resolve.rs:required_id].
-- generation_config EOS lists are capped at 256 ids and filtered to the vocabulary range before joining `stop_token_ids` [config.rs:MAX_EOS_TOKEN_IDS], [mod.rs:MfTokenizer].
+- A generation_config EOS list over 256 ids is rejected, not truncated: the parse error makes [mod.rs:read_generation_config] return `None`, so the whole file is ignored and no extra EOS ids are added [config.rs:MAX_EOS_TOKEN_IDS]. Accepted lists are filtered to the vocabulary range before joining `stop_token_ids` [config.rs:MAX_EOS_TOKEN_IDS], [mod.rs:MfTokenizer].
 - Dialect resolution decides ids and stops only; framing is the checkpoint template's job [mod.rs] (module doc).
 
 ## Side Effects

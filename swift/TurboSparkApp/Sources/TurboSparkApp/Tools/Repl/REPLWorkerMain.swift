@@ -118,6 +118,7 @@ enum REPLWorkerMain {
         var worker: REPLWorkerContext?
         var limits = REPLLimits()
         var buffer = Data()
+        var discardingOversizedLine = false
 
         func reply(_ message: ResultMessage) {
             guard let line = try? encoder.encode(message) else { return }
@@ -147,7 +148,30 @@ enum REPLWorkerMain {
             var incoming = [UInt8](repeating: 0, count: 65_536)
             let byteCount = read(STDIN_FILENO, &incoming, incoming.count)
             guard byteCount > 0 else { break }
-            buffer.append(contentsOf: incoming[0..<byteCount])
+            var chunk = Data(incoming[0..<byteCount])
+
+            // Still inside a line already refused as oversized: drop bytes up
+            // to and including its terminating newline so the tail is not
+            // parsed as a request of its own.
+            if discardingOversizedLine {
+                guard let newlineIndex = chunk.firstIndex(of: 0x0A) else { continue }
+                chunk.removeSubrange(chunk.startIndex...newlineIndex)
+                discardingOversizedLine = false
+            }
+            buffer.append(chunk)
+
+            // Bound the buffer before waiting for a newline, as the codemode
+            // loop does: a peer that never terminates its line must not grow
+            // this buffer without limit.
+            if buffer.count > Self.maximumTransportBytes, !buffer.contains(0x0A) {
+                localFailure(
+                    id: -1,
+                    "request of at least \(buffer.count) bytes exceeds the "
+                        + "\(Self.maximumTransportBytes) byte transport limit")
+                buffer.removeAll(keepingCapacity: false)
+                discardingOversizedLine = true
+                continue
+            }
 
             while let newlineIndex = buffer.firstIndex(of: 0x0A) {
                 let lineData = buffer[buffer.startIndex..<newlineIndex]

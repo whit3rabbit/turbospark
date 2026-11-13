@@ -128,6 +128,10 @@ final class BackgroundShellManager: @unchecked Sendable {
     private let lock = NSLock()
     private var records: [String: BackgroundShellRecord] = [:]
     private var nextID = 1
+    /// Launches that passed the cap check but are not yet in `records`.
+    /// Counted against the cap so the check and the reservation are one lock
+    /// hold; without it N threads could all pass the check before any insert.
+    private var pendingLaunches = 0
     /// Set by `AppModel` at init, read under the lock, always dispatched to
     /// the main queue. The kill UI cannot poll the registry from SwiftUI (a
     /// view only re-renders when observed state changes), so every shape
@@ -149,7 +153,7 @@ final class BackgroundShellManager: @unchecked Sendable {
         description: String?
     ) throws -> BackgroundShellRecord {
         lock.lock()
-        let runningCount = records.values.filter { $0.state == .running }.count
+        let runningCount = records.values.filter { $0.state == .running }.count + pendingLaunches
         guard runningCount < Self.maxRunningShells else {
             lock.unlock()
             throw NSError(
@@ -159,12 +163,31 @@ final class BackgroundShellManager: @unchecked Sendable {
                         + "(\(runningCount)). Retrieve or kill one with BashOutput / "
                         + "KillShell before starting another."])
         }
-        let id = "bg_\(nextID)"
+        // The id is allocated only after the cap check passes, so a refused
+        // launch never advances the counter.
+        let idNumber = nextID
+        let id = "bg_\(idNumber)"
         nextID += 1
+        pendingLaunches += 1
         lock.unlock()
 
-        let launch = try ShellNetworkSandbox.launch(
-            executable: URL(fileURLWithPath: "/bin/zsh"), arguments: ["-c", command])
+        // Gives the reservation (and the id, when no later launch has taken
+        // one) back on any failure before the record is inserted.
+        func releaseReservation() {
+            lock.lock()
+            pendingLaunches -= 1
+            if nextID == idNumber + 1 { nextID = idNumber }
+            lock.unlock()
+        }
+
+        let launch: (executable: URL, arguments: [String])
+        do {
+            launch = try ShellNetworkSandbox.launch(
+                executable: URL(fileURLWithPath: "/bin/zsh"), arguments: ["-c", command])
+        } catch {
+            releaseReservation()
+            throw error
+        }
         let process = Process()
         process.executableURL = launch.executable
         process.arguments = launch.arguments
@@ -216,6 +239,7 @@ final class BackgroundShellManager: @unchecked Sendable {
 
         lock.lock()
         records[id] = record
+        pendingLaunches -= 1
         lock.unlock()
         notifyChanged()
 
@@ -251,6 +275,7 @@ final class BackgroundShellManager: @unchecked Sendable {
             // `.running` record whose process does not exist.
             lock.lock()
             records.removeValue(forKey: id)
+            if nextID == idNumber + 1 { nextID = idNumber }
             lock.unlock()
             // No reader was started, so closing every handle is race-free.
             try? stdoutPipe.fileHandleForWriting.close()
@@ -441,6 +466,7 @@ final class BackgroundShellManager: @unchecked Sendable {
         lock.lock()
         let all = Array(records.values)
         records.removeAll()
+        nextID = 1
         lock.unlock()
         for record in all where record.state == .running {
             record.markKilled()

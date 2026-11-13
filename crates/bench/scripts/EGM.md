@@ -4,7 +4,7 @@
 Dev-only Python helpers for the Frozen E meeting-scoring fixtures: derive the committed text fixtures, rebuild the AMI clips, and score a SegLST with the frozen scorer.
 
 ## Interface
-- `import_frozen_e_evidence.py`: derives `testdata/frozen_e/` (references, E hypothesis, frozen counts, manifest). Only references.json and E_seglst.json are read from the evidence dir; the per-clip counts and matched-six list are literal tables (`FROZEN_E`, `MATCHED_SIX`) in the script [import_frozen_e_evidence.py:FROZEN_E, import_frozen_e_evidence.py:main].
+- `import_frozen_e_evidence.py`: derives `testdata/frozen_e/` (references, E hypothesis, frozen counts, manifest). Only `evaluation_manifest.json` (clip list) and `E_seglst.json` are read from the evidence dir, and `manifest.json` pins the SHA-256 of all three `SOURCES` (those two plus the qualification notebook); the per-clip counts and matched-six list are literal tables (`FROZEN_E`, `MATCHED_SIX`) in the script [import_frozen_e_evidence.py:FROZEN_E, import_frozen_e_evidence.py:main].
 - `prepare_frozen_e_clips.py`: cuts 120 s clips from AMI WAVs and checks each against its `audio_sha256` [prepare_frozen_e_clips.py:main].
 - `frozen_e_score.py`: reference cpWER scorer (`tokens`, `edit`, `cpwer`) copied from the frozen notebook [frozen_e_score.py:cpwer].
 

@@ -373,4 +373,58 @@ final class ForgeGuardrailsTests: XCTestCase {
         let sanitized = ForgeGuardrailsEngine.sanitizeProse(text: text, rescuedCalls: [call])
         XCTAssertEqual(sanitized, "")
     }
+
+    // MARK: - Name casing (B5)
+
+    private func readTool(_ name: String) -> OpenAITool {
+        OpenAITool.function(
+            name: name,
+            description: "Read file contents",
+            parameters: .object(
+                properties: ["path": .string(description: "Path to file")],
+                required: ["path"]
+            )
+        )
+    }
+
+    func testRescuedCallWithDifferentCasingResolvesToCanonicalName() {
+        let text = "<function=Read>{\"path\": \"README.md\"}</function>"
+        let verdict = ForgeGuardrailsEngine.inspect(
+            text: text,
+            parsedCalls: [],
+            availableTools: [readTool("read")]
+        )
+        guard case .rescued(let calls, _) = verdict else {
+            return XCTFail("Expected rescued, got \(verdict)")
+        }
+        XCTAssertEqual(calls.count, 1)
+        XCTAssertEqual(calls[0].name, "read")
+    }
+
+    func testCaseInsensitiveLookupPrefersExactMatch() {
+        let call = AppToolCall(
+            name: "Read",
+            arguments: ["path": "a"],
+            rawInvocation: "",
+            status: .pendingApproval,
+            category: .fileRead,
+            riskAssessment: ToolRiskAssessment(level: .low, category: .fileRead, reasons: ["Read"])
+        )
+        // The lowercase spec requires `path`; the exact-case spec requires `file`.
+        // Exact match must win, so the missing `file` is what gets reported.
+        let exact = OpenAITool.function(
+            name: "Read",
+            description: "x",
+            parameters: .object(properties: ["file": .string(description: "f")], required: ["file"])
+        )
+        let verdict = ForgeGuardrailsEngine.inspect(
+            text: "",
+            parsedCalls: [call],
+            availableTools: [readTool("read"), exact]
+        )
+        guard case .retry(let nudge) = verdict else {
+            return XCTFail("Expected retry, got \(verdict)")
+        }
+        XCTAssertTrue(nudge.contains("`file`"), nudge)
+    }
 }

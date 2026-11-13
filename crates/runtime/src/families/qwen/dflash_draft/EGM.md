@@ -35,7 +35,7 @@ The DFlash2 block-diffusion drafter for the Qwen family (`docs/DFLASH2.md`). A r
 - Writes drafter KV ring slots, advances the cursor, zeroes `capture_rows` as the last step of a write so a later draft does not rewrite consumed rows [context_kv.rs:dflash_context_write]
 - Autorelease pool around each round [mod.rs:dflash_run_block]
 - Host readback of 248k-wide f16 logit rows per step [select.rs:dflash_select]
-- Requires `TURBOSPARK_DFLASH_DRAFT` set before open for `real_dflash` to exist [mod.rs:dflash_prime_from_capture]
+- `real_dflash` exists only if the policy builds it: unset `TURBOSPARK_DFLASH_DRAFT` is Auto (built on dense installs carrying `dflash.fc.weight`), `N` forces block size N, `0` turns it off; Auto block size is `dflash_serving_block` (`DFLASH_SERVING_BLOCK`, or `DFLASH_SERVING_BLOCK_TILE` when `TURBOSPARK_INT4_MMA8` is on) [dflash_state.rs:DflashDraftPolicy::from_env] [dflash_state.rs:dflash_serving_block]
 
 ## Verification
 - Run: `cargo test -p turbospark-runtime`

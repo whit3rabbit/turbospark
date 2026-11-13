@@ -1013,25 +1013,24 @@ impl MossMusic {
             .map_err(|error| SpeechError::Input {
                 why: format!("tokenizer decode failed: {error}"),
             })?;
-        Ok(strip_thinking(&raw).to_owned())
+        Ok(strip_thinking(&raw))
     }
 }
 
 /// The reference `_strip_thinking`: drop `<think>...</think>` blocks and an
 /// unterminated leading `<think>`.
-fn strip_thinking(text: &str) -> &str {
-    let mut working = text;
-    if let Some(open) = working.find("<think>") {
-        if let Some(close) = working[open..].find("</think>") {
-            let mut stripped = String::with_capacity(working.len());
-            stripped.push_str(&working[..open]);
-            stripped.push_str(&working[open + close + "</think>".len()..]);
-            working = Box::leak(stripped.into_boxed_str());
-        } else if open == 0 || working[..open].trim().is_empty() {
-            working = "";
+fn strip_thinking(text: &str) -> String {
+    if let Some(open) = text.find("<think>") {
+        if let Some(close) = text[open..].find("</think>") {
+            let mut stripped = String::with_capacity(text.len());
+            stripped.push_str(&text[..open]);
+            stripped.push_str(&text[open + close + "</think>".len()..]);
+            return stripped.trim().to_owned();
+        } else if open == 0 || text[..open].trim().is_empty() {
+            return String::new();
         }
     }
-    working.trim()
+    text.trim().to_owned()
 }
 
 #[cfg(test)]
@@ -1084,6 +1083,12 @@ mod tests {
         assert_eq!(strip_thinking("<think>x</think>\nhello"), "hello");
         assert_eq!(strip_thinking("<think>unterminated"), "");
         assert_eq!(strip_thinking("plain text"), "plain text");
+        // Closed block mid-text, and an unterminated block after real text.
+        assert_eq!(strip_thinking("a <think>x</think> b"), "a  b");
+        assert_eq!(
+            strip_thinking("  hi <think>unterminated"),
+            "hi <think>unterminated"
+        );
     }
 
     #[test]

@@ -144,10 +144,18 @@ public enum TerminalCommandClassifier {
         // program name. The head word alone cannot tell those apart; the
         // inline-code flag can, and it is the ONLY thing making the
         // interpreter entries above safe to have.
-        if interpreters.contains(head) {
-            if parts.dropFirst().contains(where: { inlineCodeFlags.contains($0.lowercased()) }) {
-                return false
-            }
+        if interpreters.contains(head), hasInlineCodeFlag(head: head, args: parts.dropFirst()) {
+            return false
+        }
+
+        // **A READ-ONLY HEAD WORD DOES NOT MAKE ITS FLAGS READ-ONLY.**
+        // `find -delete`, `awk -f`, `rg --pre`, `tree -o` and friends write or
+        // execute while wearing a head word from the read list. The
+        // `ToolRiskClassifier` denylist names some of them, but this function
+        // is also the only gate the subagent path calls, and a denylist only
+        // knows what somebody wrote down.
+        if hasDangerousFlag(head: head, args: Array(parts.dropFirst())) {
+            return false
         }
 
         if searchCommands.contains(head) || readCommands.contains(head)
@@ -158,10 +166,158 @@ public enum TerminalCommandClassifier {
 
         if head == "git" {
             guard parts.count > 1 else { return false }
-            return gitAutoApprovableSubcommands.contains(parts[1].lowercased())
+            let sub = parts[1].lowercased()
+            guard gitAutoApprovableSubcommands.contains(sub) else { return false }
+            return !hasDangerousGitForm(sub: sub, args: Array(parts.dropFirst(2)))
         }
 
         return false
+    }
+
+    // MARK: - Flag-level refusals
+
+    /// Whether an interpreter is being handed code on its command line.
+    ///
+    /// Exact-token matching missed attached forms (`python3 -cprint`,
+    /// `node --eval=x`) and clusters (`python3 -ec x`, `node -p ...`).
+    /// Over-refusing is the safe direction here: a refused command asks.
+    private static func hasInlineCodeFlag(head: String, args: ArraySlice<String>) -> Bool {
+        for raw in args {
+            let token = raw.lowercased()
+            if inlineCodeFlags.contains(token) { return true }
+            if token.hasPrefix("--eval=") || token.hasPrefix("--command=")
+                || token == "--print" || token.hasPrefix("--print=")
+            {
+                return true
+            }
+            // Single-dash cluster of lowercase letters: `-c`, `-cCODE`, `-ec`.
+            // `node -p` / `-pe` print the value of an expression, which
+            // evaluates it. Case-sensitive on the raw token so `-Werror` and
+            // `-E` (not code flags) are left alone.
+            if raw.hasPrefix("-"), !raw.hasPrefix("--"), raw.count > 1,
+                raw.dropFirst().allSatisfy({ $0.isLowercase && $0.isLetter })
+            {
+                if raw.contains("c") || raw.contains("e") { return true }
+                if head == "node", raw.contains("p") { return true }
+            }
+        }
+        return false
+    }
+
+    /// Flags that make an otherwise read-only command write a file or run
+    /// another program.
+    private static func hasDangerousFlag(head: String, args: [String]) -> Bool {
+        let lowered = args.map { $0.lowercased() }
+        func hasFlag(_ names: Set<String>) -> Bool {
+            lowered.contains { token in
+                names.contains(token) || names.contains(where: { $0.hasPrefix("--") && token.hasPrefix($0 + "=") })
+            }
+        }
+        switch head {
+        case "find", "locate":
+            return hasFlag([
+                "-delete", "-exec", "-execdir", "-ok", "-okdir",
+                "-fprint", "-fprint0", "-fprintf", "-fls",
+            ])
+        case "awk":
+            // `-f` runs a program file that can call `system`; `-i` is gawk's
+            // in-place edit. `system` anywhere is refused because a program
+            // text without braces or parens can still reach it.
+            return hasFlag(["-f", "--file", "-i", "--include"])
+                || lowered.contains { $0.contains("system") }
+        case "sort":
+            return hasFlag(["-o", "--output"])
+        case "tree":
+            return hasFlag(["-o"])
+        case "rg", "ag", "ack":
+            // ripgrep runs `--pre` on every file; `--hostname-bin` runs a program too.
+            return hasFlag(["--pre", "--hostname-bin"])
+        default:
+            return false
+        }
+    }
+
+    /// Git subcommand argument forms that write, force, delete, rewrite
+    /// history or run a program, within the subcommands `.auto` admits.
+    ///
+    /// The destructive-by-flag cases differ from the safe ones by a flag, so a
+    /// pattern list works here. Anything this cannot positively read as
+    /// benign for `branch`, `tag`, `remote` and `stash` is refused, since
+    /// those subcommands are reads in one spelling and writes in another.
+    /// Residual: `git checkout <path>` restores a file from the index, which
+    /// cannot be told from `git checkout <branch>` without reading the repo.
+    private static func hasDangerousGitForm(sub: String, args: [String]) -> Bool {
+        let lowered = args.map { $0.lowercased() }
+        let flags = lowered.filter { $0.hasPrefix("-") }
+        let positionals = lowered.filter { !$0.hasPrefix("-") }
+        func hasFlag(_ names: Set<String>) -> Bool {
+            flags.contains { token in
+                names.contains(token) || names.contains(where: { $0.hasPrefix("--") && token.hasPrefix($0 + "=") })
+            }
+        }
+        // `-c`-style program overrides on the transport commands.
+        let runsProgram: Set<String> = ["--upload-pack", "--receive-pack", "--exec"]
+        // Short flag clusters containing `f` or `d`, on the raw case-sensitive
+        // arguments so `-D` and `-d` are told apart from `-u`.
+        func hasShortFlag(_ letters: Set<Character>) -> Bool {
+            args.contains { arg in
+                arg.hasPrefix("-") && !arg.hasPrefix("--") && arg.dropFirst().contains(where: letters.contains)
+            }
+        }
+
+        switch sub {
+        case "diff", "log", "show":
+            return hasFlag(["--output", "--ext-diff"])
+        case "branch":
+            if hasFlag(["--delete", "--move", "--copy", "--force", "--set-upstream-to",
+                        "--unset-upstream", "--edit-description", "--track", "--no-track"]) {
+                return true
+            }
+            if hasShortFlag(["d", "D", "m", "M", "c", "C", "f", "u"]) { return true }
+            // A bare positional creates a branch unless a list flag is present.
+            let listing = hasFlag(["--list", "--show-current", "--contains", "--no-contains",
+                                   "--merged", "--no-merged", "--points-at"])
+                || hasShortFlag(["l"])
+            return !positionals.isEmpty && !listing
+        case "tag":
+            if hasFlag(["--delete", "--force", "--sign", "--annotate", "--message", "--file", "--edit"]) {
+                return true
+            }
+            if hasShortFlag(["d", "f", "s", "a", "m", "F", "e", "u"]) { return true }
+            let listing = hasFlag(["--list", "--contains", "--no-contains", "--merged",
+                                   "--no-merged", "--points-at"]) || hasShortFlag(["l"])
+            return !positionals.isEmpty && !listing
+        case "remote":
+            // Only the bare listing and `-v` forms. `show` and `get-url`
+            // read, but `add`, `set-url`, `remove`, `rename`, `prune` write.
+            let readVerbs: Set<String> = ["show", "get-url"]
+            if let first = positionals.first { return !readVerbs.contains(first) }
+            return false
+        case "stash":
+            let readOrSave: Set<String> = ["list", "show", "push", "save", "apply", "pop", "create"]
+            if let first = positionals.first, !readOrSave.contains(first) { return true }
+            return false
+        case "fetch", "pull":
+            return hasFlag(runsProgram)
+        case "push":
+            if hasFlag(runsProgram.union([
+                "--force", "--force-with-lease", "--force-if-includes", "--delete",
+                "--mirror", "--prune",
+            ])) { return true }
+            if hasShortFlag(["f", "d"]) { return true }
+            // `+ref` forces and `:ref` deletes, whatever the flags say.
+            return positionals.contains { $0.hasPrefix("+") || $0.hasPrefix(":") }
+        case "checkout", "switch":
+            if hasFlag(["--force", "--discard-changes", "--ours", "--theirs", "--merge", "--patch"]) {
+                return true
+            }
+            // `-f`, `-B` and `-C` reset or overwrite; `--` and `.` restore paths.
+            if hasShortFlag(["f", "B", "C", "m"]) { return true }
+            if args.contains("--") || args.contains(".") { return true }
+            return false
+        default:
+            return false
+        }
     }
 
     /// Determines if a shell command string is purely a search or read operation.

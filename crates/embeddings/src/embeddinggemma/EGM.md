@@ -13,6 +13,7 @@ google/embeddinggemma-300m: a bidirectional Gemma3 text encoder with mean poolin
 - Quantized embedding tables stay packed and dequantize per gathered row [../weights.rs:EmbeddingTable]
 - Truncation keeps the tokenizer's special tokens, like HF `truncation=True` [embeddinggemma/mod.rs:GemmaTokenizer]
 - Only verified quantization bits and group size are accepted [embeddinggemma/config.rs:VERIFIED_QUANT_BITS]
+- Configs without `use_bidirectional_attention: true` are refused, since a causal mask would embed silently wrong [embeddinggemma/config.rs:GemmaConfig::from_json]
 
 ## Side Effects
 - Reads checkpoint, tokenizer and sentence-transformers JSON from disk at `load` [embeddinggemma/mod.rs:EmbeddingGemma]

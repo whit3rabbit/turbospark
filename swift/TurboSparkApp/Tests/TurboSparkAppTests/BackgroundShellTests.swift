@@ -177,6 +177,74 @@ final class BackgroundShellTests: XCTestCase {
         }
     }
 
+    /// The cap check and the insert used to be separate lock holds, so
+    /// concurrent launches could all pass the check. Non-deterministic on the
+    /// old code (it needs the threads to interleave), but 60 racers against a
+    /// cap of 20 with a slow-ish launch path hit it reliably in practice.
+    func testConcurrentLaunchesNeverExceedTheCap() throws {
+        let project = temporaryProject()
+        let rootURL = try XCTUnwrap(project.rootDirectoryURL)
+        let cap = BackgroundShellManager.maxRunningShells
+        let racers = cap * 3
+        let succeeded = NSLock()
+        var successCount = 0
+        DispatchQueue.concurrentPerform(iterations: racers) { _ in
+            if (try? BackgroundShellManager.shared.launch(
+                command: "sleep 30", startDirectory: rootURL,
+                environment: ShellOutputFormatting.shellEnvironment(),
+                chatID: nil, description: nil)) != nil
+            {
+                succeeded.lock(); successCount += 1; succeeded.unlock()
+            }
+        }
+        XCTAssertEqual(successCount, cap)
+        XCTAssertEqual(BackgroundShellManager.shared.runningRecords().count, cap)
+    }
+
+    /// A launch that fails (here: missing cwd) must not consume an id, so the
+    /// next successful launch gets the number the failed one would have had.
+    func testFailedLaunchDoesNotAdvanceTheIDCounter() throws {
+        let project = temporaryProject()
+        let rootURL = try XCTUnwrap(project.rootDirectoryURL)
+        let missing = rootURL.appendingPathComponent("does-not-exist")
+        let env = ShellOutputFormatting.shellEnvironment()
+        let first = try BackgroundShellManager.shared.launch(
+            command: "sleep 30", startDirectory: rootURL, environment: env,
+            chatID: nil, description: nil)
+        XCTAssertThrowsError(
+            try BackgroundShellManager.shared.launch(
+                command: "sleep 30", startDirectory: missing, environment: env,
+                chatID: nil, description: nil))
+        let second = try BackgroundShellManager.shared.launch(
+            command: "sleep 30", startDirectory: rootURL, environment: env,
+            chatID: nil, description: nil)
+        XCTAssertEqual(first.id, "bg_1")
+        XCTAssertEqual(second.id, "bg_2")
+    }
+
+    /// A launch refused by the cap must not advance the id counter either.
+    func testCapRefusalDoesNotAdvanceTheIDCounter() throws {
+        let project = temporaryProject()
+        let rootURL = try XCTUnwrap(project.rootDirectoryURL)
+        let env = ShellOutputFormatting.shellEnvironment()
+        var records: [BackgroundShellRecord] = []
+        for _ in 0..<BackgroundShellManager.maxRunningShells {
+            records.append(try BackgroundShellManager.shared.launch(
+                command: "sleep 30", startDirectory: rootURL, environment: env,
+                chatID: nil, description: nil))
+        }
+        for _ in 0..<5 {
+            XCTAssertThrowsError(try BackgroundShellManager.shared.launch(
+                command: "sleep 30", startDirectory: rootURL, environment: env,
+                chatID: nil, description: nil))
+        }
+        BackgroundShellManager.shared.kill(records[0])
+        let next = try BackgroundShellManager.shared.launch(
+            command: "sleep 30", startDirectory: rootURL, environment: env,
+            chatID: nil, description: nil)
+        XCTAssertEqual(next.id, "bg_\(BackgroundShellManager.maxRunningShells + 1)")
+    }
+
     /// A launch failure (missing working directory) used to close the pipe
     /// read handles while reader threads could still call availableData,
     /// which raises an uncaught Objective-C exception. Looped so the old race

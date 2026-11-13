@@ -5,7 +5,7 @@ Byte-range reads over a remote (HTTP) or in-memory source, used by the repacker 
 
 ## Interface
 - `RangeSource` [mod.rs:RangeSource]: trait, `read_range(start, end_exclusive) -> Result<Vec<u8>, DownloadError>` by absolute offset
-- `DownloadError` [mod.rs:DownloadError]: Request, SourceIdentity, Cancelled, UnexpectedStatus{status, retry_after}, ShortRead, InvalidRange, Header, GgufHeader, TruncatedGguf
+- `DownloadError` [mod.rs:DownloadError]: Request (also local filesystem failures and the refusing-to-overwrite check, not only transport errors [http.rs:PendingDownload::new, http.rs:PendingDownload::publish]), SourceIdentity, Cancelled, UnexpectedStatus{status, retry_after}, ShortRead, InvalidRange, Header, GgufHeader, TruncatedGguf
 - `fetch_safetensors_header` [mod.rs:fetch_safetensors_header]: reads the 8-byte prefix, then exactly the declared header
 - `fetch_gguf_header` [mod.rs:fetch_gguf_header]: geometric growth from `GGUF_INITIAL_FETCH_BYTES` (1 MiB) up to the GGUF cap, since GGUF has no length prefix
 - `MemoryRangeSource` [mod.rs:MemoryRangeSource]: in-memory source for tests

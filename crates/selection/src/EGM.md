@@ -9,7 +9,7 @@ Token selection after the producer returns logits: penalties, shaping (temperatu
 - Distribution: [distribution.rs:ShapedDistribution] (`new`, `point_mass`, `support`, `probability`, `draw`), and [distribution.rs:residual] (rejection-sampling correction distribution from p and q; `None` when the residual mass underflows).
 - Penalties: [penalty.rs:apply_repetition_penalty], [penalty.rs:apply_presence_and_frequency_penalty].
 - Truncation and ranking: [truncation.rs:softmax], [truncation.rs:rank_indices], [truncation.rs:rank_top_k], [truncation.rs:rank_indices_u32_into], [truncation.rs:rank_top_k_u32_into], [truncation.rs:truncate_by_probability_mass], [truncation.rs:truncate_by_rank], [truncation.rs:truncate_by_min_p].
-- The live path is [choose.rs:shape_candidates], which inlines softmax, top-p, and min-p and uses only `rank_indices_u32_into` and `rank_top_k_u32_into`. `softmax` and the `truncate_by_*` helpers are not called by `select`; they are reference implementations that tests exercise, so a change to one must be mirrored in the other.
+- The live path is [choose.rs:shape_candidates], which inlines softmax, top-p, and min-p and uses only `rank_indices_u32_into` and `rank_top_k_u32_into`. `softmax`, `rank_indices`, `rank_top_k` and the `truncate_by_*` helpers are not called by `select`; they are reference implementations that tests exercise, so a change to one must be mirrored in the other.
 - Seeded derivation: [derive.rs:derive_step_value], [derive.rs:to_unit_interval].
 
 ## Invariants

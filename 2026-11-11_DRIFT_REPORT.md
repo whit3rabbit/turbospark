@@ -4627,3 +4627,2146 @@ No drift detected.
 - Source comments in rounding.rs, smart_resize.rs and patchify.rs say "see NOTICE". The NOTICE file exists only at the repo root (/Users/whit3rabbit/Documents/GitHub/turbospark/NOTICE), not in crates/vision-io.
 - Index: `st` reported its index as stale and locked by another process; searches still ran against the stale index, so line numbers from `st` were confirmed by Read where cited.
 
+
+# Crates drift check, third pass after the second doc-fix round (haiku-reported)
+
+Third rerun of the same 34 jobs. Same caveats: mostly sampled, haiku-reported, not independently verified. README.md and AGENTS.md were not edited, so their findings repeat.
+
+## crates/audio/AGENTS.md
+
+Coverage: sampled (claims verified 14 of about 20 checkable; all relative links checked; quant, FFT, Slaney, Whisper and NeMo padding rules checked in source)
+- Line 45 "Verify the local clone at ../mlx-audio": relative to crates/audio this resolves to crates/mlx-audio, which does not exist. The sibling checkout is at repo-root ../mlx-audio (GitHub/mlx-audio), and its HEAD is e1b19b9054bf163f5d812221a54fcc346f1890e9 as stated. The base directory of the path is ambiguous. (d)
+
+## crates/audio/EGM.md
+
+Coverage: full read (11 lines); claims checked against Cargo.toml [Cargo.toml:exclude], the directory listing and the tools/EGM.md, src/EGM.md, examples/EGM.md and scripts/EGM.md links.
+No drift detected.
+
+## crates/audio/README.md
+
+Coverage: sampled (module map cross-checked against src/lib.rs; every role family listed was matched to a src directory; all src/ links resolve; test commands checked for the named test files)
+No drift detected.
+
+## crates/audio/MODELS.md
+
+Coverage: sampled (claims verified about 35 of about 200 table and prose claims; all src/ and ../ links resolve; 101 source-directory count matches upstream after excluding __pycache__; table rows not individually read against source)
+- Lines 255-256 say gpt2, cohere2, bailing_moe, switch_layers and falcon_h1/ssm are "still upstream-only", but the crate ships them: [src/lm/mod.rs], [src/lm/gpt2.rs], [src/lm/falcon_h1.rs], [src/lm/ssm.rs]. The arktts row (line 260) and indextts row (line 274) also say they are built on falcon_h1 and gpt2. The sentence is stale. (b)
+- Line 157 says shared codecs belong under `models/codec/`. No such directory exists; codecs live at [crates/audio/src/codec/mod.rs] (src/codec). (d)
+- Line 217 links `../../docs/SWIFT_BINDINGS.md#audio-binding-plan`. That anchor does not resolve: docs/SWIFT_BINDINGS.md has no "audio binding plan" heading, only "## Audio" at line 1784. (d)
+- Layout tree (lines 145 and 148) lists `testdata/` twice. (d)
+- CODEC table (lines 448-467) has no row for `spark_bicodec`, which [src/codec/mod.rs] declares and the tts/spark row (line 295) links as its codec port. (c)
+- Aliases named in the table that do not occur in [crates/audio/src], [crates/model-io/src] or [crates/catalog/src]: `higgs_multimodal_qwen3` (line 273), `dramabox-tts` (line 269), `vibevoice_streaming` (line 298), `csm` and `marvis` (line 293), `samaudio` (line 415), `dialoguesidon` (line 408), `breeze-tts` (line 263). The alias mapping may live in runtime or elsewhere; it was not checked there. (a, scope limited)
+- Line 188 says the speech catalog has nine pinned Whisper rows. The count of Whisper rows is correct, but [crates/catalog/src/speech_models.json] has ten rows in total; the tenth is `qwen3-asr-06b-8bit`, which the sentence does not mention. (c, minor)
+
+## crates/audio/examples/EGM.md
+
+Coverage: sampled (all 13 example files matched to the interface list; write and argument behavior checked by grep in each file; example bodies not read)
+No drift detected.
+
+## crates/audio/scripts/EGM.md
+
+Coverage: sampled (generator, benchmark and NeMo tool file names checked; subprocess calls checked in benchmark_music3.py; one generator docstring and the benchmark docstring read; the "interleave variants" claim not checked)
+No drift detected.
+
+## crates/audio/scripts/nemo_218d0b4/README.md
+
+Coverage: full read (27 lines); every listed script and subcommand checked, the NeMo commit checked in pyproject.toml and uv.lock, the referenced bench script and crate README checked to exist. The macOS arm64 and PyPI CPU wheel resolution claim was not checked.
+No drift detected.
+
+## crates/audio/src/EGM.md
+
+Coverage: sampled (every named symbol checked to exist in its file or in the crate root re-exports; invariants and side effects checked in source; ops.rs, fft.rs, mel.rs and resample.rs bodies not read in full)
+- Side Effects says the TableCache tables (`PLANS`, `BANKS`, `KERNELS`) "persist for the life of the process". The cache is bounded: it is cleared when it reaches `max_entries`, and tables marked not cacheable are never stored. [src/dsp.rs:TableCache::get_or_build], used by [src/fft.rs:RealFftPlan::cached], [src/mel.rs:mel_projector_cached] and [src/resample.rs] KERNELS. The claim is overstated. (b)
+- Not this file, but in the same directory: the [src/lib.rs] module map says `quant` covers "2/3/4/6/8-bit", while [src/quant.rs:QuantScheme] validation accepts 2/3/4/5/6/8. The same map lists only Kokoro under `tts`, although about 40 families exist. Both are stale doc comments. (b, source comment)
+
+## crates/audio/src/codec/EGM.md
+
+Coverage: sampled (shared block signatures, the pub mod list in [src/codec/mod.rs], REFERENCE_COMMIT in all 16 family mod.rs files that declare it, and the side-effect claims checked; conv.rs, vq.rs and dac.rs bodies not read)
+No drift detected.
+
+## crates/audio/src/codec/README.md
+
+Coverage: sampled (family list and every link checked; per-family architecture prose not checked against source)
+No drift detected.
+
+## crates/audio/src/codec/bigvgan/EGM.md
+
+Coverage: sampled (interface names, SpeechError variants, reference pin, env and side-effect claims checked in mod.rs and tests.rs; forward pass not read)
+No drift detected.
+
+## crates/audio/src/codec/bigvgan/README.md
+
+Coverage: sampled (test names, TURBOSPARK_BIGVGAN_MODEL, fixture and tool paths, snakebeta default and the resblocks.{i * num_kernels + j} indexing checked; sample-rate and upsample values are config-driven and have no code default to compare)
+No drift detected.
+
+## crates/audio/src/codec/dacvae/EGM.md
+
+Coverage: sampled (interface names, validate checks, BadConfig/Input/Tensor variants, and the absence of env and fs writes in mod.rs checked; encode and decode bodies not read in full)
+No drift detected.
+
+## crates/audio/src/codec/dacvae/README.md
+
+Coverage: sampled (default geometry, hop length, test count, env var, watermark and chunked-decode scope checked; static padding claim not checked)
+- Verification says "cargo test -p turbospark-audio --lib codec::dacvae (3 tests)". tests.rs has five #[test] functions: config_defaults_match_reference, tiny_end_to_end_matches_reference, real_checkpoint_gate, config_rejects_degenerate_geometry, load_revalidates_hand_built_config [src/codec/dacvae/tests.rs]. (b)
+
+## crates/audio/src/codec/descript/EGM.md
+
+Coverage: sampled (interface names, decode_codes validation (count, length and index range), TURBOSPARK_DAC_MODEL gate and no-write claims checked; compress body not read)
+No drift detected.
+
+## crates/audio/src/codec/descript/README.md
+
+Coverage: sampled (default config values, test names, fixture tool path and consumer claims checked; L2-normalized codebook claim not checked)
+- Architecture table says strides are "[2, 4, 8, 8] (44.1 kHz) or [2, 4, 8, 8] / [8, 5, 4, 2]". The code default for encoder_rates is [2, 4, 5, 8] and for decoder_rates [8, 5, 4, 2] [src/codec/descript/mod.rs:DacConfig::from_json]. (b)
+- The intro says DAC serves as the acoustic tokenizer for Chatterbox. Chatterbox uses the S3 codec, not DAC: [src/tts/chatterbox/mod.rs] imports `crate::codec::s3`, and MODELS.md lists chatterbox over s3. (b)
+
+## crates/audio/src/codec/ecapa_tdnn/EGM.md
+
+Coverage: sampled (interface names, Res2NetBlock divisibility check, BadConfig claim and no-env/no-write claim checked; forward pass not read)
+No drift detected.
+
+## crates/audio/src/codec/ecapa_tdnn/README.md
+
+Coverage: sampled (test names, fixture and tool paths, block kernel and dilation values, scale and SE values checked; pooling and BatchNorm structure not read)
+- Architecture table says input features are "80-channel log mel" and output embedding is "192 dimensions", and the pipeline ends in a "192-dimensional Speaker Embedding". The code defaults are input_size 60 and embed_dim 256 [src/codec/ecapa_tdnn/mod.rs:EcapaTdnnConfig::from_json]. The README says config_defaults_match_reference verifies defaults against mlx-audio, and that test asserts 60 and 256 [src/codec/ecapa_tdnn/tests.rs:config_defaults_match_reference]. The 80 and 192 values contradict the README's own test unless a checkpoint config overrides them, which the README does not say. (b)
+- "Intermediate channels 512 or 1024": the default is 1024 only. (minor)
+
+## crates/audio/src/codec/encodec/EGM.md
+
+Coverage: sampled (claims verified 9 of 11, source not fully read)
+- (c) `normalize` is an undocumented side-effect-free switch on the encode path. [crates/audio/src/codec/encodec/mod.rs:Encodec::encode] computes the RMS scale when `config.normalize` is set and then discards it (`let _ = scale;`), returning codes only. The EGM does not mention `normalize` or the scale.
+
+## crates/audio/src/codec/encodec/README.md
+
+Coverage: sampled (claims verified 8 of 10, source not fully read)
+- (b) Architecture table row "Normalization | weight_norm on all convolutions" describes the reference. The Rust loader requires `norm_type == "weight_norm"` and expects weights already folded at conversion [crates/audio/src/codec/encodec/mod.rs:Encodec::load], [crates/audio/src/codec/encodec/mod.rs:plain_conv_dims]. Wording is misleading, not wrong.
+- (b) Round-trip claim is incomplete: the doc on [crates/audio/src/codec/encodec/mod.rs:Encodec::decode_codes] says callers pass "the encode-time scale", but [crates/audio/src/codec/encodec/mod.rs:Encodec::encode] never returns it. See the EGM item above.
+- Verified: the four test names in the Verification section exist in [crates/audio/src/codec/encodec/tests.rs] (config_defaults_match_reference, isolated_lstm_matches_reference, tiny_end_to_end_matches_reference, real_checkpoint_gate). Bandwidths [1.5, 3.0, 6.0, 12.0, 24.0], codebook 1024 x 128 and 24 kHz defaults match [crates/audio/src/codec/encodec/mod.rs:EncodecConfig::from_json].
+
+## crates/audio/src/codec/fish_s1_dac/EGM.md
+
+Coverage: sampled (claims verified 12 of 12 listed, source not fully read)
+No drift detected.
+
+## crates/audio/src/codec/fish_s1_dac/README.md
+
+Coverage: sampled (claims verified 8 of 10, source not fully read)
+- (a) "Scope and Divergences" says `encode_zq` / `decode_zq` (continuous-latent entry points) are not ported. The code exposes both as public API: [crates/audio/src/codec/fish_s1_dac/mod.rs:FishS1Dac::encode_zq] and [crates/audio/src/codec/fish_s1_dac/mod.rs:FishS1Dac::decode_zq], exercised by [crates/audio/src/codec/fish_s1_dac/tests.rs:encode_zq_decode_zq_roundtrip_matches_shapes]. The sibling EGM lists both as interface, so the two docs disagree. `from_latents` has no symbol in the crate, so that part of the claim holds.
+- Verified: 44.1 kHz, encoder rates product 512 (hop 512), frame_length 2048, 4096 semantic and 9 x 1024 acoustic books, transformer on the last encoder block, match [crates/audio/src/codec/fish_s1_dac/mod.rs:FishS1DacConfig::build_ae] and [crates/audio/src/codec/fish_s1_dac/mod.rs:FishS1DacConfig::frame_length].
+- Verified: `open` treats config.json as optional and reads `model.safetensors` ([crates/audio/src/codec/fish_s1_dac/mod.rs:FishS1Dac::open]). The env var `TURBOSPARK_FISH_S1_DAC_MODEL` appears only in [crates/audio/src/codec/fish_s1_dac/tests.rs:real_checkpoint_gate].
+- Not checked: the 1e-3 relative gate value and the transformer layer counts inside the quantizer.
+
+## crates/audio/src/codec/higgs_audio/EGM.md
+
+Coverage: sampled (claims verified 8 of 8 listed, source not fully read)
+No drift detected.
+
+## crates/audio/src/codec/higgs_audio/README.md
+
+Coverage: sampled (claims verified 6 of 8, source not fully read)
+- (b) "Scope and Divergences" says the semantic encode path is not ported: "that tower is an STT model outside the codec crate and is not ported", "The sinc resampler ... is not ported", and "semantic fusion happens in a future STT integration". The code implements it. [crates/audio/src/codec/higgs_audio/mod.rs:HiggsAudioTokenizer::encode_tokens] runs [crates/audio/src/codec/higgs_audio/semantic.rs:sinc_resample] and [crates/audio/src/codec/higgs_audio/semantic.rs:SemanticEncoder], and the path loads when the config carries `semantic_model_config` ([crates/audio/src/codec/higgs_audio/mod.rs:HiggsAudioTokenizer::load]). Released-format configs still lack it, so decode-only is accurate for them, but the "not ported" wording is stale. The sibling EGM describes the gate correctly.
+- Verified: defaults (24 kHz, 8 books x 1024, dim 64, latent 1024, fc2 width 256, acoustic hop 8x5x4x2x3 = 960) match [crates/audio/src/codec/higgs_audio/mod.rs:HiggsAudioConfig::defaults]. `quantizer_latent_dim` and `decoder_input_dim` exist as stated.
+
+## crates/audio/src/codec/mimi/EGM.md
+
+Coverage: sampled (claims verified 6 of 6 listed, source not fully read)
+No drift detected.
+
+## crates/audio/src/codec/mimi/README.md
+
+Coverage: sampled (claims verified 9 of 11, source not fully read)
+- (b) "Scope and Reference Deviations" item 2 "Name mapping" says the Rust loader "applies the reference's PyTorch rename rules for real checkpoints". No rename step exists in the crate. [crates/audio/src/codec/mimi/mod.rs:Mimi::load] looks up only the MLX-style names (for example `encoder.init_conv1d.conv.conv.weight` and `quantizer.rvq_first.input_proj.weight`). The loader doc comment at the same symbol repeats the false claim (lines 1024-1026). I did not verify the raw kyutai tensor names, so whether a real checkpoint loads is unknown; the mapping the doc describes is absent.
+- (b) Verification section: "cargo test -p turbospark-audio --lib codec::mimi (4 tests)". [crates/audio/src/codec/mimi/tests.rs] defines 6 `#[test]` functions (mimi_202407_factory_defaults, tiny_end_to_end_matches_reference, isolated_transformer_matches_reference, real_checkpoint_gate, attention_matches_original_within_ulps_of_scale, decode_refuses_codes_outside_the_codebook).
+- Verified: `encode_step` / `decode_step` are absent, matching the scope note. The rest RVQ quantizes its own projection of the input, not the first book's residual ([crates/audio/src/codec/mimi/mod.rs:SplitRvq::encode]), matching the README. Factory numbers (dim 512, ratios [8,6,5,4], 2048 bins x 256, context 250) match [crates/audio/src/codec/mimi/mod.rs:MimiConfig::mimi_202407].
+
+## crates/audio/src/codec/mimo_audio_tokenizer/EGM.md
+
+Coverage: sampled (claims verified 6 of 6 listed, source not fully read)
+No drift detected.
+
+## crates/audio/src/codec/mimo_audio_tokenizer/README.md
+
+Coverage: sampled (claims verified 9 of 9 checked, source not fully read)
+No drift detected. Checked: defaults (nfft 960, hop 240, 32 encoder layers with skip layer 3, avg pooler 2, 32 decoder layers, vocoder dim 256 with 16 layers) in [crates/audio/src/codec/mimo_audio_tokenizer/mod.rs:MimoConfig::defaults]; codebook sizes [1024, 1024] then 128 x 18 in the same function; vocoder band window (40, 10) read as [-40, +10] at the mask check in [crates/audio/src/codec/mimo_audio_tokenizer/mod.rs]; `istft.window` loaded when present in [crates/audio/src/codec/mimo_audio_tokenizer/mod.rs:MiMoAudioTokenizer::load]; LayerNorm vs RMSNorm via [crates/audio/src/codec/mimo_audio_tokenizer/mod.rs:LnormType]; the batch-only, no-segment_size scope.
+
+## crates/audio/src/codec/moss_audio_tokenizer/EGM.md
+
+Coverage: sampled (claims verified 7 of 7 listed, source not fully read)
+No drift detected.
+
+## crates/audio/src/codec/moss_audio_tokenizer/README.md
+
+Coverage: sampled (claims verified 5 of 7, source not fully read)
+- (b) "Parameters (default config)" table lists codebook dim 32 and "2 channels interleaved" at 48 kHz. These match the Nano checkpoint, not the code's fallbacks: [crates/audio/src/codec/moss_audio_tokenizer/mod.rs:MossConfig::from_json] defaults `codebook_dim` to 8 and `number_channels` to 1. Either label the table as checkpoint values or state the fallbacks.
+- Verified: downsample rate 3840 default, 32 books x 1024 default `num_quantizers` / `codebook_size`, batch-only scope (no `AttentionStepCache` in the crate), `encode_frame` / `decode_frame` exist, and the weight-shard discovery in [crates/audio/src/codec/moss_audio_tokenizer/mod.rs:open_checkpoint] (`read_dir`).
+- Not checked: the 48 kHz default sample rate fallback.
+
+## crates/audio/src/codec/nemotron_voicechat/EGM.md
+
+Coverage: sampled (claims verified 7 of 7 listed, source not fully read)
+No drift detected.
+
+## crates/audio/src/codec/nemotron_voicechat/README.md
+
+Coverage: sampled (claims verified 8 of 10, source not fully read)
+No drift detected in the claims checked: defaults (22 050 Hz, 384 base channels, multipliers [1, 2, 4], downsample [7, 7, 9], latent 512, n_fft 16, hop 4, 31 x 1024) in [crates/audio/src/codec/nemotron_voicechat/mod.rs:NemotronVoiceChatConfig::from_json]; the magnitude formula `100 * exp(-softplus(-logit + ln 100))` and DC/Nyquist imaginary zeroing in the decode head; strict `variance_list` loading in [crates/audio/src/codec/nemotron_voicechat/mod.rs:NemotronVoiceChatCodec::load]; the batch-only scope. Not checked: the "encode drops tail shorter than one token" and "tokens * 1764" length claims.
+
+## crates/audio/src/codec/s3/EGM.md
+
+Coverage: sampled (claims verified 8 of 8 listed, source not fully read)
+No drift detected.
+
+## crates/audio/src/codec/s3/README.md
+
+Coverage: sampled (claims verified 8 of 10, source not fully read)
+No drift detected in the claims checked: codebook sizes 4096 (v1, [crates/audio/src/codec/s3/mod.rs:S3Config::v1]) and 6561 (v2, [crates/audio/src/codec/s3/mod.rs:S3Config::v2]); 25 Hz profile selected by the `speech_tokenizer_v1_25hz` name ([crates/audio/src/codec/s3/mod.rs:V1_25HZ]); 2600-frame sliding stride ([crates/audio/src/codec/s3/mod.rs:FRAMES_PER_STRIDE]); codebook key discovery `quantizer.embed` and the two aliases ([crates/audio/src/codec/s3/mod.rs] codebook key list); the ignored `real_checkpoint_gate` reading `TURBOSPARK_S3_MODEL_DIR` ([crates/audio/src/codec/s3/tests.rs:real_checkpoint_gate]). Not checked: the ternary FSQ levels and the FSMN branch details.
+
+## crates/audio/src/codec/snac/EGM.md
+
+Coverage: sampled (claims verified 7 of 7 listed, source not fully read)
+No drift detected. The `frames_per_level` consistency check exists ([crates/audio/src/codec/snac/mod.rs:SnacConfig::frames_per_level]).
+
+## crates/audio/src/codec/snac/README.md
+
+Coverage: sampled (claims verified 8 of 9, source not fully read)
+- (b) "Config parsing follows the reference constructor defaults, so a checkpoint config.json that omits fields still loads." This is false for `attn_window_size`: when the key is absent, [crates/audio/src/codec/snac/mod.rs:SnacConfig::from_json] sets `Some(32)`, and [crates/audio/src/codec/snac/mod.rs:Snac::load] refuses any `Some` value with `SpeechError::Unsupported`. A config that omits the key is refused, not loaded.
+- Verified: hop 512 (product of encoder rates at the checkpoint values), `decode` refuses noise-enabled configs ([crates/audio/src/codec/snac/mod.rs:Snac::decode]), the transpose-conv `output_padding: 1` quirk in the weight-norm path ([crates/audio/src/codec/wnconv.rs]), and 9 `#[test]` functions in [crates/audio/src/codec/snac/tests.rs]. The real-checkpoint gate falls back to the HF cache path and `TURBOSPARK_SNAC_MODEL` as described.
+
+## crates/audio/src/codec/spark_bicodec/EGM.md
+
+Coverage: sampled (claims verified 6 of 6 listed, source not fully read)
+No drift detected.
+
+## crates/audio/src/codec/spark_bicodec/README.md
+
+Coverage: sampled (claims verified 8 of 9, source not fully read)
+No drift detected in the claims checked: the identity `SamplingBlock` triples its input ([crates/audio/src/codec/spark_bicodec/mod.rs:SamplingBlock::forward]); the prenet/speaker width equality gate and the `sample_ratios` gate in [crates/audio/src/codec/spark_bicodec/mod.rs:BiCodecConfig::from_yaml] validation; empty semantic tokens rejected in [crates/audio/src/codec/spark_bicodec/mod.rs:BiCodec::detokenize]; `config.yaml` plus `model.safetensors` layout in [crates/audio/src/codec/spark_bicodec/mod.rs:BiCodec::open]; the 2e-4 detokenize tolerance (from the fixture trace, tests.rs). Not checked: the measured 8.9e-8 maximum diff.
+
+## crates/audio/src/codec/stepaudio2/EGM.md
+
+Coverage: sampled (claims verified most of the interface, invariants and side effects; mod.rs open/load/decode read in full, flow/hift/campplus not fully read)
+- [mod.rs:StepAudio2Token2Wav::load] optional CAMPPlus encoder and `prepare_prompt` requirement (speaker_embedding required when no CAMPPlus is loaded) are omitted from the EGM.
+- [mod.rs:StepAudio2Token2Wav::decode] takes `&mut self`; EGM does not say so (minor).
+
+## crates/audio/src/codec/stepaudio2/README.md
+
+Coverage: sampled (constants dit_depth 16, dit_hidden 512, inference_cfg_rate 0.7, upsample [8,5,3], AUDIO_LIMIT 0.99, rand_noise, test names and TURBOSPARK_STEPAUDIO2_MODEL, fixture and link paths verified; per-layer port notes not re-derived)
+- No drift detected.
+
+## crates/audio/src/codec/vocos/EGM.md
+
+Coverage: sampled (interface symbols, open/load/decode/decode_from_codes read in full; invariants not all traced)
+- [mod.rs:Vocos::decode] returns Unsupported for the Encodec front end; the EGM does not state this (omission, minor).
+- [mod.rs:FeatureKind] Encodec variant and the caller-supplied codebooks of [mod.rs:Vocos::decode_from_codes] are not described in the EGM (omission, minor).
+
+## crates/audio/src/codec/vocos/README.md
+
+Coverage: sampled (exp/min(1e2) magnitude clamp, symmetric Hann iSTFT, head shape [n_fft+2, dim], intermediate default 1536, test names, fixture and link paths verified)
+- Architecture table values (24 kHz, dim 512, 8 layers, n_fft 1024, hop 256) are checkpoint-specific; the code only holds defaults and config-driven values, and no real checkpoint config was checked. Not verified, not counted as drift.
+
+## crates/audio/src/codec/wavvae/EGM.md
+
+Coverage: sampled (interface symbols, open/encode/decode/Posterior::sample, megatts3 geometry and side effects verified in full read of mod.rs config, open, encode, decode)
+- Invariant "Inference is CPU f32 over host Vec<f32> buffers; no GPU state is held here" is false. [mod.rs:WavVae::with_backend] stores `Option<Rc<dyn ComputeBackend>>` and a device weight cache `RefCell<HashMap<usize, Rc<dyn DeviceWeight>>>` ([mod.rs:ConvExec]), and the decoder convolutions run on that backend.
+- Overview says the decoder "may run on an injected backend", which the invariant contradicts.
+
+## crates/audio/src/codec/wavvae/README.md
+
+Coverage: sampled (megatts3 geometry, reversed ratios [2,4,4,5,6], proj_to_z 512->64, clamp [-30,20], hop 960, Posterior fields, open path, has_encoder/Unsupported, real-checkpoint env vars, tools and testdata paths verified; tiny-fixture error numbers not re-run)
+- [wavvae/tests.rs:real_checkpoint_matches_pytorch] reads `TURBOSPARK_WAVVAE_TOL` (default 5e-3); the README does not mention it (omission, minor).
+
+## crates/audio/src/lid/EGM.md
+
+Coverage: full read (mod.rs is 3 lines of doc comments; EGM claims checked against it)
+- No drift detected.
+
+## crates/audio/src/lid/README.md
+
+Coverage: full read (README is short; link `../../MODELS.md#lid` resolves to `## LID` in crates/audio/MODELS.md)
+- No drift detected.
+
+## crates/audio/src/lm/EGM.md
+
+Coverage: sampled (every Interface symbol located; Side Effects checked: no env, thread or static in src/lm; Execution fallback, device attention gate, token-id and sliding_window refusals, MoE slot order, cohere2 and falcon checks read in targeted reads; cache.rs internals not fully read)
+- No drift detected.
+
+## crates/audio/src/lm/README.md
+
+Coverage: sampled (module table entries, backbone flavor claims for llama, qwen2, qwen3, ssm formula, 16 testdata/lm cases and 7 llama rope cases, regeneration script path verified; mutation-check numbers and cache-order tests not re-run)
+- No drift detected.
+
+## crates/audio/src/models/EGM.md
+
+Coverage: full read (mod.rs is 28 lines; every re-export and alias checked)
+- No drift detected.
+
+## crates/audio/src/music/EGM.md
+
+Coverage: full read (mod.rs is 6 lines; `pub mod minimax_music3` confirmed)
+- No drift detected.
+
+## crates/audio/src/music/README.md
+
+Coverage: full read (link `../../MODELS.md#music` resolves to `## MUSIC` in crates/audio/MODELS.md; minimax_music3/README.md link resolves)
+- No drift detected.
+
+## crates/audio/src/music/minimax_music3/EGM.md
+
+Coverage: sampled (all Interface symbols located; constants MAX_PROMPT_TOKENS, MAX_AUDIO_FRAMES, FRAME_RATE, AR_CFG_SCALE, AR_CFG_TOP_K, DIT_CFG_SCALE, SAMPLING_RATE, CHUNK_*, CROP_*, OVERLAP_LATENT_LENGTH, AR_SAMPLING_TOP_K and FlowProfile step counts verified; ~12.9k lines not fully read)
+- Invariant "backend-specific state is not held in this crate" is overstated. [mod.rs:Model] holds `backend: Option<Rc<dyn ComputeBackend>>`; [depth.rs:DepthDecoder], [dit.rs:FlowMatchingTransformer], [fusion.rs:ConditionEncoder] hold `Option<Rc<dyn ComputeBackend>>`; [qwen3.rs:Qwen3] holds device KV buffers `Rc<dyn DeviceBuffer>` (qwen3.rs:154-155) that persist between decode steps.
+- Side Effects omit interior mutability on `Model`: [mod.rs:Model] uses `RefCell<StageTimings>` and `Cell<FlowGuidance>`, which `set_flow_guidance`, `set_flow_solver`, `set_flow_profile` and the generate paths mutate through `&self`. The model is also single-threaded (Rc), which the EGM does not state (omission).
+- `TURBOSPARK_MUSIC3_BENCH_TREES` ([timing.rs:bench_dir]) and `read_dir` in [mod.rs:load_official_tensors] match the EGM.
+
+## crates/audio/src/music/minimax_music3/README.md
+
+Coverage: sampled (request defaults 60 s / 30 steps / seed 0 and 360 s and 1..=30 limits, flow profile constants and defaults, test names, script, example, fixture, docs and MODELS.md links, music3 CLI flags in crates/cli/src/bin/music.rs verified; performance tables and numeric claims not re-measured; 12.9k lines not fully read)
+- No drift detected.
+
+## crates/audio/src/ops/EGM.md
+
+Coverage: full read of EGM; `kernel_parity.rs` symbols and gating verified by grep (1187 lines not fully read)
+- No drift detected.
+
+## crates/audio/src/sts/EGM.md
+
+Coverage: full read (mod.rs is 15 lines; re-exports verified; subdirectory EGM links deepfilternet, dialogue_sidon, mel_roformer, mossformer2_se, sam_audio all resolve)
+- No drift detected.
+
+## crates/audio/src/sts/README.md
+
+Coverage: sampled (subdirectory README links resolve; family descriptions not verified against each family source, since those directories are outside this assignment)
+- No drift detected.
+
+## crates/audio/src/sts/deepfilternet/EGM.md
+
+Coverage: sampled (claims verified 5 of 6; mod.rs is 46 KB, checked by targeted reads, not read in full)
+- Invariant "[mod.rs:load]": there is no `DeepFilterNet::load`. Model loading happens in `DeepFilterNet::open` [crates/audio/src/sts/deepfilternet/mod.rs:open]. The only `fn load` items in the file are per-layer helpers [mod.rs:load at lines 64 and 186].
+- Invariant on `sample_rate` says it feeds the normalization constant "[mod.rs:enhance]". The value is read in `open` and used to compute `a_raw` at mod.rs:926 inside `open`. `enhance` does not read it. The field is `#[allow(dead_code)]` [mod.rs:DeepFilterNet].
+
+## crates/audio/src/sts/deepfilternet/README.md
+
+Coverage: sampled (claims verified 4 of 6; source not fully read)
+- "Supported Versions: DeepFilterNet v1, v2, and v3": [mod.rs:open] documents only the v3 layout. v2 loads through the `enc_concat` flag. No v1 handling was found in the file.
+- Verification gate "v3 local witness: waveform correlation 0.964, max absolute error 0.021": no match under crates/audio/src/sts/deepfilternet (the only hit is the README). The number is not traceable to an in-tree test or fixture.
+- "square-root Hann (Vorbis)" [mod.rs:vorbis_window]: the function computes a Vorbis power-complementary window, sin(pi/2 * sin^2(...)). It is not a square-root Hann window. The two names are conflated.
+
+## crates/audio/src/sts/dialogue_sidon/EGM.md
+
+Coverage: sampled (claims verified 9 of 9 checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/sts/dialogue_sidon/README.md
+
+Coverage: sampled (claims verified 8 of 9 checked; source not fully read)
+- Chunked long-file inference is described as part of the reference `separate()`, and the Documented divergences section does not say the Rust port omits it. [crates/audio/src/sts/dialogue_sidon/mod.rs] has no chunk or overlap or crossfade logic (the only `chunk` hits are `chunks_exact_mut` and `normalize_chunk`). The "Not yet verified: chunked stitching" note covers testing only, not absence.
+- Checked and matching: pre-emphasis 0.97 (mod.rs:1030), povey exponent 0.85 (mod.rs:47), peak normalization 0.9 with 160-sample pads (mod.rs:1097-1102), beta_end 0.02 and 1000 training steps (mod.rs:132-134), depthwise kernel 31 default (mod.rs:122), decoder via `codec::descript` (directory exists), all listed fixture files present under crates/audio/testdata/dialogue_sidon.
+
+## crates/audio/src/sts/mel_roformer/EGM.md
+
+Coverage: sampled (claims verified 6 of 6 checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/sts/mel_roformer/README.md
+
+Coverage: sampled (claims verified 6 of 8 checked; source not fully read)
+- Window naming is wrong and contradicts itself. The Overview says "symmetric-Hann STFT" and the Architecture section says "periodic (symmetric) Hann". The code path uses `crate::dsp::hann_window` [crates/audio/src/dsp.rs:hann_window], which divides by `size` (periodic). The code comment at [crates/audio/src/sts/mel_roformer/mod.rs:forward-STFT, line 768] also says "Symmetric Hann window (np.hanning(n_fft + 1)[:-1])", which is the periodic form. The README and the comment should say periodic.
+- Checked and matching: `open` requires config.json [mod.rs:open], packed `to_qkv` keys refused [mod.rs:load, lines 648-653], n_fft default 2048 [mod.rs:from_json], fixture files present under testdata/mel_roformer.
+
+## crates/audio/src/sts/mossformer2_se/EGM.md
+
+Coverage: sampled (claims verified 7 of 7 checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/sts/mossformer2_se/README.md
+
+Coverage: sampled (claims verified 8 of 9 checked; source not fully read)
+- Enhance wrapper boundaries do not match the code. The README says the full path is used "below 20 s" and segmented "at 20 s and above", and chunked "above the 60 s threshold". The code uses the segmented path only when `len > sample_rate * one_time_decode_length` [mod.rs:decode_one_audio], which is strictly greater, so exactly 20 s takes the full path. The chunked path triggers when `duration >= auto_chunk_threshold` [mod.rs:enhance_with_mode], which is inclusive, so exactly 60 s is chunked. The code comment at [mod.rs:enhance_with_mode] ("(20 s) use the reference segmented overlap-discarding path") repeats the inclusive wording, so the code comment also disagrees with the code.
+- Quantization claim "other bit widths are refused" is not traced. The loader hard-codes 8-bit, group 64 [mod.rs:load, the `linear` closure with `QuantScheme { bits: 8, group_size: 64 }`]. The refusal of other widths lives in the shared quant module and was not checked.
+- Checked and matching: nonzero dither refused [mod.rs:kaldi_fbank], config defaults decode_window 4, chunk_overlap 0.25, auto_chunk_threshold 60.0 [mod.rs:Default for MossFormer2SeConfig], optional config.json in open [mod.rs:open], real-checkpoint gate `real_checkpoint_gate` [tests.rs:real_checkpoint_gate] reads TURBOSPARK_MOSSFORMER2_SE_MODEL.
+
+## crates/audio/src/sts/sam_audio/EGM.md
+
+Coverage: sampled (claims verified 8 of 9 checked; source not fully read)
+- Not traced: the invariant that [shapes.rs] checks every config-derived stride at load. The module exists (mod.rs `mod shapes`), but its contents were not read.
+- Checked and matching: all interface names exist (`SamAudioConfig::validate`, `OdeOptions`, `EmbedAnchors`-backed velocity path, `T5Encoder::forward`); `open` reads config.json, model.safetensors or tiny_weights.safetensors, and tiny_codec.safetensors [mod.rs:open].
+
+## crates/audio/src/sts/sam_audio/README.md
+
+Coverage: sampled (claims verified 5 of 7 checked; source not fully read)
+No drift detected in the claims checked. Checked and matching: `OdeOptions` default is midpoint with step 2/32 [mod.rs:OdeOptions::default], temporal anchors (`EmbedAnchors`) exist, `codec::dacvae` directory exists, all listed fixture files present under testdata/sam_audio. Not traced: QK RMSNorm eps 1e-5, the RoPE theta formula, and the "no learned sigmoid gates" statement.
+
+## crates/audio/src/vad/EGM.md
+
+Coverage: full read of crates/audio/src/vad/mod.rs (409 bytes); sub-module claims not re-checked here
+- Interface claims the re-exports include "the sortformer public API". [crates/audio/src/vad/mod.rs:pub use sortformer] re-exports only DiarizationOutput, DiarizationSegment, GenerateOptions, Sortformer, StreamingOptions, and StreamingProfile. Not re-exported: SortformerConfig, StreamingChunk, StreamingState, extract_mel_features, preds_to_segments, preds_to_segments_with_options, median_filter_probs, trim_silence. The Nemotron re-export is also partial: NemotronConfig, LatencyPreset, CoupledDiarizer, and EncoderExecutor are not re-exported.
+
+## crates/audio/src/vad/README.md
+
+Coverage: full read (short file); links checked by path only
+- Links resolve: ../../MODELS.md is crates/audio/MODELS.md (exists); the three family READMEs exist. The `#vad` anchor was not checked.
+- Checked and matching: Nemotron max 8 speakers [crates/audio/src/vad/nemotron_diarization/mod.rs:from_json, num_speakers default 8]; Sortformer 4 speakers and Silero dual 16 kHz/8 kHz branches [crates/audio/src/vad/silero_vad/mod.rs:load, vad_16k and vad_8k].
+
+## crates/audio/src/vad/nemotron_diarization/EGM.md
+
+Coverage: sampled (claims verified 9 of 9 checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/vad/nemotron_diarization/README.md
+
+Coverage: sampled (claims verified 8 of 10 checked; source not fully read)
+- "80-bin Mel Spectrogram" in the diagram: the code default is `feature_size: 128` [crates/audio/src/vad/nemotron_diarization/mod.rs:MelConfig::default], and the coupled tests assert 128 mel bins [mod.rs, coupled test around line 2009]. config.json can override the default, so this is a mismatch only if the shipped checkpoint is 128. The README should name the checkpoint value or say it is config-driven.
+- Example and tooling path does not resolve: `scripts/convert_multitalker_nemo.py convert-diar` is cited from the repo root. The script is at crates/audio/scripts/convert_multitalker_nemo.py. No scripts/ directory exists at the repo root.
+- Checked and matching: coupled constants fifo_len 264, spkcache_update_period 222, 14-frame chunk [mod.rs:multitalker_coupled, lines 1308-1317]; test `coupled_chunk_preds_match_nemo` [mod.rs:coupled_chunk_preds_match_nemo]; both runtime files crates/runtime/src/nemotron_diar_metal.rs and crates/runtime/tests/nemotron_diar_metal.rs exist; 1e-4 tolerances in that test; 31 layers and subsampling 8 defaults [mod.rs:from_json]; `CoupledDiarizer::with_executor` [mod.rs:with_executor].
+
+## crates/audio/src/vad/silero_vad/EGM.md
+
+Coverage: sampled (claims verified 6 of 6 checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/vad/silero_vad/README.md
+
+Coverage: sampled (claims verified 4 of 5 checked; source not fully read)
+- Verification claim "Maximum probability absolute error 4.8e-7" appears only in this README. No in-tree test or fixture under crates/audio/src/vad/silero_vad or testdata carries the figure, so it is not traceable to the repo.
+- Checked and matching: LSTM hidden size 128 [mod.rs:load, lstm_dim] and state shape [mod.rs:VadStreamState]; 16 kHz and 8 kHz branches [mod.rs:initial_state, vad_16k and vad_8k]; streaming chunk sizes 512 and 256 appear in the per-rate config tuples [mod.rs:load].
+- Not traced: the 188-chunk parity count, the CPU throughput and memory figures.
+
+## crates/audio/src/vad/sortformer/EGM.md
+
+Coverage: sampled (claims verified 9 of 9 checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/vad/sortformer/README.md
+
+Coverage: sampled (claims verified 2 of 4 checked; source not fully read)
+- Checked and matching: hop 160 samples (10 ms at 16 kHz) [mod.rs:ProcessorConfig::default], Slaney mel scale [mod.rs:extract_mel_features, MelScale::Slaney].
+- Not traced: "AOSC compression matches reference fixture byte-for-byte", the 1e-5 fixture tolerance, and the RTF and DER figures. These are test and benchmark claims, not code claims; no divergence asserted.
+
+## crates/audio/tools/EGM.md
+
+Coverage: sampled (file names and invariants checked; generator bodies not read)
+- No divergence found in the names checked. Every listed generator, convert_megatts3.py, test_convert_megatts3.py, and the reference probes exist under crates/audio/tools. The test runs `import convert_megatts3` after inserting its own directory into sys.path [crates/audio/tools/test_convert_megatts3.py], so the documented `python3 -I` command works.
+- `--real` uses `local_files_only` [crates/audio/tools/gen_snac_fixtures.py:main, the --real flag]. OUT is ../turbospark/crates/audio/testdata/snac [gen_snac_fixtures.py:OUT], consistent with the invariant.
+- Not traced: "pinned commit" of mlx-audio. Most generators (69 of 71) reference the venv or mlx-audio, but the pinned commit was not compared.
+
+## crates/audio/src/stt/EGM.md
+
+Coverage: sampled (claims verified 14 of 16, source not fully read; mod.rs pub mod and re-export lists compared in full)
+No drift detected.
+
+## crates/audio/src/stt/README.md
+
+Coverage: sampled (claims verified 8 of 8 integration and layout claims; family list not checked line by line against each family README)
+No drift detected.
+
+## crates/audio/src/stt/canary/EGM.md
+
+Coverage: sampled (claims verified 14 of 16, source not fully read)
+No drift detected.
+
+## crates/audio/src/stt/canary/README.md
+
+Coverage: sampled (claims verified 11 of 13, source not fully read)
+- Test count drift: README says the port "adds 9 always-on tests and 1 ignored gated test" [mod.rs:tests] [tokenizer.rs:tests]. Current tree has 8 always-on plus 1 ignored in canary/mod.rs and 2 always-on in canary/tokenizer.rs, so 10 always-on plus 1 ignored under stt::canary. Low severity, count may be historical.
+
+## crates/audio/src/stt/cohere_asr/EGM.md
+
+Coverage: full read (cohere_asr/mod.rs read in full)
+No drift detected.
+
+## crates/audio/src/stt/cohere_asr/README.md
+
+Coverage: full read (cohere_asr/mod.rs read in full; README pins and investigation claims are not verifiable from source and were checked only for consistency with the pinned constants)
+No drift detected.
+
+## crates/audio/src/stt/fireredasr2/EGM.md
+
+Coverage: sampled (claims verified 18 of 20, source not fully read)
+No drift detected.
+
+## crates/audio/src/stt/fireredasr2/README.md
+
+Coverage: sampled (claims verified 4 of 4 checkable claims; artifact digests not checked)
+No drift detected.
+
+## crates/audio/src/stt/fun_asr_nano/EGM.md
+
+Coverage: sampled (claims verified 10 of 12, source not fully read)
+No drift detected.
+
+## crates/audio/src/stt/fun_asr_nano/README.md
+
+Coverage: sampled (claims verified 5 of 5 checkable claims; artifact digests and fixture regeneration commands not executed)
+No drift detected.
+
+## crates/audio/src/stt/glmasr/EGM.md
+
+Coverage: sampled (claims verified 12 of 13, source not fully read)
+No drift detected.
+
+## crates/audio/src/stt/glmasr/README.md
+
+Coverage: sampled (claims verified 4 of 4 checkable claims: pinned revision, tolerances 1e-2 and 3e-2, test name, fixture generator; runtime and timing claims not checked)
+No drift detected.
+
+## crates/audio/src/stt/granite_speech/EGM.md
+
+Coverage: sampled (claims verified 14 of 16, source not fully read)
+No drift detected.
+
+## crates/audio/src/stt/granite_speech/README.md
+
+Coverage: sampled (claims verified 9 of 10 checkable claims: multipliers, pins, prompt, max_tokens, translation prompt; file digests and timing not checked)
+No drift detected.
+
+## crates/audio/src/stt/granite_speech5_ctc/EGM.md
+
+Coverage: sampled (claims verified 12 of 13, source not fully read)
+No drift detected.
+
+## crates/audio/src/stt/granite_speech5_ctc/README.md
+
+Coverage: sampled (claims verified 4 of 4 checkable claims: pin, frontend (HTK, 512 FFT, 400 Hann), CTC collapse, batching; fixture digest not checked)
+No drift detected.
+
+## crates/audio/src/stt/granite_speech_nar/EGM.md
+
+Coverage: sampled (claims verified 13 of 14, source not fully read)
+- Shape wording: Interface says `compute_features(samples)` returns `[T/2, 160]` features [mod.rs:compute_features]. The function returns a flat Vec with 2 * (n_samples / 320) rows of N_MELS = 80 values each, and no pairing or stacking step exists in compute_features; the flat buffer has the same element count and order as [T/2, 160]. The doc comment on compute_features also says "stacked paired" [mod.rs:compute_features]. Low severity: the wording describes a stacking that the code does not perform.
+
+## crates/audio/src/stt/granite_speech_nar/README.md
+
+Coverage: sampled (claims verified 9 of 10 checkable claims; artifact digests not checked)
+- Slot placement: README says the hypothesis is "interleaved with blank insertion slots (odd positions, minimum length 8)". add_insertion_slots places blanks at even indices (0, 2, 4, ...) and CTC tokens at odd indices, matching the code comment and EGM.md. The README's "odd positions" contradicts the code [mod.rs:add_insertion_slots].
+
+## crates/audio/src/stt/higgs_audio_3/EGM.md
+
+Coverage: sampled (claims verified 14 of 16, source not fully read)
+No drift detected.
+
+## crates/audio/src/stt/higgs_audio_3/README.md
+
+Coverage: sampled (claims verified 8 of 9 checkable claims: pin, prompts, token ids, VAD parameters and API, qwen3_asr shard extension; numeric stage witnesses and frame counts not re-run)
+No drift detected.
+
+## crates/audio/src/stt/lasr_ctc/EGM.md
+
+Coverage: sampled (claims verified 13 of 14, source not fully read)
+No drift detected.
+
+## crates/audio/src/stt/lasr_ctc/README.md
+
+Coverage: sampled (claims verified 9 of 10 checkable claims: pin, residual weights, eps from config, CTC decode order, frontend constants; fixture transcript not re-run)
+No drift detected.
+
+## crates/audio/src/stt/mega_asr/EGM.md
+
+Coverage: sampled (claims verified approx. 12 of 20, source not fully read)
+No drift detected.
+
+## crates/audio/src/stt/mega_asr/README.md
+
+Coverage: sampled (claims verified approx. 8 of 20, source not fully read; pinned sizes and SHA-256 table not checked against files)
+No drift detected.
+
+## crates/audio/src/stt/mms/EGM.md
+
+Coverage: sampled (claims verified approx. 10 of 14, source not fully read)
+No drift detected.
+
+## crates/audio/src/stt/mms/README.md
+
+Coverage: sampled (claims verified approx. 5 of 10, source not fully read; pinned sizes and SHA-256 table not checked against files)
+No drift detected.
+
+## crates/audio/src/stt/moonshine/EGM.md
+
+Coverage: sampled (claims verified approx. 14 of 18, source not fully read)
+No drift detected.
+
+## crates/audio/src/stt/moonshine/README.md
+
+Coverage: sampled (claims verified approx. 6 of 10, source not fully read; checkpoint revision and SHA-256 table have no code constant to compare against)
+- [crates/audio/src/stt/moonshine/mod.rs:Moonshine::open] The pinned checkpoint revision `2ccd087d043f77a4a07bd412b6725266355b08f4` and file digests appear only in this README. Unlike the sibling families, moonshine has no profile constant in code, so the pin cannot be checked against code (informational, not a mismatch).
+
+## crates/audio/src/stt/moss_music/EGM.md
+
+Coverage: sampled (claims verified approx. 14 of 18, source not fully read)
+No drift detected.
+
+## crates/audio/src/stt/moss_music/README.md
+
+Coverage: sampled (claims verified approx. 6 of 10, source not fully read; pinned sizes and SHA-256 table not checked against files)
+No drift detected.
+
+## crates/audio/src/stt/moss_transcribe_diarize/EGM.md
+
+Coverage: sampled (claims verified approx. 10 of 16, source not fully read)
+No drift detected.
+
+## crates/audio/src/stt/moss_transcribe_diarize/README.md
+
+Coverage: sampled (claims verified approx. 8 of 14, source not fully read; encoder and adaptor geometry checked only through config test values; pinned file table not checked against files)
+No drift detected.
+
+## crates/audio/src/stt/multitalker_asr/EGM.md
+
+Coverage: sampled (claims verified approx. 14 of 16; Interface checked against public items in mod.rs, scheduler.rs, frontend.rs, seglst.rs; source not fully read)
+- [scheduler.rs:LiveSession] Interface omits public methods `seglst`, `processed_frames`, `samples_received`, `diarization`.
+- [scheduler.rs:CoupledSession] Interface omits public methods `new`, `run` (the batch entry point, named only in invariants), `seglst`, `diarization`.
+- [mod.rs:MultitalkerAsr::drop_extra_pre_encoded] public method not listed in Interface.
+- [mod.rs:Features] `frame_major` and `channel_major` not listed in Interface.
+- [mod.rs:SpeakerStream] `tokens`, `decoded_frames`, `cache_len` not listed in Interface.
+- [seglst.rs:SentenceBuilder] Interface names the type only; public `new`, `update`, `changes`, `entries` are not listed.
+
+## crates/audio/src/stt/multitalker_asr/README.md
+
+Coverage: sampled (claims verified approx. 12 of 18, source not fully read; benchmark and timing figures not checked, they are not reproducible from code)
+- Reproduce/Tests section: `scripts/nemo_multitalker_trace.py` does not resolve from the repo root; the script is at `crates/audio/scripts/nemo_multitalker_trace.py` (the Reproduce block uses the full path, the Tests table does not).
+- Confirmed as written: pinned revision `8749fc71fd6e2d88ef230159bbf2aea69b524ee1` [mod.rs:MULTITALKER_PARAKEET_STREAMING_V1]; frozen_e settings (4 speakers, threshold 0.5, cache gating over 2 chunks) [scheduler.rs:CoupledConfig::frozen_e]; `supported_punctuation` required [mod.rs:supported_punctuation]; catalog row `can_run: false` [crates/catalog/src/audio_families.json:stt/multitalker_asr]; no `ts_multitalker_stream_*` FFI in crates/ffi.
+
+## crates/audio/src/stt/nemo/EGM.md
+
+Coverage: sampled (claims verified approx. 9 of 10, alignment.rs read in targeted ranges only, not in full)
+- [alignment.rs:merge_longest_contiguous] Invariant says the function returns `SpeechError::Input` when the best run is "shorter than half the overlap length". The code compares against `overlap_a.len() / 2`, a token count, not half the overlap duration. Wording mismatch only; the doc should say "half the overlap token count".
+
+## crates/audio/src/stt/nemotron_asr/EGM.md
+
+Coverage: sampled (claims verified approx. 10 of 14, source not fully read)
+No drift detected.
+
+## crates/audio/src/stt/nemotron_asr/README.md
+
+Coverage: sampled (claims verified approx. 3 of 5, source not fully read)
+No drift detected.
+
+## crates/audio/src/stt/parakeet/EGM.md
+
+Coverage: sampled (claims verified approx. 9 of 12, source not fully read)
+No drift detected.
+
+## crates/audio/src/stt/parakeet/README.md
+
+Coverage: sampled (claims verified approx. 5 of 8, source not fully read; WER-free stage numbers in the README are not reproducible from code)
+- Stage fixture command: `scripts/generate_parakeet_fixtures.py` does not resolve from the repo root; the script is at `crates/audio/scripts/generate_parakeet_fixtures.py`.
+
+## crates/audio/src/stt/phonon/EGM.md
+
+Coverage: sampled (claims verified approx. 12 of 16, source not fully read)
+No drift detected.
+
+## crates/audio/src/stt/phonon/README.md
+
+Coverage: sampled (claims verified approx. 6 of 12, source not fully read; pinned file sizes and SHA-256 table not checked against files)
+No drift detected.
+
+## crates/audio/src/stt/qwen2_audio/EGM.md
+
+Coverage: sampled (claims verified approx. 12 of 16, source not fully read)
+No drift detected.
+
+## crates/audio/src/stt/qwen2_audio/README.md
+
+Coverage: sampled (claims verified approx. 5 of 10, source not fully read; pinned file table not checked against files)
+- [crates/audio/testdata] Verification section names the shared smoke WAV as `crates/audio/testdata/qwen2_audio_reference.wav`. That file does not exist; the README's parenthetical notes the audio is actually `qwen3_forced_aligner_reference.wav`, so the primary path is wrong and should be corrected.
+- Verification status table says `cargo check --target x86_64-unknown-linux-gnu -p turbospark-audio` passes. moss_transcribe_diarize/README.md says the same check could not run on the dev host (onig_sys needs a cross gcc). Both are dated claims and could both be true at different times, but the qwen2 claim is not reproduced here and should carry a date.
+
+## crates/audio/src/stt/qwen3_asr/README.md
+
+Coverage: sampled (claims verified 20 of 26, source not fully read: 4108 lines across 8 files)
+No drift detected.
+Not verifiable from source (pinned digests, sizes, and timing figures): SHA-256 table, phase timings, RSS figures, Hub revision hashes.
+
+## crates/audio/src/stt/qwen3_asr/EGM.md
+
+Coverage: sampled (claims verified 20 of 26, source not fully read: 4108 lines across 8 files)
+No drift detected.
+
+## crates/audio/src/stt/qwen3_forced_aligner/README.md
+
+Coverage: full read (mod.rs, 584 lines; only source file in the directory)
+- Local checks use the test filter `models::stt::qwen3_forced_aligner` (both the unit-test command and the ignored-fixture command). The test paths are `stt::qwen3_forced_aligner::tests::...` (the `models` module only re-exports `stt`), so the substring filter matches zero tests. Correct filter: `stt::qwen3_forced_aligner`. [mod.rs:tests]
+- Not verifiable from source: artifact sizes and SHA-256 digests, fixture digests, the "within 1 ms" match claim (fixture has 9 items, consistent with README).
+
+## crates/audio/src/stt/qwen3_forced_aligner/EGM.md
+
+Coverage: full read (mod.rs, 584 lines; only source file in the directory)
+- Invariant says config failures are `Unsupported` ("... else `Unsupported`"). Only the classify_num and timestamp_segment_time mismatch return `Unsupported`. model_type, timestamp_token_id, and timestamp_segment_time parse failures return `BadConfig`. [mod.rs:Qwen3ForcedAlignerConfig::from_json]
+
+## crates/audio/src/stt/whisper/README.md
+
+Coverage: sampled (claims verified 13 of 16, mod.rs 779 lines not fully read)
+- Profile table lists `whisper-medium` (769M, d_model 1024, 24 enc / 24 dec layers, 16 heads). No medium profile or constructor exists; the code defines only tiny, base, small, large_v3, and distil_large_v3. [mod.rs:WhisperConfig]
+- Decoding line says "Greedy or beam search". There is no beam search; `transcribe` is greedy argmax only. [mod.rs:WhisperModel::transcribe]
+- Architecture line says the log-mel frontend is "Provided by [turbospark_audio::models::whisper]". `models::whisper` re-exports `stt::whisper`, which takes caller-supplied mel in `encode` and contains no Slaney filterbank. The frontend is `whisper_log_mel_window` in `crates/audio/src/whisper.rs` (also referenced by the module doc at stt/whisper/mod.rs:5). [whisper.rs:whisper_log_mel_window]
+
+## crates/audio/src/stt/whisper/EGM.md
+
+Coverage: sampled (claims verified 13 of 16, mod.rs 779 lines not fully read)
+- Citation `[whisper.rs:WHISPER_WINDOW_SAMPLES]` does not point at a file in this directory. The constant is in the crate-root file `crates/audio/src/whisper.rs`. Low severity; the symbol exists. [whisper.rs:WHISPER_WINDOW_SAMPLES]
+
+## crates/audio/src/stt/voxtral/README.md
+
+Coverage: sampled (claims verified 14 of 17, mod.rs 1050 lines not fully read)
+- Prompt bullet says the Tekken prompt uses "pinned English transcription prompt tokens". No pinned prompt constant exists. `Voxtral::transcribe` takes `prompt_ids` from the caller, and the EGM says the same. The module doc (mod.rs:6-7, "pinned here as token ids") has the same stale claim. [mod.rs:Voxtral::transcribe]
+- Verification section states audio-tower features match "within 9e-3 relative tolerance" and transcripts are "byte-identical". No assertion with that tolerance exists in the module tests; the only checkpoint test is ignored and reads `TURBOSPARK_VOXTRAL_MODEL_DIR`. Result is not verifiable from source. [mod.rs:tests]
+
+## crates/audio/src/stt/voxtral/EGM.md
+
+Coverage: sampled (claims verified 14 of 17, mod.rs 1050 lines not fully read)
+No drift detected.
+
+## crates/audio/src/stt/sensevoice/README.md
+
+Coverage: sampled (claims verified 18 of 19; frontend.rs and mod.rs checked by targeted reads, sanm.rs 745 lines not read)
+No drift detected.
+Not verifiable from source: model file size, SHA-256 of the WAV, and the Python reference transcript.
+
+## crates/audio/src/stt/sensevoice/EGM.md
+
+Coverage: sampled (claims verified 18 of 19; frontend.rs and mod.rs checked by targeted reads, sanm.rs 745 lines not read)
+No drift detected.
+
+## crates/audio/src/stt/vibevoice_asr/README.md
+
+Coverage: sampled (claims verified 12 of 14, source 2738 lines not fully read)
+No drift detected.
+Not verifiable from source: upstream load-path failure narrative, reference timings, prompt-id count (83), and the artifact table.
+
+## crates/audio/src/stt/vibevoice_asr/EGM.md
+
+Coverage: sampled (claims verified 12 of 14, source 2738 lines not fully read)
+- Overview says "Streaming, diarization controls, and hotwords are refused." No refusal check exists for diarization or hotwords; they are absent from the API. The README itself says "refused by omission" for streaming, so the EGM wording overstates the code. [mod.rs:VibeVoiceAsr]
+
+## crates/audio/src/stt/voxtral_realtime/README.md
+
+Coverage: sampled (claims verified 17 of 19, source 3803 lines not fully read)
+- Overview says the real-time `StreamingSession` "is out of scope and refused with a reason". No `StreamingSession` type or refusal path exists in code; the name appears only in the module doc (mod.rs:16). Streaming is absent, not refused. [mod.rs:VoxtralRealtime]
+- Not verifiable from source: parity figures (1.3e-6, 6.1e-5, 1.1e-5), the two port bugs described, and artifact digests.
+
+## crates/audio/src/stt/voxtral_realtime/EGM.md
+
+Coverage: sampled (claims verified 17 of 19, source 3803 lines not fully read)
+No drift detected.
+
+## crates/audio/src/stt/wav2vec/README.md
+
+Coverage: sampled (claims verified 9 of 10, source 2422 lines not fully read)
+No drift detected.
+Not verifiable from source: artifact digests, the 2.0e-4 and 5.0e-3 parity tolerances, and the reference transcript.
+
+## crates/audio/src/stt/wav2vec/EGM.md
+
+Coverage: sampled (claims verified 9 of 10, source 2422 lines not fully read)
+No drift detected.
+
+## crates/audio/src/stt/whistle/README.md
+
+Coverage: sampled (claims verified 14 of 15, source 3511 lines including fixtures not fully read)
+No drift detected.
+Not verifiable from source: checkpoint SHA-256 values, Hugging Face revisions, and the oracle agreement claims.
+
+## crates/audio/src/stt/whistle/EGM.md
+
+Coverage: sampled (claims verified 14 of 15, source 3511 lines including fixtures not fully read)
+No drift detected.
+
+## crates/audio/src/tts/EGM.md
+
+Coverage: sampled (module wiring, all child EGM links, alias list and no-alias list checked against mod.rs; all 11 directories read at the EGM level)
+- Interface lists "Families exported as modules only (no alias)" without `pocket_tts`, but mod.rs declares `pub mod pocket_tts` with no `pub use`, and this file's own Invariants say pocket_tts has no alias. [mod.rs:pub mod pocket_tts]
+
+## crates/audio/src/tts/README.md
+
+Coverage: sampled (links resolve, `../../MODELS.md#tts` anchor exists at crates/audio/MODELS.md line 244, family index compared against the pub mod list)
+- Family index lists 19 families and omits 20 declared families that each have their own README: arktts, bark, chatterbox, chatterbox_turbo, confucius4, dia, dramabox, echo_tts, fish_drama3, fish_qwen3_omni, irodori_tts, longcat_audiodit, melotts, omnivoice, pocket_tts, tada, vibevoice, voxcpm, voxcpm2, voxtral_tts. [mod.rs:pub mod]
+
+## crates/audio/src/tts/arktts/EGM.md
+
+Coverage: sampled (SamplingParams defaults, codec upsample strides, empty-generation error, decode-only codec and symbols checked)
+No drift detected.
+
+## crates/audio/src/tts/arktts/README.md
+
+Coverage: full read of README; sampled source (SamplingParams, codec strides [8,8,4,2], falcon_h1 seam, fixture paths). Test counts ("15 arktts tests", "1296-test crate suite") were not run.
+- Broken link: `../../../../tools/gen_arktts_fixtures.py` resolves to crates/tools/gen_arktts_fixtures.py, which does not exist. The file is at crates/audio/tools/gen_arktts_fixtures.py, so the link should be `../../../tools/gen_arktts_fixtures.py`. [README.md link]
+
+## crates/audio/src/tts/bailingmm/EGM.md
+
+Coverage: sampled (all named symbols located; Model::open prefix handling, max_decode_steps rejection, and the step-3 stop threshold checked)
+No drift detected.
+
+## crates/audio/src/tts/bailingmm/README.md
+
+Coverage: full read of README; sampled source (crate::lm and ming_qwen2/dit/audio_vae layout, fixture tool path, stop rule)
+No drift detected.
+
+## crates/audio/src/tts/bark/EGM.md
+
+Coverage: sampled (named consts and types located; Model::generate forcing of max_coarse_history 1, sliding_window_len 60, and no coarse KV cache verified at mod.rs:Model::generate)
+No drift detected.
+
+## crates/audio/src/tts/bark/README.md
+
+Coverage: full read of README; sampled source (tests.rs, fixture dir testdata/tts_bark and tools/gen_bark_fixtures.py exist, NonCausalSelfAttention has no mask, max_coarse_history pin, 60-token default window)
+No drift detected. (ALLOWED_PROMPTS is an upstream Python name named only as an open item; not a Rust symbol and not a claim about this crate.)
+
+## crates/audio/src/tts/breeze_tts/EGM.md
+
+Coverage: sampled (named symbols located; GenerateParams::validate checks, reserved-codec masking, EOS class at vocab_size checked)
+No drift detected.
+
+## crates/audio/src/tts/breeze_tts/README.md
+
+Coverage: full read of README; sampled source (GenerateParams defaults 750 / 0.9 / 1.0 / 50 / 1.0 match Default impl at mod.rs:514; fixture dirs and tools/gen_breeze_tts_fixtures.py exist)
+No drift detected.
+
+## crates/audio/src/tts/chatterbox/EGM.md
+
+Coverage: sampled (named symbols located; env var TURBOSPARK_DEBUG_CONV, 6561/6562 markers, 480/480 trim fade, s3gen/hift constants checked)
+- Invariant "ids at or above 6561 are dropped" cites [mod.rs:drop_invalid_tokens], but drop_invalid_tokens only slices between the first start marker and the first stop marker. The `< SPEECH_VOCAB_SIZE` filter is applied in the caller in mod.rs (about lines 544-553). Behavior matches; the citation points at the wrong symbol.
+
+## crates/audio/src/tts/chatterbox/README.md
+
+Coverage: full read of README; sampled source (env vars TURBOSPARK_CHATTERBOX_MODEL_DIR and TURBOSPARK_S3_MODEL_DIR, #[ignore] real_checkpoint_gate, debug_flow_stages and debug_hift_stages, tools/gen_chatterbox_fixtures.py and tools/dbg_chatterbox_traces.py, src/codec/s3 link, trim_top_db 20 and rate 1.3)
+No drift detected.
+
+## crates/audio/src/tts/chatterbox_turbo/EGM.md
+
+Coverage: sampled (S3GEN_SIL = 4299, token filter below 6561, meanflow default of 2 steps, empty-text rejection in inference_turbo checked; env var claim checked by grep, none found in non-test code)
+No drift detected.
+
+## crates/audio/src/tts/chatterbox_turbo/README.md
+
+Coverage: full read of README; sampled source (four post-upsample conformer layers at conformer.rs, S3GEN_SIL, with_position_table_at_root in lm/gpt2.rs, noised_mels splice, stft_window recomputed in hift.rs, empty-text rejection). StatsPool epsilon and the other gotcha claims were not checked.
+No drift detected.
+
+## crates/audio/src/tts/confucius4/EGM.md
+
+Coverage: sampled (22050 output rate, 16 kHz intake, language_token, 26-point linspace with cfg 0.7, BOS/EOS 8192/8193, 400-sample refusal in dsp.rs checked)
+No drift detected.
+
+## crates/audio/src/tts/confucius4/README.md
+
+Coverage: full read of README; sampled source (sample rates, 1.72 length regulator, tests.rs, tools/gen_confucius4_fixtures.py, codec/bigvgan path)
+- Names a `LANGUAGE_TOKEN` subset as the API. No such item exists; the public API is `language_token(lang)`. The name appears only in a doc comment at [mod.rs:language_token].
+- "Rust gates ... (6 tests)": tests.rs has 8 `#[test]` attributes and none are `#[ignore]`d. [tests.rs]
+
+## crates/audio/src/tts/dia/EGM.md
+
+Coverage: sampled (KEEP_VOCAB 1025, EXTRA_STEPS_AFTER_EOS 30, MASK_DENIED -1e9, float32-only dtype check, delay_pattern check)
+No drift detected.
+
+## crates/audio/src/tts/dia/README.md
+
+Coverage: full read of README; sampled source (GenerateParams defaults temperature 1.3, top_p 0.95, cfg_filter_top_k 35; delay pattern [0,8..15]; 30-frame tail drop and [0,1023] clamp in audio.rs; codec/descript link; tools/gen_dia_fixtures.py; testdata/tts_dia)
+No drift detected.
+
+## crates/audio/src/tts/dramabox/EGM.md
+
+Coverage: sampled (GenerateParams defaults cfg 2.5, stg 1.5, stg_block 29, steps 30; decode_waveform_refusal; SeededNoise; all_perturbed handling)
+No drift detected.
+
+## crates/audio/src/tts/dramabox/README.md
+
+Coverage: full read of README; sampled source (all_perturbed branch at dit.rs ~300, causal time bound at diffusion.rs:174-176, flip_sin_to_cos at dit.rs ~420, waveform refusal at mod.rs ~1109, DRAMABOX_MEASURE in tests.rs:53, fixture dir and tools/gen_dramabox_fixtures.py)
+No drift detected.
+
+## crates/audio/src/tts/echo_tts/EGM.md
+
+Coverage: sampled (DEFAULT_TRUNCATION_FACTOR 0.96, t schedule from 0.999, model. weight prefix, delete_blockwise_modules refusal, zero one-patch speaker default, codec fish_s1_dac link)
+No drift detected.
+
+## crates/audio/src/tts/echo_tts/README.md
+
+Coverage: full read of README; sampled source (config defaults latent 80, model 2048, 40 steps, sequence 640, heads 16, text/speaker 1280; 2048-sample crop; codec encode_zq/decode_zq; fixture and tool paths). Blocks=24 and the speaker chunk default were not checked.
+- "Rust gates: cargo test ... echo_tts (9 tests)": echo_tts/tests.rs has 10 `#[test]` attributes and none are `#[ignore]`d. Test run not executed to confirm the count.
+
+## crates/audio/src/tts/fish_drama3/EGM.md
+
+Coverage: sampled (most interface and invariant claims grep-checked and read at the cited lines; generate.rs and tower.rs not read in full; exact N of M not tallied)
+No drift detected.
+
+## crates/audio/src/tts/fish_drama3/README.md
+
+Coverage: sampled (sampling presets, RAS values, PauseGuard constants, rollback limit, file paths and fixture paths checked; the real-checkpoint and parity numbers are not re-run)
+No drift detected.
+
+## crates/audio/src/tts/fish_qwen3_omni/EGM.md
+
+Coverage: sampled (symbols, RAS constants, speed and budget formulas, semantic bias guard, and no-env/no-thread claim checked; mod.rs (48 KB) not read in full)
+No drift detected.
+
+## crates/audio/src/tts/fish_qwen3_omni/README.md
+
+Coverage: sampled (RAS window and temperature values, REFERENCE_COMMIT, and the budget formula checked; fixture generator and parity figures not re-run)
+No drift detected.
+
+## crates/audio/src/tts/higgs_audio/EGM.md
+
+Coverage: sampled (delay-pattern, sampler, fade, prompt-string, and stop-reason symbols, codebook stride, and attention-head checks confirmed; mod.rs (53 KB) not read in full)
+No drift detected.
+
+## crates/audio/src/tts/higgs_audio/README.md
+
+Coverage: sampled (refused config flags, DEFAULT_CODEC_REPO, sampler and fade symbols checked; the "no real-checkpoint gate" statement is a claim about unrun work and was not verified either way)
+No drift detected.
+
+## crates/audio/src/tts/higgs_audio_v3/EGM.md
+
+Coverage: sampled (AUDIO_PLACEHOLDER_ID, DEFAULT_MAX_NEW_FRAMES, DEFAULT_SAMPLE_RATE, SamplerState, sample_independent, greedy_sample_audio, PromptBuilder/PromptParts/ReferenceCodes, and the four tensor-prefix layouts checked; mod.rs (37 KB) not read in full)
+No drift detected.
+
+## crates/audio/src/tts/higgs_audio_v3/README.md
+
+Coverage: sampled (default max frames, sample-rate default, load_with_embed_table, layout probes, and the "no clipping" claim checked; the claim that use_delay_pattern and audio_token_id are never read was not confirmed, since the grep output was truncated)
+No drift detected.
+
+## crates/audio/src/tts/indextts/EGM.md
+
+Coverage: sampled (GenerateParams defaults, REF_MEL_BINS, DEFAULT_SAMPLE_RATE, position_row bounds, top_k vocab refusal, max-mel-token bound, and rel_pos and kernel-parity checks confirmed; mod.rs (25 KB) and the sub-modules not read in full)
+No drift detected.
+
+## crates/audio/src/tts/indextts/README.md
+
+Coverage: sampled (rel_pos refusal, macaron refusal, log_mel_spectrogram, sampler defaults, and file paths checked)
+- Name typo: "ECPA-TDNN" (Architecture, the BigVGAN bullet) should read "ECAPA-TDNN", the name used in EGM.md and the speaker encoder (`crates/audio/src/tts/indextts/speaker.rs:SpeakerEncoder`).
+
+## crates/audio/src/tts/irodori_tts/EGM.md
+
+Coverage: sampled (alternating-CFG refusal, ref_max_seconds, SeededFlowNoise, build_duration_features, sample_rate, decode_latents, encode_conditions_full, build_kv_cache, forward_with_conditions, and duration clamp checked; mod.rs (136 KB) not read in full)
+No drift detected.
+
+## crates/audio/src/tts/irodori_tts/README.md
+
+Coverage: sampled (codec path link, alternating-CFG refusal, dacvae folder loading, and FlowNoise and ModernBERT types checked; the parity figures and the AdaLN and RoPE bug notes were not re-derived)
+No drift detected.
+
+## crates/audio/src/tts/kitten_tts/EGM.md
+
+Coverage: sampled (install_voice, generate_segment_with_durations, synthesize_with, fake-quant helpers, SAMPLE_RATE, REFERENCE_COMMIT, frontend re-exports, npz-to-safetensors mapping, per-request Rng, and finite-speed checks confirmed; mod.rs (105 KB) and frontend.rs (50 KB) not read in full)
+No drift detected.
+
+## crates/audio/src/tts/kitten_tts/README.md
+
+Coverage: sampled (STYLE_SPLIT of 128, ActivationQuant and fake_quant_dynamic_u8, the voices.safetensors name probe, TextPreprocessor::process, and ModelConfig fields checked; the phonemizer boundary and pipeline passes were not traced end to end)
+No drift detected.
+
+## crates/audio/src/tts/kokoro/EGM.md
+
+Coverage: sampled (open_with_backend, diagnostic_vocoder (doc hidden), VOICE_FILES, MAX_FRAMES_PER_PHONEME, round_duration (ties to even), pub seed, execution weight cache (RefCell), trace, checkpoint callback, and the no-env/no-thread claim checked; mod.rs (82 KB) not read in full)
+No drift detected.
+
+## crates/audio/src/tts/kokoro/README.md
+
+Coverage: sampled (every tests/reference and fixture path in the reproduce block exists, provenance.json link exists, and KokoroRunner is defined at crates/runtime/src/kokoro.rs; the GPU, precision, and Metal parity claims are in other crates and were not checked)
+No drift detected.
+
+## crates/audio/src/tts/kokoro/frontend/EGM.md
+
+Coverage: sampled (MAX_PHONEME_CHARS, usable length formula, 65536-byte input limit, [510, 1, 256] voice shape, ENGINE OnceLock, bundled module, style_row, and no-env/no-thread claim checked; mod.rs (22 KB), normalize.rs, and tagger.rs not read in full)
+No drift detected.
+
+## crates/audio/src/tts/kugelaudio/EGM.md
+
+Coverage: sampled (speech token ids, VALID_SPEECH_TOKENS, FINAL_LATENT_LOGIT_MARGIN of 5.0, ddpm step bounds (1..=100000), scheduler beta-schedule acceptance and cosine-only betas, prediction types, backbone prefix probe, NaN scaling-factor rule, and step restore in generate checked; scheduler.rs, diffusion_head.rs and acoustic_decoder.rs not read in full)
+No drift detected.
+
+## crates/audio/src/tts/kugelaudio/README.md
+
+Coverage: sampled (link targets ../../lm and ../../ops exist, speech token ids, the decoder-only loader, and the [out, kernel, in] conv layout note checked; decode geometry and checkpoint claims not re-run)
+No drift detected.
+
+## crates/audio/src/tts/llama/EGM.md
+
+Coverage: sampled (all special-token constants, CODES_PER_GROUP, DEFAULT_TOKENIZER_NAME, GenerateParams defaults, i32 token-id bound, encode_audio_to_codes 1:2:4 check, and the rng import path checked; mod.rs (17 KB) and tests not read in full)
+No drift detected.
+
+## crates/audio/src/tts/llama/README.md
+
+Coverage: sampled (special-token table ids, sampler.rs link, music::minimax_music3::rng path, and defaults checked; the zero-noise decode and the sampled-run divergence claims were not re-run)
+No drift detected.
+
+# Drift report: audio TTS families (job audio_tts_3)
+
+Method: every doc read in full. Every Interface identifier in each EGM.md
+resolves to a definition in its directory, and every cited [file:symbol]
+resolves. Invariants, env vars, side effects and numeric constants were
+checked by targeted reads and st/grep, not by reading all source. Test
+commands and tool/fixture paths were checked for existence.
+
+## crates/audio/src/tts/longcat_audiodit/EGM.md
+
+Coverage: sampled (all Interface names and cited symbols resolve; invariants, constants, LC_DEBUG side effect and APG constants checked by targeted reads; source not fully read)
+No drift detected.
+
+## crates/audio/src/tts/longcat_audiodit/README.md
+
+Coverage: sampled (EGM-level claims plus CJK/alphabetic duration constants, APG eta and momentum, RoPE base and the fixture/tool paths checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/tts/megatts3/EGM.md
+
+Coverage: sampled (all Interface names and cited symbols resolve; env/thread/logging scan clean; DiT tone rule, MAX_LATENT_FRAMES, sampler 1..=1000, draw order, layer bounds and open paths checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/tts/megatts3/README.md
+
+Coverage: sampled (quality presets, DiT/duration/aligner/chunker constants, API signatures, crossfade, reserve constant and fixture/tool paths checked; Metal and runtime/FFI/server claims are outside this directory and were not verified; source not fully read)
+- [sampler.rs:sample_controlled] README "Steps and quality" says `steps` takes any count from 1 to 100. The code enforces `1..=MAX_STEPS` with `MAX_STEPS = 1000` [sampler.rs:MAX_STEPS]. No 100 cap exists in [facade.rs:synthesize_controlled]. If the 100 bound is intended, it must be enforced in a caller layer (HTTP/FFI), which this directory does not read. Otherwise the README is wrong. EGM.md states 1..=1000, so the two docs disagree.
+- README names `benchmark_megatts3.py` with no path. The file is at `crates/audio/scripts/benchmark_megatts3.py`, not under `crates/audio/tools/` (the README's tools directory). Low severity; a reader looking in tools/ will not find it.
+
+## crates/audio/src/tts/melotts/EGM.md
+
+Coverage: sampled (all Interface names and cited symbols resolve; flow count of four coupling+flip pairs at even indices, speaker resolution order, sdp_ratio guard and layer_norm_eps default checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/tts/melotts/README.md
+
+Coverage: sampled (flow and speaker wiring, BERT layer-norm epsilons, Rng::normal, sdp_ratio guard, fixture generator and testdata paths checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/tts/moss_tts/EGM.md
+
+Coverage: sampled (all Interface names and cited symbols resolve; Model::load refusal of v1.5, sampling order (penalty, top-k, top-p, categorical, greedy no draw), INT64_MAX sentinel and n_embd % n_head guard checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/tts/moss_tts/README.md
+
+Coverage: sampled (variant dispatch, default tokenizer repos (v1 and v2), use_static_local_kv_cache unused, legacy refusal, fixture generator and testdata paths checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/tts/moss_tts_nano/EGM.md
+
+Coverage: sampled (all Interface names and cited symbols resolve; sampler and loader invariants spot-checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/tts/moss_tts_nano/README.md
+
+Coverage: sampled (GenerateParams defaults (375 frames, text and audio sampler values, penalty 1.2), prompt constants, sampler candidate handling and fixture paths checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/tts/omnivoice/EGM.md
+
+Coverage: sampled (all Interface names and cited symbols resolve; config from_json, Rc backend, seed+step RNG, num_steps guard and pipeline module checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/tts/omnivoice/README.md
+
+Coverage: sampled (tokens-per-second formula, quantization format gate (omnivoice-rowwise only), layout names, fixture and tool paths checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/tts/omnivoice/duration/EGM.md
+
+Coverage: full read (directory holds only tests.rs; `mod tests;` at duration.rs:1098 and `mod duration;` privately declared in omnivoice/mod.rs:39 confirmed)
+No drift detected.
+
+## crates/audio/src/tts/outetts/EGM.md
+
+Coverage: sampled (all Interface names and cited symbols resolve; decode chunk 4096 and -18 LUFS / -1 dB limits, completion-prompt separator mutation, from_ids/from_lookup checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/tts/outetts/README.md
+
+Coverage: sampled (GenerateParams defaults (temperature 0.4, top-p 0.9, min-p 0.05, top-k 40, penalty 1.1 over 64, max 1200), model_type dispatch, DEFAULT_SAMPLE_RATE checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/tts/pocket_tts/EGM.md
+
+Coverage: sampled (all Interface names and cited symbols resolve; zero-head and divisibility checks, conditioning multiple, bos seed, noise width and StopReason checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/tts/pocket_tts/README.md
+
+Coverage: sampled (eos threshold default -4.0, frames_after_eos default (3 + 2 short-text branch), lsd_decode, prepare_text_prompt checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/tts/qwen3/EGM.md
+
+Coverage: sampled (all Interface names and cited symbols resolve; special token ids and offsets from TOKENIZER_LENGTH=151669, 7-code grouping and prefill rule checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/tts/qwen3/README.md
+
+Coverage: sampled (special-token table (all ids match), GenerateParams defaults (0.6, 0.8, top-k off, penalty 1.3 over 20, 1200), fixture paths checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/tts/rumik_oss/EGM.md
+
+Coverage: sampled (all Interface names and cited symbols resolve; quantizer-index resync rule, non-unit clear, min_tokens gate, two stop-predictor tensor layouts, DEFAULT_SPEAKERS and MIMI_REPO checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/tts/rumik_oss/README.md
+
+Coverage: sampled (stop-predictor layout, frame-rate and quantizer defaults, prompt helpers, fixture and tool paths checked; source not fully read)
+No drift detected.
+
+## crates/audio/src/tts/sesame/EGM.md
+
+Coverage: sampled (claims verified ~25 of ~30; mod.rs read in targeted ranges, tests.rs not read)
+No drift detected.
+
+## crates/audio/src/tts/sesame/README.md
+
+Coverage: sampled (claims verified ~10 of ~15; mod.rs read in targeted ranges, tests.rs not read)
+No drift detected.
+
+## crates/audio/src/tts/soprano/EGM.md
+
+Coverage: sampled (claims verified ~20 of ~25; mod.rs, decoder.rs and text.rs read in targeted ranges, tests.rs not read)
+No drift detected.
+
+## crates/audio/src/tts/soprano/README.md
+
+Coverage: sampled (claims verified ~12 of ~15; mod.rs, decoder.rs and text.rs read in targeted ranges, tests.rs not read)
+No drift detected.
+
+## crates/audio/src/tts/spark/EGM.md
+
+Coverage: sampled (claims verified ~15 of ~18; mod.rs read in targeted ranges, tests.rs not read)
+No drift detected.
+
+## crates/audio/src/tts/spark/README.md
+
+Coverage: sampled (claims verified ~6 of ~8; mod.rs read in targeted ranges, tests.rs not read)
+No drift detected.
+
+## crates/audio/src/tts/tada/EGM.md
+
+Coverage: sampled (claims verified ~18 of ~22; mod.rs, gray_code.rs read in targeted ranges, diffusion_head.rs and tests.rs not read)
+No drift detected.
+
+## crates/audio/src/tts/tada/README.md
+
+Coverage: sampled (claims verified ~8 of ~12; mod.rs and gray_code.rs read in targeted ranges)
+No drift detected.
+
+## crates/audio/src/tts/vibevoice/EGM.md
+
+Coverage: sampled (claims verified ~18 of ~22; mod.rs and scheduler.rs read in targeted ranges, acoustic_decoder.rs and diffusion_head.rs not read)
+No drift detected.
+
+## crates/audio/src/tts/vibevoice/README.md
+
+Coverage: sampled (claims verified ~8 of ~12; mod.rs and scheduler.rs read in targeted ranges)
+No drift detected.
+
+## crates/audio/src/tts/voxcpm/EGM.md
+
+Coverage: sampled (claims verified ~18 of ~22; mod.rs, audio_vae.rs, dit.rs, encoder.rs, minicpm.rs read in targeted ranges)
+No drift detected.
+
+## crates/audio/src/tts/voxcpm/README.md
+
+Coverage: sampled (claims verified ~8 of ~12; mod.rs, dit.rs, audio_vae.rs read in targeted ranges)
+No drift detected.
+
+## crates/audio/src/tts/voxcpm2/EGM.md
+
+Coverage: sampled (claims verified ~20 of ~24; mod.rs, audio_vae.rs, dit.rs read in targeted ranges, tests.rs not read)
+No drift detected.
+
+## crates/audio/src/tts/voxcpm2/README.md
+
+Coverage: sampled (claims verified ~15 of ~20; mod.rs, audio_vae.rs, dit.rs read in targeted ranges, tests.rs not read)
+- Open items say the `mean_mode` checkpoint variant is refused, but the code accepts it and maps it to `dit_mean_mode` [mod.rs:SubConfig]. The README's own "V2 differences" section describes it as live, and tests.rs pins the normalization. The refusal claim is false.
+- Names the DiT type `VoxCPMLocDiTV2`; the Rust type is `VoxCpmLocDiTv2` [dit.rs:VoxCpmLocDiTv2].
+
+## crates/audio/src/tts/voxtral_tts/EGM.md
+
+Coverage: sampled (claims verified ~20 of ~24; mod.rs read in targeted ranges, tests.rs not read)
+No drift detected.
+
+## crates/audio/src/tts/voxtral_tts/README.md
+
+Coverage: sampled (claims verified ~12 of ~15; mod.rs read in targeted ranges)
+No drift detected.
+
+## crates/audio/src/tts/zonos2/EGM.md
+
+Coverage: sampled (claims verified ~18 of ~22; mod.rs read in targeted ranges, tests.rs not read)
+- Omits `TtsSamplingParams` fields `top_p` (default 0.0), `repetition_window` (50) and `repetition_codebooks` (8) from its defaults list [mod.rs:TtsSamplingParams]. Minor.
+
+## crates/audio/src/tts/zonos2/README.md
+
+Coverage: sampled (claims verified ~12 of ~16; mod.rs read in targeted ranges, tests.rs not read)
+- Layout section names `Zonos2Config.from_dict`; the Rust entry point is `ModelConfig::from_json` [mod.rs:ModelConfig]. `from_dict` appears only in a doc comment at mod.rs:ModelConfig.
+
+## crates/bench/EGM.md
+
+Coverage: sampled (claims verified about 35 of 38; crate is about 22k lines including tests, source not fully read)
+- [src/model_mode.rs:run_model_mode, src/real_model.rs:run_protocol_case_speculating] Doc says "a drafter forces greedy shaping". False. `--speculative` does not change shaping. `run_model_mode` refuses `--speculative` unless `--shaping greedy` is given (exit 2), and `run_protocol_case_speculating` refuses `Sampled` shaping instead of promoting it. `--speculative-drafter` only selects the drafter [src/main.rs:main].
+- [src/model_mode.rs:run_model_mode] Omits that `--model` mode reads `TURBOSPARK_ROUTED_BATCH` and `TURBOSPARK_BATCHED_GEMV` and echoes them in its banner, marked INERT when prefill is sequential. Relevant to the Invariants and Side Effects sections.
+
+## crates/bench/AGENTS.md
+
+Coverage: full read (68 lines; every Read-first link and directory-map path resolves)
+No drift detected.
+
+## crates/bench/README.md
+
+Coverage: sampled (claims verified about 30 of 33; test files checked by listing, source not fully read)
+- [tests/:directory] "This crate contains 81 test files in `tests/`" is wrong. There are 91 top-level `.rs` files in `tests/`, plus 8 helper module directories (`humanizer_common`, `lfm3_common`, `oracle_common`, `quality_common`, `qwen2_dense_common`, `qwen3_dense_common`, `qwen3vl_common`, `vision_oracle_rounds`).
+- [tests/:directory] The categorized lists omit 10 files: `dflash_generation_gate.rs`, `dflash_tree_pin.rs`, `lfm3_memory_oracle.rs`, `lfm3_prefill_arm_probe.rs`, `lfm3_q8_memory_oracle.rs`, `lfm3_q8_quality_gate.rs`, `lfm3_quality_gate.rs`, `moe_route_capture.rs`, `turn_snapshot_gate.rs`, `turn_snapshot_ttft_probe.rs`.
+- [src/main.rs:main, src/scripted.rs:run_real_mode] "Binary Execution Modes" omits the `--real` synthetic-model mode (macOS, real GPU forward pass on a generated install). Only the default scripted mode is described, and its "no GPU forward passes" text is correct only for that default.
+- [src/meeting_eval_main.rs:score, src/meeting/mod.rs:score_panel] Names, defaults and `--clips` values match the code. No drift.
+
+## crates/bench/scripts/EGM.md
+
+Coverage: sampled (import script body and `frozen_e_score.py` read; `prepare_frozen_e_clips.py` checked by targeted grep only)
+- [scripts/import_frozen_e_evidence.py:main, scripts/import_frozen_e_evidence.py:SOURCES] Doc says "Only references.json and E_seglst.json are read from the evidence dir". False. `main` also reads `evaluation_manifest.json` for the clip list, and `manifest.json` records SHA-256 of all three `SOURCES` (`evaluation_manifest.json`, `E_seglst.json`, `TurboSpark_Nemotron_E_Frozen_Qualification_v3.ipynb`).
+- Otherwise the named symbols (`FROZEN_E`, `MATCHED_SIX`, `sha256`, `MEETING_SHA256`, `tokens`, `edit`, `cpwer`), the stop-on-source-mismatch and exit-at-end behavior, the 120 s cut, PCM_16 output, and the stdlib-only import dependency match the code. No other drift.
+
+## crates/bench/src/EGM.md
+
+Coverage: sampled (symbols and gating claims checked by targeted reads; source about 3.8k lines, not fully read)
+No drift detected.
+
+## crates/bench/src/meeting/EGM.md
+
+Coverage: sampled (`mod.rs` and `cpwer.rs` key sections and `seglst.rs` `group_by_session` read; `seglst.rs` otherwise not fully read)
+No drift detected.
+
+## crates/catalog/EGM.md
+
+Coverage: sampled (claims verified 14 of 15, source not fully read)
+No drift detected.
+
+## crates/catalog/README.md
+
+Coverage: sampled (claims verified 40 of 50, source not fully read)
+- Omits the library subsystem entirely: no mention of external-drive libraries, move, delete, import, `libraries.json`, or the `library.json` marker [src/library/mod.rs:INTERNAL_LIBRARY_ID, src/library/registry.rs:LibraryRegistry].
+- Omits `check.rs`, which provides the compatibility check API (`check_repo`, `arch_hint`) re-exported from the crate root [src/check.rs:check_repo, src/lib.rs:check_repo].
+- Overstated: Key Modules says `recommend/rank.rs` tiers "based on system memory and hardware configuration". rank.rs orders by `Key` (runs, evidence, tok_s, install_bytes, suspicious) [src/recommend/rank.rs:Key]. Memory enters only through the fit verdict [src/recommend/fit.rs:fit].
+- Wrong location: `stream.rs` is described as containing the flint intake `write_flint_install_streamed`. That function is defined in repack [crates/repack/src/gemma4_checkpoint/mod.rs:write_flint_install_streamed]; stream.rs only calls it [src/stream.rs:write_flint_install_streamed].
+- Tests list omits library_install.rs, store_relocation_libraries.rs, check_repo.rs, hub_cache.rs and hub_search_network.rs [tests/library_install.rs, tests/check_repo.rs].
+
+## crates/catalog/AGENTS.md
+
+Coverage: sampled (claims verified 12 of 13, source not fully read)
+- Wrong name: the flint rule says `repack::parse_flint_quantization` "lives in `mlx_export`, not `quantization`". No module named `mlx_export` exists in crates/repack/src. The function is defined in crates/repack/src/flint_config.rs [crates/repack/src/flint_config.rs:parse_flint_quantization]. `mlx_export` is the JSON config block key it reads, not a module.
+
+## crates/catalog/examples/EGM.md
+
+Coverage: sampled (claims verified 6 of 6, source not fully read)
+No drift detected.
+
+## crates/catalog/src/EGM.md
+
+Coverage: sampled (claims verified 20 of 21, source not fully read)
+No drift detected.
+
+## crates/catalog/src/library/EGM.md
+
+Coverage: sampled (claims verified 16 of 18, source not fully read)
+- Imprecise: the Import line lists `import_moved_root` as a free function. It is a method in the `impl LibraryRegistry` block [src/library/import.rs:import_moved_root].
+
+## crates/catalog/src/probe/EGM.md
+
+Coverage: sampled (claims verified 8 of 8, probe/mod.rs gates read, gguf.rs and safetensors.rs partly read)
+No drift detected.
+
+## crates/catalog/src/recommend/EGM.md
+
+Coverage: sampled (claims verified 11 of 13, source not fully read)
+- Overstated: Invariant "Quantization choice walks QUANT_LADDER, picking the largest published file that plausibly fits" does not match [src/recommend/discover.rs:choose_quantization]. QUANT_LADDER is only a filter (a file must have a ladder rank) and a size tie-breaker. The pick is the largest file at or under the physical budget. When none fits, the function falls back to the smallest runnable file (`runnable.first()`), which the doc omits.
+- Omitted: sharded GGUF files (names containing `-of-0`) are excluded from quantization choice [src/recommend/discover.rs:choose_quantization].
+
+## crates/cli/EGM.md
+
+Coverage: full read of the doc; claims checked against the [[bin]] table in crates/cli/Cargo.toml and the child EGM.md files.
+No drift detected.
+
+## crates/cli/AGENTS.md
+
+Coverage: sampled (checked --chat/--image refusal [chat.rs:run], prompt template path [front/models.rs:check_args], flag arity [front/models.rs:takes_value via invocation::OPTIONS], view verbs and --json [model_cmd/views.rs], doc links; main.rs exit-status mapping and the no-unsafe claim in src/ui not read).
+No drift detected.
+
+## crates/cli/README.md
+
+Coverage: sampled (flags and subcommands checked against invocation OPTIONS, bin/turbospark.rs Cmd enum, bin/model.rs, bin/steer.rs, crates/server args, agent list [agent.rs:is_agent], expert cache auto sizing [model-io/src/expert_cache_policy.rs:auto_slots_at] and its constants, and the tests directory; measured tok/s and RAM figures are not verifiable from code and were not checked).
+- [src/front/models.rs:plan_run] and [src/front/models.rs:check_args]: line 141 says `turbospark run <model> "hello"` is an "Alias for turbospark-check --prompt". Code sends a positional prompt through the chat template (`--messages-file /dev/stdin`, one user turn) unless `--raw` is given; only `--raw` produces `--prompt`. The README is wrong for the default path. Note that the root CLAUDE.md states the same shorthand "encodes the text verbatim", which matches the README and not the code. The crate AGENTS.md matches the code.
+- Omission: the Tests section (lines 198-206) does not list tests/daemon_root.rs, tests/library_lifecycle.rs, or tests/model_library_cli.rs, which exist in crates/cli/tests/.
+
+## crates/cli/src/EGM.md
+
+Coverage: sampled (all Interface symbols located in daemon.rs and agent.rs; pid/meta 0600 and run dir 0700 [daemon.rs:write_private_file, daemon.rs:create_private_run_dir]; --api-key stripping [daemon.rs:server_args_and_api_key]; log path sibling of run dir [daemon.rs:logs_dir, daemon.rs:run_dir]; require_root; get_running_pid cleanup; TURBOSPARK_PREFIX_REUSE [chat.rs:run]; main.rs cfg gates; start/stop bodies read in part).
+No drift detected.
+
+## crates/cli/src/bin/EGM.md
+
+Coverage: sampled (#[path] includes [bin/turbospark.rs], model delegation [bin/model.rs], steer exit codes [bin/steer.rs:main], steer_data contents, child EGM links; the "thin shell" characterization was not measured, and bin/music.rs and bin/speak.rs run 700+ lines).
+No drift detected.
+
+## crates/cli/src/bin/model_cmd/EGM.md
+
+Coverage: sampled (every Interface symbol located; alias ASCII check [mod.rs:check_alias]; /bin/df use and KINDS [transfer.rs]; image staging refusal [image_source.rs:materialize]; shared SIGINT flag [mod.rs:INTERRUPTED] used by audio.rs, drama3.rs, transfer.rs; auth stdin read [auth.rs:read_token]; bodies of mod.rs pull and pull_image not read).
+- Omission: [mod.rs:recommend] (mod.rs:951, dispatched from bin/model.rs:323) is a public catalog entry point that the Interface list does not name, though the Overview says "catalog listing, probe, and install entry points".
+- Minor: [render.rs:human_bytes] resolves only as a `pub use catalog::human_bytes` re-export (render.rs:14), not a function render owns.
+
+## crates/cli/src/bin/steer_cmd/EGM.md
+
+Coverage: sampled (every Interface symbol located; family refusal [walk.rs:resolve_model]; pack id check [packs.rs:parse]; CAPTURE_ENV set and removed [walk.rs:capture_side]; MAX_CAPTURE_CONTEXT cap; .partial plus rename [extract.rs:write_atomically]; extract and check run bodies not fully read).
+No drift detected.
+
+## crates/cli/src/front/EGM.md
+
+Coverage: sampled (every Interface symbol located; HIDE_RESOLVED_REQUEST env set [models.rs:check_command]; interactive() gate [models.rs:interactive]; loopback probe [agent.rs:http_health_ok] used by [server.rs:snapshot]; the rest of ensure_installed after its Verbatim and Catalog arms and the run() body were not read, so the "--yes or non-terminal downloads without asking" claim is unverified).
+No drift detected.
+
+## crates/cli/src/generate/EGM.md
+
+Coverage: sampled (every Interface symbol and attach_* family located; env var reads [format.rs:print_phases], [mod.rs:resolve_chunk_tokens], [mod.rs:run_one_turn]; TURBOSPARK_EXPERT_DISK_IO only in a footer hint; Outcome semantics [mod.rs:Outcome] and chat --image refusal [chat.rs:run]; image-install refusal [session.rs:reject_image_install]; the per-turn prepare_images call site not read).
+- Omission: the humanize mode is not documented. [mod.rs:try_generate] dispatches `Mode::HumanizeFile` to [mod.rs:run_humanize] (mod.rs:55, :65), selected by `--humanize-file` [crates/invocation/src/options.rs] and the `turbospark humanize` subcommand [bin/turbospark.rs]. [mod.rs:run_prompt] is also not named. The Overview describes only chat-template streaming.
+
+## crates/cli/src/ui/EGM.md
+
+Coverage: sampled (color decision order and env vars [mod.rs:color_enabled], Paint methods, ok/note/warn/error stream and marks, columns/clip/section, Table/Cell/CellStyle/Align located; --json bypass checked against views.rs print_json).
+No drift detected. Aside, not drift in this doc: the ui/mod.rs module doc (line 9) lists `*` among the marks, and no helper emits it. The EGM already states this correctly.
+
+## crates/compute/EGM.md
+
+Coverage: full read
+No drift detected.
+
+## crates/compute/README.md
+
+Coverage: sampled (about 40 of about 45 extracted claims checked; source not fully read)
+- Key Modules omits two public modules: [crates/compute/src/short_conv.rs:short_conv_reference] (LFM3 gated short convolution, PORT-LOCAL) and [crates/compute/src/steering_extract.rs:difference_of_means] with [steering_extract.rs:layer_stats] and [steering_extract.rs:derived_alpha_cap] (difference-of-means direction extraction for turbospark-steer).
+- Tests section omits [crates/compute/tests/dash_oracle.rs] (pins dash.rs to mlx-vlm) and [crates/compute/tests/gemma4_vision_reference.rs] (pins vision_gemma4.rs).
+- Tests entry for tests/kv_quant.rs says it "verifies TurboQuant compression error bounds", but the fixture it includes, [crates/compute/tests/generated/kv_quant_oracle.rs], is headed as generated with the numpy fallback and says to re-run without it before trusting the fixture beyond structural review. The caveat is omitted.
+
+## crates/compute/AGENTS.md
+
+Coverage: full read
+- Rule "FP16 uses the `half` crate" is false. The crate depends only on turbospark-core (aliased `foundation`) [crates/compute/Cargo.toml:foundation], and has no `half` import anywhere under crates/compute. FP16 goes through `foundation::LogitValue` [crates/compute/src/quant_1bit.rs:f16_to_f32], [crates/compute/src/quant_1bit.rs:f32_to_f16], and the alias `F16` in [crates/compute/src/gdn.rs] and the quant_gguf modules. The rule as written would push a contributor to add a second FP16 representation, which the same file forbids.
+- Verified: BF16 bit-shift rule, the read-first links (.claude/docs/modules/compute.md, docs/BENCHMARKS.md, docs/TESTING.md all resolve), `#![forbid(unsafe_code)]` [crates/compute/src/lib.rs], and the test and cargo check commands. The cargo check command was not run.
+
+## crates/compute/src/EGM.md
+
+Coverage: sampled (existence of every named symbol and all five Tolerance constants checked; invariants and side effects spot-checked; source not fully read)
+- Invariant "Affine quantization uses 64-element groups" is overstated. It holds for [crates/compute/src/quant.rs:GROUP_SIZE] (INT4/INT8). The 1-bit and 2-bit affine formats use 128-element groups, [crates/compute/src/quant_1bit.rs:BONSAI_GROUP_SIZE] and [crates/compute/src/quant_2bit.rs:TERNARY_GROUP_SIZE], and the 1-bit doc says `group_size` is a per-checkpoint property carried on the row [quant_1bit.rs:Int1AffineRow].
+
+## crates/compute/src/quant_gguf/EGM.md
+
+Coverage: sampled (all named symbols, asserts, and the duplicated-layout doc claims checked; source files read in part, not in full)
+- Omits the behavior of [crates/compute/src/quant_gguf/pearson.rs:pearson], which returns 0.0 when either input is constant. Callers' thresholds depend on this (the doc comment says an undefined correlation must not read as a match), so the EGM should state it next to the "non-empty, equal length" invariant.
+
+## crates/core/EGM.md
+
+Coverage: full read (doc, Cargo.toml, all 9 src files, 2 test files; crate is 1313 lines).
+- Crate summary omits the chunk_sizing and engagement modules (the doc lists only token types, runtime knob sets, prefill planning, steering modes and humanizer). [crates/core/src/lib.rs:chunk_sizing] [crates/core/src/lib.rs:engagement]
+
+## crates/core/README.md
+
+Coverage: full read (doc, Cargo.toml, all src and test files, plus targeted greps of downstream crates).
+- Key Modules omits the engagement module, the exported `engaged!` macro (`#[macro_export]`, used as `foundation::engaged!` in crates/gpu) and the `TURBOSPARK_ENGAGEMENT` env var. [crates/core/src/engagement.rs:engaged] [crates/core/src/engagement.rs:enabled]
+- Safety says "Pure, deterministic logic with no filesystem or network I/O." Filesystem and network claim holds, but `enabled()` reads `TURBOSPARK_ENGAGEMENT` and `engaged!` writes `[engaged] NAME` to stderr when it is set. The Safety section should say so. [crates/core/src/engagement.rs:enabled] [crates/core/src/engagement.rs:engaged]
+- Crate Gotcha 1 says runtime parameters are checked against sorted allowed sets "rather than open integer ranges". This contradicts the doc's own bullets: `ALLOWED_SPECULATION_BLOCKS` is a `RangeInclusive<u32>` (1..=15) and `DEFAULT_MAX_CONTEXT` has no allowed set. [crates/core/src/runtime_config.rs:ALLOWED_SPECULATION_BLOCKS] [crates/core/src/runtime_config.rs:DEFAULT_MAX_CONTEXT]
+- runtime_config bullet says the module "Enforces ascending order and valid defaults at compile time via const assertions". The assertions cover only `ALLOWED_CACHE_SLOTS` and `ALLOWED_CHUNK_SIZES` and their defaults. `ALLOWED_SPECULATION_BLOCKS`, `DEFAULT_ADAPTIVE_CAP` and `MIN_ADAPTIVE_CAP` have no compile-time check. (src/EGM.md states this correctly.) [crates/core/src/runtime_config.rs:ALLOWED_CACHE_SLOTS]
+- Crate Gotcha 2 says negative token IDs are "reserved for sentinel error codes or unassigned positions". Nothing in crates/core defines or checks that convention, so the claim is not established by this crate. Not checked across the workspace. [crates/core/src/primitives.rs:TokenId]
+- Verified without drift: `TokenId = i32`, `LogitValue` = `half::f16`, cache slot and chunk set literals and defaults (16, 128), `ALLOWED_SPECULATION_BLOCKS = 1..=15`, `DEFAULT_ADAPTIVE_CAP = 4`, `MIN_ADAPTIVE_CAP = 3`, `DEFAULT_MAX_CONTEXT = 4096`, `MAX_CHUNK_TOKENS = 4096`, the steering enum, `STEERING_MODE_NAMES`, humanizer items, the `foundation` alias, zero internal workspace dependencies (Cargo.toml has only `half`, plus dev-dep `sha2`), and the `turbospark_compute::steering` and `turbospark_gpu::encode_steer_direction` references. The Renorm "analytic norm repair" claim matches crates/compute/src/steering.rs.
+
+## crates/core/AGENTS.md
+
+Coverage: full read (doc is 25 lines; its three linked docs and the `cargo test -p turbospark-core` package name were checked).
+No drift detected.
+
+## crates/core/src/EGM.md
+
+Coverage: full read (all 7 source files in src plus both test files; every interface symbol was located).
+- Side Effects says "Otherwise pure; no disk or network access. None beyond the above." This omits the stderr write from the `engaged!` macro, which runs whenever `TURBOSPARK_ENGAGEMENT=1`. [crates/core/src/engagement.rs:engaged]
+- Invariant for `PrefillChunkCommitState::mark_dirty` lists only the positive-token-count requirement. The code also asserts that `start_position + token_count` does not overflow `usize`, which the doc omits. [crates/core/src/prefill.rs:PrefillChunkCommitState]
+- Interface says `RewriteAudit::warnings` produces "stderr report lines". The function returns `Vec<String>` and prints nothing; the caller writes to stderr. Wording only. [crates/core/src/humanizer.rs:RewriteAudit]
+- Outside the doc, but in the module docs this EGM indexes: the `prefill.rs` header (line 3) says the module was "Ported from `Runtime/Prefill/PrefillRuntimeConfig.swift`". No file of that name exists in the repository, so the reference does not resolve. [crates/core/src/prefill.rs:prefill_chunk_spans]
+- Verified without drift: the Overview's consumers (runtime, invocation, cli and server all depend on `turbospark-core`), `runtime_config` symbols and const assertions, `prefill_chunk_spans` clamping, empty-plan and overflow-panic behavior, `max_of` deriving `MAX_CHUNK_TOKENS`, steering encodings (Ablate 0, Add 1, Clamp 2, Renorm 3) and `can_grow`, `default_max_new` clamp and saturation, `REUSE_FLAG_THRESHOLD = 0.22`, `PROMPT_FINGERPRINT`, the `TURBOSPARK_ENGAGEMENT` OnceLock cache, and the `lib.rs` module wiring.
+
+## crates/coreml/EGM.md
+
+Coverage: full read of doc; 6 of 6 structural claims verified (sub-doc links, tests/testdata have no EGM.md, tools contents, tests/fixtures.rs is cfg(target_os = "macos")); source read in part.
+No drift detected.
+
+## crates/coreml/AGENTS.md
+
+Coverage: sampled (claims verified 24 of 25; lib.rs, cache.rs, stub.rs, sys.rs load/predict/state/compile/prune/compute_plan read; sys.rs marshalling helpers and tests not read).
+- "Programs are generated via tools/gen_ane_prefill_programs.py and validated against manifest.json": this crate does not validate against manifest.json. The check runs in the runtime [crates/runtime/src/families/qwen/ane_split.rs:manifest program validation, line 333]. Here, sys.rs:check_plane validates against the model's feature specs only. Doc is true only for the runtime.
+
+## crates/coreml/examples/EGM.md
+
+Coverage: full read (both examples and the doc read in full).
+No drift detected.
+
+## crates/coreml/src/EGM.md
+
+Coverage: sampled (claims verified 27 of 33; lib.rs, stub.rs, cache.rs, error.rs variants, tensor.rs strided_extent and f16 conversion read; sys.rs load, predict, state, compile, prune, compute_plan, SharedF16Plane read; sys.rs lines 130-405 (marshalling helpers), 1340-1400 and the tests not read).
+- Cache key overstated: doc says the key "hashes package contents (regular files only, symlinks skipped on purpose) so a changed package recompiles". Code hashes Manifest.json bytes, then each file's relative path, size and mtime, then the OS build string. Weight bytes are not hashed. A single-file .mlmodel is hashed in full [cache.rs:cache_key]. The OS build string in the key is omitted [cache.rs:cache_key], [sys.rs:os_tag].
+- Omitted invariant: predict_with_state refuses a CoreMlState created by a different CoreMlModel instance (process-unique owner id) [sys.rs:CoreMlModel::predict_with_state]. The doc covers only copy_from.
+- Omitted behavior: compute_plan refuses a path that is not a compiled .mlmodelc directory, and refuses networks that are not ML programs or pipelines [sys.rs:compute_plan], [sys.rs:walk_structure].
+- Omitted behavior: check_inputs refuses duplicate input names [lib.rs:check_inputs]. The "every predict input must be declared" line is incomplete without it.
+- Omitted behavior: predict_shared requires every input and output to be bound, and refuses a result whose output backing Core ML did not write into [sys.rs:predict_shared].
+- Wording: "Allocates page-rounded shared buffers". The code aligns bytes-per-row with IOSurfaceAlignProperty and does not round to pages itself; the page-aligned base is an IOSurface property noted in a comment [sys.rs:SharedF16Plane::new]. Low severity.
+
+## crates/coreml/tools/EGM.md
+
+Coverage: sampled (claims verified 17 of 19; read in full: gen_coreml_fixtures.py, gen_ane_sweep_programs.py main and const_int4_program, bake_ane_vision_programs.py const_f16_program; read in part: bake_ane_prefill_programs.py (Install.rows, fp16_mapping, lut_table, baked_program, constants), gen_ane_prefill_programs.py (matmul, build, main head). Not read: bake_ane_prefill_programs.py bake_classes/main bodies, bake_ane_vision_programs.py main.)
+- Side effect misdescribed: doc says "Each script writes programs or packages into an output directory argument [gen_coreml_fixtures.py:main]". gen_coreml_fixtures.py takes no output argument. It writes to a fixed OUT (crates/coreml/testdata), removes any existing package of the same name first (shutil.rmtree), and rewrites testdata/manifest.json. The destructive overwrite is omitted.
+- Citation mismatch: the Baked INT4 layout claim (row-major codes low nibble first, BF16 scales and biases per 64 columns) cites [bake_ane_prefill_programs.py:baked_program]. The nibble unpacking and scale/bias reads are in Install.rows; baked_program only consumes them [bake_ane_prefill_programs.py:Install.rows].
+
+## crates/embeddings/AGENTS.md
+
+Coverage: sampled (checked test gating, excludes, env var names, family doc links, and the audio and docs link targets; cargo commands were not run)
+- Overstated: "Default suite: ... frontend (tokenizer, image, mel) parity. No install needed." Real tokenizer-vs-reference tests are #[ignore]d for gte [crates/embeddings/src/gte/tests.rs:real_tokenizer_matches_sentence_transformers_ids], embeddinggemma [crates/embeddings/src/embeddinggemma/tests.rs:real_tokenizer_matches_sentence_transformers_ids], siglip2 [crates/embeddings/src/siglip2/tests.rs:real_tokenizer_ids_match_processor], and clap [crates/embeddings/src/clap/tests.rs:real_tokenizer_ids]. Only nomic_bert runs a tokenizer parity test without an install [crates/embeddings/src/nomic_bert/tests.rs:pinned_tokenizer_matches_sentence_transformers_ids].
+
+## crates/embeddings/EGM.md
+
+Coverage: sampled (checked Cargo.toml features, excludes, lib name, dependency list, and the subdirectory list against src/ and tools/)
+No drift detected.
+
+## crates/embeddings/MODELS.md
+
+Coverage: sampled (compared every revision and converted_from entry against src/pins.rs; Hub facts such as blob ids and search results cannot be checked offline)
+No drift detected. All revisions and MLX-to-upstream pairings match [crates/embeddings/src/pins.rs:PINS], and the 5- and 6-bit EmbeddingGemma pins match the refusal in [crates/embeddings/src/embeddinggemma/config.rs:VERIFIED_QUANT_BITS].
+
+## crates/embeddings/src/EGM.md
+
+Coverage: sampled (checked re-exports in lib.rs, the pub items listed for pooling, similarity, normalize, weights, st_config, tokenize, error, and the invariants on constants and quantization mode)
+No drift detected.
+
+## crates/embeddings/src/bert/EGM.md
+
+Coverage: sampled (checked every listed type and method exists, the quantization constants, the XLM-R position rule, and the refusal of unimplemented config values)
+No drift detected.
+
+## crates/embeddings/src/bert/README.md
+
+Coverage: sampled (checked the public API list, modules.json requirement, pooling-source policy, refused config keys including do_lower_case and include_prompt, and the test tolerances; the numeric tables, timings and mutation results were not re-run)
+No drift detected.
+
+## crates/embeddings/src/clap/EGM.md
+
+Coverage: sampled (checked every listed type and method, LongAudioCrop default, validate() methods, and the f64 and complex64 spectrum rounding)
+- Citation mismatch: the invariant "shorter ones tiled then zero-padded" cites [crates/embeddings/src/clap/features.rs:LongAudioCrop], but that enum only defines Head, Center and Offset(n) and holds no tiling or padding logic. Cite the extraction routine instead [crates/embeddings/src/clap/features.rs:ClapFeatureExtractor].
+
+## crates/embeddings/src/clap/README.md
+
+Coverage: sampled (checked the API, LongAudioCrop default and embed_audio using Head, classify softmax, 512-token text limit [crates/embeddings/src/clap/config.rs:max_tokens], WAV path, refusals, and the test names listed under Verified stages; numeric tables and timings were not re-run)
+- Nonexistent test named in the mutation table: `positions_start_after_padding_idx` does not exist anywhere under crates/embeddings/src/clap/ [crates/embeddings/src/clap/tests.rs]. The other names in that table (tiny_text_tower_matches_reference, and the other Verified stages names) do exist.
+
+## crates/embeddings/src/embeddinggemma/EGM.md
+
+Coverage: sampled (checked every listed type and method, Layout variants, the quantization constants, and the sliding band rule)
+- Omitted invariant: the code refuses any config where use_bidirectional_attention is not true, because a causal config would embed with the wrong mask [crates/embeddings/src/embeddinggemma/config.rs:GemmaConfig::from_json]. The doc does not state it.
+
+## crates/embeddings/src/embeddinggemma/README.md
+
+Coverage: sampled (checked sliding band width 512/2+1 = 257 [config.rs:band_width], local RoPE base for sliding layers [backbone.rs], layout detection by tensor name and mean-pooling fallback [mod.rs:EmbeddingGemma::load], truncate_dim range, the activation and quantization refusals; numeric tables and timings were not re-run)
+- Minor omission: the refusal list does not mention that use_bidirectional_attention must be true (code refuses false, [crates/embeddings/src/embeddinggemma/config.rs:GemmaConfig::from_json]). "causal attention" in the refusal list covers it only by implication.
+
+## crates/embeddings/src/gte/EGM.md
+
+Coverage: sampled (checked every listed type and method, rope_tables recomputed per forward [gte/encoder.rs:Encoder::forward_traced], BadConfig for required keys and the model_type check, and defaults for max_position_embeddings, type_vocab_size and rope_theta [gte/config.rs:GteConfig::from_json])
+No drift detected.
+
+## crates/embeddings/src/gte/README.md
+
+Coverage: sampled (checked optional tokenizer.json, embed_ids limit against max_position_embeddings [gte/mod.rs:embed_ids], rope_scaling/layer_norm_type/pack_qkv/logn/type_vocab_size refusals, word table mapped when F32 [gte/encoder.rs:WORD_TABLE], and the test tolerances; numeric tables and timings were not re-run)
+No drift detected.
+
+## crates/embeddings/src/nomic_bert/EGM.md
+
+Coverage: sampled (checked every listed type and method, MLP_MULTIPLE_OF, padded_vocab_size rounding with default 1 [nomic_bert/config.rs:padded_vocab_size], and ntk_base [nomic_bert/encoder.rs:ntk_base])
+No drift detected.
+
+## crates/embeddings/src/nomic_bert/README.md
+
+Coverage: sampled (checked the NTK formula and base-1000 boundary [encoder.rs:ntk_base], rotary_scaling_factor absent/null/0 handling [config.rs:NomicBertConfig::from_json], word table copied to heap [encoder.rs:Encoder::load], the refused flags, and the test tolerances; numeric tables and timings were not re-run)
+- Incomplete refusal list: the code also refuses `parallel_block_tied_norm = true` [crates/embeddings/src/nomic_bert/config.rs:NomicBertConfig::from_json], which the README's list of refused flags omits.
+
+## crates/embeddings/src/siglip2/EGM.md
+
+Coverage: sampled (checked every listed type, function and constant, the tokenize position-count guard [siglip2/mod.rs:Siglip2::tokenize], the gelu_pytorch_tanh-only rule [siglip2/config.rs:HIDDEN_ACT], and the pixel_attention_mask helper)
+No drift detected.
+
+## crates/embeddings/src/siglip2/README.md
+
+Coverage: sampled (checked the quantized-checkpoint, non-Fast processor, resample, vision_use_head and projection_size refusals, the Mapped token table, the logit/probability API, and the test tolerances; numeric tables and timings were not re-run)
+No drift detected.
+
+## crates/embeddings/tools/EGM.md
+
+Coverage: sampled (checked argparse flags of all six generators, trust_remote_code only in gte and nomic_bert, HF_HUB_OFFLINE forcing, torchvision import in the siglip2 generator, and module-level torch import in every generator; generators were not run, no venv here)
+No drift detected.
+
+## crates/ffi/AGENTS.md
+
+Coverage: sampled (claims verified 9 of 9 checked; Swift side, the verification reference and .claude/docs/modules/ffi.md body not read)
+No drift detected.
+
+## crates/ffi/EGM.md
+
+Coverage: sampled (claims verified: 157 exported ts_ functions, guard coverage, unguarded pair, staticlib+rlib crate-type, no workspace dependents, lib.rs macOS cfgs)
+No drift detected.
+
+## crates/ffi/README.md
+
+Coverage: sampled (claims verified: ABI_VERSION and TS_ERR_* codes, prefixReuse/guardrails process-level wiring, server thread and tokio runtime, c_surface.rs and listed domain test files exist, Makefile swift-test-real MODEL var, ts_session_cancel atomic flag; Whisper/Qwen3 ASR/Parakeet and Engine::Real not checked)
+No drift detected. Daemon environment forwarding is omitted here but is reported under crates/ffi/src/api/EGM.md.
+
+## crates/ffi/include/EGM.md
+
+Coverage: sampled (turbospark.h is about 121 KB and was not read in full; verified TS_ABI_VERSION 2 and TS_ERR_* 0-8 against abi.rs, header rules 3 and 4 against the header text, ts_session_open non-macOS UNSUPPORTED in api/session.rs:open_platform, ts_chip_supports_ane_prefill)
+No drift detected.
+
+## crates/ffi/src/EGM.md
+
+Coverage: sampled (claims verified: ABI guard exceptions, server prefixReuse applied in api/server.rs:ts_server_start and server.rs:Server::attach, STT MAX_APPEND_BYTES = 2 s of 16 kHz f32, 1 MiB queue caps, idle SWEEP_INTERVAL and DEFAULT_IDLE_TTL with the disabled-policy on-demand-only branch, default 127.0.0.1 bind, DEFAULT_MAX_ATTACHED_MODELS = 8, lib.rs macOS cfgs; not read: session.rs Engine::Real arm, telemetry bodies, vision.rs body)
+- [heavy.rs:HeavyWorkGuard] is described only as a re-export. The heavyweight-work permit shared by audio jobs and chat generation (src/api/audio_stream.rs module doc, src/api/audio.rs:ts_heavy_work_try_acquire and ts_heavy_work_release) is an invariant the doc does not state.
+
+## crates/ffi/src/api/EGM.md
+
+Coverage: sampled (all 157 exported names compared to turbospark.h, no mismatch in either direction; every name the doc lists exists; guard coverage checked on all exports; daemon, hf token and store code paths read; bodies of most listed functions not read)
+- [api/daemon.rs:ts_daemon_start] forwards TURBOSPARK_API_KEY and TURBOSPARK_HOME into the spawned daemon's environment (daemon.rs lines ~335-338 and ~600-614), and reads PATH and HOME when resolving it (daemon.rs ~251, ~259). The doc says only "starts or stops the daemon" and lists no env handoff in Side Effects.
+- Exports not named in the doc and not covered by its "Other public surface" line: [api/audio.rs:ts_heavy_work_try_acquire] and [api/audio.rs:ts_heavy_work_release] (shared heavy-work permit); [api/models.rs:ts_store_relocate] (store relocation); [api/libraries.rs:ts_store_import_moved_root], [api/libraries.rs:ts_model_forget], [api/libraries.rs:ts_library_set_default], [api/models.rs:ts_model_delete], [api/models.rs:ts_model_resolve_path], [api/models.rs:ts_hub_check_json], [api/models.rs:ts_expert_residency_for_install_json]; [api/server.rs:ts_server_attach_image_model], [api/server.rs:ts_server_attach_embedding_model], [api/server.rs:ts_server_attach_audio_model], [api/server.rs:ts_server_attach_audio_speech_model] and the matching detach, complete and poll functions (the doc names only "image/embedding attach"); [api/session.rs:ts_session_release_vision], [api/session.rs:ts_session_phases_json]; [api/generate.rs:ts_session_fit_window_with_tools_json]; [api/image.rs:ts_image_buffer_free]; [api/embedding.rs:ts_embedding_install].
+- Side Effects gap: [api/models.rs:ts_store_relocate] and [api/libraries.rs:ts_store_import_moved_root] change where the managed store lives. The doc lists move and delete side effects for [libraries.rs:ts_model_move] and [libraries.rs:ts_model_delete_install] but not for store relocation. Behavior not read.
+- Not drift: [api/models.rs:ts_hf_token_set] stores the token at `<store root>/hf_token` with mode 0600 set at creation (catalog/src/store.rs:Store::set_hf_token), and it honors the process-local root set by ts_store_root_set (catalog/src/store.rs:default_root). "Model store root" is accurate, but it is the store root, not the `models/` subdirectory.
+
+## crates/ffi/src/generate/EGM.md
+
+Coverage: sampled (TS_EVENT_* values 0-4 match generate/mod.rs; role_of rejects unknown roles as the doc says; turn_block holds the session engine lock during streaming; humanize type names exist; humanizer raw-completion path and output_budget body not read)
+No drift detected.
+
+## crates/ffi/src/models/EGM.md
+
+Coverage: sampled (every listed function exists; hub limits 20/50/2 match hub.rs constants; install lock order installs-then-move matches install.rs; refuse_while_installing_for covers model moves as the doc says; TURBOSPARK_RESIDENCY_INSTALL and TURBOSPARK_STEERING_VECTOR appear only in #[ignore] or skip-if-unset tests, so not production env vars; catalog and fit bodies not read)
+No drift detected.
+
+## crates/gpu/EGM.md
+
+Coverage: sampled (build.rs main, collect, tool, compile, digest, and strict/non-macOS paths read; symbol and flag claims verified; syn expand body not read)
+No drift detected.
+
+## crates/gpu/AGENTS.md
+
+Coverage: sampled (claims verified N of M: about 25 of 30 checked; env vars, MAX_GQA_GROUP, MAX_CHUNKS, FC_GDN_DK, 128-thread norm, BatchedScratch fields, delta_pipeline, script and test paths, runtime gates; DecodeScratch match and the RoPE/MLX details not read)
+- Fused INT4 kernel names do not exist: doc says `dequant_int4_gemv_fused_gate_up_act` and `dequant_int4_gemv_fused_down_epilogue`; the Metal kernels are `dequant_int4_gate_up_act_gemv_simd` and `dequant_int4_down_epi_gemv_simd` [src/shaders/dequant_int4_fused.metal:dequant_int4_gate_up_act_gemv_simd], [src/dequant_int4_fused.rs:encode_gate_up_act_gemv], [src/dequant_int4_fused.rs:encode_down_epi_gemv]
+- Omitted mode: `TURBOSPARK_INT4_MMA8=verify` (drift-bound arm, only the verify path) is read by the runtime alongside `=1` [crates/runtime/src/real_forward_dispatch.rs:int4_mma8_mode]
+
+## crates/gpu/README.md
+
+Coverage: sampled (test-file list checked file by file for existence; shader and test counts counted; vision/ANE/INT4 flag claims, rope/rms/chunks_for names, and gotchas 1 and 3 verified; "~6 KiB per buffer" and the `gpu` alias use in downstream crates not verified against code, though the alias itself is used by crates/runtime/Cargo.toml)
+- Test suite count is stale: doc says 97 integration test suites in `tests/`; `crates/gpu/tests/` has 112 top-level `.rs` files (some may be shared helpers, so the true suite count needs a precise definition) [crates/gpu/tests]
+- Shader count is stale: doc says 50 `.metal` files under `shaders/`; there are 51 [src/shaders]
+
+## crates/gpu/examples/EGM.md
+
+Coverage: sampled (both example CLIs checked for their subcommands and flags, the MLX version pin 0.32.3, and the generator script path; the FNV/timing bodies not read)
+No drift detected.
+
+## crates/gpu/src/EGM.md
+
+Coverage: sampled (about 80 of 90 named symbols confirmed to exist with the stated names; env var reads, cfg gating, lib.rs re-exports, NSProcessInfo, runtime forbid(unsafe_code), warmup gate location, KV max_context asserts, FP16 batch check, and ane-prefill feature gating verified; encode bodies not read)
+No drift detected.
+
+## crates/gpu/src/context/EGM.md
+
+Coverage: sampled (all MetalContext, PassEncoder, and CommittedPass methods listed were confirmed; Drop impls, env var reads, and the macOS 15 archive gate verified; cache path resolution read)
+- Omitted default: when `TURBOSPARK_METAL_CACHE_DIR` is unset, the disk cache falls back to `$HOME/Library/Caches/TurboSpark/metal` (the doc names the env var but not the default) [src/context/pipeline_cache.rs:PipelineDiskCache]
+
+## crates/gpu/src/moe_gguf/EGM.md
+
+Coverage: sampled (all listed encode functions and constants confirmed to exist; PHASE2_FIXED_SLOTS, the top_k assert, the Q2_0 top_k == 10 requirement, and MXFP4 constants verified; kquants, iq and mxfp4 kernel bodies not read)
+No drift detected.
+
+## crates/gpu/src/music3/EGM.md
+
+Coverage: sampled (all listed Music3Sequence operations and Music3Device constructors confirmed; Music3Buffer write/read error returns read; the one-command-buffer-per-sequence claim not checked)
+No drift detected.
+
+## crates/gpu/src/shaders/EGM.md
+
+Coverage: sampled (all 15 FC_ATTN_* function constants in attention.metal match the doc; kernel counts for moe.metal (19) and moe_gguf.metal (15) match; named rope, moe, gdn and music3 kernels exist; chunk rounding and M_q = 1 header comments verified; every .metal file is covered by the doc)
+No drift detected.
+
+## crates/image/AGENTS.md
+
+Coverage: sampled (claims verified 9 of 9 checked: 4 read-first links resolve, rule anchors checked against lib.rs cfg gates; cargo commands not executed; crate source not fully read)
+No drift detected.
+
+## crates/image/EGM.md
+
+Coverage: sampled (claims verified 8 of 9 checked; src is about 9.5k non-test lines, targeted reads only)
+- [runtime.rs:ImageRequest::validate] and [install.rs:ImageFamily::supported]: the doc says the request path "only admits the Z-Image one". ImageRequest::validate (runtime.rs:385-411) has no family check. It compares batch, steps, and guidance against the hard-coded Z-Image constants IMAGE_BATCH, IMAGE_STEPS, IMAGE_GUIDANCE (install.rs:23-26). The observable result matches (Qwen-Image-2.1 at 40 steps and Turbo or Krea at 8 steps are rejected), but the gate is a constant comparison, not a family gate. A change to those constants would silently change family behavior. Wording should say so. (b, minor)
+
+## crates/image/README.md
+
+Coverage: sampled (claims verified 20 of 22 checked; test names, ignore attributes, fixture paths, and env vars checked by search; crate source not fully read; cross-target cargo check not executed)
+- [tests/transformer_math_parity.rs:test_rope_three_axis_synthetic_parity, test_transformer_synthetic_block_parity, test_transformer_checkpoint_block_parity] Line 49 says `cargo test -p turbospark-image` runs "math parity against checked-in fixtures", and line 70 says the file "Validates diffusion transformer blocks and attention." All three math parity tests in this file are `#[ignore]` (transformer_math_parity.rs:36, 146, 261) and read from `target/ig0/runs/...` or an external shard, which is not in the repo and is absent in this checkout. Only test_patchify_unpatchify_contract runs by default. (b, overstated)
+- [tests/conditioning_parity.rs, tests/scheduler_parity.rs] Line 49 "checked-in fixtures" is false. `git ls-files crates/image` lists no fixture data. These tests are not ignored; they print NOTE and return early when external files are missing (conditioning_parity.rs:37, 79, 106; scheduler_parity.rs:66, 110), so the default run passes without checking them. The README should say the default run is a smoke pass and parity runs need the external fixtures. (b, overstated)
+- [install.rs / shaders] Line 20 says the macOS app runs these families "through the app's Swift MLX sessions (the vendored ZImage and QwenImage packages)". swift/TurboSparkApp/Package.swift vendors only Vendor/ZImage and Vendor/QwenImage (lines 23-24, 70-71). No Krea 2 Turbo or Qwen-Image-2.1-Turbo Swift path was found in this check, so the Krea part is unverified. (could not confirm)
+- Line 46-54 Platform claim that the portable core compiles on Linux x86_64 was not checked by running `cargo check --target x86_64-unknown-linux-gnu`. (could not confirm)
+
+## crates/image/src/EGM.md
+
+Coverage: sampled (claims verified about 30 of 33 checked; src is about 9.5k non-test lines, targeted reads and pub-item skim only)
+- [metal_ops.rs:TURBOSPARK_IMAGE_RESIDENCY] The Environment bullet lists only TURBOSPARK_IMAGE_STREAM_PROGRESS and TURBOSPARK_IMAGE_FORCE_SYNC_DISPATCH. TURBOSPARK_IMAGE_RESIDENCY is read at metal_ops.rs:94-99, but only inside `#[cfg(test)]`, so it is test-only. The doc should either list it as test-only or leave it out with a note. (c, minor)
+- [lib.rs:pub use] Interface omits public items the crate exports: ImageBudgetError (lib.rs:58-61, the error returned by admit_image_budget that the doc lists only indirectly), the macOS diagnostic trace types ImageFirstStepBoundary, ImageFirstStepTrace, ImageIntraBlockTrace (lib.rs:43-46), ImageStage, ImageMetadata, SchedulerMetadata (lib.rs:58-66), PackedQuantization, PackedTensor, PackedTensorReport, PACKED_INDEX_NAME, PACKED_DATA_NAME (lib.rs:47-50), ImageInstallSpec, ImageInstallReport (lib.rs:29-31). (c, minor; the doc does not claim the list is exhaustive, but ImageBudgetError and the trace types are the ones a caller reaches for)
+- [runtime.rs:ImageRequest::validate] Same wording issue as crates/image/EGM.md: the doc at line 25 reads as a family gate. (b, minor)
+
+## crates/image/src/shaders/EGM.md
+
+Coverage: full read of image.metal (842 lines, under the 1500-line threshold); host-side claims sampled (metal_ops.rs:21, 773, 815, 1198-1207, 1234), claims verified 17 of 18 checked
+- [image.metal:image_scale_shift, image.metal:image_gate_add, image.metal:image_scheduler_step] Invariant line 22 says the elementwise kernels "take a constant uint & count", and the rest "take a params struct". Only image_add, image_silu_mul, image_silu, image_round_bf16, and image_scheduler_step take the `constant uint &count` form. image_scale_shift and image_gate_add take `constant uint2 &shape` (image.metal:525-533, 547-556), and image_scheduler_step also takes a scalar `constant float &delta` (image.metal:536-544). Neither image_scale_shift nor image_gate_add takes a params struct. (b, minor)
+
+Everything else in this file matches the source: all 20 kernel names exist, the 512 cap applies only to image_attention (image.metal:416), the 256-thread kernels are the ones listed, image_vae_attention holds numerator[16] over 32 lanes (image.metal:655), the host bounds 1..=512, multiple of 8, and area multiple of 64 (metal_ops.rs:1198-1207), and image_attention needs 4 * head_dim threads with head_dim <= 128 (metal_ops.rs:773, 815; image.metal:426).
+
+## crates/invocation/EGM.md
+
+Coverage: sampled (claims verified 25 of 27; parser.rs, lib.rs, diagnostics.rs, failure.rs, usage.rs read in full; options.rs and request.rs checked by targeted grep and reads; tests not read)
+No drift detected.
+
+## crates/invocation/README.md
+
+Coverage: sampled (claims verified 25 of 27; parser.rs, lib.rs, diagnostics.rs, failure.rs, usage.rs read in full; options.rs and request.rs checked by targeted grep and reads; tests not read)
+No drift detected.
+Not confirmed: the claim that turbospark-cli or turbospark-runtime checks model and message-file existence downstream was not traced end to end (cli/src/agent.rs shows is_file and is_dir checks, which is consistent but not proof).
+
+## crates/invocation/AGENTS.md
+
+Coverage: sampled (claims verified 25 of 27; parser.rs, lib.rs, diagnostics.rs, failure.rs, usage.rs read in full; options.rs and request.rs checked by targeted grep and reads; tests not read; cargo commands not executed)
+No drift detected.
+
+## crates/invocation/src/EGM.md
+
+Coverage: sampled (claims verified 25 of 27; parser.rs, lib.rs, diagnostics.rs, failure.rs, usage.rs read in full; options.rs and request.rs checked by targeted grep and reads; tests not read)
+- Omitted behavior: repeated `--system` values are joined with a newline in supplied order [parser.rs:parse].
+- Omitted behavior: `--stop`, `--image`, `--steering` and the steering knob lists are repeatable and order-preserving, and the i-th knob value pairs with the i-th `--steering` path [parser.rs:parse, request.rs:steering_knob].
+- Omitted behavior: `--vision-sidecar` takes an opaque path, and the literal `auto` is read as a path, not a keyword [parser.rs:parse].
+- Omitted behavior: `--help` and `--version` short-circuit only when reached, so an earlier per-token failure (unknown option, missing value, invalid value) still wins over a later help or version token [parser.rs:parse].
+- Omitted invariant: a sub-1.0 `--top-p` with `--top-k 0` is accepted; the earlier refusal was removed [parser.rs:parse]. docs/CLI.md line 316 still says the threshold requires `--top-k > 0`, so that doc diverges from the code (outside this doc file).
+- Stale code comment, not a doc file: the InvalidValue doc names a "sampling cross-check violation" that the parser no longer emits [failure.rs:ParseFailure].
+
+## crates/lab/README.md
+
+Coverage: sampled (claims verified about 45 of 52, source not fully read: crates/lab/src is about 30k lines)
+- Exit codes section says "1 error, 2 usage". Code does not do that: any returned error, including an unknown command or a bad flag, goes through finish() and exits 1; exit 2 is reached only for an empty argv [src/cli.rs:finish] [src/cli.rs:main] [src/cli.rs:dispatch]. The same wrong line is in the USAGE string [src/cli.rs:USAGE]. src/EGM.md states the code behavior correctly.
+- Command table omits `hybrid-replay`, which dispatch accepts [src/cli.rs:dispatch]. The "Offline pricing and replays" bullet does name it, so the table is incomplete rather than wrong.
+- Verdict rule omits the sign-test requirement. Below 6 clean pairs every pair must agree in sign; from 6 pairs the one-sided exact sign test must reach 0.05 [src/stats.rs:decide] [src/stats.rs:UNANIMITY_BELOW] [src/stats.rs:SIGN_TEST_ALPHA]. The doc lists only the pair count, median, and bootstrap interval.
+- "INCONCLUSIVE means the host was busy" is imprecise. In decide(), INCONCLUSIVE is returned only when clean pairs are fewer than MIN_PAIRS; a sign disagreement or an interval spanning zero yields NOISE [src/stats.rs:decide]. I did not trace orchestrate.rs to confirm how host-busy rounds are counted before they reach decide().
+
+## crates/lab/EGM.md
+
+Coverage: sampled (claims verified about 30 of 33; symbol existence checked by grep across crates/lab/src; invariants checked against integrity.rs, paths.rs, atomic.rs, orchestrate.rs, cli.rs)
+- No drift detected.
+
+## crates/lab/AGENTS.md
+
+Coverage: sampled (claims verified about 25 of 28; test file names and bench registry checked against tree and src/kernel/mod.rs)
+- Rule "Commands print through say!, never println!" has one exception the doc does not mention: finish() prints the single --json envelope with println! [src/cli.rs:finish]. This is the intended path, so the rule should say so.
+- Otherwise no drift detected.
+
+## crates/lab/src/EGM.md
+
+Coverage: sampled (claims verified about 35 of 40; every cited symbol name grepped for existence, invariants and exit codes read in code)
+- No drift detected. Exit-code, PASSTHROUGH, ORCHESTRATOR_ENV, FORBIDDEN_PREFIXES, and atomic hard-link claims all match code.
+
+## crates/lab/src/bin/EGM.md
+
+Coverage: full read (both entry points are short and read in full)
+- No drift detected. Both binaries exit 2 with a message on non-macOS [src/bin/tslab.rs:main] [src/bin/tslab_worker.rs:main].
+
+## crates/lab/src/dash/EGM.md
+
+Coverage: sampled (claims verified about 12 of 14; route table and serve defaults read in dash/mod.rs; CSP and nosniff header values not read)
+- No drift detected in the checked claims. Routes, default port 7878, default bind 127.0.0.1, GET-only registration, no MachineLock use under src/dash, and the non-loopback warning path match.
+
+## crates/lab/src/kernel/EGM.md
+
+Coverage: sampled (claims verified about 14 of 17; bench names, registry, helper functions, arm labels, feature gates, and the music3 golden-file include checked; "runs in the orchestrator process, no worker" not read end to end)
+- No drift detected in the checked claims. Registry order and membership, MachineLock in kernel_cmd, and the ane-prefill gating match the doc.
+
+## crates/lab/skill/EGM.md
+
+Coverage: full read (folder holds no Rust source; the only contract claim is the layout, and it matches the tree)
+- No drift detected.
+
+## crates/lab/skill/scripts/EGM.md
+
+Coverage: full read (both scripts read in full)
+- No drift detected. doctor.sh checks, exit status, the lab dir resolution order, and the preflight "no CPU-load check" statement match the scripts. The 10 GiB threshold matches [src/host.rs:default_min_free_gb], and the name-fragment MODEL_MARKERS list matches [src/host.rs:MODEL_MARKERS].
+
+## crates/lab/tools/EGM.md
+
+Coverage: sampled (claims verified about 8 of 9; function names and the main() usage contract checked in trace_tables.py; the one-tenth GPU sample share is a docstring claim and was not recomputed)
+- No drift detected in the checked claims.
+
+## crates/lab/families/README.md
+
+Coverage: sampled (all 26 family JSON files in crates/lab/families checked by script against the documented field rules: schema string, family equal to file stem, kind, doc and upstream findings with verdict "reading", finding id prefix; reader validators read in src/family_profile.rs; tests not run)
+- No drift detected. Prefix tags, "!" negation and "|" alternation, id slug characters, date format, ASCII rule, and the ledger/doc/upstream provenance rules all match src/family_profile.rs. Not checked: the "findings named in the same file" rule for recommended[].
+
+## crates/lab/pinned/README.md
+
+Coverage: sampled (all 18 pinned JSON files checked by script: schema, id equal to repo and stem, kernel_class, settings kind, role; revision table compared to source.rev and rev_date; reader validators read in src/pinned.rs; tests not run)
+- Field rule says `role` "starts with primary or secondary", and the doc says these rules are "enforced by the reader and its tests". The reader only rejects an empty role [src/pinned.rs:validate]. The data does not follow the rule: 24 model rows across 8 files in pinned/mlx-serve/ (attn_kv.json, gdn_decode.json, keyed_sample.json, prefill_fusions.json, row_attn.json, row_exact.json, spec_round.json, verify_lanes.json) have roles that begin with free text. The primary_model() lookup depends on starts_with("primary") [src/pinned.rs:primary_model].
+- Format section says `source.rev` is "the 40-hex commit". The reader accepts 7 to 40 hex characters [src/pinned.rs:validate, rev_ok]. Minor.
+- Field rule says `files` "exist at that rev". The reader checks only that each path is repo-relative [src/pinned.rs:validate]. The doc heading claims enforcement that does not exist. Not verifiable without the upstream clones.
+- Revision table matches the source.rev and rev_date values in all 18 files.
+
+## crates/lab/workloads/audio/README.md
+
+Coverage: full read (doc is short; AudioJob fields, transcription input check, and speak/consent behavior checked in src/workload.rs and src/worker_audio.rs)
+- No drift detected. The transcription 16 kHz mono requirement is enforced [src/worker_audio.rs:pcm_16k_mono]. The "AR stage dominates" timing remark was not measured and is not verified.
+
+## crates/model-io/EGM.md
+
+Coverage: sampled (claims verified 9 of 9 at this level: crate name, Cargo deps and `foundation` alias, doc links, test command; source not read beyond the crate root)
+No drift detected.
+
+## crates/model-io/AGENTS.md
+
+Coverage: sampled (claims verified about 14 of 15: read-first links resolve, index and manifest constants exist and are imported by repack [crates/repack/src/resident_writer.rs, crates/repack/src/gturbo_writer/manifest.rs], unsafe sites located; `cargo check --target x86_64-unknown-linux-gnu` not run)
+- Unsafe rule omits the `libc::sysconf(_SC_PAGESIZE)` call in `resident_buffer.rs` [src/resident_buffer.rs:page_size_bytes]. The source-level EGM (src/EGM.md) records it, so the two docs disagree.
+
+## crates/model-io/README.md
+
+Coverage: sampled (claims verified about 45 of 55: module file list, public type names, baseline constructors, error variants, constants, test file list, unsafe sites; source of most modules not fully read)
+- Flint router described as "INT8 sigmoid router". The Flint baseline header says the router is BF16 ("p = sigmoid(h @ router^T) # BF16 router, no bias") and the checkpoint is MLX affine INT4 g64 [src/arch_baselines/flint.rs:flint_40b_a2_5b] (INT8 is not mentioned in that file). Verify which tensor the INT8 claim refers to before keeping it.
+- `arch_baselines/llama.rs` described as covering "Llama 3, Mixtral, and related Dense/MoE variants". The file exports only `mixtral_8x7b`; the header says a dense Llama 3.1 differs only in shape fields read from GGUF by `arch_from_gguf` (`gguf_config.rs`, outside this crate) [src/arch_baselines/llama.rs:mixtral_8x7b]. The README overstates what this file provides.
+- `arch_baselines/gpt_oss.rs` described as the GPT-OSS-20B "(Harmony chat template) architecture". No Harmony reference exists in the crate [src/arch_baselines/gpt_oss.rs:gpt_oss_20b]. The template belongs to another crate, or the claim is stale.
+- `arch_baselines/minimax.rs` described as "split-GGUF and sigmoid routing". The file sets `router_scoring_func: "sigmoid"`; no split-GGUF handling appears in the file or the crate [src/arch_baselines/minimax.rs:minimax_m2].
+- Tests list omits `tests/metadata_read_bounds.rs` and `tests/metadata_size_caps.rs` [tests/metadata_size_caps.rs].
+- Key Modules list omits `cgroup.rs` (`probe_cgroup_memory`, `parse_cgroup_limit`, a public re-export) and `bounded_read.rs` (size-capped metadata reads used by manifest and install receipt loading) [src/lib.rs:pub use].
+- Safety section omits the `sysconf(_SC_PAGESIZE)` call in `resident_buffer.rs` [src/resident_buffer.rs:page_size_bytes].
+
+## crates/model-io/src/EGM.md
+
+Coverage: sampled (claims verified about 40 of 45: re-export list against lib.rs, `ModelError` variants, cgroup paths, receipt tamper note, sysconf and statvfs sites, index constants, trunk marker and speech receipt write sites; not every listed function body read)
+- Interface omits several public items re-exported from the crate root: `build_layer_multipliers`, `derive_head_vocab_and_offsets`, `find_nth_prime_after` [src/ngram_hash.rs], `ExpertSlotWiring`, `ResolvedExpertResidency`, `largest_context_within*`, `committed_breakdown*`, `CommittedBytes` [src/expert_cache_policy.rs, src/context_policy.rs], `EncoderQuantization` [src/encoder_config.rs], and the `TRUNK_ROLE_FILE`, `SPEECH_RECEIPT_FILENAME`, `SIDECAR_RECORD_FILE`, `DASH_SIDECAR` file-name constants [src/lib.rs:pub use]. Lower priority than the omissions above; the Interface block is a summary, so this is a completeness note.
+- Unsafe invariant lists `mmap`, `statvfs` and `sysconf`; the README and AGENTS.md do not list `sysconf`. See the two items above.
+
+## crates/model-io/src/arch_baselines/EGM.md
+
+Coverage: sampled (claims verified about 25 of 25 at the constructor and registry level; `arch_validation` field-by-field check not traced)
+No drift detected.
+
+## crates/model-io/src/arch_config/EGM.md
+
+Coverage: sampled (claims verified about 15 of 16: `ModelFamily` persisted strings, `ArchConfig` predicates and `has_*_layers` methods, `MAX_VISION_DEEPSTACK_MERGERS` = 3, re-export list; round-trip of every variant not exhaustively checked)
+No drift detected.
+
+## crates/model-io/src/manifest/EGM.md
+
+Coverage: sampled (claims verified about 16 of 17: `load`/`validate`/`peek_family` signatures, constants, `known_flags`, `turboQuantKV` refusal, `image-generation` refusal, stride check, vision and Hadamard file requirements, `Gemma4` fallback, 4 MiB default cap, `validate_quant` visibility; `validate_quant` slot rules not read)
+- "quant is required when the arch matches a shipped baseline" overstates the check. `is_production_arch` matches only `num_layers` and `hidden_size` against any baseline in `all_known_architectures()`, not the full arch [src/manifest/mod.rs:is_production_arch]. A toy manifest with the same two values would be treated as production.
+
+## crates/repack/README.md
+
+Coverage: sampled (claims verified 17 of 21, source not fully read)
+- [crates/repack/tests:count] Says "This crate contains 83 integration test files in `tests/`". There are 91 top-level .rs files in crates/repack/tests/ (the count is stale).
+- [crates/repack/src/lfm3_config.rs:parse_lfm3_config] and [crates/repack/src/deepseek_vl2_config.rs:parse_deepseek_vl2_config] are public config parsers that the Key Modules list omits. synthetic_lfm3.rs (LFM3 tiny-install fixture) is also not listed under the synthetic generators.
+
+## crates/repack/AGENTS.md
+
+Coverage: sampled (claims verified 9 of 11, source not fully read)
+- Not verified in production code: "the `softmax_offset` sinks are resident" (Flint). The only `softmax_offset` reference in crates/repack/src is the test fixture [crates/repack/src/synthetic_flint.rs:tiny_flint_arch]. Residency is implied by the default resident bucket in classify, but no production symbol names it.
+- All five doc links resolve (.claude/docs/modules/repack.md, docs/GTURBO.md, docs/MODELS.md, docs/FLINT.md, .claude/docs/diagnostics.md). The mxfp4 nibble-order, 0xFF refusal, flint 2^6 rebalance, marker file, and position-numbered expert blobs claims match code.
+
+## crates/repack/EGM.md
+
+Coverage: full read
+No drift detected. Both subdirectory links (./src/EGM.md, ./examples/EGM.md) resolve.
+
+## crates/repack/examples/EGM.md
+
+Coverage: sampled (claims verified 15 of 17, source not fully read; examples total about 390 lines)
+No drift detected.
+(Checked: four example .rs files; `--undo` and exit code 2 in [crates/repack/examples/flint_rebalance.rs:main]; shard prefix trailing-slash check in [crates/repack/examples/fish_drama3_intake.rs:main]; four sidecars in [crates/repack/examples/flint_local_intake.rs:SIDECARS]; existing-destination refusal in both intake examples; preprocessor_config.json copy and the no-vision-tower error in [crates/repack/examples/minicpm_tower_local.rs:run].)
+
+## crates/repack/src/EGM.md
+
+Coverage: sampled (claims verified about 25 of 40, source not fully read; src/ top level is about 10k lines)
+- [crates/repack/src/hf_checkpoint.rs:decode_tensor_f32] The Invariant "lm_head only when embeddings are untied" is cited to decode_tensor_f32, but that function only decodes F32/BF16 and never touches lm_head. The untied condition (`!dims.tie_word_embeddings`) is in the orchestration code around hf_checkpoint.rs lines 135 and 249. Fix the citation.
+- Not checked, so not reported as drift: the `describe_headless_tts_trunk` routing, and the statement that the fixture group size is 64 via [crates/repack/src/synthetic_tensors.rs:int4_triple] (the file does not name GROUP_SIZE directly; the quantizer's GROUP_SIZE is 64 in crates/compute/src/quant.rs).
+
+## crates/repack/src/gemma4_checkpoint/EGM.md
+
+Coverage: sampled (claims verified about 18 of 30, source about 12k lines not fully read)
+No drift detected.
+(Checked: all interface symbols exist in the crate; FP16 overflow refused, not clamped, in [crates/repack/src/gemma4_checkpoint/narrow.rs:convert_raw_to_fp16]; GTURBO_PAGE_BYTES = 16384 in [crates/repack/src/gemma4_checkpoint/shards.rs:GTURBO_PAGE_BYTES]; the expert stride rounded to the page size in [crates/repack/src/gemma4_checkpoint/expert_blobs.rs:expert_stride_from_headers]; affine/mxfp4 group rules in [crates/repack/src/gemma4_checkpoint/config.rs:is_supported_affine_shape] and [config.rs:MXFP4_GROUP_SIZE]; routed expert 3/4-bit rule in [expert_blobs.rs:routed_expert_bits]; 0xFF mxfp4 refusal in [mlx_mxfp4.rs]; .signs refusal and hadamard.bin written before finish_streaming in [mod.rs:write_gemma4_install_streamed_in_place]; vision_gemma4 27 depths and 13 roles in [vision_gemma4.rs:SUPPORTED_DEPTHS, GEMMA4_BLOCK_ROLES]; the 13-variant bucket enum in [classify.rs:Gemma4Bucket]; the staging-dir and rename/rollback publish in [mod.rs:sibling_work_dir, publish_staged_install].)
+
+## crates/repack/src/gguf_checkpoint/EGM.md
+
+Coverage: sampled (claims verified about 14 of 16, source about 3.4k lines not fully read)
+- [crates/repack/src/gguf_checkpoint/mod.rs:write_gguf_install_streamed_resumable] Invariant (line 24) says a leftover `layer_NN.bin` is adopted only when provenance matches AND its size equals the header-derived size, "otherwise leftovers are deleted", citing [resume.rs:prepare] and [plan.rs:layer_file_bytes]. Actual behavior: resume::prepare deletes leftovers only when provenance does not match. The size check is in write_gguf_install_streamed_resumable (on_disk == plan::layer_file_bytes). When provenance matches but the size differs, the layer is rewritten by writer.write_layer, not deleted. Fix the citation and the "deleted" wording for that path.
+- Checked and matching: no env reads in production code (env::temp_dir appears only in #[cfg(test)] helpers in resume.rs and ngram.rs); the DeepseekV4Flash refusal; ResumeProvenance::new 40-hex rule; the ngram header remove, temp, and sync_all sequence; FUSED_GATE_FIRST; the minimax_gguf_sizing, verify_plan, zero_tail_pattern, qwen4exp_tensor_is_transcoded, and gguf_manifest_quant symbols; the MiniMax F32 router rule in [plan.rs:classify]; the IQ4_NL constants in [ngram.rs].
+
+## crates/repack/src/gguf_config/EGM.md
+
+Coverage: sampled (claims verified about 14 of 20, source about 1.2k lines not fully read)
+No drift detected.
+(Checked: 4096 layer cap via MAX_MODEL_LAYERS in [gguf_config/mod.rs]; the Unported-family list returning UnsupportedArchitecture in [mod.rs:arch_from_gguf]; tie_word_embeddings only when output.weight is absent; rope.freq_base to full_rope_theta and freq_base_swa to rope_theta; MiniMax-M2, Qwen2 (1e-6) and LFM3 (1e-5) epsilon pins; DeepSeek2 q_lora_rank > 0 refusal; the Spark25 and LFM3 dimension consistency checks, and the Qwen4Exp partial_rotary derivation; the lfm3 KV-head rule (0 is kind 6 only on a full layer, otherwise BadValue) in [masks.rs:lfm3_layer_mask]; Meta accessor methods; qwen_gdn_moe, gemma4, gpt_oss masks and kv_heads / linear_attention in attention.rs and masks.rs.)
+
+## crates/repack/src/gguf_header/EGM.md
+
+Coverage: sampled (claims verified 12 of 13, source about 740 lines not fully read)
+No drift detected.
+(Checked: DEFAULT_ALIGNMENT=32, DEFAULT_MAX_HEADER_BYTES=64 MiB, MAX_ARRAY_DEPTH=64, SUPPORTED_VERSION=3 in [gguf_header/types.rs]; all GgufHeaderError variants named in the doc exist in [types.rs:GgufHeaderError]; the 32 B and 13 B minimum sizes in [parser.rs:parse_header]; Cursor::take and Cursor::value; helper methods on GgufHeader and GgufTensorInfo; ggml_type_name and ggml_type_block in [ggml.rs].)
+
+## crates/repack/src/gguf_names/EGM.md
+
+Coverage: sampled (claims verified 12 of 14, source about 930 lines not fully read)
+No drift detected.
+(Checked: GgufMapping variants (Resident, Routed, RoutedFusedGateUp, Ignored, ZeroTailRopeFreqs) and GgufNameError variants in [gguf_names/mod.rs]; rope_freqs.weight refused for all families except Lfm3 (lfm3 top-level checked first) in [mod.rs:map_gguf_name]; PreMergeExperts refusal for Llama in [llama.rs:is_pre_merge_expert]; the five unported families returning None in [mod.rs]; qwen35moe and qwen35 strings in [mod.rs:gguf_architecture]; the layer_prefix string; A_log and dt_bias with no .weight suffix in [qwen.rs]; all per-family map_* functions named in the doc exist in their files.)
+
+## crates/repack/src/gturbo_writer/EGM.md
+
+Coverage: sampled (claims verified about 22 of 24; layers.rs and streaming.rs read in full, manifest.rs header and hash path read, its JSON body checked by grep only, types.rs checked by grep)
+- No drift detected.
+
+## crates/repack/src/ranged_download/EGM.md
+
+Coverage: sampled (claims verified about 30 of 33; key regions of http.rs, chunks.rs, and mod.rs read, not every line)
+- Omission: `DownloadError::Request` is also returned for local filesystem failures and for the "refusing to overwrite" check, not only for transport errors [http.rs:PendingDownload::new, http.rs:PendingDownload::publish]. Callers that match `Request` as a network error will see local I/O errors too. The doc's variant list does not say so.
+
+## crates/repack/src/synthetic_gguf/EGM.md
+
+Coverage: sampled (claims verified about 18 of 20; gemma4.rs, gptoss.rs, minimax.rs, qwen2.rs and gemma4_shape.rs checked by targeted grep and reads, not in full)
+- Invariant cites `[gemma4_shape.rs:SyntheticGgufShape]` for the rule that dimensions tile each quant type's block size. SyntheticGgufShape has no such check. Only the doc comments mention tiling there. The enforcement is the panicking asserts in `[builder/tensors.rs:q8_0_tensor, q4_k_tensor, q6_k_tensor, q3_k_tensor, iq_tensor, mxfp4_tensor]`.
+
+## crates/repack/src/synthetic_gguf/builder/EGM.md
+
+Coverage: sampled (claims verified about 14 of 15; mod.rs build path and tensors.rs assertions read directly)
+- Invariant says "Row length `dims[0]` must tile the block size ... [tensors.rs:q8_0_tensor, ...]". `q8_0_tensor` does not check `dims[0]`. It asserts that the product of all dims is a multiple of 32 [tensors.rs:q8_0_tensor]. The other helpers (q4_k, q6_k, q3_k, iq, mxfp4) do check `dims[0]`.
+
+## crates/repack/src/synthetic_model/EGM.md
+
+Coverage: sampled (claims verified about 14 of 16; arch.rs grep, moe.rs sub-tensor and stride code, dense.rs SWA mask read directly)
+- Interface says `build_synthetic_gemma4_install`, `build_synthetic_gemma4_swa_install`, `build_synthetic_gemma4_moe_install` and `build_synthetic_gemma4_moe_streamed_install` "return the ArchConfig". Each actually returns `Result<ArchConfig, WriterError>` [synthetic_model/dense.rs:build_synthetic_gemma4_install, synthetic_model/moe.rs:build_synthetic_gemma4_moe_install]. The invariant "the returned ArchConfig" is right only inside the Ok arm.
+
+## crates/repack/src/synthetic_qwen/EGM.md
+
+Coverage: sampled (claims verified about 20 of 24; public items and builder signatures checked by grep, dense_tensors.rs, drama3.rs, vision.rs and qwen4.rs read in targeted ranges)
+- Interface says the dense GDN builders (and `build_synthetic_qwen_gdn_dense_install` in particular) "return ArchConfig". The signature is `Result<ArchConfig, Box<dyn std::error::Error>>` [synthetic_qwen/dense.rs:build_synthetic_qwen_gdn_dense_install]. The invariant section states the Result return correctly, so only the interface line is off.
+
+## crates/repack/src/synthetic_qwen/qwen4_decode/EGM.md
+
+Coverage: sampled (claims verified about 18 of 20; arch.rs, tensors.rs, ngram.rs and mod.rs checked by targeted grep and reads, the indexer-budget validation path not read)
+- No drift detected.
+
+## crates/runtime/src/families/EGM.md
+
+Coverage: full read of EGM.md and families/mod.rs (14 lines); all 12 child module links resolve; the 12 declared modules match the doc's list. Claims about the child flows were not re-checked here (see the child sections).
+No drift detected.
+
+## crates/runtime/src/families/deepseek2/EGM.md
+
+Coverage: sampled (claims verified about 25 of about 30, source not fully read; directory is about 1550 lines across 5 files, state.rs and mod.rs read by targeted search and reads).
+No drift detected. Checked: produce_real_deepseek2 / _inner, encode_steering use, layer_tensor, RealDeepseek2State and build_mha, encode_mla_attention_block, encode_mha_attention_block, Q_PROJ and the other suffix consts, softmax_topk_no_renorm, encode_shared_expert, encode_deepseek2_layer_moe, validate_q8_0_matrix, yarn_mscale not applied, rope_mscale, PHASE2_FIXED_SLOTS, PreadExpertStreamer, the ffnSandwichNorms/attentionKEqV refusal list, the kv_lora == 512 and mask 5 checks, the dense-lead and build_mha refusals, the MissingTensor failures, vocab/logits-length checks, and the flat vision injection write.
+
+## crates/runtime/src/families/flint/EGM.md
+
+Coverage: sampled (claims verified about 20 of about 25, source not fully read; directory is about 1870 lines across 6 files).
+- Overview calls the chunked prefill path "layer-batched" and says it shares per-token encoders. prefill.rs refuses TURBOSPARK_BATCHED_GEMV and TURBOSPARK_ROUTED_BATCH for flint because "its resident GEMVs stay per token" and "its routed half stays per token" [prefill.rs:prefill_chunk_real_flint], and runs attention through [prefill.rs:encode_flint_chunk_token]. The wording overstates the batching; it reads as a per-token path driven layer by layer per micro-batch.
+- Not checked: the 49-layer count and layers 0 and 1 for the published checkpoint (manifest data, not source), and routed_pipeline_banks sizing (2 * top_k threshold) [moe_prefill_pipeline.rs:routed_pipeline_banks].
+- Verified with no drift: RealFlintState::build refusals (ModelFamily::Flint, sandwich, untied lm_head, non-sigmoid router, mask > 1, sliding_window > 0, full_rope_theta == 0, lead range), router dtype 5 and size check, softmax_offset per head, sigmoid_topk_renorm (stable rank, sigmoid over sum times scale), encode_swiglu widths 6144 and 1024, DEBUG_REPORT_ABOVE = 2000, env vars TURBOSPARK_FLINT_DEBUG, TURBOSPARK_FLINT_ROUTER_DUMP, TURBOSPARK_FLINT_CHUNKED_PREFILL (OnceLock, default on), kv_start for sliding window.
+
+## crates/runtime/src/families/gemma4/EGM.md
+
+Coverage: sampled (claims verified about 20 of about 25, source not fully read; directory is about 3950 lines across 10 files).
+No drift detected. Checked: RealGemmaState and build, ensure_batched, produce_real_gemma4 / _inner, prefill_chunk_real_gemma4, prefill_micro_batch_gemma4 (prefill.rs:300), prefill_micro_batch_gemma4_dense, encode_gemma4_routed_half_per_token, the attn/attn_batch/moe/moe_batch/shared_expert entry points, router_offsets_gemma4, encode_gemma4_layer_tail(_dense), RoutedSlot re-export, gemma4_span_refusal (BATCHED_GEMV, ROUTED_BATCH, quantized KV, ring < window + len - 1), span_attention_range, encode_gemma4_pilot_probe (TURBOSPARK_PILOT_PROBE), the attn_batch quantized-KV refusal [attn_batch.rs:encode_gemma4_layer_attn_and_router_batched], the batched routed refusals for non-affine INT4 blobs, MAX_PREFILL_EXPERT_BINDINGS and the pilot probe [moe_batch.rs:encode_gemma4_layer_routed_moe_batched], dense = num_experts == 0, and the flag-based acceptance (ffn_sandwich_norms and router_scaled).
+Not checked: the sqrt(hidden) omission for image rows in vision_prefill.rs.
+
+## crates/runtime/src/families/gptoss/EGM.md
+
+Coverage: sampled (claims verified about 12 of about 20, source not fully read; directory is about 2080 lines across 7 files).
+- Env seam list in Side Effects omits TURBOSPARK_PILOT_PROBE. The batched routed path also refuses the router pilot probe by name [moe_batch.rs:encode_gpt_oss_layer_routed_moe_batched], and the doc's Invariants mention the pilot probe but the Side Effects env-seam bullet does not. Minor omission.
+- Verified with no drift: layer_tensor, RealGptOssState::build and its refusals (family, Gemma flags, softcap, untied head, mask > 1, window <= 0, yarn factor <= 0), ensure_batched, BatchedRoutedScratch, produce_real_gpt_oss, encode_attention_block, encode_gpt_oss_layer_attn_and_router, encode_gpt_oss_layer_moe (router bias added to logits before top-k, router_topk_gemma4 with per-expert ones, INT8 dtype 5 router size check), encode_gpt_oss_layer_routed_moe_pipelined and _batched, prefill_chunk_real_gpt_oss with the TURBOSPARK_BATCHED_GEMV refusal, kv.advance, and the TURBOSPARK_ROUTED_BATCH / TURBOSPARK_EXPERT_RESIDENCY refusal text.
+Not checked: the two command buffers per decode layer, and the BF16 sink count check.
+
+## crates/runtime/src/families/lfm3/EGM.md
+
+Coverage: sampled (claims verified about 15 of about 22, source not fully read; directory is about 1730 lines across 6 files).
+No drift detected. Checked: RealLfm3State build refusals (ModelFamily::Lfm3, rope_neox_subdim, lm_head.weight refusal, conv.conv.weight BF16 [hidden, taps] check), reset, Lfm3Batched, RMS_EPS, layer_tensor, produce_real_lfm3, set_lfm3_fused_ffn, short_conv_tail_abs_max, encode_conv_block, rope_params_for with full_rotated_pairs, encode_mlp_block and the int4_mma8_takes gate, lfm3_fused_ffn (TURBOSPARK_LFM3_FUSED_FFN, OnceLock), prefill_chunk_real_lfm3 and the TURBOSPARK_FFN_HIST refusal, lfm3_chunked_prefill (TURBOSPARK_LFM3_CHUNKED_PREFILL, OnceLock), LFM3_PREFILL_ROWS, lfm3_prefill_width, encode_attention_rows, commit_kv_rows, and the TURBOSPARK_PREFILL_STEEL / TURBOSPARK_PREFILL_ROWS_ATTN references.
+Not checked: the layer mask 0/1/6 refusal text and the sandwich-norm flags refusal list in full.
+
+## crates/runtime/src/families/llama/EGM.md
+
+Coverage: sampled (claims verified about 14 of about 22, source not fully read; directory is about 3380 lines across 10 files).
+No drift detected. Checked: RealLlamaState and build (Gemma-extension refusals, softcap, non-full-attention refusal, expert count agreement, MAX_STREAMED_EXPERTS, dense intermediate_size, MiniMax FP32 dtype 3 bias read, untied head for MiniMax), batch_attention_eligible and batch_attention_route_eligible (family, num_experts == 0, all-full mask, unquantized KV, live_rows > 1), capacity == MAX_PREFILL_BATCH check [state.rs:build], encode_llama_layer_dense, encode_llama_layer_moe (sigmoid_topk with bias selection), encode_llama_layer_routed_moe_pipelined, router::encode / sigmoid_topk / fp32_tensor, the mRoPE arms, prefill_chunk_real_llama_dense and _moe with the TURBOSPARK_ROUTED_BATCH and TURBOSPARK_BATCHED_GEMV refusals, the TURBOSPARK_STANDIN lab_hooks use, and the routed_batch_prefill / batched_gemv_prefill / routed_pipeline runner flags.
+Not checked: the Qwen2 / Qwen3-VL / MiniMax-M2 family routing list in full, and the image-pad host write detail beyond the scratch.x write.
+
+## crates/runtime/src/families/museglimmer/EGM.md
+
+Coverage: sampled (about 22 of 26 claims verified across 6 files of about 1,260 lines; source not fully read)
+- The doc calls the four scalars "published", but the constants are documented in code as RECALLED values where config.json is silent, guarded only by crates/repack/tests/museglimmer_config.rs, and the code says to change them there in lockstep. The doc omits this guard and the caveat [state.rs:RealMuseState, state.rs:RMS_EPS]
+
+## crates/runtime/src/families/qwen/EGM.md
+
+Coverage: sampled (about 45 of 60 claims verified across 25 files of about 13,350 lines; source not fully read; routed-expert slot ordering in the mapped arm and the DFlash tie rules were not traced)
+- Invariant "Drafters allocate nothing unless asked at open" is false for the default environment. Unset TURBOSPARK_MTP_DRAFT maps to Auto, which builds the MTP head at AUTO_DEPTH 2 whenever the install carries one, and unset TURBOSPARK_DFLASH_DRAFT maps to Auto, which builds the DFlash drafter on dense installs carrying dflash.fc.weight [mtp_state.rs:MtpDraftPolicy::from_env, mtp_state.rs:MtpState::build (Auto arm), dflash.rs:DflashState::build (Auto arm)]
+- Env reads omitted from the Side Effects list: TURBOSPARK_PREFILL_STEEL, TURBOSPARK_MTP_BATCHED_PRIME and TURBOSPARK_PREFILL_ROWS_ATTN are read on the shared open path that builds this runner [real_forward_open.rs:369-371]; TURBOSPARK_STANDIN skips FFN or attention blocks in the decode loop [lab_hooks.rs:68, produce.rs:produce_real_qwen_inner]; TURBOSPARK_ROUTER_LOGITS_LAYER is read for router logit capture [router_hist.rs:96, moe.rs:encode_qwen_layer_moe]; TURBOSPARK_ATTN_DECODE_KERNEL selects the decode attention kernel [gpu/src/attention_decode.rs:736, batched_layers.rs:encode_full_attention_block_batched]
+
+## crates/runtime/src/families/qwen/dflash_draft/EGM.md
+
+Coverage: sampled (about 14 of 18 claims verified across 6 files of about 1,380 lines; source not fully read; tie-break and tree-chain equivalence not traced)
+- "Requires TURBOSPARK_DFLASH_DRAFT set before open for real_dflash to exist" is wrong. Unset means Auto, which builds real_dflash on any dense install that carries dflash.fc.weight. The variable is needed only to force a block size or to turn the drafter off with 0 [dflash_state.rs:DflashDraftPolicy::from_env, dflash.rs:DflashState::build (Auto arm)]. The error text in dflash_prime_from_capture repeats the same instruction [mod.rs:dflash_prime_from_capture]
+- The env read the doc cites at mod.rs:dflash_prime_from_capture is actually in dflash_state.rs:DflashDraftPolicy::from_env (citation does not resolve to the read)
+- Omitted: the Off/Auto/Fixed policy and the serving block size chosen by TURBOSPARK_INT4_MMA8 (DFLASH_SERVING_BLOCK vs DFLASH_SERVING_BLOCK_TILE) [dflash_state.rs:dflash_serving_block]
+
+## crates/runtime/src/families/qwen4/EGM.md
+
+Coverage: sampled (about 30 of 36 claims verified across 13 files of about 5,830 lines; source not fully read)
+- Invariant "build refuses ... PLE on a QSA layer" is not enforced. The only PLE layer-kind check is `if arch.layer_is_linear(ple_layer) { ... }` at state.rs:RealQwen4State::build (around lines 1145-1156), and its body is comments only, so a PLE layer on a QSA layer passes build. The comment says the check exists to make that case a loud refusal, so either the refusal is missing or the doc overstates it [state.rs:RealQwen4State::build]
+- TURBOSPARK_QWEN4_TAP_LAYERS is cited to GdnNormCapture, but the read is in TapCapture::from_env [state.rs:TapCapture::from_env]. The doc also omits the default layer list "5,15,25,35,45" and the QTAP file format described in that code
+- Omitted: the runtime setter for TURBOSPARK_QSA_FORCE_DENSE (the doc comment at state.rs:785-789 names RealForwardRunner::set_qsa_force_dense) and its diagnostic purpose (KL against the dense path)
+
+## crates/runtime/src/families/spark/EGM.md
+
+Coverage: sampled (about 18 of 22 claims verified across 5 files of about 1,100 lines; source not fully read)
+No drift detected.
+
+## crates/runtime/src/families/synthetic/EGM.md
+
+Coverage: sampled (about 12 of 13 claims verified; produce_inner read in full, layer.rs and other claims spot-checked by grep; source not fully read)
+- Verification list is non-exhaustive: crates/runtime/tests/real_forward_qwen35.rs also contains the_synthetic_flows_arithmetic_is_frozen, which the doc omits (minor)
+
+## crates/runtime/src/families/unlimited_ocr2/EGM.md
+
+Coverage: sampled (about 14 of 15 claims verified across 3 files of about 1,100 lines; source not fully read; router tensor size checks and pread/mapped offsets not traced)
+No drift detected.
+
+## crates/runtime/EGM.md
+
+Coverage: sampled (subdirectory links and their targets verified; top-level structure only, no code claims)
+- No drift detected.
+
+## crates/runtime/AGENTS.md
+
+Coverage: sampled (claims verified 14 of about 40; module and doc links all resolve; env defaults and numeric thresholds checked by grep and Read; Qwen MoE, MiniCPM, lazy tape, Flint rebalance factor and expert count not verified)
+- Says `TURBOSPARK_QWEN_FUSED_FFN=1` activates the fused INT4 FFN dispatches (opt-in). The code default is ON: the flag is read as `!= "0"`, so only `0` disables it, and the doc comment there calls `=0` the kill switch [families/qwen/mod.rs:fused_ffn].
+- Says MegaTTS3 sessions open on Metal by default and that the CPU reference path runs only as an opt-in fallback when Metal cannot open. `MegaTts3Runner::open` takes an explicit `Device` and propagates Metal init errors (`map_err(metal_error)?`) with no automatic CPU fallback [src/megatts3.rs:MegaTts3Runner::open]. Metal is the default only in `examples/megatts3_bench.rs` (`--device` default). A fallback may exist in a caller (ffi/Swift); not confirmed here.
+
+## crates/runtime/README.md
+
+Coverage: sampled (all module, test-suite and family paths resolve; `ScriptedLogitProducer`, `forbid(unsafe_code)`, package/alias name checked; `PhaseCounters`, `DecodeScratch`, `GdnStateManager` reset behavior and the llama family member list not verified)
+- Says the crate has "81 integration test suites in `tests/`". There are 105 top-level `.rs` files in `tests/` and all 105 contain `#[test]` or `fn main` [tests/]. The count is stale.
+- The families list omits `lfm3/`, which exists under `src/families/` and is not mentioned anywhere in the README [src/families/mod.rs].
+- Says `whisper/` provides the "audio mel frontend windowing". The mel computation comes from the audio crate (`audio::whisper::whisper_log_mel_window`, imported in [src/whisper/mod.rs]); `whisper/` only windows and calls it. Minor wording overstatement.
+
+## crates/runtime/examples/EGM.md
+
+Coverage: sampled (claims verified 19 of about 30: binary count, `#![cfg(target_os = "macos")]` gates on the four fish_drama3 probes and whisper/parakeet, the `_say`/`_runner`/`_step_cost` ungated state, CLI flags for frozen_e_metal, music3_bench, megatts3_bench, moonshine_backend_probe, OCR single/multi prompt, `TURBOSPARK_DRAMA3_SERIAL`, `TURBOSPARK_MUSIC3_AR_ONLY`, `OCR_MAX_NEW_TOKENS`, `!Send` note on the Music 3 runner; per-binary behavior not read; 4.4k lines)
+- No drift detected.
+
+## crates/runtime/scripts/EGM.md
+
+Coverage: sampled (quiet_host rule, `digests_agree` reported not enforced, arm rotation, binary path and `pmset` use checked against the two drivers; 365 lines, not fully read)
+- No drift detected.
+
+## crates/runtime/tools/EGM.md
+
+Coverage: sampled (OUT_DIR fallback chain and `--help` absence checked in `fetch_sound_recall_clips.py`; SHA-256 pin behavior, ffmpeg spawn and `gen_ocr_pages` macOS requirement not verified; 406 lines)
+- No drift detected.
+
+## crates/runtime/src/EGM.md
+
+Coverage: sampled (about 30 of about 70 cited symbols resolved to their file; `#![forbid(unsafe_code)]` and macOS gating of the listed modules checked against `lib.rs`; `RuntimeError` and `RealForwardError` variants; `open_with_options` pins for speculation, steering and session slots; `open_with_kv_quant` defaulting residency to Auto; `TURBOSPARK_METAL_KERNEL_WARMUP` only `"1"`; `TURBOSPARK_ROUTER_HIST` writes on Drop; env reads; 30k lines, not fully read)
+- No drift detected.
+
+## crates/runtime/src/coreml/EGM.md
+
+Coverage: sampled (all five `*_UNITS`/quantized-GPU env names, `<install>/.compiled` cache root, 1 MiB JSON cap, macOS 15 and MultiFunction gates, Unlimited OCR GPU pin and Neural Engine rejection, OCR config checks and Core ML file contract verified; 5.9k lines)
+- No drift detected.
+
+## crates/runtime/src/encoder/EGM.md
+
+Coverage: sampled (`SUPPORTED_MODEL_TYPES`, missing `model_type` refusal, `1_Pooling` pass-through, tokenizer load swallowed to `None` via `.ok()`, 8-bit group size check against `GROUP_SIZE`, `use_tanh_gelu: false`; per-layer bias defaults and encode-time errors not verified; 510 lines, not fully read)
+- No drift detected.
+
+## crates/runtime/src/native_audio/EGM.md
+
+Coverage: sampled (`busy` and `cancelled` handling, terminal cancel, `"cancelled"` ABI marker, Unified admission `3x + 256 MiB`, Multitalker admission `weights + weights/4 + 512 MiB`, named threads `native-audio` and `multitalker-stream`, Unified finish reset to a new stream, Multitalker Metal-free header; 540 lines)
+- Says Multitalker `finish` "closes the session". The worker loop in `multitalker_stream.rs` has no closed flag and does not exit after `Op::Finish`; the only "closed" statement is a doc comment on `finish`. Whether `LiveSession::finish` refuses later appends was not checked (lives outside this directory). Unconfirmed divergence [src/native_audio/multitalker_stream.rs:finish].
+
+## crates/runtime/src/router_hist/EGM.md
+
+Coverage: full read (`batches.rs`, 178 lines, including its two unit tests); the env gating in parent `router_hist.rs` checked by grep only
+- Says "Empty route slices and records outside a begin/end scope are dropped". In `record`, an empty route slice also sets `truncated = true` before returning, so an empty record marks the whole capture truncated. Out-of-scope records return without touching `truncated`. The doc omits the empty-slice `truncated` side effect [src/router_hist/batches.rs:BatchCapture::record].
+
+## crates/runtime/src/vision/EGM.md
+
+Coverage: sampled (`VISION_SLOTS = 2`, FP16 narrowing bound `65504` in `gemma4.rs:to_f16` and `lfm3_vl.rs:to_f16`, Qwen2.5 full-attention every 8th block, LFM3-VL `t != 1` refusal and 65,536-patch cap, Uocr2 2 GiB bin cap, SigLIP final LayerNorm eps 1e-5, `TURBOSPARK_VISION_RESIDENCY` read, all sibling tower files present; 14.7k lines)
+- No drift detected.
+
+## crates/runtime/src/whisper/EGM.md
+
+Coverage: sampled (`MAX_OPEN_BYTES` 24 GiB hard cap, config 1 MiB and tokenizer 16 MiB limits, safetensors header 1 MiB, 480000-sample windows and 29 s stride, 440-token cap, 8-repeat stop, `TURBOSPARK_WHISPER_DEVICE=cpu` and `TURBOSPARK_WHISPER_PROFILE=1`, static open lock, English-only language acceptance, silent Metal-to-CPU fallback verified; 4.3k lines)
+- No drift detected.
+
+## crates/selection/AGENTS.md
+
+Coverage: full read of src/ and docs; tests/ checked by file list and grep only.
+No drift detected.
+
+## crates/selection/EGM.md
+
+Coverage: full read of src/ and docs; tests/ checked by file list and grep only.
+No drift detected.
+
+## crates/selection/README.md
+
+Coverage: full read of src/ and docs; tests/ checked by file list and grep only.
+- Key Modules, choose.rs bullet says `select` "Dispatches greedy argmax, categorical sampling, or rejection sampling." False: [choose.rs:select] only chooses between the deterministic argmax arm and a reweighted draw. Rejection sampling is not dispatched in choose.rs; the caller builds the p/q distributions with [choose.rs:shaped_distribution] and corrects with [distribution.rs:residual].
+- Public entry point [choose.rs:shaped_distribution] is omitted from the README entirely, though it is re-exported in [lib.rs:shaped_distribution] and is the path rejection sampling depends on.
+- Gotcha 2 "Deterministic Step Seeding" overstates: "guarantees bit-exact reproducible token sequences across identical runs" holds only when a seed is supplied. With `seed: None`, [derive.rs:derive_step_value] reads `SystemTime::now()` and the draw varies between runs. The README also says the generator is "seeded per generation step"; the code keys the draw on (seed, position) in [choose.rs:draw] and [derive.rs:derive_step_value], and the clock fallback is not mentioned.
+- Omitted invariants: [shaping.rs:ShapingConfig::new] rejects top_k above [shaping.rs:MAX_TOP_K] (256), non-finite or non-positive repetition penalties, and top_p outside (0, 1]. The builders [shaping.rs:ShapingConfig::with_presence_penalty], [shaping.rs:ShapingConfig::with_frequency_penalty] (range [-2, 2]) and [shaping.rs:ShapingConfig::with_min_p] (range [0, 1), 0 disables) also validate. None of these bounds appear in the README.
+- Gotcha 3 "Hot-Path Partial Ranking" describes a "sequential kth-largest cut followed by sorting only the admitted set". That is only [truncation.rs:rank_top_k_u32_into], the path [choose.rs:shape_candidates] uses. The public [truncation.rs:rank_top_k] uses `select_nth_unstable_by` and has no sequential cut. The README does not say which function it means.
+
+## crates/selection/src/EGM.md
+
+Coverage: full read of all seven src/*.rs files and this doc; tests/ checked by grep only.
+- Minor omission: the sentence "`softmax` and the `truncate_by_*` helpers are not called by `select`" also holds for [truncation.rs:rank_indices] and [truncation.rs:rank_top_k], which are listed under Truncation and ranking but are not named as non-live. A reader can assume they are on the live path.
+- Every other named symbol, invariant, fallback, panic site and side effect checked against source ([choose.rs:select], [choose.rs:shape_candidates], [choose.rs:argmax], [choose.rs:reweight], [choose.rs:SCRATCH], [derive.rs:derive_step_value], [penalty.rs:apply_repetition_penalty], [distribution.rs:residual], [truncation.rs:assert_u32_domain]) matches.
+
+## crates/server/EGM.md
+
+Coverage: sampled (claims verified 4 of 5, source not fully read)
+No drift detected.
+
+## crates/server/AGENTS.md
+
+Coverage: sampled (claims verified about 9 of 11, source not fully read; catalog alias rule and tool-guardrail buffering checked only against the --help text in crates/server/src/args.rs)
+No drift detected.
+
+## crates/server/README.md
+
+Coverage: sampled (claims verified about 40 of 44, source not fully read)
+- [crates/server/src/queue.rs:DEFAULT_MAX_QUEUED] Line 52 says the admission gate has "no queue timeout or depth cap". The code caps waiters at DEFAULT_MAX_QUEUED (64), settable with --max-queued ([crates/server/src/args.rs:parsed.max_queued], [crates/server/src/main.rs] set_max_queued), and returns 429 with Retry-After past the cap ([crates/server/src/handler/mod.rs:queue_full_response]). The "depth cap" part is false. No queue timeout was found in queue.rs (only test timeouts), so that part may hold.
+- [crates/server/src/messages.rs:messages] Intro says "Uses zero-allocation translations between Anthropic and OpenAI protocols." Nothing in messages.rs or responses/map.rs or any comment supports this claim. Remove or qualify it.
+- [crates/server/src/guardrails.rs:inspect] Key Modules says guardrails provide "schema repair". The code validates parsed arguments against the request schema (validate_tool_arguments in inspect) and re-asks once (GuardrailConfig::default retries = 1). No repair step was found. coerce_value in [crates/server/src/guardrails/extra_formats.rs:coerce_value] converts scalar text during rescue, which is parsing, not schema repair. Replace "schema repair" with "schema validation".
+- [crates/server/src/args.rs:USAGE] (c) Key Modules lists the flag parser by example only and omits behavior-changing flags: --max-queued, --prefix-reuse (default off, with a shared-cache privacy caveat that appears only in crates/server/AGENTS.md), --session-slots (requires --prefix-reuse on), --guardrails, --max-concurrent-requests (alias for --session-slots), and the --steering and --kv-bits families. Low priority if the list is meant to be partial.
+
+## crates/server/src/EGM.md
+
+Coverage: sampled (claims verified about 45 of 47, source not fully read)
+No drift detected.
+
+## crates/server/src/audio/EGM.md
+
+Coverage: sampled (claims verified about 25 of 27, source not fully read)
+- [crates/server/src/audio/mod.rs:clones_voices] Invariants give the consent families as MegaTTS3, OmniVoice, and Drama 3 (fish_drama3) only. clones_voices also accepts "qwen3_tts" ([crates/server/src/audio/mod.rs:clones_voices]), and no consent or reference_text branch for qwen3_tts appears in [crates/server/src/audio/speech.rs:speech]. The doc does not list qwen3_tts as a cloning family and does not state its consent rule. Confirm the intended behavior before documenting it.
+
+## crates/server/src/guardrails/EGM.md
+
+Coverage: sampled (claims verified 7 of 7, source not fully read; extra_formats.rs was grepped and read in part, not in full)
+No drift detected.
+
+## crates/server/src/handler/EGM.md
+
+Coverage: sampled (all named symbols confirmed to exist; SSE keep-alive, RunControl, and cancelled_before_start behavior verified; source not fully read)
+No drift detected.
+
+## crates/server/src/responses/EGM.md
+
+Coverage: sampled (claims verified about 10 of 10, source not fully read)
+No drift detected.
+
+## crates/streaming/EGM.md
+
+Coverage: full read (doc is 6 lines; its one link resolves; `src` symbols it names all exist). Directory `crates/streaming` as a whole: sampled, see the `src/EGM.md` section.
+No drift detected.
+
+## crates/streaming/README.md
+
+Coverage: sampled (claims verified about 50 of 55, source not fully read). Checked: env vars, `POOL_THREADS` = 8, `F_RDADVISE`/`posix_fadvise(WILLNEED)`, `MADV_WILLNEED`, `read_volatile` touches, `proc_pid_rusage`/`F_NOCACHE`, `posix_memalign`, `libc::syscall` io_uring, cfg gating in Gotcha 4, `layer_NN.bin` naming (repack writes two-digit names, model-io accepts both), `packed_vision/blobs.bin`, `streaming` alias in `crates/runtime/Cargo.toml`.
+- `aligned_slot.rs` is described under Key Modules as "Page-aligned buffer allocations required for unbuffered direct disk I/O". Overstated: the shipping `pread` path opens no `O_DIRECT` descriptor (only the unwired `linux_uring.rs` path does, see `linux_uring.rs:dio_aligned`), and `aligned_slot.rs:AlignedSlot` documents its purpose as a no-copy base pointer for a GPU backend to wrap.
+- Tests section omits `tests/offset_overflow.rs` (asserts offset arithmetic refuses to wrap in the streamer chain). Omission.
+
+## crates/streaming/AGENTS.md
+
+Coverage: sampled (claims verified about 50 of 55, source not fully read). Checked: `../../.claude/docs/modules/streaming.md` exists, `scripts/expert_policy_replay.py` exists, both `cargo` check and test commands name this package, Gotcha on `linux_uring.rs` Linux-only gating matches the `#[cfg(target_os = "linux")]` on `sys`.
+No drift detected.
+
+## crates/streaming/src/EGM.md
+
+Coverage: sampled (claims verified about 50 of 55; source is about 3,050 lines so `expert_cache.rs` lines 30-110 and 270-389, most of `pread_streamer.rs`, and `mapped_experts.rs` were checked by targeted reads and grep, not read in full).
+- Overview says the crate provides "io_uring on Linux" as a read source. Overstated: no streamer reads through the ring, `Mode::parse("auto")` resolves to `Pread`, and nothing selects `Mode::Uring` outside tests [linux_uring.rs:Mode] [linux_uring.rs:Mode::parse]. The README already says "nothing selects it yet".
+- Cache entry calls `ExpertCache::plan_if_possible` the "non-panicking plan entry". It still panics via `assert!(experts.len() <= self.slot_count)` at the top of the function; only the "not enough evictable slots" case returns `None` [expert_cache.rs:ExpertCache::plan_if_possible].
+- Side Effects list `mlock`ing slot pages alongside opening and pread. `PreadExpertStreamer::open` does not wire anything; wiring is the separate explicit call `wire_slots` [pread_streamer.rs:PreadExpertStreamer::open] [pread_streamer.rs:PreadExpertStreamer::wire_slots].
+- Interface omits public items: `ExpertCache::slot_count` [expert_cache.rs:ExpertCache::slot_count], `ExpertCache::non_resident_experts` [expert_cache.rs:ExpertCache::non_resident_experts], `ExpertCachePolicy::describe` [expert_cache.rs:ExpertCachePolicy::describe], `Mode::from_env_default` and `Mode::parse` [linux_uring.rs:Mode::from_env_default]. Minor.
+- Code comment, not this doc: the `linux_uring.rs` module header says "`Mode` is selected once per process from `TURBOSPARK_LINUX_IO`", but `Mode::from_env` has no production caller. The EGM's "parse-only seam" wording is the accurate one [linux_uring.rs:Mode].
+- Verified without drift: `ExpertCachePolicy::DEFAULT` is `Lfu`; `TURBOSPARK_EXPERT_CACHE_DECAY` parsing and halving after increments; `slot_count > 0` asserts in `ExpertCache::new` and `PreadExpertStreamer::open`; speculative in-flight slots excluded from plans; `prefetch_expert` refused under `F_NOCACHE`; `POOL_THREADS` = 8 and lazy pool spawn after the single-chunk inline path in `run_batch`; `Sqe` 64-byte const assert; `TURBOSPARK_READ_QOS`, `TURBOSPARK_EXPERT_DISK_IO`, `TURBOSPARK_EXPERT_NOCACHE` env reads; all `PreadExpertStreamer` and `MappedExpertLayer` method names listed exist; `MappedPagePreparationMode` and `MappedPagePreparationStats` exist; re-exports in `lib.rs` match the list.
+
+## crates/tokenizer/AGENTS.md
+
+Coverage: sampled (claims verified 12 of 14; source not fully read). Not verified: "FFI guard and server poison recovery contain the panic", "only the decoder arm is compiler-enforced".
+No drift detected.
+
+## crates/tokenizer/EGM.md
+
+Coverage: full read (index doc; linked child src/EGM.md also read).
+No drift detected.
+
+## crates/tokenizer/README.md
+
+Coverage: sampled (claims verified 16 of 19; source not fully read). Not verified: downstream `tokenizer` alias usage in other crates' Cargo.toml.
+- Doc says "This crate includes 18 comprehensive test suites in `tests/`", but tests/ holds 25 .rs files. The list omits 7: chatml_no_tool_call.rs, content_marker_spelling.rs, deepseek_vl2_image_render.rs, regex_backend_hostile_pattern.rs, sidecar_size_cap.rs, stop_matcher_long_stop.rs, vision_markers_muse.rs [crates/tokenizer/tests]
+- Gotcha 3 overstates UTF-8 handling: "buffers incomplete UTF-8 sequences and emits text only when valid codepoints are formed". [detokenizer.rs:MfDetokenizer::flush] emits `String::from_utf8_lossy` output, so an unfinished trailing sequence comes out as U+FFFD at end of stream. The hold-back in [detokenizer.rs:MfDetokenizer::push] covers byte-fallback ids and trailing U+FFFD runs, not general incomplete sequences.
+- Gotcha 1 says to resolve ids "using `token_to_id`, `end_of_turn_id`". `end_of_turn_id` is a public field of [dialect/mod.rs:MfTokenizer], not a lookup method. Wording only.
+- Key Modules omit the template sidecar precedence (chat_template.jinja, then chat_template.json, then the tokenizer_config key) [dialect/mod.rs:MfTokenizer::load_from_dir]. Omission only.
+- Key Modules describe `json_value.rs` as used inside Jinja template contexts only. Tool-call parsers also build values with [json_value.rs:JsonValue] (`parse`) and share [json_value.rs:MAXIMUM_DEPTH] with [tool_call/gemma.rs:GemmaToolCallParser::parse]. Omission only.
+
+## crates/tokenizer/src/EGM.md
+
+Coverage: sampled (claims verified 12 of 13; source not fully read).
+- Side effects list `TURBOSPARK_CHAT_DATE` but omit the fallback: when it is unset, [jinja_date.rs:strftime_now] reads the system clock in UTC, so a template calling strftime_now is non-deterministic by default. Omission only.
+- Verified without drift: public re-export list in [lib.rs], `MAXIMUM_DEPTH` = 64 [json_value.rs:MAXIMUM_DEPTH], `#![forbid(unsafe_code)]`, `parse_pinned` day range 1..=31 (2026-02-31 accepted), seconds defaulting to 0, `Tokenizer` file loading.
+
+## crates/tokenizer/src/chat_template/EGM.md
+
+Coverage: sampled (claims verified 9 of 10; source not fully read). Not verified: "fallback renderers are pure".
+No drift detected.
+
+## crates/tokenizer/src/dialect/EGM.md
+
+Coverage: sampled (claims verified 10 of 12; source not fully read). Not verified: `NO_SUCH_TOKEN_ID` behavior for every dialect.
+- Invariant "generation_config EOS lists are capped at 256 ids" describes truncation, but the code rejects instead. [dialect/config.rs:EosTokenIds] `visit_seq` returns "too many EOS token ids" at the 257th element, and [dialect/mod.rs:read_generation_config] maps any parse error to `None`. The whole generation_config.json is then ignored, so no extra EOS ids are added, including the valid ones. A checkpoint with more than 256 EOS ids silently loses its full stop set.
+- Consumer field list omits public fields `end_of_turn_id`, `bos_prefix_id` and `think_start_id` [dialect/mod.rs:MfTokenizer]. `encode(add_bos = true)` uses `bos_prefix_id` [dialect/mod.rs:MfTokenizer::encode], which the doc does not mention. Omission only.
+- Verified without drift: sidecar size caps (16 MiB and 1 MiB) and fall-through on over-cap files [dialect/mod.rs:read_capped], load order of template sidecars, `MissingSpecialToken` from [dialect/resolve.rs:required_id], filtering of extra EOS ids to the vocabulary range [dialect/mod.rs:MfTokenizer::new], MiniMax EOS doubling as pad [dialect/minimax.rs].
+
+## crates/tokenizer/src/structured_decoder/EGM.md
+
+Coverage: sampled (claims verified 8 of 8 checked; source not fully read).
+No drift detected.
+
+## crates/tokenizer/src/tool_call/EGM.md
+
+Coverage: sampled (claims verified 8 of 9; source not fully read). Not verified: Kimi-K2.5 grammar provenance beyond the module doc.
+- Invariant "Function names must be non-empty, at most 64 bytes, ASCII alphanumeric plus `_` and `-`" is stated as universal. [tool_call/gemma.rs:GemmaToolCallParser::parse] does not call [tool_call/mod.rs:is_valid_function_name]. It checks the name against `allowed_tools` and returns `UnknownTool`. The doc comment on `is_valid_function_name` ("the shared name check every dialect applies") is also wrong for Gemma. The Harmony decoder arm does call it [structured_decoder/harmony.rs:is_valid_function_name use].
+- Verified without drift: all six parsers reference `MAXIMUM_BYTES` (256 KiB), `ParsedToolCall`, GLM and Kimi marker consts, `DSML_MARK`, `deepseek_dsml_mark`, and each parser has `new` and `parse`.
+
+## crates/vision-io/EGM.md
+
+Coverage: full read (doc); all 4 claims verified against Cargo.toml and src/decode.rs.
+No drift detected.
+
+## crates/vision-io/src/EGM.md
+
+Coverage: sampled (claims verified about 60 of about 75; src is about 6,000 lines, so symbols were checked by grep and the cited functions read, not every file read in full).
+- [src/lib.rs:crate docs] Not in this EGM, but the crate-level doc says "Every per-patch sequence in this crate" is merge-window order. False for Muse (raster order, muse.rs:muse_patch_rows) and Gemma 4 (row-major, gemma4.rs:Gemma4Patches). The EGM's own invariant ("Qwen path only") is correct.
+- [src/lib.rs:pub use] Public constants and types reachable from the crate root are not listed in the EGM Interface: `GEMMA4_PATCH`, `GEMMA4_PATCH_DIM`, `GEMMA4_POOL`, `GEMMA4_DEFAULT_SOFT_TOKENS`, `GEMMA4_SOFT_TOKEN_BUDGETS` [gemma4.rs]; `CLIP_PATCH`, `CLIP_PATCH_DIM` [clip.rs]; `OCR_BASE_SIZE`, `OCR_DOWNSAMPLE`, `OCR_GRID`, `OCR_IMAGE_TOKENS`, `OCR_PATCH`, `DeepseekOcrRow`, `DeepseekOcrView` [deepseek_ocr.rs]; `DSVL2_PATCH`, `DSVL2_PATCH_DIM`, `DeepseekVl2Row` [deepseek_vl2.rs]; `PIXTRAL_PATCH`, `PIXTRAL_PATCH_DIM` [pixtral.rs]; `OV_PATCH`, `OV_PATCH_DIM`, `OV_SIDE`, `OV_TILE`, `OV_TILE_PATCHES`, `OV_MAX_AREA_TILES` [onevision.rs]; `MINICPM_PATCH`, `MINICPM_SCALE_RESOLUTION`, `MINICPM_MERGE`, `MINICPM_SLICE_END_ID`, `MINICPM_NEWLINE_ID`, `MINICPM_IMAGE_ID_START`, `MINICPM_IMAGE_ID_END`, `MINICPM_MARKER_TOKENS` [minicpm.rs]. The Interface lists names, so this is an omission (c), not a false claim.
+
+## crates/vision-io/README.md
+
+Coverage: full read of the doc; the pipeline, the four gotchas, the test list, the Key Modules list, and the dependent crates were checked against source. Claims about the pixel budget, the resize order, and the rope theta matched code.
+- [tests/generated/gemma4_preprocess_oracle.rs] README "Tests" says every golden fixture under tests/generated/ is probed by scripts/qwen3vl_vision_oracle.py. The Gemma 4 fixture header says `@generated by scripts/gemma4_vision_oracle.py` (that script exists at repo root).
+- [tests/generated/preprocess_oracle.rs:header] README says the mlx-vlm reference is "vendored". No copy exists in the repo. The fixture header points to an absolute path outside the repo (mlx-v/mlx-vlm).
+- [tests/generated/preprocess_oracle.rs:synth_image, scripts/qwen3vl_vision_oracle.py:synth_image, src/decode.rs:module doc] Gotcha 3 says fixtures are "generated from PNG rather than JPEG sources". Fixtures start from synthetic pixels generated identically on both sides (decode.rs module doc, synth_image in the oracle script). The no-JPEG rule holds; the PNG wording does not describe the source.
+- [tests/ listing] Test list is incomplete. Files not mentioned: gemma4_preprocess_parity.rs, muse_params.rs, muse_wrap.rs, params_geometry.rs, rope_theta.rs.
+- [src/lib.rs:pub mod, src/*.rs] "Key Modules" omits every family pipeline module except gemma4.rs and unlimited_ocr2.rs: clip.rs, minicpm.rs, deepseek_ocr.rs, deepseek_vl2.rs, pixtral.rs, muse.rs, onevision.rs. Muse in particular uses a different resize filter (PIL Lanczos, resize_lanczos_pil) and raster patch order, and neither appears in the README.
+- Verified with no drift: the `patch_size * merge_size` rounding factor (params.rs:spatial_factor), merge-window and (T, P_h, P_w, C) row order (patchify.rs:patch_rows), 48x48 pos-embed grid, rope base 1e4 vs trunk 1e7 (rope.rs:VISION_ROPE_THETA), `image_dimensions`/`decode_image_bytes` limits (decode.rs), version 0.8.0 and no dependent crate aliasing the package (workspace Cargo.toml and dependents).
+
+## crates/vision-io/AGENTS.md
+
+Coverage: full read (27 lines). The four `Read first` links resolve (.claude/docs/modules/vision-io.md, docs/VISION.md, docs/VISION_PHASE0.md, docs/TESTING.md). The two `Checks` commands were not executed, so they are unverified, not confirmed.
+No drift detected.
+

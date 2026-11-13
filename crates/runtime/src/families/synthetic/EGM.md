@@ -26,4 +26,4 @@ The fallback decode path of `RealForwardRunner` for checkpoints with short tenso
 - No env vars read here
 
 ## Verification
-- No tests live in this directory. The flow is exercised by `the_synthetic_flows_arithmetic_is_frozen` in `crates/runtime/tests/real_forward_spark.rs`, `real_forward_lfm3.rs`, `real_forward_muse.rs`, and `real_forward_qwen4.rs` (for example `cargo test -p turbospark-runtime --test real_forward_spark`)
+- No tests live in this directory. The flow is exercised by `the_synthetic_flows_arithmetic_is_frozen` in `crates/runtime/tests/real_forward_spark.rs`, `real_forward_lfm3.rs`, `real_forward_muse.rs`, `real_forward_qwen35.rs`, and `real_forward_qwen4.rs` (for example `cargo test -p turbospark-runtime --test real_forward_spark`)

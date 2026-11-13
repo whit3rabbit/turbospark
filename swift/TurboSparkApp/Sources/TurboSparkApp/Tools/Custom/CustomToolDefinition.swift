@@ -82,6 +82,16 @@ public struct CustomToolDefinition: Identifiable, Codable, Sendable, Equatable {
         self.sourcePath = sourcePath
     }
 
+    /// Names become file names (`<name>.json`, `custom_<name>_<id>.sh`), so
+    /// only a short ASCII word with no path separators or dots is allowed.
+    public static func isSafeName(_ name: String) -> Bool {
+        guard (1...64).contains(name.utf8.count) else { return false }
+        return name.utf8.allSatisfy {
+            ($0 >= 0x30 && $0 <= 0x39) || ($0 >= 0x41 && $0 <= 0x5A)
+                || ($0 >= 0x61 && $0 <= 0x7A) || $0 == 0x5F || $0 == 0x2D
+        }
+    }
+
     /// The category permissions and risk are decided on.
     ///
     /// **THE DECLARED CATEGORY IS A REQUEST, NOT A GRANT.** A definition file

@@ -60,4 +60,58 @@ final class WebRebindingTests: NetworkPolicyPinnedTestCase {
             XCTAssertFalse(AppToolSandbox.isPrivateOrMetadataHost(host), "\(host) must stay public")
         }
     }
+
+    // MARK: - Web search path (issue S1)
+
+    /// SearXNG takes a user-supplied base URL. Under the strict policy a
+    /// loopback instance is refused before any request reaches the fixture.
+    func testSearXNGLoopbackBaseUrlIsRefusedBeforeSending() async throws {
+        let server = try BrowserAutomationHTTPFixtureServer()
+        let base = server.url("/").absoluteString
+        do {
+            _ = try await WebSearchExecutor.searchSearXNG(query: "swift", baseUrl: base)
+            XCTFail("a loopback SearXNG URL must be refused under the strict policy")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("denied"), error.localizedDescription)
+        }
+        XCTAssertEqual(server.requestCount(for: "/search"), 0, "nothing may reach the fixture")
+    }
+
+    func testSearXNGMetadataBaseUrlIsRefused() async {
+        do {
+            _ = try await WebSearchExecutor.searchSearXNG(
+                query: "swift", baseUrl: "http://169.254.169.254/latest")
+            XCTFail("a metadata SearXNG URL must be refused")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("denied"), error.localizedDescription)
+        }
+    }
+
+    /// A public name that resolves to loopback stands in for DNS rebinding:
+    /// the pre-flight check passes (injected) and the connected-address
+    /// check must discard the response on the search path too.
+    func testSearchFetchRefusesAConnectionToAPrivateAddress() async throws {
+        let server = try BrowserAutomationHTTPFixtureServer()
+        do {
+            _ = try await WebSearchExecutor.fetchLimited(
+                request: URLRequest(url: server.url("/search")),
+                session: nil,
+                validate: { _ in })
+            XCTFail("a search connection that landed on loopback must be refused")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("rebinding"), error.localizedDescription)
+        }
+    }
+
+    func testSearchFetchValidatesInjectedSessionRequestsBeforeSending() async throws {
+        let server = try BrowserAutomationHTTPFixtureServer()
+        do {
+            _ = try await WebSearchExecutor.fetchLimited(
+                request: URLRequest(url: server.url("/search")), session: URLSession.shared)
+            XCTFail("an injected session must not bypass destination validation")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("denied"), error.localizedDescription)
+        }
+        XCTAssertEqual(server.requestCount(for: "/search"), 0)
+    }
 }

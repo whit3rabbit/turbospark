@@ -1,7 +1,7 @@
 # Flint Decode Flow
 
 ## Overview
-The `flint` decode flow for `RealForwardRunner`: 49 layers of GQA attention (per-head QK norm, learned sinks, NoPE on full-attention layers, sliding window on the rest) followed by a dense SwiGLU lead (layers 0 and 1 for the published checkpoint; the code takes the count from `num_dense_leading_layers`) and then sigmoid-routed MoE layers with an ungated shared expert. It is a distinct flow rather than a variant of an existing family; the skeleton follows `families/deepseek2` and the attention follows `families/gptoss`. A sequential per-token `produce` path and a layer-batched chunked prefill path share the same per-token attention and routed-MoE encoders.
+The `flint` decode flow for `RealForwardRunner`: 49 layers of GQA attention (per-head QK norm, learned sinks, NoPE on full-attention layers, sliding window on the rest) followed by a dense SwiGLU lead (layers 0 and 1 for the published checkpoint; the code takes the count from `num_dense_leading_layers`) and then sigmoid-routed MoE layers with an ungated shared expert. It is a distinct flow rather than a variant of an existing family; the skeleton follows `families/deepseek2` and the attention follows `families/gptoss`. A sequential per-token `produce` path and a chunked prefill path that batches only the host wait (one command buffer and one blocking wait per layer per micro-batch) share the same per-token attention and routed-MoE encoders; attention, resident GEMVs, and the routed half stay per token.
 
 ## Interface
 - `RealFlintState` [state.rs:RealFlintState]: open-time state (scratch buffers, lead, widths, rms_eps); built and validated by `RealFlintState::build`

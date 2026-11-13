@@ -20,7 +20,7 @@ validation, an install builder, and a staged `generate` lifecycle
 
 ## Invariants
 - `#![forbid(unsafe_code)]` applies crate-wide [lib.rs:forbid(unsafe_code)].
-- Per-family envelopes in [install.rs:ImageFamily::supported] are enforced by `ImageManifest::validate`; the request check below is Z-Image only.
+- Per-family envelopes in [install.rs:ImageFamily::supported] are enforced by `ImageManifest::validate`; the request check below has no family gate and compares against the Z-Image constants, so a change to them changes which families can generate.
 - Supported dimensions are 512 to 1024 per side, multiples of 16, at most 1024x1024 pixels [runtime.rs:is_supported_image_dimensions].
 - `ImageRequest::validate` rejects empty model id, revision, prompt, noise provenance, unsupported quantization label ([runtime.rs:is_supported_quantization_label]), and any batch, step count, or guidance other than the fixed envelope (batch 1, 9 steps, guidance 0.0) [runtime.rs:ImageRequest::validate, install.rs:IMAGE_STEPS].
 - `generate` checks cancellation between stages [runtime.rs:generate].
@@ -32,7 +32,7 @@ validation, an install builder, and a staged `generate` lifecycle
 ## Side Effects
 - Disk: reads safetensors shards and packed `tensors.bin`; `pack_component` refuses an existing output directory, then creates it [packed.rs:pack_component]; the builder creates a staging dir, copies scheduler config, writes `manifest.json` and the install receipt [builder_files.rs:write_receipt], verifies files via `verify_files_for_publication`, then renames and removes staging on failure [builder.rs:build_image_install_with_progress].
 - GPU: Metal command buffers are committed inside `gpu::autorelease_pool` around `pass.commit()` [metal_ops.rs:459].
-- Environment: `TURBOSPARK_IMAGE_STREAM_PROGRESS` and `TURBOSPARK_IMAGE_FORCE_SYNC_DISPATCH` are read by the Metal ops [metal_ops.rs:TURBOSPARK_IMAGE_STREAM_PROGRESS].
+- Environment: `TURBOSPARK_IMAGE_STREAM_PROGRESS` and `TURBOSPARK_IMAGE_FORCE_SYNC_DISPATCH` are read by the Metal ops [metal_ops.rs:TURBOSPARK_IMAGE_STREAM_PROGRESS]. `TURBOSPARK_IMAGE_RESIDENCY` is read only under `cfg(test)` [metal_ops.rs:streamed_requested].
 
 ## Verification
 - Run: `cargo test -p turbospark-image`

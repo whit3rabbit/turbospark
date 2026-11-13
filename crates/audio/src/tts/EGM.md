@@ -6,7 +6,7 @@ Text-to-speech model families for the audio crate, aligned with `mlx_audio/tts/m
 ## Interface
 - `sampling` shared sampler module. [mod.rs:sampling]
 - Re-exported aliases such as `BarkTts`, `ChatterboxTts`, `KittenTts`, `Kokoro`, `VoxtralTts`, `Zonos2Tts`. [mod.rs:pub use]
-- Families exported as modules only (no alias): `arktts`, `chatterbox_turbo`, `dramabox`, `fish_drama3`, `fish_qwen3_omni`, `megatts3`, `moss_tts`, `omnivoice`. [mod.rs:pub mod]
+- Families exported as modules only (no alias): `arktts`, `chatterbox_turbo`, `dramabox`, `fish_drama3`, `fish_qwen3_omni`, `megatts3`, `moss_tts`, `omnivoice`, `pocket_tts`. [mod.rs:pub mod]
 - Child contracts:
   - [arktts](./arktts/EGM.md)
   - [bailingmm](./bailingmm/EGM.md)
