@@ -35,7 +35,7 @@ public enum NotebookEditExecutor {
         if let size = AppFileReadLimits.fileSize(of: targetURL), size > AppFileReadLimits.maximumBytes {
             throw NSError(
                 domain: "TurboSparkTool",
-                code: 17,
+                code: 101,
                 userInfo: [NSLocalizedDescriptionKey: "Notebook '\(relPath)' is \(size / 1_024 / 1_024) MB, over the \(AppFileReadLimits.maximumBytes / 1_024 / 1_024) MB limit for NotebookEdit."]
             )
         }
