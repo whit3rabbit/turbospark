@@ -22,7 +22,7 @@ Subcommand implementations for the `turbospark-model` binary. Each module prints
 - Image staging refuses to overwrite an existing directory [image_source.rs:materialize].
 - Moves use the absolute `/bin/df` so PATH cannot substitute a program [transfer.rs:DF].
 - Move kinds are limited to text, vision, audio, image [transfer.rs:KINDS].
-- A user-chosen `--alias` (`--repo` pulls, image and vision pulls) is ASCII-checked before network work [mod.rs:check_alias]; a curated positional alias is not. Destination is settled before any request [destination.rs module doc].
+- A user-chosen `--alias` (`--repo` pulls, image and vision pulls) is ASCII-checked before network work [mod.rs:check_alias]. A positional `pull` alias gets the same predicate [mod.rs:check_row_alias], because a row merged from the user's `models.json` is not curated; a test holds that every embedded curated alias passes [mod.rs:alias_tests]. Destination is settled before any request [destination.rs module doc].
 
 ## Side Effects
 - Installs and removals write and delete model directories (`std::fs::remove_dir_all`, `create_dir_all`) [mod.rs:remove], [mod.rs:pull_image], [audio.rs:remove_audio].

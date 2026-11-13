@@ -151,6 +151,8 @@ turbospark bench                              # Runs turbospark-bench
 
 The `start <agent>` subcommand connects external coding agents (`claude`, `codex`, `opencode`, `grok`, `gemini`, `hermes`, `openclaw`, `dsh`) directly to the local server via `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL`.
 
+`turbospark start --api-key KEY` hands the key to the daemon through the `TURBOSPARK_API_KEY` environment variable, so it does not appear in the daemon's argv. `turbospark run <model>` downloads a missing catalog model without asking when `--yes` is set or stdin or stderr is not a terminal (it prints the size first).
+
 Audio serving: `turbospark serve` accepts `--stt-model` (Whisper, Qwen3-ASR, Parakeet on Core ML), `--tts-model` (Kokoro, MegaTTS3, OmniVoice, Drama 3), and `--music-model` (MiniMax Music 3). With no `--model`, the server runs in audio-only mode, serving `/v1/audio/{transcriptions,speech,generate,jobs,models}`.
 
 ---

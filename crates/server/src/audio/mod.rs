@@ -31,6 +31,19 @@ mod speech;
 mod stt;
 mod ws;
 
+/// A catalog alias is a plain file name. Refusing separators and dots keeps
+/// HTTP callers inside the store's audio directory. Checked by the load
+/// route for every provider, so a provider that accepts arbitrary strings
+/// never sees a path-shaped name.
+pub(crate) fn valid_alias(alias: &str) -> bool {
+    !alias.is_empty()
+        && alias.len() <= 128
+        && !alias.starts_with('.')
+        && alias
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
 pub(crate) use generate::generate;
 pub(crate) use jobs::{delete_job, get_job, get_job_result, JobStore};
 pub(crate) use metrics::{metrics_endpoint, AudioMetrics};

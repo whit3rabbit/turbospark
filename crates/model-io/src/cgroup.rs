@@ -52,8 +52,21 @@ pub fn probe(sys_fs: &Path) -> Option<CgroupMemoryLimit> {
 }
 
 /// The production entry point: probe THIS process's cgroup.
+///
+/// Gated on Linux: cgroups do not exist elsewhere, and a non-Linux host
+/// (or a sandbox that mounts something at `/sys/fs/cgroup`) must not have
+/// that path read as a memory budget.
 pub fn probe_self() -> Option<CgroupMemoryLimit> {
-    probe(Path::new("/sys/fs/cgroup"))
+    probe_for_os(cfg!(target_os = "linux"), Path::new("/sys/fs/cgroup"))
+}
+
+/// The OS gate of [`probe_self`], with the OS answer and the mount injected
+/// so a test can hold the non-Linux arm on any machine.
+fn probe_for_os(is_linux: bool, sys_fs: &Path) -> Option<CgroupMemoryLimit> {
+    if !is_linux {
+        return None;
+    }
+    probe(sys_fs)
 }
 
 /// Parses one sysfs limit file. `max` (no limit) and an unparseable value
@@ -127,5 +140,19 @@ mod tests {
         let limit = probe(&dir).expect("max-only cgroup");
         assert_eq!(limit.max, Some(4_294_967_296));
         assert_eq!(limit.high, None);
+    }
+
+    /// A populated cgroup tree is ignored off Linux and read on Linux.
+    #[test]
+    fn the_os_gate_ignores_a_cgroup_tree_off_linux() {
+        let dir = std::env::temp_dir().join("turbospark-cgroup-probe-os-gate");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("tempdir");
+        std::fs::write(dir.join("memory.max"), "4294967296\n").expect("write max");
+        assert_eq!(probe_for_os(false, &dir), None);
+        assert_eq!(
+            probe_for_os(true, &dir).expect("linux reads it").max,
+            Some(4_294_967_296)
+        );
     }
 }

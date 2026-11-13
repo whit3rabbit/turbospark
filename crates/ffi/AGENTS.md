@@ -25,7 +25,9 @@ The C ABI used by the Swift package and macOS app.
   are shared by every client and are not partitioned by API key. Apply
   `prefixReuse` at attach on both attach paths: `ts_server_start` sets it
   before attaching the startup session, so no request sees the session's own
-  default, and `Server::attach` applies it again at the attach point both
+  default (which is reuse on: `open.rs` uses `prefix_reuse.unwrap_or(true)`,
+  the opposite of the standalone server's off default), and
+  `Server::attach` applies it again at the attach point both
   paths share. A JSON `null` leaves the session's open-time decision alone; a
   wrong-typed value is refused by `ts_server_start` (`tests/c_surface.rs`),
   never dropped.
