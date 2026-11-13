@@ -47,7 +47,7 @@ gpu = { package = "turbospark-gpu", path = "../gpu" }
 - `conformer_stream.rs` & `nemotron_diar.rs`: cache-aware streaming Conformer kernels for the Multitalker Parakeet encoder and the Nemotron-3 diarization kernel beyond the whisper f32 set.
 - `ane_split.rs` (cargo feature `ane-prefill`, off by default): the Metal half of the ANE+Steel dense prefill split, wrapping Core ML F16 IOSurface planes as resident buffers.
 - `resident_metal.rs`: `ResidentGpuWeights` zero-copy `MTLBuffer` creation over memory-mapped weight slices (`newBufferWithBytesNoCopy`).
-- `shaders/`: Metal Shading Language source files containing compute kernels across 50 `.metal` files.
+- `shaders/`: Metal Shading Language source files containing compute kernels across 51 `.metal` files.
 
 ## Development & Test Commands
 
@@ -61,7 +61,7 @@ cargo test -p turbospark-gpu --test rms_norm_parity -- --nocapture
 
 ## Tests
 
-This crate contains 97 integration test suites in `tests/`, the parity ones comparing GPU kernel outputs against CPU reference calculations in `crates/compute`:
+This crate contains 112 integration test suites in `tests/`, the parity ones comparing GPU kernel outputs against CPU reference calculations in `crates/compute`:
 - Quantization parity: `dequant_1bit_gemv_parity.rs`, `dequant_1bit_gemm_parity.rs`, `dequant_2bit_gemv_parity.rs`, `dequant_2bit_gemm_parity.rs`, `dequant_int4_gemv_parity.rs`, `dequant_int4_gemm_parity.rs`, `dequant_int4_fused_parity.rs`, `dequant_int4_mma_parity.rs`, `dequant_int4_mma8_parity.rs`, `dequant_int4_steel_parity.rs`, `dequant_int8_gemv_parity.rs`, `dequant_int8_gemm_parity.rs`, `dequant_iq_gemv_parity.rs`, `dequant_q3_k_gemv_parity.rs`, `dequant_q4_k_gemv_parity.rs`, `dequant_q5_k_gemv_parity.rs`, `dequant_q6_k_gemv_parity.rs`, `dequant_q8_0_gemv_parity.rs`.
 - Attention and KV cache: `attention_decode_parity.rs`, `attention_indexed_parity.rs`, `attention_tq_parity.rs`, `attention_sinks.rs`, `attention_swa.rs`, `kv_cache.rs`, `kv_cache_quant.rs`, `kv_quantize_parity.rs`.
 - Normalization and activations: `rms_norm_parity.rs`, `rms_norm_grouped_parity.rs`, `rms_norm_rows_as_heads.rs`, `scaled_norm_and_embed.rs`, `unary_activation_parity.rs`, `logit_softmax_parity.rs`.

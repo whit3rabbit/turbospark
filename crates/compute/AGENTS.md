@@ -11,7 +11,8 @@ Portable numerical primitives and quantized tensor helpers.
 ## Rules
 
 - Keep `#![forbid(unsafe_code)]`.
-- FP16 uses the `half` crate. BF16 conversion follows the existing
+- FP16 comes from `turbospark-core` (the `half` crate is a dependency of core, not of
+  this crate). BF16 conversion follows the existing
   bit-shift implementation. Do not introduce a second representation.
 - Preserve quantization block layout and scale semantics. A self-consistency
   test is not an independent numerical oracle.

@@ -58,7 +58,7 @@ Causal Conv1d(k7) -> reconstructed waveform
 | Deployed checkpoint | mlx-community/encodec-24khz |
 | Sample rate | 24 kHz (checkpoint); 48 kHz supported by architecture |
 | Audio channels | Mono (1 channel) |
-| Latent hop length | 320 (for [8, 5, 4, 2] strides), 75 fps at 24 kHz |
+| Latent hop length | Code default 512 ([8, 8, 4, 2] ratios); 320 for the 24 kHz checkpoint ([8, 5, 4, 2]), 75 fps |
 | Bandwidths | [1.5, 3.0, 6.0, 12.0, 24.0] kbps |
 | Codebooks | 32 levels x 1024 entries x 128 dims |
 | Normalization | weight_norm on all convolutions |

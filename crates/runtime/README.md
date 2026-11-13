@@ -68,7 +68,7 @@ cargo test -p turbospark-runtime --test real_forward_gemma4
 
 ## Tests
 
-This crate contains 81 integration test suites in `tests/`, including:
+This crate contains 105 integration test suites in `tests/`, including:
 - Model family forward passes: `real_forward_flint.rs`, `real_forward_gemma4.rs`, `real_forward_gptoss.rs`, `real_forward_llama.rs`, `real_forward_llama_dense.rs`, `real_forward_minimax.rs`, `real_forward_muse.rs`, `real_forward_qwen.rs`, `real_forward_qwen2.rs`, `real_forward_qwen35.rs`, `real_forward_qwen3moe.rs`, `real_forward_qwen4.rs`, `real_forward_spark.rs`.
 - Chunked prefill & prefix reuse: `chunked_prefill.rs`, `chunked_prefill_refusal.rs`, `prefix_reuse_real.rs`, `real_forward_flint_prefill.rs`, `real_forward_gemma4_chunked.rs`, `real_forward_qwen35_chunked.rs`, `real_forward_qwen_moe_chunked.rs`.
 - Quantized KV cache forward tests: `real_forward_gemma4_kv_quant.rs`, `real_forward_gptoss_kv_quant.rs`, `real_forward_llama_kv_quant.rs`, `real_forward_qwen35_kv_quant.rs`, `real_forward_spark_kv_quant.rs`.
