@@ -1015,8 +1015,21 @@ impl Encodec {
 
     /// Encodes mono samples into per-level codes. `bandwidth` (in
     /// kbps) must be one of `config.target_bandwidths`; `None` picks
-    /// the first.
+    /// the first. With `config.normalize` the RMS scale is dropped; use
+    /// [`Self::encode_with_scale`] to keep it for `decode_codes`.
     pub fn encode(&self, samples: &[f32], bandwidth: Option<f64>) -> Result<Vec<Vec<i32>>> {
+        self.encode_with_scale(samples, bandwidth)
+            .map(|(codes, _)| codes)
+    }
+
+    /// Like [`Self::encode`], also returning the encode-time scale that
+    /// `decode_codes` takes to undo normalization: `Some(rms)` when
+    /// `config.normalize` is set, `None` otherwise.
+    pub fn encode_with_scale(
+        &self,
+        samples: &[f32],
+        bandwidth: Option<f64>,
+    ) -> Result<(Vec<Vec<i32>>, Option<f32>)> {
         if samples.is_empty() {
             return Err(SpeechError::Input {
                 why: "empty waveform".to_string(),
@@ -1043,8 +1056,7 @@ impl Encodec {
         let embeddings = self.encoder.forward(&x)?;
         let dim = self.config.hidden_size;
         let codes = self.quantizer.encode(&embeddings, dim, bandwidth);
-        let _ = scale;
-        Ok(codes)
+        Ok((codes, scale))
     }
 
     /// Decodes code levels to mono samples. The output is exactly

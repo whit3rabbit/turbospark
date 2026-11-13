@@ -143,6 +143,18 @@ fn attention_configs_are_refused() {
         panic!("attention config must be refused");
     };
     assert!(err.to_string().contains("attn_window_size"), "{err}");
+
+    // A config that omits the key gets the upstream default of 32 and is
+    // refused the same way; the message must say why.
+    let mut config = read_json("tiny_a_config.json");
+    config.as_object_mut().unwrap().remove("attn_window_size");
+    let config = SnacConfig::from_json(&config).unwrap();
+    let Err(err) = Snac::load(config, &file) else {
+        panic!("config without attn_window_size must be refused");
+    };
+    let msg = err.to_string();
+    assert!(msg.contains("defaults to 32"), "{msg}");
+    assert!(msg.contains("not implemented"), "{msg}");
 }
 
 #[test]

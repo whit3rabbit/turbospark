@@ -119,4 +119,7 @@ Codes are exact-equality gates; tensors are float-tolerant gates.
 - `Snac::decode_stream`-style context concatenation from the reference
   is not ported; callers concatenate code levels themselves and decode.
 - Config parsing follows the reference constructor defaults, so a
-  checkpoint `config.json` that omits fields still loads.
+  checkpoint `config.json` may omit fields. The exception in effect is
+  `attn_window_size`: a missing key defaults to 32 upstream, which
+  enables LocalMHA, so `Snac::load` refuses such a config
+  (`Unsupported`). A loadable config stores `attn_window_size: null`.
