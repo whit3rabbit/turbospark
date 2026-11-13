@@ -14,7 +14,7 @@ Port of mlx-audio Voxtral Mini 3B speech understanding: a Whisper-large-v3 style
 - Config requires `audio_config` and `text_config` with positive dims, finite positive rms_norm_eps and rope_theta, and an integer `audio_token_id`; qk_norm and tied embeddings are fixed false, rotary_dim equals head_dim [mod.rs:VoxtralConfig::from_json]
 - Scheme is bf16 passthrough (`bits: 16, group_size: 1`) [mod.rs:VoxtralConfig::from_json]
 - Weights load from two fixed shards `model-00001-of-00002.safetensors` and `model-00002-of-00002.safetensors`; the audio tower must live in shard one [mod.rs:Voxtral::load]
-- Frontend zero-pads to 480000 samples via `Vec::resize`, which also silently truncates input over 30 s, so frames are always exactly 3000 and no refusal is raised [mod.rs:compute_features] [mod.rs:TARGET_SAMPLES]
+- Frontend zero-pads to 480000 samples and refuses input over 30 s with `SpeechError::Input` (it used to truncate silently), so frames are always exactly 3000; callers must chunk longer audio [mod.rs:compute_features] [mod.rs:TARGET_SAMPLES]
 - Frontend: 400-point FFT, hop 160, Hann, Slaney 128 mels, trailing STFT frame dropped, peak-8 floor, `(x+4)/4` [mod.rs:compute_features]
 - `audio_tower.embed_positions.weight` must be `[1500, d_model]` (TOWER_POSITION_ROWS); forward errors if it is shorter than the conv output length [mod.rs:AudioTower::validate_positions] [mod.rs:AudioTower::forward]
 - Conv weights accept `[out, 3, in]` (MLX, transposed at load) or `[out, in, 3]`; other shapes error [mod.rs:AudioTower::load_conv]

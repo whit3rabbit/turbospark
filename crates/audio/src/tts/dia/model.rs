@@ -6,7 +6,7 @@
 use super::config::DiaConfig;
 use super::layers::{load_dense_linear, load_tensor, Attention, KvStore, Mlp, Rotary};
 use crate::nn::{Linear, RmsNorm};
-use crate::{ops, Result};
+use crate::{ops, Result, SpeechError};
 use turbospark_model_io::safetensors::SafetensorsFile;
 
 /// Embedding lookup with the observed MLX gather semantics: an
@@ -157,6 +157,17 @@ impl Encoder {
         for (b, row_ids) in src_ids.iter().enumerate() {
             for (t, &id) in row_ids.iter().take(seq).enumerate() {
                 let row = embed_lookup(&self.embedding, self.embed_dim, id);
+                // An id at or past the vocabulary yields an empty row from
+                // `embed_lookup` (right for the decoder's zero-row semantics),
+                // and `copy_from_slice` would panic on it. Refuse instead.
+                if row.len() != self.embed_dim {
+                    return Err(SpeechError::Input {
+                        why: format!(
+                            "source token id {id} is outside the encoder vocabulary ({} entries)",
+                            self.embedding.len() / self.embed_dim.max(1)
+                        ),
+                    });
+                }
                 let dst = (b * seq + t) * self.embed_dim;
                 x[dst..dst + self.embed_dim].copy_from_slice(row);
             }
@@ -496,5 +507,30 @@ impl Decoder {
         self.norm.apply(&mut x, 2 * tokens);
         ops::checksum(&x);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A source byte id past the vocabulary used to panic in copy_from_slice.
+    #[test]
+    fn encoder_forward_rejects_out_of_vocabulary_source_id() {
+        let dim = 2;
+        let encoder = Encoder {
+            embedding: vec![0.5; 4 * dim],
+            layers: Vec::new(),
+            norm: RmsNorm::new(vec![1.0; dim], 1e-5),
+            embed_dim: dim,
+        };
+        let positions = [0];
+        let masks = vec![vec![0.0f32]; 2];
+        let ok = encoder.forward(&[vec![3], vec![0]], &positions, &masks);
+        assert!(ok.is_ok());
+        let err = encoder
+            .forward(&[vec![4], vec![0]], &positions, &masks)
+            .expect_err("id 4 is past a 4-entry vocabulary");
+        assert!(matches!(err, SpeechError::Input { .. }), "{err:?}");
     }
 }

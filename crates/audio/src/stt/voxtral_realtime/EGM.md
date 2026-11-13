@@ -17,7 +17,7 @@ Voxtral Mini 4B Realtime speech-to-text, ported from mlx-audio 0.5.7. It runs th
 - Config refuses `model_type` other than `voxtral_realtime`, a missing `quantization`, any mode other than `affine`, and anything other than 4-bit group 64 [mod.rs:VoxtralRealtimeConfig::from_json]
 - Geometry keys may be absent (pinned default) but a present, different value is an error [mod.rs:pinned_int, mod.rs:pinned_float]
 - Non-causal encoder, untied embeddings, or a disabled ada RMSNorm conditioning are refused [mod.rs:VoxtralRealtimeConfig::from_json]
-- Transcription delay is fixed at 480 ms (6 tokens), left pad 32 tokens, BOS 1, EOS 2, STREAMING_PAD 32, generation stops once more than 4096 tokens are recorded (the check runs after the push, so up to 4097 entries including EOS) [mod.rs:TRANSCRIPTION_DELAY_MS, mod.rs:N_LEFT_PAD_TOKENS, mod.rs:BOS_TOKEN_ID, mod.rs:MAX_NEW_TOKENS]
+- Transcription delay is fixed at 480 ms (6 tokens), left pad 32 tokens, BOS 1, EOS 2, STREAMING_PAD 32, generation stops once 4096 tokens are recorded (the check runs after the push via `cap_reached`, so at most 4096 entries including a final EOS) [mod.rs:TRANSCRIPTION_DELAY_MS, mod.rs:N_LEFT_PAD_TOKENS, mod.rs:BOS_TOKEN_ID, mod.rs:MAX_NEW_TOKENS, mod.rs:cap_reached]
 - Non-finite samples are rejected in `prepare` and in the mel stage [mod.rs:VoxtralRealtime::prepare, mod.rs:mel_spectrogram]
 - `transcribe` errors if the adapter yields fewer rows than the prompt length [mod.rs:VoxtralRealtime::transcribe]
 - `precompute_ada_scales` must run before `prefill` or `step`, which index `ada_scales` directly; `load` does this [decoder.rs:Decoder::precompute_ada_scales, mod.rs:VoxtralRealtime::load]
