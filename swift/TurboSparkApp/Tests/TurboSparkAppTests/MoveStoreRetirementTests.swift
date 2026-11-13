@@ -15,8 +15,9 @@ import XCTest
 /// which is why these tests scan the sources rather than trust a review: a
 /// later change that wires the call back in must fail here.
 ///
-/// The Rust export and the package wrapper stay (they have their own tests and
-/// the C ABI is not changed by this task). Only the app is held to this rule.
+/// The C export `ts_store_relocate` and the package wrapper `relocateStore`
+/// have since been removed, so a reference would also fail to build; this scan
+/// still catches a hand-declared caller or the sheet's label coming back.
 final class MoveStoreRetirementTests: XCTestCase {
     /// `swift/TurboSparkApp`.
     private var packageRoot: URL {

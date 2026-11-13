@@ -35,8 +35,8 @@ pub(crate) use hub::{hub_check_json, hub_search_json};
 pub(crate) use image_install::{catalog_json as image_catalog_json, install as image_install};
 pub(crate) use install::{
     cancel_active_installs, cancel_active_move, install, install_repo, installed_value,
-    installs_finished, library_name_of, pause_active_installs, refuse_while_installing,
-    refuse_while_installing_for, refuse_while_moving, resume_active_installs,
+    installs_finished, library_name_of, pause_active_installs, refuse_while_installing_for,
+    refuse_while_moving, resume_active_installs,
 };
 pub use install::{TS_INSTALL_BYTES, TS_INSTALL_STAGE};
 pub(crate) use probe::{probe_json, repo_variants_json};

@@ -387,15 +387,6 @@ public struct InstallCost: Decodable, Sendable, Equatable {
     public let installBytes: UInt64
 }
 
-/// Result of relocating the managed TurboSpark store.
-@available(*, deprecated, message: "Move Store is retired. The engine refuses the relocation once a model library is listed, because it deletes the home's install records. Use TurboSparkLibraries.add(path:name:) and TurboSparkLibraries.move(...).")
-public struct StoreRelocation: Decodable, Sendable, Equatable {
-    public let source: String
-    public let destination: String
-    public let bytes: UInt64
-    public let files: UInt64
-}
-
 /// One install-progress event.
 public enum InstallEvent: Sendable, Equatable {
     case stage(String)
@@ -408,13 +399,6 @@ public enum ImageInstallEvent: Sendable, Equatable {
     case stage(String)
     case bytes(done: UInt64, total: UInt64)
     case finished(ImageInstalledModel)
-}
-
-/// Progress from a managed store relocation.
-@available(*, deprecated, message: "Move Store is retired. The engine refuses the relocation once a model library is listed, because it deletes the home's install records. Use TurboSparkLibraries.add(path:name:) and TurboSparkLibraries.move(...).")
-public enum StoreRelocationEvent: Sendable, Equatable {
-    case bytes(done: UInt64, total: UInt64)
-    case finished(StoreRelocation)
 }
 
 /// Progress while curated checkpoint headers are ranked for this machine.
@@ -439,35 +423,6 @@ public enum TurboSparkCatalog {
     /// restores the environment-derived default.
     public static func setStoreRoot(_ root: String?) throws {
         try check(withOptionalCString(root) { ts_store_root_set($0) })
-    }
-
-    /// Relocates the managed store on a dedicated thread. The source is only
-    /// removed after the destination and install-record paths verify.
-    ///
-    /// Retired: it deletes the install records of every model library from the
-    /// home, so the engine refuses it once any library is listed.
-    @available(*, deprecated, message: "Move Store is retired. The engine refuses the relocation once a model library is listed, because it deletes the home's install records. Use TurboSparkLibraries.add(path:name:) and TurboSparkLibraries.move(...).")
-    public static func relocateStore(to destination: String) -> AsyncThrowingStream<StoreRelocationEvent, Error> {
-        AsyncThrowingStream { continuation in
-            let thread = Thread {
-                let box = StoreRelocationBox(continuation)
-                let userdata = Unmanaged.passRetained(box).toOpaque()
-                defer { Unmanaged<StoreRelocationBox>.fromOpaque(userdata).release() }
-                do {
-                    let json = try takeString { out in
-                        destination.withCString {
-                            ts_store_relocate($0, storeRelocationCallback, userdata, out)
-                        }
-                    }
-                    continuation.yield(.finished(try decode(StoreRelocation.self, from: json)))
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            thread.name = "com.turbospark.store-relocation"
-            thread.start()
-        }
     }
 
     /// The curated table, each row carrying whether it is installed.
@@ -1109,22 +1064,6 @@ private let imageInstallCallback: TsInstallCallback = { userdata, kind, text, le
     default:
         return
     }
-}
-
-@available(*, deprecated)
-private final class StoreRelocationBox: @unchecked Sendable {
-    let continuation: AsyncThrowingStream<StoreRelocationEvent, Error>.Continuation
-
-    init(_ continuation: AsyncThrowingStream<StoreRelocationEvent, Error>.Continuation) {
-        self.continuation = continuation
-    }
-}
-
-@available(*, deprecated)
-private let storeRelocationCallback: TsInstallCallback = { userdata, kind, _, _, done, total in
-    guard let userdata, kind == TS_INSTALL_BYTES else { return }
-    let box = Unmanaged<StoreRelocationBox>.fromOpaque(userdata).takeUnretainedValue()
-    box.continuation.yield(.bytes(done: done, total: total))
 }
 
 /// Calls `body` with a C string, or NULL when the value is absent.
