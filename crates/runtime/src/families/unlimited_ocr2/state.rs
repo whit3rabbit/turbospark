@@ -127,13 +127,7 @@ impl RealUnlimitedOcr2State {
         }
         let lead = validate_dense_lead(arch)?;
         let num_layers = arch.num_layers as usize;
-        let top_k = arch.top_k_experts as usize;
-        if top_k == 0 || top_k > gpu::MAX_STREAMED_EXPERTS {
-            return unsupported(format!(
-                "top_k {top_k} exceeds the {}-slot MoE kernels",
-                gpu::MAX_STREAMED_EXPERTS
-            ));
-        }
+        validate_top_k(arch)?;
         let head_dim = arch.head_dim as usize;
         let hidden = arch.hidden_size as usize;
         let dash =
@@ -355,6 +349,26 @@ fn validate_dense_lead(arch: &ArchConfig) -> Result<usize, RealForwardError> {
     Ok(lead)
 }
 
+/// Routed experts per token, within the streamed MoE kernels' slot count.
+///
+/// Zero gets its own message: "top_k 0 exceeds the N-slot MoE kernels" sent
+/// a reader looking for a value that is too large.
+fn validate_top_k(arch: &ArchConfig) -> Result<usize, RealForwardError> {
+    let top_k = arch.top_k_experts.max(0) as usize;
+    if top_k == 0 {
+        return Err(RealForwardError::Unsupported(
+            "unlimited_ocr2 needs routed experts: top_k_experts is 0".into(),
+        ));
+    }
+    if top_k > gpu::MAX_STREAMED_EXPERTS {
+        return Err(RealForwardError::Unsupported(format!(
+            "top_k {top_k} exceeds the {}-slot MoE kernels",
+            gpu::MAX_STREAMED_EXPERTS
+        )));
+    }
+    Ok(top_k)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -395,5 +409,36 @@ mod tests {
     fn lead_covering_every_layer_or_zero_width_is_refused() {
         err(&arch(12, 12, 6848));
         err(&arch(1, 12, 0));
+    }
+
+    fn top_k_err(top_k: i64) -> String {
+        let mut a = model_io::unlimited_ocr2_12l();
+        a.top_k_experts = top_k;
+        match validate_top_k(&a) {
+            Err(RealForwardError::Unsupported(m)) => m,
+            other => panic!(
+                "expected Unsupported, got {:?}",
+                other.map_err(|e| e.to_string())
+            ),
+        }
+    }
+
+    #[test]
+    fn real_baseline_top_k_is_accepted() {
+        let a = model_io::unlimited_ocr2_12l();
+        assert_eq!(validate_top_k(&a).unwrap(), a.top_k_experts as usize);
+    }
+
+    #[test]
+    fn zero_top_k_is_refused_without_saying_it_exceeds() {
+        let m = top_k_err(0);
+        assert!(m.contains("top_k_experts is 0"), "{m}");
+        assert!(!m.contains("exceeds"), "{m}");
+    }
+
+    #[test]
+    fn top_k_above_the_kernel_slots_is_refused() {
+        let m = top_k_err(gpu::MAX_STREAMED_EXPERTS as i64 + 1);
+        assert!(m.contains("exceeds"), "{m}");
     }
 }
