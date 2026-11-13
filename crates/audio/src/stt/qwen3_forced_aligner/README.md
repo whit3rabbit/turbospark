@@ -60,10 +60,10 @@ revision above.
 ## Local checks
 
 ```sh
-cargo test -p turbospark-audio --lib models::stt::qwen3_forced_aligner
+cargo test -p turbospark-audio --lib stt::qwen3_forced_aligner
 TURBOSPARK_QWEN3_FORCED_ALIGNER_DIR=/path/to/pinned-model \
   cargo test -p turbospark-audio --lib \
-  models::stt::qwen3_forced_aligner::tests::pinned_checkpoint_matches_mlx_word_alignment_fixture \
+  stt::qwen3_forced_aligner::tests::pinned_checkpoint_matches_mlx_word_alignment_fixture \
   -- --ignored --nocapture
 ```
 

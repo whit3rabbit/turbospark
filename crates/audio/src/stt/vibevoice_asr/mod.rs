@@ -10,7 +10,8 @@
 //! the default chat prompt, prefill, greedily decode until one of the two
 //! Qwen EOS tokens, decode with special tokens skipped, strip). The
 //! streaming chunk protocol, diarization controls, and hotword folding are
-//! refused; see the family README for the full refusal list.
+//! not ported (absent from the API, not refused at runtime, except config
+//! options the loader rejects); see the family README for the full list.
 //!
 //! The upstream loader cannot load the pinned checkpoint: its
 //! `AutoTokenizer` path validates `config.json` against transformers'
