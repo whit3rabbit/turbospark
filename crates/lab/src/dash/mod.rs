@@ -227,21 +227,25 @@ fn host_is_loopback(host: &str) -> bool {
 /// rebound DNS name would otherwise be same-origin with the dashboard.
 /// `img-src data:` exists only so the pages' inline favicon may load.
 async fn hardening(State(loopback): State<bool>, req: Request, next: Next) -> Response {
-    if loopback {
+    let refused = loopback && {
         let host = req
             .headers()
             .get(axum::http::header::HOST)
             .and_then(|h| h.to_str().ok())
             .unwrap_or("");
-        if !host_is_loopback(host) {
-            return (
-                StatusCode::FORBIDDEN,
-                "refused: the Host header does not name this machine",
-            )
-                .into_response();
-        }
-    }
-    let mut res = next.run(req).await;
+        !host_is_loopback(host)
+    };
+    // The refusal goes through the same header insertion as a served page,
+    // so "every response" holds for the 403 too.
+    let mut res = if refused {
+        (
+            StatusCode::FORBIDDEN,
+            "refused: the Host header does not name this machine",
+        )
+            .into_response()
+    } else {
+        next.run(req).await
+    };
     let headers = res.headers_mut();
     headers.insert(
         axum::http::header::X_CONTENT_TYPE_OPTIONS,
