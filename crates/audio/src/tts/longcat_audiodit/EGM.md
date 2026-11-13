@@ -26,7 +26,7 @@ Port of meituan-longcat LongCat-AudioDiT from mlx-audio: conditional flow matchi
 - Reads `config.json` and safetensors from the checkpoint directory; tensors under `text_encoder.`, `transformer.`, `vae.` [mod.rs:Model::open] [mod.rs:Model::load]
 - `SeededNoise` draws from the crate-local threefry RNG [mod.rs:SeededNoise]
 - `generate` takes `&mut self` [mod.rs:Model::generate]
-- Setting `LC_DEBUG` (any value) makes the VAE encoder and decoder print debug traces to stderr with `eprintln!` [vae.rs:EncoderStage::forward] [vae.rs:DecoderStage::forward]. No threads.
+- No environment variables are read and nothing is printed. No threads.
 
 ## Verification
 - Run: `cargo test -p turbospark-audio tts::longcat_audiodit`
