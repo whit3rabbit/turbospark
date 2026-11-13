@@ -318,10 +318,23 @@ fn page_size_bytes() -> u64 {
 
 /// A manifest matching one of the shipped production baselines must carry
 /// quantization metadata; toy/synthetic manifests may omit it.
+///
+/// Matches on family plus every shape field a real checkpoint of that
+/// baseline always carries unchanged. `(num_layers, hidden_size)` alone let
+/// a toy arch that happened to share both be forced to carry `quant`.
 fn is_production_arch(expected: &ArchConfig) -> bool {
-    all_known_architectures()
-        .iter()
-        .any(|b| b.num_layers == expected.num_layers && b.hidden_size == expected.hidden_size)
+    all_known_architectures().iter().any(|b| {
+        b.family == expected.family
+            && b.num_layers == expected.num_layers
+            && b.hidden_size == expected.hidden_size
+            && b.num_heads == expected.num_heads
+            && b.num_kv_heads == expected.num_kv_heads
+            && b.head_dim == expected.head_dim
+            && b.vocab_size == expected.vocab_size
+            && b.intermediate_size == expected.intermediate_size
+            && b.moe_intermediate_size == expected.moe_intermediate_size
+            && b.num_experts == expected.num_experts
+    })
 }
 
 /// Decode just enough of `manifest.json` to identify the model family,
@@ -357,4 +370,41 @@ pub fn peek_family(dir: &Path, max_bytes: u64) -> Result<ModelFamily, ModelError
     ModelFamily::parse(&raw).ok_or_else(|| ModelError::IndexCorrupt {
         detail: format!("unknown arch.family \"{raw}\""),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every shipped baseline must still require `quant`.
+    #[test]
+    fn every_shipped_baseline_is_production() {
+        for b in all_known_architectures() {
+            assert!(is_production_arch(&b), "{:?} lost production", b.family);
+        }
+    }
+
+    /// A toy arch that shares only `num_layers` and `hidden_size` with a
+    /// baseline is not production: each identifying field on its own must
+    /// break the match, or a toy manifest is forced to carry `quant`.
+    #[test]
+    fn a_toy_sharing_layers_and_hidden_is_not_production() {
+        let base = crate::arch_baselines::qwen3_4b();
+        type Mutation = (&'static str, fn(&mut ArchConfig));
+        let mutations: [Mutation; 8] = [
+            ("family", |a| a.family = ModelFamily::Gemma4),
+            ("num_heads", |a| a.num_heads += 1),
+            ("num_kv_heads", |a| a.num_kv_heads += 1),
+            ("head_dim", |a| a.head_dim += 1),
+            ("vocab_size", |a| a.vocab_size += 1),
+            ("intermediate_size", |a| a.intermediate_size += 1),
+            ("moe_intermediate_size", |a| a.moe_intermediate_size += 1),
+            ("num_experts", |a| a.num_experts += 1),
+        ];
+        for (field, mutate) in mutations {
+            let mut toy = base.clone();
+            mutate(&mut toy);
+            assert!(!is_production_arch(&toy), "{field} alone kept the match");
+        }
+    }
 }

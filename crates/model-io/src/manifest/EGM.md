@@ -15,7 +15,7 @@ Loads and validates `manifest.json` of a `.gturbo` model install, checking versi
 - Flags outside `streamingPresent`, `turboQuantKV`, `aneSharedExpert` are an error; `turboQuantKV: true` is itself refused with `IndexCorrupt` (not a flag this port reads) [manifest/mod.rs:known_flags] [manifest/mod.rs:validate]
 - A manifest whose `expert_stride` is not a multiple of 4096 is `ExpertStrideNotPageAligned`; 4096 is a hard-coded floor, not the OS page size [manifest/mod.rs:page_size_bytes]
 - `capability == "image-generation"` is refused with `UnsupportedCapability` [manifest/mod.rs:load]
-- `quant` is required when `num_layers` and `hidden_size` match any shipped baseline; the rest of the arch is not compared, so a toy manifest with those two values is treated as production [manifest/mod.rs:is_production_arch]
+- `quant` is required when the expected arch matches a shipped baseline on family, layers, hidden size, heads, KV heads, head dim, vocab, FFN widths and expert count; a toy sharing only some of those may omit it [manifest/mod.rs:is_production_arch]
 - Per-layer `packed_experts/layer_NN.bin` (or `layer_N.bin`) files are required, plus `packed_vision/layout.json` and `blobs.bin` when the arch has a vision tower [manifest/mod.rs:validate]
 - An optional `hadamard` section is validated and requires `hadamard.bin` [manifest/mod.rs:validate_hadamard]
 - A missing `arch.family` resolves to Gemma4 in `peek_family` rather than erroring [manifest/mod.rs:peek_family]
