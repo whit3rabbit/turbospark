@@ -103,8 +103,10 @@ loop's `run-experiment`. Text and audio installs of every family.
   each with the repo revision it was read at, the models it serves, and its
   hardcoded settings traceable to `path:line`. The reader validates every
   file against `pinned/README.md`, embeds the set into the binary, and
-  `tslab pinned` lists or inspects it; a sweep loads a tweaked copy with
-  `--dir`. `tests` in `src/pinned.rs` fail when a file drifts from the
+  `tslab pinned` lists or inspects it (`--dir` inspects a tweaked copy).
+  `tslab sweep` does not read pinned sets: its `--dir` loads family
+  profiles, and `PinnedSet::with_overlay` has no caller outside tests.
+  `tests` in `src/pinned.rs` fail when a file drifts from the
   embedded copy or is added without registering it.
 - `src/tree_replay.rs`: the tree-verify acceptance replay. Its lattice
   recorders and replay math live in `crates/bench` (`tree_replay*.rs`), shared

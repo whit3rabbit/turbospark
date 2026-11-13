@@ -10,7 +10,9 @@
 //! Benches run in this process (no worker): they touch no model weights, and
 //! one Metal context serves every arm. The machine lock and host guard still
 //! apply, because a GPU microbench is as sensitive to a neighbour as a model
-//! run is. Env knobs do not reach a bench: it calls the kernels directly.
+//! run is. The lab's own knob overlay does not reach a bench (it calls the
+//! kernels directly), but env reads inside the gpu crate, such as
+//! `TURBOSPARK_ATTN_DECODE_KERNEL`, still apply to the process.
 
 pub mod ane_handoff;
 pub mod ane_matmul;

@@ -5,8 +5,9 @@ compares against: `nace-ai/kapitsa`, `jundot/omlx`, and `ddalcu/mlx-serve`.
 One JSON file per kernel entry, named `<short_name>.json` under the repo's
 directory (`pinned/<repo>/`); the entry's id is `<repo>.<short_name>`. `crates/lab/src/pinned.rs` reads and validates them; every
 file is also embedded into the lab binary at compile time, so the verified
-baseline travels with `tslab` and a sweep can layer tweaked copies over it
-through `--dir`.
+baseline travels with `tslab`. `tslab pinned --dir` inspects a tweaked copy
+laid over it; `tslab sweep` does not read pinned sets (its `--dir` is the
+family-profile directory).
 
 The point is comparison, not admiration. Each entry holds the settings the
 kernel was shipped and measured with, traceable to a source line at a pinned
@@ -131,7 +132,7 @@ cross-read against `docs/KAPITSA_KERNELS.md` and `docs/MLX_SERVE_KERNELS.md`.
 When those docs disagree with the source, the entry sides with the source
 and records the conflict in `notes`.
 
-To sweep against a pinned set: copy the JSON, change the fields the sweep
+To inspect a tweaked pinned set (no sweep consumes it today): copy the JSON, change the fields the sweep
 varies, and load the directory variant explicitly (`tslab pinned --dir ...`,
 or `PinnedSet::load_dir` from code). Entries loaded from a directory are
 validated by the same rules; an id that collides with an embedded entry
