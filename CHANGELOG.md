@@ -14,6 +14,12 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Granite 4.x GGUF files (`ibm-granite/granite-4.x-*-GGUF`) install on the Llama
+  flow with their 1/head_dim attention scale; Granite 3.x, whose residual,
+  embedding and logit multipliers are not identity, refuses. The ChatML
+  tokenizer dialect accepts a table with no `<|endoftext|>` when its config
+  declares an EOS. Checked against the real GGUF and official BF16 bytes, and a
+  real 3B install decodes correctly.
 - Muse Glimmer GGUF files (`ggml-org`, `unsloth`, `meta-models`) are recognized
   and walked: the `muse-glimmer` architecture, its tensor names, the
   converter's baked-in norm `+1`, its interleaved RoPE row order and its
