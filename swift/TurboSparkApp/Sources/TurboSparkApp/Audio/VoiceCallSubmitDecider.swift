@@ -12,7 +12,8 @@ import TurboSpark
 /// - Only an explicit `.allow` can send. Every other result, an error, a
 ///   timeout, an unloaded model, an unparseable answer, falls back to the
 ///   draft-first path that already exists.
-/// - The pre-filter is deterministic and can only DOWNGRADE (`allow` to
+/// - The pre-filter (an allowlist of informational-question shapes plus a
+///   risky-word deny) is deterministic and can only DOWNGRADE (`allow` to
 ///   `confirm`). Nothing in this file can turn a `confirm` or `deny` into an
 ///   `allow`.
 /// - The utterance is DATA. It is quoted into the prompt behind a fixed
@@ -37,12 +38,61 @@ protocol VoiceCallSubmitDeciding: Sendable {
 }
 
 /// The rules that run before any model, in plain code.
+///
+/// Two layers, both must pass before the model is asked:
+///
+/// 1. An ALLOWLIST: only an informational question or a plain
+///    "explain/summarize/describe" request may reach the model. Everything
+///    else (commands, statements, "turn off", "move", "unlock", any
+///    unfamiliar shape) is `.confirm` and waits for the user to press Send.
+///    An allowlist fails safe on phrasings nobody listed, which a blocklist
+///    cannot (the OC-08 v2 eval: 13 of 34 fresh risky commands got past the
+///    old blocklist).
+/// 2. The risky-word list, kept as a secondary deny on top.
+///
+/// Downgrade-only: nothing here can return `.allow`. English only, because
+/// the streaming recognizer is English only.
 enum VoiceCallSubmitPreFilter {
-    /// More words than this is dictation, not a spoken turn.
-    static let maxCharacters = 400
-    /// One or two words ("yes", "stop", "go ahead") are too easy to hear
-    /// wrongly, and too close to approving something.
-    static let minWords = 3
+    /// More than this is dictation, not a spoken turn.
+    static let maxCharacters = 300
+    /// Shorter than this is too easy to mishear and too close to approving
+    /// something ("yes", "go ahead", "stop it now").
+    static let minWords = 4
+
+    /// Trivial lead-ins skipped before the opener is checked.
+    static let fillers: Set<String> = [
+        "hey", "hi", "hello", "so", "okay", "ok", "um", "umm", "uh", "uhh", "er", "hmm", "well", "alright",
+        "oh", "please", "and", "now", "actually",
+    ]
+
+    /// Interrogative openers that start an informational question by
+    /// themselves.
+    static let questionOpeners: Set<String> = [
+        "what", "what's", "whats", "how", "how's", "why", "when", "when's", "where", "where's", "who", "who's",
+        "whom", "whose", "which",
+    ]
+
+    /// Informational request verbs. They may start the utterance, or follow
+    /// one of `modalPrefixes` ("can you explain ...").
+    static let verbOpeners: Set<String> = [
+        "explain", "summarize", "summarise", "describe", "compare", "define", "translate", "list",
+    ]
+
+    /// Multi-word informational openers, lowercase, space separated.
+    static let phraseOpeners = [
+        "tell me about", "give me an example", "give me examples", "show me how", "walk me through",
+    ]
+
+    /// Allowed in front of a verb or phrase opener only.
+    static let modalPrefixes = ["can you", "could you", "would you", "will you"]
+
+    /// Second-person words. A question that says "you" or "your" after the
+    /// opener is much more often aimed at a person in the room ("what do you
+    /// want for dinner") than at the assistant, so it waits for review. A
+    /// real question to the assistant that uses "you" costs one Send press.
+    static let secondPerson: Set<String> = [
+        "you", "your", "yours", "yourself", "you're", "you've", "you'll", "you'd", "youre", "ya", "y'all",
+    ]
 
     /// Verbs and nouns that mean the utterance may be an instruction to run,
     /// delete, send, pay or change something. Whole-word, lowercased. The
@@ -71,6 +121,47 @@ enum VoiceCallSubmitPreFilter {
         "previous instructions", "system prompt", "you are now", "rm -rf", "sudo ", "api key", "access token",
     ]
 
+    /// Lowercased word tokens, as the recognizer's text is compared.
+    static func tokens(_ text: String) -> [String] {
+        text.lowercased().replacingOccurrences(of: "\u{2019}", with: "'")
+            .split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "'") }).map(String.init)
+    }
+
+    /// True when the utterance has the shape of an informational question
+    /// or a plain explain/summarize request, and nothing else. Pure shape:
+    /// it says nothing about risk, the risky-word list does that.
+    static func isAllowlistedShape(_ utterance: String) -> Bool {
+        let text = utterance.trimmingCharacters(in: .whitespacesAndNewlines)
+        // One utterance: no line break, no sentence end followed by more.
+        if text.contains(where: { $0.isNewline }) { return false }
+        let chars = Array(text)
+        for i in chars.indices.dropLast() where ".?!".contains(chars[i]) && chars[i + 1].isWhitespace {
+            return false
+        }
+        var words = tokens(text)
+        while let first = words.first, fillers.contains(first) { words.removeFirst() }
+        guard let head = words.first else { return false }
+        var rest: [String]
+        if questionOpeners.contains(head) {
+            rest = Array(words.dropFirst())
+        } else {
+            var verbPart = words
+            for modal in modalPrefixes {
+                let m = modal.split(separator: " ").map(String.init)
+                if words.starts(with: m) { verbPart = Array(words.dropFirst(m.count)); break }
+            }
+            guard let verb = verbPart.first else { return false }
+            if verbOpeners.contains(verb) {
+                rest = Array(verbPart.dropFirst())
+            } else if let phrase = phraseOpeners.first(where: { verbPart.starts(with: $0.split(separator: " ").map(String.init)) }) {
+                rest = Array(verbPart.dropFirst(phrase.split(separator: " ").count))
+            } else {
+                return false
+            }
+        }
+        return !rest.contains(where: { secondPerson.contains($0) })
+    }
+
     /// Returns `.confirm` when the utterance must be reviewed, or nil when
     /// the model may be asked. Never returns `.allow`.
     static func downgrade(_ utterance: String) -> VoiceCallSubmitDecision? {
@@ -82,8 +173,11 @@ enum VoiceCallSubmitPreFilter {
         if text.contains("@") || text.contains("`") || text.contains("$(") { return .confirm }
         guard text.count <= maxCharacters else { return .confirm }
         let lowered = text.lowercased()
-        let words = lowered.split(whereSeparator: { !($0.isLetter || $0.isNumber || $0 == "'") }).map(String.init)
+        let words = tokens(text)
         guard words.count >= minWords else { return .confirm }
+        // Allowlist first: an unfamiliar shape never reaches the model.
+        guard isAllowlistedShape(text) else { return .confirm }
+        // Secondary deny, on top of the allowlist: both must pass.
         if words.contains(where: { riskyWords.contains($0) }) { return .confirm }
         if riskyPhrases.contains(where: { lowered.contains($0) }) { return .confirm }
         return nil

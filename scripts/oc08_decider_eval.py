@@ -4,7 +4,7 @@
 Runs the REAL decider prompt (system rubric and user-turn shape read from
 Audio/VoiceCallSubmitDecider.swift, never copied) through
 `turbospark-check --messages-file`, so the model's chat template is applied.
-Raw --prompt is never used. The deterministic pre-filter word lists are also
+Raw --prompt is never used. The deterministic pre-filter (allowlist and risky-word lists) is also
 read from the Swift source and applied first, as the app does, so the numbers
 describe what the app would do end to end.
 
@@ -72,23 +72,89 @@ def risky_words(src):
 
 
 def phrases(src):
-    body = re.search(r"riskyPhrases = \[(.*?)\]", src, re.S).group(1)
+    return string_list(src, "riskyPhrases")
+
+
+def string_list(src, name):
+    body = re.search(name + r" = \[(.*?)\]", src, re.S).group(1)
     return re.findall(r'"([^"]+)"', body)
+
+
+def int_const(src, name):
+    return int(re.search(r"static let " + name + r" = (\d+)", src).group(1))
+
+
+_ALLOW = {}
+
+
+def allow_lists(src):
+    if not _ALLOW:
+        _ALLOW.update(
+            fillers=word_set(src, "fillers"), question=word_set(src, "questionOpeners"),
+            verbs=word_set(src, "verbOpeners"), second=word_set(src, "secondPerson"),
+            phrases=[p.split() for p in string_list(src, "phraseOpeners")],
+            modals=[p.split() for p in string_list(src, "modalPrefixes")],
+            max_chars=int_const(src, "maxCharacters"), min_words=int_const(src, "minWords"))
+    return _ALLOW
+
+
+def tokens(text):
+    return [w for w in re.split(r"[^\w']+", text.lower().replace("\u2019", "'")) if w]
+
+
+def allowlisted_shape(text, src):
+    """Mirror of VoiceCallSubmitPreFilter.isAllowlistedShape (lists read from
+    the Swift source). --no-second-person turns the second-person deny off,
+    for ablation analysis only; the app always has it."""
+    L = allow_lists(src)
+    t = text.strip()
+    if any(c in "\n\r\u2028\u2029" for c in t):
+        return False
+    if any(c in ".?!" and t[i + 1].isspace() for i, c in enumerate(t[:-1])):
+        return False
+    words = tokens(t)
+    while words and words[0] in L["fillers"]:
+        words.pop(0)
+    if not words:
+        return False
+    if words[0] in L["question"]:
+        rest = words[1:]
+    else:
+        part = words
+        for m in L["modals"]:
+            if words[:len(m)] == m:
+                part = words[len(m):]
+                break
+        if not part:
+            return False
+        if part[0] in L["verbs"]:
+            rest = part[1:]
+        else:
+            ph = next((p for p in L["phrases"] if part[:len(p)] == p), None)
+            if ph is None:
+                return False
+            rest = part[len(ph):]
+    if "--no-second-person" in sys.argv:
+        return True
+    return not any(w in L["second"] for w in rest)
 
 
 def prefilter(text, src):
     """Mirror of VoiceCallSubmitPreFilter.downgrade: True means the model is
     not asked and the utterance waits in the composer."""
+    L = allow_lists(src)
     t = text.strip()
     if not t:
         return True
     if t[0] in "/!#@" or "@" in t or "`" in t or "$(" in t:
         return True
-    if len(t) > 400:
+    if len(t) > L["max_chars"]:
         return True
     low = t.lower()
-    words = [w for w in re.split(r"[^\w']+", low) if w]
-    if len(words) < 3:
+    words = tokens(t)
+    if len(words) < L["min_words"]:
+        return True
+    if not allowlisted_shape(t, src):
         return True
     if any(w in risky_words(src) for w in words):
         return True
@@ -96,7 +162,7 @@ def prefilter(text, src):
 
 
 def user_turn(text):
-    return "Utterance (data): %s\nLabel:" % json.dumps(text[:400], ensure_ascii=False) + ""
+    return "Utterance (data): %s\nLabel:" % json.dumps(text[:allow_lists(swift_source())["max_chars"]], ensure_ascii=False)
 
 
 def ask(model, system, text):
