@@ -7,7 +7,7 @@ and the
 [plugin CDN zip source doc](https://github.com/zai-org/ZCode/blob/main/docs/plugin-cdn-zip-source.md).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented (seeding half; `cdnZip` deferred)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -176,6 +176,48 @@ stage-move-rollback installer; only download and verification are new.
 * **Manual**: seed, uninstall, restart (no re-seed), restore; install
   from a cdnZip row against a local static server with a good and a bad
   digest.
+
+--------------------------------------------------------------------------------
+
+## Implementation notes (2026-11-14)
+
+Shipped: `State/BuiltinPluginSeeder.swift`, `BuiltinPluginSeederTests`, and the
+`SWIFT_PLUGINS.md` section. Applied EGM review findings: B1 (copy semantics
+stated technically: the bundle is a signed read-only `.app`, so symlinks and
+in-place writes are wrong), M3 (seeding is a `directory`-source install through
+the existing installer, not a second path), M4 (one state record per builtin
+reconciled with the ledger every launch; flock seed lock, no stale-lock case;
+version bump reinstalls; corrupt state fails closed), M6 (hooks stay untrusted
+until approved; seeding copies files and never runs code), M7 (the builtin row is
+app-owned and never persisted, hidden when the bundle is empty), M8 (failure
+modes in the SWIFT_PLUGINS.md section and tests).
+
+Deviations from the draft:
+
+* **`cdnZip` and `MarketplaceSource.builtin`/`cdnZip` cases are NOT built**
+  (review B2, M1, M2, M5; INDEX says ZP-05 is a later re-delivery path). The
+  app has no zip extractor, so it needs either a new dependency or an `unzip`
+  subprocess, both of which need an explicit decision. A digest in the same
+  row as the URL only catches corruption, so a trust anchor (signed catalog or
+  pinned digests shipped in the bundle) must be chosen too. No consumer exists
+  (TurboSpark hosts no CDN). Constraints for a future delivery: HTTPS only,
+  redirects off or same-host, streamed download with a byte cap and a
+  streaming sha256, required lowercase 64-hex digest (malformed refuses),
+  extraction refusing `..`, absolute paths, symlinks and over-cap archives,
+  all staged into a temp dir before the existing atomic installer.
+* **No new source enum case at all.** The builtin row is injected as a
+  non-persisted `.directory` entry in `AppModel.marketplaceSources`, avoiding
+  Codable downgrade risk.
+* **No builtin ships day one** (ZP-07, ZP-18 and ZP-20 shipped as bundled
+  skills instead). `Package.swift` is therefore untouched; the first builtin
+  adds `.copy("BuiltinPlugins")` and runs `make swift-app-build`.
+* **No UI change**: no official-segment styling and no digest error surface
+  (no digest yet). The row appears as an ordinary marketplace once a builtin
+  exists. No new localized strings.
+* **Integrity**: the bundle code signature is the anchor; the seeder adds
+  symlink, escape, and size-cap refusals (2,000 files, 64 MiB per plugin).
+* **Mutation checks run**: bypassing the lock, the suppression check, and the
+  symlink check each fail their tests.
 
 --------------------------------------------------------------------------------
 

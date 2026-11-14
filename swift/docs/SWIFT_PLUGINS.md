@@ -184,7 +184,7 @@ reported at the first tool call rather than at install time.
 ## Out of scope (parsed or absent, on purpose)
 
 Dependency closure and demotion, auto-update, enterprise policy/managed
-plugins, builtin plugin registry, seed dirs, LSP servers, output styles,
+plugins, the `cdnZip` source (deferred, see ZP-05), LSP servers, output styles,
 channels, MCPB bundles, npm/pip sources. `dependencies` is recorded
 informationally; the unsupported surfaces are listed per plugin in the
 settings pane.
@@ -219,6 +219,49 @@ user.
 - **Tests.** `PluginCreatorSkillTests`: real-bundle discovery, precedence,
   read-only, templates through the real parsers, localized draft.
 
+## Builtin plugins (ZP-05)
+
+`State/BuiltinPluginSeeder.swift` seeds plugins shipped in the app bundle.
+The bundle holds a read-only directory marketplace
+(`BuiltinPlugins/.claude-plugin/marketplace.json`, one `./relative` folder
+per plugin) named `turbospark-plugins-builtin`. The app ships NO builtin
+today, so the row is hidden and launch seeding is a no-op. To ship the first
+one: add the folder, add `.copy("BuiltinPlugins")` to the
+`TurboSparkAppResources` target in `Package.swift`, and run
+`make swift-app-build` (read the resource rules in `swift/AGENTS.md`).
+
+- **Same installer.** Seeding calls `PluginMarketplaceManager.install` as a
+  `directory` source, so staging, the versioned cache, the v2 ledger and the
+  hook trust gate are unchanged. Seeding copies files and never runs code; a
+  seeded plugin's hooks stay untrusted until approved.
+- **Builtin row.** Injected by `AppModel.marketplaceSources(kind: .plugins)`,
+  never persisted (no new `MarketplaceSource` case, so no downgrade decode
+  risk), and it wins a name clash so a hand-edited
+  `known_marketplaces.json` cannot repoint it. Hidden when the bundle is empty.
+- **State.** One file, `builtin_seed.json` beside the ledger, one record per
+  builtin (`seeded` with version, or `suppressed`). `seed()` reconciles it
+  with the ledger each launch: suppressed is never reinstalled; seeded but
+  missing from the ledger becomes suppressed; installed but unrecorded is
+  adopted; an older installed version is reinstalled when the bundle
+  carries a newer one. A corrupt file fails closed (nothing seeded).
+- **Uninstall sticks, Install restores.** `uninstallPluginID` (user scope)
+  records suppression; installing from the builtin row records `seeded`,
+  clearing it. A project-scope install or removal touches neither.
+- **Seed lock.** A `flock` on `.builtin-seed.lock` in the plugin root,
+  held for the whole reconcile. The kernel drops it when the holder dies, so
+  there is no stale-lock case; a waiter gives up after 10 s.
+- **Refusals.** Per entry: only a `./relative` source strictly inside the
+  bundle, no symlink anywhere in the tree, at most 2,000 files and 64 MiB.
+  One refused entry does not stop the others. The bundle's code signature is
+  the integrity anchor; there is no second digest.
+- **Profiles.** The state file and seeded copies live under the profile's
+  plugin root, so profiles stay isolated.
+- **Deferred: `cdnZip`.** A CDN zip source needs a zip extractor (none in the
+  app; a new dependency or an `unzip` subprocess), a trust anchor beyond a
+  digest in the same row as the URL, and a named consumer. None exists, so
+  it is not built. See the ZP-05 draft.
+- **Tests.** `BuiltinPluginSeederTests` (fixture bundle, temp root).
+
 ## Where things live
 
 `State/PluginModels.swift` (types), `State/PluginManifestParser.swift`
@@ -226,7 +269,7 @@ user.
 (discovery, cascade, memoized resolution), `State/PluginManager+Contributions.swift`
 (skills/agents/MCP accessors), `State/PluginVariableExpander.swift`
 (substitution contract), `State/PluginLedgerStore.swift` (v2 ledger,
-local folders), `State/PluginMarketplaceManager.swift` (fetch, install,
+local folders), `State/BuiltinPluginSeeder.swift` (bundled plugins), `State/PluginMarketplaceManager.swift` (fetch, install,
 uninstall), `State/AppModel+Plugins.swift` (UI actions, toasts, settings
 writes), `Components/PluginSettingsPaneView.swift` +
 `Components/PluginMarketplaceSheet.swift` (UI). Tests:

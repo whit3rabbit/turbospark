@@ -1240,6 +1240,7 @@ public final class AppModel: ObservableObject {
         reloadSkills()
         reloadAgents()
         reloadPlugins()
+        seedBuiltinPlugins()
         refreshModels()
         startCronScheduler()
         startOffPeakDispatcher()
