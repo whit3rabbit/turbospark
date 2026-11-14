@@ -164,6 +164,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// Out-of-app notification toggles and sounds per event (OC-02). Empty
     /// means every event is off, which is the default.
     var attentionEvents: AttentionPreferences
+    /// Whether voice call mode is offered (OC-08). Off by default.
+    public var voiceCallEnabled: Bool
     /// Whether the app opens a temporary (Ghost Mode) chat on launch.
     public var alwaysStartInGhostMode: Bool
     /// Whether queued off-peak tasks may run (admission gate). Off by default.
@@ -368,6 +370,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         interactionMode: String = "chat",
         chatSidebarMode: String = "chats",
         attentionEvents: AttentionPreferences = AttentionPreferences(),
+        voiceCallEnabled: Bool = false,
         alwaysStartInGhostMode: Bool = false,
         offPeakEnabled: Bool = false,
         rootlessPermissionMode: String = "auto",
@@ -465,6 +468,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.interactionMode = interactionMode
         self.chatSidebarMode = chatSidebarMode
         self.attentionEvents = attentionEvents
+        self.voiceCallEnabled = voiceCallEnabled
         self.alwaysStartInGhostMode = alwaysStartInGhostMode
         self.offPeakEnabled = offPeakEnabled
         self.rootlessPermissionMode = rootlessPermissionMode
@@ -618,6 +622,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             String.self, forKey: .chatSidebarMode, fallback: "chats")
         self.attentionEvents = c.decodeLenient(
             AttentionPreferences.self, forKey: .attentionEvents, fallback: AttentionPreferences())
+        self.voiceCallEnabled = c.decodeLenient(
+            Bool.self, forKey: .voiceCallEnabled, fallback: false)
         self.alwaysStartInGhostMode = c.decodeLenient(
             Bool.self, forKey: .alwaysStartInGhostMode, fallback: false)
         self.offPeakEnabled = c.decodeLenient(

@@ -108,6 +108,7 @@ extension AppModel {
         self.interactionMode = AppInteractionMode(rawValue: settings.interactionMode) ?? .chat
         self.chatSidebarMode = ChatSidebarMode(storedValue: settings.chatSidebarMode)
         self.attentionPreferences = settings.attentionEvents
+        self.voiceCallEnabled = settings.voiceCallEnabled
         self.browserSettings = settings.browser
         self.computerUseSettings = settings.computerUse
         self.networkPolicy = settings.networkPolicy
@@ -294,6 +295,7 @@ extension AppModel {
             interactionMode: interactionMode.rawValue,
             chatSidebarMode: chatSidebarMode.rawValue,
             attentionEvents: attentionPreferences,
+            voiceCallEnabled: voiceCallEnabled,
             alwaysStartInGhostMode: alwaysStartInGhostMode,
             offPeakEnabled: offPeakEnabled,
             rootlessPermissionMode: activePermissionMode.rawValue,

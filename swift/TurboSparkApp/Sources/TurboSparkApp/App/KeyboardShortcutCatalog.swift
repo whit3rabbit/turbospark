@@ -42,6 +42,7 @@ public struct KeyboardCommandID: RawRepresentable, Hashable, Sendable, Expressib
     static let cancelGeneration: KeyboardCommandID = "generation.cancel"
     static let stopAll: KeyboardCommandID = "generation.stopAll"
     static let startRecording: KeyboardCommandID = "audio.startRecording"
+    static let toggleVoiceCall: KeyboardCommandID = "call.toggle"
 }
 
 /// One command in the inventory: a stable id, the catalog label, its default
@@ -184,6 +185,10 @@ public enum KeyboardShortcutCatalog {
             command(.generate, "Generate Response", "return", cmd, rebindable: false),
             command(.cancelGeneration, "Cancel Generation", ".", cmd, rebindable: false),
             command(.stopAll, "Stop All", ".", shiftCmd),
+            // OC-08. Cmd+Shift+Y is free in the catalog and the reserved
+            // list; the call panel's Escape (stop speaking) is a local
+            // control key and is not a catalog command.
+            command(.toggleVoiceCall, "Start Voice Call", "y", shiftCmd),
         ]
 
         // Bound on the Record page's Start button (`AudioRecordingPanel`), not

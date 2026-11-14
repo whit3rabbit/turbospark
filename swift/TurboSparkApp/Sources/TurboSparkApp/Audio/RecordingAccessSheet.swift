@@ -7,6 +7,9 @@ enum RecordingAccessPurpose: Identifiable, Hashable {
     case start
     /// Opened by the check button: finishing refreshes the device lists.
     case review
+    /// Opened by Call (OC-08): finishing starts a voice call. The sheet shows
+    /// the microphone only and says nothing is saved.
+    case call
 
     var id: Self { self }
 }
@@ -72,12 +75,12 @@ struct RecordingAccessSheet: View {
                     ViewThatFits(in: .horizontal) {
                         HStack(alignment: .top, spacing: 20) {
                             rows.frame(minWidth: 320 * scale, idealWidth: 400 * scale, maxWidth: .infinity)
-                            RecordingAudioUseCard()
+                            useCard
                                 .frame(minWidth: 240 * scale, idealWidth: 280 * scale, maxWidth: 340 * scale)
                         }
                         VStack(alignment: .leading, spacing: 20) {
                             rows
-                            RecordingAudioUseCard()
+                            useCard
                         }
                     }
                 }
@@ -93,28 +96,52 @@ struct RecordingAccessSheet: View {
         .onAppear { permissions.refresh() }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Allow recording access", bundle: .module)
-                .themedFont(.title2, weight: .semibold)
-                .accessibilityAddTraits(.isHeader)
-            Text("macOS asks once for each source you record. Nothing is recorded until you press Start recording.", bundle: .module)
-                .foregroundStyle(.appSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("Access is optional. Without it you can still import, transcribe, and edit audio files.", bundle: .module)
-                .foregroundStyle(.appSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+    @ViewBuilder private var useCard: some View {
+        if purpose == .call { VoiceCallAudioUseCard() } else { RecordingAudioUseCard() }
+    }
+
+    @ViewBuilder private var header: some View {
+        if purpose == .call {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Allow microphone for voice calls", bundle: .module)
+                    .themedFont(.title2, weight: .semibold)
+                    .accessibilityAddTraits(.isHeader)
+                Text("macOS asks once. Nothing is heard until you press Start call.", bundle: .module)
+                    .foregroundStyle(.appSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Access is optional. Without it you can still type, dictate, and use every other feature.", bundle: .module)
+                    .foregroundStyle(.appSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Allow recording access", bundle: .module)
+                    .themedFont(.title2, weight: .semibold)
+                    .accessibilityAddTraits(.isHeader)
+                Text("macOS asks once for each source you record. Nothing is recorded until you press Start recording.", bundle: .module)
+                    .foregroundStyle(.appSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("Access is optional. Without it you can still import, transcribe, and edit audio files.", bundle: .module)
+                    .foregroundStyle(.appSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
+    }
+
+    /// A call needs the microphone only, so it lists no other grant.
+    private var listedPermissions: [RecordingPermission] {
+        purpose == .call ? [.microphone] : RecordingPermission.allCases
     }
 
     private var rows: some View {
         VStack(spacing: 10) {
-            ForEach(RecordingPermission.allCases) { permission in
+            ForEach(listedPermissions) { permission in
                 RecordingPermissionRow(
                     permission: permission,
                     state: permissions.state(permission),
                     isNeeded: needed.contains(permission),
-                    isBusy: permissions.isRequesting
+                    isBusy: permissions.isRequesting,
+                    callDetail: purpose == .call
                 ) {
                     Task { await permissions.request(permission) }
                 }
@@ -171,9 +198,12 @@ struct RecordingAccessSheet: View {
                 dismiss()
                 request.onReady([])
             } label: {
-                if purpose == .start {
+                switch purpose {
+                case .start:
                     Label { Text("Start recording", bundle: .module) } icon: { Image(systemName: "record.circle") }
-                } else {
+                case .call:
+                    Label { Text("Start call", bundle: .module) } icon: { Image(systemName: "phone.fill") }
+                case .review:
                     Text("Done", bundle: .module)
                 }
             }
@@ -206,6 +236,8 @@ struct RecordingPermissionRow: View {
     let state: RecordingPermissionState
     let isNeeded: Bool
     let isBusy: Bool
+    /// A voice call words the microphone's purpose for a call (OC-08).
+    var callDetail = false
     let action: () -> Void
 
     var body: some View {
@@ -229,7 +261,7 @@ struct RecordingPermissionRow: View {
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
                 permission.title.themedFont(.base, weight: .semibold)
-                permission.detail
+                (callDetail ? Text("Listens to your voice during a call.", bundle: .module) : permission.detail)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -320,6 +352,36 @@ struct RecordingAudioUseCard: View {
             point("speaker.slash", Text("TurboSpark playback is excluded. Only audio is saved.", bundle: .module))
             point("text.badge.checkmark", Text("Transcripts are generated by a model. Review them for accuracy.", bundle: .module))
             point("person.2", Text("Tell others before you record a meeting. Some places require their consent.", bundle: .module))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .appCardSurface(padding: 18)
+    }
+
+    private func point(_ symbol: String, _ text: Text) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: symbol)
+                .foregroundStyle(.appAccent)
+                .frame(minWidth: 18)
+                .accessibilityHidden(true)
+            text.fixedSize(horizontal: false, vertical: true)
+        }
+        .themedFont(.small)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// How a voice call uses audio (OC-08). Every line is a claim the call keeps:
+/// local recognition, nothing written to disk, the system voice.
+@MainActor
+struct VoiceCallAudioUseCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            AppSectionHeader(title: Text("How TurboSpark uses audio", bundle: .module))
+            point("cpu", Text("Speech is transcribed on this Mac by the live text model.", bundle: .module))
+            point("internaldrive", Text("No audio is saved. Only the text you send stays in the chat.", bundle: .module))
+            point("speaker.wave.2", Text("Replies are read aloud with the system voice.", bundle: .module))
+            point("headphones", Text("Use headphones so the speaker does not feed back into the microphone.", bundle: .module))
+            point("text.badge.checkmark", Text("Transcripts are generated by a model. Review them for accuracy.", bundle: .module))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .appCardSurface(padding: 18)

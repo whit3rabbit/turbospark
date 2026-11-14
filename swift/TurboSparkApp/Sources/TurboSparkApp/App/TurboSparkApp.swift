@@ -578,6 +578,20 @@ struct TurboSparkModelCommands: Commands {
                 .keyboardChord(.previousSessionTab, keybinds)
                 .disabled(!model.sessionTabsActive)
 
+                // OC-08. Posts the request the Call button posts, so the
+                // conversation pane's access gate is the one start path.
+                Button {
+                    NotificationCenter.default.post(name: .toggleVoiceCall, object: nil)
+                } label: {
+                    model.voiceCallActive
+                        ? Text("End Voice Call", bundle: .module)
+                        : Text("Start Voice Call", bundle: .module)
+                }
+                .keyboardChord(.toggleVoiceCall, keybinds)
+                .disabled(
+                    !model.voiceCallActive
+                        && !(model.voiceCallEnabled && model.activeSection.runsChatGenerationCommand))
+
                 Divider()
 
                 Button {

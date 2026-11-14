@@ -36,6 +36,8 @@ struct GeneralSettingsPaneView: View {
 
             NotificationsSettingsSection(model: model, center: model.attentionCenter)
 
+            VoiceCallSettingsSection(model: model)
+
             compactionSection
 
             chatRuntimeSection

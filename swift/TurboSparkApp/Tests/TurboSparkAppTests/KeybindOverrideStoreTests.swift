@@ -15,6 +15,7 @@ enum KeybindMenuSpelling {
         .newSessionTab: ".newSessionTab", .closeSessionTab: ".closeSessionTab",
         .reopenSessionTab: ".reopenSessionTab", .nextSessionTab: ".nextSessionTab",
         .previousSessionTab: ".previousSessionTab",
+        .toggleVoiceCall: ".toggleVoiceCall",
         .focusPrompt: ".focusPrompt", .commandCenter: ".commandCenter",
         .runCommand: ".runCommand", .clearHistory: ".clearHistory",
         .previousTurn: ".previousTurn", .nextTurn: ".nextTurn", .stopAll: ".stopAll",

@@ -9,7 +9,7 @@ and
 [call transport](https://github.com/anomalyco/opencode/blob/dev/packages/app/src/voice/transport.ts).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Partial (core loop implemented behind a default-off setting; see Implementation Record)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -120,6 +120,9 @@ Technical Plan).
 * **Panel shape**: (a) a floating, draggable panel over the chat,
   OpenCode's shape; (b) a dock pane. Lean (a) in v1; the panel is small,
   state-only, and closes with the call.
+  **Decided: (a)**, with the draft's recommendation. The panel is an
+  overlay on the conversation pane, draggable by its header, position not
+  persisted. See the Implementation Record for every other [confirm] item.
 
 ## Critical User Journeys
 
@@ -248,6 +251,130 @@ call with that reason shown.
   Measure end-of-speech to first spoken word once and record it.
   Run the [DESIGN.md](../../../DESIGN.md) section 9 checklist on the
   panel. [confirm section 9 still exists in DESIGN.md]
+
+--------------------------------------------------------------------------------
+
+## Implementation Record
+
+Implemented 2026-11-14 on branch `fix/b6-tool-edge-cases` (shared tree,
+committed through a private index). Status is **Partial**: the core loop
+(listen, transcribe, draft, answer, speak, barge-in) is in, behind a
+default-off setting; the items under "Deferred" are not.
+
+### What shipped
+
+* **Setting**: General > Voice call > "Voice call mode",
+  `MacAppSettings.voiceCallEnabled`, default false, old files decode.
+  Off means no Call button, no menu item, and no call object is built (the
+  controller is a lazy property). Turning it off ends a live call.
+* **Entry**: a Call button beside the composer's dictation button and a
+  Chat menu item "Start Voice Call" / "End Voice Call" with the catalog
+  command `call.toggle` (Cmd+Shift+Y, rebindable, listed in the Keyboard
+  Shortcuts pane). It does not collide with OC-04 (Cmd+T, Cmd+Shift+W/T,
+  Cmd+Option+[ ]) or OC-05 (Cmd+Option+Left/Right). Escape is a local
+  control key on the panel's Stop speaking button, not a catalog command.
+* **Controller**: `Audio/VoiceCallController.swift`, a `@MainActor` state
+  machine over idle, preparing, listening, thinking, speaking, paused and
+  failed (Mute is listening <-> paused; End from any state is idle with the
+  microphone released). Every dependency is a protocol in
+  `Audio/VoiceCallSeams.swift`, so tests use fakes.
+* **Detector**: `Audio/VoiceCallSpeechDetector.swift`, an energy detector
+  counted in samples (no clock), behind `VoiceCallSpeechDetecting`.
+* **Speech text**: `Audio/VoiceCallSpeechPlanner.swift`, sentence by
+  sentence over the streaming reply, with the skip rules below.
+* **Production seams**: `Audio/VoiceCallAdapters.swift` (call-owned
+  `AVSpeechSynthesizer` speaker, non-persisting microphone source, the
+  per-turn recognizer over the existing `AudioLiveTranscriber`, and the
+  speech-model status), `State/AppModel+VoiceCall.swift` (the chat port and
+  wiring).
+* **UI**: `Audio/VoiceCallPanelView.swift` and `Audio/VoiceCallHostView.swift`
+  (panel, Call button, the one start path through `.recordingAccessGate`).
+  `RecordingAccessSheet` gained a `.call` purpose (microphone row only,
+  call-specific copy and use card, "Start call").
+* **Localization**: 39 new keys in all 21 languages, added with
+  `--patience` diffs and held by `LocalizationParityTests`
+  (`VoiceCallState` titles are listed in its enum-backed test).
+
+### Open Questions and [confirm] items, as decided
+
+| Item | Decision |
+|---|---|
+| Panel shape | Floating, draggable overlay on the conversation pane. |
+| VAD ([confirm which]) | A rolling energy detector over the 16 kHz feed (20 ms frames, 0.12 s sustained onset, 0.7 s silence window), behind a protocol. Silero is batch only and an optional model install, so a streaming wrapper over it is deferred; the swap is one type. |
+| Barge-in threshold | Onset must clear 3x the quiet-room level (about +10 dB) while the reply speaks. Headphones recommended, stated in the panel and the access sheet. The button and Escape always stop playback. No echo cancellation. |
+| Silence window | 0.7 s, a constant in `VoiceCallTuning`, no setting. |
+| Speaker ([confirm extend or sibling]) | A sibling `VoiceCallSpeaker`; `AppSpeechSynthesizer` is untouched. It owns its `AVSpeechSynthesizer`, queues sentences and reports when the queue drains. System voice only. |
+| Non-persisting capture ([confirm mechanism]) | `AudioCapture.Configuration.persistsChunks = false`: packets go only to the live feed, nothing is chunked or handed to `onChunk`. The Record page keeps the default true. |
+| Segmentation ([confirm]) | One `AudioLiveTranscriber` per turn, closed with `finishAndClose()` at end-of-speech, a fresh one opened after. A `.ready` event was added to `AudioLiveTranscriber.Event` so the call never closes a recognizer that is still loading. |
+| Submit bridge ([author to name]) | There is none. The call writes the composer draft only and has no send entry point; the user's own Send goes through `AppModel.run()`. A test scans the port and the controller to keep it that way. |
+| Push-to-talk, dictation | Unchanged. The existing dictation button stays; Mute and the panel buttons are the keyboard-reachable controls. |
+| CUJ 3 copy ([confirm copy]) | The access sheet in `.call` purpose: "Allow microphone for voice calls", "macOS asks once. Nothing is heard until you press Start call.", Not now leaves the call idle. A denied grant shows the existing "Open System Settings" row. Revoking access during a call ends it with a message. |
+| Latency numbers | Targets only, not gates, and not measured: with draft-first the end-of-speech to first-word interval includes the user's Send. |
+| DESIGN.md section 9 | Still exists; its automated half was run, its manual checklist was not (see Verification). |
+
+### Behavior that goes beyond the plan text
+
+* **Lane exclusion.** A recognizer is opened only while no turn is busy
+  (`isTurnBusy` covers generating, a submission awaiting its hook, and an
+  open approval or question). It is closed before the user's Send, cancelled
+  if a turn starts beneath it (a typed Send beside a half-spoken
+  utterance), and reopened only when the turn ends. A barge-in while the
+  turn is still generating stops playback and suppresses the rest of the
+  reply at once; recognition waits for the lane and starts from the audio
+  kept meanwhile (30 s cap). Escape or Stop speaking during a running turn
+  returns to thinking, and to listening when the turn ends.
+* **Start refusals.** A press is refused, with the call idle, while a turn
+  runs, while a Record-page capture is active (the existing "recording
+  already active" text), or when the live text model is missing or cannot
+  run. A missing install offers Download through the existing install flow.
+  The streaming model is English only, so a non-English system language
+  reports that instead of transcribing wrongly. In the other direction the
+  Record page refuses to start while a call holds the microphone.
+* **Tool output is never spoken.** The call reads only the assistant's text;
+  tool results are separate message fields. Fenced code becomes one spoken
+  placeholder per block, file paths and URLs become short placeholders
+  inside the sentence, and markdown scaffolding is dropped.
+* **Leaving the chat ends the call**: a chat switch, or a change of
+  section, ends it and releases the microphone.
+
+### Verification run
+
+* Focused suites with injected audio, recognizer, speaker and chat:
+  `VoiceCallControllerTests`, `VoiceCallSpeechDetectorTests`,
+  `VoiceCallSpeechPlannerTests`, `VoiceCallNoPromptAtLaunchTests`,
+  plus `LocalizationParityTests`, `KeyboardShortcutCatalogTests`,
+  `KeybindMapTests`, `AudioLiveTextTests`. `make compile-strings`,
+  `make design-check` and `generate-settings-catalog.py --check` were run.
+* Mutation checks (each applied, shown to redden tests, then restored and
+  the suite re-run green; 114 focused tests pass at the end):
+  barge-in transition removed reddened
+  `testBargeInDuringAStillRunningTurn...` (and the run then crashed on an
+  index, since guarded in the test); barge-in threshold scale 3.0 -> 1.0
+  reddened `testSpeakerBleedBelowTheBargeInBarDoesNotInterrupt` and
+  `testOnsetScaleRaisesTheBarThatSpeakerBleedMustClear`; recognizer not
+  cancelled when a turn starts reddened three lane tests; lane guard removed
+  from `openTranscriber` reddened
+  `testBargeInDuringAStillRunningTurn...`; microphone status guard removed
+  reddened `testADeclinedMicrophoneNeverStartsAnything`; approval pause
+  removed reddened `testAnApprovalPauses...`.
+* Not run: a real call on a loaded model with headphones, the DESIGN.md
+  section 9 visual checklist (text sizes, themes, VoiceOver, RTL),
+  `make swift-lib` (no Rust ABI changed), the full app suite.
+
+### Deferred (needs a dependency, a download, or a decision)
+
+* **Auto-submit** of a final utterance. Draft-first stays until the user
+  decides; it is a safety call about an agent that can run tools.
+* **Streaming Silero VAD** (better onset than energy in noise). Needs the
+  optional VAD model install and a streaming wrapper over a batch API.
+* **Measured latency** (end-of-speech to first spoken word) and the cost of
+  reopening the recognizer each turn; both need a manual run on a loaded
+  model. If the reopen cost is high, a single recognizer reused with
+  `finish()` (which restarts the stream) is the next step.
+* **Manual verification** with headphones and the DESIGN.md section 9
+  checklist.
+* **Non-English speech**, local TTS, echo cancellation, wake word,
+  delegation tools: still out of scope as written.
 
 --------------------------------------------------------------------------------
 

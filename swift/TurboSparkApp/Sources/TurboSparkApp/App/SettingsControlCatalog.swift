@@ -97,6 +97,7 @@ enum SettingsControlCatalog {
         .init(title: "Turn finished", pane: .general, timing: .immediate),
         .init(title: "Use it even when the first turn is slow", pane: .general, timing: .nextTurn),
         .init(title: "Use the model's native tool calling", pane: .general, timing: .nextTurn),
+        .init(title: "Voice call mode", pane: .general, timing: .immediate),
         .init(title: "Custom & App Hooks", pane: .hooks, timing: .nextTurn),
         .init(title: "From Config", pane: .hooks, timing: .nextTurn),
         .init(title: "Hooks", pane: .hooks, timing: .nextTurn),

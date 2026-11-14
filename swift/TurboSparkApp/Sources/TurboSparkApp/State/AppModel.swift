@@ -29,6 +29,7 @@ public final class AppModel: ObservableObject {
     lazy var audioWorkspace: AudioWorkspaceController = {
         let workspace = AudioWorkspaceController(installService: libraryState.service)
         audioWorkspaceCreated = true
+        workspace.externalCaptureActive = { [weak self] in self?.voiceCallActive == true }
         workspace.onResidentModelChanged = { [weak self] in
             self?.ejectCoordination?.coordinator.scheduleRefresh()
         }
@@ -454,6 +455,23 @@ public final class AppModel: ObservableObject {
     /// Chats whose turn ended in an error this tail, so the finish cue is
     /// not also sent for them.
     var attentionErroredChats: Set<UUID> = []
+    /// OC-08: whether voice call mode is offered (Call button, menu item).
+    /// Off by default and persisted in `MacAppSettings`. Turning it off ends
+    /// a live call. Nothing about a call exists until the user presses Call.
+    @Published var voiceCallEnabled = false {
+        didSet {
+            if !voiceCallEnabled, voiceCallBuilt { voiceCall.end() }
+        }
+    }
+    /// OC-08: the one call controller, built on first use so a launch with
+    /// the setting off creates no audio objects.
+    var voiceCallBuilt = false
+    /// Mirror of the call's `state.isActive`, so the menu item and the Call
+    /// button redraw without observing the controller itself.
+    @Published var voiceCallActive = false
+    var voiceCallStateObserver: AnyCancellable?
+    lazy var voiceCall: VoiceCallController = makeVoiceCallController()
+    var voiceCallPort: AppModelVoiceCallPort?
     /// OC-03: how the chat sidebar groups rows. Persisted in `MacAppSettings`.
     @Published var chatSidebarMode: ChatSidebarMode = .chats
     /// OC-03: the chat the user just opened from a Finished inbox row. Opening

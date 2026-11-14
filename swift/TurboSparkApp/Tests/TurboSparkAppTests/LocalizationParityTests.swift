@@ -594,6 +594,11 @@ final class LocalizationParityTests: XCTestCase {
             values.append(("AttentionEvent.settingsTitle", event.settingsTitle))
         }
         values.append(("AttentionSound.none", AttentionSound.none.settingsTitle))
+        // OC-08: the call panel renders each state's title as a key.
+        let callStates: [VoiceCallState] = [.idle, .preparing, .listening, .thinking, .speaking, .paused, .failed("")]
+        for state in callStates {
+            values.append(("VoiceCallState.titleKey", state.titleKey))
+        }
         for mode in WorktreeTabMode.allCases {
             values.append(("WorktreeTabMode.title", mode.title))
         }

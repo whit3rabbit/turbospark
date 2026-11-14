@@ -90,6 +90,11 @@ extension AudioWorkspaceController {
     /// them, and keeps the current take selected on the Voice Cloning page.
     func startRecording(asVoiceReference: Bool) {
         guard !hasRecordingActivity, !isShutDown, capture == nil else { return }
+        // A voice call holds the microphone (OC-08); the two never share it.
+        guard !externalCaptureActive() else {
+            error = AppStrings.localized("A voice call is using the microphone. End the call before recording.")
+            return
+        }
         let capturesMicrophone = asVoiceReference || captureMicrophone
         let capturesSystemAudio = !asVoiceReference && captureSystemAudio
         guard capturesMicrophone || capturesSystemAudio else {

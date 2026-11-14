@@ -197,7 +197,11 @@ struct RootView: View {
         // A chat or section switch ends the peek: the click that caused it
         // was the peek's job, and the panel should not linger over the pane.
         .onChange(of: model.selectedChatID) { _, _ in sidebarPeek.cancel() }
-        .onChange(of: model.activeSection) { _, _ in sidebarPeek.cancel() }
+        .onChange(of: model.activeSection) { _, _ in
+            sidebarPeek.cancel()
+            // OC-08: a call belongs to the chat pane; leaving it ends the call.
+            if model.voiceCallBuilt { model.voiceCall.end() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             sidebarPeek.cancel()
         }

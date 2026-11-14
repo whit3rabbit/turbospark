@@ -74,6 +74,8 @@ struct PromptComposerFooter: View {
 
             clearAction
 
+            if model.voiceCallEnabled { VoiceCallButton(model: model) }
+
             PromptAudioInputButton(promptFocused: promptFocused)
 
             GenerateControl(model: model)
