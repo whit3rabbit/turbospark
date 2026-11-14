@@ -962,6 +962,12 @@ public final class AppModel: ObservableObject {
     /// The cron poll timer, installed by `startCronScheduler`; held so
     /// shutdown can invalidate it.
     var cronPollTimer: Timer?
+    /// Whether queued off-peak tasks may be admitted (default off). Persisted
+    /// in `MacAppSettings.offPeakEnabled`.
+    @Published public var offPeakEnabled: Bool = false
+    /// Own timer, store and dispatcher: independent of the cron poller.
+    var offPeakTimer: Timer?
+    var offPeakDispatcher: OffPeakTaskDispatcher?
 
 
     // Runtime Settings
@@ -1224,6 +1230,7 @@ public final class AppModel: ObservableObject {
         reloadPlugins()
         refreshModels()
         startCronScheduler()
+        startOffPeakDispatcher()
         startMemoryScheduler()
         AppToolRegistry.activeSessionProvider = { [weak self] in
             self?.session
@@ -1347,6 +1354,7 @@ public final class AppModel: ObservableObject {
     deinit {
         // Releasing our reference alone leaves the run loop polling shared state.
         cronPollTimer?.invalidate()
+        offPeakTimer?.invalidate()
         memorySchedulerTimer?.invalidate()
     }
 

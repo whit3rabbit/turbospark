@@ -160,6 +160,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var interactionMode: String
     /// Whether the app opens a temporary (Ghost Mode) chat on launch.
     public var alwaysStartInGhostMode: Bool
+    /// Whether queued off-peak tasks may run (admission gate). Off by default.
+    public var offPeakEnabled: Bool
     /// `AppPermissionMode` raw value for chats with no project. An unknown
     /// value loads as Auto, the default it had before it was stored.
     public var rootlessPermissionMode: String
@@ -354,6 +356,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         modelReasoningDefaults: [String: String] = [:],
         interactionMode: String = "chat",
         alwaysStartInGhostMode: Bool = false,
+        offPeakEnabled: Bool = false,
         rootlessPermissionMode: String = "auto",
         autoCompact: Bool = true,
         actionFusion: Bool = true,
@@ -447,6 +450,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.modelReasoningDefaults = modelReasoningDefaults
         self.interactionMode = interactionMode
         self.alwaysStartInGhostMode = alwaysStartInGhostMode
+        self.offPeakEnabled = offPeakEnabled
         self.rootlessPermissionMode = rootlessPermissionMode
         self.autoCompact = autoCompact
         self.actionFusion = actionFusion
@@ -595,6 +599,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.interactionMode = c.decodeLenient(String.self, forKey: .interactionMode, fallback: "chat")
         self.alwaysStartInGhostMode = c.decodeLenient(
             Bool.self, forKey: .alwaysStartInGhostMode, fallback: false)
+        self.offPeakEnabled = c.decodeLenient(
+            Bool.self, forKey: .offPeakEnabled, fallback: false)
         self.rootlessPermissionMode = c.decodeLenient(
             String.self, forKey: .rootlessPermissionMode, fallback: "auto")
         self.autoCompact = c.decodeLenient(Bool.self, forKey: .autoCompact, fallback: true)

@@ -45,7 +45,7 @@ public enum AppToolCatalog {
     public static var memoryTools: [OpenAITool] { MemoryToolDefinitions.all }
 
     /// Automation, cron, monitoring, and notifications tools.
-    public static let automationTools: [OpenAITool] = WorkflowCronDefinitions.all + MonitoringNotificationDefinitions.all
+    public static let automationTools: [OpenAITool] = WorkflowCronDefinitions.all + OffPeakTaskDefinitions.all + MonitoringNotificationDefinitions.all
 
     /// Full suite of all supported OpenAI tool definitions.
     ///
@@ -223,7 +223,7 @@ public enum AppToolCatalog {
             return .browser
         case _ where ComputerUseToolDefinitions.toolNames.contains(name):
             return .computerUse
-        case "batch", "schedule", "cron", "manage_task", "monitoring", "notify", "notification", "sleep", "delay", "pushnotification", "push_notification", "config", "config_tool", "ctxinspect", "ctx_inspect", "askuserquestion", "ask_user_question", "ask_question", "question", "enterplanmode", "enter_plan_mode", "plan_mode", "plan", "exitplanmode", "exit_plan_mode", "reportfindings", "report_findings", "findings", "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "agent", "subagent", "task", "stop_agent", "agentstop", "kill_agent", "stopagent", "taskcreate", "task_create", "task_add", "taskget", "task_get", "tasklist", "task_list", "taskupdate", "task_update", "taskstop", "task_stop", "task_cancel", "taskoutput", "task_output":
+        case "batch", "schedule", "cron", "offpeakenqueue", "offpeak_enqueue", "offpeaklist", "offpeak_list", "offpeakcancel", "offpeak_cancel", "manage_task", "monitoring", "notify", "notification", "sleep", "delay", "pushnotification", "push_notification", "config", "config_tool", "ctxinspect", "ctx_inspect", "askuserquestion", "ask_user_question", "ask_question", "question", "enterplanmode", "enter_plan_mode", "plan_mode", "plan", "exitplanmode", "exit_plan_mode", "reportfindings", "report_findings", "findings", "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "agent", "subagent", "task", "stop_agent", "agentstop", "kill_agent", "stopagent", "taskcreate", "task_create", "task_add", "taskget", "task_get", "tasklist", "task_list", "taskupdate", "task_update", "taskstop", "task_stop", "task_cancel", "taskoutput", "task_output":
             return .automation
         case "tool_call", "call_mcp_tool", "callmcptool", "mcp_tool", "list_resources", "listmcpresources", "list_mcp_resources", "read_resource", "readmcpresource", "read_mcp_resource", "codemode":
             return .mcp

@@ -81,6 +81,9 @@ extension AppToolRegistry {
     /// The composer web-tools switch. Execution consults this independently
     /// from prompt construction so stale or forged calls cannot bypass it.
     public static var webToolsEnabledProvider: (@Sendable @MainActor () -> Bool)?
+    /// Whether a chat may hold off-peak tasks (false for a ghost chat).
+    /// Nil (no app model, as in a unit test) allows it.
+    public static var offPeakChatEligibleProvider: (@Sendable @MainActor (UUID) -> Bool)?
 
     /// Current browser automation runtime. The provider resolves the active
     /// tab, backend manifest, and call-scoped permission context on MainActor.
@@ -201,6 +204,8 @@ extension AppToolRegistry {
         "croncreate", "cron_create",
         "crondelete", "cron_delete",
         "cronlist", "cron_list",
+        "offpeakenqueue", "offpeak_enqueue", "offpeaklist", "offpeak_list",
+        "offpeakcancel", "offpeak_cancel",
         "schedulewakeup", "schedule_wakeup",
         "sleep", "delay",
         "pushnotification", "push_notification", "notify",

@@ -110,6 +110,7 @@ extension AppModel {
         self.computerUseSettings = settings.computerUse
         self.networkPolicy = settings.networkPolicy
         self.alwaysStartInGhostMode = settings.alwaysStartInGhostMode
+        self.offPeakEnabled = settings.offPeakEnabled
         self.activePermissionMode = AppPermissionMode(rawValue: settings.rootlessPermissionMode) ?? .auto
         self.autoCompactEnabled = settings.autoCompact
         self.actionFusionEnabled = settings.actionFusion
@@ -288,6 +289,7 @@ extension AppModel {
             modelReasoningDefaults: modelReasoningDefaults,
             interactionMode: interactionMode.rawValue,
             alwaysStartInGhostMode: alwaysStartInGhostMode,
+            offPeakEnabled: offPeakEnabled,
             rootlessPermissionMode: activePermissionMode.rawValue,
             autoCompact: autoCompactEnabled,
             actionFusion: actionFusionEnabled,
@@ -618,6 +620,11 @@ extension AppModel {
         // quit must never be dissented from, and a cycle in flight must not
         // reach for sessions this method is about to drop. The registration
         // moves to the next model; the process-wide monitor keeps running.
+        // Before the model is released: records the running off-peak task as
+        // interrupted and releases the no-sleep hold.
+        offPeakTimer?.invalidate()
+        offPeakTimer = nil
+        offPeakDispatcher?.shutdown()
         ejectCoordination?.stop()
         ejectCoordination = nil
         libraryOfferAnnouncer?.stop()

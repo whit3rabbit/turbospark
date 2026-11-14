@@ -36,6 +36,7 @@ enum SettingsControlCatalog {
         .init(title: "UI font", pane: .appearance, timing: .immediate),
         .init(title: "UI font size", pane: .appearance, timing: .immediate),
         .init(title: "Use pointer cursors", pane: .appearance, timing: .immediate),
+        .init(title: "Run off-peak tasks", pane: .automation, timing: .immediate),
         .init(title: "API key (optional)", pane: .engine, timing: .action),
         .init(title: "Cache Slots", pane: .engine, timing: .modelReload),
         .init(title: "Context Window", pane: .engine, timing: .modelReload),

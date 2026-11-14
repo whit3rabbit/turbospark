@@ -887,6 +887,20 @@ public enum AppToolRegistry {
             case "cronlist", "cron_list":
                 output = CronScheduler.executeList(arguments: call.arguments)
 
+            case "offpeakenqueue", "offpeak_enqueue":
+                var chatEligible = true
+                if let chatID, let provider = offPeakChatEligibleProvider {
+                    chatEligible = await provider(chatID)
+                }
+                output = try OffPeakTaskExecutors.executeEnqueue(
+                    arguments: call.arguments, chatID: chatID, chatEligible: chatEligible)
+
+            case "offpeaklist", "offpeak_list":
+                output = OffPeakTaskExecutors.executeList(arguments: call.arguments)
+
+            case "offpeakcancel", "offpeak_cancel":
+                output = try OffPeakTaskExecutors.executeCancel(arguments: call.arguments)
+
             case "schedulewakeup", "schedule_wakeup":
                 output = try CronScheduler.executeScheduleWakeup(arguments: call.arguments, chatID: chatID)
 

@@ -532,6 +532,7 @@ extension AppModel {
     /// A NEWER turn owns the state when the epoch moved, so this is a no-op.
     func finishTurnTail(myEpoch: Int, turnChatID: UUID, session: TurboSparkSession?) {
         guard self.generationEpoch == myEpoch else { return }
+        let wasCancelled = self.isCancellationPending
         self.generating = false
         self.phase = .idle
         self.isCancellationPending = false
@@ -551,6 +552,11 @@ extension AppModel {
         self.drainPendingUserMessagesIfIdle(chatID: turnChatID)
         self.drainPendingTaskNotificationsIfIdle(chatID: turnChatID)
         self.drainPendingTitleGenerationIfIdle(session: session)
+        // After the drains: one of them may have started the next turn, and
+        // an approval card parks the run rather than ending it.
+        self.offPeakTurnDidFinish(
+            chatID: turnChatID, cancelled: wasCancelled,
+            stillBusy: self.generating || self.pendingToolCall != nil)
     }
 
     private func finishProseTurn(
