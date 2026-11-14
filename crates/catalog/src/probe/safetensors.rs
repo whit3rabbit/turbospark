@@ -164,9 +164,22 @@ pub fn evaluate_config(
              full-precision size; the install is about a quarter of it."
                 .to_string(),
         );
-        if family != model_io::ModelFamily::QwenGdnDense {
-            // Only qwen35 has been diffed byte for byte against a published
-            // mlx-community conversion; say so rather than imply it.
+        if family == model_io::ModelFamily::QwenGdnMoe {
+            report.warnings.push(
+                "the Qwen MoE quantizes at 4-bit only (its routed kernels read 3- or 4-bit \
+                 experts); the router and shared-expert gate are written at 8-bit, as \
+                 mlx-community's conversion does. The fused experts are held in memory one \
+                 layer at a time while they quantize (about 1.5 GiB for the 35B-A3B)."
+                    .to_string(),
+            );
+        }
+        if !matches!(
+            family,
+            model_io::ModelFamily::QwenGdnDense | model_io::ModelFamily::QwenGdnMoe
+        ) {
+            // Only the qwen35 trunks (dense and MoE) have been diffed byte for
+            // byte against a published mlx-community conversion; say so
+            // rather than imply it for the others.
             report.warnings.push(format!(
                 "quantize-on-install for the {} family has not been byte-checked against a \
                  published MLX conversion; judge the install on its own output",

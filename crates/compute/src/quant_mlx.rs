@@ -1,4 +1,5 @@
-//! Bit-exact port of MLX's `mx.quantize` affine mode (4- and 8-bit).
+//! Bit-exact port of MLX's `mx.quantize` affine mode (4- and 8-bit, plus a
+//! 2-bit group-128 variant with no published reference).
 //!
 //! **Why this exists beside [`crate::quant::quantize_int4_affine`].** That
 //! reference uses `scale = (max - min) / 15`, `bias = min`. MLX instead snaps
@@ -21,13 +22,34 @@
 
 use crate::quant::{f32_to_bf16, Int4AffineRow, Int8AffineRow, GROUP_SIZE};
 
+/// How a half-way value rounds to a code. The Metal kernel (`mlx_lm.convert`
+/// on an Apple GPU) rounds half away from zero; the CPU kernel uses `rint`,
+/// half to even. The two agree except at exact ties (about one code in a
+/// thousand for BF16 weights), and published conversions come from both:
+/// `DeepSeek-V4-Pro-Qwen3.5-9B-4bit` is exact under [`Rounding::HalfAway`] and
+/// `Qwen3.6-35B-A3B-4bit` under [`Rounding::HalfEven`]. Installs use
+/// `HalfAway`, what a Mac produces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rounding {
+    HalfAway,
+    HalfEven,
+}
+
+#[inline]
+fn round_with(x: f32, mode: Rounding) -> f32 {
+    match mode {
+        Rounding::HalfAway => x.round(),
+        Rounding::HalfEven => x.round_ties_even(),
+    }
+}
+
 /// MLX's `eps` floor on the scale.
 const EPS: f32 = 1e-7;
 
 /// Per-group `(scale, bias)` in f32, exactly as the Metal kernel computes
 /// them before the BF16 store. `n_bins` is `2^bits - 1`.
 #[inline]
-fn group_params(group: &[f32], n_bins: f32) -> (f32, f32) {
+fn group_params(group: &[f32], n_bins: f32, mode: Rounding) -> (f32, f32) {
     let mut w_min = f32::INFINITY;
     let mut w_max = f32::NEG_INFINITY;
     for &v in group {
@@ -40,7 +62,7 @@ fn group_params(group: &[f32], n_bins: f32) -> (f32, f32) {
         scale = -scale;
     }
     let edge = if side { w_min } else { w_max };
-    let q0 = (edge / scale).round();
+    let q0 = round_with(edge / scale, mode);
     if q0 == 0.0 {
         (scale, 0.0)
     } else {
@@ -49,11 +71,11 @@ fn group_params(group: &[f32], n_bins: f32) -> (f32, f32) {
 }
 
 #[inline]
-fn quantize_value(w: f32, scale: f32, bias: f32, n_bins: f32) -> u8 {
+fn quantize_value(w: f32, scale: f32, bias: f32, n_bins: f32, mode: Rounding) -> u8 {
     // The Metal kernel clamps only the top. A value below zero can come only
     // from f32 error at the snapped edge and rounds to -0, so clamping at 0
     // matches its cast.
-    ((w - bias) / scale).round().clamp(0.0, n_bins) as u8
+    round_with((w - bias) / scale, mode).clamp(0.0, n_bins) as u8
 }
 
 fn check_len(row: &[f32]) -> usize {
@@ -65,20 +87,26 @@ fn check_len(row: &[f32]) -> usize {
     row.len() / GROUP_SIZE
 }
 
-/// `mx.quantize(w, group_size=64, bits=4)` for one row.
+/// `mx.quantize(w, group_size=64, bits=4)` for one row, as the Metal kernel
+/// computes it.
 pub fn quantize_int4_affine_mlx(row: &[f32]) -> Int4AffineRow {
+    quantize_int4_affine_mlx_with(row, Rounding::HalfAway)
+}
+
+/// [`quantize_int4_affine_mlx`] under an explicit tie rule.
+pub fn quantize_int4_affine_mlx_with(row: &[f32], mode: Rounding) -> Int4AffineRow {
     let n_groups = check_len(row);
     let mut packed = vec![0u8; row.len() / 2];
     let mut scales = vec![0u16; n_groups];
     let mut biases = vec![0u16; n_groups];
     for g in 0..n_groups {
         let group = &row[g * GROUP_SIZE..(g + 1) * GROUP_SIZE];
-        let (scale, bias) = group_params(group, 15.0);
+        let (scale, bias) = group_params(group, 15.0, mode);
         scales[g] = f32_to_bf16(scale);
         biases[g] = f32_to_bf16(bias);
         for (k, pair) in group.chunks_exact(2).enumerate() {
-            let lo = quantize_value(pair[0], scale, bias, 15.0);
-            let hi = quantize_value(pair[1], scale, bias, 15.0);
+            let lo = quantize_value(pair[0], scale, bias, 15.0, mode);
+            let hi = quantize_value(pair[1], scale, bias, 15.0, mode);
             packed[g * (GROUP_SIZE / 2) + k] = lo | (hi << 4);
         }
     }
@@ -89,19 +117,25 @@ pub fn quantize_int4_affine_mlx(row: &[f32]) -> Int4AffineRow {
     }
 }
 
-/// `mx.quantize(w, group_size=64, bits=8)` for one row.
+/// `mx.quantize(w, group_size=64, bits=8)` for one row, as the Metal kernel
+/// computes it.
 pub fn quantize_int8_affine_mlx(row: &[f32]) -> Int8AffineRow {
+    quantize_int8_affine_mlx_with(row, Rounding::HalfAway)
+}
+
+/// [`quantize_int8_affine_mlx`] under an explicit tie rule.
+pub fn quantize_int8_affine_mlx_with(row: &[f32], mode: Rounding) -> Int8AffineRow {
     let n_groups = check_len(row);
     let mut packed = vec![0u8; row.len()];
     let mut scales = vec![0u16; n_groups];
     let mut biases = vec![0u16; n_groups];
     for g in 0..n_groups {
         let group = &row[g * GROUP_SIZE..(g + 1) * GROUP_SIZE];
-        let (scale, bias) = group_params(group, 255.0);
+        let (scale, bias) = group_params(group, 255.0, mode);
         scales[g] = f32_to_bf16(scale);
         biases[g] = f32_to_bf16(bias);
         for (k, &w) in group.iter().enumerate() {
-            packed[g * GROUP_SIZE + k] = quantize_value(w, scale, bias, 255.0);
+            packed[g * GROUP_SIZE + k] = quantize_value(w, scale, bias, 255.0, mode);
         }
     }
     Int8AffineRow {
@@ -133,11 +167,11 @@ pub fn quantize_int2_affine_mlx(row: &[f32]) -> crate::quant_2bit::Int2AffineRow
     let mut biases = vec![0u16; n_groups];
     for g in 0..n_groups {
         let group = &row[g * INT2_GROUP_SIZE..(g + 1) * INT2_GROUP_SIZE];
-        let (scale, bias) = group_params(group, 3.0);
+        let (scale, bias) = group_params(group, 3.0, Rounding::HalfAway);
         scales[g] = crate::quant_1bit::f32_to_f16(scale);
         biases[g] = crate::quant_1bit::f32_to_f16(bias);
         for (k, quad) in group.chunks_exact(4).enumerate() {
-            let q = |i: usize| quantize_value(quad[i], scale, bias, 3.0);
+            let q = |i: usize| quantize_value(quad[i], scale, bias, 3.0, Rounding::HalfAway);
             packed[g * (INT2_GROUP_SIZE / 4) + k] = q(0) | (q(1) << 2) | (q(2) << 4) | (q(3) << 6);
         }
     }
@@ -183,6 +217,33 @@ mod tests {
         r[3] = 0.5;
         let q = quantize_int2_affine_mlx(&r);
         assert_eq!(q.packed[0], 0b11_10_01_00);
+    }
+
+    #[test]
+    fn half_away_and_half_even_differ_only_at_an_exact_tie() {
+        // Range [0, 15] has its larger-magnitude edge at +15, so MLX takes
+        // scale -1 and bias 15 and a code is 15 - w. 2.5 then lands on the
+        // tie 12.5 (Metal 13, CPU 12) and 3.5 on 11.5 (both 12). Every other
+        // element is a whole number.
+        let mut r: Vec<f32> = (0..64).map(|i| (i % 16) as f32).collect();
+        r[0] = 15.0;
+        r[1] = 0.0;
+        r[2] = 2.5;
+        r[3] = 3.5;
+        let away = quantize_int4_affine_mlx_with(&r, Rounding::HalfAway);
+        let even = quantize_int4_affine_mlx_with(&r, Rounding::HalfEven);
+        assert_eq!(away.scales, even.scales);
+        assert_eq!(away.biases, even.biases);
+        let code = |q: &Int4AffineRow, i: usize| (q.packed[i / 2] >> (4 * (i % 2))) & 0xf;
+        assert_eq!((code(&away, 2), code(&even, 2)), (13, 12));
+        assert_eq!((code(&away, 3), code(&even, 3)), (12, 12));
+        let differing = away
+            .packed
+            .iter()
+            .zip(&even.packed)
+            .filter(|(a, b)| a != b)
+            .count();
+        assert_eq!(differing, 1, "only the byte holding element 2 may differ");
     }
 
     fn row(seed: u32, n: usize) -> Vec<f32> {
