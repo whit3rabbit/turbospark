@@ -21,6 +21,8 @@ cannot drift between the three.
 | `Cmd+6` | API | Opens the API workspace. |
 | `Cmd+7` | Audio | Opens Audio Studio. |
 | `Cmd+8` | Humanize | Opens the Humanize workspace. |
+| `Cmd+Option+Left` | Go Back | Walks back through section and chat switches (OC-05, 100 entries, not kept across relaunch). Skips deleted chats. Disabled at the start of the history and while a turn runs. Cmd+[ stays Previous Chat. |
+| `Cmd+Option+Right` | Go Forward | Walks forward after a Go Back. A new switch after going back discards the forward entries. |
 | `Ctrl+Cmd+S` | Toggle Sidebar | Shows or hides the panel beside the icon rail (the chat list in Chat, the page list in Audio). The rail stays. Disabled in sections without a panel. |
 | `Cmd+Shift+I` | Toggle Inspector | Expands or collapses the right-hand model and runtime inspector. |
 | `Cmd++` | Make Text Bigger | Increases in-app text readability and Dynamic Type scale. |

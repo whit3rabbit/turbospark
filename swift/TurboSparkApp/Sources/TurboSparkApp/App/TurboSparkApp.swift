@@ -341,6 +341,28 @@ struct TurboSparkModelCommands: Commands {
 
                 Divider()
 
+                // OC-05. Cmd+[ and Cmd+] are the Previous/Next Chat chords, so
+                // history takes Cmd+Option+Left/Right (Safari's tab chords,
+                // unused here). Disabled at either end of the stack and
+                // while a turn runs, as the chat cycle is.
+                Button {
+                    model.goBackInHistory()
+                } label: {
+                    Text("Go Back", bundle: .module)
+                }
+                .keyboardShortcut(.leftArrow, modifiers: [.command, .option])
+                .disabled(!model.canGoBackInHistory)
+
+                Button {
+                    model.goForwardInHistory()
+                } label: {
+                    Text("Go Forward", bundle: .module)
+                }
+                .keyboardShortcut(.rightArrow, modifiers: [.command, .option])
+                .disabled(!model.canGoForwardInHistory)
+
+                Divider()
+
                 // The chat sidebar owns the Chat/Projects segment since the
                 // top bar's duplicate was removed, and Ctrl+Cmd+S can hide
                 // that sidebar -- which would strand the only way to

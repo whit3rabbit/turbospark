@@ -92,7 +92,16 @@ public final class AppModel: ObservableObject {
         }
         return controller
     }()
-    @Published public var activeSection: AppNavigationSection = .chat
+    @Published public var activeSection: AppNavigationSection = .chat {
+        willSet {
+            // OC-05: one observer for every writer. See AppModel+NavigationHistory.
+            navigationStateWillChange(
+                from: NavigationEntry(section: activeSection, chatID: selectedChatID))
+        }
+    }
+    /// Back/forward stack over section and chat switches (OC-05).
+    @Published var navigationHistory = NavigationHistory()
+    var navigationFlushScheduled = false
     /// Sub-modes listed in a section's panel beside the rail (Gotcha 17).
     /// Held here rather than in the pane's `@State` because the panel and the
     /// rail's fallback menu set them while the pane reads them; the pane no
@@ -879,6 +888,10 @@ public final class AppModel: ObservableObject {
     /// lazily inside that getter, mutating `@Published` state while a
     /// SwiftUI view was reading it (state#7).
     @Published public var selectedChatID: UUID = UUID() {
+        willSet {
+            navigationStateWillChange(
+                from: NavigationEntry(section: activeSection, chatID: selectedChatID))
+        }
         didSet {
             if activeDraftChat.id != selectedChatID {
                 // **STAMPED WITH THE PROJECT** (state#79). `run()`'s lazy

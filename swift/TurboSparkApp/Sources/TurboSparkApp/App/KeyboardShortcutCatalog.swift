@@ -44,6 +44,7 @@ public enum KeyboardShortcutCatalog {
     static let command = "\u{2318}"
     static let shift = "\u{21E7}"
     static let control = "\u{2303}"
+    static let option = "\u{2325}"
     static let returnKey = "\u{21A9}"
 
     /// One row per `AppSection`, in rail order, plus the two pane toggles and
@@ -59,6 +60,11 @@ public enum KeyboardShortcutCatalog {
             label: "Toggle Sidebar",
             keys: "\(control) \(command) S",
             altKeys: "\(command) B"))
+        // OC-05. Not Cmd+[ / Cmd+], which are Previous/Next Chat.
+        rows.append(KeyboardShortcutRow(
+            label: "Go Back", keys: "\(command) \(option) \u{2190}"))
+        rows.append(KeyboardShortcutRow(
+            label: "Go Forward", keys: "\(command) \(option) \u{2192}"))
         rows.append(KeyboardShortcutRow(label: "Toggle Inspector", keys: "\(shift) \(command) I"))
         rows.append(KeyboardShortcutRow(label: "Keyboard Shortcuts", keys: "\(command) /"))
         return KeyboardShortcutSection(title: "Navigation & View", rows: rows)
