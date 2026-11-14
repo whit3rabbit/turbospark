@@ -58,6 +58,19 @@ Checkpoint intake and `.gturbo` writing.
   bytes. Byte parity against the published mlx-community `-bf16`/`-4bit`
   pair is the gate (`tests/mlx_quantize_parity_network.rs`), not
   correlation, which the wrong quantizer also passes.
+- Quantize-on-install admits `qwen2` and `qwen3_vl` on inference only: their
+  norms are assumed plain `x * w` in both HF and MLX (no shift, from the
+  runtime's `encode_rms_norm_bf16w`), and nobody has diffed HF bytes against a
+  published conversion. Treat it as unproven until a `*_parity_network` test
+  exists for each. A Qwen2 text-only checkpoint spells the trunk `model.*` in
+  both layouts, so `canonicalize_for_family` must not run the qwen35 prefix
+  map on it (it would rename a bare `lm_head.` and the later
+  `canonicalize_qwen2_header` refuses the file as mixed).
+- 2-bit quantize-on-install writes group 128 with F16 scales and biases (the
+  walk requires F16 for 1- and 2-bit). `mx.quantize` stores companions in the
+  input dtype, so byte parity with `mlx_lm.convert` holds only against a
+  float16 conversion. A trunk matrix whose columns are not whole groups is
+  refused, not served raw.
 - An HF transformers export of `qwen3_5` stores trunk RMSNorms zero-centred.
   mlx-vlm adds 1 to `input_layernorm`, `post_attention_layernorm`, `q_norm`,
   `k_norm` and `model.norm`, and the runtime expects that. `linear_attn.norm`
