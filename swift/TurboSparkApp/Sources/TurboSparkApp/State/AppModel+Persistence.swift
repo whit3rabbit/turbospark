@@ -106,6 +106,7 @@ extension AppModel {
         self.guardrailsMode = AppGuardrailsMode(rawValue: settings.guardrailsMode) ?? .select
         self.modelReasoningDefaults = settings.modelReasoningDefaults
         self.interactionMode = AppInteractionMode(rawValue: settings.interactionMode) ?? .chat
+        self.chatSidebarMode = ChatSidebarMode(storedValue: settings.chatSidebarMode)
         self.browserSettings = settings.browser
         self.computerUseSettings = settings.computerUse
         self.networkPolicy = settings.networkPolicy
@@ -290,6 +291,7 @@ extension AppModel {
             guardrailsMode: guardrailsMode.rawValue,
             modelReasoningDefaults: modelReasoningDefaults,
             interactionMode: interactionMode.rawValue,
+            chatSidebarMode: chatSidebarMode.rawValue,
             alwaysStartInGhostMode: alwaysStartInGhostMode,
             offPeakEnabled: offPeakEnabled,
             rootlessPermissionMode: activePermissionMode.rawValue,

@@ -444,6 +444,12 @@ public final class AppModel: ObservableObject {
 
     /// Current UI interaction mode (Chat vs Projects / Coding).
     @Published public var interactionMode: AppInteractionMode = .chat
+    /// OC-03: how the chat sidebar groups rows. Persisted in `MacAppSettings`.
+    @Published var chatSidebarMode: ChatSidebarMode = .chats
+    /// OC-03: the chat the user just opened from a Finished inbox row. Opening
+    /// marks it read, so without this it would leave the list under the
+    /// pointer; it stays in Finished until the selection moves on.
+    @Published var inboxRetainedChatID: UUID?
     /// Profile-scoped browser automation preferences.
     @Published public var browserSettings = BrowserSettings()
     @Published public var computerUseSettings = ComputerUseSettings()
@@ -1481,6 +1487,12 @@ public final class AppModel: ObservableObject {
     public var info: SessionInfo? { session?.info }
 
     /// Switches the primary interaction mode and saves it as the default for future launches.
+    func setChatSidebarMode(_ mode: ChatSidebarMode) {
+        guard chatSidebarMode != mode else { return }
+        chatSidebarMode = mode
+        persistSettings()
+    }
+
     public func setInteractionMode(_ mode: AppInteractionMode) {
         self.interactionMode = mode
         persistSettings()

@@ -158,6 +158,9 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var modelReasoningDefaults: [String: String]
     /// Last-used primary interaction mode ("chat" or "projects").
     public var interactionMode: String
+    /// Chat sidebar grouping ("chats" or "inbox", OC-03). Unknown values load
+    /// as "chats".
+    public var chatSidebarMode: String
     /// Whether the app opens a temporary (Ghost Mode) chat on launch.
     public var alwaysStartInGhostMode: Bool
     /// Whether queued off-peak tasks may run (admission gate). Off by default.
@@ -360,6 +363,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         guardrailsMode: String = "select",
         modelReasoningDefaults: [String: String] = [:],
         interactionMode: String = "chat",
+        chatSidebarMode: String = "chats",
         alwaysStartInGhostMode: Bool = false,
         offPeakEnabled: Bool = false,
         rootlessPermissionMode: String = "auto",
@@ -455,6 +459,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.minAutoContextTokens = minAutoContextTokens
         self.modelReasoningDefaults = modelReasoningDefaults
         self.interactionMode = interactionMode
+        self.chatSidebarMode = chatSidebarMode
         self.alwaysStartInGhostMode = alwaysStartInGhostMode
         self.offPeakEnabled = offPeakEnabled
         self.rootlessPermissionMode = rootlessPermissionMode
@@ -604,6 +609,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.minAutoContextTokens = c.decodeLenient(UInt32.self, forKey: .minAutoContextTokens, fallback: 0)
         self.modelReasoningDefaults = c.decodeLenient([String: String].self, forKey: .modelReasoningDefaults, fallback: [:])
         self.interactionMode = c.decodeLenient(String.self, forKey: .interactionMode, fallback: "chat")
+        self.chatSidebarMode = c.decodeLenient(
+            String.self, forKey: .chatSidebarMode, fallback: "chats")
         self.alwaysStartInGhostMode = c.decodeLenient(
             Bool.self, forKey: .alwaysStartInGhostMode, fallback: false)
         self.offPeakEnabled = c.decodeLenient(

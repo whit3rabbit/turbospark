@@ -30,6 +30,11 @@ extension AppModel {
     /// being opened are both "seen" at this moment.
     func selectionChangedForReadState(from old: UUID) {
         guard old != selectedChatID else { return }
+        // Before the markers move: a chat opened while it holds an unread
+        // reply is a Finished inbox row that must not vanish on open.
+        inboxRetainedChatID =
+            chats.first(where: { $0.id == selectedChatID })?.hasUnreadReply == true
+            ? selectedChatID : nil
         markChatRead(id: old)
         markChatRead(id: selectedChatID)
     }

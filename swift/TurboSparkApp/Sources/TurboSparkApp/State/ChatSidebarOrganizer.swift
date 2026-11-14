@@ -57,15 +57,19 @@ struct ChatSidebarLayout {
 
     var isEmpty: Bool { isSearching ? matches.isEmpty : (pinned.isEmpty && groups.isEmpty) }
 
+    /// The search rule, shared with the Inbox grouping (OC-03) so both modes
+    /// filter alike. `query` is already trimmed and non-blank.
+    static func matches(_ chat: AppChat, query: String) -> Bool {
+        chat.title.localizedCaseInsensitiveContains(query)
+            || chat.preview.localizedCaseInsensitiveContains(query)
+    }
+
     /// `sortedHistory` must already be in `AppChat.sortedForSidebar` order;
     /// that order is kept inside the pinned list and every bucket.
     static func make(sortedHistory: [AppChat], searchText: String, now: Date = Date()) -> ChatSidebarLayout {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
-            let hits = sortedHistory.filter {
-                $0.title.localizedCaseInsensitiveContains(trimmed)
-                    || $0.preview.localizedCaseInsensitiveContains(trimmed)
-            }
+            let hits = sortedHistory.filter { matches($0, query: trimmed) }
             return ChatSidebarLayout(isSearching: true, matches: hits, pinned: [], groups: [])
         }
         var pinned: [AppChat] = []
