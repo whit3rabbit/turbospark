@@ -97,8 +97,13 @@ Skills are partitioned into two user-facing scopes:
      and project coding guidelines.
 
 3. **Bundled Scope (`SkillScope.bundled`)**:
-   - Read-only skills packaged with the application binary (e.g. system
-     diagnostic skills, initial starter templates).
+   - Read-only skills packaged with the application binary. They live in
+     `Sources/TurboSparkAppResources/BundledSkills/<name>/SKILL.md` (a `.copy`
+     resource: `.process` would flatten the folders) and are read by
+     `SkillManager.discoverBundledSkills()`.
+   - Lowest precedence: a user or project skill of the same name replaces
+     the bundled one. Not editable or deletable (`ownsSkill` is false).
+   - Shipped today: `plugin-creator` (see `SWIFT_PLUGINS.md`).
 
 ### B. On-disk directory and file layout
 

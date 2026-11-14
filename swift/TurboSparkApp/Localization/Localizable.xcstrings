@@ -95769,6 +95769,137 @@
         }
       }
     },
+    "Create Plugin...": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إنشاء إضافة…"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plugin erstellen…"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Create Plugin..."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Crear plugin…"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Créer un plugin…"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "יצירת תוסף…"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्लगइन बनाएँ…"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Buat plugin…"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Crea plugin…"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プラグインを作成…"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "플러그인 만들기…"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plug-in maken…"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Utwórz wtyczkę…"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Criar plugin…"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Создать плагин…"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skapa tillägg…"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eklenti oluştur…"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Створити плагін…"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tạo plugin…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "创建插件…"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "建立外掛…"
+          }
+        }
+      }
+    },
     "Image search": {
       "extractionState": "manual",
       "localizations": {
@@ -522998,6 +523129,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "使用技能"
+          }
+        }
+      }
+    },
+    "Use the plugin-creator skill to create a new plugin for me.\nPlugin name: \nWhat it does: \nComponents (skills, commands, agents, MCP servers): \nFolder to create it in: ": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "استخدم مهارة plugin-creator لإنشاء إضافة جديدة.\nاسم الإضافة: \nما تفعله: \nالمكونات (المهارات، الأوامر، الوكلاء، خوادم MCP): \nالمجلد المراد الإنشاء فيه: "
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nutze den Skill plugin-creator, um ein neues Plugin zu erstellen.\nPlugin-Name: \nWas es tut: \nKomponenten (Skills, Befehle, Agenten, MCP-Server): \nOrdner zum Erstellen: "
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use the plugin-creator skill to create a new plugin for me.\nPlugin name: \nWhat it does: \nComponents (skills, commands, agents, MCP servers): \nFolder to create it in: "
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usa la skill plugin-creator para crear un plugin nuevo.\nNombre del plugin: \nQué hace: \nComponentes (skills, comandos, agentes, servidores MCP): \nCarpeta donde crearlo: "
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Utilise la skill plugin-creator pour créer un nouveau plugin.\nNom du plugin: \nCe qu’il fait: \nComposants (skills, commandes, agents, serveurs MCP): \nDossier de création: "
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "השתמש במיומנות plugin-creator כדי ליצור תוסף חדש.\nשם התוסף: \nמה הוא עושה: \nרכיבים (מיומנויות, פקודות, סוכנים, שרתי MCP): \nתיקייה ליצירה: "
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "नया प्लगइन बनाने के लिए plugin-creator स्किल का उपयोग करें।\nप्लगइन का नाम: \nयह क्या करता है: \nघटक (स्किल, कमांड, एजेंट, MCP सर्वर): \nबनाने के लिए फ़ोल्डर: "
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gunakan skill plugin-creator untuk membuat plugin baru.\nNama plugin: \nFungsinya: \nKomponen (skill, perintah, agen, server MCP): \nFolder tujuan pembuatan: "
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usa la skill plugin-creator per creare un nuovo plugin.\nNome del plugin: \nCosa fa: \nComponenti (skill, comandi, agenti, server MCP): \nCartella in cui crearlo: "
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "plugin-creator スキルを使って新しいプラグインを作成してください。\nプラグイン名: \n機能: \nコンポーネント（スキル、コマンド、エージェント、MCPサーバー）: \n作成先フォルダ: "
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "plugin-creator 스킬을 사용해 새 플러그인을 만들어 주세요.\n플러그인 이름: \n기능: \n구성 요소(스킬, 명령, 에이전트, MCP 서버): \n만들 폴더: "
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gebruik de skill plugin-creator om een nieuwe plug-in te maken.\nNaam van de plug-in: \nWat hij doet: \nOnderdelen (skills, commando’s, agents, MCP-servers): \nMap om in aan te maken: "
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Użyj umiejętności plugin-creator, aby utworzyć nową wtyczkę.\nNazwa wtyczki: \nCo robi: \nKomponenty (umiejętności, polecenia, agenci, serwery MCP): \nFolder docelowy: "
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use a skill plugin-creator para criar um novo plugin.\nNome do plugin: \nO que ele faz: \nComponentes (skills, comandos, agentes, servidores MCP): \nPasta onde criá-lo: "
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Используй навык plugin-creator, чтобы создать новый плагин.\nНазвание плагина: \nЧто он делает: \nКомпоненты (навыки, команды, агенты, MCP-серверы): \nПапка для создания: "
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Använd färdigheten plugin-creator för att skapa ett nytt tillägg.\nTilläggets namn: \nVad det gör: \nKomponenter (färdigheter, kommandon, agenter, MCP-servrar): \nMapp att skapa det i: "
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yeni bir eklenti oluşturmak için plugin-creator becerisini kullan.\nEklenti adı: \nNe yapar: \nBileşenler (beceriler, komutlar, ajanlar, MCP sunucuları): \nOluşturulacak klasör: "
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Використай навичку plugin-creator, щоб створити новий плагін.\nНазва плагіна: \nЩо він робить: \nКомпоненти (навички, команди, агенти, MCP-сервери): \nПапка для створення: "
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hãy dùng kỹ năng plugin-creator để tạo một plugin mới.\nTên plugin: \nChức năng: \nThành phần (kỹ năng, lệnh, tác nhân, máy chủ MCP): \nThư mục để tạo: "
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请使用 plugin-creator 技能为我创建一个新插件。\n插件名称: \n功能: \n组件（技能、命令、代理、MCP 服务器）: \n创建位置: "
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請使用 plugin-creator 技能為我建立一個新外掛。\n外掛名稱: \n功能: \n元件（技能、指令、代理、MCP 伺服器）: \n建立位置: "
           }
         }
       }

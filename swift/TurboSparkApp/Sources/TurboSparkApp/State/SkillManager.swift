@@ -185,6 +185,25 @@ public final class SkillManager: @unchecked Sendable {
         return skills.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
+    /// Where the skills packaged inside the app live (`BundledSkills` in the
+    /// `TurboSparkAppResources` target, copied rather than processed so each
+    /// skill keeps its `<name>/SKILL.md` folder). Settable so a test can point
+    /// discovery at a fixture tree.
+    public var bundledSkillsDirectory: URL? = Bundle.module.resourceURL?
+        .appendingPathComponent("BundledSkills", isDirectory: true)
+
+    /// Skills shipped with the app. They are read-only (`ownsSkill` is false
+    /// for the `.bundled` scope, so edit and delete are refused) and the
+    /// lowest precedence: a user or project skill of the same name replaces
+    /// one, which is how a user swaps in their own version.
+    public func discoverBundledSkills() -> [AppSkill] {
+        guard let root = bundledSkillsDirectory,
+            fileManager.fileExists(atPath: root.path)
+        else { return [] }
+        return scanDirectory(root, scope: .bundled, defaultAgent: .turboSpark)
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
     /// Discovers all project-local skills inside a given project workspace directory.
     public func discoverProjectSkills(projectRootURL: URL) -> [AppSkill] {
         guard fileManager.fileExists(atPath: projectRootURL.path) else { return [] }
@@ -349,13 +368,24 @@ public final class SkillManager: @unchecked Sendable {
         // collide with a bare user or project name and need no precedence
         // rule -- the colon IS the namespace, as in Claude Code.
         let pluginSkills = PluginManager.shared.pluginSkills(projectURL: projectURL)
+        // Bundled skills sit below everything: a same-named user or project
+        // skill wins, so they are inserted first and overwritten.
+        let bundledSkills = discoverBundledSkills()
         guard let projectURL else {
-            return (userSkills + pluginSkills)
+            var byName: [String: AppSkill] = [:]
+            for skill in bundledSkills { byName[skill.name.lowercased()] = skill }
+            for skill in userSkills + pluginSkills { byName[skill.name.lowercased()] = skill }
+            return byName.values
                 .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
         }
 
         let projectSkills = discoverProjectSkills(projectRootURL: projectURL)
         var mergedMap: [String: AppSkill] = [:]
+
+        // 0. Bundled skills, overridden by anything below
+        for skill in bundledSkills {
+            mergedMap[skill.name.lowercased()] = skill
+        }
 
         // 1. Insert user skills first
         for skill in userSkills {

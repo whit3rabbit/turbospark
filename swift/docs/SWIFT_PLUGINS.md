@@ -189,6 +189,36 @@ channels, MCPB bundles, npm/pip sources. `dependencies` is recorded
 informationally; the unsupported surfaces are listed per plugin in the
 settings pane.
 
+## Plugin creator (ZP-07)
+
+Plugins are authored by the agent, not a form. The bundled `plugin-creator`
+skill (`Sources/TurboSparkAppResources/BundledSkills/plugin-creator/SKILL.md`)
+scaffolds `.claude-plugin/plugin.json` plus only the requested components, a
+dev `marketplace.json`, and prints the manual steps. The Plugins pane Import
+menu has "Create Plugin...", which calls `AppModel.composeInChat` with a
+localized draft naming the skill. The draft is editable and never sent for the
+user.
+
+- **Delivery.** A `SkillScope.bundled` skill read from the resource bundle by
+  `SkillManager.discoverBundledSkills()`. It is the lowest precedence (a user
+  or project skill of the same name replaces it), read-only (`ownsSkill` is
+  false), and disablable through the persisted skill state. The folder is a
+  `.copy` resource in `Package.swift` because `.process` flattens directories.
+  This differs from ZCode, which ships a builtin plugin; the builtin plugin
+  registry is out of scope here, and a later seeded-plugin path (ZP-05) can
+  take over the same skill.
+- **Containment is advisory.** The skill text forbids `..`, absolute paths,
+  symlinks and overwrites and names the refusal `PLUGIN_PATH_ESCAPE`, but only
+  the agent follows it. The enforced controls are the manifest parser (which
+  drops `..` and absolute paths) and the tool permission prompts on file
+  writes. The skill writes no hooks by default, so the plugin-hook trust gate
+  is untouched; MCP commands in `.mcp.json` run only once the user registers
+  and enables the plugin.
+- **Needs a project.** File writes are workspace-rooted tools, so the agent
+  can scaffold only in a chat with an open project and says so otherwise.
+- **Tests.** `PluginCreatorSkillTests`: real-bundle discovery, precedence,
+  read-only, templates through the real parsers, localized draft.
+
 ## Where things live
 
 `State/PluginModels.swift` (types), `State/PluginManifestParser.swift`
