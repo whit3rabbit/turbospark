@@ -550,6 +550,8 @@ extension AppModel {
         // Humanize owns a separate mapping that the Chat session cannot see.
         // Keep this guard here so deletion from Installed Models is safe too.
         // It is released with the chat model, after the delete has succeeded.
+        // The decider's second session maps the same files; it reloads lazily.
+        voiceCallDeciderHost.release(path: model.path)
         let humanizeHoldsIt = humanizeWorkspace.usesModel(at: model.path)
         if humanizeHoldsIt {
             guard !humanizeWorkspace.isBusy else {

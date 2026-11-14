@@ -645193,6 +645193,792 @@
         }
       }
     },
+    "Decider model": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "نموذج القرار"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Entscheidungsmodell"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Decider model"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modelo decisor"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modèle de décision"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מודל ההחלטה"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "निर्णय मॉडल"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model penentu"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modello decisionale"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "判定モデル"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "판단 모델"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beslismodel"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model decyzyjny"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modelo decisor"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Модель принятия решения"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beslutsmodell"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Karar modeli"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Модель ухвалення рішення"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mô hình quyết định"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "判定模型"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "判定模型"
+          }
+        }
+      }
+    },
+    "Automatic (the loaded chat model)": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تلقائي (نموذج الدردشة المحمّل)"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatisch (das geladene Chat-Modell)"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatic (the loaded chat model)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automático (el modelo de chat cargado)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatique (le modèle de chat chargé)"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "אוטומטי (מודל הצ'אט הטעון)"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "स्वचालित (लोड किया हुआ चैट मॉडल)"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Otomatis (model obrolan yang dimuat)"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatico (il modello di chat caricato)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動(読み込み済みのチャットモデル)"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "자동(불러온 채팅 모델)"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatisch (het geladen chatmodel)"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatycznie (załadowany model czatu)"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automático (o modelo de chat carregado)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Автоматически (загруженная модель чата)"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatiskt (den inlästa chattmodellen)"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Otomatik (yüklü sohbet modeli)"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Автоматично (завантажена модель чату)"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tự động (mô hình trò chuyện đã tải)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动(已加载的聊天模型)"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動(已載入的聊天模型)"
+          }
+        }
+      }
+    },
+    "Automatic uses the loaded chat model. Or pick a small installed model: it loads only while a call with auto-send is open, unloads when the call ends or after a few idle minutes, and until it is loaded spoken text waits in the message box. Nothing is downloaded.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يستخدم الوضع التلقائي نموذج الدردشة المحمّل. أو اختر نموذجًا صغيرًا مثبّتًا: يُحمَّل فقط أثناء مكالمة مفتوحة مع الإرسال التلقائي، ويُفرَّغ عند انتهاء المكالمة أو بعد بضع دقائق من الخمول، وإلى أن يُحمَّل يبقى الكلام المنطوق في مربع الرسالة. لا يتم تنزيل أي شيء."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatisch verwendet das geladene Chat-Modell. Oder wähle ein kleines installiertes Modell: Es wird nur geladen, solange ein Anruf mit automatischem Senden offen ist, und entladen, wenn der Anruf endet oder nach einigen Minuten Leerlauf. Bis es geladen ist, bleibt gesprochener Text im Nachrichtenfeld. Es wird nichts heruntergeladen."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatic uses the loaded chat model. Or pick a small installed model: it loads only while a call with auto-send is open, unloads when the call ends or after a few idle minutes, and until it is loaded spoken text waits in the message box. Nothing is downloaded."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automático usa el modelo de chat cargado. O elige un modelo pequeño instalado: solo se carga mientras hay una llamada abierta con envío automático, se descarga al terminar la llamada o tras unos minutos de inactividad, y hasta que se cargue el texto hablado espera en el cuadro de mensaje. No se descarga nada."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatique utilise le modèle de chat chargé. Ou choisissez un petit modèle installé : il n'est chargé que pendant un appel avec envoi automatique, déchargé à la fin de l'appel ou après quelques minutes d'inactivité, et tant qu'il n'est pas chargé, le texte dicté attend dans la zone de message. Rien n'est téléchargé."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "במצב אוטומטי נעשה שימוש במודל הצ'אט הטעון. אפשר גם לבחור מודל קטן שהותקן: הוא נטען רק בזמן שיחה פתוחה עם שליחה אוטומטית, נפרק בסיום השיחה או לאחר כמה דקות של חוסר פעילות, ועד שייטען הטקסט המדובר ממתין בתיבת ההודעה. שום דבר לא מורד."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "स्वचालित में लोड किया हुआ चैट मॉडल इस्तेमाल होता है। या कोई छोटा इंस्टॉल किया हुआ मॉडल चुनें: वह केवल ऑटो-सेंड वाली खुली कॉल के दौरान लोड होता है, कॉल खत्म होने पर या कुछ मिनट निष्क्रिय रहने पर अनलोड हो जाता है, और लोड होने तक बोला गया टेक्स्ट संदेश बॉक्स में रुका रहता है। कुछ भी डाउनलोड नहीं होता।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Otomatis memakai model obrolan yang sedang dimuat. Atau pilih model kecil yang terpasang: model ini dimuat hanya saat panggilan dengan kirim otomatis terbuka, dibongkar saat panggilan berakhir atau setelah beberapa menit tidak aktif, dan sebelum dimuat, ucapan tetap menunggu di kotak pesan. Tidak ada yang diunduh."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatico usa il modello di chat caricato. Oppure scegli un piccolo modello installato: viene caricato solo durante una chiamata aperta con invio automatico, scaricato alla fine della chiamata o dopo qualche minuto di inattività, e finché non è caricato il testo parlato resta nella casella del messaggio. Non viene scaricato nulla."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動では読み込み済みのチャットモデルを使います。または、インストール済みの小さなモデルを選べます。このモデルは、自動送信が有効な通話中だけ読み込まれ、通話の終了後または数分間使われなかった後に解放されます。読み込まれるまでは、話した内容はメッセージ欄に残ります。何もダウンロードされません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "자동은 불러온 채팅 모델을 사용합니다. 또는 설치된 작은 모델을 고를 수 있습니다. 이 모델은 자동 전송이 켜진 통화 중에만 불러오고, 통화가 끝나거나 몇 분간 사용하지 않으면 내려놓으며, 불러오기 전에는 말한 내용이 메시지 입력란에 남습니다. 아무것도 다운로드하지 않습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatisch gebruikt het geladen chatmodel. Of kies een klein geïnstalleerd model: het wordt alleen geladen zolang een gesprek met automatisch verzenden openstaat, en ontladen als het gesprek eindigt of na een paar minuten inactiviteit. Tot het geladen is, blijft gesproken tekst in het berichtvak staan. Er wordt niets gedownload."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tryb automatyczny używa załadowanego modelu czatu. Możesz też wybrać mały zainstalowany model: jest ładowany tylko podczas otwartej rozmowy z automatycznym wysyłaniem i zwalniany po jej zakończeniu lub po kilku minutach bezczynności, a do czasu załadowania wypowiedziany tekst czeka w polu wiadomości. Nic nie jest pobierane."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automático usa o modelo de chat carregado. Ou escolha um modelo pequeno instalado: ele só é carregado enquanto uma chamada com envio automático está aberta, é descarregado quando a chamada termina ou após alguns minutos ocioso, e até ser carregado o texto falado fica na caixa de mensagem. Nada é baixado."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В автоматическом режиме используется загруженная модель чата. Либо выберите небольшую установленную модель: она загружается только во время открытого звонка с автоотправкой, выгружается по его окончании или после нескольких минут простоя, а пока она не загружена, сказанный текст остаётся в поле сообщения. Ничего не скачивается."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatiskt använder den inlästa chattmodellen. Eller välj en liten installerad modell: den läses in bara medan ett samtal med automatisk sändning är öppet, lämnas när samtalet slutar eller efter några minuters inaktivitet, och tills den är inläst väntar talad text i meddelanderutan. Inget laddas ned."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Otomatik, yüklü sohbet modelini kullanır. Ya da yüklü küçük bir model seçin: yalnızca otomatik gönderimin açık olduğu bir görüşme sürerken yüklenir, görüşme bitince veya birkaç dakika boşta kalınca boşaltılır ve yüklenene kadar konuşulan metin mesaj kutusunda bekler. Hiçbir şey indirilmez."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В автоматичному режимі використовується завантажена модель чату. Або виберіть невелику встановлену модель: вона завантажується лише під час відкритого дзвінка з автовідправленням, вивантажується після його завершення або після кількох хвилин бездіяльності, а доки вона не завантажена, сказаний текст залишається в полі повідомлення. Нічого не завантажується з мережі."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tự động dùng mô hình trò chuyện đã tải. Hoặc chọn một mô hình nhỏ đã cài: mô hình chỉ được tải khi có cuộc gọi đang mở với tự động gửi, được gỡ khi cuộc gọi kết thúc hoặc sau vài phút không dùng, và cho đến khi tải xong, lời nói vẫn nằm trong ô tin nhắn. Không có gì được tải xuống."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自动使用已加载的聊天模型。也可以选择一个已安装的小模型:它只在开启自动发送的通话期间加载,通话结束或闲置几分钟后卸载,加载完成之前,说出的文字会留在消息框中。不会下载任何内容。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動會使用已載入的聊天模型。也可以選擇一個已安裝的小型模型:它只在開啟自動傳送的通話期間載入,通話結束或閒置幾分鐘後卸載,載入完成之前,說出的文字會留在訊息框中。不會下載任何內容。"
+          }
+        }
+      }
+    },
+    "The model you chose is no longer available, so the loaded chat model is used instead.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "النموذج الذي اخترته لم يعد متاحًا، لذا يُستخدم نموذج الدردشة المحمّل بدلًا منه."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Das gewählte Modell ist nicht mehr verfügbar, deshalb wird stattdessen das geladene Chat-Modell verwendet."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The model you chose is no longer available, so the loaded chat model is used instead."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El modelo que elegiste ya no está disponible, así que se usa el modelo de chat cargado."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le modèle choisi n'est plus disponible, le modèle de chat chargé est donc utilisé à la place."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "המודל שבחרת אינו זמין עוד, ולכן נעשה שימוש במודל הצ'אט הטעון."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "आपका चुना हुआ मॉडल अब उपलब्ध नहीं है, इसलिए इसके बजाय लोड किया हुआ चैट मॉडल इस्तेमाल हो रहा है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model yang Anda pilih tidak tersedia lagi, jadi model obrolan yang dimuat dipakai sebagai gantinya."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il modello scelto non è più disponibile, quindi viene usato al suo posto il modello di chat caricato."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "選択したモデルは利用できなくなったため、代わりに読み込み済みのチャットモデルを使います。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "선택한 모델을 더 이상 사용할 수 없어 대신 불러온 채팅 모델을 사용합니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Het gekozen model is niet meer beschikbaar, dus het geladen chatmodel wordt gebruikt."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wybrany model nie jest już dostępny, więc używany jest załadowany model czatu."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O modelo escolhido não está mais disponível, então o modelo de chat carregado é usado no lugar."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Выбранная вами модель больше недоступна, поэтому вместо неё используется загруженная модель чата."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modellen du valde är inte längre tillgänglig, så den inlästa chattmodellen används i stället."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Seçtiğiniz model artık kullanılamıyor, bu yüzden bunun yerine yüklü sohbet modeli kullanılıyor."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вибрана вами модель більше недоступна, тому замість неї використовується завантажена модель чату."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mô hình bạn đã chọn không còn khả dụng, nên mô hình trò chuyện đã tải được dùng thay thế."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你选择的模型已不可用,因此改用已加载的聊天模型。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "你選擇的模型已無法使用,因此改用已載入的聊天模型。"
+          }
+        }
+      }
+    },
+    "This model is too large to keep beside the chat model, so spoken text stays in the message box.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "هذا النموذج أكبر من أن يبقى بجانب نموذج الدردشة، لذا يبقى الكلام المنطوق في مربع الرسالة."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieses Modell ist zu groß, um neben dem Chat-Modell geladen zu bleiben. Gesprochener Text bleibt deshalb im Nachrichtenfeld."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This model is too large to keep beside the chat model, so spoken text stays in the message box."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este modelo es demasiado grande para mantenerlo junto al modelo de chat, así que el texto hablado se queda en el cuadro de mensaje."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce modèle est trop volumineux pour rester chargé à côté du modèle de chat : le texte dicté reste dans la zone de message."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "המודל הזה גדול מדי כדי להישאר לצד מודל הצ'אט, ולכן הטקסט המדובר נשאר בתיבת ההודעה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "यह मॉडल चैट मॉडल के साथ रखने के लिए बहुत बड़ा है, इसलिए बोला गया टेक्स्ट संदेश बॉक्स में ही रहता है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model ini terlalu besar untuk dijaga berdampingan dengan model obrolan, jadi ucapan tetap berada di kotak pesan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Questo modello è troppo grande per restare accanto al modello di chat, quindi il testo parlato resta nella casella del messaggio."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このモデルはチャットモデルと同時に保持するには大きすぎるため、話した内容はメッセージ欄に残ります。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 모델은 채팅 모델과 함께 두기에는 너무 커서 말한 내용이 메시지 입력란에 남습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dit model is te groot om naast het chatmodel te blijven staan, dus gesproken tekst blijft in het berichtvak staan."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ten model jest zbyt duży, by pozostawać w pamięci obok modelu czatu, więc wypowiedziany tekst zostaje w polu wiadomości."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este modelo é grande demais para ficar ao lado do modelo de chat, então o texto falado fica na caixa de mensagem."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Эта модель слишком велика, чтобы держать её рядом с моделью чата, поэтому сказанный текст остаётся в поле сообщения."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Den här modellen är för stor för att ligga bredvid chattmodellen, så talad text stannar i meddelanderutan."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu model sohbet modelinin yanında tutulamayacak kadar büyük, bu yüzden konuşulan metin mesaj kutusunda kalır."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ця модель завелика, щоб тримати її поруч із моделлю чату, тому сказаний текст залишається в полі повідомлення."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mô hình này quá lớn để giữ cùng mô hình trò chuyện, nên lời nói vẫn nằm trong ô tin nhắn."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此模型太大,无法与聊天模型同时保留,因此说出的文字会留在消息框中。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此模型太大,無法與聊天模型同時保留,因此說出的文字會留在訊息框中。"
+          }
+        }
+      }
+    },
+    "The decider model did not load, so spoken text stays in the message box.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لم يتم تحميل نموذج القرار، لذا يبقى الكلام المنطوق في مربع الرسالة."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Das Entscheidungsmodell wurde nicht geladen. Gesprochener Text bleibt deshalb im Nachrichtenfeld."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The decider model did not load, so spoken text stays in the message box."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El modelo decisor no se cargó, así que el texto hablado se queda en el cuadro de mensaje."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le modèle de décision n'a pas été chargé : le texte dicté reste dans la zone de message."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מודל ההחלטה לא נטען, ולכן הטקסט המדובר נשאר בתיבת ההודעה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "निर्णय मॉडल लोड नहीं हुआ, इसलिए बोला गया टेक्स्ट संदेश बॉक्स में ही रहता है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model penentu tidak termuat, jadi ucapan tetap berada di kotak pesan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il modello decisionale non è stato caricato, quindi il testo parlato resta nella casella del messaggio."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "判定モデルを読み込めなかったため、話した内容はメッセージ欄に残ります。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "판단 모델을 불러오지 못해 말한 내용이 메시지 입력란에 남습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Het beslismodel is niet geladen, dus gesproken tekst blijft in het berichtvak staan."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model decyzyjny nie został załadowany, więc wypowiedziany tekst zostaje w polu wiadomości."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O modelo decisor não foi carregado, então o texto falado fica na caixa de mensagem."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Модель принятия решения не загрузилась, поэтому сказанный текст остаётся в поле сообщения."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beslutsmodellen lästes inte in, så talad text stannar i meddelanderutan."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Karar modeli yüklenmedi, bu yüzden konuşulan metin mesaj kutusunda kalır."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Модель ухвалення рішення не завантажилась, тому сказаний текст залишається в полі повідомлення."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mô hình quyết định chưa được tải, nên lời nói vẫn nằm trong ô tin nhắn."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "判定模型未能加载,因此说出的文字会留在消息框中。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "判定模型未能載入,因此說出的文字會留在訊息框中。"
+          }
+        }
+      }
+    },
     "Auto-send voice utterances": {
       "extractionState": "manual",
       "localizations": {

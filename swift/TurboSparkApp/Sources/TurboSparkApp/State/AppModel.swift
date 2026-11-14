@@ -268,6 +268,8 @@ public final class AppModel: ObservableObject {
         // model (maybe without vision) must ask again.
         didSet {
             if oldValue !== session, !computerUseSessions.isEmpty { revokeAllComputerUseGrants() }
+            // A chat model that becomes the chosen decider needs no second copy.
+            if oldValue !== session, voiceCallDeciderModelID != nil { syncVoiceCallDecider() }
         }
     }
     /// Whether a model is currently being loaded into memory.
@@ -466,6 +468,12 @@ public final class AppModel: ObservableObject {
     /// OC-08: auto-send of a voice utterance after a local decider allows it.
     /// Off by default. Needs `voiceCallEnabled` and a loaded local model.
     @Published var voiceCallAutoSendEnabled = false
+    /// The installed model (`installId`) that answers the auto-send check, or
+    /// nil for Automatic (the loaded chat model).
+    @Published var voiceCallDeciderModelID: String?
+    /// The second resident session for a dedicated decider model. Built on
+    /// first use and empty until a call with auto-send on asks for it.
+    lazy var voiceCallDeciderHost: VoiceCallDeciderHost = makeVoiceCallDeciderHost()
     /// OC-08: the one call controller, built on first use so a launch with
     /// the setting off creates no audio objects.
     var voiceCallBuilt = false

@@ -41,7 +41,9 @@ struct VoiceCallSettingsSection: View {
             .font(theme.ui(.small))
             .foregroundStyle(.appSecondary)
             .fixedSize(horizontal: false, vertical: true)
-            if model.voiceCallAutoSendEnabled, model.session == nil {
+            deciderModelPicker
+            if model.voiceCallAutoSendEnabled, model.session == nil,
+               model.voiceCallDeciderResolution.dedicatedCandidate == nil {
                 Text(
                     "No model is loaded, so spoken text stays in the message box until you load one.",
                     bundle: .module
@@ -51,5 +53,76 @@ struct VoiceCallSettingsSection: View {
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    /// The model that answers the auto-send check. Automatic is the loaded
+    /// chat model; a chosen model loads only while a call with auto-send on is
+    /// open, and never downloads anything.
+    @ViewBuilder
+    private var deciderModelPicker: some View {
+        let candidates = model.voiceCallDeciderCandidates
+        let resolution = model.voiceCallDeciderResolution
+        Picker(selection: Binding<String?>(
+            get: { resolution.dedicatedCandidate?.installId },
+            set: { model.setVoiceCallDeciderModelID($0) })
+        ) {
+            Text("Automatic (the loaded chat model)", bundle: .module).tag(String?.none)
+            ForEach(candidates) { candidate in
+                Text(verbatim: "\(candidate.alias) (\(Self.sizeText(candidate.bytes)))")
+                    .tag(Optional(candidate.installId))
+            }
+        } label: {
+            Text("Decider model", bundle: .module)
+        }
+        .disabled(!model.voiceCallEnabled || !model.voiceCallAutoSendEnabled)
+        .settingsControl("Decider model", pane: .general, timing: .immediate)
+        Text(
+            "Automatic uses the loaded chat model. Or pick a small installed model: it loads only while a call with auto-send is open, unloads when the call ends or after a few idle minutes, and until it is loaded spoken text waits in the message box. Nothing is downloaded.",
+            bundle: .module
+        )
+        .font(theme.ui(.small))
+        .foregroundStyle(.appSecondary)
+        .fixedSize(horizontal: false, vertical: true)
+        if resolution.note == .savedModelUnavailable {
+            Text(
+                "The model you chose is no longer available, so the loaded chat model is used instead.",
+                bundle: .module
+            )
+            .font(theme.ui(.small))
+            .foregroundStyle(.appWarning)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        if resolution.dedicatedCandidate != nil {
+            VoiceCallDeciderStatusNote(host: model.voiceCallDeciderHost)
+        }
+    }
+
+    private static func sizeText(_ bytes: UInt64) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    }
+}
+
+/// Observes the host so a failed load shows without reopening Settings.
+@MainActor
+private struct VoiceCallDeciderStatusNote: View {
+    @Environment(\.appTheme) private var theme
+    @ObservedObject var host: VoiceCallDeciderHost
+
+    var body: some View {
+        switch host.status {
+        case .failed(.tooLarge):
+            note("This model is too large to keep beside the chat model, so spoken text stays in the message box.")
+        case .failed:
+            note("The decider model did not load, so spoken text stays in the message box.")
+        case .unloaded, .loading, .ready:
+            EmptyView()
+        }
+    }
+
+    private func note(_ key: LocalizedStringKey) -> some View {
+        Text(key, bundle: .module)
+            .font(theme.ui(.small))
+            .foregroundStyle(.appWarning)
+            .fixedSize(horizontal: false, vertical: true)
     }
 }

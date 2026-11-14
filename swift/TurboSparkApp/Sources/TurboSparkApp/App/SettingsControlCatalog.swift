@@ -77,6 +77,7 @@ enum SettingsControlCatalog {
         .init(title: "Compact older tool results", pane: .general, timing: .nextTurn),
         .init(title: "Context Compaction", pane: .general, timing: .immediate),
         .init(title: "Continue responses after output limits", pane: .general, timing: .nextTurn),
+        .init(title: "Decider model", pane: .general, timing: .immediate),
         .init(title: "Enable Syntext project indexing", pane: .general, timing: .immediate),
         .init(title: "Enable tools in Chat by default", pane: .general, timing: .nextTurn),
         .init(title: "Error", pane: .general, timing: .immediate),

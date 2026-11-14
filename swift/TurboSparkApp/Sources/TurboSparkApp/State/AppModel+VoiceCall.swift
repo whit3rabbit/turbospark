@@ -121,14 +121,17 @@ extension AppModel {
         voiceCallStateObserver = controller.$state
             .map(\.isActive)
             .removeDuplicates()
-            .sink { [weak self] active in self?.voiceCallActive = active }
+            .sink { [weak self] active in
+                self?.voiceCallActive = active
+                self?.syncVoiceCallDecider()
+            }
         return controller
     }
 
     private func makeVoiceCallControllerCore(
         port: AppModelVoiceCallPort, environment: VoiceCallEnvironment
     ) -> VoiceCallController {
-        VoiceCallController(
+        let controller = VoiceCallController(
             chat: port, audio: AudioCaptureVoiceSource(), speaker: VoiceCallSpeaker(),
             environment: environment,
             makeTranscriber: { [weak self] onEvent in
@@ -147,13 +150,26 @@ extension AppModel {
                 guard let self else { return false }
                 return self.voiceCallEnabled && self.voiceCallAutoSendEnabled
             })
+        // Per decision: a dedicated model has its own budget, and a dropped
+        // decision (turn, End, Mute, approval) stops its generation.
+        controller.decisionTimeoutProvider = { [weak self] in
+            self?.voiceCallDeciderResolution.dedicatedCandidate.map {
+                VoiceCallDeciderBudget.decisionTimeout(modelBytes: $0.bytes)
+            }
+        }
+        controller.onDecisionCancelled = { [weak self] in self?.voiceCallDeciderHost.cancelInFlight() }
+        return controller
     }
 
     /// The decider runs on the local model that is already loaded: no
     /// network, no new credential, no download. With no model loaded it
     /// throws, which the race turns into draft-first.
     private func voiceCallSubmitDecider() -> VoiceCallSubmitDeciding {
-        VoiceCallLocalDecider { [weak self] messages, options in
+        let dedicated = VoiceCallLocalDecider { [weak self] messages, options in
+            guard let host = await self?.voiceCallDeciderHost else { throw VoiceCallDeciderError.notWanted }
+            return try await host.complete(messages, options: options)
+        }
+        let automatic = VoiceCallLocalDecider { [weak self] messages, options in
             guard let session = await self?.session else {
                 throw TurboSparkError(code: .invalidArgument, message: "no local model loaded")
             }
@@ -164,6 +180,71 @@ extension AppModel {
             }
             return response
         }
+        return VoiceCallRoutedDecider(
+            automatic: automatic, dedicated: dedicated,
+            usesDedicated: { [weak self] in
+                await self?.voiceCallDeciderResolution.dedicatedCandidate != nil
+            })
+    }
+
+    // MARK: Dedicated decider model
+
+    /// Installed text models that can answer the check: loadable now, a chat
+    /// model (not a vision sidecar). Nothing is downloaded or loaded to list them.
+    var voiceCallDeciderCandidates: [VoiceCallDeciderCandidate] {
+        loadableModels
+            .filter { $0.modality == "text" && $0.kind == nil }
+            .map {
+                VoiceCallDeciderCandidate(
+                    installId: $0.installId, alias: $0.alias, path: $0.path, bytes: $0.installBytes)
+            }
+    }
+
+    var voiceCallDeciderResolution: VoiceCallDeciderResolution {
+        VoiceCallDeciderResolution.resolve(
+            savedID: voiceCallDeciderModelID, available: voiceCallDeciderCandidates,
+            loadedChatPath: loadedModelPath)
+    }
+
+    func setVoiceCallDeciderModelID(_ id: String?) {
+        guard voiceCallDeciderModelID != id else { return }
+        voiceCallDeciderModelID = id
+        persistSettings()
+        syncVoiceCallDecider()
+    }
+
+    /// Brings the second session in line with the setting, the call and the
+    /// choice. It is wanted only while a call is active with auto-send on.
+    func syncVoiceCallDecider() {
+        let resolved = voiceCallDeciderResolution.dedicatedCandidate
+        voiceCallDeciderHost.configure(candidate: resolved)
+        voiceCallDeciderHost.setWanted(
+            resolved != nil && voiceCallActive && voiceCallEnabled && voiceCallAutoSendEnabled)
+    }
+
+    func makeVoiceCallDeciderHost() -> VoiceCallDeciderHost {
+        let host = VoiceCallDeciderHost()
+        host.turnBusy = { [weak self] in
+            guard let self else { return true }
+            return self.generating || self.submitting || self.pendingToolCall != nil
+                || self.pendingUserQuestions != nil
+        }
+        host.open = { [weak self] path in
+            // Same resource policy as the chat session and Humanize, read on
+            // the main actor at open time.
+            let (options, moving): (OpenOptions, Bool) = await MainActor.run {
+                var options = OpenOptions()
+                guard let self else { return (options, true) }
+                options.powerProfile = self.runtimeOptions.powerProfile.powerProfile
+                options.loadGuard = self.activeLoadGuard
+                // The rubric and one utterance fit in a small window.
+                options.maxContext = .fixed(2_048)
+                return (options, self.isMoving(path: path))
+            }
+            guard !moving else { throw VoiceCallDeciderError.notReady }
+            return VoiceCallSessionEngine(session: try await TurboSparkSession(modelPath: path, options: options))
+        }
+        return host
     }
 
     /// OC-08: the ONE path that sends a voice utterance without the user's
@@ -190,6 +271,7 @@ extension AppModel {
         guard voiceCallAutoSendEnabled != enabled else { return }
         voiceCallAutoSendEnabled = enabled
         persistSettings()
+        syncVoiceCallDecider()
     }
 
     /// The call uses the live text model the Record page uses.

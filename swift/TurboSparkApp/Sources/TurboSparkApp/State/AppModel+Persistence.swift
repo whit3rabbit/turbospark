@@ -110,6 +110,7 @@ extension AppModel {
         self.attentionPreferences = settings.attentionEvents
         self.voiceCallEnabled = settings.voiceCallEnabled
         self.voiceCallAutoSendEnabled = settings.voiceCallAutoSendEnabled
+        self.voiceCallDeciderModelID = settings.voiceCallDeciderModelID
         self.browserSettings = settings.browser
         self.computerUseSettings = settings.computerUse
         self.networkPolicy = settings.networkPolicy
@@ -298,6 +299,7 @@ extension AppModel {
             attentionEvents: attentionPreferences,
             voiceCallEnabled: voiceCallEnabled,
             voiceCallAutoSendEnabled: voiceCallAutoSendEnabled,
+            voiceCallDeciderModelID: voiceCallDeciderModelID,
             alwaysStartInGhostMode: alwaysStartInGhostMode,
             offPeakEnabled: offPeakEnabled,
             rootlessPermissionMode: activePermissionMode.rawValue,

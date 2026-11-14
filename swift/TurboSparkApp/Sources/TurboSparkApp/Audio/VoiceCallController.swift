@@ -46,7 +46,17 @@ final class VoiceCallController: ObservableObject {
     private let decisionSleep: VoiceCallDecisionRace.Sleep
     /// Identifies the decision in flight; nil when none. Clearing it is how
     /// a decision is cancelled, so a late result is dropped.
-    private var decisionToken: UUID?
+    private var decisionToken: UUID? {
+        didSet {
+            // A decision that is dropped (End, Mute, an approval, a turn)
+            // must also stop a dedicated model that is still generating.
+            if decisionToken == nil, oldValue != nil { onDecisionCancelled?() }
+        }
+    }
+    /// The budget for the next decision, read per decision so a dedicated
+    /// model can have its own. nil means `decisionTimeout`.
+    var decisionTimeoutProvider: (@MainActor () -> Duration?)?
+    var onDecisionCancelled: (@MainActor () -> Void)?
     private var detector: VoiceCallSpeechDetecting
     private var planner: VoiceCallSpeechPlanner
 
@@ -427,7 +437,7 @@ final class VoiceCallController: ObservableObject {
               !chat.isTurnBusy, !chat.hasPendingApproval else { return false }
         let token = UUID()
         decisionToken = token
-        let timeout = decisionTimeout
+        let timeout = decisionTimeoutProvider?() ?? decisionTimeout
         let sleep = decisionSleep
         Task { [weak self] in
             let decision = await VoiceCallDecisionRace.run(

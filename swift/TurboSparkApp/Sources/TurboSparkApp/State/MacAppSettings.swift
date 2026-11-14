@@ -169,6 +169,10 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// Whether a final voice utterance may be sent without pressing Send,
     /// after a local decider says allow (OC-08). Off by default.
     public var voiceCallAutoSendEnabled: Bool
+    /// The installed model that answers the auto-send check (`installId`), or
+    /// nil for Automatic (the loaded chat model). An id that no longer
+    /// resolves behaves as Automatic and the setting says so.
+    public var voiceCallDeciderModelID: String?
     /// Whether the app opens a temporary (Ghost Mode) chat on launch.
     public var alwaysStartInGhostMode: Bool
     /// Whether queued off-peak tasks may run (admission gate). Off by default.
@@ -375,6 +379,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         attentionEvents: AttentionPreferences = AttentionPreferences(),
         voiceCallEnabled: Bool = false,
         voiceCallAutoSendEnabled: Bool = false,
+        voiceCallDeciderModelID: String? = nil,
         alwaysStartInGhostMode: Bool = false,
         offPeakEnabled: Bool = false,
         rootlessPermissionMode: String = "auto",
@@ -474,6 +479,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.attentionEvents = attentionEvents
         self.voiceCallEnabled = voiceCallEnabled
         self.voiceCallAutoSendEnabled = voiceCallAutoSendEnabled
+        self.voiceCallDeciderModelID = voiceCallDeciderModelID
         self.alwaysStartInGhostMode = alwaysStartInGhostMode
         self.offPeakEnabled = offPeakEnabled
         self.rootlessPermissionMode = rootlessPermissionMode
@@ -631,6 +637,9 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             Bool.self, forKey: .voiceCallEnabled, fallback: false)
         self.voiceCallAutoSendEnabled = c.decodeLenient(
             Bool.self, forKey: .voiceCallAutoSendEnabled, fallback: false)
+        // A wrong-typed value decodes as Automatic, never fails the file.
+        self.voiceCallDeciderModelID = c.decodeLenient(
+            String?.self, forKey: .voiceCallDeciderModelID, fallback: nil)
         self.alwaysStartInGhostMode = c.decodeLenient(
             Bool.self, forKey: .alwaysStartInGhostMode, fallback: false)
         self.offPeakEnabled = c.decodeLenient(
