@@ -400,6 +400,10 @@ impl PullSource {
     /// The plan, probing a `--repo` source first.
     fn plan(self, client: &Client, options: &Options) -> Result<InstallPlan, Error> {
         match self {
+            Self::Row(_) if options.quantize.is_some() => Err(Error::Usage(
+                "--quantize applies to a --repo pull; a catalog row pins its own quantization"
+                    .to_string(),
+            )),
             Self::Row(plan) => Ok(plan),
             Self::Repo {
                 alias,
@@ -409,7 +413,9 @@ impl PullSource {
                 let report =
                     catalog::probe(client, &weights, options.file.as_deref(), Some(&sidecars))
                         .map_err(Error::Failed)?;
-                Ok(InstallPlan::from_probe(&alias, &report, sidecars))
+                let mut plan = InstallPlan::from_probe(&alias, &report, sidecars);
+                plan.quantize_bits = options.quantize;
+                Ok(plan)
             }
         }
     }

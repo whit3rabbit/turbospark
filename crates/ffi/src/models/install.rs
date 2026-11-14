@@ -514,6 +514,7 @@ mod cancel_tests {
             // `crates/catalog` defaults this false too.
             include_vision: false,
             vision_from_bytes: false,
+            quantize_bits: None,
         };
         let flag = CancelFlag::new();
         flag.cancel();

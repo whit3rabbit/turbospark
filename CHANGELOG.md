@@ -14,6 +14,16 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- `turbospark-model pull --repo` installs unquantized (BF16, FP16 or F32)
+  Qwen 3.5 dense, Qwen2 and Qwen3-VL checkpoints, such as fine-tunes
+  published only in full precision. The weights are quantized to MLX affine
+  4-bit at group 64 as they stream, 8-bit with `--quantize 8`, or 2-bit at
+  group 128 with `--quantize 2`. For Qwen 3.5 the 4-bit install is
+  byte-identical to what `mlx_lm.convert` produces; Qwen2 and Qwen3-VL are
+  not yet byte-checked against a published conversion, and 2-bit matches
+  `mlx_lm.convert` only for a float16 source. Both the MLX and the Hugging
+  Face transformers tensor layouts are accepted. Other families still refuse
+  an unquantized checkpoint.
 - Music and Voice Cloning ask for a model before they open. While none of the
   page's curated models is on the Mac, a card over the page lists each one with
   its download size and estimated memory, flags a model that may not fit this

@@ -110,6 +110,11 @@ OPTIONS:
     --sidecar-repo <REPO>[@REV] take tokenizer files from another repo. A GGUF
                                 carries llama.cpp's tokenizer, not an HF
                                 tokenizer.json, so a GGUF pull needs this
+    --quantize <2|4|8>          for a --repo pull of an UNQUANTIZED (BF16/FP16)
+                                checkpoint: the MLX affine width to quantize to
+                                at group 64 (2-bit: group 128; default 4).
+                                Refused on a
+                                checkpoint that is already quantized
     --reuse-trunk-from <ALIAS>  for a row naming an mtp source: read an
                                 already-installed alias's resident trunk back
                                 off disk instead of re-streaming it, so only
@@ -213,6 +218,8 @@ pub struct Options {
     pub kind: Option<String>,
     pub file: Option<String>,
     pub sidecar_repo: Option<String>,
+    /// `--quantize <2|4|8>`: quantize-on-install width for a `--repo` pull.
+    pub quantize: Option<u32>,
     /// An already-installed alias to reuse the trunk's resident bytes from,
     /// instead of re-streaming them, when the row being pulled names an
     /// `mtp` source. Only meaningful with `pull`.
@@ -329,6 +336,7 @@ fn run(args: &[String]) -> Result<(), Error> {
                 "alias",
                 "file",
                 "sidecar-repo",
+                "quantize",
                 "reuse-trunk-from",
                 "force",
             ])?;
@@ -495,6 +503,20 @@ fn parse(args: &[String]) -> Result<(Vec<String>, Options), Error> {
             "--sidecar-repo" => {
                 options.sidecar_repo = Some(value_for(&mut index, "--sidecar-repo")?);
                 seen.push("sidecar-repo");
+            }
+            "--quantize" => {
+                let value = value_for(&mut index, "--quantize")?;
+                options.quantize = Some(match value.as_str() {
+                    "4" => 4,
+                    "8" => 8,
+                    "2" => 2,
+                    _ => {
+                        return Err(Error::Usage(format!(
+                            "--quantize {value:?}: only 2, 4 or 8 is supported"
+                        )))
+                    }
+                });
+                seen.push("quantize");
             }
             "--reuse-trunk-from" => {
                 options.reuse_trunk_from = Some(value_for(&mut index, "--reuse-trunk-from")?);

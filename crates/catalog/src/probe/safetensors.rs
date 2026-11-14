@@ -146,11 +146,36 @@ pub fn evaluate_config(
     // Hugging Face probe as a runnable INT4 one. A default is a claim about
     // what silence means, and this module's question makes silence mean
     // something else (AGENTS.md Gotcha 39).
-    if config
+    let unquantized = config
         .get("quantization")
         .and_then(|v| v.as_object())
-        .is_none()
-    {
+        .is_none();
+    // Quantize-on-install (`repack::quantize_on_install`): the install walk
+    // writes exactly what `mlx_lm.convert` would have, so this checkpoint has
+    // the same kernels as its mlx-community 4-bit conversion. Admitted per
+    // family, each on its own real gate; every other family keeps the
+    // refusal below verbatim.
+    if unquantized && repack::quantize_on_install::family_admits_quantize_on_install(family) {
+        report.affine = Some((4, repack::quantize_on_install::group_for(4)));
+        report.warnings.push(
+            "config.json declares no quantization block: the install quantizes the BF16 \
+             weights to MLX affine 4-bit at group 64 as they stream, or 8-bit with \
+             --quantize 8 or 2-bit (group 128) with --quantize 2. The download is the \
+             full-precision size; the install is about a quarter of it."
+                .to_string(),
+        );
+        if family != model_io::ModelFamily::QwenGdnDense {
+            // Only qwen35 has been diffed byte for byte against a published
+            // mlx-community conversion; say so rather than imply it.
+            report.warnings.push(format!(
+                "quantize-on-install for the {} family has not been byte-checked against a \
+                 published MLX conversion; judge the install on its own output",
+                family.as_str()
+            ));
+        }
+        return Ok(report);
+    }
+    if unquantized {
         report.refuse(
             "config.json declares no `quantization` block, so this is an unquantized \
              checkpoint. This intake installs MLX-quantized checkpoints only (4- or \

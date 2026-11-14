@@ -217,12 +217,52 @@ pub(crate) fn stream_mlx(
     enable_requested_vision(plan, family, &mut arch, &config_text)?;
     // Flint declares its INT8 embedding outside `quantization` (in the
     // producer's `mlx_export` block), so it parses through its own reader.
-    let quant = if family == ModelFamily::Flint {
+    //
+    // An ABSENT block is decided here, not by `parse_gemma4_quantization`,
+    // which answers its 4-bit default for silence (catalog Gotcha 39). Silence
+    // means an unquantized checkpoint, which only quantize-on-install can
+    // take, and only for the families it admits.
+    let has_quant_block = config
+        .get("quantization")
+        .and_then(|v| v.as_object())
+        .is_some();
+    let quantize_on_install = if has_quant_block {
+        if let Some(bits) = plan.quantize_bits {
+            return Err(format!(
+                "{}: --quantize {bits} asks to quantize, but config.json already declares a \
+                 quantization block; drop the flag",
+                plan.weights
+            ));
+        }
+        None
+    } else {
+        if !repack::quantize_on_install::family_admits_quantize_on_install(family) {
+            return Err(format!(
+                "{}: config.json declares no quantization block and quantize-on-install is \
+                 not wired for the {} family",
+                plan.weights,
+                family.as_str()
+            ));
+        }
+        let bits = plan.quantize_bits.unwrap_or(4);
+        if !repack::quantize_on_install::is_supported_quantize_bits(bits) {
+            return Err(format!("--quantize {bits}: only 2, 4 or 8 is supported"));
+        }
+        Some(bits)
+    };
+    let quant = if let Some(bits) = quantize_on_install {
+        repack::Gemma4Quant {
+            default_bits: bits,
+            group_size: repack::quantize_on_install::group_for(bits),
+            ..Default::default()
+        }
+    } else if family == ModelFamily::Flint {
         repack::parse_flint_quantization(&config_text)
+            .map_err(|e| format!("parsing the quantization block: {e}"))?
     } else {
         repack::parse_gemma4_quantization(&config_text)
-    }
-    .map_err(|e| format!("parsing the quantization block: {e}"))?;
+            .map_err(|e| format!("parsing the quantization block: {e}"))?
+    };
 
     // Reuse an EXISTING install's trunk bytes rather than re-streaming them:
     // only the head crosses the network here. `--reuse-trunk-from` (the CLI
@@ -300,6 +340,20 @@ pub(crate) fn stream_mlx(
         .map(|s| repack::fetch_safetensors_header(s).map_err(|e| format!("shard header: {e}")))
         .collect::<Result<Vec<_>, _>>()?;
 
+    // Quantize-on-install takes the HF transformers spelling as well as the
+    // MLX one; the layout also decides the norm shift further down.
+    let source_layout = if quantize_on_install.is_some() {
+        let layout = repack::quantize_on_install::canonicalize_for_family(family, &mut headers)
+            .map_err(|e| format!("{}: {e}", plan.weights))?;
+        progress(&format!(
+            "unquantized checkpoint ({layout:?} layout): quantizing to {}-bit affine at group \
+             {} on install",
+            quant.default_bits, quant.group_size
+        ));
+        Some(layout)
+    } else {
+        None
+    };
     if family == ModelFamily::Qwen2Dense {
         for header in &mut headers {
             repack::canonicalize_qwen2_header(header).map_err(|e| e.to_string())?;
@@ -383,14 +437,50 @@ pub(crate) fn stream_mlx(
         }
     }
 
-    let shards = Gemma4Shards::new(
-        headers
+    // A tied head is the embedding; a stray HF `lm_head.weight` would become a
+    // second quantized matrix nothing reads.
+    if quantize_on_install.is_some() && arch.tie_word_embeddings {
+        repack::quantize_on_install::drop_tied_lm_head(&mut headers);
+    }
+    // The quantized VIEW of the shards: the walk below then sees exactly the
+    // checkpoint `mlx_lm.convert` would have written, so no writer changes.
+    let source_refs: Vec<&dyn RangeSource> =
+        sources.iter().map(|s| s as &dyn RangeSource).collect();
+    let quantized = match (quantize_on_install, source_layout) {
+        (Some(bits), Some(layout)) => {
+            // The mean cross-checks a norm SHIFT, so only a family that shifts
+            // has anything to check.
+            if repack::quantize_on_install::shifts_norms(family) {
+                let mean =
+                    repack::quantize_on_install::check_norm_layout(&headers, &source_refs, layout)
+                        .map_err(|e| format!("{}: {e}", plan.weights))?;
+                progress(&format!(
+                    "trunk layernorm mean {mean:.3}, consistent with {layout:?}"
+                ));
+            }
+            let v = repack::quantize_on_install::quantize_on_install_shards(
+                &headers,
+                &source_refs,
+                bits,
+                layout,
+            )
+            .map_err(|e| format!("{}: {e}", plan.weights))?;
+            progress(&format!(
+                "{} trunk matrices will be quantized as they stream",
+                v.iter().map(|s| s.quantized_count()).sum::<usize>()
+            ));
+            Some(v)
+        }
+        _ => None,
+    };
+    let shard_pairs: Vec<(&SafetensorsHeader, &dyn RangeSource)> = match &quantized {
+        Some(v) => v
             .iter()
-            .zip(sources.iter())
-            .map(|(h, s)| (h, s as &dyn RangeSource))
+            .map(|s| (s.header(), s as &dyn RangeSource))
             .collect(),
-    )
-    .map_err(|e| format!("checkpoint shards: {e}"))?;
+        None => headers.iter().zip(source_refs.iter().copied()).collect(),
+    };
+    let shards = Gemma4Shards::new(shard_pairs).map_err(|e| format!("checkpoint shards: {e}"))?;
 
     let model_id = plan.weights.repo.clone();
     let report = |stage: &str| progress(&format!("[repack] {stage}"));

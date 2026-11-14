@@ -58,6 +58,8 @@ pub mod quant_gguf_iq_lowbit_tables;
 pub mod quant_gguf_iq_tables;
 /// Dequantization primitives for the GGUF MXFP4 format (ROADMAP M5).
 pub mod quant_gguf_mxfp4;
+/// Bit-exact port of MLX's `mx.quantize` affine mode, for quantize-on-install.
+pub mod quant_mlx;
 /// Root-Mean-Square Normalization (RMSNorm) compute kernels.
 pub mod rms_norm;
 /// Rotary Position Embedding (RoPE) compute kernels.
