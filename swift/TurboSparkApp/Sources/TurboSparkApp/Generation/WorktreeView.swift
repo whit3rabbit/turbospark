@@ -66,6 +66,8 @@ struct WorktreeView: View {
             } else {
                 WorktreeTimelineView(worktree: worktree)
             }
+        case .activity:
+            TreemapPaneView(worktree: worktree)
         case .worktrees:
             WorktreeWorktreeListView(worktree: worktree)
         }

@@ -592,6 +592,10 @@ final class LocalizationParityTests: XCTestCase {
         for mode in WorktreeTabMode.allCases {
             values.append(("WorktreeTabMode.title", mode.title))
         }
+        // The treemap reads the status label through AppStrings.localized.
+        for status in [WorktreeFileChange.Status.modified, .added, .deleted, .renamed, .untracked, .ignored, .unknown] {
+            values.append(("WorktreeFileChange.Status.label", status.label))
+        }
         // Audio model pickers render the engine name and its tooltip as keys.
         for label in AudioEngineLabel.allCases {
             values.append(("AudioEngineLabel.title", label.title))
