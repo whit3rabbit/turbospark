@@ -2,6 +2,7 @@ import Foundation
 import Security
 import XCTest
 @testable import TurboSparkApp
+@testable import TurboSpark
 
 // MARK: - Fixtures
 
@@ -673,5 +674,263 @@ final class RemoteProviderStoreTests: XCTestCase {
         let service = RemoteProviderService(store: store, transport: ScriptedTransport { _, _ in ScriptedTransport.Reply(status: 401) })
         do { try await service.testConnection(providerID: p.id); XCTFail("expected auth") }
         catch { XCTAssertEqual(error as? RemoteProviderError, .auth) }
+    }
+}
+
+// MARK: - The remote turn, on the real turn loop
+
+/// Drives `executeGenerationTurn` for a chat pointed at a scripted remote
+/// model. No local session exists in these tests: that is the point.
+@MainActor
+final class RemoteTurnTests: XCTestCase {
+    private var model: AppModel!
+    private var dir: URL!
+    private var suite: String!
+    private var transport: ScriptedTransport!
+    private var providerID: UUID!
+    private var chatID: UUID!
+    private let key = "sk-ant-api03-TESTKEYTESTKEYTESTKEY1234"
+
+    override func setUp() async throws {
+        dir = FileManager.default.temporaryDirectory.appendingPathComponent("ts_remote_turn_\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        suite = "RemoteTurnTests.\(UUID().uuidString)"
+        model = AppModel()
+        model.remoteProviders = RemoteProviderStore(
+            fileURL: dir.appendingPathComponent("remote_providers.json"),
+            keys: RemoteProviderKeyStore(backend: FakeSecretBackend(), defaults: UserDefaults(suiteName: suite)!))
+        let p = try model.remoteProviders.add(name: "Acme", family: .openAICompatible, baseURL: "https://api.acme.example/v1")
+        providerID = p.id
+        model.remoteProviders.setModels(
+            [RemoteProviderModel(id: "acme-1", displayName: "Acme One", contextWindow: 100_000)], for: p.id)
+        model.remoteProviders.keys.setSessionKey(key, for: p.id)
+        let chat = AppChat(title: "Remote")
+        chatID = chat.id
+        model.chats = [chat]
+        model.selectedChatID = chat.id
+        model.interactionMode = .chat
+        model.chatToolsEnabled = true
+        model.webSearchEnabled = true
+        model.mutateTurnMessages(for: chat.id) { $0.append(AppChatMessage(role: .user, content: "hello")) }
+    }
+
+    override func tearDown() async throws {
+        UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite)
+        try? FileManager.default.removeItem(at: dir)
+        model = nil
+    }
+
+    private func select(confirmed: Bool = true) {
+        if confirmed { model.remoteProviders.confirmConsent(provider: providerID, chat: chatID) }
+        model.requestRemoteModel(providerID: providerID, modelID: "acme-1", chatID: chatID)
+    }
+
+    private func settle() async {
+        for _ in 0..<400 {
+            if !model.generating { return }
+            try? await Task.sleep(nanoseconds: 25_000_000)
+        }
+        XCTFail("the remote turn never finished")
+    }
+
+    private func proseStream(_ text: String) -> String {
+        sse([
+            (nil, #"{"choices":[{"delta":{"content":"\#(text)"}}]}"#),
+            (nil, #"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#),
+            (nil, #"{"choices":[],"usage":{"prompt_tokens":40,"completion_tokens":5}}"#),
+            (nil, "[DONE]"),
+        ])
+    }
+
+    func testSelectionNeedsConfirmationAndNothingIsSentBeforeIt() {
+        select(confirmed: false)
+        XCTAssertNil(model.remoteSelections[chatID], "selecting without consent must not switch the chat")
+        XCTAssertEqual(model.remoteConfirmation?.host, "api.acme.example")
+        model.confirmRemoteSelection()
+        XCTAssertEqual(model.remoteSelections[chatID]?.modelID, "acme-1")
+        XCTAssertNil(model.remoteConfirmation)
+    }
+
+    func testARemoteChatNeedsNoLocalSessionAndCanRun() {
+        XCTAssertNil(model.session)
+        XCTAssertFalse(model.hasTurnModel)
+        select()
+        XCTAssertTrue(model.hasTurnModel)
+        model.useLocalModel(chatID: chatID)
+        XCTAssertFalse(model.hasTurnModel, "local is the default and the way back")
+    }
+
+    func testProseTurnStreamsRecordsUsageProviderTaggedAndReleasesTheLane() async throws {
+        transport = ScriptedTransport(sse: proseStream("Hi there"))
+        model.remoteTransport = transport
+        select()
+        model.executeGenerationTurn(step: 0, chatID: chatID)
+        XCTAssertTrue(model.generating)
+        XCTAssertEqual(model.generatingChatID, chatID, "a remote turn claims the same lane")
+        await settle()
+
+        let reply = model.chats[0].messages.last
+        XCTAssertEqual(reply?.role, .assistant)
+        XCTAssertEqual(reply?.content, "Hi there")
+        XCTAssertNil(model.generatingChatID)
+        XCTAssertNil(model.turnCoordinator.laneHolder)
+        XCTAssertEqual(model.chats[0].usage?.byProvider["Acme"]?.promptTokens, 40)
+        XCTAssertEqual(model.chats[0].usage?.byProvider["Acme"]?.outputTokens, 5)
+        XCTAssertEqual(model.chats[0].usage?.totalPromptTokens, 40)
+        XCTAssertEqual(model.remoteUsage[chatID], 45)
+        XCTAssertFalse(model.remoteContextReading(chatID: chatID)!.isEstimate)
+
+        let req = try XCTUnwrap(transport.requests.first)
+        XCTAssertEqual(req.url.host, "api.acme.example")
+        XCTAssertFalse(String(decoding: req.body, as: UTF8.self).contains(key))
+        let body = try XCTUnwrap(RemoteJSON.object(String(decoding: req.body, as: UTF8.self)))
+        XCTAssertNotNil(body["tools"], "chat tools are offered natively")
+    }
+
+    func testBeforeAnyUsageTheRingReadsALabeledEstimate() {
+        select()
+        let reading = model.remoteContextReading(chatID: chatID)
+        XCTAssertEqual(reading?.isEstimate, true)
+        XCTAssertEqual(reading?.windowTokens, 100_000)
+    }
+
+    func testProviderErrorEndsTheTurnWithALocalizedKeyFreeErrorAndAnInterruptedRow() async {
+        transport = ScriptedTransport(sse: "invalid key \(key)", status: 401)
+        model.remoteTransport = transport
+        select()
+        model.executeGenerationTurn(step: 0, chatID: chatID)
+        await settle()
+        XCTAssertEqual(model.error, model.remoteErrorText(.auth))
+        XCTAssertFalse((model.error ?? "").contains(key))
+        XCTAssertNil(model.chats[0].usage, "a failed call records no usage")
+        XCTAssertNil(model.generatingChatID)
+    }
+
+    func testEveryRemoteErrorHasADistinctKeyFreeMessage() {
+        let all: [RemoteProviderError] = [
+            .notConfigured, .disabled, .invalidBaseURL("x"), .keyUnavailable("denied"), .auth,
+            .endpointNotFound, .rateLimited, .overloaded, .contextOverflow, .server(status: 500),
+            .requestRefused(status: 400, detail: "d"), .network("n"), .badStream("b"),
+            .redirectRefused, .firstByteTimeout, .stalled, .responseTooLarge, .requestTooLarge,
+        ]
+        let texts = all.map { model.remoteErrorText($0) }
+        XCTAssertEqual(Set(texts).count, texts.count)
+        XCTAssertTrue(texts.allSatisfy { !$0.contains(key) && !$0.isEmpty })
+    }
+
+    func testStopCancelsTheStreamAndKeepsThePartialReply() async {
+        transport = ScriptedTransport { _, _ in
+            ScriptedTransport.Reply(
+                chunks: [Data(#"data: {"choices":[{"delta":{"content":"par"}}]}"#.utf8 + [10, 10])], hang: true)
+        }
+        model.remoteTransport = transport
+        select()
+        model.executeGenerationTurn(step: 0, chatID: chatID)
+        for _ in 0..<100 where model.outputText.isEmpty { try? await Task.sleep(nanoseconds: 20_000_000) }
+        XCTAssertEqual(model.outputText, "par")
+        model.cancel()
+        await settle()
+        XCTAssertNil(model.generatingChatID)
+        XCTAssertEqual(model.chats[0].messages.last?.content, "par")
+    }
+
+    // MARK: Tool ladder equality
+
+    private func toolCallStream() -> String {
+        sse([
+            (nil, #"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"web_fetch","arguments":"{\"url\":\"https://example.org/a\"}"}}]}}]}"#),
+            (nil, #"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#),
+            (nil, "[DONE]"),
+        ])
+    }
+
+    /// The same call, once as a remote reply and once handed to the shared
+    /// tail the way a local reply is, must meet the same approval ladder.
+    func testRemoteToolCallMeetsTheSameLadderAsALocalOne() async throws {
+        transport = ScriptedTransport(sse: toolCallStream())
+        model.remoteTransport = transport
+        select()
+        model.executeGenerationTurn(step: 0, chatID: chatID)
+        await settle()
+        let remotePending = try XCTUnwrap(model.pendingToolCall, "a remote tool call must raise the approval card")
+        XCTAssertEqual(remotePending.name, "WebFetch", "normalized to the offered tool name, as a local call is")
+        XCTAssertEqual(model.pendingToolCallChatID, chatID)
+        XCTAssertEqual(
+            transport.requests.count, 1,
+            "nothing ran: the call is parked behind approval, no tool result was sent")
+
+        // Local-shaped path on a second chat, same call, same shared tail.
+        model.clearPendingToolCall()
+        let other = AppChat(title: "Local shaped")
+        model.chats.append(other)
+        model.selectedChatID = other.id
+        model.mutateTurnMessages(for: other.id) { $0.append(AppChatMessage(role: .user, content: "hello")) }
+        let local = AppModel.makeGenerationResult(
+            promptTokens: 1, newTokens: 1, decodeSeconds: 0, finish: .toolCalls, content: "",
+            reasoning: "", toolCalls: [RemoteToolCall(id: "c1", name: "web_fetch", argumentsJSON: #"{"url":"https://example.org/a"}"#)])!
+        model.generating = true
+        model.claimLane(for: other.id)
+        let tools = model.captureTurnTools(
+            project: nil, mediaCapability: AppToolMediaCapability(supportsImageBearingToolResults: false, maximumPixelCount: 0),
+            contextTokens: nil)
+        await model.processCompletedTurn(
+            completed: CompletedGenerationTurn(
+                result: local, content: "", reasoning: "", continuationsUsed: 0,
+                outputTokensGenerated: 1, recoveryEvents: []),
+            nativeToolCalls: [GenerationToolCall(id: "c1", name: "web_fetch", argumentsJSON: #"{"url":"https://example.org/a"}"#)],
+            step: 0, turnChatID: other.id, turnProject: nil, usesSkillState: false,
+            turnAvailableTools: tools, turnAllowsToolCalls: true, myEpoch: model.generationEpoch)
+        let localPending = try XCTUnwrap(model.pendingToolCall)
+        XCTAssertEqual(localPending.name, remotePending.name)
+        XCTAssertEqual(localPending.arguments, remotePending.arguments)
+        XCTAssertEqual(localPending.category, remotePending.category)
+    }
+
+    func testTruncatedToolCallFromTheProviderRunsNothing() async {
+        transport = ScriptedTransport(sse: sse([
+            (nil, #"{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"web_fetch","arguments":"{\"url\":"}}]}}]}"#),
+            (nil, #"{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}"#),
+            (nil, "[DONE]"),
+        ]))
+        model.remoteTransport = transport
+        select()
+        model.executeGenerationTurn(step: 0, chatID: chatID)
+        await settle()
+        XCTAssertNil(model.pendingToolCall)
+        XCTAssertEqual(model.error, model.remoteErrorText(.badStream("")))
+    }
+
+    func testCompactionSummaryRunsOnTheSelectedRemoteModel() async throws {
+        transport = ScriptedTransport(sse: proseStream("<summary>short</summary>"))
+        model.remoteTransport = transport
+        select()
+        var options = GenerateOptions(); options.maxNewTokens = 100
+        let text = try await model.remoteSummary(chatID: chatID, messages: [ChatMessage.user("a long transcript")], options: options)
+        XCTAssertTrue(text.contains("short"))
+        XCTAssertEqual(transport.requests.first?.url.host, "api.acme.example")
+    }
+
+    func testOverflowOffersCompactionNamedError() async {
+        transport = ScriptedTransport(sse: #"{"error":{"code":"context_length_exceeded"}}"#, status: 400)
+        model.remoteTransport = transport
+        select()
+        model.executeGenerationTurn(step: 0, chatID: chatID)
+        await settle()
+        XCTAssertEqual(model.error, model.remoteErrorText(.contextOverflow))
+    }
+
+    func testRolloutLogRecordsHostMarkerAndNoKeyWhenEnabled() async throws {
+        model.trajectoryLoggingEnabled = true
+        defer { model.trajectoryLoggingEnabled = false }
+        transport = ScriptedTransport(sse: proseStream("echo \(key) done"))
+        model.remoteTransport = transport
+        select()
+        model.executeGenerationTurn(step: 0, chatID: chatID)
+        await settle()
+        RolloutStore.shared.flush()
+        let log = RolloutStore.shared.readTail(chatID: chatID)
+        let entry = try XCTUnwrap(log.records.first { $0.entry.kind == .modelCall }?.entry)
+        XCTAssertEqual(entry.remoteHost, "api.acme.example")
+        XCTAssertFalse((entry.result ?? "").contains(key))
     }
 }

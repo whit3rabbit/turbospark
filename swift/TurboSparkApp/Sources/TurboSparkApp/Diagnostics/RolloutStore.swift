@@ -41,13 +41,17 @@ public struct RolloutEntry: Codable, Equatable, Sendable {
     public var error: String?
     /// True when any text field was clipped by the size caps.
     public var truncated: Bool?
+    /// Set only for a call that went to a remote provider (ZP-22): the host
+    /// the content was sent to. Absent for every local call.
+    public var remoteHost: String?
 
     public init(
         v: Int = RolloutEntry.currentVersion, ts: Date = Date(), kind: Kind, role: String,
         step: Int? = nil, model: String? = nil, promptTokens: Int? = nil,
         completionTokens: Int? = nil, cachedTokens: Int? = nil, latencyMs: Int? = nil,
         finishReason: String? = nil, name: String? = nil, args: [String: String]? = nil,
-        result: String? = nil, error: String? = nil, truncated: Bool? = nil
+        result: String? = nil, error: String? = nil, truncated: Bool? = nil,
+        remoteHost: String? = nil
     ) {
         self.v = v
         self.ts = ts
@@ -65,6 +69,7 @@ public struct RolloutEntry: Codable, Equatable, Sendable {
         self.result = result
         self.error = error
         self.truncated = truncated
+        self.remoteHost = remoteHost
     }
 
     /// Case-insensitive match over every text field, for the pane's search.
@@ -554,6 +559,7 @@ public final class RolloutStore: @unchecked Sendable {
         out.error = text(entry.error, limits.maxFieldChars)
         out.name = text(entry.name, 200)
         out.model = text(entry.model, 200)
+        out.remoteHost = text(entry.remoteHost, 200)
         out.finishReason = text(entry.finishReason, 100)
         if let args = entry.args {
             var kept: [String: String] = [:]

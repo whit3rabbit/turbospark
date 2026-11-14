@@ -54,6 +54,8 @@ struct PromptComposerFooter: View {
 
             ToolsStatusChip(model: model)
 
+            RemoteModelPill(model: model, store: model.remoteProviders)
+
             SearchToggleButton(model: model)
 
             if model.selectedProject != nil {

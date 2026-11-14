@@ -1002,7 +1002,7 @@ extension AppModel {
     ///   resolving it here builds the next step from that chat's history and
     ///   replies into it.
     public func continueAgentLoop(step: Int, chatID: UUID) {
-        guard session != nil else { return }
+        guard session != nil || remoteSelections[chatID] != nil else { return }
         // Cancellation is cooperative: a tool already in flight runs to
         // completion, and what Stop guarantees is that no further turn starts.
         // Without this the loop resumed straight through a cancel.

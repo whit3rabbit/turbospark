@@ -382,7 +382,8 @@ extension AppModel {
         let tokenCountOverride = compactionTokenCountOverride
         let pinningReasoning = AppChatCompaction.pinningReasoning(
             requestSnapshot: requestReasoning, currentReasoning: reasoning)
-        guard session != nil || (summaryOverride != nil && tokenCountOverride != nil) else {
+        let remoteChat = remoteSelections[chatID] != nil
+        guard remoteChat || session != nil || (summaryOverride != nil && tokenCountOverride != nil) else {
             return .failed("no model is loaded")
         }
         guard let chatIndex = chats.firstIndex(where: { $0.id == chatID }) else {
@@ -434,7 +435,10 @@ extension AppModel {
         }
         var summaryText = ""
         do {
-            if let session {
+            if remoteChat {
+                // A remote chat summarizes on the model it selected.
+                summaryText = try await remoteSummary(chatID: chatID, messages: messages, options: options)
+            } else if let session {
                 for try await event in session.generate(messages, options: options) {
                     try Task.checkCancellation()
                     switch event {
@@ -466,7 +470,9 @@ extension AppModel {
         await commitCompactionBoundary(
             chatIndex: chatIndex, summary: summary, boundary: newBoundary
         ) {
-            if let session {
+            if remoteChat {
+                // Local tokenizer counts mean nothing for a remote model.
+            } else if let session {
                 await self.refreshInstructionPinningCache(
                     chatID: chatID, boundary: newBoundary, messages: allMessages,
                     session: session, reasoning: pinningReasoning)

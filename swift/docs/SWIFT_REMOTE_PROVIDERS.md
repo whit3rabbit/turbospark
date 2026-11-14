@@ -4,12 +4,10 @@ Opt-in chat through upstream APIs with user-managed API keys. Local weights
 stay the default and the product center. Design and review record:
 `docs/designs/zcode-parity/ZP-22-remote-providers.md`.
 
-**Status: foundation only.** The transport, parsing, error, credential and
-configuration layers exist and are tested. Nothing here is wired to the turn
-loop, the composer picker or Settings yet. The draft's Implementation Record
-lists the exact remainder. No code in this layer runs unless something calls
-`RemoteProviderService`, and nothing does yet. The app's behavior is
-unchanged.
+**Status: implemented.** Remote stays off by default: with no provider
+configured nothing here runs, the composer shows no Remote control, and every
+chat uses the local model. The one manual follow-up is a real-provider smoke
+test by the user (the tests use scripted transports only).
 
 ## Decision record: API keys only, no OAuth
 
@@ -31,6 +29,9 @@ is fixed at creation. Changing family means adding a new provider.
 | `State/RemoteProviderKeyStore.swift` | Per-credential key handling and the Keychain backend. |
 | `State/RemoteProviderStore.swift` | Provider and model shape (no keys), picker entries, per-chat consent gate. |
 | `State/RemoteProviderService.swift` | The one entry point: gates, key read, runner. |
+| `State/AppModel+RemoteTurn.swift` | Selection, the remote turn (`executeRemoteGenerationTurn`), mapping to `GenerationResult`, remote context and compaction, rollout call, localized error text. |
+| `Components/RemoteProviderSettingsPaneView.swift` | Settings > Network > Remote providers. |
+| `Generation/RemoteModelPill.swift` | Composer Remote menu, persistent indicator, first-send confirmation. |
 
 ## Family support matrix
 
@@ -120,3 +121,61 @@ timeouts, mid-stream disconnect, probe fallback, Keychain opt-in (no touch at
 init or picker build, one read at first send, named failure, no delete on a
 failed read), shape file without keys, and the consent gate. Mutation checks
 recorded in the draft's Implementation Record.
+
+## The turn loop
+
+A chat is pointed at a remote model per chat, in memory only
+(`AppModel.remoteSelections`), so a relaunch returns every chat to local.
+`executeGenerationTurn` routes such a chat to `executeRemoteGenerationTurn`
+before it touches the local session. The remote turn uses the same lane
+(`claimLane`), epoch, cancel flags and `finishTurnTail` as a local turn, and
+hands its reply to `processCompletedTurn`, the post-generation tail extracted
+from the local turn (state patch, dispatch gate, guardrail retry, prose or
+tool-call tail). A remote tool call therefore meets the same dispatch gate,
+the same permission ladder and the same ZP-23 background-parking rule as a
+local one, and the existing step cap (`maxAutonomousSteps`) bounds a remote
+agent loop. Tool definitions are sent natively. Images are not sent: the
+request is text only, and the per-model Vision flag is recorded for a later
+change.
+
+A remote chat needs no loaded local model (`hasTurnModel`). The reply is built
+into a `GenerationResult` through its decoder (timings zero) and tool calls
+into `GenerationToolCall`, so nothing below the model call changed type.
+
+## Context, compaction, usage
+
+* The ring shows the provider's last reported prompt plus output tokens, or
+  the labeled estimate (characters divided by 4) before one arrives.
+* Auto-compaction uses the larger of the last reported count and the estimate
+  against the model entry's window, with the local threshold. The summary runs
+  on the chat's selected remote model (`performCompaction` branches on the
+  chat). A provider context-overflow error is `contextOverflow` and its
+  message offers compaction. Window fitting, recall and the instruction-pin
+  cache are local-only and skipped for remote chats.
+* `AppChatUsageLedger.byProvider` records remote turns by provider name, next
+  to the existing totals. `AppChatUsageTotals.byProvider` sums it. No
+  dashboard row is added.
+
+## Rollout log
+
+`logTrajectoryRemoteCall` writes a `modelCall` entry only when trajectory
+logging is on and the chat is eligible (same gate as a local call). The entry
+carries `remoteHost`, and its text passes the exact-key redaction and then the
+store's own `TrajectoryRedactor` pass. The request body is never logged.
+
+## Errors
+
+Each `RemoteProviderError` maps to a localized, key-free message in
+`AppModel.remoteErrorText`, shown in the same two places a local engine error
+is: `AppModel.error` and an interrupted row (`finishCancelled(reason:
+"error")`). No automatic retry.
+
+## ATS and loopback http
+
+The generated `Info.plist` (`scripts/make-app-bundle.sh`) has no
+`NSAppTransportSecurity` key, so default ATS applies. https needs no
+exception. Default ATS does not apply to connections made to an IP address, so
+`http://127.0.0.1:PORT` and `http://[::1]:PORT` work, while a plain
+`http://localhost` may be refused by ATS in the bundled app. Prefer the IP
+form. Allowing `localhost` would mean adding `NSAllowsLocalNetworking`, a
+release-script change that was not made here.

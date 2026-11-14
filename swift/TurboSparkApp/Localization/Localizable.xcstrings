@@ -20617,6 +20617,268 @@
         }
       }
     },
+    "Add model": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إضافة نموذج"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modell hinzufügen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add model"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Añadir modelo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajouter un modèle"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הוסף מודל"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "मॉडल जोड़ें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tambah model"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aggiungi modello"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルを追加"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델 추가"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model toevoegen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dodaj model"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adicionar modelo"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавить модель"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lägg till modell"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model ekle"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Додати модель"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thêm mô hình"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加模型"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新增模型"
+          }
+        }
+      }
+    },
+    "Add provider": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إضافة مزوّد"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anbieter hinzufügen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add provider"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Añadir proveedor"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajouter un fournisseur"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הוסף ספק"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्रदाता जोड़ें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tambah penyedia"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aggiungi provider"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロバイダを追加"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "제공업체 추가"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Provider toevoegen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dodaj dostawcę"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adicionar provedor"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавить провайдера"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lägg till leverantör"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sağlayıcı ekle"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Додати провайдера"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thêm nhà cung cấp"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加提供方"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新增提供者"
+          }
+        }
+      }
+    },
     "ANE+Steel Prefill Split": {
       "extractionState": "manual",
       "localizations": {
@@ -21137,6 +21399,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "Anotasi"
+          }
+        }
+      }
+    },
+    "Anthropic": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anthropic"
           }
         }
       }
@@ -68284,6 +68677,137 @@
         }
       }
     },
+    "Base URL": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "عنوان URL الأساسي"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Basis-URL"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Base URL"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "URL base"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "URL de base"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "כתובת בסיס"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "बेस URL"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "URL dasar"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "URL di base"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ベースURL"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "기본 URL"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Basis-URL"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bazowy adres URL"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "URL base"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Базовый URL"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bas-URL"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Temel URL"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Базова URL-адреса"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "URL gốc"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "基础 URL"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "基礎 URL"
+          }
+        }
+      }
+    },
     "Base URL for Hugging Face downloads ($HF_ENDPOINT), e.g. https://hf-mirror.com for restricted regions.": {
       "extractionState": "manual",
       "localizations": {
@@ -76268,6 +76792,399 @@
         }
       }
     },
+    "Connection works.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الاتصال يعمل."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verbindung funktioniert."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Connection works."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La conexión funciona."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La connexion fonctionne."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "החיבור פועל."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "कनेक्शन काम कर रहा है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Koneksi berfungsi."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La connessione funziona."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "接続できました。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "연결이 정상입니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verbinding werkt."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Połączenie działa."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A conexão funciona."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Соединение работает."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anslutningen fungerar."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bağlantı çalışıyor."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "З'єднання працює."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kết nối hoạt động."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "连接正常。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "連線正常。"
+          }
+        }
+      }
+    },
+    "Content leaves this Mac": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "المحتوى يغادر هذا الـ Mac"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inhalte verlassen diesen Mac"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Content leaves this Mac"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El contenido sale de este Mac"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le contenu quitte ce Mac"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "התוכן יוצא מה-Mac הזה"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "सामग्री इस Mac से बाहर जाती है"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Konten keluar dari Mac ini"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il contenuto lascia questo Mac"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "内容はこのMacの外に出ます"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "콘텐츠가 이 Mac을 벗어납니다"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inhoud verlaat deze Mac"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Treść opuszcza ten Mac"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O conteúdo sai deste Mac"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Содержимое покидает этот Mac"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Innehållet lämnar den här Macen"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "İçerik bu Mac'ten çıkıyor"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вміст залишає цей Mac"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nội dung rời khỏi Mac này"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "内容会离开这台 Mac"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "內容會離開這台 Mac"
+          }
+        }
+      }
+    },
+    "Context window (tokens)": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "نافذة السياق (رموز)"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kontextfenster (Token)"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Context window (tokens)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ventana de contexto (tokens)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fenêtre de contexte (tokens)"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "חלון הקשר (טוקנים)"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "संदर्भ विंडो (टोकन)"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jendela konteks (token)"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Finestra di contesto (token)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "コンテキストウィンドウ (トークン)"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "컨텍스트 창 (토큰)"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Contextvenster (tokens)"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Okno kontekstu (tokeny)"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Janela de contexto (tokens)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Контекстное окно (токены)"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kontextfönster (tokens)"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bağlam penceresi (token)"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Контекстне вікно (токени)"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cửa sổ ngữ cảnh (token)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上下文窗口（token）"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "上下文視窗（token）"
+          }
+        }
+      }
+    },
     "Could not attach the annotated image: %@": {
       "extractionState": "manual",
       "localizations": {
@@ -76526,6 +77443,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "無法將影像搜尋金鑰存入鑰匙圈。"
+          }
+        }
+      }
+    },
+    "Could not save the key to the Keychain.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تعذر حفظ المفتاح في سلسلة المفاتيح."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Schlüssel konnte nicht im Schlüsselbund gesichert werden."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Could not save the key to the Keychain."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo guardar la clave en el llavero."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La clé n'a pas pu être enregistrée dans le trousseau."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "לא ניתן לשמור את המפתח בשרשרת המפתחות."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "कुंजी को कीचेन में सहेजा नहीं जा सका।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kunci tidak dapat disimpan ke Keychain."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossibile salvare la chiave nel portachiavi."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "キーをキーチェーンに保存できませんでした。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "키를 키체인에 저장할 수 없습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De sleutel kon niet in de sleutelhanger worden bewaard."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie można zapisać klucza w pęku kluczy."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível salvar a chave no Chaveiro."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось сохранить ключ в связке ключей."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nyckeln kunde inte sparas i nyckelringen."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anahtar anahtar zincirine kaydedilemedi."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не вдалося зберегти ключ у зв'язці ключів."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không thể lưu khóa vào chuỗi khóa."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法将密钥存入钥匙串。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法將金鑰儲存至鑰匙圈。"
           }
         }
       }
@@ -97996,6 +99044,399 @@
         }
       }
     },
+    "Display name": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الاسم المعروض"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anzeigename"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Display name"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nombre visible"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nom affiché"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "שם תצוגה"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्रदर्शन नाम"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nama tampilan"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nome visualizzato"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "表示名"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "표시 이름"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weergavenaam"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nazwa wyświetlana"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nome de exibição"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отображаемое имя"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Visningsnamn"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Görünen ad"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показувана назва"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tên hiển thị"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示名称"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顯示名稱"
+          }
+        }
+      }
+    },
+    "Estimate": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تقدير"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Schätzung"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimate"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimación"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimation"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הערכה"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "अनुमान"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Perkiraan"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stima"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "推定"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "추정"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Schatting"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Szacunek"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimativa"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Оценка"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uppskattning"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tahmin"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Оцінка"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ước tính"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "估算"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "估算"
+          }
+        }
+      }
+    },
+    "Estimated from text length. The provider has not reported usage yet.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "مقدّر من طول النص. لم يُبلغ المزوّد عن الاستخدام بعد."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aus der Textlänge geschätzt. Der Anbieter hat noch keine Nutzung gemeldet."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimated from text length. The provider has not reported usage yet."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimado a partir de la longitud del texto. El proveedor aún no ha informado del uso."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimé d'après la longueur du texte. Le fournisseur n'a pas encore communiqué l'utilisation."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מוערך לפי אורך הטקסט. הספק עוד לא דיווח על שימוש."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पाठ की लंबाई से अनुमानित। प्रदाता ने अभी तक उपयोग की जानकारी नहीं दी है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diperkirakan dari panjang teks. Penyedia belum melaporkan penggunaan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stimato dalla lunghezza del testo. Il provider non ha ancora comunicato l'utilizzo."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "テキストの長さから推定しています。プロバイダはまだ使用量を報告していません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "텍스트 길이로 추정한 값입니다. 제공업체가 아직 사용량을 보고하지 않았습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Geschat op basis van tekstlengte. De provider heeft nog geen gebruik gemeld."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oszacowano na podstawie długości tekstu. Dostawca nie zgłosił jeszcze użycia."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Estimado pelo tamanho do texto. O provedor ainda não informou o uso."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Оценка по длине текста. Провайдер ещё не сообщил об использовании."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uppskattat från textlängden. Leverantören har ännu inte rapporterat användning."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Metin uzunluğundan tahmin edildi. Sağlayıcı henüz kullanım bildirmedi."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Оцінено за довжиною тексту. Провайдер ще не повідомив про використання."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ước tính từ độ dài văn bản. Nhà cung cấp chưa báo cáo mức sử dụng."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "根据文本长度估算。提供方尚未报告用量。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "根據文字長度估算。提供者尚未回報用量。"
+          }
+        }
+      }
+    },
     "Export Redacted Copy": {
       "extractionState": "manual",
       "localizations": {
@@ -98516,6 +99957,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "Sesuaikan dengan jendela"
+          }
+        }
+      }
+    },
+    "Forget key": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "انسَ المفتاح"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Schlüssel vergessen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Forget key"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Olvidar clave"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oublier la clé"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "שכח מפתח"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "कुंजी हटाएँ"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lupakan kunci"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dimentica chiave"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "キーを削除"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "키 삭제"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sleutel vergeten"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zapomnij klucz"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esquecer chave"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Забыть ключ"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Glöm nyckel"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anahtarı unut"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Забути ключ"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Xóa khóa"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清除密钥"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "清除金鑰"
           }
         }
       }
@@ -240591,6 +242163,399 @@
         }
       }
     },
+    "Keep local": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ابقَ محليًا"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lokal bleiben"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep local"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mantener local"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rester en local"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "השאר מקומי"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "स्थानीय रखें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tetap lokal"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resta in locale"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカルのままにする"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "로컬 유지"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lokaal houden"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zostań lokalnie"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Manter local"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Оставить локально"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Behåll lokalt"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yerel kal"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Залишити локально"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Giữ cục bộ"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保持本地"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保持本機"
+          }
+        }
+      }
+    },
+    "Key held in memory for this session only.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "المفتاح محفوظ في الذاكرة لهذه الجلسة فقط."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Schlüssel nur für diese Sitzung im Speicher."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Key held in memory for this session only."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clave en memoria solo durante esta sesión."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clé conservée en mémoire pour cette session uniquement."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "המפתח נשמר בזיכרון להפעלה זו בלבד."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "कुंजी केवल इस सत्र के लिए मेमोरी में है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kunci hanya disimpan di memori untuk sesi ini."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chiave tenuta in memoria solo per questa sessione."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "キーはこのセッションの間だけメモリに保持されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "키는 이 세션 동안만 메모리에 보관됩니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sleutel alleen in het geheugen voor deze sessie."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Klucz jest w pamięci tylko w tej sesji."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chave mantida na memória somente nesta sessão."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ключ хранится в памяти только на этот сеанс."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nyckeln finns endast i minnet under den här sessionen."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anahtar yalnızca bu oturum için bellekte tutuluyor."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ключ зберігається в пам'яті лише на цей сеанс."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Khóa chỉ được giữ trong bộ nhớ cho phiên này."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "密钥仅在本次会话的内存中保留。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "金鑰僅在本次工作階段的記憶體中保留。"
+          }
+        }
+      }
+    },
+    "Key saved in the Keychain.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "المفتاح محفوظ في سلسلة المفاتيح."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Schlüssel im Schlüsselbund gesichert."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Key saved in the Keychain."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clave guardada en el llavero."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clé enregistrée dans le trousseau."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "המפתח נשמר בשרשרת המפתחות."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "कुंजी कीचेन में सहेजी गई है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kunci tersimpan di Keychain."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chiave salvata nel portachiavi."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "キーはキーチェーンに保存されています。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "키가 키체인에 저장되었습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sleutel bewaard in de sleutelhanger."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Klucz zapisano w pęku kluczy."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chave salva no Chaveiro."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ключ сохранён в связке ключей."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nyckeln är sparad i nyckelringen."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anahtar anahtar zincirine kaydedildi."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ключ збережено у зв'язці ключів."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Khóa đã được lưu trong chuỗi khóa."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "密钥已存入钥匙串。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "金鑰已儲存至鑰匙圈。"
+          }
+        }
+      }
+    },
     "KV cache": {
       "extractionState": "manual",
       "localizations": {
@@ -265468,6 +267433,137 @@
         }
       }
     },
+    "Model ID": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "معرّف النموذج"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modell-ID"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model ID"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ID del modelo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ID du modèle"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מזהה מודל"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "मॉडल ID"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ID model"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ID modello"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルID"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델 ID"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model-ID"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Identyfikator modelu"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ID do modelo"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ID модели"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modell-ID"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model kimliği"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ID моделі"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ID mô hình"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型 ID"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型 ID"
+          }
+        }
+      }
+    },
     "MTP Head": {
       "extractionState": "manual",
       "localizations": {
@@ -287865,6 +289961,137 @@
         }
       }
     },
+    "Network error: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "خطأ في الشبكة: %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Netzwerkfehler: %@"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Network error: %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Error de red: %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erreur réseau : %@"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "שגיאת רשת: %@"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "नेटवर्क त्रुटि: %@"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Galat jaringan: %@"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Errore di rete: %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ネットワークエラー: %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "네트워크 오류: %@"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Netwerkfout: %@"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Błąd sieci: %@"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erro de rede: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ошибка сети: %@"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nätverksfel: %@"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ağ hatası: %@"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Помилка мережі: %@"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lỗi mạng: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "网络错误：%@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "網路錯誤：%@"
+          }
+        }
+      }
+    },
     "Network is off for this preview": {
       "extractionState": "manual",
       "localizations": {
@@ -292182,6 +294409,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "未偵測到 Git 儲存庫"
+          }
+        }
+      }
+    },
+    "No key set.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لم يتم تعيين مفتاح."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kein Schlüssel gesetzt."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No key set."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sin clave configurada."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucune clé définie."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "לא הוגדר מפתח."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "कोई कुंजी सेट नहीं है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Belum ada kunci."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nessuna chiave impostata."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "キーが設定されていません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설정된 키가 없습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Geen sleutel ingesteld."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie ustawiono klucza."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nenhuma chave definida."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ключ не задан."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ingen nyckel angiven."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anahtar ayarlanmadı."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ключ не задано."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chưa đặt khóa."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未设置密钥。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未設定金鑰。"
           }
         }
       }
@@ -313263,6 +315621,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "線上目錄"
+          }
+        }
+      }
+    },
+    "OpenAI-compatible": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenAI-compatible"
           }
         }
       }
@@ -352928,6 +355417,268 @@
         }
       }
     },
+    "Prompts and tool results in this chat are sent to %@.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تُرسل الطلبات ونتائج الأدوات في هذه المحادثة إلى %@."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompts und Tool-Ergebnisse dieses Chats werden an %@ gesendet."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompts and tool results in this chat are sent to %@."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los prompts y resultados de herramientas de este chat se envían a %@."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les prompts et résultats d'outils de ce chat sont envoyés à %@."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ההנחיות ותוצאות הכלים בצ'אט זה נשלחים אל %@."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस चैट के प्रॉम्प्ट और टूल परिणाम %@ को भेजे जाते हैं।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompt dan hasil alat di obrolan ini dikirim ke %@."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "I prompt e i risultati degli strumenti di questa chat vengono inviati a %@."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このチャットのプロンプトとツールの結果は %@ に送信されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 채팅의 프롬프트와 도구 결과가 %@(으)로 전송됩니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompts en toolresultaten in deze chat worden naar %@ gestuurd."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompty i wyniki narzędzi w tym czacie są wysyłane do %@."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompts e resultados de ferramentas deste chat são enviados para %@."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запросы и результаты инструментов этого чата отправляются на %@."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompter och verktygsresultat i den här chatten skickas till %@."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu sohbetteki istemler ve araç sonuçları %@ adresine gönderilir."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запити та результати інструментів цього чату надсилаються на %@."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompt và kết quả công cụ trong cuộc trò chuyện này được gửi tới %@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此对话中的提示词和工具结果会发送到 %@。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此對話中的提示詞與工具結果會傳送到 %@。"
+          }
+        }
+      }
+    },
+    "Prompts and tool results in this chat will be sent to %@ (%@) and leave this machine. The provider's own terms apply. Local models stay the default for other chats.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "سترسل الطلبات ونتائج الأدوات في هذه المحادثة إلى %@ (%@) وتغادر هذا الجهاز. تنطبق شروط المزوّد نفسه. تبقى النماذج المحلية افتراضية للمحادثات الأخرى."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompts und Tool-Ergebnisse dieses Chats werden an %@ (%@) gesendet und verlassen diesen Rechner. Es gelten die Bedingungen des Anbieters. Für andere Chats bleiben lokale Modelle die Voreinstellung."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompts and tool results in this chat will be sent to %@ (%@) and leave this machine. The provider's own terms apply. Local models stay the default for other chats."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los prompts y resultados de herramientas de este chat se enviarán a %@ (%@) y saldrán de este equipo. Se aplican los términos del proveedor. Los modelos locales siguen siendo el valor predeterminado en otros chats."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les prompts et résultats d'outils de ce chat seront envoyés à %@ (%@) et quitteront cet ordinateur. Les conditions du fournisseur s'appliquent. Les modèles locaux restent le choix par défaut pour les autres chats."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ההנחיות ותוצאות הכלים בצ'אט זה יישלחו אל %@ (%@) ויצאו מהמחשב הזה. חלים תנאי הספק עצמו. מודלים מקומיים נשארים ברירת המחדל בצ'אטים אחרים."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस चैट के प्रॉम्प्ट और टूल परिणाम %@ (%@) को भेजे जाएँगे और इस मशीन से बाहर जाएँगे। प्रदाता की अपनी शर्तें लागू होती हैं। अन्य चैट के लिए स्थानीय मॉडल डिफ़ॉल्ट रहते हैं।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompt dan hasil alat di obrolan ini akan dikirim ke %@ (%@) dan keluar dari mesin ini. Ketentuan penyedia berlaku. Model lokal tetap menjadi default untuk obrolan lain."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "I prompt e i risultati degli strumenti di questa chat verranno inviati a %@ (%@) e lasceranno questo computer. Valgono i termini del provider. I modelli locali restano l'impostazione predefinita per le altre chat."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このチャットのプロンプトとツールの結果は %@ (%@) に送信され、このマシンの外に出ます。プロバイダ自身の規約が適用されます。ほかのチャットでは引き続きローカルモデルが既定です。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 채팅의 프롬프트와 도구 결과가 %@(%@)(으)로 전송되어 이 컴퓨터를 벗어납니다. 제공업체 자체 약관이 적용됩니다. 다른 채팅에서는 로컬 모델이 계속 기본값입니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompts en toolresultaten in deze chat worden naar %@ (%@) gestuurd en verlaten deze machine. De voorwaarden van de provider zijn van toepassing. Voor andere chats blijven lokale modellen de standaard."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompty i wyniki narzędzi w tym czacie zostaną wysłane do %@ (%@) i opuszczą ten komputer. Obowiązują warunki dostawcy. W innych czatach modele lokalne pozostają domyślne."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompts e resultados de ferramentas deste chat serão enviados para %@ (%@) e sairão deste computador. Valem os termos do próprio provedor. Os modelos locais continuam sendo o padrão nos outros chats."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запросы и результаты инструментов этого чата будут отправлены на %@ (%@) и покинут этот компьютер. Действуют условия самого провайдера. В других чатах по умолчанию остаются локальные модели."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompter och verktygsresultat i den här chatten skickas till %@ (%@) och lämnar den här datorn. Leverantörens egna villkor gäller. Lokala modeller är fortfarande standard för andra chattar."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu sohbetteki istemler ve araç sonuçları %@ (%@) adresine gönderilecek ve bu makineden çıkacak. Sağlayıcının kendi koşulları geçerlidir. Diğer sohbetlerde yerel modeller varsayılan olarak kalır."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запити та результати інструментів цього чату буде надіслано на %@ (%@), і вони залишать цей комп'ютер. Діють умови самого провайдера. В інших чатах типовими залишаються локальні моделі."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prompt và kết quả công cụ trong cuộc trò chuyện này sẽ được gửi tới %@ (%@) và rời khỏi máy này. Áp dụng điều khoản của chính nhà cung cấp. Mô hình cục bộ vẫn là mặc định cho các cuộc trò chuyện khác."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此对话中的提示词和工具结果将发送到 %@（%@），并离开这台电脑。适用提供方自身的条款。其他对话仍默认使用本地模型。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此對話中的提示詞與工具結果將傳送到 %@（%@），並離開這台電腦。適用提供者自身的條款。其他對話仍預設使用本機模型。"
+          }
+        }
+      }
+    },
     "Propose Goal": {
       "localizations": {
         "ar": {
@@ -357638,6 +360389,530 @@
           "stringUnit": {
             "state": "translated",
             "value": "Ulangi"
+          }
+        }
+      }
+    },
+    "Remote (content leaves this Mac)": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "بعيد (يغادر المحتوى هذا الـ Mac)"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remote (Inhalte verlassen diesen Mac)"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remote (content leaves this Mac)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remoto (el contenido sale de este Mac)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Distant (le contenu quitte ce Mac)"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מרוחק (התוכן יוצא מה-Mac הזה)"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "दूरस्थ (सामग्री इस Mac से बाहर जाती है)"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jarak jauh (konten keluar dari Mac ini)"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remoto (il contenuto lascia questo Mac)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リモート (内容はこのMacの外に出ます)"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "원격 (콘텐츠가 이 Mac을 벗어남)"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Extern (inhoud verlaat deze Mac)"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zdalne (treść opuszcza ten Mac)"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remoto (o conteúdo sai deste Mac)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалённые (содержимое покидает этот Mac)"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fjärr (innehållet lämnar den här Macen)"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uzak (içerik bu Mac'ten çıkar)"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Віддалені (вміст залишає цей Mac)"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Từ xa (nội dung rời khỏi Mac này)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "远程（内容会离开这台 Mac）"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "遠端（內容會離開這台 Mac）"
+          }
+        }
+      }
+    },
+    "Remote providers send your prompts and tool results to a third party over the network. Local models stay the default. Nothing is sent until you add a provider and key, then choose its model in a chat and confirm. API keys only, no account sign-in.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ترسل المزوّدات البعيدة طلباتك ونتائج الأدوات إلى جهة خارجية عبر الشبكة. تبقى النماذج المحلية هي الافتراضية. لا يُرسل شيء حتى تضيف مزوّدًا ومفتاحًا، ثم تختار نموذجه في محادثة وتؤكد. مفاتيح API فقط، دون تسجيل دخول بحساب."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remote-Anbieter senden deine Prompts und Tool-Ergebnisse über das Netzwerk an Dritte. Lokale Modelle bleiben die Voreinstellung. Es wird nichts gesendet, bis du einen Anbieter und einen Schlüssel hinzufügst, dann in einem Chat sein Modell wählst und bestätigst. Nur API-Schlüssel, keine Kontoanmeldung."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remote providers send your prompts and tool results to a third party over the network. Local models stay the default. Nothing is sent until you add a provider and key, then choose its model in a chat and confirm. API keys only, no account sign-in."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los proveedores remotos envían tus prompts y resultados de herramientas a un tercero por la red. Los modelos locales siguen siendo el valor predeterminado. No se envía nada hasta que añadas un proveedor y una clave, elijas su modelo en un chat y confirmes. Solo claves de API, sin inicio de sesión de cuenta."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les fournisseurs distants envoient vos prompts et résultats d'outils à un tiers via le réseau. Les modèles locaux restent le choix par défaut. Rien n'est envoyé tant que vous n'avez pas ajouté un fournisseur et une clé, choisi son modèle dans un chat et confirmé. Clés API uniquement, sans connexion à un compte."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ספקים מרוחקים שולחים את ההנחיות ותוצאות הכלים שלך לצד שלישי דרך הרשת. מודלים מקומיים נשארים ברירת המחדל. דבר לא נשלח עד שתוסיף ספק ומפתח, תבחר את המודל שלו בצ'אט ותאשר. מפתחות API בלבד, ללא התחברות לחשבון."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "दूरस्थ प्रदाता आपके प्रॉम्प्ट और टूल परिणाम नेटवर्क के जरिए किसी तीसरे पक्ष को भेजते हैं। स्थानीय मॉडल डिफ़ॉल्ट बने रहते हैं। जब तक आप प्रदाता और कुंजी नहीं जोड़ते, चैट में उसका मॉडल नहीं चुनते और पुष्टि नहीं करते, कुछ नहीं भेजा जाता। केवल API कुंजियाँ, कोई खाता साइन-इन नहीं।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Penyedia jarak jauh mengirim prompt dan hasil alat Anda ke pihak ketiga melalui jaringan. Model lokal tetap menjadi default. Tidak ada yang dikirim sampai Anda menambahkan penyedia dan kunci, lalu memilih modelnya di obrolan dan mengonfirmasi. Hanya kunci API, tanpa masuk akun."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "I provider remoti inviano i tuoi prompt e i risultati degli strumenti a una terza parte tramite la rete. I modelli locali restano l'impostazione predefinita. Non viene inviato nulla finché non aggiungi un provider e una chiave, scegli il suo modello in una chat e confermi. Solo chiavi API, nessun accesso con account."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リモートプロバイダは、プロンプトとツールの結果をネットワーク経由で第三者に送信します。ローカルモデルが引き続き既定です。プロバイダとキーを追加し、チャットでそのモデルを選んで確認するまで、何も送信されません。使えるのはAPIキーのみで、アカウントへのサインインはありません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "원격 제공업체는 프롬프트와 도구 결과를 네트워크를 통해 제3자에게 보냅니다. 로컬 모델이 계속 기본값입니다. 제공업체와 키를 추가하고 채팅에서 해당 모델을 선택해 확인하기 전에는 아무것도 전송되지 않습니다. API 키만 사용하며 계정 로그인은 없습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Externe providers sturen je prompts en toolresultaten via het netwerk naar een derde partij. Lokale modellen blijven de standaard. Er wordt niets verzonden totdat je een provider en sleutel toevoegt, in een chat het model kiest en bevestigt. Alleen API-sleutels, geen accountaanmelding."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zdalni dostawcy wysyłają Twoje prompty i wyniki narzędzi przez sieć do strony trzeciej. Modele lokalne pozostają domyślne. Nic nie jest wysyłane, dopóki nie dodasz dostawcy i klucza, nie wybierzesz jego modelu w czacie i nie potwierdzisz. Tylko klucze API, bez logowania na konto."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Provedores remotos enviam seus prompts e resultados de ferramentas a um terceiro pela rede. Os modelos locais continuam sendo o padrão. Nada é enviado até você adicionar um provedor e uma chave, escolher o modelo dele em um chat e confirmar. Somente chaves de API, sem login de conta."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалённые провайдеры отправляют ваши запросы и результаты инструментов третьей стороне по сети. Локальные модели остаются по умолчанию. Ничего не отправляется, пока вы не добавите провайдера и ключ, не выберете его модель в чате и не подтвердите. Только ключи API, без входа в аккаунт."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fjärrleverantörer skickar dina prompter och verktygsresultat till en tredje part över nätverket. Lokala modeller är fortfarande standard. Inget skickas förrän du lägger till en leverantör och nyckel, väljer dess modell i en chatt och bekräftar. Endast API-nycklar, ingen kontoinloggning."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uzak sağlayıcılar istemlerinizi ve araç sonuçlarını ağ üzerinden üçüncü bir tarafa gönderir. Yerel modeller varsayılan olarak kalır. Bir sağlayıcı ve anahtar ekleyip sohbette modelini seçerek onaylamadıkça hiçbir şey gönderilmez. Yalnızca API anahtarları, hesap girişi yok."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Віддалені провайдери надсилають ваші запити та результати інструментів стороннім особам через мережу. Локальні моделі залишаються типовими. Нічого не надсилається, доки ви не додасте провайдера й ключ, не оберете його модель у чаті та не підтвердите. Лише ключі API, без входу в обліковий запис."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nhà cung cấp từ xa gửi prompt và kết quả công cụ của bạn tới bên thứ ba qua mạng. Mô hình cục bộ vẫn là mặc định. Không có gì được gửi cho đến khi bạn thêm nhà cung cấp và khóa, chọn mô hình của họ trong cuộc trò chuyện rồi xác nhận. Chỉ dùng khóa API, không đăng nhập tài khoản."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "远程提供方会通过网络把你的提示词和工具结果发送给第三方。本地模型仍是默认选项。在你添加提供方和密钥、于对话中选择其模型并确认之前，不会发送任何内容。仅支持 API 密钥，不支持账户登录。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "遠端提供者會透過網路把你的提示詞與工具結果傳送給第三方。本機模型仍是預設選項。在你新增提供者與金鑰、於對話中選擇其模型並確認之前，不會傳送任何內容。僅支援 API 金鑰，不支援帳戶登入。"
+          }
+        }
+      }
+    },
+    "Remove model": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إزالة النموذج"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modell entfernen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove model"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitar modelo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Supprimer le modèle"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הסר מודל"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "मॉडल हटाएँ"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hapus model"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rimuovi modello"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルを削除"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델 제거"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model verwijderen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usuń model"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remover modelo"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить модель"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ta bort modell"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modeli kaldır"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Видалити модель"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Xóa mô hình"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除模型"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除模型"
+          }
+        }
+      }
+    },
+    "Remove provider": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إزالة المزوّد"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anbieter entfernen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove provider"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quitar proveedor"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Supprimer le fournisseur"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הסר ספק"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्रदाता हटाएँ"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hapus penyedia"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rimuovi provider"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロバイダを削除"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "제공업체 제거"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Provider verwijderen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usuń dostawcę"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remover provedor"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить провайдера"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ta bort leverantör"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sağlayıcıyı kaldır"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Видалити провайдера"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Xóa nhà cung cấp"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除提供方"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除提供者"
           }
         }
       }
@@ -381469,6 +384744,137 @@
         }
       }
     },
+    "Reported by the provider.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "أبلغ عنه المزوّد."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vom Anbieter gemeldet."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reported by the provider."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Informado por el proveedor."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Communiqué par le fournisseur."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "דווח על ידי הספק."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्रदाता द्वारा बताया गया।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dilaporkan oleh penyedia."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Comunicato dal provider."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロバイダが報告した値です。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "제공업체가 보고한 값입니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gemeld door de provider."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zgłoszone przez dostawcę."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Informado pelo provedor."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сообщено провайдером."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rapporterat av leverantören."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sağlayıcı tarafından bildirildi."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Повідомлено провайдером."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Do nhà cung cấp báo cáo."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "由提供方报告。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "由提供者回報。"
+          }
+        }
+      }
+    },
     "Repository": {
       "localizations": {
         "ar": {
@@ -396787,6 +400193,137 @@
         }
       }
     },
+    "Save to Keychain": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "احفظ في سلسلة المفاتيح"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Im Schlüsselbund sichern"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save to Keychain"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Guardar en el llavero"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrer dans le trousseau"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "שמור בשרשרת המפתחות"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "कीचेन में सहेजें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Simpan ke Keychain"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Salva nel portachiavi"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "キーチェーンに保存"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "키체인에 저장"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bewaar in sleutelhanger"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zapisz w pęku kluczy"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Salvar no Chaveiro"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сохранить в связке ключей"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spara i nyckelringen"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anahtar zincirine kaydet"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Зберегти у зв'язці ключів"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lưu vào chuỗi khóa"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "存入钥匙串"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "儲存至鑰匙圈"
+          }
+        }
+      }
+    },
     "Saves each model call and tool run (model, token counts, timing, clipped output and tool arguments) to an unencrypted file on this Mac, with passwords and tokens removed. Nothing is sent anywhere. Temporary chats and protected profiles never keep one, and turning this off deletes every log. Open one from a chat's context menu.": {
       "extractionState": "manual",
       "localizations": {
@@ -397311,6 +400848,137 @@
         }
       }
     },
+    "Send this chat to %@?": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إرسال هذه المحادثة إلى %@؟"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diesen Chat an %@ senden?"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send this chat to %@?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "¿Enviar este chat a %@?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer ce chat à %@ ?"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "לשלוח את הצ'אט הזה אל %@?"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस चैट को %@ को भेजें?"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kirim obrolan ini ke %@?"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inviare questa chat a %@?"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このチャットを %@ に送信しますか？"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 채팅을 %@(으)로 보낼까요?"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deze chat naar %@ sturen?"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wysłać ten czat do %@?"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enviar este chat para %@?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отправлять этот чат на %@?"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skicka den här chatten till %@?"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu sohbet %@ adresine gönderilsin mi?"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Надсилати цей чат на %@?"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gửi cuộc trò chuyện này tới %@?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "要将此对话发送到 %@ 吗？"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "要將此對話傳送到 %@ 嗎？"
+          }
+        }
+      }
+    },
     "Send to chat": {
       "extractionState": "manual",
       "localizations": {
@@ -397438,6 +401106,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "Kirim ke obrolan"
+          }
+        }
+      }
+    },
+    "Send to remote": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "أرسل إلى البعيد"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remote senden"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Send to remote"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enviar al remoto"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Envoyer au distant"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "שלח למרוחק"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "दूरस्थ को भेजें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kirim ke jarak jauh"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Invia al remoto"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リモートに送信"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "원격으로 보내기"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Naar extern sturen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wyślij zdalnie"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enviar ao remoto"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Отправлять удалённо"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skicka till fjärr"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uzağa gönder"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Надсилати віддалено"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gửi tới từ xa"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "发送到远程"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "傳送到遠端"
           }
         }
       }
@@ -472975,6 +476774,137 @@
         }
       }
     },
+    "Testing...": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "جارٍ الاختبار..."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Teste ..."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Testing..."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Probando..."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Test en cours..."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "בודק..."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "परीक्षण हो रहा है..."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Menguji..."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verifica in corso..."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "テスト中..."
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "테스트 중..."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Testen..."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Testowanie..."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Testando..."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Проверка..."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Testar..."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Test ediliyor..."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перевірка..."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Đang kiểm tra..."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在测试..."
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在測試..."
+          }
+        }
+      }
+    },
     "Text": {
       "extractionState": "manual",
       "localizations": {
@@ -477031,6 +480961,1840 @@
           "stringUnit": {
             "state": "translated",
             "value": "Gambar terlalu besar untuk diekspor dengan anotasi."
+          }
+        }
+      }
+    },
+    "The Keychain could not be read: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تعذرت قراءة سلسلة المفاتيح: %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Schlüsselbund konnte nicht gelesen werden: %@"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The Keychain could not be read: %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo leer el llavero: %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le trousseau n'a pas pu être lu : %@"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "לא ניתן לקרוא את שרשרת המפתחות: %@"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "कीचेन पढ़ी नहीं जा सकी: %@"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keychain tidak dapat dibaca: %@"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossibile leggere il portachiavi: %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "キーチェーンを読み取れませんでした: %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "키체인을 읽을 수 없습니다: %@"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De sleutelhanger kon niet worden gelezen: %@"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie można odczytać pęku kluczy: %@"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível ler o Chaveiro: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось прочитать связку ключей: %@"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nyckelringen kunde inte läsas: %@"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Anahtar zinciri okunamadı: %@"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не вдалося прочитати зв'язку ключів: %@"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không thể đọc chuỗi khóa: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法读取钥匙串：%@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法讀取鑰匙圈：%@"
+          }
+        }
+      }
+    },
+    "The provider did not respond in time.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لم يستجب المزوّد في الوقت المناسب."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Anbieter hat nicht rechtzeitig geantwortet."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The provider did not respond in time."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El proveedor no respondió a tiempo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le fournisseur n'a pas répondu à temps."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הספק לא הגיב בזמן."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्रदाता ने समय पर उत्तर नहीं दिया।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Penyedia tidak merespons tepat waktu."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il provider non ha risposto in tempo."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロバイダが時間内に応答しませんでした。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "제공업체가 제시간에 응답하지 않았습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De provider reageerde niet op tijd."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dostawca nie odpowiedział na czas."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O provedor não respondeu a tempo."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Провайдер не ответил вовремя."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leverantören svarade inte i tid."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sağlayıcı zamanında yanıt vermedi."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Провайдер не відповів вчасно."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nhà cung cấp không phản hồi kịp thời."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提供方未能及时响应。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提供者未能及時回應。"
+          }
+        }
+      }
+    },
+    "The provider endpoint was not found. Check the base URL.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لم يُعثر على نقطة نهاية المزوّد. تحقق من عنوان URL الأساسي."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Endpunkt des Anbieters wurde nicht gefunden. Prüfe die Basis-URL."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The provider endpoint was not found. Check the base URL."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se encontró el endpoint del proveedor. Revisa la URL base."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le point de terminaison du fournisseur est introuvable. Vérifiez l'URL de base."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "נקודת הקצה של הספק לא נמצאה. בדוק את כתובת הבסיס."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्रदाता का एंडपॉइंट नहीं मिला। बेस URL जाँचें।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Endpoint penyedia tidak ditemukan. Periksa URL dasar."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Endpoint del provider non trovato. Controlla l'URL di base."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロバイダのエンドポイントが見つかりません。ベースURLを確認してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "제공업체 엔드포인트를 찾을 수 없습니다. 기본 URL을 확인하세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Het eindpunt van de provider is niet gevonden. Controleer de basis-URL."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie znaleziono punktu końcowego dostawcy. Sprawdź bazowy adres URL."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O endpoint do provedor não foi encontrado. Verifique a URL base."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Конечная точка провайдера не найдена. Проверьте базовый URL."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leverantörens slutpunkt hittades inte. Kontrollera bas-URL:en."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sağlayıcı uç noktası bulunamadı. Temel URL'yi kontrol edin."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Кінцеву точку провайдера не знайдено. Перевірте базову URL-адресу."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không tìm thấy endpoint của nhà cung cấp. Hãy kiểm tra URL gốc."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未找到提供方的端点。请检查基础 URL。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "找不到提供者的端點。請檢查基礎 URL。"
+          }
+        }
+      }
+    },
+    "The provider is overloaded. Try again shortly.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "المزوّد مثقل بالطلبات. حاول مجددًا بعد قليل."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Anbieter ist überlastet. Versuche es gleich noch einmal."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The provider is overloaded. Try again shortly."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El proveedor está sobrecargado. Inténtalo de nuevo en breve."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le fournisseur est surchargé. Réessayez dans un instant."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הספק עמוס. נסה שוב בעוד רגע."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्रदाता पर अत्यधिक भार है। थोड़ी देर बाद पुनः प्रयास करें।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Penyedia kelebihan beban. Coba lagi sebentar lagi."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il provider è sovraccarico. Riprova tra poco."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロバイダが過負荷です。しばらくしてからもう一度お試しください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "제공업체가 과부하 상태입니다. 잠시 후 다시 시도하세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De provider is overbelast. Probeer het zo opnieuw."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dostawca jest przeciążony. Spróbuj ponownie za chwilę."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O provedor está sobrecarregado. Tente novamente em instantes."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Провайдер перегружен. Повторите попытку чуть позже."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leverantören är överbelastad. Försök igen om en stund."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sağlayıcı aşırı yüklü. Birazdan tekrar deneyin."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Провайдер перевантажений. Спробуйте ще раз трохи згодом."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nhà cung cấp đang quá tải. Hãy thử lại sau giây lát."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提供方过载。请稍后重试。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提供者過載。請稍後重試。"
+          }
+        }
+      }
+    },
+    "The provider is rate limiting requests. Try again shortly.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يحدّ المزوّد من معدل الطلبات. حاول مجددًا بعد قليل."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Anbieter begrenzt die Anfragen. Versuche es gleich noch einmal."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The provider is rate limiting requests. Try again shortly."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El proveedor está limitando las solicitudes. Inténtalo de nuevo en breve."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le fournisseur limite le débit des requêtes. Réessayez dans un instant."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הספק מגביל את קצב הבקשות. נסה שוב בעוד רגע."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्रदाता अनुरोधों की दर सीमित कर रहा है। थोड़ी देर बाद पुनः प्रयास करें।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Penyedia membatasi laju permintaan. Coba lagi sebentar lagi."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il provider sta limitando le richieste. Riprova tra poco."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロバイダがリクエストを制限しています。しばらくしてからもう一度お試しください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "제공업체가 요청 속도를 제한하고 있습니다. 잠시 후 다시 시도하세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De provider beperkt het aantal verzoeken. Probeer het zo opnieuw."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dostawca ogranicza liczbę żądań. Spróbuj ponownie za chwilę."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O provedor está limitando as solicitações. Tente novamente em instantes."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Провайдер ограничивает частоту запросов. Повторите попытку чуть позже."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leverantören begränsar antalet förfrågningar. Försök igen om en stund."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sağlayıcı istekleri sınırlıyor. Birazdan tekrar deneyin."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Провайдер обмежує частоту запитів. Спробуйте ще раз трохи згодом."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nhà cung cấp đang giới hạn tốc độ yêu cầu. Hãy thử lại sau giây lát."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提供方正在限制请求频率。请稍后重试。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提供者正在限制請求頻率。請稍後重試。"
+          }
+        }
+      }
+    },
+    "The provider refused the request (HTTP %lld): %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "رفض المزوّد الطلب (HTTP %lld): %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Anbieter hat die Anfrage abgelehnt (HTTP %lld): %@"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The provider refused the request (HTTP %lld): %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El proveedor rechazó la solicitud (HTTP %lld): %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le fournisseur a refusé la requête (HTTP %lld) : %@"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הספק סירב לבקשה (HTTP %lld): %@"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्रदाता ने अनुरोध अस्वीकार किया (HTTP %lld): %@"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Penyedia menolak permintaan (HTTP %lld): %@"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il provider ha rifiutato la richiesta (HTTP %lld): %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロバイダがリクエストを拒否しました (HTTP %lld): %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "제공업체가 요청을 거부했습니다 (HTTP %lld): %@"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De provider weigerde het verzoek (HTTP %lld): %@"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dostawca odrzucił żądanie (HTTP %lld): %@"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O provedor recusou a solicitação (HTTP %lld): %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Провайдер отклонил запрос (HTTP %lld): %@"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leverantören avvisade förfrågan (HTTP %lld): %@"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sağlayıcı isteği reddetti (HTTP %lld): %@"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Провайдер відхилив запит (HTTP %lld): %@"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nhà cung cấp đã từ chối yêu cầu (HTTP %lld): %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提供方拒绝了请求（HTTP %lld）：%@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提供者拒絕了請求（HTTP %lld）：%@"
+          }
+        }
+      }
+    },
+    "The provider rejected the API key.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "رفض المزوّد مفتاح API."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Anbieter hat den API-Schlüssel abgelehnt."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The provider rejected the API key."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El proveedor rechazó la clave de API."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le fournisseur a refusé la clé API."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הספק דחה את מפתח ה-API."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्रदाता ने API कुंजी अस्वीकार कर दी।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Penyedia menolak kunci API."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il provider ha rifiutato la chiave API."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロバイダがAPIキーを拒否しました。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "제공업체가 API 키를 거부했습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De provider heeft de API-sleutel geweigerd."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dostawca odrzucił klucz API."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O provedor rejeitou a chave de API."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Провайдер отклонил ключ API."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leverantören avvisade API-nyckeln."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sağlayıcı API anahtarını reddetti."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Провайдер відхилив ключ API."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nhà cung cấp đã từ chối khóa API."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提供方拒绝了 API 密钥。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提供者拒絕了 API 金鑰。"
+          }
+        }
+      }
+    },
+    "The provider returned an error (HTTP %lld).": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "أعاد المزوّد خطأً (HTTP %lld)."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Anbieter hat einen Fehler gemeldet (HTTP %lld)."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The provider returned an error (HTTP %lld)."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El proveedor devolvió un error (HTTP %lld)."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le fournisseur a renvoyé une erreur (HTTP %lld)."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הספק החזיר שגיאה (HTTP %lld)."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्रदाता ने त्रुटि लौटाई (HTTP %lld)।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Penyedia mengembalikan galat (HTTP %lld)."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il provider ha restituito un errore (HTTP %lld)."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロバイダがエラーを返しました (HTTP %lld)。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "제공업체가 오류를 반환했습니다 (HTTP %lld)."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De provider gaf een fout terug (HTTP %lld)."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dostawca zwrócił błąd (HTTP %lld)."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O provedor retornou um erro (HTTP %lld)."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Провайдер вернул ошибку (HTTP %lld)."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leverantören returnerade ett fel (HTTP %lld)."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sağlayıcı bir hata döndürdü (HTTP %lld)."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Провайдер повернув помилку (HTTP %lld)."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nhà cung cấp trả về lỗi (HTTP %lld)."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提供方返回了错误（HTTP %lld）。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提供者回傳了錯誤（HTTP %lld）。"
+          }
+        }
+      }
+    },
+    "The provider tried to redirect the request, so it was blocked.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "حاول المزوّد إعادة توجيه الطلب، لذا تم حظره."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Anbieter wollte die Anfrage umleiten, daher wurde sie blockiert."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The provider tried to redirect the request, so it was blocked."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El proveedor intentó redirigir la solicitud, así que se bloqueó."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le fournisseur a tenté de rediriger la requête, elle a donc été bloquée."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הספק ניסה להפנות את הבקשה, ולכן היא נחסמה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्रदाता ने अनुरोध को रीडायरेक्ट करने का प्रयास किया, इसलिए इसे रोका गया।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Penyedia mencoba mengalihkan permintaan, jadi diblokir."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il provider ha tentato di reindirizzare la richiesta, quindi è stata bloccata."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロバイダがリクエストをリダイレクトしようとしたため、ブロックしました。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "제공업체가 요청을 리디렉션하려 해서 차단했습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De provider probeerde het verzoek om te leiden, dus het is geblokkeerd."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dostawca próbował przekierować żądanie, więc zostało zablokowane."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O provedor tentou redirecionar a solicitação, então ela foi bloqueada."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Провайдер попытался перенаправить запрос, поэтому он заблокирован."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leverantören försökte omdirigera förfrågan, så den blockerades."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sağlayıcı isteği yönlendirmeye çalıştı, bu yüzden engellendi."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Провайдер спробував перенаправити запит, тому його заблоковано."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nhà cung cấp cố chuyển hướng yêu cầu nên đã bị chặn."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提供方试图重定向请求，因此已被阻止。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提供者試圖重新導向請求，因此已被封鎖。"
+          }
+        }
+      }
+    },
+    "The provider's base URL is not allowed. Use https, or http for localhost only.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "عنوان URL الأساسي للمزوّد غير مسموح. استخدم https، أو http لـ localhost فقط."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Basis-URL des Anbieters ist nicht erlaubt. Nutze https, oder http nur für localhost."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The provider's base URL is not allowed. Use https, or http for localhost only."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La URL base del proveedor no está permitida. Usa https, o http solo para localhost."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'URL de base du fournisseur n'est pas autorisée. Utilisez https, ou http pour localhost uniquement."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "כתובת הבסיס של הספק אינה מותרת. השתמש ב-https, או ב-http עבור localhost בלבד."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्रदाता का बेस URL अनुमत नहीं है। https का उपयोग करें, या केवल localhost के लिए http।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "URL dasar penyedia tidak diizinkan. Gunakan https, atau http hanya untuk localhost."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'URL di base del provider non è consentito. Usa https, oppure http solo per localhost."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロバイダのベースURLは使用できません。httpsを使うか、localhostに限りhttpを使ってください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "제공업체의 기본 URL이 허용되지 않습니다. https를 사용하거나 localhost에만 http를 사용하세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De basis-URL van de provider is niet toegestaan. Gebruik https, of http alleen voor localhost."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bazowy adres URL dostawcy jest niedozwolony. Użyj https lub http tylko dla localhost."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A URL base do provedor não é permitida. Use https, ou http somente para localhost."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Базовый URL провайдера не разрешён. Используйте https или http только для localhost."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leverantörens bas-URL är inte tillåten. Använd https, eller http endast för localhost."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sağlayıcının temel URL'sine izin verilmiyor. https kullanın, ya da yalnızca localhost için http."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Базова URL-адреса провайдера не дозволена. Використовуйте https або http лише для localhost."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "URL gốc của nhà cung cấp không được phép. Dùng https, hoặc http chỉ cho localhost."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不允许使用该提供方的基础 URL。请使用 https，仅 localhost 可使用 http。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "不允許使用該提供者的基礎 URL。請使用 https，僅 localhost 可使用 http。"
+          }
+        }
+      }
+    },
+    "The provider's reply was cut off or malformed. Nothing was run.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "قُطع رد المزوّد أو كان مشوّهًا. لم يُنفَّذ شيء."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Antwort des Anbieters wurde abgeschnitten oder war fehlerhaft. Es wurde nichts ausgeführt."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The provider's reply was cut off or malformed. Nothing was run."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La respuesta del proveedor se cortó o es incorrecta. No se ejecutó nada."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La réponse du fournisseur a été coupée ou est malformée. Rien n'a été exécuté."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "תשובת הספק נקטעה או פגומה. דבר לא הורץ."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्रदाता का उत्तर कट गया या दोषपूर्ण था। कुछ भी नहीं चलाया गया।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Balasan penyedia terputus atau rusak. Tidak ada yang dijalankan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La risposta del provider è stata interrotta o è malformata. Non è stato eseguito nulla."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロバイダの応答が途中で切れたか不正です。何も実行されていません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "제공업체의 응답이 중간에 끊겼거나 형식이 잘못되었습니다. 아무것도 실행되지 않았습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Het antwoord van de provider was afgebroken of onjuist. Er is niets uitgevoerd."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Odpowiedź dostawcy została ucięta lub jest nieprawidłowa. Nic nie zostało uruchomione."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A resposta do provedor foi cortada ou está malformada. Nada foi executado."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ответ провайдера оборван или повреждён. Ничего не выполнено."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leverantörens svar avbröts eller var felaktigt. Inget kördes."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sağlayıcının yanıtı kesildi veya bozuk. Hiçbir şey çalıştırılmadı."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Відповідь провайдера обірвано або пошкоджено. Нічого не виконано."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Phản hồi của nhà cung cấp bị cắt hoặc không hợp lệ. Không có gì được chạy."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提供方的回复被截断或格式错误。未执行任何操作。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "提供者的回覆被截斷或格式錯誤。未執行任何操作。"
+          }
+        }
+      }
+    },
+    "The reply stalled and was stopped.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "توقف الرد وتم إيقافه."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Antwort ist ins Stocken geraten und wurde gestoppt."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The reply stalled and was stopped."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La respuesta se detuvo y se canceló."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La réponse s'est bloquée et a été arrêtée."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "התשובה נתקעה ונעצרה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "उत्तर अटक गया और रोक दिया गया।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Balasan macet dan dihentikan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La risposta si è bloccata ed è stata interrotta."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "応答が停止したため中断しました。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "응답이 멈춰서 중지되었습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Het antwoord liep vast en is gestopt."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Odpowiedź utknęła i została zatrzymana."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A resposta travou e foi interrompida."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ответ завис и был остановлен."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Svaret fastnade och stoppades."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yanıt takıldı ve durduruldu."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Відповідь зависла й була зупинена."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Phản hồi bị treo và đã bị dừng."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回复停滞，已停止。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回覆停滯，已停止。"
+          }
+        }
+      }
+    },
+    "The reply was too large and was stopped.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "كان الرد كبيرًا جدًا وتم إيقافه."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Antwort war zu groß und wurde gestoppt."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The reply was too large and was stopped."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La respuesta era demasiado grande y se detuvo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La réponse était trop volumineuse et a été arrêtée."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "התשובה גדולה מדי ונעצרה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "उत्तर बहुत बड़ा था और रोक दिया गया।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Balasan terlalu besar dan dihentikan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La risposta era troppo grande ed è stata interrotta."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "応答が大きすぎるため中断しました。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "응답이 너무 커서 중지되었습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Het antwoord was te groot en is gestopt."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Odpowiedź była zbyt duża i została zatrzymana."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A resposta era grande demais e foi interrompida."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ответ слишком велик и был остановлен."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Svaret var för stort och stoppades."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yanıt çok büyüktü ve durduruldu."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Відповідь була завеликою й була зупинена."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Phản hồi quá lớn và đã bị dừng."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回复过大，已停止。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回覆過大，已停止。"
+          }
+        }
+      }
+    },
+    "The request is too large to send. Compact the chat.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الطلب كبير جدًا بحيث لا يمكن إرساله. اضغط المحادثة."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Anfrage ist zu groß zum Senden. Verdichte den Chat."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The request is too large to send. Compact the chat."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La solicitud es demasiado grande para enviarla. Compacta el chat."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La requête est trop volumineuse pour être envoyée. Compactez le chat."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הבקשה גדולה מדי לשליחה. כווץ את הצ'אט."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "अनुरोध भेजने के लिए बहुत बड़ा है। चैट को संक्षिप्त करें।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permintaan terlalu besar untuk dikirim. Padatkan obrolan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La richiesta è troppo grande per essere inviata. Compatta la chat."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "リクエストが大きすぎて送信できません。チャットを圧縮してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "요청이 너무 커서 보낼 수 없습니다. 채팅을 압축하세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Het verzoek is te groot om te verzenden. Comprimeer de chat."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Żądanie jest zbyt duże, aby je wysłać. Skompaktuj czat."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A solicitação é grande demais para enviar. Compacte o chat."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запрос слишком велик для отправки. Сожмите чат."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Förfrågan är för stor för att skickas. Komprimera chatten."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "İstek göndermek için çok büyük. Sohbeti sıkıştırın."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запит завеликий для надсилання. Стисніть чат."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yêu cầu quá lớn để gửi. Hãy nén cuộc trò chuyện."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请求过大，无法发送。请压缩对话。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請求過大，無法傳送。請壓縮對話。"
           }
         }
       }
@@ -492744,6 +498508,137 @@
         }
       }
     },
+    "This conversation exceeds the model's context window. Compact the chat or start a new one.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تتجاوز هذه المحادثة نافذة سياق النموذج. اضغط المحادثة أو ابدأ محادثة جديدة."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diese Unterhaltung überschreitet das Kontextfenster des Modells. Verdichte den Chat oder starte einen neuen."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This conversation exceeds the model's context window. Compact the chat or start a new one."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esta conversación supera la ventana de contexto del modelo. Compacta el chat o empieza uno nuevo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cette conversation dépasse la fenêtre de contexte du modèle. Compactez le chat ou commencez-en un nouveau."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "השיחה חורגת מחלון ההקשר של המודל. כווץ את הצ'אט או התחל חדש."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "यह बातचीत मॉडल की संदर्भ विंडो से अधिक है। चैट को संक्षिप्त करें या नई शुरू करें।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Percakapan ini melebihi jendela konteks model. Padatkan obrolan atau mulai yang baru."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Questa conversazione supera la finestra di contesto del modello. Compatta la chat o iniziane una nuova."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この会話はモデルのコンテキストウィンドウを超えています。チャットを圧縮するか、新しく始めてください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 대화가 모델의 컨텍스트 창을 초과합니다. 채팅을 압축하거나 새로 시작하세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dit gesprek overschrijdt het contextvenster van het model. Comprimeer de chat of begin een nieuwe."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ta rozmowa przekracza okno kontekstu modelu. Skompaktuj czat lub zacznij nowy."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esta conversa excede a janela de contexto do modelo. Compacte o chat ou comece um novo."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Этот разговор превышает контекстное окно модели. Сожмите чат или начните новый."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Den här konversationen överskrider modellens kontextfönster. Komprimera chatten eller starta en ny."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu konuşma modelin bağlam penceresini aşıyor. Sohbeti sıkıştırın veya yenisini başlatın."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ця розмова перевищує контекстне вікно моделі. Стисніть чат або почніть новий."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cuộc trò chuyện này vượt quá cửa sổ ngữ cảnh của mô hình. Hãy nén cuộc trò chuyện hoặc bắt đầu cuộc mới."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此对话超出了模型的上下文窗口。请压缩对话或开始新对话。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此對話超出了模型的上下文視窗。請壓縮對話或開始新對話。"
+          }
+        }
+      }
+    },
     "This Mac": {
       "extractionState": "manual",
       "localizations": {
@@ -500466,6 +506361,268 @@
           "stringUnit": {
             "state": "translated",
             "value": "此專案覆寫了你自己的：%@。"
+          }
+        }
+      }
+    },
+    "This remote provider needs an API key. Add one in Settings, Network, Remote providers.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يحتاج هذا المزوّد البعيد إلى مفتاح API. أضف مفتاحًا في الإعدادات > الشبكة > المزوّدون البعيدون."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieser Remote-Anbieter braucht einen API-Schlüssel. Füge in den Einstellungen unter Netzwerk, Remote-Anbieter einen hinzu."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This remote provider needs an API key. Add one in Settings, Network, Remote providers."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este proveedor remoto necesita una clave de API. Añade una en Ajustes, Red, Proveedores remotos."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce fournisseur distant a besoin d'une clé API. Ajoutez-en une dans Réglages, Réseau, Fournisseurs distants."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "לספק המרוחק הזה נדרש מפתח API. הוסף אחד בהגדרות, רשת, ספקים מרוחקים."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस दूरस्थ प्रदाता को API कुंजी चाहिए। सेटिंग्स, नेटवर्क, दूरस्थ प्रदाता में एक जोड़ें।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Penyedia jarak jauh ini memerlukan kunci API. Tambahkan di Pengaturan, Jaringan, Penyedia jarak jauh."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Questo provider remoto richiede una chiave API. Aggiungine una in Impostazioni, Rete, Provider remoti."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このリモートプロバイダにはAPIキーが必要です。設定のネットワーク、リモートプロバイダで追加してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 원격 제공업체에는 API 키가 필요합니다. 설정, 네트워크, 원격 제공업체에서 추가하세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deze externe provider heeft een API-sleutel nodig. Voeg er een toe in Instellingen, Netwerk, Externe providers."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ten zdalny dostawca wymaga klucza API. Dodaj go w Ustawieniach, Sieć, Zdalni dostawcy."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este provedor remoto precisa de uma chave de API. Adicione uma em Ajustes, Rede, Provedores remotos."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Этому удалённому провайдеру нужен ключ API. Добавьте его в Настройки, Сеть, Удалённые провайдеры."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Den här fjärrleverantören behöver en API-nyckel. Lägg till en i Inställningar, Nätverk, Fjärrleverantörer."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu uzak sağlayıcı bir API anahtarı gerektirir. Ayarlar, Ağ, Uzak sağlayıcılar bölümünden ekleyin."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Цьому віддаленому провайдеру потрібен ключ API. Додайте його в Параметри, Мережа, Віддалені провайдери."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nhà cung cấp từ xa này cần khóa API. Hãy thêm trong Cài đặt, Mạng, Nhà cung cấp từ xa."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此远程提供方需要 API 密钥。请在“设置”、“网络”、“远程提供方”中添加。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此遠端提供者需要 API 金鑰。請在「設定」、「網路」、「遠端提供者」中新增。"
+          }
+        }
+      }
+    },
+    "This remote provider or model is turned off.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "هذا المزوّد البعيد أو النموذج متوقف."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieser Remote-Anbieter oder dieses Modell ist ausgeschaltet."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This remote provider or model is turned off."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este proveedor remoto o modelo está desactivado."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce fournisseur distant ou ce modèle est désactivé."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הספק המרוחק או המודל הזה כבוי."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "यह दूरस्थ प्रदाता या मॉडल बंद है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Penyedia jarak jauh atau model ini dinonaktifkan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Questo provider remoto o modello è disattivato."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このリモートプロバイダまたはモデルはオフです。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 원격 제공업체 또는 모델이 꺼져 있습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deze externe provider of dit model staat uit."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ten zdalny dostawca lub model jest wyłączony."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este provedor remoto ou modelo está desativado."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Этот удалённый провайдер или модель отключены."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Den här fjärrleverantören eller modellen är avstängd."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu uzak sağlayıcı veya model kapalı."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Цей віддалений провайдер або модель вимкнено."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nhà cung cấp từ xa hoặc mô hình này đang tắt."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此远程提供方或模型已关闭。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此遠端提供者或模型已關閉。"
           }
         }
       }
@@ -529553,6 +535710,268 @@
         }
       }
     },
+    "Use for this session": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "استخدم لهذه الجلسة"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Für diese Sitzung verwenden"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use for this session"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usar en esta sesión"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Utiliser pour cette session"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "השתמש בהפעלה זו"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस सत्र के लिए उपयोग करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gunakan untuk sesi ini"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usa per questa sessione"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このセッションで使用"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 세션에서 사용"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gebruiken voor deze sessie"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Użyj w tej sesji"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usar nesta sessão"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Использовать в этом сеансе"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Använd för den här sessionen"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu oturum için kullan"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Використати в цьому сеансі"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dùng cho phiên này"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "仅在本次会话使用"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "僅在本次工作階段使用"
+          }
+        }
+      }
+    },
+    "Use local model": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "استخدم النموذج المحلي"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lokales Modell verwenden"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use local model"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usar modelo local"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Utiliser le modèle local"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "השתמש במודל המקומי"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "स्थानीय मॉडल उपयोग करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gunakan model lokal"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usa il modello locale"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ローカルモデルを使用"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "로컬 모델 사용"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lokaal model gebruiken"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Użyj modelu lokalnego"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usar modelo local"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Использовать локальную модель"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Använd lokal modell"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yerel modeli kullan"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Використати локальну модель"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dùng mô hình cục bộ"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用本地模型"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用本機模型"
+          }
+        }
+      }
+    },
     "Use Skill": {
       "localizations": {
         "ar": {
@@ -539235,6 +545654,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "可見"
+          }
+        }
+      }
+    },
+    "Vision": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الرؤية"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bildverständnis"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vision"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Visión"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vision"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ראייה"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "विज़न"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Visi"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Visione"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ビジョン"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "비전"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Visie"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wizja"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Visão"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Зрение"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bildförståelse"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Görüntü"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Зір"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thị giác"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "视觉"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "視覺"
           }
         }
       }

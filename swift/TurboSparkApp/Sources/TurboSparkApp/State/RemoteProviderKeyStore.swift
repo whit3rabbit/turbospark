@@ -99,6 +99,13 @@ final class RemoteProviderKeyStore: @unchecked Sendable {
         return backend.exists(account: account(id))
     }
 
+    /// The in-memory key only. Never reads the Keychain, so it is safe for
+    /// redaction after a send (the key is cached by then).
+    func cachedKey(for id: UUID) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        return session[id]
+    }
+
     /// The user's explicit save. `errSecSuccess` on success so the pane can
     /// show the system's reason otherwise.
     @discardableResult

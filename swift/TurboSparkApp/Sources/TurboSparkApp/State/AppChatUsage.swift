@@ -43,19 +43,25 @@ public struct AppChatUsageLedger: Codable, Equatable, Sendable {
     /// Day-bucketed usage, keyed "yyyy-MM-dd" (UTC-day, `dayKey`'s rule).
     public var byDay: [String: AppChatUsageDay]
     public var lastUpdatedAt: Date
+    /// Usage of turns that ran on a remote provider (ZP-22), keyed by the
+    /// provider's name at the time. Local turns are not here, so the local
+    /// totals above minus this is what ran on the Mac. Absent in older files.
+    public var byProvider: [String: AppChatUsageDay]
 
     public init(
         totalPromptTokens: Int = 0,
         totalOutputTokens: Int = 0,
         turns: Int = 0,
         byDay: [String: AppChatUsageDay] = [:],
-        lastUpdatedAt: Date = Date()
+        lastUpdatedAt: Date = Date(),
+        byProvider: [String: AppChatUsageDay] = [:]
     ) {
         self.totalPromptTokens = totalPromptTokens
         self.totalOutputTokens = totalOutputTokens
         self.turns = turns
         self.byDay = byDay
         self.lastUpdatedAt = lastUpdatedAt
+        self.byProvider = byProvider
     }
 
     /// UTC day key. Deliberately not local-time: a ledger that re-buckets
@@ -73,8 +79,15 @@ public struct AppChatUsageLedger: Codable, Equatable, Sendable {
     /// as "nothing recorded" rather than trusted: the engine should never
     /// produce one, and a ledger is a terrible place to find out otherwise.
     public mutating func record(
-        promptTokens: Int, outputTokens: Int, on date: Date = Date()
+        promptTokens: Int, outputTokens: Int, on date: Date = Date(), provider: String? = nil
     ) {
+        if let provider, !provider.isEmpty {
+            var entry = byProvider[provider] ?? AppChatUsageDay()
+            entry.promptTokens += max(0, promptTokens)
+            entry.outputTokens += max(0, outputTokens)
+            entry.turns += 1
+            byProvider[provider] = entry
+        }
         let prompt = max(0, promptTokens)
         let output = max(0, outputTokens)
         totalPromptTokens += prompt
@@ -96,6 +109,7 @@ public struct AppChatUsageLedger: Codable, Equatable, Sendable {
         turns = try container.decodeIfPresent(Int.self, forKey: .turns) ?? 0
         byDay = try container.decodeIfPresent([String: AppChatUsageDay].self, forKey: .byDay) ?? [:]
         lastUpdatedAt = try container.decodeIfPresent(Date.self, forKey: .lastUpdatedAt) ?? Date()
+        byProvider = try container.decodeIfPresent([String: AppChatUsageDay].self, forKey: .byProvider) ?? [:]
     }
 }
 
@@ -108,6 +122,8 @@ public struct AppChatUsageTotals: Equatable, Sendable {
     /// Day-keyed totals across the same chats, dense in the keys the
     /// ledgers actually carry (a day with no usage is absent, not zero).
     public var byDay: [String: AppChatUsageDay]
+    /// Remote-provider totals across the same chats (ZP-22).
+    public var byProvider: [String: AppChatUsageDay] = [:]
 
     public init(
         promptTokens: Int = 0, outputTokens: Int = 0, turns: Int = 0,
@@ -132,6 +148,13 @@ public struct AppChatUsageTotals: Equatable, Sendable {
             promptTokens += ledger.totalPromptTokens
             outputTokens += ledger.totalOutputTokens
             turns += ledger.turns
+            for (key, usage) in ledger.byProvider {
+                var total = byProvider[key] ?? AppChatUsageDay()
+                total.promptTokens += usage.promptTokens
+                total.outputTokens += usage.outputTokens
+                total.turns += usage.turns
+                byProvider[key] = total
+            }
             for (key, day) in ledger.byDay {
                 var total = byDay[key] ?? AppChatUsageDay()
                 total.promptTokens += day.promptTokens

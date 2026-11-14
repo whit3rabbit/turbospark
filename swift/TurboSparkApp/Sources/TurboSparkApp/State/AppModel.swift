@@ -562,6 +562,19 @@ public final class AppModel: ObservableObject {
     /// (`AppModel+Trajectory.swift`).
     /// The chat whose trajectory pane is open, if any (ZP-03).
     @Published var trajectoryPaneChatID: UUID?
+    // Remote providers (ZP-22). Off by default: with no provider configured
+    // none of this runs. Selection is per chat and in memory only, so a
+    // relaunch returns every chat to the local model, and the Keychain is not
+    // touched until a remote model is used.
+    var remoteProviders = RemoteProviderStore()
+    /// The transport remote turns use. A seam so tests never open a socket.
+    var remoteTransport: any RemoteHTTPTransport = URLSessionRemoteTransport()
+    @Published var remoteSelections: [UUID: RemoteModelSelection] = [:]
+    @Published var remoteConfirmation: RemoteConfirmationRequest?
+    /// The last API-reported token count per remote chat (prompt plus output),
+    /// the ring's reading and a compaction input. Absent until a reply reports
+    /// usage, when the labeled estimate is shown instead.
+    @Published var remoteUsage: [UUID: Int] = [:]
     @Published public var trajectoryLoggingEnabled: Bool = false {
         didSet { trajectoryLoggingDidChange(from: oldValue) }
     }

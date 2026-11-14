@@ -9,8 +9,8 @@ and the
 [provider JSON schema doc](https://github.com/zai-org/ZCode/blob/main/docs/model-provider-json-schema.md).
 
 * Author: whit3rabbit
-* Status: Implemented (partial). See "Implementation Record" for what
-  shipped, the seam finding, and the exact remainder.
+* Status: Implemented. One manual follow-up remains (real-provider smoke
+  test by the user). See "Implementation Record".
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -465,41 +465,66 @@ Mutation checks (each applied, observed failing, restored):
 The tool-ladder mutation is deferred with step 8 below. An earlier M2 attempt
 did not compile (a bad edit) and was redone; only the redo is counted.
 
-### Remaining steps (exact)
+### Second increment (2026-11-14): the wiring
 
-1. `executeRemoteGenerationTurn` in `State/AppModel+Generation.swift`: sibling
-   of the local path per the seam record. Maps `RemoteStepEvent` to
-   `GenerationEvent` and builds `GenerationResult` via `JSONDecoder`. Calls
-   `claimLane`, honors epoch and cancel flags, runs the same tail. Chooses the
-   path from a per-chat remote selection (new `AppChat` field or a per-chat
-   map persisted without keys).
-2. Context rule for remote chats: ring shows API usage; pre-send estimate is
-   characters divided by 4 labeled "estimate"; compaction triggers on the
-   watermark or estimate against the model entry's window; overflow offers
-   compaction; the summarizer runs on the selected remote model.
-   Files: `State/AppContextUsage.swift`, the compaction entry in
-   `AppModel+Compaction`.
-3. `State/AppChatUsage.swift`: provider-tagged ledger entries.
-4. Settings: `App/SettingsTab.swift`, `App/AppSettingsView.swift`,
-   `Components/RemoteProviderSettingsPaneView.swift` (provider list, key field
-   with an explicit "Save to Keychain" action, model editor, Test connection,
-   the leaves-this-machine statement). Read DESIGN.md and the design-system
-   README first; run `make design-check`.
-5. Composer: `Generation/PromptContextPills.swift` Remote section (hidden with
-   no usable provider, labeled with a cloud glyph and the provider name,
-   persistent "content leaves this Mac" indicator while a remote model is
-   selected), first-send and local-to-remote confirmation sheet from
-   `RemoteProviderStore.sendDecision`.
-6. Localization: every user string in the catalog, 21 languages, parity gates;
-   map each `RemoteProviderError` to the local engine error row type and a
-   localized message (confirm the row type by reading the local error code).
-7. Rollout-log call with remote marker (only when ZP-03 logging is enabled).
-8. Tool ladder equality test against the remote turn once step 1 exists
-   (mutation: skip the ladder, expect failure). Not testable before then.
-9. ATS: confirm `Info.plist` allows loopback `http` (local-networking), or
-   keep loopback http unsupported in the app and update the policy.
-10. Manual: local mock SSE server for both families, one real-provider smoke by
-    the user, verify key absence from settings and logs.
+* Seam, settled with the smallest safe change: no new protocol. The post-
+  generation tail was extracted from `executeGenerationTurn` into
+  `processCompletedTurn` (a mechanical move, no behavior change) and the
+  remote turn is a sibling, `executeRemoteGenerationTurn` in
+  `State/AppModel+RemoteTurn.swift`, selected per chat before the local
+  session is touched. The first record's second blocker is moot:
+  `GenerationToolCall` already has a public `init(id:name:argumentsJSON:)`, so
+  no package change was needed. `GenerationResult` is built through its decoder.
+  Same lane (`claimLane`), epoch, cancel flags, `finishTurnTail`, dispatch gate,
+  ladder, parked-tool rule and step cap as a local turn. `canRun`, the submit
+  guards and `continueAgentLoop` accept a remote chat without a local session
+  (`hasTurnModel`).
+* Context and compaction: the ring reads the last API usage or a labeled
+  estimate (characters over 4). Compaction triggers on the larger of the two
+  against the model entry's window with the local threshold. The summary runs
+  on the selected remote model. Overflow is a named error that offers
+  compaction.
+* Usage ledger: `byProvider` on the chat ledger and on the totals.
+* Settings: a "Remote providers" section in Settings > Network (not a new tab:
+  it avoids the tab plumbing, and the pane already holds the other credential
+  section). Provider list, key field with "Use for this session", "Save to
+  Keychain" (the explicit opt-in) and "Forget key", model editor, Test
+  connection. The settings search catalog was regenerated (four entries).
+* Composer: `Generation/RemoteModelPill.swift`, a Remote menu beside the tool
+  chips (hidden until a provider has a key and an enabled model), a persistent
+  "Content leaves this Mac" label while a chat is remote, and the
+  confirmation naming the provider and host, raised on selection so nothing is
+  sent before the person confirms. The local model picker stays the top-bar
+  control. The Remote menu is separate because that control is the load and
+  eject surface.
+* Errors: `AppModel.remoteErrorText`, localized in 21 languages, key-free,
+  landing in `AppModel.error` plus an interrupted row like a local error.
+* Rollout log: `RolloutEntry.remoteHost`, written only when logging is on and
+  the chat is eligible, redacted.
+* ATS: no `NSAppTransportSecurity` key in the generated `Info.plist`.
+  Default ATS exempts IP addresses, so `http://127.0.0.1` and `http://[::1]`
+  work and plain `http://localhost` may not. Not changed (release script).
+* Localization: 50 catalog keys added with translations in all 21 languages.
+* Verification: `RemoteTurnTests` drive the real turn loop with a scripted
+  transport and no local session (prose, usage tagging, lane release, error
+  mapping, stop, tool-call approval equality with the local shape, truncated
+  tool call, summary on the remote model, overflow, rollout log). Mutation:
+  forcing `turnAllowsToolCalls: false` on the remote turn failed the ladder
+  equality test (applied, observed, restored). `make design-check`,
+  `make compile-strings`, the settings catalog generator, the localization and
+  font-propagation suites and the full app suite were run. The full suite has
+  50 failures on this shared tree and none is in this feature: Audio voice
+  clone and reference tests, `ArtifactRegistryTests`, `ChatSharingAndSummaryTests`
+  (the known tool icon one), `LoadPathSourceScanTests`, `StoreDurabilityTests`
+  (labels from other stores), `ToolErrorCodeUniquenessTests` (a duplicate code
+  between `AppModel` and `AppToolRegistry`). One failure of mine was fixed (a
+  hard-coded `.font` in the new pane, caught by `FontPropagationTests`).
+  `make swift-lib-app` was not run (Rust is dirty from other sessions), and
+  `swift build` of the app succeeds.
+* Not done and why: the vision flag is stored but images are not sent (text
+  only in this version). No dashboard row for `byProvider`. Per-vendor quirks
+  stay out of scope. Step 10, a real-provider smoke, is a manual follow-up for
+  the user (both families, tool call, stop, key absence in settings and logs).
 
 --------------------------------------------------------------------------------
 

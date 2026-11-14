@@ -25,6 +25,7 @@ struct NetworkSettingsPaneView: View {
             if policy.mode == .custom {
                 customSection
             }
+            RemoteProviderSettingsSectionView(model: model, store: model.remoteProviders)
             ImageSearchSettingsSectionView()
             coverageSection
         }

@@ -68,6 +68,13 @@ extension AppModel {
     /// step's prompt from a DIFFERENT conversation's history and put the reply
     /// there. Every caller has the originating chat id in hand.
     func executeGenerationTurn(step: Int, chatID: UUID) {
+        // A chat the person pointed at a remote model takes the sibling path
+        // (`AppModel+RemoteTurn`): it has no local session, so none of the
+        // fit, recall and local compaction code below applies to it.
+        if let selection = remoteSelections[chatID] {
+            executeRemoteGenerationTurn(step: step, chatID: chatID, selection: selection)
+            return
+        }
         guard let session, let chatIndex = chats.firstIndex(where: { $0.id == chatID }) else { return }
         clearCompactionBoundaryEvent(for: chatID)
         beginRecoveryEventHistoryForGenerationStart(step: step, chatID: chatID)
@@ -402,118 +409,11 @@ extension AppModel {
                     }
                     return segmentResult
                 }
-                let result = completed.result
-                // Merge the state patch BEFORE parsing tool calls, so the
-                // parser never mistakes patch JSON for a tool call.
-                var generatedContent = completed.content
-                if usesSkillState,
-                    let idx = self.chats.firstIndex(where: { $0.id == turnChatID }) {
-                    generatedContent = self.applySkillStatePatch(
-                        from: generatedContent, chatIndex: idx, project: turnProject)
-                }
-                let generatedReasoning = completed.reasoning
-                let streamState: ToolCallStreamState
-                if case .cancelled = result.stopReason {
-                    streamState = .failed
-                } else {
-                    streamState = .completed
-                }
-                let dispatchGate = ToolCallDispatchGate.evaluate(
-                    content: generatedContent,
-                    streamState: streamState,
-                    availableTools: turnAvailableTools,
-                    forgeGuardrailsEnabled: self.forgeGuardrailsEnabled(for: turnProject),
-                    allowsParsing: turnAllowsToolCalls,
-                    projectURL: turnProject?.rootDirectoryURL,
-                    nativeCalls: nativeToolCalls)
-                if !dispatchGate.refusals.isEmpty {
-                    self.showToast(
-                        dispatchGate.refusals
-                            .map(\.userFacingSummary)
-                            .joined(separator: " "),
-                        style: .warning)
-                }
-                // Ordinary Retry/Edit variants describe prose and cannot be
-                // attached to a chain of tool rows. Recovery retries keep the
-                // partial variant parked until their eventual prose reply.
-                if !dispatchGate.dispatchableCalls.isEmpty,
-                    self.pendingRecoveryRetryCounts[turnChatID] == nil
-                {
-                    self.pendingResponseVariants[turnChatID] = nil
-                }
-
-                // One helper for the four dispatch sites below. An all-agent
-                // batch runs its calls concurrently; everything else keeps
-                // the first-call-only rule (state#37).
-                func dispatch(_ calls: [AppToolCall], content: String) async {
-                    if calls.isEmpty {
-                        await self.finishProseTurn(
-                            content: content,
-                            reasoning: generatedReasoning,
-                            result: result,
-                            chatID: turnChatID,
-                            step: step,
-                            project: turnProject,
-                            continuationsUsed: completed.continuationsUsed)
-                    } else {
-                        await self.handleExtractedToolCalls(
-                            calls,
-                            fullContent: content,
-                            reasoning: generatedReasoning,
-                            result: result,
-                            currentStep: step,
-                            chatID: turnChatID,
-                            project: turnProject)
-                    }
-                }
-
-                let maxSteps = turnProject?.maxAutonomousSteps ?? 5
-                let resolution = ToolCallDispatchResolution.resolve(
-                    gateResult: dispatchGate,
-                    originalContent: generatedContent,
-                    completedAttempts: step + 1,
-                    maximumAttempts: maxSteps)
-                let handlingResult = await ToolCallDispatchResolution.handle(
-                    resolution,
-                    retry: { nudge, assistantContent in
-                        self.mutateTurnMessages(for: turnChatID) { messages in
-                            messages.append(AppChatMessage(
-                                role: .assistant,
-                                content: assistantContent,
-                                reasoning: generatedReasoning,
-                                stopReason: "guardrail_retry"
-                            ))
-                            messages.append(AppChatMessage(
-                                role: .user,
-                                content: nudge,
-                                isSynthetic: true
-                            ))
-                        }
-                        self.outputText = ""
-                        self.outputReasoningText = ""
-                        self.continueAgentLoop(step: step + 1, chatID: turnChatID)
-                    },
-                    finishProse: { content in
-                        await dispatch([], content: content)
-                    },
-                    dispatch: { calls, content in
-                        await dispatch(calls, content: content)
-                    })
-                // **NO EARLY RETURN ON `.retried`.** The retry closure calls
-                // `continueAgentLoop`, which declines (Stop pressed, no
-                // session) without starting a turn; returning here then
-                // skipped the tail and latched `generating` and
-                // `isCancellationPending`. When the retry DID start a turn,
-                // `executeGenerationTurn` bumped `generationEpoch`, and the
-                // epoch guards below make this older task a no-op.
-                _ = handlingResult
-
-                // **UNDER THE EPOCH GUARD** (state#98). `dispatch` above can
-                // re-enter `executeGenerationTurn` through the agent loop.
-                if self.generationEpoch == myEpoch {
-                    self.outputText = ""
-                    self.outputReasoningText = ""
-                }
+                await self.processCompletedTurn(
+                    completed: completed, nativeToolCalls: nativeToolCalls, step: step,
+                    turnChatID: turnChatID, turnProject: turnProject,
+                    usesSkillState: usesSkillState, turnAvailableTools: turnAvailableTools,
+                    turnAllowsToolCalls: turnAllowsToolCalls, myEpoch: myEpoch)
             } catch {
                 let interruptionReason = AppStreamRecovery.interruptionReason(
                     taskIsCancelled: Task.isCancelled,
@@ -527,6 +427,137 @@ extension AppModel {
                     continuationsUsed: continuationRequestsStarted)
             }
             self.finishTurnTail(myEpoch: myEpoch, turnChatID: turnChatID, session: session)
+        }
+    }
+
+    /// Everything after a turn's generation finished: the state patch, the
+    /// dispatch gate, the guardrail retry, and the prose or tool-call tail.
+    ///
+    /// Shared by the local turn above and the remote turn
+    /// (`AppModel+RemoteTurn`), so a remote reply passes the same gate, the
+    /// same permission ladder and the same epoch guards (ZP-22).
+    func processCompletedTurn(
+        completed: CompletedGenerationTurn,
+        nativeToolCalls: [GenerationToolCall],
+        step: Int,
+        turnChatID: UUID,
+        turnProject: AppProject?,
+        usesSkillState: Bool,
+        turnAvailableTools: TurnAvailableTools,
+        turnAllowsToolCalls: Bool,
+        myEpoch: Int
+    ) async {
+        let result = completed.result
+        // Merge the state patch BEFORE parsing tool calls, so the
+        // parser never mistakes patch JSON for a tool call.
+        var generatedContent = completed.content
+        if usesSkillState,
+            let idx = self.chats.firstIndex(where: { $0.id == turnChatID }) {
+            generatedContent = self.applySkillStatePatch(
+                from: generatedContent, chatIndex: idx, project: turnProject)
+        }
+        let generatedReasoning = completed.reasoning
+        let streamState: ToolCallStreamState
+        if case .cancelled = result.stopReason {
+            streamState = .failed
+        } else {
+            streamState = .completed
+        }
+        let dispatchGate = ToolCallDispatchGate.evaluate(
+            content: generatedContent,
+            streamState: streamState,
+            availableTools: turnAvailableTools,
+            forgeGuardrailsEnabled: self.forgeGuardrailsEnabled(for: turnProject),
+            allowsParsing: turnAllowsToolCalls,
+            projectURL: turnProject?.rootDirectoryURL,
+            nativeCalls: nativeToolCalls)
+        if !dispatchGate.refusals.isEmpty {
+            self.showToast(
+                dispatchGate.refusals
+                    .map(\.userFacingSummary)
+                    .joined(separator: " "),
+                style: .warning)
+        }
+        // Ordinary Retry/Edit variants describe prose and cannot be
+        // attached to a chain of tool rows. Recovery retries keep the
+        // partial variant parked until their eventual prose reply.
+        if !dispatchGate.dispatchableCalls.isEmpty,
+            self.pendingRecoveryRetryCounts[turnChatID] == nil
+        {
+            self.pendingResponseVariants[turnChatID] = nil
+        }
+
+        // One helper for the four dispatch sites below. An all-agent
+        // batch runs its calls concurrently; everything else keeps
+        // the first-call-only rule (state#37).
+        func dispatch(_ calls: [AppToolCall], content: String) async {
+            if calls.isEmpty {
+                await self.finishProseTurn(
+                    content: content,
+                    reasoning: generatedReasoning,
+                    result: result,
+                    chatID: turnChatID,
+                    step: step,
+                    project: turnProject,
+                    continuationsUsed: completed.continuationsUsed)
+            } else {
+                await self.handleExtractedToolCalls(
+                    calls,
+                    fullContent: content,
+                    reasoning: generatedReasoning,
+                    result: result,
+                    currentStep: step,
+                    chatID: turnChatID,
+                    project: turnProject)
+            }
+        }
+
+        let maxSteps = turnProject?.maxAutonomousSteps ?? 5
+        let resolution = ToolCallDispatchResolution.resolve(
+            gateResult: dispatchGate,
+            originalContent: generatedContent,
+            completedAttempts: step + 1,
+            maximumAttempts: maxSteps)
+        let handlingResult = await ToolCallDispatchResolution.handle(
+            resolution,
+            retry: { nudge, assistantContent in
+                self.mutateTurnMessages(for: turnChatID) { messages in
+                    messages.append(AppChatMessage(
+                        role: .assistant,
+                        content: assistantContent,
+                        reasoning: generatedReasoning,
+                        stopReason: "guardrail_retry"
+                    ))
+                    messages.append(AppChatMessage(
+                        role: .user,
+                        content: nudge,
+                        isSynthetic: true
+                    ))
+                }
+                self.outputText = ""
+                self.outputReasoningText = ""
+                self.continueAgentLoop(step: step + 1, chatID: turnChatID)
+            },
+            finishProse: { content in
+                await dispatch([], content: content)
+            },
+            dispatch: { calls, content in
+                await dispatch(calls, content: content)
+            })
+        // **NO EARLY RETURN ON `.retried`.** The retry closure calls
+        // `continueAgentLoop`, which declines (Stop pressed, no
+        // session) without starting a turn; returning here then
+        // skipped the tail and latched `generating` and
+        // `isCancellationPending`. When the retry DID start a turn,
+        // `executeGenerationTurn` bumped `generationEpoch`, and the
+        // epoch guards below make this older task a no-op.
+        _ = handlingResult
+
+        // **UNDER THE EPOCH GUARD** (state#98). `dispatch` above can
+        // re-enter `executeGenerationTurn` through the agent loop.
+        if self.generationEpoch == myEpoch {
+            self.outputText = ""
+            self.outputReasoningText = ""
         }
     }
 
