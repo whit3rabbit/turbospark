@@ -9,10 +9,15 @@ local TurboSpark session over stdio. Design and decisions:
 The protocol core, session registry, file tools and permission gate are
 implemented and tested against a fake engine. `turbospark acp --model M` wires
 a real local engine (text-only, streaming, cancellable) behind that core. It is
-tested with a fake backend and a real child process, but **the real-model path
-has not been exercised end to end**: the `#[ignore]`d smoke test
-(`crates/cli/tests/acp_agent.rs`) was written and not run, because the host was
-not quiet. No editor (Zed or otherwise) has been run against it. The
+tested with a fake backend and a real child process, and the `#[ignore]`d smoke
+test (`crates/cli/tests/acp_agent.rs`) has been run once against the real
+installed `dsv4pro-q35-9b-heretic-mlx4` model on an Apple M4 Max (release
+build): the model loaded inside the first prompt, a reply streamed as
+`agent_message_chunk` and ended `end_turn`, a `session/cancel` mid-answer
+returned `cancelled` (about 150 ms after the cancel in a second run), and
+closing stdin exited 0. **No timing is claimed**: the host's 1-minute load was
+10.7 to 11.3 during those runs (other sessions' test jobs), above the quiet
+threshold. No editor (Zed or otherwise) has been run against it. The
 `turbospark-acp` binary on its own is still the protocol-only build and answers
 every prompt with a "no local model" error.
 

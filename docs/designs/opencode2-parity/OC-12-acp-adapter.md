@@ -318,15 +318,24 @@ Decision taken (reversible): the real engine lives in `crates/cli`, not in
   model fails the turn and EOF exits 0, the front door lists `acp`), and one
   `#[ignore]`d real-model smoke test. Mutation check: dropping the cancel
   propagation fails the cancel test.
-* **Not run:** the real-model smoke test. The host load average was 24 to 29
-  with other sessions building and testing, so it was not quiet. No claim is
-  made that a real model streamed through ACP.
+* **Real-model smoke test: run (2026-11-14).** Release build, Apple M4 Max,
+  installed `dsv4pro-q35-9b-heretic-mlx4` (the only complete installed chat
+  model). `cargo test --release -p turbospark-cli --test acp_agent -- --ignored`
+  passed in 3.3 s: the model loaded inside the first prompt, the reply
+  streamed as `agent_message_chunk`, a mid-answer `session/cancel` returned
+  `cancelled`, the session answered again, stdin EOF exited 0. A second,
+  independent-client run (item B) measured the cancel landing 145 ms after the
+  `session/cancel` and the whole first turn (load plus first chunk) at 0.78 s
+  with a warm page cache. **The host was not quiet** (1-minute load 10.7 to
+  11.3, other sessions' test jobs; a quiet host never came within the polling
+  window), so those numbers are functional observations, not benchmarks, and
+  no first-token latency is claimed. Text only at that point: no tool call
+  reached the model.
 
 ### Remaining (why this is Partial)
 
-1. **Real-model run**: run the ignored smoke test
-   (`TURBOSPARK_ACP_SMOKE_MODEL=<model> cargo test -p turbospark-cli --test
-   acp_agent -- --ignored --nocapture`) on a quiet host.
+1. **Real-model run: done functionally** (see the bullet above); a timing
+   run on a quiet host (load under 10) is still open.
 2. **Tools for a local model**: render the tool schema, parse calls with
    `TurnSplitter`, feed results back, then run the permission gate from a real
    model. Without it the adapter is a chat-only agent.
