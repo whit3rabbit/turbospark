@@ -8,7 +8,7 @@ public enum AppToolCatalog {
     private static let agentDescriptionCharacterLimit = 200
 
     /// File and codebase navigation tools.
-    public static let fileTools: [OpenAITool] = FileReadWriteToolDefinitions.all + FileSearchToolDefinitions.all + ApplyPatchToolDefinitions.all + MultiEditToolDefinitions.all + ToolObservationToolDefinitions.all
+    public static let fileTools: [OpenAITool] = FileReadWriteToolDefinitions.all + FileSearchToolDefinitions.all + ApplyPatchToolDefinitions.all + MultiEditToolDefinitions.all + ToolObservationToolDefinitions.all + DocumentWriteToolDefinitions.all
 
     /// Terminal and execution tools.
     public static let terminalTools: [OpenAITool] = TerminalToolDefinitions.all
@@ -212,7 +212,7 @@ public enum AppToolCatalog {
             return .mcp
         }
         switch name {
-        case "filewrite", "write_file", "write", "fileedit", "edit_file", "edit", "editor", "apply_patch", "applypatch", "multiedit", "multi_edit", "notebookedit", "notebook_edit", "todowrite", "todo_write", "proposeskills", "propose_skills", "memory", "remember":
+        case "filewrite", "write_file", "write", "fileedit", "edit_file", "edit", "editor", "apply_patch", "applypatch", "multiedit", "multi_edit", "notebookedit", "notebook_edit", "todowrite", "todo_write", "proposeskills", "propose_skills", "memory", "remember", "document_write":
             return .fileWrite
         case "bash", "run_command", "repl", "shell", "exec", "terminal", "bashoutput", "bash_output", "killshell", "kill_shell", "enterworktree", "enter_worktree", "exitworktree", "exit_worktree":
             return .terminal

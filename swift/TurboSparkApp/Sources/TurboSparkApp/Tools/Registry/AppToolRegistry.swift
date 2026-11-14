@@ -476,6 +476,14 @@ public enum AppToolRegistry {
                         url: targetURL, toolCallID: call.id, toolName: call.name, origin: .fileWrite))
                 }
 
+            case "document_write":
+                let written = try DocumentWriteExecutor.execute(arguments: call.arguments, rootURL: rootURL)
+                output = written.report
+                // A document the agent was asked to make is presented
+                // deliberately, so it goes to the chat's artifact list.
+                producedFiles.append(ArtifactRegistrar.ProducedFile(
+                    url: written.url, toolCallID: call.id, toolName: call.name, origin: .sentToUser))
+
             case "webfetch", "web_fetch", "fetch_url", "read_url_content":
                 guard let urlString = call.arguments["url"]
                     ?? call.arguments["uri"]

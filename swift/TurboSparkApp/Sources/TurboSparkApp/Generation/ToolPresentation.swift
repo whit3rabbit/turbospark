@@ -31,6 +31,7 @@ struct ToolPresentation: Equatable {
         register("Read Webpage", "globe", "webfetch web_fetch fetch_url read_url_content")
         register("Search Images", "search", "image_search")
         register("Save Image", "file-plus", "image_fetch")
+        register("Write Document", "file-plus", "document_write")
         register("Navigate", "globe", "browser_navigate")
         register("Click", "target", "browser_click")
         register("Type", "file-pen", "browser_type")
