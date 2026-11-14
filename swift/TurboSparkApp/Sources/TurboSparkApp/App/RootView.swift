@@ -23,6 +23,11 @@ struct RootView: View {
     @ObservedObject private var appearanceManager = AppearanceManager.shared
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var isChatSearchPresented = false
+    /// What the command center's field starts with: empty from Cmd+K, `>`
+    /// from Cmd+Shift+P. `paletteSeedToken` bumps when a seeded open
+    /// arrives while the palette is already showing.
+    @State private var paletteInitialQuery = ""
+    @State private var paletteSeedToken = 0
     @State private var isSummaryVisible = true
     @State private var workingWidth: CGFloat = 0
     @State private var downloadControlHeight: CGFloat = 38
@@ -129,10 +134,12 @@ struct RootView: View {
             .padding(.bottom, AppChromeLayout.statusBarHeight + 12)
         }
         .overlay {
-            // The Search Chats palette. Sits above every pane so Cmd+K
-            // works from any section.
+            // The command center (commands, chats, files). Sits above every
+            // pane so Cmd+K works from any section.
             if isChatSearchPresented {
-                ChatSearchOverlayView(model: model, isPresented: $isChatSearchPresented)
+                CommandPaletteView(
+                    model: model, isPresented: $isChatSearchPresented,
+                    initialQuery: paletteInitialQuery, seedToken: paletteSeedToken)
             }
         }
         .overlay {
@@ -170,8 +177,22 @@ struct RootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .toggleChatSidebar)) { _ in
             toggleSidebarPanel()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .showChatSearch)) { _ in
-            isChatSearchPresented.toggle()
+        .onReceive(NotificationCenter.default.publisher(for: .showChatSearch)) { note in
+            // No payload (Cmd+K, `/resume`): toggle, as before. A seeded
+            // post (Cmd+Shift+P sends `>`) opens the palette pre-filtered,
+            // and re-seeds it when it is already open instead of closing it.
+            let seed = note.userInfo?[PaletteQuery.seedUserInfoKey] as? String
+            if let seed {
+                paletteInitialQuery = seed
+                if isChatSearchPresented {
+                    paletteSeedToken += 1
+                } else {
+                    isChatSearchPresented = true
+                }
+            } else {
+                paletteInitialQuery = ""
+                isChatSearchPresented.toggle()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .toggleInspector)) { _ in
             guard !model.activeSection.hidesChatPanes else { return }

@@ -458,10 +458,22 @@ struct TurboSparkModelCommands: Commands {
                 Button {
                     NotificationCenter.default.post(name: .showChatSearch, object: nil)
                 } label: {
-                    Text("Search Chats...", bundle: .module)
+                    Text("Command Center...", bundle: .module)
                 }
                 .keyboardShortcut("k", modifiers: .command)
-                .accessibilityHint(Text("Searches previous chats by keyword", bundle: .module))
+                .accessibilityHint(Text("Searches commands, chats, and files", bundle: .module))
+
+                // Cmd+Shift+P: the same palette, opened on the commands
+                // scope (the seed is the visible `>` prefix).
+                Button {
+                    NotificationCenter.default.post(
+                        name: .showChatSearch, object: nil,
+                        userInfo: [PaletteQuery.seedUserInfoKey: ">"])
+                } label: {
+                    Text("Run Command...", bundle: .module)
+                }
+                .keyboardShortcut("p", modifiers: [.command, .shift])
+                .accessibilityHint(Text("Searches commands, chats, and files", bundle: .module))
 
                 Button {
                     NotificationCenter.default.post(name: .focusPrompt, object: nil)

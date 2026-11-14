@@ -14,7 +14,7 @@ import Foundation
 ///
 /// Every `label` and section `title` is a string-catalog key spelled the way
 /// the menu item spells it (an ellipsis-bearing menu title such as
-/// "Search Chats..." drops it here, since the row names the command rather
+/// "Command Center..." drops it here, since the row names the command rather
 /// than the item that opens a panel). The pane renders them through the
 /// catalog, so a new row needs its key translated.
 public struct KeyboardShortcutRow: Equatable, Identifiable, Sendable {
@@ -87,7 +87,8 @@ public enum KeyboardShortcutCatalog {
                 keys: "\(command) ]",
                 altKeys: "\(shift) \(command) ]"),
             KeyboardShortcutRow(label: "Focus Prompt", keys: "\(command) L"),
-            KeyboardShortcutRow(label: "Search Chats", keys: "\(command) K"),
+            KeyboardShortcutRow(label: "Command Center", keys: "\(command) K"),
+            KeyboardShortcutRow(label: "Run Command", keys: "\(shift) \(command) P"),
             KeyboardShortcutRow(label: "Add Files or Photos", keys: "\(command) U"),
             KeyboardShortcutRow(label: "Clear Chat History", keys: "\(shift) \(command) K"),
             KeyboardShortcutRow(

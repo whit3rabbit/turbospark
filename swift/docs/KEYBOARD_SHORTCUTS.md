@@ -35,6 +35,8 @@ cannot drift between the three.
 | `Cmd+[` | Previous Chat | Switches focus to the previous conversation in chronological history. |
 | `Cmd+]` | Next Chat | Switches focus to the next conversation in chronological history. |
 | `Cmd+L` | Focus Prompt | Moves first-responder focus directly into the prompt editor. |
+| `Cmd+K` | Command Center | Opens the palette over commands, chats and project files (`>` commands, `#` chats, `@` files, Tab switches scope). |
+| `Cmd+Shift+P` | Run Command | Opens the same palette on the commands scope. |
 | `Cmd+Shift+K` | Clear Chat History | Clears all turns from the active conversation transcript. |
 
 ### Model Execution and Generation (Generation Menu)
