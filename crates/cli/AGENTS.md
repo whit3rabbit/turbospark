@@ -12,7 +12,8 @@ User-facing model, generation, image, music, voice cloning, and server command e
   (`docs/STEERING_TRAITS.md`).
 - `turbospark-ocr`: Document OCR via Core ML (macOS 15+).
 - `turbospark-acp-agent`: the local engine behind `turbospark acp` (OC-12,
-  `docs/ACP.md`). stdout is the protocol channel: never print to it, and do
+  `docs/ACP.md`). Offers the four ACP file tools to the model; execution and the
+  permission gate live in `crates/acp`. stdout is the protocol channel: never print to it, and do
   not reuse `generate::stream_turn` there.
 - `turbospark`: the user front door (clap). Owns the command tree, help,
   model tags and presentation, and calls the binaries above.

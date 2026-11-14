@@ -8,7 +8,7 @@ local TurboSpark session over stdio. Design and decisions:
 
 The protocol core, session registry, file tools and permission gate are
 implemented and tested against a fake engine. `turbospark acp --model M` wires
-a real local engine (text-only, streaming, cancellable) behind that core. It is
+a real local engine (streaming, cancellable, with the four file tools) behind that core. It is
 tested with a fake backend and a real child process, and the `#[ignore]`d smoke
 test (`crates/cli/tests/acp_agent.rs`) has been run once against the real
 installed `dsv4pro-q35-9b-heretic-mlx4` model on an Apple M4 Max (release
@@ -71,12 +71,24 @@ workspaces must lie inside), `--state-dir DIR`, `--no-persist`.
   between tokens and between prefill chunks, so a cancel lands within one token
   or one prefill chunk. stdin EOF drops the engine, which joins the worker and
   unmaps the model.
-* **Text only: tools are not wired.** The model is never told about
-  `read_file`, `write_file` and the rest, so it never calls them and the
-  permission gate is never reached from a real model yet. The runtime has a
-  tool-call splitter (`TurnSplitter`, used by the server), but rendering the
-  tool schema into the template and feeding tool results back is separate
-  work. A tool message in the history is dropped.
+* **Tools are wired.** The four file tools (`read_file`, `list_dir`,
+  `write_file`, `edit_file`) are rendered into the prompt through the
+  checkpoint's own chat template (`encode_generic_tool_chat`, the path
+  `turbospark-server` uses) and the runtime's `TurnSplitter` parses calls out
+  of the stream. A turn is a bounded loop: generate, run each call through the
+  adapter's gate (workspace containment, size bounds, default-deny writes),
+  append the assistant turn with its calls and the tool results, generate
+  again. Caps: 8 rounds and 64 calls per turn; hitting either ends the turn as
+  `max_turn_requests`. Call ids are assigned by the engine (`call_N`), not the
+  model; a result is clipped to 16 KiB characters for the model (the editor
+  gets the full output). Trimming for the context window drops a leading tool
+  result whose call was trimmed. A checkpoint whose template cannot render
+  tools falls back to text-only, with a note on stderr. Tool rounds live only
+  inside one turn: the stored session history is text, so a later turn does not
+  replay earlier calls. Verified with a fake backend (rounds, caps, cancel,
+  clipping), through the real `serve` loop (silent, rejecting and allowing
+  clients), and once with the installed 9B (see the OC-12 record); how often
+  any other model emits a parseable call is not measured.
 * No `--max-context`, `--max-new` or sampling flags yet.
 
 ### When another process holds the model

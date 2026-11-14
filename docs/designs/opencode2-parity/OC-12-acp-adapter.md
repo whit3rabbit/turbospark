@@ -8,7 +8,7 @@ and
 [session adapter](https://github.com/anomalyco/opencode/blob/dev/packages/cli/src/acp/sessions.ts).
 
 * Author: whit3rabbit
-* Status: Partial (protocol core and a text-only local engine implemented; real-model end-to-end run, tools and editor interop pending, see Implementation Record)
+* Status: Implemented, with no editor run (protocol core, local engine with file tools, real-model streaming and tool calls verified with a scripted client; Zed or any real editor is NOT run, see Implementation Record and Remaining)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -185,12 +185,13 @@ editor transcript in the app.
 
 Implemented 2026-11-14 as the new crate `crates/acp` (package
 `turbospark-acp`, lib `turbospark_acp`, binary `turbospark-acp`). **Status
-Partial**: the stdio JSON-RPC core, session registry, file tools, permission
-gate and cancellation are done and tested against a fake engine and a real
-child process (first pass). Real-model generation was wired in the second pass
-below but has not been run end to end, and no editor (Zed or any
-other ACP client) has been run against the adapter. Nothing here is an editor
-interop claim.
+Implemented, no editor run**: the stdio JSON-RPC core, session registry, file
+tools, permission gate and cancellation (first pass), the local engine in
+`crates/cli` (second pass), a scripted independent client (third pass) and
+tool wiring for local models (fourth pass) are done. A real model has streamed,
+been cancelled and called tools through the adapter, driven by a scripted
+client. No editor (Zed or any other ACP client) has been run against the
+adapter. Nothing here is an editor interop claim.
 
 ### Open Question resolutions
 
@@ -307,11 +308,7 @@ Decision taken (reversible): the real engine lives in `crates/cli`, not in
   the first prompt and is joined and dropped at stdin EOF.
 * Refusal policy for a held model: advisory `flock` per model directory plus a
   live-daemon check; the app is not covered (see `docs/ACP.md`).
-* **Tools are not wired.** A Rust splitter exists (`TurnSplitter`, used by the
-  server), so this is not for lack of a parser: the tool schema is not rendered
-  into the template and tool results are not fed back. Deferred. Until then the
-  permission gate is not reachable from a real model, and permissions stay
-  default-deny.
+* **Tools: wired in the fourth pass (below).** This pass was text-only.
 * Tests: 5 fake-backend engine tests (stream order, load once, cancel between
   tokens, release on drop, load failure retried, panic isolated), 4 lock/daemon
   tests (real `flock` conflicts), process tests (flag errors, an unloadable
@@ -352,13 +349,54 @@ reject/cancel/error test). A first version of the suite shared one workspace
 across parallel tests and flaked; each test now gets its own directory.
 **Scripted client only: no editor was run.**
 
-### Remaining (why this is Partial)
+### Tool wiring (fourth pass, 2026-11-14)
+
+* `acp_engine.rs`: `LocalEngine::run_turn` is now a bounded round loop.
+  `ChatBackend::generate` takes the working conversation (`ChatMsg`: user,
+  assistant with calls, tool result) and reports `ToolReq`s. Each call goes
+  through `TurnHost::call_tool` (the adapter's gate, unchanged), the result is
+  clipped to 16 KiB characters for the model and appended, and the model runs
+  again. Caps: `MAX_TOOL_ROUNDS = 8`, `MAX_TOOL_CALLS = 64` (the adapter's own
+  `max_tool_calls_per_turn` still applies if lower); either ends the turn as
+  `max_turn_requests`. Ids are engine-assigned. Cancel is checked between
+  tokens, between calls and between rounds. `tool_schemas()` holds the four
+  schemas with the argument names `crates/acp/src/tools.rs` validates
+  (`old_text`/`new_text` for `edit_file`).
+* `acp_real.rs`: when tools are offered the prompt is rendered with
+  `encode_generic_tool_chat`, exactly as `crates/server/src/handler/plan.rs`
+  does, and the `TurnSplitter` allowlist is the four names, so parsed calls
+  arrive as `TurnEvent::ToolCall`. If the template cannot render tools the
+  backend drops to the plain template for the process and says so on stderr.
+  Window-fit trimming that leaves a leading tool result removes it (a template
+  rejects an orphan). Nothing in the backend executes a tool.
+* Not changed: the permission gate, containment, size bounds and the 60 s
+  silence-means-deny rule. No flag approves anything.
+* Tests: 8 new fake-backend engine tests (call runs and result reaches the
+  model, round cap, per-reply call cap and unique ids, cancel between calls,
+  clipping, stored tool history not replayed, schema names) and 3 through the
+  real `serve` loop in-process (silent client denies the model's write and the
+  model is told, only an explicit allow writes, reject leaves the disk alone;
+  an escaping `../` read is refused with no prompt). Real model, `#[ignore]`d
+  (`scripted_client_real_model_tool_calls`), installed 9B: the model called
+  `read_file`, the result came back and it answered with the file's word; asked
+  to write, it reached the gate once, the scripted client stayed silent for
+  the 60 s timeout, nothing was written and the model told the user it could
+  not get approval. One run; the host load was 9 to 10.
+* Mutation checks (applied, failure observed, restored; the first three re-run
+  after this change): timeout approves, reject approves, containment check
+  removed, per-reply call cap removed, round cap raised, cancel between calls
+  removed. All six fail a test.
+* Verified by: `cargo test -p turbospark-acp` (all green),
+  `cargo test --release -p turbospark-cli --bin turbospark-acp-agent`
+  (20 passed), clippy on both crates clean of new warnings.
+
+### Remaining (why this is not "editor-verified")
 
 1. **Real-model run: done functionally** (see the bullet above); a timing
    run on a quiet host (load under 10) is still open.
-2. **Tools for a local model**: render the tool schema, parse calls with
-   `TurnSplitter`, feed results back, then run the permission gate from a real
-   model. Without it the adapter is a chat-only agent.
+2. **Tools for a local model: done** (fourth pass). Open: only one model
+   (the 9B) has been seen to emit a parseable call; other families are
+   unmeasured, and tool rounds are not persisted across turns.
 3. **Editor interop**: a scripted client written independently from the spec
    has been run (below); a real editor (Zed) has not (streaming, permission
    forwarding, abort). Not run.
