@@ -112,6 +112,7 @@ struct TurboSparkApp: App {
     // The MenuBarExtra's icon and insertion depend on model state this struct
     // does not otherwise observe; the bridge republishes only those two bits.
     @StateObject private var menuBarState = MenuBarStateBridge()
+    @State private var splashPresented = true
 
     init() {
         AppFontRegistrar.registerBundledFonts()
@@ -159,6 +160,14 @@ struct TurboSparkApp: App {
                     ProfileUnlockView(coordinator: vaultCoordinator)
                 }
             }
+                // OC-07: the launch splash, inside the theme so it draws in
+                // the user's palette. Once per process: a later vault relock
+                // does not bring it back.
+                .overlay {
+                    SplashOverlayView(
+                        isPresented: $splashPresented,
+                        stateReady: vaultCoordinator.state != .unlocking)
+                }
                 .appThemed()
                 .preferredColorScheme(appearanceManager.appearance.preferredColorScheme)
                 .environment(\.locale, currentLanguage.locale)

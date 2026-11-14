@@ -261,6 +261,8 @@ struct RootView: View {
         // The one "Load anyway" question: every interactive load reaches it
         // through `AppModel.requestLoad`, and no picker carries a dialog.
         .modifier(LoadAnywayConfirmation(model: model))
+        // OC-07: the first-run welcome flow, present only on a new install.
+        .modifier(FirstRunHost(model: model))
         .onReceive(NotificationCenter.default.publisher(for: .toggleChatSidebar)) { _ in
             toggleSidebarPanel()
         }

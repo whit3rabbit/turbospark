@@ -9,7 +9,7 @@ and
 [splash](https://github.com/anomalyco/opencode/blob/dev/packages/desktop/src/renderer/startup/splash.tsx).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented (2026-11-14)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -75,6 +75,22 @@ new user gets no sequenced path from launch to first prompt.
 * **Splash dismissal trigger**: app-state-ready signal from
   persistence load versus a fixed minimum display time. Lean: state
   ready, with a 400 ms floor so the mark does not flash.
+
+**Resolved 2026-11-14** (implementation took each lean):
+
+* **Flag location**: app-level. `FirstRunStore` writes `first_run.json`
+  under `AppStorageRoot.machineRoot` (shared by every profile) through
+  `AppJSONStore`, so a corrupt file is quarantined, not overwritten. The
+  flow mounts inside `RootView`, which exists only after the vault gate
+  has opened a profile, so a vault-locked user never sees it. A fresh Mac
+  has no vault, so "before the unlock gate" and "after it" coincide for
+  the one audience that sees the flow.
+* **Splash dismissal**: state-ready with a 400 ms floor (`SplashPolicy`).
+  Reduce Motion dismisses the moment state is ready with no floor and
+  never draws the mark. A 3 s cap dismisses regardless, so a ready signal
+  that never arrives cannot cover the window. "State ready" is
+  `ProfileVaultCoordinator.state != .unlocking`: a locked vault is ready,
+  because the unlock screen is what the splash hands off to.
 
 ## Critical User Journeys
 
@@ -172,5 +188,77 @@ steps are injectable and testable.
   Run the DESIGN.md section 9 checklist on the flow and splash.
 
 --------------------------------------------------------------------------------
+
+## Implementation record (2026-11-14)
+
+Files (all under `swift/TurboSparkApp`, `Sources/TurboSparkApp/App/FirstRun/`
+unless noted):
+
+* `FirstRunCoordinator.swift`: `FirstRunRecord`, `FirstRunStore`,
+  `FirstRunDecision`, `FirstRunStep`, `FirstRunFlow.steps(...)`,
+  `FirstRunCoordinator` (the step machine).
+* `FirstRunFlowView.swift`, `FirstRunStepViews.swift`: the flow UI.
+* `FirstRunHost.swift`: the modifier that mounts the flow in `RootView` and
+  applies its exit (new chat with composer focus, or Discover).
+* `SplashOverlayView.swift`: `SplashPolicy` and the overlay, mounted in the
+  main `Window` scene in `TurboSparkApp.swift`.
+* `App/RootView.swift`: one `.modifier(FirstRunHost(model:))` line.
+* `Localization/Localizable.xcstrings`: 14 new keys in 21 languages.
+* Tests: `FirstRunCoordinatorTests.swift` (also holds `SplashPolicyTests`),
+  `FirstRunNoPermissionPromptTests.swift`.
+
+Decisions and deviations from the draft as written:
+
+* **Existing users are never forced through the flow.** The flag is new, so
+  an upgrader has none. `FirstRunDecision.shouldRun` therefore also requires
+  no chat with a message and no installed model. This also keeps a lost or
+  quarantined flag file from replaying the flow for someone with history.
+  Consequence: a Mac whose model library was filled by the CLI before the
+  first launch skips the flow entirely. The "model present removes the
+  first-model step" rule still applies live: a model that finishes
+  installing while the flow is open drops the step.
+* **No change to `ModelInstallGate.swift`** (draft target file 5). The review
+  was right that the gate is a per-install verdict function with no
+  installed-model state; the flow reads `AppModel.installed` instead.
+* **Import step is absent.** `FirstRunStep.importHandoff` exists only so the
+  step list can be tested; `FirstRunFlow.importWizardAvailable` is false and
+  the step is in no list. The desktop-shell-hardening spec is not in this
+  checkout. Turning the flag on requires a real view in `FirstRunFlowView`.
+* **Browse Models ends the flow** (flag set, lands in Discover). The
+  primer is not shown on that path; every Allow sheet states its own reason
+  where it asks. Nothing downloads from the flow: choosing a model is the
+  existing Discover section, by the person's own click.
+* **Skip semantics**: Skip moves to the next step and writes nothing; Skip
+  Setup (header, also Escape) and Get Started write the flag. Quitting
+  mid-flow writes nothing, so the flow shows again on relaunch unless the
+  person has gained history or a model by then. Back is always allowed.
+* **Files live in `App/FirstRun/`**, not flat in `App/`, following the review
+  note (N1).
+* **Splash is not conditional.** The review suggested showing it only when
+  loading is slow; the draft's own recommendation (400 ms floor) was taken.
+  Revisit if the fixed 400 ms reads as an artificial delay on returning
+  launches.
+* **Flow does not trap keyboard shortcuts underneath it.** The overlay is
+  marked modal for VoiceOver, but menu chords still reach the window while it
+  is open. Harmless (the flow ends in a new chat either way) and left as is.
+* **No settings row, no new shortcut.** Nothing here is a setting or a menu
+  command, so `SettingsControlCatalog` and the OC-01 catalog are untouched.
+  Return (default action) and Escape (cancel action) are fixed
+  sheet-convention keys, not rebindable commands.
+* **No replay entry point.** The draft does not ask for one; a "Show the
+  welcome tour again" Help item would be a small follow-up.
+
+Verification run: `swift build`; focused `swift test` over
+`FirstRunCoordinatorTests`, `SplashPolicyTests`,
+`FirstRunNoPermissionPromptTests`, `LocalizationParityTests`,
+`LocalizationTests`, `LocalizationAndAccessibilityTests`,
+`RecordingPermissionsTests`, `DesignTokenRatchetTests` and
+`KeyboardShortcutCatalogTests` (green); `make compile-strings`,
+`make design-check` and `generate-settings-catalog.py --check` (green).
+Mutation checks (all killed): removing the import-absent rule, dropping
+the history/model terms of the existing-user rule, and planting a
+microphone prompt call in a flow file. Not run: the DESIGN.md section 9
+live-app pass (text sizes, themes, VoiceOver, RTL, Reduce Motion) and a
+fresh-state launch of the app; both remain open.
 
 *Drafted with EGM*
