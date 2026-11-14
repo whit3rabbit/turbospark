@@ -40,6 +40,11 @@ fail() { echo "verify-app-bundle: FAIL: $*" >&2; exit 1; }
 plist_min="$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$contents/Info.plist")"
 echo "==> Info.plist LSMinimumSystemVersion: $plist_min"
 
+# A release bundle without this key would show the Dock DEV badge
+# (DevIconBadger), so a packaging regression is caught here.
+release_marker="$(/usr/libexec/PlistBuddy -c 'Print :TSReleasePackage' "$contents/Info.plist" 2>/dev/null || true)"
+[ "$release_marker" = "true" ] || fail "Info.plist lacks TSReleasePackage=true; the packaged app would show the DEV badge"
+
 # `a <= b` for dotted versions.
 version_le() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" = "$1" ]; }
 

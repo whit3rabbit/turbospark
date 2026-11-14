@@ -17,10 +17,10 @@ public enum AppDockIconRenderer {
             image.unlockFocus()
             if let url = Bundle.module.url(forResource: "AppIcon", withExtension: "png"),
                let bundled = NSImage(contentsOf: url) {
-                NSApplication.shared.applicationIconImage = bundled
+                Self.setIcon(bundled)
                 return
             } else if let appIcon = NSImage(named: "AppIcon") {
-                NSApplication.shared.applicationIconImage = appIcon
+                Self.setIcon(appIcon)
                 return
             }
             image.lockFocus()
@@ -106,6 +106,13 @@ public enum AppDockIconRenderer {
         }
 
         image.unlockFocus()
-        NSApplication.shared.applicationIconImage = image
+        Self.setIcon(image)
+    }
+
+    /// The one writer of the Dock icon, so the dev badge sits on top of
+    /// whichever preset is active.
+    @MainActor
+    private static func setIcon(_ image: NSImage) {
+        NSApplication.shared.applicationIconImage = DevIconBadger.resolvedIcon(image)
     }
 }

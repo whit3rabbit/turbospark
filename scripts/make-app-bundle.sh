@@ -350,6 +350,10 @@ plutil -replace CFBundleLocalizations -json \
   "$(plutil -extract CFBundleLocalizations json -o - "$root/swift/TurboSparkApp/Localization/Info.plist")" \
   "$contents/Info.plist"
 
+# Marks this bundle as packaged so the app skips the Dock DEV badge
+# (DevIconBadger). Written before the codesign pass below seals Info.plist.
+plutil -insert TSReleasePackage -bool true "$contents/Info.plist"
+
 plutil -lint "$contents/Info.plist" >/dev/null
 
 # --- Computer-use helper ------------------------------------------------------
