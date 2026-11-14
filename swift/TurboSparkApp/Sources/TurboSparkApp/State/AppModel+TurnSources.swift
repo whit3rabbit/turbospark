@@ -46,4 +46,49 @@ extension AppModel {
         NSPasteboard.general.setString(source.url, forType: .string)
         showToast(AppStrings.localized("Copied URL"))
     }
+
+    /// Brings the tool card of the call that first produced `source` into
+    /// view (OC-09). Opens the turn if it was collapsed, then publishes a
+    /// `ToolCardReveal` that the transcript scrolls to and the card (and its
+    /// group) expand for. False, with a toast, when the call is not in the
+    /// selected chat's transcript any more (compacted away or a stale source).
+    @discardableResult
+    func revealToolCard(for source: TurnSource) -> Bool {
+        let messages = selectedTurnMessages
+        guard let origin = source.origin,
+              messages.contains(where: { message in
+                  message.id == origin.messageID
+                      && message.toolCalls.contains { $0.id == origin.callID }
+              })
+        else {
+            showToast(AppStrings.localized("That tool call is no longer in the transcript."), style: .warning)
+            return false
+        }
+        if let anchor = TurnSources.turnAnchor(containing: origin.messageID, in: messages) {
+            collapsedTurnAnchors.remove(anchor)
+        }
+        toolCardReveal = ToolCardReveal(
+            messageID: origin.messageID,
+            callID: origin.callID,
+            token: (toolCardReveal?.token ?? 0) + 1)
+        // The popover closes and focus does not move, so say where we went.
+        _ = AccessibilityNotification.Announcement.post(
+            .init(AppStrings.localized("Showing the tool call that found this source.")))
+        return true
+    }
+
+    /// Whether `reveal` has not been acted on by a card yet.
+    func isToolCardRevealPending(_ reveal: ToolCardReveal) -> Bool {
+        reveal.token > toolCardRevealConsumedToken
+    }
+
+    /// A card for `callID` takes the pending reveal: true exactly once per
+    /// request, and only for the card the request names.
+    func consumeToolCardReveal(forCallID callID: UUID) -> Bool {
+        guard let reveal = toolCardReveal, reveal.callID == callID,
+              isToolCardRevealPending(reveal)
+        else { return false }
+        toolCardRevealConsumedToken = reveal.token
+        return true
+    }
 }

@@ -137,6 +137,15 @@ private struct SourceRowView: View {
             .accessibilityLabel(Text(verbatim: "\(source.title), \(source.domain), \(kindLabel)"))
             .accessibilityHint(Text("Open in browser pane", bundle: .module))
 
+            AppIconButton("text.magnifyingglass", label: Text("Reveal in transcript", bundle: .module)) {
+                // Close first: the popover would otherwise hold focus over
+                // the row the transcript is about to scroll to.
+                dismiss()
+                model.revealToolCard(for: source)
+            }
+            .buttonStyle(.borderless)
+            .disabled(source.origin == nil)
+
             AppIconButton("doc.on.doc", label: Text("Copy URL", bundle: .module)) {
                 model.copySourceURL(source)
             }

@@ -182,6 +182,18 @@ struct ChatTranscriptView: View {
                     proxy.scrollTo(target, anchor: .top)
                 }
             }
+            // OC-09: the sources popover's Reveal. The turn may have just
+            // been opened, so its rows do not exist until the next pass;
+            // yield once before asking the proxy to scroll.
+            .onChange(of: model.toolCardReveal) { _, reveal in
+                guard let reveal else { return }
+                Task { @MainActor in
+                    await Task.yield()
+                    TSMotion.animate(TSMotion.pane) {
+                        proxy.scrollTo(reveal.messageID, anchor: .top)
+                    }
+                }
+            }
             .accessibilityRotor(Text("Messages", bundle: .module)) {
                 ForEach(model.selectedTurnMessages) { msg in
                     let prefix = msg.role == .user

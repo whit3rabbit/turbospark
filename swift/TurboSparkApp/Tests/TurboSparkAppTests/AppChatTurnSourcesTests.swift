@@ -227,4 +227,100 @@ final class AppChatTurnSourcesTests: XCTestCase {
         let active = try XCTUnwrap(store.activeTabID.flatMap { store.tab(id: $0) })
         XCTAssertEqual(active.owner, .user)
     }
+
+    // MARK: Reveal in the tool card
+
+    /// Mutation check: letting a later duplicate overwrite `origin` in `add`
+    /// makes this fail (the reveal would jump to the second call).
+    func testOriginIsTheFirstCallThatProducedTheSource() throws {
+        let search = searchMessage([("Swift", "https://swift.org/a")])
+        let again = searchMessage([("Swift", "https://swift.org/a/")], query: "q2")
+        let fetch = fetchMessage("https://swift.org/a")
+        let sources = TurnSources.collect(in: [search, again, fetch])
+        XCTAssertEqual(sources.sources.count, 1)
+        let source = try XCTUnwrap(sources.sources.first)
+        XCTAssertEqual(source.kind, .fetchedPage)
+        XCTAssertEqual(
+            source.origin,
+            TurnSourceOrigin(messageID: search.id, callID: search.toolCalls[0].id))
+    }
+
+    func testEachSourceKeepsItsOwnCall() throws {
+        let first = searchMessage([("A", "https://a.com/x")])
+        let second = fetchMessage("https://b.com/y")
+        let sources = TurnSources.collect(in: [first, second])
+        XCTAssertEqual(sources.sources.map { $0.origin?.callID },
+                       [first.toolCalls[0].id, second.toolCalls[0].id])
+        XCTAssertEqual(sources.sources.map { $0.origin?.messageID }, [first.id, second.id])
+    }
+
+    func testTurnAnchorFindsTheEnclosingTurn() {
+        let user1 = AppChatMessage(role: .user, content: "one")
+        let search = searchMessage([("A", "https://a.com")])
+        let user2 = AppChatMessage(role: .user, content: "two")
+        let later = fetchMessage("https://b.com")
+        let all = [user1, search, user2, later]
+        XCTAssertEqual(TurnSources.turnAnchor(containing: search.id, in: all), user1.id)
+        XCTAssertEqual(TurnSources.turnAnchor(containing: later.id, in: all), user2.id)
+        XCTAssertNil(TurnSources.turnAnchor(containing: UUID(), in: all))
+    }
+
+    @MainActor
+    private func modelWithTurn() -> (AppModel, AppChatMessage, AppChatMessage, TurnSource) {
+        let model = AppModel()
+        let user = AppChatMessage(role: .user, content: "find it")
+        let search = searchMessage([("A", "https://a.com/x")])
+        let answer = AppChatMessage(role: .assistant, content: "Here.")
+        var chat = AppChat(title: "reveal")
+        chat.messages = [user, search, answer]
+        model.chats = [chat]
+        model.selectedChatID = chat.id
+        let source = TurnSources.collect(in: [search]).sources[0]
+        return (model, user, search, source)
+    }
+
+    @MainActor
+    func testRevealOpensACollapsedTurnAndPublishesTheRequest() throws {
+        let (model, user, search, source) = modelWithTurn()
+        defer { model.shutdown() }
+        model.collapsedTurnAnchors = [user.id]
+        XCTAssertTrue(model.revealToolCard(for: source))
+        XCTAssertFalse(model.collapsedTurnAnchors.contains(user.id))
+        let reveal = try XCTUnwrap(model.toolCardReveal)
+        XCTAssertEqual(reveal.messageID, search.id)
+        XCTAssertEqual(reveal.callID, search.toolCalls[0].id)
+        // A second reveal of the same call is a new request.
+        XCTAssertTrue(model.revealToolCard(for: source))
+        XCTAssertEqual(model.toolCardReveal?.token, reveal.token + 1)
+    }
+
+    /// Mutation check: dropping the `token > consumed` test in
+    /// `consumeToolCardReveal` lets a recreated card re-expand, and this fails.
+    @MainActor
+    func testRevealIsConsumedOnceAndOnlyByTheNamedCard() throws {
+        let (model, _, search, source) = modelWithTurn()
+        defer { model.shutdown() }
+        XCTAssertTrue(model.revealToolCard(for: source))
+        XCTAssertFalse(model.consumeToolCardReveal(forCallID: UUID()))
+        XCTAssertTrue(model.consumeToolCardReveal(forCallID: search.toolCalls[0].id))
+        XCTAssertFalse(model.consumeToolCardReveal(forCallID: search.toolCalls[0].id))
+        let reveal = try XCTUnwrap(model.toolCardReveal)
+        XCTAssertFalse(model.isToolCardRevealPending(reveal))
+        // A fresh request is pending again.
+        XCTAssertTrue(model.revealToolCard(for: source))
+        XCTAssertTrue(model.consumeToolCardReveal(forCallID: search.toolCalls[0].id))
+    }
+
+    @MainActor
+    func testRevealRefusedWhenTheCallIsGone() throws {
+        let (model, _, _, source) = modelWithTurn()
+        defer { model.shutdown() }
+        let stale = TurnSource(
+            kind: .searchResult, title: "A", rawURL: "https://a.com/x",
+            origin: TurnSourceOrigin(messageID: source.origin!.messageID, callID: UUID()))
+        let originless = try XCTUnwrap(TurnSource(kind: .searchResult, title: "B", rawURL: "https://b.com"))
+        XCTAssertFalse(model.revealToolCard(for: try XCTUnwrap(stale)))
+        XCTAssertFalse(model.revealToolCard(for: originless))
+        XCTAssertNil(model.toolCardReveal)
+    }
 }

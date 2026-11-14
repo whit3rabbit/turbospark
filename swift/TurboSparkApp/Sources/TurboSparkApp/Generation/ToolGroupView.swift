@@ -64,6 +64,15 @@ struct ToolGroupView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // OC-09: open the group that holds a revealed card. It only LOOKS at
+        // the request; the card consumes it once it exists.
+        .onChange(of: model.toolCardReveal, initial: true) { _, reveal in
+            guard let reveal, model.isToolCardRevealPending(reveal),
+                  toolCalls.contains(where: { $0.id == reveal.callID }),
+                  !isExpanded
+            else { return }
+            TSMotion.animate(TSMotion.select) { isManuallyExpanded = true }
+        }
     }
 
     private var triggerButton: some View {

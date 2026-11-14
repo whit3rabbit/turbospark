@@ -9,6 +9,13 @@ enum TurnSourceKind: String, Equatable, Sendable {
     case fetchedPage
 }
 
+/// Where a source first showed up: the archived tool call and the message
+/// that holds it (OC-09 "reveal in the tool card").
+struct TurnSourceOrigin: Equatable, Sendable {
+    let messageID: UUID
+    let callID: UUID
+}
+
 /// One web source a turn relied on: title, URL and domain.
 struct TurnSource: Identifiable, Equatable, Sendable {
     /// The dedupe key, so SwiftUI identity and dedupe agree.
@@ -22,6 +29,10 @@ struct TurnSource: Identifiable, Equatable, Sendable {
     let domain: String
     /// The URL path without query or fragment; empty for a site root.
     let displayPath: String
+    /// The first call of the turn that produced this source, kept through
+    /// dedupe (a later search or fetch of the same page never replaces it).
+    /// Nil only for a source built without a turn, such as in a test.
+    var origin: TurnSourceOrigin?
 
     /// The only schemes a source may carry. A model-written search row can
     /// hold `file:`, `javascript:` or `data:` text, and the popover's open
@@ -34,7 +45,7 @@ struct TurnSource: Identifiable, Equatable, Sendable {
 
     /// Builds a source from raw tool text, or nil for an unusable URL
     /// (wrong scheme, no host, whitespace inside).
-    init?(kind: TurnSourceKind, title: String?, rawURL: String) {
+    init?(kind: TurnSourceKind, title: String?, rawURL: String, origin: TurnSourceOrigin? = nil) {
         let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty,
               !trimmed.contains(where: { $0.isWhitespace }),
@@ -64,6 +75,7 @@ struct TurnSource: Identifiable, Equatable, Sendable {
         self.url = trimmed
         self.domain = domain
         self.displayPath = path
+        self.origin = origin
     }
 
     /// Whether `title` came from a search row rather than falling back to the
@@ -141,6 +153,7 @@ struct TurnSources: Equatable, Sendable {
         var collected = TurnSources()
         for message in messages where message.role == .assistant {
             for call in message.toolCalls {
+                let origin = TurnSourceOrigin(messageID: message.id, callID: call.id)
                 guard let kind = webKind(of: call.name),
                       let result = message.toolResults.first(where: { $0.callID == call.id }),
                       !result.isError
@@ -148,12 +161,12 @@ struct TurnSources: Equatable, Sendable {
                 switch kind {
                 case .searchResult:
                     for (title, url) in searchRows(in: result.output) {
-                        collected.add(TurnSource(kind: .searchResult, title: title, rawURL: url))
+                        collected.add(TurnSource(kind: .searchResult, title: title, rawURL: url, origin: origin))
                     }
                 case .fetchedPage:
                     let raw = fetchURLKeys.lazy.compactMap { call.arguments[$0] }.first
                     if let raw {
-                        collected.add(TurnSource(kind: .fetchedPage, title: nil, rawURL: raw))
+                        collected.add(TurnSource(kind: .fetchedPage, title: nil, rawURL: raw, origin: origin))
                     }
                 }
             }
@@ -164,7 +177,8 @@ struct TurnSources: Equatable, Sendable {
     private mutating func add(_ candidate: TurnSource?) {
         guard let candidate else { return }
         if let index = sources.firstIndex(where: { $0.key == candidate.key }) {
-            // Same page again: keep the first position, upgrade in place.
+            // Same page again: keep the first position and the first call
+            // (`origin`), upgrade the rest in place.
             if candidate.kind == .fetchedPage { sources[index].kind = .fetchedPage }
             if !sources[index].hasRealTitle && candidate.hasRealTitle {
                 sources[index].title = candidate.title
@@ -218,5 +232,26 @@ extension TurnSources {
         }
         guard let answer, answer.toolCalls.isEmpty else { return nil }
         return answer.id
+    }
+}
+
+/// A request to bring one tool card into view (OC-09): the transcript
+/// scrolls to `messageID`, an enclosing group and the card itself expand,
+/// and a collapsed turn opens first. `token` makes a repeat reveal of the
+/// same call distinct, and lets a card that is created AFTER the request
+/// (a lazy row, a group that was closed) still act on it exactly once.
+struct ToolCardReveal: Equatable, Sendable {
+    let messageID: UUID
+    let callID: UUID
+    let token: Int
+}
+
+extension TurnSources {
+    /// The anchor (user prompt id) of the collapsed-able turn that holds
+    /// `messageID`, or nil when the message is in no turn. The caller removes
+    /// it from the collapsed set so the hidden activity rows render.
+    static func turnAnchor(containing messageID: UUID, in messages: [AppChatMessage]) -> UUID? {
+        TurnCollapseModel.turns(in: messages)
+            .first { $0.messageIDs.contains(messageID) }?.anchorID
     }
 }

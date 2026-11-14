@@ -8,7 +8,7 @@ from [PR 58307](https://github.com/anomalyco/opencode/pull/58307)
 ("show the web sources a reply used").
 
 * Author: whit3rabbit
-* Status: Partial (implemented; reveal-in-tool-card deferred)
+* Status: Implemented (reveal in tool card shipped 2026-11-14; manual app checklist not run)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -100,10 +100,9 @@ every tool card in the turn.
   opens. Open pane: the visible tab navigates (the pane model does not
   follow a tab created behind it). Disabled with an explanation when the
   browser feature is off.
-* **Scope cut** (review M5): the "reveal in tool card" row action is
-  deferred. It needs a first-seen call id plus transcript scroll and
-  expand plumbing that this change does not design. Domain grouping and
-  counts are kept.
+* **Scope cut** (review M5): the "reveal in tool card" row action was
+  deferred in the first pass and shipped in the follow-up below. Domain
+  grouping and counts are kept.
 * **No new shortcut, setting, dependency or CI change.**
 
 ## Critical User Journeys
@@ -207,9 +206,46 @@ Files:
   chip count and overflow strings avoid plural variations by wording).
 * `Tests/.../AppChatTurnSourcesTests.swift` (new).
 
-Deferred: reveal in the transcript's tool card (see Resolved decisions).
+Deferred then: reveal in the transcript's tool card (done, next record).
 The manual app checklist (DESIGN.md section 9: text sizes, themes,
 VoiceOver, Reduce Motion, RTL) was not run from this session.
+
+## Implementation record: reveal in the tool card (2026-11-14)
+
+Still derived, still nothing stored. Design:
+
+* `TurnSource.origin` (`TurnSourceOrigin`: message id, call id) is set when
+  `TurnSources.collect` first adds a source and is never overwritten by a
+  later duplicate (a fetch of a searched page upgrades the kind, keeps the
+  first call).
+* `AppModel.revealToolCard(for:)` checks the call is still in the selected
+  chat's transcript (else a toast and `false`), removes the enclosing turn's
+  anchor from `collapsedTurnAnchors`, publishes
+  `toolCardReveal: ToolCardReveal(messageID, callID, token)` and posts a
+  VoiceOver announcement. Not persisted.
+* `ChatTranscriptView` scrolls to the message row (`TSMotion.animate`, so
+  Reduce Motion is honored) after one `Task.yield`, because an opened turn's
+  rows do not exist until the next pass.
+* `ToolGroupView` opens the group that holds the call; `ToolCallCardView`
+  expands for it. The card is the only consumer
+  (`consumeToolCardReveal(forCallID:)`, gated by a token high-water mark), so
+  a card recreated by the lazy stack does not re-expand after the reader
+  collapsed it, and a card created after the request still acts once.
+* The popover row gets a third icon button, "Reveal in transcript" (the
+  popover closes first). It is a real button: keyboard focusable, VoiceOver
+  label and help text from the same key. Disabled for a source with no origin.
+* 3 new strings in 21 languages (button, announcement, stale-call toast).
+* Tests: origin first-wins, per-source calls, turn anchor lookup, reveal
+  opens a collapsed turn and bumps the token, reveal consumed once and only
+  by the named call, refusal when the call is gone. Mutation checks: copying
+  the later duplicate's origin over the first, and dropping the pending
+  check in `consumeToolCardReveal`, each fail exactly one named test.
+
+Remaining: scrolling lands on the message ROW, not the card inside a long
+multi-call row (the card is not an addressable id and a lazy stack cannot
+scroll to an uninstantiated child); no highlight pulse on the revealed card.
+The manual DESIGN.md section 9 pass (text sizes, themes, VoiceOver, RTL) was
+not run from this session.
 
 --------------------------------------------------------------------------------
 

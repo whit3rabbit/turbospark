@@ -1115,6 +1115,13 @@ public final class AppModel: ObservableObject {
     /// Bumped on every jump so repeating a jump to the SAME row still
     /// scrolls (an onChange keyed on the id alone would not).
     @Published public var turnNavigationToken: Int = 0
+    /// The tool card the sources popover asked to reveal (OC-09). Cards and
+    /// groups read it; the transcript scrolls to it. Never persisted.
+    @Published var toolCardReveal: ToolCardReveal? = nil
+    /// Highest reveal token a card has acted on, so a lazily recreated card
+    /// does not re-expand after the reader collapsed it. Not published: it
+    /// only gates, and a change needs no redraw.
+    var toolCardRevealConsumedToken = 0
     /// The cron poll timer, installed by `startCronScheduler`; held so
     /// shutdown can invalidate it.
     var cronPollTimer: Timer?

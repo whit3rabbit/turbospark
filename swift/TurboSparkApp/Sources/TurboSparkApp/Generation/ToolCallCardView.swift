@@ -288,6 +288,14 @@ struct ToolCallCardView: View {
         .onChange(of: submittedPlan, initial: true) { _, plan in
             if plan != nil { isExpanded = true }
         }
+        // OC-09: "Reveal" in the sources popover. `initial` so a card created
+        // after the request (lazy row, group that was closed) still sees it.
+        .onChange(of: model.toolCardReveal, initial: true) { _, reveal in
+            guard reveal?.callID == call.id,
+                  model.consumeToolCardReveal(forCallID: call.id)
+            else { return }
+            TSMotion.animate(TSMotion.select) { isExpanded = true }
+        }
     }
 
     // MARK: - Unsloth Studio-Style Summary Row
