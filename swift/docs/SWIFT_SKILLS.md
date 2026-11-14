@@ -106,7 +106,10 @@ Skills are partitioned into two user-facing scopes:
    - Shipped today: `plugin-creator` (see `SWIFT_PLUGINS.md`),
      `turbospark-guide` (self-diagnosis of hooks, commands, skills, MCP and
      plugins) and `visualize` (output contract for self-contained HTML in the
-     artifact panel). One folder level only: `scanDirectory` does not recurse,
+     artifact panel), `ios-simulator` and `android-emulator` (device-control
+     loops over `xcrun simctl` and `adb`; every device command is high risk
+     on the permission ladder, simulators and emulators only, no network
+     exposure, no credentials). One folder level only: `scanDirectory` does not recurse,
      so a skill nested in another skill's folder is never discovered.
 
 ### B. On-disk directory and file layout
