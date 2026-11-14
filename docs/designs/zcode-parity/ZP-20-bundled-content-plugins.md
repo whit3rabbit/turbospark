@@ -8,7 +8,7 @@ and the visualize skill's
 (related finding 9.9, Partial).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -164,6 +164,62 @@ Agent activation via Skill tool
 * **Manual**: ask the agent to diagnose a deliberately broken MCP
   config; ask it to visualize a small dataset and confirm the artifact
   renders and obeys the no-CDN contract offline.
+
+--------------------------------------------------------------------------------
+
+## Implementation Notes
+
+Implemented through ZP-07's bundled-skill root
+(`swift/TurboSparkApp/Sources/TurboSparkAppResources/BundledSkills/`, a `.copy`
+resource read by `SkillManager.discoverBundledSkills()`); ZP-05 builtin
+marketplace seeding is only a later re-delivery path. Deviations from the
+draft above, each from the EGM review in
+`docs/egm-reviews/zcode-parity/ZP-20/`:
+
+* **Two skills, not seven (review M5).** `scanDirectory` reads one folder
+  level, so a nested `turbospark-guide/diagnose-hooks/SKILL.md` would never be
+  discovered. The guide is one `turbospark-guide` skill with a section per
+  diagnosis (hooks, commands, skills, MCP, plugins) plus `visualize`. This
+  also keeps the listing cost at two entries. A test fails if a skill is
+  nested below another skill folder.
+* **Skills, not plugins (M2).** Only skills ship; the title word "plugins"
+  means bundled content. Site publishing and legacy session restore (the other
+  two thirds of finding 9.14) are inapplicable to TurboSpark. ZP-90 has no
+  9.14 entry, so the exclusion is recorded here.
+* **Guide source of truth: option (a), hand-written (M3).** The drift guard
+  covers store FILE NAMES and Settings pane names only. Extraction rule: the
+  last path component of every inline code span ending in `.json` must appear
+  as a quoted literal in `Sources/TurboSparkApp`, and every `Settings > X`
+  must be an `AppSettingsView.SettingsTab` title. It does not prove the
+  surrounding prose is correct. Paths and panes the guide cites: app store
+  `settings.json`, `projects_archive.json`, `global_mcp_servers.json`,
+  `disabled_items.json`, `Hooks/trusted_hook_hashes.json`,
+  `Hooks/custom_hooks.json`, `~/.turbospark/plugins/*.json`, user and project
+  `skills/`, and the panes Hooks & Lifecycle, MCP Servers, Skills, Plugins,
+  Profiles, Keyboard Shortcuts, General.
+* **No MCP log (M8).** The app keeps no MCP log file, so the diagnosis path is
+  the "Test connection and discover tools" result on the server card, which the
+  skill asks the user to read back. The draft's "log output" is dropped.
+* **Visualize contract is advisory (M4).** The 1 MB cap is not enforced in
+  code and the skill says so. "Fragment-free" means a complete document; "no
+  CDN by default" means no external loads at all, because the first blocked
+  load shows the panel's "Network is off for this preview" banner whose Allow
+  button is the user's grant, and the skill forbids designing for it. "Save a
+  copy" exists in the artifact panel (`Generation/ArtifactPanelView.swift`).
+  No validator was added (rejected as scope growth).
+* **Security (M7).** The guide says to redact MCP `env`, `headers` and tokens,
+  to read only what is needed, and adds no tools. Reads outside the project
+  keep their normal permission prompts.
+* **Disable-able is state-only.** A user switch-off persists through
+  `SkillManager.setSkillEnabled` (`disabled_items.json`) and hides the skill
+  from the Skill tool, tested. The Settings > Skills pane does not list
+  bundled skills (it lists user, project and plugin skills), so there is no
+  toggle for them yet. Deferred, same gap as `plugin-creator` (ZP-07).
+* **Files.** The draft's `Resources/bundled-skills/` paths became
+  `BundledSkills/` (the ZP-07 root); `SkillManager.swift` needed no change.
+  Tests are in `BundledGuideSkillsTests.swift`. No localization keys were added:
+  skill text is agent-facing English and the existing `[Bundled]` listing label
+  is unchanged.
 
 --------------------------------------------------------------------------------
 

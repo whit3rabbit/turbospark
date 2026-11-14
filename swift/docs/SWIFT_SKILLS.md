@@ -103,7 +103,11 @@ Skills are partitioned into two user-facing scopes:
      `SkillManager.discoverBundledSkills()`.
    - Lowest precedence: a user or project skill of the same name replaces
      the bundled one. Not editable or deletable (`ownsSkill` is false).
-   - Shipped today: `plugin-creator` (see `SWIFT_PLUGINS.md`).
+   - Shipped today: `plugin-creator` (see `SWIFT_PLUGINS.md`),
+     `turbospark-guide` (self-diagnosis of hooks, commands, skills, MCP and
+     plugins) and `visualize` (output contract for self-contained HTML in the
+     artifact panel). One folder level only: `scanDirectory` does not recurse,
+     so a skill nested in another skill's folder is never discovered.
 
 ### B. On-disk directory and file layout
 
