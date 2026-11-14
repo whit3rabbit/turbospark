@@ -39,7 +39,7 @@ the draft rather than silently chosen.
 | 5.11 treemapping activity | [ZP-12](ZP-12-treemap-activity.md) | small |
 | 1.16 dev-build icon badge | [ZP-13](ZP-13-dev-build-icon-badge.md) | small |
 | 6.9 browser page permission governance | [ZP-14](ZP-14-browser-page-permissions.md) | medium |
-| 6.12 browser WebM recording | [ZP-15](ZP-15-browser-webm-recording.md) | medium; reverses an earlier exclusion, see draft |
+| 6.12 browser session recording | [ZP-15](ZP-15-browser-webm-recording.md) | medium; reverses an earlier exclusion; MP4 via snapshot capture, see draft |
 | 8.5 command center palette | [ZP-16](ZP-16-command-center-palette.md) | medium; supersedes an earlier deferral, see draft |
 | 8.6 error boundaries | [ZP-17](ZP-17-error-boundaries.md) | medium; SwiftUI has no crash-isolation primitive |
 | 9.1 office document generation | [ZP-09](ZP-09-office-document-generation.md) | large; must respect the no-Python/Node rule |
