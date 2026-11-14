@@ -8,7 +8,7 @@ from [PR 58307](https://github.com/anomalyco/opencode/pull/58307)
 ("show the web sources a reply used").
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Partial (implemented; reveal-in-tool-card deferred)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -64,6 +64,47 @@ every tool card in the turn.
 * **Fetch inclusion**: whether plain URL fetches count as sources or
   only search results. Lean: both, marked differently, because a fetched
   page the reply drew on is a source.
+
+## Resolved decisions (implementation, 2026-11-14)
+
+* **Surface shape**: popover from the chip, per the draft's lean. The
+  right-column claimant is not used; a long list scrolls inside the
+  popover (cap below).
+* **Fetch inclusion**: both, per the lean. A successful fetch is a source
+  marked "Fetched page" (document glyph); a search row is "Search result"
+  (magnifier glyph). A page both searched and fetched shows as fetched and
+  keeps the search title. The label is also in the VoiceOver text.
+* **Derive, do not store** (review M1, M7): sources are computed at render
+  time from the turn's archived `toolCalls` and `toolResults`. There is no
+  new `AppChatMessage` field, collector hook or archive migration, so old
+  chats get chips for free and CUJ 3 holds by construction. Plan items 2
+  (`AppModel+Tools.swift`) and 5 (`ToolPresentation.swift`) are dropped.
+* **Typed payload** (review M2): the registry flattens results to markdown,
+  so the search parser reads `N. [title](url)` rows (the exact
+  `WebSearchOutput.formatMarkdown` shape) and a fetch takes its URL from the
+  call arguments. No change to `AppToolResult`.
+* **Turn and chip owner** (review M3): a turn is the existing
+  `TurnCollapseModel` turn (opened by a user row). The chip sits on the
+  turn's final assistant row that has content and no tool calls, the row a
+  collapsed turn keeps visible. A turn that ends on a tool call has no chip.
+* **Source definition** (review M4): a http or https URL from a successful
+  call (a failed, denied or interrupted call records nothing). Dedupe key:
+  lowercased scheme and host, port, path without trailing slash, query kept,
+  fragment dropped. Cap: 50 listed per turn, the rest counted and shown as
+  "N more sources not shown". The Tavily direct-answer row (home page URL)
+  is skipped. A redirected fetch records the requested URL, since the
+  executor does not return the final one.
+* **Open path** (review M6): `AppModel.openSourceInBrowserPane` uses
+  `WebKitBrowserEngine.navigateAsUser`, the pane's user path, not agent
+  `authorizeBrowserNavigation`. Closed pane: a new user tab, then the pane
+  opens. Open pane: the visible tab navigates (the pane model does not
+  follow a tab created behind it). Disabled with an explanation when the
+  browser feature is off.
+* **Scope cut** (review M5): the "reveal in tool card" row action is
+  deferred. It needs a first-seen call id plus transcript scroll and
+  expand plumbing that this change does not design. Domain grouping and
+  counts are kept.
+* **No new shortcut, setting, dependency or CI change.**
 
 ## Critical User Journeys
 
@@ -150,6 +191,25 @@ Records are capped per turn with the overflow recorded as a count.
 * **Manual**: a turn with searches, chip count and popover contents,
   open in browser pane, relaunch persistence, and the DESIGN.md
   section 9 checklist on the popover.
+
+## Implementation record (2026-11-14)
+
+Files:
+
+* `State/AppChatTurnSources.swift` (new): `TurnSource`, `TurnSources`
+  (collect, parse, dedupe, cap, groups, reply-row choice). Pure.
+* `State/AppModel+TurnSources.swift` (new): open-in-browser-pane and copy.
+* `Generation/SourcesPopoverView.swift` (new): chip and popover.
+* `Generation/MessageRowView.swift`, `Generation/ChatTranscriptView.swift`:
+  `sources:` input on the row; the transcript derives it per turn, only for
+  a turn that made a web call.
+* `Localization/Localizable.xcstrings`: 12 new keys in 21 languages (the
+  chip count and overflow strings avoid plural variations by wording).
+* `Tests/.../AppChatTurnSourcesTests.swift` (new).
+
+Deferred: reveal in the transcript's tool card (see Resolved decisions).
+The manual app checklist (DESIGN.md section 9: text sizes, themes,
+VoiceOver, Reduce Motion, RTL) was not run from this session.
 
 --------------------------------------------------------------------------------
 

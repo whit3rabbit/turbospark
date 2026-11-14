@@ -206,10 +206,18 @@ struct ChatTranscriptView: View {
         let visibleIDs = isCollapsed
             ? TurnCollapseModel.visibleIDs(collapsedFor: turn, messagesByID: byID)
             : turn.messageIDs
+        // OC-09: derived per render from the turn's own tool results, and
+        // only for a turn that made a web call, so other turns never parse.
+        let turnMessages = turn.messageIDs.compactMap { byID[$0] }
+        let turnSources = TurnSources.hasWebCall(in: turnMessages)
+            ? TurnSources.collect(in: turnMessages) : TurnSources()
+        let sourcesRowID = turnSources.isEmpty ? nil : TurnSources.replyRowID(in: turnMessages)
         VStack(alignment: .leading, spacing: 18) {
             ForEach(visibleIDs, id: \.self) { messageID in
                 if let message = byID[messageID] {
-                    MessageRowView(model: model, message: message)
+                    MessageRowView(
+                        model: model, message: message,
+                        sources: messageID == sourcesRowID ? turnSources : nil)
                         .id(message.id)
                     if messageID == turn.anchorID && hidden > 0 && !model.isRunning {
                         TurnActivityDisclosure(count: hidden, isExpanded: !isCollapsed) {

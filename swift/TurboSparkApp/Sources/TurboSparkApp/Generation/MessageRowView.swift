@@ -7,6 +7,9 @@ struct MessageRowView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     let message: AppChatMessage
+    /// The web sources of the turn this row closes (OC-09). Set by the
+    /// transcript only on a turn's final reply row; nil draws no chip.
+    var sources: TurnSources?
     @State private var isHovered = false
     @State private var showsReasoning = false
     @State private var branchTarget: AppModel.BranchTarget?
@@ -385,6 +388,10 @@ struct MessageRowView: View {
                     }
 
                     imageAttachments
+
+                    if let sources, !sources.isEmpty {
+                        SourcesChipView(model: model, sources: sources)
+                    }
 
                     MessageActionBarView(
                         text: message.content,
