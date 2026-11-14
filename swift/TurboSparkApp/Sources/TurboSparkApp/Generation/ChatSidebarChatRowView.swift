@@ -27,6 +27,9 @@ struct ChatSidebarChatRowView: View {
 
     @State private var isHovered = false
     private var actionButtonSize: CGFloat { theme.sidebarActionSize }
+    /// Whether the running work pins THIS chat (ZP-23): its own turn, or work
+    /// that is not a chat turn. Another chat's turn does not.
+    private var isChatBusy: Bool { model.isChatBusyForRowActions(chat.id) }
 
     var body: some View {
         let isSelected = chat.id == model.selectedChatID
@@ -73,11 +76,11 @@ struct ChatSidebarChatRowView: View {
                 renameText = chat.title
                 chatBeingRenamed = chat
             } label: { Text("Rename", bundle: .module) }
-            .disabled(model.isRunning || chat.isGhost)
+            .disabled(isChatBusy || chat.isGhost)
             Button {
                 chatForSystemPrompt = chat
             } label: { Text("Chat System Prompt", bundle: .module) }
-            .disabled(model.isRunning)
+            .disabled(isChatBusy)
             Button {
                 _ = model.duplicateChat(id: chat.id)
             } label: { Text("Duplicate", bundle: .module) }
@@ -101,19 +104,19 @@ struct ChatSidebarChatRowView: View {
             Button(role: .destructive) {
                 chatPendingDeletion = chat
             } label: { Text("Delete", bundle: .module) }
-            .disabled(model.isRunning)
+            .disabled(isChatBusy)
         }
         .accessibilityAction(named: (chat.isPinned ? Text("Unpin", bundle: .module) : Text("Pin", bundle: .module))) {
             model.setChatPinned(id: chat.id, pinned: !chat.isPinned)
         }
         .accessibilityAction(named: Text("Rename", bundle: .module)) {
-            if !model.isRunning && !chat.isGhost {
+            if !isChatBusy && !chat.isGhost {
                 renameText = chat.title
                 chatBeingRenamed = chat
             }
         }
         .accessibilityAction(named: Text("Chat System Prompt", bundle: .module)) {
-            if !model.isRunning {
+            if !isChatBusy {
                 chatForSystemPrompt = chat
             }
         }
@@ -136,7 +139,7 @@ struct ChatSidebarChatRowView: View {
             }
         }
         .accessibilityAction(named: Text("Delete", bundle: .module)) {
-            if !model.isRunning {
+            if !isChatBusy {
                 chatPendingDeletion = chat
             }
         }
@@ -185,18 +188,19 @@ struct ChatSidebarChatRowView: View {
                     }
                 }
                 Spacer(minLength: 0)
+                stateBadge
             }
             .padding(.leading, 9)
             .padding(.vertical, 8)
             .contentShape(.rect)
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.985))
-        .disabled(model.isRunning && !isSelected)
-        .help(model.isRunning && !isSelected
+        .disabled(!model.canSelectChat(id: chat.id))
+        .help(!model.canSelectChat(id: chat.id)
             ? Text("Cannot switch chats while generation is running", bundle: .module)
             : Text("Switch to \(chat.title)", bundle: .module))
         .accessibilityLabel(chat.title)
-        .accessibilityValue(Text(verbatim: chat.preview))
+        .accessibilityValue(stateAccessibilityValue)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
@@ -215,7 +219,7 @@ struct ChatSidebarChatRowView: View {
                 .font(theme.ui(.tiny))
                 .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
                 .accessibilityHidden(true)
-        } else if isSelected && model.isRunning {
+        } else if model.chatTurnState(for: chat.id) == .generating {
             TaskProgressFlameIcon(size: 13)
         } else {
             Image(systemName: isSelected ? "bubble.left.fill" : "bubble.left")
@@ -223,6 +227,38 @@ struct ChatSidebarChatRowView: View {
                 .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
                 .contentTransition(.symbolEffect(.replace))
                 .accessibilityHidden(true)
+        }
+    }
+
+    /// What this chat is doing in the single turn lane (ZP-23). A glyph with
+    /// a text equivalent (help and VoiceOver), never color alone. Generating
+    /// is the animated flame in the icon slot, so it has no badge here.
+    @ViewBuilder
+    private var stateBadge: some View {
+        switch model.chatTurnState(for: chat.id) {
+        case .awaitingTool, .awaitingQuestion:
+            Image(systemName: "hand.raised.fill")
+                .font(theme.ui(.tiny))
+                .foregroundStyle(AppAttention.color)
+                .help(Text("Needs Approval", bundle: .module))
+                .accessibilityHidden(true)
+        case .queued:
+            Image(systemName: "clock")
+                .font(theme.ui(.tiny))
+                .foregroundStyle(.appSecondary)
+                .help(Text("Queued", bundle: .module))
+                .accessibilityHidden(true)
+        case .generating, .idle:
+            EmptyView()
+        }
+    }
+
+    private var stateAccessibilityValue: Text {
+        switch model.chatTurnState(for: chat.id) {
+        case .generating: return Text("Generating", bundle: .module)
+        case .awaitingTool, .awaitingQuestion: return Text("Needs Approval", bundle: .module)
+        case .queued: return Text("Queued", bundle: .module)
+        case .idle: return Text(verbatim: chat.preview)
         }
     }
 
@@ -269,7 +305,7 @@ struct ChatSidebarChatRowView: View {
         .accessibilityLabel(Text("Chat actions for \(chat.title)", bundle: .module))
         .opacity(showsActions ? 1 : 0)
         .scaleEffect(showsActions ? 1 : 0.85)
-        .disabled(model.isRunning)
+        .disabled(isChatBusy)
         .padding(.trailing, 5)
     }
 }

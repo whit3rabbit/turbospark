@@ -451,6 +451,7 @@ extension AppModel {
         // EXECUTION, so Send cannot start a second turn beside the tool and
         // Stop is enabled for exactly the window a shell command runs in.
         generating = true
+        claimLane(for: chatID)
         isCancellationPending = false
         // **THE DEFER BELOW MUST NOT LOWER A FLAG A LATER TURN RAISED**
         // (state#29). `continueOrStop` runs SYNCHRONOUSLY inside this task and
@@ -571,6 +572,7 @@ extension AppModel {
         // started a second `generate()` on the serial session beside the deny
         // path's own. Mirrors the approve path above, epoch guard included.
         generating = true
+        claimLane(for: chatID)
         isCancellationPending = false
         generationEpoch += 1
         let myEpoch = generationEpoch

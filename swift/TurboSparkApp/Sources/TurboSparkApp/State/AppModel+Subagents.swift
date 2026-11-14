@@ -516,10 +516,7 @@ extension AppModel {
     /// drain at the next idle tail after the eject, which is a later turn's
     /// tail or selecting the chat, exactly as they do after a busy turn.
     func canInjectChatInput(into chatID: UUID) -> Bool {
-        !generating && !submitting && pendingToolCall == nil && pendingBatchCalls == nil
-            && !isEjecting
-            && selectedChatID == chatID
-            && chats.contains(where: { $0.id == chatID })
+        canStartTurn(inChat: chatID) && selectedChatID == chatID
     }
 
     /// Background notifications wait behind queued user prompts and behind a

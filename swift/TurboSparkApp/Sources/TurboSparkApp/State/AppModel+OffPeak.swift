@@ -41,11 +41,15 @@ extension AppModel: OffPeakHost {
     /// plus a quiet composer and an empty queue so an off-peak turn never
     /// jumps ahead of, or lands on top of, something the user parked.
     public func offPeakCanDispatch(chatID: UUID) -> Bool {
-        canInjectChatInput(into: chatID)
+        // No selection requirement (ZP-23): the composer terms below describe
+        // the selected chat's draft, so they bind only that chat. A task for
+        // a background chat dispatches when the lane is free.
+        canStartTurn(inChat: chatID)
             && hasModelReadyForScheduledDelivery
             && (pendingUserMessages[chatID] ?? []).isEmpty
-            && promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && promptAttachments.isEmpty
+            && (chatID != selectedChatID
+                || (promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && promptAttachments.isEmpty))
     }
 
     /// Delivered like a cron prompt: a plain synthetic user turn that never

@@ -320,9 +320,9 @@ struct ChatSidebarGroupedProjectsView: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .disabled(model.isRunning && !isSelected)
+            .disabled(!model.canOpenChat(id: chat.id))
             // Data only (the chat's own title and a locale-formatted date).
-            .help((model.isRunning && !isSelected)
+            .help(!model.canOpenChat(id: chat.id)
                 ? Text("Cannot start a new chat while generation is running", bundle: .module)
                 : Text(verbatim: "\(chat.title) - \(MessageTimestampFormatter.relativeString(for: chat.updatedAt, locale: locale))"))
             .accessibilityLabel(chat.title)
@@ -390,7 +390,7 @@ struct ChatSidebarGroupedProjectsView: View {
 
     @ViewBuilder
     private func taskIcon(chat: AppChat, isSelected: Bool, isRecent: Bool) -> some View {
-        if isSelected && model.isRunning {
+        if model.chatTurnState(for: chat.id) == .generating {
             TaskProgressFlameIcon(size: 11)
         } else if isRecent {
             Image(systemName: "sparkle")

@@ -605,6 +605,19 @@ extension AppModel {
     /// ordinary tool is a dependency the model should spell out across turns.
     func handleExtractedToolCalls(_ calls: [AppToolCall], fullContent: String, reasoning: String, result: GenerationResult, currentStep: Int, chatID: UUID, project: AppProject?) async {
         guard let first = calls.first else { return }
+        // **BACKGROUND CHATS DO NOT RUN TOOLS** (ZP-23). A turn the user has
+        // left behind can finish its prose but not act: the proposal parks
+        // whole and replays through this same function when the chat is
+        // foreground, so hooks, the permission engine and the approval card
+        // all run then, in front of the user, exactly as for any call.
+        if shouldDeferToolProposal(chatID: chatID) {
+            deferToolProposal(
+                DeferredToolProposal(
+                    calls: calls, fullContent: fullContent, reasoning: reasoning,
+                    result: result, step: currentStep, project: project),
+                chatID: chatID)
+            return
+        }
         if calls.count > 1, calls.allSatisfy({ Self.isAgentFamilyToolName($0.name) }) {
             await runConcurrentAgentBatch(
                 calls, fullContent: fullContent, reasoning: reasoning, result: result,

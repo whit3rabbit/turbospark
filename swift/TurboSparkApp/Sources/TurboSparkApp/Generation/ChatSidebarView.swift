@@ -290,8 +290,8 @@ struct ChatSidebarView: View {
             }
         }
         .buttonStyle(SidebarActionButtonStyle())
-        .disabled(model.isRunning)
-        .help(model.isRunning
+        .disabled(!model.canCreateChat)
+        .help(!model.canCreateChat
             ? Text("Cannot start a new chat while generation is running", bundle: .module)
             : (Text("New chat", bundle: .module) + Text(verbatim: " (Cmd+N)")))
     }

@@ -8,7 +8,8 @@ and the
 [session idle deactivation doc](https://github.com/zai-org/ZCode/blob/main/docs/session-idle-deactivation.md).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented (partial). See "Implementation Record" for what
+  shipped, what the review changed, and the exact remainder.
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -109,6 +110,10 @@ sidebar that switches freely.
   no chat's transcript is corrupted by the shared shutdown.
 
 ## Technical Plan (ChatGenerationCoordinator)
+
+This section is the original plan. The engine-lease mechanism below was
+contingent on the Open Question; the Implementation Record at the end says
+which part was built and why.
 
 ```text
 ChatGenerationCoordinator (new, Swift)
@@ -218,6 +223,136 @@ makes it explicit).
   chat stays interactive and background progress advances; quit mid-run
   and verify both interrupted rows. Report measured tokens-per-second
   as observations only; no performance claim without the bench gates.
+
+## Implementation Record
+
+Resolution of the "Decode lane" Open Question (verified against source):
+
+* `crates/ffi/src/session.rs` holds one `Engine` per session behind a
+  `Mutex`; a turn holds it for its duration. Swift already serializes
+  requests on top of that (`QueuedGenerationStream`). Nothing in the engine
+  steps two turns alternately, and none was added.
+* What cannot run twice is the per-turn state on `AppModel`: one `runTask`,
+  one `generationEpoch`, one live stream buffer (`outputText`), one approval
+  slot (`pendingToolCall` and six sibling fields), one cancel flag. About 25
+  guard sites in 10+ files read them as "the app is busy".
+* Decision (the draft's own fallback, "turn-level lease"): one turn at a time
+  app-wide. The lane is that turn slot, not the engine. Concurrency means any
+  chat can be selected while another runs, other chats park behind the lane,
+  and a chat that needs the user releases the lane. No Rust or FFI change.
+
+What shipped:
+
+* `State/ChatGenerationCoordinator.swift`: pure scheduler (lane holder,
+  foreground-first admission order, parked states) and the guard verdicts for
+  select, create, delete and model switch.
+* `State/AppModel+ConcurrentChats.swift`: the AppModel side. `generatingChatID`
+  names the chat that owns the running turn; `selectChat`, `createChat` and
+  `deleteChat` use the verdict instead of the blanket guard; the live stream
+  buffer is scoped to the running turn's chat (`isRunningInSelectedChat`,
+  `liveOutputBelongsToSelectedChat`); sidebar rows stay enabled and show
+  generating, needs approval or queued.
+* Background tool deferral and admission (below); quit flush of the running
+  turn into its own chat plus every parked proposal.
+* The model-switch refusal names the chat ("<chat> is generating on this
+  model. Stop it before switching models."). It is a toast on the existing
+  load refusal, not a new gate.
+
+Review fixes applied (docs/egm-reviews/zcode-parity/ZP-23):
+
+* B1, B4: the Swift lease is no longer assumed. The spike was a source read
+  (above); the fallback is the turn-level lease. Rejected alternatives are in
+  the next section.
+* M2: one policy, strict foreground priority. The foreground chat's parked
+  work is admitted first, then other chats in the order they parked. There is
+  no round robin because there is no interleaving: a turn runs to its end.
+* M3: constant cap of 1 turn lane (`ChatGenerationCoordinator.laneCapacity`).
+  A request at the cap queues, it does not refuse. No settings field and no
+  hardware-aware bound in v1: a second concurrent turn is not offered, so
+  there is no KV or expert-cache figure to bound.
+* M4, ladder position: a tool call proposed by a chat that is not selected
+  does not run. The whole proposal parks (`DeferredToolProposal`) and
+  replays through `handleExtractedToolCalls` when the chat is selected and
+  the lane is free. Hooks, the permission engine, Agent mode and the approval
+  card therefore evaluate in the foreground exactly as before; nothing is
+  auto-approved in the background and no new approval variant exists. An
+  awaiting-tool chat holds no lane (the flag drops when the proposal parks).
+* M11, slot accounting: one slot per top-level chat. Subagents and
+  background agents run inside their parent chat's slot and already queue on
+  the engine's serial stream. Idle KV retention is unchanged: the session is
+  shared and KV belongs to it, so a switched-away chat holds nothing extra.
+  Per-chat KV release (ZCode idle deactivation) is deferred, see Remainder.
+* M5: the interrupted-row flow is reused. `shutdown()` flushes the running
+  turn's buffer into `generatingChatID` (it used `selectedChatID`, which is
+  wrong once the two can differ) and
+  `flushDeferredProposalsForShutdown()` writes each parked proposal's captured
+  prose as an interrupted row with a recovery anchor. Crash reconciliation is
+  ZP-17's marker, unchanged and not extended per chat.
+* M6: there is no `ResidencyPolicy` type in Swift and no change to expert
+  caps. The claim was removed from this draft's scope.
+* M7: CUJ 3 is the existing load refusal, now naming the chat. Stop-then-
+  switch is the way forward and stays a follow-up.
+
+Alternatives considered (replaces the "by author" rejections):
+
+* Rust-side scheduler stepping two sessions: needs per-session cancel and
+  KV accounting in `crates/runtime` plus real-hardware memory and quality
+  gates this change cannot run. Not built.
+* One engine per chat: doubles resident weights unless shared, and sharing is
+  the engine change above. Not built.
+* KV swap or evict per background chat: the idle-deactivation analogue; an
+  engine feature with a restore-correctness gate. Deferred.
+* Swift scheduler over the existing serial stream with per-chat turn state:
+  the right long-term shape, but it is the M1 refactor (about 25 guard sites,
+  the approval slot, the cancel flag, the stream buffer). Not done in one
+  pass without being able to validate on hardware.
+* Turn-level lease (chosen): safe with the existing serial worker, no engine
+  change, and it delivers the user-visible goal that switching is never
+  blocked by another chat's generation.
+
+Risks and mitigations (hypotheses, none measured):
+
+* Background turn finishes while the user is elsewhere: its reply commits to
+  its own chat (every append is keyed by chat id, state#17), and the row shows
+  the queued or needs-approval glyph. Unread dots are ZP-02, not built here.
+* A tool proposal waits indefinitely for a chat nobody opens: bounded by the
+  user's own switching; the row says "Needs Approval". No timeout was added.
+* Lease leak: the app-wide `generating` flag is the source of truth. When it
+  drops, the holder is released unconditionally; a release by a non-holder is
+  ignored so a stale tail cannot free a newer turn's lane.
+* Approval spoofing and same-workspace races: no background tool runs, and
+  only one turn runs, so the existing single-turn guarantees hold.
+* Partial flush on quit: the running turn and every parked proposal flush in
+  `shutdown()` before the final persist; a missed chat degrades to the
+  existing relaunch behavior (user prompt with no reply, Retry available).
+
+Dependencies: ZP-02 (unread and pending badges) is not implemented; this
+change supplies the per-row state it needs (`chatTurnState(for:)`). ZP-21
+(workspace tabs) composes later. ZP-01 (off-peak tasks) now dispatches into
+a background chat: `offPeakCanDispatch` no longer requires selection.
+
+Remainder (not done, with the reason):
+
+1. Two chats awaiting approval at once (CUJ 2). The approval slot is one set
+   of fields on `AppModel`; an approval card in the selected chat still pins
+   the user to it. Needs the per-chat approval store (swap-on-select) and
+   changes to about 30 read sites.
+2. A question for the user (`AskUserQuestion`) holds the lane while it waits:
+   it blocks inside the running tool's execution task, so `generating` stays
+   up. Releasing it needs the turn and the tool task decoupled.
+3. A typed prompt parked in a background chat waits until that chat is
+   selected, because submission goes through the composer. A composer-free
+   `run()` is the fix. Background agent completion notifications keep the
+   same selection requirement (`canInjectTaskNotification`, pinned by
+   `BackgroundAgentTests`); only scheduled prompts (cron, off-peak) start in
+   a background chat.
+4. Cross-project chat switching, project creation and `clearOutput`,
+   `duplicateChat`, message editing and split-pane moves keep the blanket
+   guard: they touch workspace-global or selection-bound state.
+5. Cmd+. and the menu Stop act on the running turn wherever the user is.
+6. Real two-turn concurrency, per-chat KV release, and any performance claim:
+   engine work with hardware gates. Hardware verification (two chats on one
+   resident model, switching mid-run, quit mid-run) was not run here.
 
 --------------------------------------------------------------------------------
 

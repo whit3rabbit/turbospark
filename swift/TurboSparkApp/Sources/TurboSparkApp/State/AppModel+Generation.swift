@@ -108,6 +108,7 @@ extension AppModel {
         outputText = ""
         outputReasoningText = ""
         generating = true
+        claimLane(for: chatID)
         phase = .prefill
         livePrefillDone = 0
         livePrefillTotal = 0
@@ -554,6 +555,9 @@ extension AppModel {
         self.drainPendingUserMessagesIfIdle(chatID: turnChatID)
         self.drainPendingTaskNotificationsIfIdle(chatID: turnChatID)
         self.drainPendingTitleGenerationIfIdle(session: session)
+        // The lane is free: offer it to the foreground chat's parked work,
+        // then to other chats in the order they parked (ZP-23).
+        self.admitParkedWork()
         // After the drains: one of them may have started the next turn, and
         // an approval card parks the run rather than ending it.
         self.offPeakTurnDidFinish(

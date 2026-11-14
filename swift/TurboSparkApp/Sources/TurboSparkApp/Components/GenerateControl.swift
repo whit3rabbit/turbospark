@@ -30,7 +30,10 @@ struct GenerateControl: View {
 
     var body: some View {
         Group {
-            if model.isRunning {
+            // The Stop button belongs to the chat that owns the running turn
+            // (ZP-23). In any other chat the button is Send, which queues
+            // behind the running turn.
+            if model.isRunningInSelectedChat {
                 stopButton
             } else {
                 generateButton
@@ -39,13 +42,13 @@ struct GenerateControl: View {
         // The swap between the two is a real change of state, not a redraw:
         // animating it stops the footer from flickering at the moment a turn
         // starts or ends.
-        .tsAnimation(TSMotion.select, value: model.isRunning)
+        .tsAnimation(TSMotion.select, value: model.isRunningInSelectedChat)
     }
 
     // MARK: - Idle
 
     private var generateButton: some View {
-        let ready = model.canRun
+        let ready = model.canRunOrQueue
         let fill = ready
             ? AnyShapeStyle(theme.accent.gradient)
             : AnyShapeStyle(theme.foreground.opacity(0.08))

@@ -74,6 +74,7 @@ extension AppModel {
         guard !text.isEmpty || !attachments.isEmpty else { return }
         pendingUserMessages[chatID, default: []].append(
             QueuedUserPrompt(text: text, attachments: attachments))
+        noteParkedWork(chatID: chatID)
         if let index = chats.firstIndex(where: { $0.id == chatID }) {
             if chats[index].isGhost {
                 mutateGhostPayload(for: chatID) { $0.draft = "" }
@@ -132,10 +133,14 @@ extension AppModel {
     /// chat is not idle.
     @discardableResult
     func drainPendingUserMessagesIfIdle(chatID: UUID) -> PendingUserSubmission? {
-        guard canInjectChatInput(into: chatID),
-            let queued = pendingUserMessages[chatID], !queued.isEmpty
-        else { return nil }
+        guard let queued = pendingUserMessages[chatID], !queued.isEmpty else { return nil }
         let first = queued[0]
+        // A scheduled entry never touches the composer, so a background chat
+        // may start it when the lane is free (ZP-23); a typed prompt goes
+        // through the composer, which describes only the selected chat.
+        guard first.isScheduled
+            ? canStartTurn(inChat: chatID) : canInjectChatInput(into: chatID)
+        else { return nil }
         if first.isScheduled {
             // Model-origin text: appended as a plain user turn, composer and
             // draft untouched, no bang/slash parsing. Waits (stays parked)

@@ -85,6 +85,16 @@ staging files changed.
   `runsChatGenerationCommand` enables chat generation only in Chat. Full-bleed
   workspaces (`.images`, `.audio`, `.humanize`) declare `ownsGenerationShortcuts`
   to bind those chords to their own run/stop controls.
+- Concurrent chats (ZP-23): one turn at a time app-wide. A chat that owns the
+  running turn is `generatingChatID`; any other chat can be selected, created
+  or deleted while it runs (`ChatGenerationCoordinator.verdict`), and the live
+  buffer (`outputText`) is drawn only for that chat. Chat-level guards must
+  ask `laneVerdict`, not `generating`, unless they touch workspace-global
+  state. Every site that raises `generating` for a chat turn must call
+  `claimLane(for:)`; unattributed work keeps the blanket refusal. A tool
+  proposal from a chat that is not selected parks and replays when the chat is
+  foreground, so nothing runs unattended in the background. Deferred items and
+  the reasoning: `docs/designs/zcode-parity/ZP-23-concurrent-chats.md`.
 - Tool options in Chat vs Projects: In Chat (`interactionMode == .chat`), tools
   can be toggled on/off via `chatToolsEnabled` (persisted in `MacAppSettings`,
   default true, switched from the Tools chip popover below the prompt composer

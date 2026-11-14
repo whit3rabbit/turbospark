@@ -55,9 +55,9 @@ extension AppModel {
     /// Whether there is any conversation history or live output to display.
     public var hasOutputTranscript: Bool {
         !selectedTurnMessages.isEmpty
-            || !outputText.isEmpty
-            || !outputReasoningText.isEmpty
-            || isRunning
+            || (liveOutputBelongsToSelectedChat && !outputText.isEmpty)
+            || (liveOutputBelongsToSelectedChat && !outputReasoningText.isEmpty)
+            || isRunningInSelectedChat
             || pendingToolCall != nil
             || !liveSubagentRuns.isEmpty
             || backgroundAgentRuns.values.contains { $0.chatID == nil || $0.chatID == selectedChatID }
@@ -101,7 +101,7 @@ extension AppModel {
 
     /// Plain text of the latest assistant output.
     public var outputResponsePlainText: String {
-        if !outputText.isEmpty {
+        if liveOutputBelongsToSelectedChat, !outputText.isEmpty {
             return outputText
         }
         return selectedTurnMessages.last(where: { $0.role == .assistant })?.content ?? ""
@@ -113,7 +113,7 @@ extension AppModel {
     /// output. The context menu reads this on every render, and building the
     /// whole conversation there cost a full concatenation per streamed token.
     public var hasOutputConversationText: Bool {
-        !selectedTurnMessages.isEmpty || !outputText.isEmpty
+        !selectedTurnMessages.isEmpty || (liveOutputBelongsToSelectedChat && !outputText.isEmpty)
     }
 
     /// Full plain text transcript of the active chat conversation.
@@ -123,7 +123,7 @@ extension AppModel {
             let label = message.role == .user ? "You" : "Assistant"
             transcriptLines.append("\(label):\n\(message.content)")
         }
-        if !outputText.isEmpty {
+        if liveOutputBelongsToSelectedChat, !outputText.isEmpty {
             transcriptLines.append("Assistant:\n\(outputText)")
         }
         return transcriptLines.joined(separator: "\n\n")

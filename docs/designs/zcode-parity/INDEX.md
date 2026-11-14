@@ -48,7 +48,7 @@ the draft rather than silently chosen.
 | 9.14 utility plugins (portable half) | [ZP-20](ZP-20-bundled-content-plugins.md) | small-medium |
 | 1.6 workspace tabs | [ZP-21](ZP-21-workspace-tabs.md) | large; composes on the adopted concurrent chats (ZP-23) |
 | 7.1 (+7.2 key half) remote providers | [ZP-22](ZP-22-remote-providers.md) | large; adopted 2026-11-11, API keys only, never OAuth |
-| 2.1 concurrent background chats | [ZP-23](ZP-23-concurrent-chats.md) | large; adopted 2026-11-11 (finding was Different) |
+| 2.1 concurrent background chats | [ZP-23](ZP-23-concurrent-chats.md) | large; adopted 2026-11-11 (finding was Different); partial: turn-level lease shipped, see the draft's Implementation Record |
 
 ### Already owned by an existing kiro spec (do not re-draft)
 

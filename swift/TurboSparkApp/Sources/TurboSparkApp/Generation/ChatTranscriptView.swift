@@ -91,12 +91,17 @@ struct ChatTranscriptView: View {
                             questions: pendingQuestions.items)
                     }
 
-                    if model.isRunning || !model.outputText.isEmpty || !model.outputReasoningText.isEmpty {
+                    // The live buffer belongs to the running turn's chat
+                    // (ZP-23): another chat's reply must not stream here.
+                    if model.isRunningInSelectedChat
+                        || (model.liveOutputBelongsToSelectedChat
+                            && (!model.outputText.isEmpty || !model.outputReasoningText.isEmpty))
+                    {
                         ActiveStreamingRowView(
                             model: model,
                             output: model.outputText,
                             reasoning: model.outputReasoningText,
-                            isRunning: model.isRunning
+                            isRunning: model.isRunningInSelectedChat
                         )
                     }
 
@@ -125,12 +130,12 @@ struct ChatTranscriptView: View {
             }
             .tsAnimation(TSMotion.hover, value: follower.isPinned)
             .onChange(of: model.outputText) {
-                if model.isRunning {
+                if model.isRunningInSelectedChat {
                     followBottom(proxy)
                 }
             }
             .onChange(of: model.outputReasoningText) {
-                if model.isRunning {
+                if model.isRunningInSelectedChat {
                     followBottom(proxy)
                 }
             }

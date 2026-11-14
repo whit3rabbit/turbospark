@@ -619254,6 +619254,137 @@
           }
         }
       }
+    },
+    "%@ is generating on this model. Stop it before switching models.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ يولّد ردًا على هذا النموذج. أوقفه قبل تبديل النماذج."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ generiert gerade mit diesem Modell. Stoppen Sie es, bevor Sie das Modell wechseln."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is generating on this model. Stop it before switching models."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ está generando con este modelo. Deténlo antes de cambiar de modelo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ est en cours de génération avec ce modèle. Arrêtez-la avant de changer de modèle."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ מייצר תשובה במודל הזה. עצור אותו לפני מעבר למודל אחר."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ इस मॉडल पर जनरेट कर रही है। मॉडल बदलने से पहले उसे रोकें।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ sedang menghasilkan jawaban dengan model ini. Hentikan sebelum berganti model."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ sta generando con questo modello. Interrompila prima di cambiare modello."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」がこのモデルで生成中です。モデルを切り替える前に停止してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 대화가 이 모델로 생성 중입니다. 모델을 전환하기 전에 중지하세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ is aan het genereren met dit model. Stop het voordat je van model wisselt."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ generuje odpowiedź na tym modelu. Zatrzymaj ją przed zmianą modelu."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ está gerando com este modelo. Interrompa antes de trocar de modelo."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ генерирует ответ на этой модели. Остановите его перед сменой модели."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ genererar med den här modellen. Stoppa den innan du byter modell."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ bu modelle yanıt üretiyor. Model değiştirmeden önce durdurun."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ генерує відповідь на цій моделі. Зупиніть її перед зміною моделі."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ đang tạo phản hồi bằng mô hình này. Hãy dừng trước khi đổi mô hình."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "“%@”正在使用此模型生成。请先停止，再切换模型。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「%@」正在使用此模型生成。請先停止，再切換模型。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

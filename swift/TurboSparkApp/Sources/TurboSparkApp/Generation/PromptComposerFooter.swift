@@ -80,7 +80,7 @@ struct PromptComposerFooter: View {
 
     @ViewBuilder
     private var clearAction: some View {
-        if !model.isRunning && !model.promptText.isEmpty {
+        if !model.isRunningInSelectedChat && !model.promptText.isEmpty {
             AppIconButton("xmark.circle.fill", label: Text("Clear prompt", bundle: .module)) {
                 model.promptText = ""
                 promptFocused.wrappedValue = true

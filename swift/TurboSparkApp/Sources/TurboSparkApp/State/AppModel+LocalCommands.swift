@@ -113,6 +113,9 @@ extension AppModel {
         if pendingUserMessages[job.chatID]?.first?.isScheduled == true {
             drainPendingUserMessagesIfIdle(chatID: job.chatID)
         }
+        // Still parked: keep its place in the admission order so the turn
+        // tail finds it when the lane frees up, selected or not.
+        if !(pendingUserMessages[job.chatID] ?? []).isEmpty { noteParkedWork(chatID: job.chatID) }
         return true
     }
 

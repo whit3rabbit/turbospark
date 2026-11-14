@@ -890,10 +890,26 @@ public final class AppModel: ObservableObject {
     @Published public var generating: Bool = false {
         didSet {
             if !generating && oldValue {
+                // The flag is the source of truth for the lane (ZP-23): when
+                // it drops, nobody owns the turn, whatever a stale tail says.
+                generatingChatID = nil
+                turnCoordinator.releaseHolder()
                 onGenerationFinished()
             }
         }
     }
+    /// The chat that owns the running turn, or nil when nothing runs or the
+    /// work is not a chat turn (audio summary, bang command, image job).
+    /// Set by `claimLane(for:)`, cleared when `generating` drops. Selecting
+    /// another chat while this is set is legal (ZP-23); while `generating`
+    /// is true and this is nil the old blanket refusal still applies.
+    @Published public var generatingChatID: UUID? = nil
+    /// Single-lane scheduler state for concurrent chats (ZP-23).
+    @Published var turnCoordinator = ChatGenerationCoordinator()
+    /// Tool calls proposed by a chat that was not selected. Nothing runs in
+    /// the background, so the proposal parks here whole, and is replayed
+    /// through the ordinary permission path once the chat is foreground.
+    @Published var deferredToolProposals: [UUID: DeferredToolProposal] = [:]
     /// Whether `run()` has accepted a submission and not yet reached
     /// `executeGenerationTurn`.
     ///

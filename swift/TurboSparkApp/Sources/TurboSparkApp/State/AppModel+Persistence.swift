@@ -657,12 +657,20 @@ extension AppModel {
         // Only when the selected chat ends in a non-assistant row, i.e. it
         // is the chat awaiting this reply; the epoch bump keeps the late
         // tail from preserving it a second time.
+        //
+        // **THE RUNNING TURN'S CHAT, NOT THE SELECTION** (ZP-23). The buffer
+        // belongs to the chat that owns the turn, which may be a background
+        // chat; flushing it into the selected chat would put another
+        // conversation's reply in the wrong transcript. Chats parked on a
+        // tool proposal flush from their own captured content.
+        let flushChatID = shutdownFlushChatID
         if generating, !audioSummaryInFlight, !outputText.isEmpty || !outputReasoningText.isEmpty,
-            turnMessages(for: selectedChatID).last.map({ $0.role != .assistant }) ?? false
+            turnMessages(for: flushChatID).last.map({ $0.role != .assistant }) ?? false
         {
-            finishCancelled(chatID: selectedChatID, reason: "cancelled")
+            finishCancelled(chatID: flushChatID, reason: "cancelled")
             generationEpoch += 1
         }
+        flushDeferredProposalsForShutdown()
         // Deliberately NOT `unloadModel()`: that refuses while `generating`,
         // which is exactly the case where the flush below matters most.
         cancel()

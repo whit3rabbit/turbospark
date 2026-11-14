@@ -130,7 +130,7 @@ struct PromptComposerEditor: View {
                             }
                         }
                         if press.key == .escape {
-                            if model.isRunning && model.canCancel
+                            if model.isRunningInSelectedChat && model.canCancel
                                 && model.handleEscCancelIntent() {
                                 // Two-stage cancel (qwen-code parity): the
                                 // first press ARMS ("Press Esc again to
