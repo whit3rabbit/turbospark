@@ -77,6 +77,7 @@ enum SettingsControlCatalog {
         .init(title: "Enable tools in Chat by default", pane: .general, timing: .nextTurn),
         .init(title: "Import from Other Agents\u{2026}", pane: .general, timing: .action),
         .init(title: "Include pinned instructions in model requests", pane: .general, timing: .nextTurn),
+        .init(title: "Keep a trajectory log of model calls", pane: .general, timing: .nextTurn),
         .init(title: "Keep recent messages verbatim", pane: .general, timing: .nextTurn),
         .init(title: "Keep running in background when window is closed", pane: .general, timing: .immediate),
         .init(title: "Language", pane: .general, timing: .immediate),

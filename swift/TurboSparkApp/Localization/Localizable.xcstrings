@@ -54012,6 +54012,137 @@
         }
       }
     },
+    "Arguments": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "المعاملات"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumente"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arguments"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumentos"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arguments"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ארגומנטים"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "आर्गुमेंट"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumen"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argomenti"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "引数"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "인수"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumenten"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumenty"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumentos"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Аргументы"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argument"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bağımsız değişkenler"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Аргументи"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Đối số"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "参数"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "引數"
+          }
+        }
+      }
+    },
     "Arguments (one per line or space-separated)": {
       "extractionState": "manual",
       "localizations": {
@@ -66320,6 +66451,137 @@
         }
       }
     },
+    "Back to recent entries": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "العودة إلى الإدخالات الأخيرة"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zurück zu den letzten Einträgen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Back to recent entries"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Volver a las entradas recientes"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Retour aux entrées récentes"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "חזרה לרשומות האחרונות"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "हाल की प्रविष्टियों पर वापस जाएँ"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kembali ke entri terbaru"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Torna alle voci recenti"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最近のエントリに戻る"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "최근 항목으로 돌아가기"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Terug naar recente items"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wróć do ostatnich wpisów"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voltar às entradas recentes"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Назад к последним записям"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tillbaka till senaste poster"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Son girdilere dön"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Назад до останніх записів"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Quay lại các mục gần đây"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "返回最近条目"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "返回最近項目"
+          }
+        }
+      }
+    },
     "Background": {
       "extractionState": "manual",
       "localizations": {
@@ -75871,6 +76133,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "CLI 啟動指令：%@"
+          }
+        }
+      }
+    },
+    "Clipped to the size limit": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تم القص عند حد الحجم"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auf die Größenbegrenzung gekürzt"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Clipped to the size limit"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Recortado al límite de tamaño"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tronqué à la limite de taille"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "נקטע בגבול הגודל"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "आकार सीमा पर काटा गया"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dipotong pada batas ukuran"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Troncato al limite di dimensione"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "サイズ上限で切り詰め"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "크기 제한에 맞춰 잘림"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afgekapt op de groottelimiet"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Przycięto do limitu rozmiaru"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cortado no limite de tamanho"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Обрезано по лимиту размера"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Avkortad vid storleksgränsen"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Boyut sınırında kesildi"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Обрізано за обмеженням розміру"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Đã cắt theo giới hạn kích thước"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已按大小上限截断"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已依大小上限截斷"
           }
         }
       }
@@ -97337,6 +97730,661 @@
           "stringUnit": {
             "state": "translated",
             "value": "Hapus anotasi"
+          }
+        }
+      }
+    },
+    "Delete Log": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "حذف السجل"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Protokoll löschen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete Log"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eliminar registro"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Supprimer le journal"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מחק יומן"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "लॉग हटाएँ"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hapus log"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Elimina registro"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ログを削除"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "로그 삭제"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Logboek verwijderen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usuń dziennik"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Excluir registro"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить журнал"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ta bort logg"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Günlüğü sil"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Видалити журнал"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Xóa nhật ký"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "删除日志"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "刪除記錄"
+          }
+        }
+      }
+    },
+    "Delete this trajectory log?": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "هل تريد حذف سجل المسار هذا؟"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieses Verlaufsprotokoll löschen?"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Delete this trajectory log?"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "¿Eliminar este registro de trayectoria?"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Supprimer ce journal de trajectoire ?"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "למחוק את יומן המסלול הזה?"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "क्या यह ट्रैजेक्टरी लॉग हटाएँ?"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hapus log lintasan ini?"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eliminare questo registro della traiettoria?"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この軌跡ログを削除しますか?"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 궤적 로그를 삭제할까요?"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dit trajectlogboek verwijderen?"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usunąć ten dziennik przebiegu?"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Excluir este registro de trajetória?"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удалить этот журнал траектории?"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ta bort den här förloppsloggen?"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu yörünge günlüğü silinsin mi?"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Видалити цей журнал траєкторії?"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Xóa nhật ký quỹ đạo này?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "删除此轨迹日志?"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "刪除此軌跡記錄?"
+          }
+        }
+      }
+    },
+    "Export Redacted Copy": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تصدير نسخة منقحة"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Geschwärzte Kopie exportieren"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Export Redacted Copy"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exportar copia redactada"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exporter une copie expurgée"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ייצוא עותק מושחר"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "छिपाई गई प्रति निर्यात करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ekspor salinan tersamar"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esporta copia oscurata"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "秘匿処理済みのコピーを書き出す"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "가려진 사본 내보내기"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Geredigeerde kopie exporteren"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eksportuj kopię z zaczernieniami"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exportar cópia redigida"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Экспортировать копию со скрытыми данными"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exportera maskerad kopia"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gizlenmiş kopyayı dışa aktar"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Експортувати копію з приховуванням"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Xuất bản sao đã che"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导出已脱敏副本"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "匯出已遮蔽副本"
+          }
+        }
+      }
+    },
+    "Exported %lld entries to %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تم تصدير %lld إدخالًا إلى %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld Einträge nach %@ exportiert"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exported %lld entries to %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se exportaron %lld entradas a %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld entrées exportées vers %@"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "יוצאו %lld רשומות אל %@"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld प्रविष्टियाँ %@ में निर्यात की गईं"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld entri diekspor ke %@"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld voci esportate in %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld 件のエントリを %@ に書き出しました"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld개 항목을 %@(으)로 내보냈습니다"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld items geëxporteerd naar %@"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wyeksportowano wpisy (%lld) do %@"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld entradas exportadas para %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Экспортировано записей: %lld, файл: %@"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld poster exporterades till %@"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%lld girdi %@ dosyasına aktarıldı"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Експортовано записів: %lld, файл: %@"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Đã xuất %lld mục vào %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已将 %lld 个条目导出到 %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已將 %lld 個項目匯出至 %@"
+          }
+        }
+      }
+    },
+    "Finish reason: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "سبب الانتهاء: %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Abschlussgrund: %@"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Finish reason: %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motivo de finalización: %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motif de fin : %@"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "סיבת סיום: %@"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "समाप्ति का कारण: %@"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alasan selesai: %@"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motivo di terminazione: %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "終了理由: %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "종료 사유: %@"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reden van beëindiging: %@"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Powód zakończenia: %@"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motivo de término: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Причина завершения: %@"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Orsak till avslut: %@"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bitiş nedeni: %@"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Причина завершення: %@"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lý do kết thúc: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "结束原因:%@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "結束原因:%@"
           }
         }
       }
@@ -239412,6 +240460,137 @@
         }
       }
     },
+    "Keep a trajectory log of model calls": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الاحتفاظ بسجل مسار لاستدعاءات النموذج"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verlaufsprotokoll der Modellaufrufe führen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep a trajectory log of model calls"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Guardar un registro de trayectoria de las llamadas al modelo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conserver un journal de trajectoire des appels au modèle"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "שמור יומן מסלול של קריאות למודל"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "मॉडल कॉल का ट्रैजेक्टरी लॉग रखें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Simpan log lintasan panggilan model"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conserva un registro della traiettoria delle chiamate al modello"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデル呼び出しの軌跡ログを保存"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델 호출의 궤적 로그 보관"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trajectlogboek van modelaanroepen bijhouden"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prowadź dziennik przebiegu wywołań modelu"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Manter um registro de trajetória das chamadas ao modelo"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вести журнал траектории вызовов модели"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spara en förloppslogg över modellanrop"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model çağrılarının yörünge günlüğünü tut"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вести журнал траєкторії викликів моделі"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lưu nhật ký quỹ đạo của các lệnh gọi mô hình"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留模型调用的轨迹日志"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保留模型呼叫的軌跡記錄"
+          }
+        }
+      }
+    },
     "KV cache": {
       "extractionState": "manual",
       "localizations": {
@@ -242683,6 +243862,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "已偵測到 LM Studio 檔案夾"
+          }
+        }
+      }
+    },
+    "Load earlier entries": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تحميل الإدخالات الأقدم"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Frühere Einträge laden"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Load earlier entries"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cargar entradas anteriores"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Charger les entrées précédentes"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "טען רשומות קודמות"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पिछली प्रविष्टियाँ लोड करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Muat entri sebelumnya"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Carica voci precedenti"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "以前のエントリを読み込む"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이전 항목 불러오기"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eerdere items laden"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wczytaj wcześniejsze wpisy"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Carregar entradas anteriores"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Загрузить более ранние записи"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Läs in tidigare poster"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Önceki girdileri yükle"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Завантажити попередні записи"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tải các mục trước"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "加载更早的条目"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "載入較早的項目"
           }
         }
       }
@@ -262324,6 +263634,137 @@
         }
       }
     },
+    "Matches in the whole log: %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "النتائج المطابقة في السجل بالكامل: %lld"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Treffer im gesamten Protokoll: %lld"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Matches in the whole log: %lld"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Coincidencias en todo el registro: %lld"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Correspondances dans tout le journal : %lld"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "התאמות בכל היומן: %lld"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पूरे लॉग में मिलान: %lld"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kecocokan di seluruh log: %lld"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Corrispondenze in tutto il registro: %lld"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ログ全体での一致数: %lld"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "전체 로그의 일치 항목: %lld"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resultaten in het hele logboek: %lld"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dopasowania w całym dzienniku: %lld"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Correspondências em todo o registro: %lld"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Совпадений во всём журнале: %lld"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Träffar i hela loggen: %lld"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tüm günlükteki eşleşmeler: %lld"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Збігів у всьому журналі: %lld"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kết quả khớp trong toàn bộ nhật ký: %lld"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "整个日志中的匹配项:%lld"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "整個記錄中的符合項目:%lld"
+          }
+        }
+      }
+    },
     "MAX": {
       "extractionState": "manual",
       "localizations": {
@@ -263761,6 +265202,268 @@
           "stringUnit": {
             "state": "translated",
             "value": "需要 MLX"
+          }
+        }
+      }
+    },
+    "Model call": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "استدعاء النموذج"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modellaufruf"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model call"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Llamada al modelo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Appel au modèle"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "קריאה למודל"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "मॉडल कॉल"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Panggilan model"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chiamata al modello"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデル呼び出し"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델 호출"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modelaanroep"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wywołanie modelu"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chamada ao modelo"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вызов модели"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modellanrop"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model çağrısı"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Виклик моделі"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lệnh gọi mô hình"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型调用"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型呼叫"
+          }
+        }
+      }
+    },
+    "Model calls and tool runs appear here after they finish.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تظهر استدعاءات النموذج وتشغيلات الأدوات هنا بعد انتهائها."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modellaufrufe und Werkzeugläufe erscheinen hier, sobald sie abgeschlossen sind."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model calls and tool runs appear here after they finish."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Las llamadas al modelo y las ejecuciones de herramientas aparecen aquí cuando terminan."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les appels au modèle et les exécutions d'outils apparaissent ici une fois terminés."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "קריאות למודל והרצות של כלים מופיעות כאן לאחר שהן מסתיימות."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "मॉडल कॉल और टूल रन पूरे होने के बाद यहाँ दिखाई देते हैं।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Panggilan model dan eksekusi alat muncul di sini setelah selesai."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le chiamate al modello e le esecuzioni degli strumenti compaiono qui al termine."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデル呼び出しとツール実行は、完了後にここに表示されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델 호출과 도구 실행은 완료된 후 여기에 표시됩니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modelaanroepen en toolruns verschijnen hier nadat ze zijn afgerond."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wywołania modelu i uruchomienia narzędzi pojawiają się tutaj po ich zakończeniu."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "As chamadas ao modelo e as execuções de ferramentas aparecem aqui depois de terminarem."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вызовы модели и запуски инструментов появляются здесь после завершения."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modellanrop och verktygskörningar visas här när de är klara."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model çağrıları ve araç çalıştırmaları tamamlandıktan sonra burada görünür."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Виклики моделі та запуски інструментів з'являються тут після завершення."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Các lệnh gọi mô hình và lượt chạy công cụ xuất hiện ở đây sau khi hoàn tất."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型调用和工具运行完成后会显示在这里。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型呼叫與工具執行完成後會顯示在此。"
           }
         }
       }
@@ -303705,6 +305408,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "尚無流量。"
+          }
+        }
+      }
+    },
+    "No trajectory log yet": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لا يوجد سجل مسار بعد"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Noch kein Verlaufsprotokoll"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No trajectory log yet"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aún no hay registro de trayectoria"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pas encore de journal de trajectoire"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "עדיין אין יומן מסלול"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "अभी कोई ट्रैजेक्टरी लॉग नहीं है"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Belum ada log lintasan"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nessun registro della traiettoria"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "軌跡ログはまだありません"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "아직 궤적 로그가 없습니다"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nog geen trajectlogboek"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Brak dziennika przebiegu"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ainda não há registro de trajetória"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Журнала траектории пока нет"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ingen förloppslogg än"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Henüz yörünge günlüğü yok"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Журналу траєкторії ще немає"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chưa có nhật ký quỹ đạo"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "还没有轨迹日志"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "尚無軌跡記錄"
           }
         }
       }
@@ -355546,6 +357380,137 @@
         }
       }
     },
+    "Redaction is best effort. Review the file before sharing it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "التنقيح يتم بأفضل جهد ممكن. راجع الملف قبل مشاركته."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Schwärzung erfolgt nach bestem Bemühen. Prüfe die Datei, bevor du sie weitergibst."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Redaction is best effort. Review the file before sharing it."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La redacción es de mejor esfuerzo. Revisa el archivo antes de compartirlo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'expurgation est faite au mieux. Relisez le fichier avant de le partager."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ההשחרה נעשית ברמת מאמץ סבירה. בדוק את הקובץ לפני שיתופו."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "छिपाने की प्रक्रिया यथासंभव प्रयास पर आधारित है। साझा करने से पहले फ़ाइल की समीक्षा करें।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Penyamaran dilakukan sebaik mungkin. Tinjau berkas sebelum membagikannya."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'oscuramento è un tentativo ragionevole. Controlla il file prima di condividerlo."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "秘匿処理はベストエフォートです。共有する前にファイルを確認してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "가림 처리는 최선의 노력으로 수행됩니다. 공유하기 전에 파일을 검토하세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Redactie gebeurt naar beste vermogen. Controleer het bestand voordat je het deelt."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zaczernianie działa w miarę możliwości. Przejrzyj plik przed udostępnieniem."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A redação é feita no melhor esforço. Revise o arquivo antes de compartilhá-lo."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Скрытие данных выполняется по мере возможности. Проверьте файл, прежде чем делиться им."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maskeringen är bästa möjliga. Granska filen innan du delar den."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gizleme elinden geldiğince yapılır. Paylaşmadan önce dosyayı gözden geçirin."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Приховування виконується за можливістю. Перегляньте файл, перш ніж ділитися ним."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Việc che thông tin chỉ ở mức cố gắng tối đa. Hãy xem lại tệp trước khi chia sẻ."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "脱敏仅为尽力而为。分享前请检查该文件。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "遮蔽僅為盡力而為。分享前請檢查此檔案。"
+          }
+        }
+      }
+    },
     "Redo": {
       "extractionState": "manual",
       "localizations": {
@@ -394691,6 +396656,268 @@
         }
       }
     },
+    "Saves each model call and tool run (model, token counts, timing, clipped output and tool arguments) to an unencrypted file on this Mac, with passwords and tokens removed. Nothing is sent anywhere. Temporary chats and protected profiles never keep one, and turning this off deletes every log. Open one from a chat's context menu.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يحفظ كل استدعاء للنموذج وكل تشغيل لأداة (النموذج وعدد الرموز والتوقيت والمخرجات المقصوصة ومعاملات الأداة) في ملف غير مشفر على هذا Mac، بعد إزالة كلمات المرور والرموز. لا يُرسل أي شيء إلى أي مكان. لا تحتفظ المحادثات المؤقتة والملفات الشخصية المحمية بأي سجل، ويؤدي إيقاف هذا الخيار إلى حذف كل السجلات. افتح سجلًا من القائمة السياقية للمحادثة."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Speichert jeden Modellaufruf und Werkzeuglauf (Modell, Token-Anzahl, Zeiten, gekürzte Ausgabe und Werkzeugargumente) in einer unverschlüsselten Datei auf diesem Mac, ohne Passwörter und Token. Es wird nichts versendet. Temporäre Chats und geschützte Profile führen nie ein Protokoll, und beim Ausschalten werden alle Protokolle gelöscht. Öffne eines über das Kontextmenü eines Chats."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Saves each model call and tool run (model, token counts, timing, clipped output and tool arguments) to an unencrypted file on this Mac, with passwords and tokens removed. Nothing is sent anywhere. Temporary chats and protected profiles never keep one, and turning this off deletes every log. Open one from a chat's context menu."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Guarda cada llamada al modelo y ejecución de herramienta (modelo, número de tokens, tiempos, salida recortada y argumentos de la herramienta) en un archivo sin cifrar en este Mac, sin contraseñas ni tokens. No se envía nada a ningún sitio. Los chats temporales y los perfiles protegidos nunca guardan uno, y al desactivarlo se eliminan todos los registros. Ábrelo desde el menú contextual de un chat."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistre chaque appel au modèle et chaque exécution d'outil (modèle, nombre de jetons, durées, sortie tronquée et arguments de l'outil) dans un fichier non chiffré sur ce Mac, sans mots de passe ni jetons. Rien n'est envoyé ailleurs. Les conversations temporaires et les profils protégés n'en conservent jamais, et le désactiver supprime tous les journaux. Ouvrez-en un depuis le menu contextuel d'une conversation."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "שומר כל קריאה למודל והרצת כלי (מודל, מספר טוקנים, תזמון, פלט קטוע וארגומנטים של הכלי) בקובץ לא מוצפן ב-Mac הזה, ללא סיסמאות וטוקנים. שום דבר לא נשלח לשום מקום. שיחות זמניות ופרופילים מוגנים אף פעם לא שומרים יומן, וכיבוי האפשרות מוחק את כל היומנים. פתח יומן מתפריט ההקשר של שיחה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "हर मॉडल कॉल और टूल रन (मॉडल, टोकन गिनती, समय, काटा गया आउटपुट और टूल आर्गुमेंट) को पासवर्ड और टोकन हटाकर इस Mac पर एक अनएन्क्रिप्टेड फ़ाइल में सहेजता है। कुछ भी कहीं नहीं भेजा जाता। अस्थायी चैट और सुरक्षित प्रोफ़ाइल कभी लॉग नहीं रखते, और इसे बंद करने पर सभी लॉग हट जाते हैं। किसी चैट के संदर्भ मेनू से लॉग खोलें।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Menyimpan setiap panggilan model dan eksekusi alat (model, jumlah token, waktu, keluaran terpotong, dan argumen alat) ke berkas tidak terenkripsi di Mac ini, tanpa kata sandi dan token. Tidak ada yang dikirim ke mana pun. Obrolan sementara dan profil yang dilindungi tidak pernah menyimpannya, dan mematikan ini menghapus semua log. Buka log dari menu konteks obrolan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Salva ogni chiamata al modello ed esecuzione di strumento (modello, numero di token, tempi, output troncato e argomenti dello strumento) in un file non cifrato su questo Mac, senza password né token. Non viene inviato nulla. Le chat temporanee e i profili protetti non ne conservano mai, e disattivandolo si eliminano tutti i registri. Aprine uno dal menu contestuale di una chat."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデル呼び出しとツール実行(モデル、トークン数、所要時間、切り詰めた出力、ツールの引数)を、パスワードやトークンを除いた上で、この Mac 上の暗号化されていないファイルに保存します。外部には何も送信されません。一時チャットと保護されたプロファイルでは保存されず、オフにするとすべてのログが削除されます。チャットのコンテキストメニューから開けます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델 호출과 도구 실행(모델, 토큰 수, 소요 시간, 잘린 출력, 도구 인수)을 비밀번호와 토큰을 제거한 채 이 Mac의 암호화되지 않은 파일에 저장합니다. 외부로는 아무것도 전송되지 않습니다. 임시 채팅과 보호된 프로필은 로그를 만들지 않으며, 끄면 모든 로그가 삭제됩니다. 채팅의 컨텍스트 메뉴에서 열 수 있습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Slaat elke modelaanroep en toolrun (model, aantal tokens, timing, afgekapte uitvoer en toolargumenten) op in een niet-versleuteld bestand op deze Mac, zonder wachtwoorden en tokens. Er wordt niets verzonden. Tijdelijke chats en beveiligde profielen houden nooit een logboek bij, en uitzetten verwijdert alle logboeken. Open er een via het contextmenu van een chat."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zapisuje każde wywołanie modelu i uruchomienie narzędzia (model, liczbę tokenów, czasy, przycięte dane wyjściowe i argumenty narzędzia) w niezaszyfrowanym pliku na tym Macu, bez haseł i tokenów. Nic nie jest nigdzie wysyłane. Czaty tymczasowe i chronione profile nigdy nie prowadzą dziennika, a wyłączenie tej opcji usuwa wszystkie dzienniki. Otwórz dziennik z menu kontekstowego czatu."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Salva cada chamada ao modelo e execução de ferramenta (modelo, contagem de tokens, tempos, saída cortada e argumentos da ferramenta) em um arquivo sem criptografia neste Mac, sem senhas nem tokens. Nada é enviado a lugar nenhum. Chats temporários e perfis protegidos nunca mantêm um, e desativar apaga todos os registros. Abra um pelo menu de contexto de um chat."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сохраняет каждый вызов модели и запуск инструмента (модель, число токенов, время, обрезанный вывод и аргументы инструмента) в незашифрованный файл на этом Mac без паролей и токенов. Ничего никуда не отправляется. Временные чаты и защищённые профили журнал не ведут, а при выключении все журналы удаляются. Откройте журнал из контекстного меню чата."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sparar varje modellanrop och verktygskörning (modell, antal tokens, tider, avkortad utdata och verktygsargument) i en okrypterad fil på den här Macen, utan lösenord och tokens. Inget skickas någonstans. Tillfälliga chattar och skyddade profiler sparar aldrig någon logg, och om du stänger av detta tas alla loggar bort. Öppna en från en chatts snabbmeny."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Her model çağrısını ve araç çalıştırmasını (model, jeton sayıları, süreler, kesilmiş çıktı ve araç bağımsız değişkenleri) parolalar ve jetonlar çıkarılmış olarak bu Mac'teki şifrelenmemiş bir dosyaya kaydeder. Hiçbir yere bir şey gönderilmez. Geçici sohbetler ve korumalı profiller günlük tutmaz, bunu kapatmak tüm günlükleri siler. Bir sohbetin bağlam menüsünden açın."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Зберігає кожен виклик моделі й запуск інструмента (модель, кількість токенів, час, обрізаний вивід та аргументи інструмента) у незашифрованому файлі на цьому Mac без паролів і токенів. Нічого нікуди не надсилається. Тимчасові чати та захищені профілі журнал не ведуть, а вимкнення видаляє всі журнали. Відкрийте журнал із контекстного меню чату."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lưu mỗi lệnh gọi mô hình và lượt chạy công cụ (mô hình, số token, thời gian, đầu ra đã cắt và đối số công cụ) vào một tệp không mã hóa trên máy Mac này, đã loại bỏ mật khẩu và token. Không có gì được gửi đi đâu cả. Cuộc trò chuyện tạm thời và hồ sơ được bảo vệ không bao giờ lưu nhật ký, và tắt tính năng này sẽ xóa mọi nhật ký. Mở nhật ký từ menu ngữ cảnh của cuộc trò chuyện."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将每次模型调用和工具运行(模型、令牌数、耗时、截断的输出和工具参数)保存到此 Mac 上未加密的文件中,并已移除密码和令牌。不会向任何地方发送内容。临时聊天和受保护的资料从不保留日志,关闭此选项会删除所有日志。可从聊天的上下文菜单中打开。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "將每次模型呼叫與工具執行(模型、Token 數、耗時、截斷的輸出與工具引數)儲存到此 Mac 上未加密的檔案中,並已移除密碼與 Token。不會傳送到任何地方。暫時對話與受保護的設定檔不會保留記錄,關閉此選項會刪除所有記錄。可從對話的快顯選單開啟。"
+          }
+        }
+      }
+    },
+    "Search entire log": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "البحث في السجل بالكامل"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gesamtes Protokoll durchsuchen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search entire log"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Buscar en todo el registro"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rechercher dans tout le journal"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "חיפוש בכל היומן"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पूरे लॉग में खोजें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cari di seluruh log"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cerca in tutto il registro"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ログ全体を検索"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "전체 로그 검색"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hele logboek doorzoeken"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Szukaj w całym dzienniku"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pesquisar em todo o registro"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Искать по всему журналу"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sök i hela loggen"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tüm günlükte ara"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Шукати в усьому журналі"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tìm trong toàn bộ nhật ký"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "搜索整个日志"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "搜尋整個記錄"
+          }
+        }
+      }
+    },
     "Search Images": {
       "extractionState": "manual",
       "localizations": {
@@ -394822,6 +397049,137 @@
         }
       }
     },
+    "Search this log": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "البحث في هذا السجل"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In diesem Protokoll suchen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search this log"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Buscar en este registro"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rechercher dans ce journal"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "חיפוש ביומן זה"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस लॉग में खोजें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cari di log ini"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cerca in questo registro"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このログを検索"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 로그에서 검색"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zoeken in dit logboek"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Szukaj w tym dzienniku"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pesquisar neste registro"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Поиск по этому журналу"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sök i den här loggen"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu günlükte ara"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пошук у цьому журналі"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tìm trong nhật ký này"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "搜索此日志"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "搜尋此記錄"
+          }
+        }
+      }
+    },
     "Send to chat": {
       "extractionState": "manual",
       "localizations": {
@@ -394949,6 +397307,268 @@
           "stringUnit": {
             "state": "translated",
             "value": "Kirim ke obrolan"
+          }
+        }
+      }
+    },
+    "Showing the first %lld matches.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "عرض أول %lld نتيجة مطابقة."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die ersten %lld Treffer werden angezeigt."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Showing the first %lld matches."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se muestran las primeras %lld coincidencias."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Affichage des %lld premières correspondances."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מוצגות %lld ההתאמות הראשונות."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पहले %lld मिलान दिखाए जा रहे हैं।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Menampilkan %lld kecocokan pertama."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vengono mostrate le prime %lld corrispondenze."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最初の %lld 件の一致を表示しています。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "처음 %lld개의 일치 항목을 표시합니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De eerste %lld resultaten worden getoond."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wyświetlono pierwsze dopasowania: %lld."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mostrando as primeiras %lld correspondências."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показаны первые совпадения: %lld."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Visar de första %lld träffarna."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "İlk %lld eşleşme gösteriliyor."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показано перші збіги: %lld."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Đang hiển thị %lld kết quả khớp đầu tiên."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示前 %lld 个匹配项。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顯示前 %lld 個符合項目。"
+          }
+        }
+      }
+    },
+    "Skipped unreadable lines: %lld": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الأسطر غير المقروءة التي تم تخطيها: %lld"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Übersprungene unlesbare Zeilen: %lld"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Skipped unreadable lines: %lld"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Líneas ilegibles omitidas: %lld"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lignes illisibles ignorées : %lld"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "שורות לא קריאות שדולגו: %lld"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "छोड़ी गई अपठनीय पंक्तियाँ: %lld"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Baris tak terbaca yang dilewati: %lld"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Righe illeggibili saltate: %lld"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "スキップした読み取れない行: %lld"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "건너뛴 읽을 수 없는 줄: %lld"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Overgeslagen onleesbare regels: %lld"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pominięte nieczytelne wiersze: %lld"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Linhas ilegíveis ignoradas: %lld"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пропущено нечитаемых строк: %lld"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Överhoppade oläsliga rader: %lld"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Atlanan okunamayan satırlar: %lld"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Пропущено нечитабельних рядків: %lld"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Số dòng không đọc được đã bỏ qua: %lld"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已跳过无法读取的行:%lld"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已略過無法讀取的行:%lld"
           }
         }
       }
@@ -490648,6 +493268,137 @@
         }
       }
     },
+    "This permanently deletes the saved log for this chat. The chat itself is not changed.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "سيؤدي هذا إلى حذف السجل المحفوظ لهذه المحادثة نهائيًا. لن تتغير المحادثة نفسها."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dadurch wird das gespeicherte Protokoll dieses Chats endgültig gelöscht. Der Chat selbst bleibt unverändert."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This permanently deletes the saved log for this chat. The chat itself is not changed."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esto elimina de forma permanente el registro guardado de este chat. El chat no se modifica."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cela supprime définitivement le journal enregistré de cette conversation. La conversation elle-même n'est pas modifiée."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "פעולה זו מוחקת לצמיתות את היומן השמור של שיחה זו. השיחה עצמה לא תשתנה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "यह इस चैट का सहेजा गया लॉग स्थायी रूप से हटा देता है। चैट में कोई बदलाव नहीं होता।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tindakan ini menghapus permanen log tersimpan untuk obrolan ini. Obrolan itu sendiri tidak berubah."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Elimina definitivamente il registro salvato di questa chat. La chat stessa non viene modificata."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このチャットの保存済みログを完全に削除します。チャット自体は変更されません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 채팅의 저장된 로그가 영구적으로 삭제됩니다. 채팅 자체는 변경되지 않습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hiermee wordt het opgeslagen logboek van deze chat definitief verwijderd. De chat zelf verandert niet."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spowoduje to trwałe usunięcie zapisanego dziennika tego czatu. Sam czat nie zostanie zmieniony."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Isso exclui permanentemente o registro salvo deste chat. O chat em si não é alterado."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сохранённый журнал этого чата будет удалён безвозвратно. Сам чат не изменится."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Den sparade loggen för den här chatten tas bort permanent. Själva chatten ändras inte."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu sohbetin kaydedilmiş günlüğü kalıcı olarak silinir. Sohbetin kendisi değişmez."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Збережений журнал цього чату буде видалено назавжди. Сам чат не зміниться."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thao tác này xóa vĩnh viễn nhật ký đã lưu của cuộc trò chuyện này. Bản thân cuộc trò chuyện không thay đổi."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这将永久删除此聊天已保存的日志。聊天本身不会改变。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "這將永久刪除此對話已儲存的記錄。對話本身不會改變。"
+          }
+        }
+      }
+    },
     "This Project": {
       "extractionState": "manual",
       "localizations": {
@@ -503219,6 +505970,137 @@
         }
       }
     },
+    "Tokens: %lld in, %lld out": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الرموز: %lld إدخال، %lld إخراج"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Token: %lld Eingabe, %lld Ausgabe"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tokens: %lld in, %lld out"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tokens: %lld de entrada, %lld de salida"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jetons : %lld en entrée, %lld en sortie"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "טוקנים: %lld קלט, %lld פלט"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "टोकन: %lld इनपुट, %lld आउटपुट"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Token: %lld masuk, %lld keluar"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Token: %lld in ingresso, %lld in uscita"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "トークン: 入力 %lld、出力 %lld"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "토큰: 입력 %lld, 출력 %lld"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tokens: %lld invoer, %lld uitvoer"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tokeny: %lld wejście, %lld wyjście"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tokens: %lld de entrada, %lld de saída"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Токены: %lld на входе, %lld на выходе"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tokens: %lld in, %lld ut"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jeton: %lld giriş, %lld çıkış"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Токени: %lld вхід, %lld вихід"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Token: %lld vào, %lld ra"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "令牌:输入 %lld,输出 %lld"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Token:輸入 %lld,輸出 %lld"
+          }
+        }
+      }
+    },
     "Tone": {
       "extractionState": "manual",
       "localizations": {
@@ -505573,6 +508455,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "執行此技能期間允許的工具權限。"
+          }
+        }
+      }
+    },
+    "Tool run": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تشغيل أداة"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Werkzeuglauf"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tool run"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ejecución de herramienta"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Exécution d'outil"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הרצת כלי"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "टूल रन"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eksekusi alat"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Esecuzione strumento"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ツール実行"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "도구 실행"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Toolrun"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uruchomienie narzędzia"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Execução de ferramenta"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запуск инструмента"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verktygskörning"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Araç çalıştırma"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Запуск інструмента"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lượt chạy công cụ"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工具运行"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "工具執行"
           }
         }
       }
@@ -508467,6 +511480,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "特徵"
+          }
+        }
+      }
+    },
+    "Trajectory logging is off. Turn it on in Settings, General. Model calls and tool runs are then recorded here as they finish.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "سجل المسار متوقف. شغّله من الإعدادات، عام. بعدها تُسجَّل استدعاءات النموذج وتشغيلات الأدوات هنا عند انتهائها."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Das Verlaufsprotokoll ist ausgeschaltet. Schalte es unter Einstellungen, Allgemein ein. Modellaufrufe und Werkzeugläufe werden dann hier erfasst, sobald sie abgeschlossen sind."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trajectory logging is off. Turn it on in Settings, General. Model calls and tool runs are then recorded here as they finish."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El registro de trayectoria está desactivado. Actívalo en Ajustes, General. Las llamadas al modelo y las ejecuciones de herramientas se registrarán aquí al terminar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le journal de trajectoire est désactivé. Activez-le dans Réglages, Général. Les appels au modèle et les exécutions d'outils y seront alors enregistrés une fois terminés."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "יומן המסלול כבוי. הפעל אותו בהגדרות, כללי. לאחר מכן קריאות למודל והרצות כלים יירשמו כאן עם סיומן."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ट्रैजेक्टरी लॉगिंग बंद है। इसे सेटिंग्स, सामान्य में चालू करें। इसके बाद मॉडल कॉल और टूल रन पूरे होने पर यहाँ दर्ज होंगे।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Log lintasan nonaktif. Aktifkan di Pengaturan, Umum. Setelah itu panggilan model dan eksekusi alat dicatat di sini saat selesai."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il registro della traiettoria è disattivato. Attivalo in Impostazioni, Generali. Le chiamate al modello e le esecuzioni degli strumenti verranno registrate qui al termine."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "軌跡ログはオフです。設定の「一般」でオンにしてください。モデル呼び出しとツール実行は、完了するとここに記録されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "궤적 로그가 꺼져 있습니다. 설정의 일반에서 켜세요. 이후 모델 호출과 도구 실행이 완료되면 여기에 기록됩니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trajectlogboek staat uit. Zet het aan bij Instellingen, Algemeen. Modelaanroepen en toolruns worden hier dan vastgelegd zodra ze zijn afgerond."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dziennik przebiegu jest wyłączony. Włącz go w Ustawienia, Ogólne. Wywołania modelu i uruchomienia narzędzi będą tu zapisywane po zakończeniu."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O registro de trajetória está desativado. Ative-o em Ajustes, Geral. As chamadas ao modelo e as execuções de ferramentas serão registradas aqui quando terminarem."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Журнал траектории выключен. Включите его в Настройки, Основные. Вызовы модели и запуски инструментов будут записываться здесь по завершении."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Förloppsloggen är avstängd. Slå på den under Inställningar, Allmänt. Modellanrop och verktygskörningar sparas sedan här när de är klara."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yörünge günlüğü kapalı. Ayarlar, Genel bölümünden açın. Model çağrıları ve araç çalıştırmaları tamamlandığında burada kaydedilir."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Журнал траєкторії вимкнено. Увімкніть його в Налаштування, Загальні. Виклики моделі та запуски інструментів записуватимуться тут після завершення."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nhật ký quỹ đạo đang tắt. Hãy bật trong Cài đặt, Chung. Sau đó các lệnh gọi mô hình và lượt chạy công cụ sẽ được ghi tại đây khi hoàn tất."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "轨迹日志已关闭。请在“设置”的“通用”中开启。之后模型调用和工具运行完成时会记录在这里。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "軌跡記錄已關閉。請在「設定」的「一般」中開啟。之後模型呼叫與工具執行完成時會記錄在此。"
           }
         }
       }
@@ -535305,6 +538449,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "在 Git 面板中檢視"
+          }
+        }
+      }
+    },
+    "View Trajectory": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "عرض المسار"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verlauf anzeigen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "View Trajectory"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ver trayectoria"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Voir la trajectoire"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הצג מסלול"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ट्रैजेक्टरी देखें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lihat lintasan"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mostra traiettoria"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "軌跡を表示"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "궤적 보기"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Traject bekijken"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pokaż przebieg"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ver trajetória"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Показать траекторию"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Visa förlopp"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yörüngeyi görüntüle"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Переглянути траєкторію"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Xem quỹ đạo"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查看轨迹"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "檢視軌跡"
           }
         }
       }

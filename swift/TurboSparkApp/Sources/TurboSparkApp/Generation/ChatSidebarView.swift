@@ -60,6 +60,15 @@ struct ChatSidebarView: View {
                 }
             )
         }
+        .sheet(isPresented: Binding(
+            get: { model.trajectoryPaneChatID != nil },
+            set: { if !$0 { model.trajectoryPaneChatID = nil } })) {
+            if let chatID = model.trajectoryPaneChatID {
+                TrajectoryPaneView(
+                    model: model, chatID: chatID,
+                    onDismiss: { model.trajectoryPaneChatID = nil })
+            }
+        }
         .sheet(item: $chatForSystemPrompt) { chat in
             ChatSystemPromptSheet(
                 model: model,

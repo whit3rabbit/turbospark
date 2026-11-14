@@ -136,6 +136,8 @@ public final class ProfileVaultCoordinator: ObservableObject {
         // protected profile must not have. From here on its gate reads
         // protected and nothing is recorded again.
         await ChatRecallStore.shared.purge()
+        // The trajectory log is plaintext too (ZP-03).
+        RolloutStore.shared.deleteAll()
         model?.loadProfiles()
         lastAuthenticationAt = Date()
         objectWillChange.send()

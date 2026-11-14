@@ -389,6 +389,8 @@ extension AppModel {
                                 promptTokens: result.promptTokens,
                                 outputTokens: result.newTokens,
                                 chatID: turnChatID)
+                            self.logTrajectoryModelCall(
+                                result: result, step: step, chatID: turnChatID)
                             self.recordGoalTurnTokens(
                                 chatID: turnChatID, tokens: result.newTokens)
                             segmentResult = result

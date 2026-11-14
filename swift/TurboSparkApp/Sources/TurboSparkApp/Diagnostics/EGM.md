@@ -16,6 +16,7 @@ The right-hand "Model Settings" inspector of the macOS app. `InspectorView` stac
   - `GenerationSamplingSection` (scope picker, sampling knobs, preset registry) [GenerationSamplingSection.swift:GenerationSamplingSection].
   - `RunnerDiagnosticsSection` with `stopReasonText(_:)`, `compactionBoundaryRows(for:)` and value type `RunnerDiagnosticValue` [RunnerDiagnosticsSection.swift:RunnerDiagnosticsSection].
 - Formatting: `MetricFormat` (`seconds`, `milliseconds`, `rate`, `percent`, `memory`, `storage`, `transferBytes`, `fileSize`); nil durations and memory render as an em-dash character `\u{2014}` [MetricFormat.swift:MetricFormat].
+- `RolloutStore` (ZP-03): per-chat local JSONL trajectory log (append-after, redacted, size-capped, bounded tail reads, crash-fragment tolerant); see `swift/docs/SWIFT_TRAJECTORY.md`.
 - Subdirectories: none.
 
 ## Invariants

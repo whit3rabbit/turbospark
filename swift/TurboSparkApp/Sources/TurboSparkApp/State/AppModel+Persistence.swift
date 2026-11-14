@@ -123,6 +123,8 @@ extension AppModel {
         self.syntextIndexingEnabled = settings.syntextIndexingEnabled
         AppToolRegistry.syntextIndexingEnabled = settings.syntextIndexingEnabled
         self.conversationRecallEnabled = settings.conversationRecallEnabled
+        self.trajectoryLoggingEnabled = settings.trajectoryLoggingEnabled
+        reconcileTrajectoryStoreAtLoad()
         // A store left by a crash between turning recall off (or protecting
         // the profile) and the purge that should have followed.
         ChatRecallStore.shared.purgeIfDisallowed()
@@ -333,6 +335,7 @@ extension AppModel {
             agentModeHints: agentModeHints,
             syntextIndexingEnabled: syntextIndexingEnabled,
             conversationRecallEnabled: conversationRecallEnabled,
+            trajectoryLoggingEnabled: trajectoryLoggingEnabled,
             browser: browserSettings,
             computerUse: computerUseSettings,
             networkPolicy: networkPolicy

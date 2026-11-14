@@ -83,6 +83,10 @@ struct ChatSidebarChatRowView: View {
             } label: { Text("Duplicate", bundle: .module) }
             .disabled(model.isRunning || chat.isGhost)
             Button {
+                model.trajectoryPaneChatID = chat.id
+            } label: { Text("View Trajectory", bundle: .module) }
+            .disabled(chat.isGhost)
+            Button {
                 model.setChatArchived(id: chat.id, archived: !chat.isArchived)
             } label: { (chat.isArchived ? Text("Unarchive", bundle: .module) : Text("Archive", bundle: .module)) }
             .disabled(chat.isGhost)
@@ -112,6 +116,9 @@ struct ChatSidebarChatRowView: View {
             if !model.isRunning {
                 chatForSystemPrompt = chat
             }
+        }
+        .accessibilityAction(named: Text("View Trajectory", bundle: .module)) {
+            if !chat.isGhost { model.trajectoryPaneChatID = chat.id }
         }
         .accessibilityAction(named: Text("Duplicate", bundle: .module)) {
             if !model.isRunning && !chat.isGhost {

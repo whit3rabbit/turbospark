@@ -251,6 +251,7 @@ struct GeneralSettingsPaneView: View {
             .pickerStyle(.menu)
 
             conversationRecallControls
+            trajectoryLoggingControls
         }
             .settingsControl("Context Compaction", pane: .general, timing: .immediate)
     }
@@ -271,6 +272,25 @@ struct GeneralSettingsPaneView: View {
         .settingsControl("Recall earlier messages in long chats", pane: .general, timing: .nextTurn)
         .disabled(vaultCoordinator.isProtected)
         Text("When older messages no longer fit in the context window, the relevant ones are brought back for the model. This keeps a searchable, unencrypted copy of each chat on this Mac. Temporary chats and protected profiles never keep one, and turning this off deletes it.", bundle: .module)
+            .font(theme.ui(.small))
+            .foregroundStyle(.appSecondary)
+    }
+
+    /// Trajectory logging (ZP-03). Off by default. A protected profile never
+    /// keeps a log, so the toggle reads off there, like conversation recall.
+    @ViewBuilder
+    private var trajectoryLoggingControls: some View {
+        Toggle(isOn: Binding(
+            get: { model.trajectoryLoggingEnabled && !vaultCoordinator.isProtected },
+            set: { newValue in
+                model.trajectoryLoggingEnabled = newValue
+                model.persistSettingsDebounced()
+            })) {
+            Text("Keep a trajectory log of model calls", bundle: .module)
+        }
+        .settingsControl("Keep a trajectory log of model calls", pane: .general, timing: .nextTurn)
+        .disabled(vaultCoordinator.isProtected)
+        Text("Saves each model call and tool run (model, token counts, timing, clipped output and tool arguments) to an unencrypted file on this Mac, with passwords and tokens removed. Nothing is sent anywhere. Temporary chats and protected profiles never keep one, and turning this off deletes every log. Open one from a chat's context menu.", bundle: .module)
             .font(theme.ui(.small))
             .foregroundStyle(.appSecondary)
     }

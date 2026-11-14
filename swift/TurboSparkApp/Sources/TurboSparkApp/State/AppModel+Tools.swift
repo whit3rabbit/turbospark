@@ -620,6 +620,10 @@ extension AppModel {
     public func appendToolExecutionTurn(call: AppToolCall, result: AppToolResult, chatID: UUID? = nil) {
         let targetID = chatID ?? selectedChatID
         guard chats.contains(where: { $0.id == targetID }) else { return }
+        // Every tool outcome funnels through here, so this is the one place
+        // that sees each call finish (ZP-03). A call is logged once per
+        // outcome; the approval card's proposal is not an outcome.
+        if call.status != .pendingApproval { logTrajectoryToolExec(call: call, result: result, chatID: targetID) }
 
         let existingMessages = turnMessages(for: targetID)
         if let msgIndex = existingMessages.lastIndex(where: { msg in

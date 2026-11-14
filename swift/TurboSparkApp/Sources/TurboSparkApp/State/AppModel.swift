@@ -557,6 +557,14 @@ public final class AppModel: ObservableObject {
     @Published public var conversationRecallEnabled: Bool = true {
         didSet { ChatRecallStore.shared.setEnabled(conversationRecallEnabled) }
     }
+    /// Whether chats keep a local trajectory log (`RolloutStore`). Off by
+    /// default; turning it off deletes every stored log
+    /// (`AppModel+Trajectory.swift`).
+    /// The chat whose trajectory pane is open, if any (ZP-03).
+    @Published var trajectoryPaneChatID: UUID?
+    @Published public var trajectoryLoggingEnabled: Bool = false {
+        didSet { trajectoryLoggingDidChange(from: oldValue) }
+    }
     /// Trailing message rows that stay verbatim after a compaction.
     @Published public var compactionKeepRecentTurns: Int = 2
     /// Whether a compaction summarizer is running right now, auto or manual.

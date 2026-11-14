@@ -302,6 +302,11 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// (`ChatRecallStore`). On by default; never for Ghost chats or a
     /// passphrase-protected profile, whatever this says.
     public var conversationRecallEnabled: Bool
+    /// Whether each chat keeps a local call-by-call trajectory log
+    /// (`RolloutStore`, ZP-03). Off by default: the log holds model output
+    /// and tool arguments and results. Never for Ghost chats or a
+    /// passphrase-protected profile, whatever this says.
+    public var trajectoryLoggingEnabled: Bool
     /// Global browser preferences. Project permissions and origin grants are stored separately.
     public var browser: BrowserSettings
     /// Global computer-use preferences. Per-app grants live only in memory.
@@ -400,6 +405,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         agentModeHints: AgentModeHints = AgentModeHints(),
         syntextIndexingEnabled: Bool = true,
         conversationRecallEnabled: Bool = true,
+        trajectoryLoggingEnabled: Bool = false,
         browser: BrowserSettings = BrowserSettings(),
         computerUse: ComputerUseSettings = ComputerUseSettings(),
         networkPolicy: AppNetworkPolicy = AppNetworkPolicy()
@@ -528,6 +534,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.agentModeHints = agentModeHints
         self.syntextIndexingEnabled = syntextIndexingEnabled
         self.conversationRecallEnabled = conversationRecallEnabled
+        self.trajectoryLoggingEnabled = trajectoryLoggingEnabled
         self.browser = browser
         self.computerUse = computerUse
         self.networkPolicy = networkPolicy
@@ -747,6 +754,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             Bool.self, forKey: .syntextIndexingEnabled, fallback: true)
         self.conversationRecallEnabled = c.decodeLenient(
             Bool.self, forKey: .conversationRecallEnabled, fallback: true)
+        self.trajectoryLoggingEnabled = c.decodeLenient(
+            Bool.self, forKey: .trajectoryLoggingEnabled, fallback: false)
         self.browser = c.decodeLenient(
             BrowserSettings.self, forKey: .browser, fallback: BrowserSettings())
         self.computerUse = c.decodeLenient(

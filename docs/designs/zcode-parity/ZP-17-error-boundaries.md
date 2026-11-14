@@ -236,7 +236,8 @@ notice. A trap during view rendering is not contained.
 
 The typed-error contract (Target File 4 and its tests) is dropped from this
 draft. Each surface draft owns its failure card: ZP-03 `RolloutStore` skips a
-truncated final line with a count notice (CUJ 3), ZP-08 `OfficeRenderModel`
+truncated final line with a count notice (CUJ 3; done in ZP-03, see its
+Implementation notes), ZP-08 `OfficeRenderModel`
 renders a bounded error card on malformed XML with an external-opener
 fallback (CUJ 2), ZP-06 `PluginPageWebView` renders a load-failure card. None
 of those files exist yet.
