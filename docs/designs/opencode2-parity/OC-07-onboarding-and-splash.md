@@ -234,10 +234,12 @@ Decisions and deviations from the draft as written:
   person has gained history or a model by then. Back is always allowed.
 * **Files live in `App/FirstRun/`**, not flat in `App/`, following the review
   note (N1).
-* **Splash is not conditional.** The review suggested showing it only when
-  loading is slow; the draft's own recommendation (400 ms floor) was taken.
-  Revisit if the fixed 400 ms reads as an artificial delay on returning
-  launches.
+* **Splash covers slow loads only** (follow-up, user decision). It draws
+  only when state is still not ready `SplashPolicy.appearDelay` (0.4 s)
+  after launch, stays at least `minimumOnScreen` (0.4 s) once drawn, never
+  draws under Reduce Motion, and the 3 s `maximumDisplay` cap still ends the
+  wait. Because the profile state is ready on the first frame in practice,
+  it normally never draws.
 * **Flow does not trap keyboard shortcuts underneath it.** The overlay is
   marked modal for VoiceOver, but menu chords still reach the window while it
   is open. Harmless (the flow ends in a new chat either way) and left as is.
@@ -245,8 +247,16 @@ Decisions and deviations from the draft as written:
   command, so `SettingsControlCatalog` and the OC-01 catalog are untouched.
   Return (default action) and Escape (cancel action) are fixed
   sheet-convention keys, not rebindable commands.
-* **No replay entry point.** The draft does not ask for one; a "Show the
-  welcome tour again" Help item would be a small follow-up.
+* **Help > Show Welcome Tour** (follow-up, user decision) replays the flow
+  through `FirstRunCoordinator.replay`, posted as `.showWelcomeTour`. It runs
+  for existing users (bypasses `FirstRunDecision`), is ignored while a flow is
+  open, never writes or clears the flag, and ends without opening a new chat
+  (`FirstRunExit.stay`). **Deferred: the OC-01 catalog entry.** The request was
+  a catalog command with no default chord, but `KeyboardCommand.defaultChord`
+  is non-optional and OC-01 states there is no unbound state (restore/clear
+  returns a command to its default), so an unbound, rebindable command needs
+  an optional default through the override map, the pane rows and capture
+  field, and other drafts' tests. The item carries no chord for now.
 
 Verification run: `swift build`; focused `swift test` over
 `FirstRunCoordinatorTests`, `SplashPolicyTests`,

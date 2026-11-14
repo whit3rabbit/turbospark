@@ -167,6 +167,56 @@ final class FirstRunCoordinatorTests: XCTestCase {
         XCTAssertFalse(relaunch.isActive)
     }
 
+    // MARK: Replay (Help > Show Welcome Tour)
+
+    func testReplayRunsForAnExistingUserAndLeavesTheFlagUntouched() {
+        let store = makeStore()
+        let coordinator = FirstRunCoordinator(store: store)
+        var exits: [FirstRunExit] = []
+        coordinator.onExit = { exits.append($0) }
+        // An existing user: begin declines.
+        coordinator.begin(hasInstalledModel: true, hasChatHistory: true)
+        XCTAssertFalse(coordinator.isActive)
+        coordinator.replay(hasInstalledModel: true)
+        XCTAssertTrue(coordinator.isActive)
+        XCTAssertEqual(coordinator.steps, [.welcome, .primer])
+        while coordinator.isActive { coordinator.advance() }
+        XCTAssertEqual(exits, [.stay])
+        XCTAssertNil(store.load(), "a replay must not write the first-run flag")
+        XCTAssertFalse(coordinator.isReplay)
+    }
+
+    func testReplayDoesNotClearACompletedFlag() {
+        let store = makeStore()
+        store.markCompleted()
+        let coordinator = FirstRunCoordinator(store: store)
+        coordinator.replay(hasInstalledModel: false)
+        coordinator.skipAll()
+        XCTAssertEqual(store.load()?.completed, true)
+        let relaunch = FirstRunCoordinator(store: store)
+        relaunch.begin(hasInstalledModel: false, hasChatHistory: false)
+        XCTAssertFalse(relaunch.isActive)
+    }
+
+    func testReplayIsIgnoredWhileAFlowIsOpen() {
+        let coordinator = FirstRunCoordinator(store: makeStore())
+        coordinator.begin(hasInstalledModel: false, hasChatHistory: false)
+        coordinator.advance()
+        coordinator.replay(hasInstalledModel: false)
+        XCTAssertEqual(coordinator.index, 1)
+        XCTAssertFalse(coordinator.isReplay)
+    }
+
+    func testReplayBrowseModelsStillGoesToDiscover() {
+        let coordinator = FirstRunCoordinator(store: makeStore())
+        var exits: [FirstRunExit] = []
+        coordinator.onExit = { exits.append($0) }
+        coordinator.replay(hasInstalledModel: false)
+        coordinator.advance()
+        coordinator.browseModels()
+        XCTAssertEqual(exits, [.modelHub])
+    }
+
     // MARK: Persistence
 
     func testCorruptFlagFileIsQuarantinedNotOverwritten() throws {
@@ -199,28 +249,41 @@ final class FirstRunCoordinatorTests: XCTestCase {
 }
 
 final class SplashPolicyTests: XCTestCase {
-    func testFloorKeepsTheMarkUpWhenReady() {
-        XCTAssertEqual(
-            SplashPolicy.remaining(elapsed: 0.1, stateReady: true, reduceMotion: false),
-            0.3, accuracy: 0.0001)
-        XCTAssertEqual(
-            SplashPolicy.remaining(elapsed: 0.5, stateReady: true, reduceMotion: false), 0)
+    func testReadyBeforeTheDelayNeverDraws() {
+        XCTAssertFalse(SplashPolicy.shouldDraw(elapsed: 0.1, stateReady: false, reduceMotion: false))
+        XCTAssertFalse(SplashPolicy.shouldDraw(elapsed: 1.0, stateReady: true, reduceMotion: false))
+        XCTAssertEqual(SplashPolicy.drawDelay(elapsed: 0.1), 0.3, accuracy: 0.0001)
+        XCTAssertEqual(SplashPolicy.drawDelay(elapsed: 2), 0)
     }
 
-    func testReduceMotionDismissesAtOnceAndNeverDraws() {
+    func testSlowLoadDrawsAfterTheDelay() {
+        XCTAssertTrue(SplashPolicy.shouldDraw(
+            elapsed: SplashPolicy.appearDelay, stateReady: false, reduceMotion: false))
+    }
+
+    func testReduceMotionNeverDraws() {
+        XCTAssertFalse(SplashPolicy.shouldDraw(elapsed: 1.5, stateReady: false, reduceMotion: true))
+    }
+
+    func testOnceDrawnItStaysForTheMinimumThenLeaves() {
         XCTAssertEqual(
-            SplashPolicy.remaining(elapsed: 0, stateReady: true, reduceMotion: true), 0)
-        XCTAssertFalse(SplashPolicy.drawsMark(stateReady: true, reduceMotion: true))
-        XCTAssertTrue(SplashPolicy.drawsMark(stateReady: false, reduceMotion: true))
-        XCTAssertTrue(SplashPolicy.drawsMark(stateReady: true, reduceMotion: false))
+            SplashPolicy.dismissWait(elapsed: 1.0, shownFor: 0.1, stateReady: true),
+            SplashPolicy.minimumOnScreen - 0.1, accuracy: 0.0001)
+        XCTAssertEqual(SplashPolicy.dismissWait(elapsed: 1.5, shownFor: 0.5, stateReady: true), 0)
+    }
+
+    func testNeverDrawnDismissesAtOnceWhenReady() {
+        XCTAssertEqual(SplashPolicy.dismissWait(elapsed: 0.05, shownFor: nil, stateReady: true), 0)
     }
 
     func testNotReadyWaitsUntilTheCapThenGivesUp() {
         XCTAssertEqual(
-            SplashPolicy.remaining(elapsed: 1, stateReady: false, reduceMotion: false),
+            SplashPolicy.dismissWait(elapsed: 1, shownFor: 0.5, stateReady: false),
             SplashPolicy.maximumDisplay - 1, accuracy: 0.0001)
         XCTAssertEqual(
-            SplashPolicy.remaining(
-                elapsed: SplashPolicy.maximumDisplay, stateReady: false, reduceMotion: false), 0)
+            SplashPolicy.dismissWait(
+                elapsed: SplashPolicy.maximumDisplay, shownFor: 2, stateReady: false), 0)
+        XCTAssertFalse(SplashPolicy.shouldDraw(
+            elapsed: SplashPolicy.maximumDisplay, stateReady: false, reduceMotion: false))
     }
 }

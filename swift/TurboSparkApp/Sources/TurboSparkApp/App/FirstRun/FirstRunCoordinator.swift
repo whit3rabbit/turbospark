@@ -106,6 +106,13 @@ enum FirstRunExit: Equatable {
     case newChat
     /// The person chose Browse Models: the existing Discover section.
     case modelHub
+    /// A replay from the Help menu ended: land where the person already was.
+    case stay
+}
+
+extension Notification.Name {
+    /// Posted by Help > Show Welcome Tour; `FirstRunHost` replays the flow.
+    static let showWelcomeTour = Notification.Name("TurboSpark.showWelcomeTour")
 }
 
 /// The flow's state machine.
@@ -125,6 +132,10 @@ final class FirstRunCoordinator: ObservableObject {
 
     private let store: FirstRunStore
     private var hasBegun = false
+    /// A replay from the Help menu. It bypasses the existing-user rule and
+    /// never writes the flag, so it cannot change whether the flow runs on the
+    /// next launch (it never clears the flag either).
+    private(set) var isReplay = false
 
     init(store: FirstRunStore = FirstRunStore()) {
         self.store = store
@@ -146,6 +157,17 @@ final class FirstRunCoordinator: ObservableObject {
             flagCompleted: flagCompleted, hasInstalledModel: hasInstalledModel,
             hasChatHistory: hasChatHistory)
         else { return }
+        steps = FirstRunFlow.steps(hasInstalledModel: hasInstalledModel)
+        index = 0
+        isActive = true
+    }
+
+    /// Help > Show Welcome Tour. Runs for any user, including an existing one,
+    /// and is ignored while a flow is already open.
+    func replay(hasInstalledModel: Bool) {
+        guard !isActive else { return }
+        hasBegun = true
+        isReplay = true
         steps = FirstRunFlow.steps(hasInstalledModel: hasInstalledModel)
         index = 0
         isActive = true
@@ -195,7 +217,15 @@ final class FirstRunCoordinator: ObservableObject {
 
     private func end(_ exit: FirstRunExit) {
         guard isActive else { return }
-        store.markCompleted()
+        var exit = exit
+        if isReplay {
+            // The flag is untouched, and finishing a replay does not open a
+            // new chat the person did not ask for.
+            if exit == .newChat { exit = .stay }
+        } else {
+            store.markCompleted()
+        }
+        isReplay = false
         isActive = false
         onExit?(exit)
     }

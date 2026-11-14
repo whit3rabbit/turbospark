@@ -1,32 +1,43 @@
 import AppKit
 import SwiftUI
 
-/// OC-07: when the splash may leave. Pure, so the three rules are tested
+/// OC-07: when the splash may draw and leave. Pure, so the rules are tested
 /// without a clock or a view.
 ///
-/// - The mark stays at least `minimumDisplay` once state is ready, so it does
-///   not flash.
-/// - Reduce Motion dismisses the moment state is ready: no pulse, no floor.
-/// - `maximumDisplay` is a hard cap: a ready signal that never arrives must
-///   not leave the window covered.
+/// The splash covers SLOW loads only:
+/// - It draws only if state is still not ready after `appearDelay`. A launch
+///   that is ready sooner never shows it, so there is no artificial delay.
+/// - Once drawn it stays at least `minimumOnScreen`, so it never flashes.
+/// - Reduce Motion never draws it.
+/// - `maximumDisplay` is a hard cap on the whole wait: a ready signal that
+///   never arrives must not leave the window covered.
 enum SplashPolicy {
-    static let minimumDisplay: TimeInterval = 0.4
+    static let appearDelay: TimeInterval = 0.4
+    static let minimumOnScreen: TimeInterval = 0.4
     static let maximumDisplay: TimeInterval = 3.0
 
-    /// Seconds still to wait before dismissing. Zero means dismiss now.
-    static func remaining(
+    /// Whether the mark should be on screen at `elapsed` since launch.
+    static func shouldDraw(
         elapsed: TimeInterval, stateReady: Bool, reduceMotion: Bool
+    ) -> Bool {
+        !reduceMotion && !stateReady && elapsed >= appearDelay && elapsed < maximumDisplay
+    }
+
+    /// Seconds to wait before the draw decision, while state is not ready.
+    static func drawDelay(elapsed: TimeInterval) -> TimeInterval {
+        max(0, appearDelay - elapsed)
+    }
+
+    /// Seconds still to wait before dismissing. Zero means dismiss now.
+    /// `shownFor` is how long the mark has been on screen, nil if it never
+    /// drew.
+    static func dismissWait(
+        elapsed: TimeInterval, shownFor: TimeInterval?, stateReady: Bool
     ) -> TimeInterval {
         if elapsed >= maximumDisplay { return 0 }
         guard stateReady else { return maximumDisplay - elapsed }
-        if reduceMotion { return 0 }
-        return max(0, minimumDisplay - elapsed)
-    }
-
-    /// Whether the overlay should draw at all on a given frame: under Reduce
-    /// Motion with state already ready it never does, so there is no flash.
-    static func drawsMark(stateReady: Bool, reduceMotion: Bool) -> Bool {
-        !(stateReady && reduceMotion)
+        guard let shownFor else { return 0 }
+        return max(0, minimumOnScreen - shownFor)
     }
 }
 
@@ -41,7 +52,8 @@ struct SplashOverlayView: View {
 
     @ObservedObject private var appearanceManager = AppearanceManager.shared
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-    @State private var shownAt = Date()
+    @State private var launchedAt = Date()
+    @State private var shownAt: Date?
 
     private var reduceMotion: Bool {
         appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
@@ -49,7 +61,7 @@ struct SplashOverlayView: View {
 
     var body: some View {
         ZStack {
-            if isPresented && SplashPolicy.drawsMark(stateReady: stateReady, reduceMotion: reduceMotion) {
+            if isPresented && shownAt != nil {
                 ZStack {
                     Rectangle().fill(.appPage)
                     Text(verbatim: "TurboSpark")
@@ -59,21 +71,30 @@ struct SplashOverlayView: View {
                 }
                 .ignoresSafeArea()
                 .transition(.opacity)
-                // Swallows clicks for the fraction of a second it is up, so
-                // nothing underneath is pressed before it has drawn.
+                // Swallows clicks while it is up.
                 .contentShape(Rectangle())
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(Text("Starting TurboSpark", bundle: .module))
             }
         }
         .task(id: stateReady) {
-            let wait = SplashPolicy.remaining(
-                elapsed: Date().timeIntervalSince(shownAt), stateReady: stateReady,
-                reduceMotion: reduceMotion)
-            if wait > 0 {
-                try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
-                if Task.isCancelled { return }
+            func elapsed() -> TimeInterval { Date().timeIntervalSince(launchedAt) }
+            func sleep(_ seconds: TimeInterval) async {
+                if seconds > 0 { try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) }
             }
+            if !stateReady {
+                await sleep(SplashPolicy.drawDelay(elapsed: elapsed()))
+                if Task.isCancelled { return }
+                if SplashPolicy.shouldDraw(
+                    elapsed: elapsed(), stateReady: false, reduceMotion: reduceMotion)
+                {
+                    shownAt = Date()
+                }
+            }
+            let shownFor = shownAt.map { Date().timeIntervalSince($0) }
+            await sleep(SplashPolicy.dismissWait(
+                elapsed: elapsed(), shownFor: shownFor, stateReady: stateReady))
+            if Task.isCancelled { return }
             await MainActor.run {
                 TSMotion.animate(TSMotion.pane) { isPresented = false }
             }

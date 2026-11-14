@@ -31,11 +31,16 @@ struct FirstRunHost: ViewModifier {
                         }
                     case .modelHub:
                         model.activeSection = .modelHub
+                    case .stay:
+                        break
                     }
                 }
                 coordinator.begin(
                     hasInstalledModel: !model.installed.isEmpty,
                     hasChatHistory: model.chats.contains { !$0.messages.isEmpty })
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .showWelcomeTour)) { _ in
+                coordinator.replay(hasInstalledModel: !model.installed.isEmpty)
             }
             .onChange(of: model.installed.isEmpty) { _, isEmpty in
                 coordinator.installedModelChanged(!isEmpty)

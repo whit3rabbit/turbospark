@@ -211,6 +211,15 @@ struct TurboSparkApp: App {
                     } label: {
                         Text("Keyboard Shortcuts...", bundle: .module)
                     }
+                    // OC-07: replays the first-run flow for any user. No
+                    // chord: it is a rare action, and the catalog needs a
+                    // default chord per command (see the OC-07 record).
+                    Button {
+                        model.showMainWindow()
+                        NotificationCenter.default.post(name: .showWelcomeTour, object: nil)
+                    } label: {
+                        Text("Show Welcome Tour", bundle: .module)
+                    }
                 }
                 Divider()
                 Button {
