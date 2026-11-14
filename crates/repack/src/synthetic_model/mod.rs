@@ -16,6 +16,8 @@ pub mod arch;
 pub mod dense;
 /// Synthetic Mixture-of-Experts (MoE) Gemma 4 model builder.
 pub mod moe;
+#[cfg(test)]
+mod quantize_on_install_gemma4_tests;
 
 pub use arch::{
     down_proj_name, embed_lm_head_name, expert_down_proj_name, expert_gate_proj_name,
