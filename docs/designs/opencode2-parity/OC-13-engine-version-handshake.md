@@ -9,7 +9,7 @@ and
 [protocol contract](https://github.com/anomalyco/opencode/blob/dev/packages/protocol/src/client.ts).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Partial (daemon version stamp, predicate, and menu bar warning implemented; HTTP health fields and Rust-side predicate deferred)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -154,6 +154,82 @@ pair of constants (header, Rust) generated together and compared at
 * **Manual**: launch an intentionally older daemon (previous build)
   and confirm the refusal and Restart action; confirm the healthy path
   and the version display.
+
+--------------------------------------------------------------------------------
+
+## Implementation Record
+
+Implemented 2026-11-14. The EGM review (docs/egm-reviews/opencode2-parity/OC-13/)
+found the draft's FFI tripwire redundant, its attach path undefined, and its
+`/health` posture unstated. The implementation follows the review's own cut:
+show and check the daemon engine version, with no new unauthenticated surface.
+
+### Open Question resolutions
+
+* **Compatibility rule**: minimum-minor (same major, daemon minor at or
+  above the app's minimum), per the draft's lean. The app minimum is
+  `DaemonEngineCompatibility.minimumEngineVersion` (`"0.8"`), raised in the
+  same change that makes the app depend on newer daemon behavior. A
+  pre-stamp daemon is `unknownVersion` (a warning, never a pass).
+* **Contract revision storage**: moot. The tripwire already exists:
+  `TS_ABI_VERSION` in the header, `ABI_VERSION` in `crates/ffi/src/abi.rs`,
+  `ts_abi_version()`, and `TurboSparkRuntime.verifyABIOnce()` (called by
+  session, tokenizer, and server opens, throwing rather than asserting so a
+  release app does not crash). Goal 5, CUJ 3, and plan item 4 are satisfied
+  by reuse and need no change.
+
+### What changed
+
+* `crates/ffi/src/api/daemon.rs`: the spawner stamps `engineVersion`
+  (`CARGO_PKG_VERSION`) into `server.meta`; `ts_daemon_status_json` returns
+  it (null for a pre-stamp meta). The app bundle ships the FFI library and
+  `turbospark-server` together, so the spawner's version is the server
+  binary's. Test: `model_meta_tests::engine_version_reads_the_stamp_and_treats_absence_as_unknown`
+  (mutation-checked: removing the empty-string filter fails it).
+* `swift/TurboSpark/Sources/TurboSpark/Daemon.swift`:
+  `TurboSparkDaemonStatus.engineVersion`, `compatibility()`, and the pure
+  `DaemonEngineCompatibility` predicate. Tests:
+  `DaemonEngineCompatibilityTests` (matrix incl. numeric minor compare,
+  major mismatch both ways, unknown, malformed, older-daemon decode, and the
+  build satisfying its own minimum). Mutation-checked: dropping the major
+  rule fails the major test.
+* `swift/TurboSparkApp/.../Server/DaemonVersionLine.swift` (new) and
+  `ServerMenuBarView.swift`: a version line in the background daemon menu,
+  and a mismatch or unknown-version warning line naming both versions. The
+  existing Restart Background Daemon item (which carries the user's launch
+  args) is the remedy. Tests: `ServerAttachGuardTests`.
+* `Localizable.xcstrings`: 3 new keys, 21 languages each.
+
+### Decisions and deviations
+
+* **Probe source**: the stamped meta file, not an HTTP `/health` read. A
+  daemon is a local, app-managed process whose status already comes from the
+  meta file, and there is no foreign-daemon attach path in the app (the
+  review's B2), so no HTTP probe exists to guard.
+* **Scope cut to display plus warning**, per the review: no hard refusal,
+  because nothing attaches to the daemon over HTTP. The warning appears
+  where the daemon is shown (menu bar daemon section); there is no daemon
+  display in the Server pane today.
+* **Predicate lives in Swift**, not `crates/server/src/version.rs`: the
+  only consumer is the app. `crates/server/tests/version_handshake.rs` is
+  not created.
+* **Diagnostics**: the warning text carries both versions; no log line was
+  added (the menu re-renders, so a log there would repeat).
+
+### Deferred
+
+* **`protocolVersion` / `engineBuild` and version fields on `GET /health`**:
+  `/health` is exempt from authentication and deliberately omits build
+  metadata (`handler::health`). Adding version fields reverses that and is
+  an auth-posture decision. Needed only if a non-app client must read the
+  version over HTTP. Decide first whether an unauthenticated engine version
+  is acceptable on a loopback-only default.
+* **Hard attach refusal and a Restart action inside an attach flow**: no
+  attach flow exists. Revisit with any foreign-daemon attach (OC-12).
+* **Manual check with an older daemon** (Verification Plan): not run; the
+  stale and unstamped cases are covered with stubbed payloads. To run it,
+  start a daemon from a pre-change build, open the menu, and expect the
+  unknown-version warning.
 
 --------------------------------------------------------------------------------
 

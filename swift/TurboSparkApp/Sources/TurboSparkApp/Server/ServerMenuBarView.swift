@@ -51,6 +51,7 @@ public struct ServerMenuBarView: View {
                     ModelStorageManager.revealInFinder(path: logPath)
                 } label: { Text("Reveal Daemon Log", bundle: .module) }
             }
+            versionLine(for: daemon)
             Button {
                 stopDaemon()
             } label: {
@@ -66,6 +67,21 @@ public struct ServerMenuBarView: View {
                 startDaemon()
             } label: { Text("Start Background Daemon", bundle: .module) }
             .disabled(daemonBusy)
+        }
+    }
+
+    /// The daemon's engine version, or the reason to restart it. The Restart
+    /// item below is the remedy for every warning, so no second action is
+    /// added here.
+    @ViewBuilder
+    private func versionLine(for daemon: TurboSparkDaemonStatus) -> some View {
+        switch DaemonVersionLine.make(for: daemon) {
+        case .version(let version):
+            Text("Daemon Engine \(version)", bundle: .module)
+        case .mismatch(let daemonVersion, let minimum):
+            Text("Daemon engine \(daemonVersion) does not match this app (needs \(minimum) or newer). Restart it.", bundle: .module)
+        case .unknown:
+            Text("Daemon engine version unknown (started by an older build). Restart it.", bundle: .module)
         }
     }
 

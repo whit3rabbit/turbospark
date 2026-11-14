@@ -99437,6 +99437,399 @@
         }
       }
     },
+    "Daemon Engine %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "محرك الخدمة الخلفية %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daemon-Engine %@"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daemon Engine %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motor del daemon %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Moteur du daemon %@"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מנוע הדמון %@"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "डेमन इंजन %@"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mesin Daemon %@"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Motore del demone %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "デーモンエンジン %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "데몬 엔진 %@"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daemon-engine %@"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Silnik demona %@"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Engine do Daemon %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Движок демона %@"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daemonmotor %@"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daemon Motoru %@"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Рушій демона %@"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Engine của daemon %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "守护进程引擎 %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "常駐程式引擎 %@"
+          }
+        }
+      }
+    },
+    "Daemon engine %@ does not match this app (needs %@ or newer). Restart it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "محرك الخدمة الخلفية %@ لا يتوافق مع هذا التطبيق (يتطلب %@ أو أحدث). أعد تشغيله."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Daemon-Engine %@ passt nicht zu dieser App (benötigt %@ oder neuer). Starten Sie ihn neu."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daemon engine %@ does not match this app (needs %@ or newer). Restart it."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El motor del daemon %@ no coincide con esta app (requiere %@ o posterior). Reinícielo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le moteur du daemon %@ ne correspond pas à cette app (version %@ ou ultérieure requise). Redémarrez-le."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מנוע הדמון %@ אינו תואם לאפליקציה הזו (נדרש %@ או חדש יותר). הפעל אותו מחדש."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "डेमन इंजन %@ इस ऐप से मेल नहीं खाता (%@ या नया चाहिए)। इसे पुनः आरंभ करें।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mesin daemon %@ tidak cocok dengan aplikasi ini (membutuhkan %@ atau lebih baru). Mulai ulang."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il motore del demone %@ non corrisponde a questa app (richiede %@ o successivo). Riavvialo."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "デーモンエンジン %@ はこのアプリと一致しません（%@ 以降が必要です）。再起動してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "데몬 엔진 %@이(가) 이 앱과 맞지 않습니다(%@ 이상 필요). 다시 시작하세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daemon-engine %@ komt niet overeen met deze app (vereist %@ of nieuwer). Herstart de daemon."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Silnik demona %@ nie pasuje do tej aplikacji (wymagany %@ lub nowszy). Uruchom go ponownie."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A engine do daemon %@ não corresponde a este app (requer %@ ou mais recente). Reinicie-o."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Движок демона %@ не соответствует этому приложению (нужен %@ или новее). Перезапустите его."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daemonmotorn %@ matchar inte den här appen (kräver %@ eller senare). Starta om den."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daemon motoru %@ bu uygulamayla uyumlu değil (%@ veya daha yenisi gerekir). Yeniden başlatın."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Рушій демона %@ не відповідає цьому застосунку (потрібен %@ або новіший). Перезапустіть його."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Engine của daemon %@ không khớp với ứng dụng này (cần %@ trở lên). Hãy khởi động lại."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "守护进程引擎 %@ 与此应用不匹配（需要 %@ 或更高版本）。请重启它。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "常駐程式引擎 %@ 與此 App 不相符（需要 %@ 或更新版本）。請重新啟動。"
+          }
+        }
+      }
+    },
+    "Daemon engine version unknown (started by an older build). Restart it.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إصدار محرك الخدمة الخلفية غير معروف (بدأه إصدار أقدم). أعد تشغيله."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daemon-Engine-Version unbekannt (von einem älteren Build gestartet). Starten Sie ihn neu."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daemon engine version unknown (started by an older build). Restart it."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Versión del motor del daemon desconocida (iniciado por una compilación anterior). Reinícielo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Version du moteur du daemon inconnue (démarré par une version antérieure). Redémarrez-le."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "גרסת מנוע הדמון לא ידועה (הופעל על ידי גרסה ישנה יותר). הפעל אותו מחדש."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "डेमन इंजन का संस्करण अज्ञात है (पुराने बिल्ड ने शुरू किया)। इसे पुनः आरंभ करें।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Versi mesin daemon tidak diketahui (dimulai oleh build lama). Mulai ulang."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Versione del motore del demone sconosciuta (avviato da una build precedente). Riavvialo."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "デーモンエンジンのバージョンが不明です（古いビルドで起動されました）。再起動してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "데몬 엔진 버전을 알 수 없습니다(이전 빌드에서 시작됨). 다시 시작하세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daemon-engineversie onbekend (gestart door een oudere build). Herstart de daemon."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wersja silnika demona nieznana (uruchomiony przez starszą kompilację). Uruchom go ponownie."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Versão da engine do daemon desconhecida (iniciado por um build mais antigo). Reinicie-o."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Версия движка демона неизвестна (запущен более старой сборкой). Перезапустите его."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daemonmotorns version är okänd (startad av en äldre version). Starta om den."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Daemon motoru sürümü bilinmiyor (eski bir derleme tarafından başlatıldı). Yeniden başlatın."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Версія рушія демона невідома (запущено старішою збіркою). Перезапустіть його."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không rõ phiên bản engine của daemon (do bản build cũ khởi chạy). Hãy khởi động lại."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "守护进程引擎版本未知（由旧版本启动）。请重启它。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "常駐程式引擎版本未知（由舊版建置啟動）。請重新啟動。"
+          }
+        }
+      }
+    },
     "Delete annotation": {
       "extractionState": "manual",
       "localizations": {
