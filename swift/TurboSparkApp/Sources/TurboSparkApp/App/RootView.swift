@@ -232,6 +232,16 @@ struct RootView: View {
             // Not in `AppModel.init`: a model built in a test must not
             // register with the workspace.
             model?.startLibraryMonitoring()
+            // After the vault gate: RootView only exists once a profile is
+            // open. Idempotent per process, so a vault lock and unlock does
+            // not read this run's own marker as a crash.
+            if case .previousEndedAbnormally = CrashRecoveryStore.shared.beginSession() {
+                model?.showToast(
+                    AppStrings.localized(
+                        "TurboSpark did not quit cleanly last time. A reply that was in progress may be incomplete."),
+                    style: .warning,
+                    duration: 12)
+            }
         }
         .onChange(of: model.hasOutputTranscript, initial: true) { _, hasTranscript in
             if hasTranscript, model.activeSection == .chat { isInspectorVisible = false }

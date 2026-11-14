@@ -514625,6 +514625,137 @@
         }
       }
     },
+    "TurboSpark did not quit cleanly last time. A reply that was in progress may be incomplete.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لم يتم إغلاق TurboSpark بشكل سليم في المرة الأخيرة. قد يكون الرد الذي كان قيد الإنشاء غير مكتمل."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark wurde beim letzten Mal nicht ordnungsgemäß beendet. Eine laufende Antwort ist möglicherweise unvollständig."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark did not quit cleanly last time. A reply that was in progress may be incomplete."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark no se cerró correctamente la última vez. Es posible que una respuesta en curso esté incompleta."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark ne s'est pas fermé correctement la dernière fois. Une réponse en cours peut être incomplète."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark לא נסגר כראוי בפעם הקודמת. ייתכן שתשובה שהייתה בתהליך יצירה אינה שלמה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पिछली बार TurboSpark सही तरह से बंद नहीं हुआ था। जो उत्तर बन रहा था, वह अधूरा हो सकता है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark tidak keluar dengan benar terakhir kali. Balasan yang sedang berjalan mungkin tidak lengkap."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "L'ultima volta TurboSpark non si è chiuso correttamente. Una risposta in corso potrebbe essere incompleta."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "前回 TurboSpark は正常に終了しませんでした。生成中の返信が不完全な可能性があります。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "지난번에 TurboSpark가 정상적으로 종료되지 않았습니다. 진행 중이던 응답이 불완전할 수 있습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark is de vorige keer niet netjes afgesloten. Een antwoord dat bezig was, kan onvolledig zijn."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ostatnio TurboSpark nie zakończył pracy prawidłowo. Odpowiedź w trakcie generowania może być niekompletna."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O TurboSpark não foi encerrado corretamente da última vez. Uma resposta em andamento pode estar incompleta."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "В прошлый раз TurboSpark завершил работу некорректно. Ответ, который генерировался, может быть неполным."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark avslutades inte korrekt förra gången. Ett svar som pågick kan vara ofullständigt."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark geçen sefer düzgün kapanmadı. Devam eden bir yanıt eksik olabilir."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Минулого разу TurboSpark завершив роботу некоректно. Відповідь, що генерувалася, може бути неповною."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lần trước TurboSpark không thoát đúng cách. Phản hồi đang tạo có thể chưa đầy đủ."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark 上次未正常退出。正在生成的回复可能不完整。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark 上次未正常結束。進行中的回覆可能不完整。"
+          }
+        }
+      }
+    },
     "TurboSpark engine": {
       "extractionState": "manual",
       "localizations": {

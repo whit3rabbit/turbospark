@@ -21,6 +21,7 @@ Short seams. Verify each one before release.
 - [Swift tool implementation](docs/SWIFT_TOOLS.md)
 - [Swift skills](docs/SWIFT_SKILLS.md)
 - [Swift storage](docs/storage.md)
+- [Crash recovery and containment limits](docs/SWIFT_CRASH_RECOVERY.md)
 - [Swift memory architecture](docs/SWIFT_MEMORY.md)
 - [Syntext code search](docs/SYNTEXT.md) and
   [conversation recall (Syntext context engine)](docs/SYNTEXT_CONTEXT.md)
@@ -65,6 +66,12 @@ staging files changed.
   UI strings without `Text`. `Localization/Info.plist` declares
   `CFBundleLocalizations` for all 21 languages so menu bar and system dialogs
   follow the in-app picker after relaunch.
+- Containment: SwiftUI cannot catch a trap in a view body, so do not add a
+  wrapper that claims to. Parse and decode untrusted or truncated input with
+  typed errors and render a failure state, and avoid force unwraps, `try!` and
+  unchecked subscripts on disk, document, network or model data in code a view
+  reaches. `CrashRecoveryStore` marks a session at launch and clears it only in
+  `applicationWillTerminate` (`docs/SWIFT_CRASH_RECOVERY.md`).
 - Store durability: `AppJSONStore` quarantines unreadable or corrupt JSON
   files (`corrupt-...`) instead of overwriting them on save, preventing silent
   data loss.

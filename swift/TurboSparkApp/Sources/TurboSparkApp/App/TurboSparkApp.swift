@@ -79,6 +79,9 @@ private final class ForegroundAppDelegate: NSObject, NSApplicationDelegate {
             // purged at the next launch's vault open). No-op when the vault
             // has no live session.
             ManagedAssetStore.shared.purgeDecryptedCache()
+            // Last: everything above can still hang or crash, and a marker
+            // that survives such a quit is the signal this exists to give.
+            CrashRecoveryStore.shared.endSession()
         }
     }
 }

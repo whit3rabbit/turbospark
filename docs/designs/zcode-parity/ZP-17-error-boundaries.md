@@ -5,7 +5,7 @@ Parity target: ZCode's
 [AppErrorBoundary](https://github.com/zai-org/ZCode/blob/main/packages/ui/src/ErrorBoundary.tsx).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented (partial: recovery marker and notice only; typed-error contract deferred)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -182,6 +182,64 @@ views, (c) process-level recovery, (d) style enforcement.
 * **Manual**: kill the app mid-turn (SIGKILL), relaunch, verify the
   banner and restore; feed a malformed fixture to each high-risk
   surface and verify bounded failure states.
+
+## Implementation notes (2026-11-13)
+
+Applies the EGM review (docs/egm-reviews/zcode-parity/ZP-17) Blockers and
+Majors, and the INDEX review's sequencing finding (ZP-17 before ZP-03/08/06).
+
+### Landed
+
+* `App/CrashRecoveryStore.swift`: marker `session-marker.json` under the
+  profile store root (`AppStorageRoot.directory`), holding a format version and
+  start time only. No pid, no content, never sent off device. Written when the
+  main window first appears (after the vault gate), deleted in
+  `applicationWillTerminate` after the other quit steps. A surviving marker
+  shows one warning toast and is replaced in the same call, so the notice is
+  once per marker. A second begin in the same process is a no-op so a vault
+  lock and unlock does not read the process's own marker.
+* Hooks: `RootView.onAppear` (begin) and `ForegroundAppDelegate.applicationWillTerminate`
+  (end). `AppModel.shutdown()` does not clear it, since a vault lock also runs
+  there and the process survives.
+* Tests: `CrashRecoveryTests` (clean first run, clean-quit clear, survival
+  into the next run, once per marker, same-process second begin, corrupt
+  marker, content-free keys, unwritable directory). Mutation-checked: a no-op
+  `endSession` fails the clean-quit test, a no-op write fails the survival test.
+* Docs: `swift/docs/SWIFT_CRASH_RECOVERY.md` (containment limits) and a
+  Containment rule in `swift/AGENTS.md`. The coding standard is a written
+  review rule, not a lint gate (review M4).
+
+### Deviations from the draft
+
+* No `RecoveryBannerView`, no "Restore previous session" action, no state
+  snapshot (review M2): the selected chat and window state already persist, so
+  a restore button would duplicate existing behavior. A warning toast is the
+  notice.
+* Goal 4 restated (review M1): SIGKILL runs no flush, so an in-flight reply is
+  not recovered. The toast says it "may be incomplete". The interrupted-row
+  save on an orderly quit is unchanged.
+* The hook is `AppShutdownCoordinator`-adjacent but sits in
+  `applicationWillTerminate`, not `AppModel.shutdown()` (see above).
+* CUJ 1 reduces to: relaunch after a crash shows the notice; no automatic
+  state restore. CUJ 2 and CUJ 3 are deferred.
+* "The process does not crash" (CUJ 2) is withdrawn: typed errors do not stop
+  traps, overflow, deep nesting or out of memory.
+
+### Risks
+
+SIGKILL, Force Quit, reboot or power loss mid-session and a second instance on
+the same store root all leave a marker and show the notice (accepted; wording
+is "did not quit cleanly"). A marker write failure silently skips the next
+notice. A trap during view rendering is not contained.
+
+### Deferred (blocked on unbuilt drafts)
+
+The typed-error contract (Target File 4 and its tests) is dropped from this
+draft. Each surface draft owns its failure card: ZP-03 `RolloutStore` skips a
+truncated final line with a count notice (CUJ 3), ZP-08 `OfficeRenderModel`
+renders a bounded error card on malformed XML with an external-opener
+fallback (CUJ 2), ZP-06 `PluginPageWebView` renders a load-failure card. None
+of those files exist yet.
 
 --------------------------------------------------------------------------------
 
