@@ -5,10 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-# Not published: the crate is not yet in `publish-crates.yml` (a release
-# workflow change this draft may not make, see docs/designs/opencode2-parity/
-# OC-12-acp-adapter.md). Flip with that change.
-publish = false
+# `turbospark-cli` depends on this crate, so it must be on crates.io first:
+# `publish-crates.yml` lists it ahead of `turbospark-cli`.
+publish.workspace = true
 description = "Agent Client Protocol adapter: JSON-RPC over stdio so an editor can drive a local TurboSpark session. No sockets, no network."
 
 [lib]

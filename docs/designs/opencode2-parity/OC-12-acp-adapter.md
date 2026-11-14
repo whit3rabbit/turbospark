@@ -249,9 +249,9 @@ interop claim.
   capped at 256 KiB, edits at 1 MiB files, listings at 1000 entries, 64 tool
   calls per turn, 32 sessions. The "adapter adds serialization only" latency
   claim was not measured (no engine is wired).
-* **Cargo**: `publish = false` for now (the crate is not in
-  `publish-crates.yml`); MSRV 1.82 and edition 2021 inherited from the
-  workspace.
+* **Cargo**: publishable (`publish.workspace = true`) and listed in
+  `publish-crates.yml` ahead of `turbospark-cli`; MSRV 1.82 and edition 2021
+  inherited from the workspace.
 
 ### What changed
 
@@ -336,13 +336,17 @@ Decision taken (reversible): the real engine lives in `crates/cli`, not in
 4. **Latency and memory**: first-token overhead is unmeasured.
 5. **App as a model holder**: the app takes no lock, so the refusal policy does
    not cover it.
-6. **CI and release (workflow changes, not made here)**: add
-   `-p turbospark-acp` to the explicit crate lists in
-   `.github/workflows/ci.yml` (around line 115). In `publish-crates.yml`, list
-   `turbospark-acp` ahead of `turbospark-cli` and flip `publish = false`.
-   **`turbospark-cli` now depends on `turbospark-acp`, so `cargo publish -p
-   turbospark-cli` fails until that lands.** Also decide whether the release
-   and app-bundle scripts must ship `turbospark-acp-agent` beside `turbospark`.
+6. **CI and release: done.** `-p turbospark-acp` is in the Linux portable
+   check in `ci.yml` (build and test already use `--workspace`), `publish.workspace
+   = true` replaces `publish = false`, and `publish-crates.yml` lists
+   `turbospark-acp` (input choices and `ALL_CRATES`) ahead of `turbospark-cli`.
+   `docs/RELEASE.md` publish order updated. Not verified: a real publish
+   (`turbospark-cli` cannot dry-run until acp is on crates.io). The release and
+   app-bundle scripts enumerate bins explicitly (`bins=(...)` in `release.yml`,
+   `scripts/make-app-bundle.sh`, `scripts/make-dmg.sh`) and do NOT ship
+   `turbospark-acp-agent`: omission breaks nothing today (no editor has been run
+   against it), so it is left out until the real-model and editor-interop items
+   above pass. Bundling it is a deliberate follow-up in those three lists.
 7. **CHANGELOG entry** (draft item 8): not written per the task's instruction.
 8. **`session/load`** and a record loader with quarantine, if resumption is
    wanted. Also `--max-context`, `--max-new` and sampling flags on `acp`.

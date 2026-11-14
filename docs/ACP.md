@@ -16,6 +16,11 @@ not quiet. No editor (Zed or otherwise) has been run against it. The
 `turbospark-acp` binary on its own is still the protocol-only build and answers
 every prompt with a "no local model" error.
 
+Release: `turbospark-acp` is a published crate (listed before `turbospark-cli`
+in `publish-crates.yml`, because the CLI depends on it). The release archive,
+app bundle and DMG do not ship `turbospark-acp-agent`; their bin lists are
+explicit and it was left out until the real-model and editor checks pass.
+
 ## Transport and safety
 
 * stdio only. The adapter opens no socket, takes no pairing token, performs

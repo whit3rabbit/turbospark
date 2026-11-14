@@ -179,7 +179,7 @@ Publish order matters: `cargo publish` refuses a crate until every internal
 path dependency it declares (`path = "../x", version = "..."`) is already
 live on the registry at that exact version.
 
-The topological dependency order across the 19 publishable crates is below.
+The topological dependency order across the 20 publishable crates is below.
 Dev-dependencies are ordered too, because a dev-dep declared with a
 `version` stays in the published manifest:
 
@@ -200,8 +200,9 @@ Dev-dependencies are ordered too, because a dev-dep declared with a
 15. `turbospark-gpu`: needs core, compute; macOS target-deps on model-io; macOS dev-deps on audio, repack
 16. `turbospark-image`: needs core, compute, model-io, tokenizer; macOS target-deps on gpu
 17. `turbospark-runtime`: needs core, selection, tokenizer; macOS target-deps on audio, coreml, embeddings, gpu, model-io, compute, streaming, vision-io
-18. `turbospark-cli`: needs audio, catalog, core, image, invocation, runtime, selection, tokenizer, repack, model-io, window-fit, vision-io
-19. `turbospark-server`: needs audio, core, runtime, selection, tokenizer, vision-io; macOS target-deps on catalog, repack
+18. `turbospark-acp`: no internal deps (serde and serde_json only)
+19. `turbospark-cli`: needs acp, audio, catalog, core, image, invocation, runtime, selection, tokenizer, repack, model-io, window-fit, vision-io
+20. `turbospark-server`: needs audio, core, runtime, selection, tokenizer, vision-io; macOS target-deps on catalog, repack
 
 The job runs on `macos-15` because `cargo publish` verifies each crate by
 building it for the host, and `turbospark-server` does not compile on Linux.
