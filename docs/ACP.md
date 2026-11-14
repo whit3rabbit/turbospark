@@ -7,10 +7,14 @@ local TurboSpark session over stdio. Design and decisions:
 ## Status
 
 The protocol core, session registry, file tools and permission gate are
-implemented and tested against a fake engine. **Real-model generation is not
-wired yet**: the shipped binary answers every prompt with an error saying so.
-No editor (Zed or otherwise) has been run against it. See the draft's
-Implementation Record for the remaining steps.
+implemented and tested against a fake engine. `turbospark acp --model M` wires
+a real local engine (text-only, streaming, cancellable) behind that core. It is
+tested with a fake backend and a real child process, but **the real-model path
+has not been exercised end to end**: the `#[ignore]`d smoke test
+(`crates/cli/tests/acp_agent.rs`) was written and not run, because the host was
+not quiet. No editor (Zed or otherwise) has been run against it. The
+`turbospark-acp` binary on its own is still the protocol-only build and answers
+every prompt with a "no local model" error.
 
 ## Transport and safety
 
@@ -25,13 +29,59 @@ Implementation Record for the remaining steps.
 
 ## Pointing an editor at it
 
-Build `turbospark-acp` (`cargo build -p turbospark-acp`) and register the
-binary as an external agent command in the editor. For Zed, an `agent_servers`
-entry whose `command` is the binary path. The same shape applies to any ACP
-client. These instructions are untested against a real editor.
+```sh
+turbospark acp --model qwen3.6:35b      # a tag, alias or install path
+```
 
-Flags: `--allow-root DIR` (repeatable; session workspaces must lie inside),
-`--state-dir DIR`, `--no-persist`.
+`turbospark acp` runs the peer binary `turbospark-acp-agent` (built from
+`crates/cli`, shipped beside `turbospark`). Register that command as an
+external agent in the editor (for Zed, an `agent_servers` entry whose `command`
+is `turbospark` with args `["acp", "--model", "..."]`). These instructions are
+untested against a real editor.
+
+Flags: `--model M` (required), `--allow-root DIR` (repeatable; session
+workspaces must lie inside), `--state-dir DIR`, `--no-persist`.
+
+## The local engine
+
+* The model loads on the first prompt, not at startup, so `initialize` and
+  `session/new` answer immediately. A model that cannot load (missing, busy,
+  too big) is that prompt's error and is retried on the next prompt.
+* One worker thread owns the model; turns from any session queue on it. The
+  session is opened through the same path as `turbospark run`
+  (`generate::open_session`): catalog alias or path resolution, context and
+  memory planning, then the checkpoint's own chat template for every turn.
+  Nothing is ever sent as a raw prompt.
+* Sampling is the CLI defaults (`turbospark run` without sampling flags). The
+  runtime's sampler owns normalization. Speculative decoding is forced off.
+* Answer text streams as `agent_message_chunk` per decoded piece. Reasoning
+  text is dropped, not shown. History that overflows the context window is
+  trimmed oldest first (the same window fit as `--chat`).
+* Cancel and editor disconnect set a flag the runtime's decode loop polls
+  between tokens and between prefill chunks, so a cancel lands within one token
+  or one prefill chunk. stdin EOF drops the engine, which joins the worker and
+  unmaps the model.
+* **Text only: tools are not wired.** The model is never told about
+  `read_file`, `write_file` and the rest, so it never calls them and the
+  permission gate is never reached from a real model yet. The runtime has a
+  tool-call splitter (`TurnSplitter`, used by the server), but rendering the
+  tool schema into the template and feeding tool results back is separate
+  work. A tool message in the history is dropped.
+* No `--max-context`, `--max-new` or sampling flags yet.
+
+### When another process holds the model
+
+The policy is to refuse, never to wait or share:
+
+* Another `turbospark acp` on the same model directory holds an advisory
+  `flock` on `<root>/run/acp-<hash>.lock` (`<root>` is `$TURBOSPARK_HOME`, else
+  `~/.turbospark`). The second one's first prompt fails naming the model and
+  the lock. A crash releases it.
+* A running `turbospark serve` daemon whose `--model` resolves to the same
+  directory (read from `run/server.meta`, pid checked live) also refuses.
+* **Not covered:** the macOS app takes no lock and leaves no record the CLI
+  can read, so the app and an ACP process can both load the same model. That
+  needs the app to take the same lock.
 
 ## What it speaks (ACP protocol version 1)
 
@@ -76,5 +126,5 @@ appear in the app. v1 writes records but cannot resume them.
 
 Not a sandbox: a check-then-use race on symlinks is not closed, and the
 permission gate is the only control over writes. One engine per adapter
-process; two editor windows are two processes and, once a real model is
-wired, two model loads.
+process; two editor windows are two processes, which means two model loads unless they
+name the same model (then the second is refused, see above).

@@ -51,6 +51,13 @@ path = "src/bin/steer.rs"
 name = "turbospark-ocr"
 path = "src/bin/ocr.rs"
 
+# The real local engine behind `turbospark acp` (OC-12): ACP over stdio with
+# a model loaded on the first prompt. Not named `turbospark-acp`, which is
+# `crates/acp`'s protocol-only binary.
+[[bin]]
+name = "turbospark-acp-agent"
+path = "src/bin/acp.rs"
+
 # The opt-in ANE+Steel prefill split (`turbospark-runtime`'s `ane-prefill`,
 # docs/SPEEDUP_PLAYBOOK.md). Off by default.
 [features]
@@ -79,6 +86,10 @@ turbospark-vision-io = { path = "../vision-io", version = "0.8.0" }
 # Trait-pack files (`steer_data/`) parse with derive on `steer_cmd::packs`.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# ACP protocol core (serde + serde_json only). `publish = false` there for now:
+# `publish-crates.yml` must list it ahead of this crate before a release
+# (docs/ACP.md, a workflow change this task may not make).
+turbospark-acp = { path = "../acp", version = "0.8.0" }
 indicatif = "0.18"
 # The `turbospark` front door's command tree, help and shell completions.
 # Held to 4.5: 4.6 moved to edition 2024 and rust-version 1.85, past this

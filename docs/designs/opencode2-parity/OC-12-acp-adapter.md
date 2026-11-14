@@ -8,7 +8,7 @@ and
 [session adapter](https://github.com/anomalyco/opencode/blob/dev/packages/cli/src/acp/sessions.ts).
 
 * Author: whit3rabbit
-* Status: Partial (protocol core implemented; real-engine wiring and editor interop pending, see Implementation Record)
+* Status: Partial (protocol core and a text-only local engine implemented; real-model end-to-end run, tools and editor interop pending, see Implementation Record)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -187,7 +187,8 @@ Implemented 2026-11-14 as the new crate `crates/acp` (package
 `turbospark-acp`, lib `turbospark_acp`, binary `turbospark-acp`). **Status
 Partial**: the stdio JSON-RPC core, session registry, file tools, permission
 gate and cancellation are done and tested against a fake engine and a real
-child process. Real-model generation is not wired, and no editor (Zed or any
+child process (first pass). Real-model generation was wired in the second pass
+below but has not been run end to end, and no editor (Zed or any
 other ACP client) has been run against the adapter. Nothing here is an editor
 interop claim.
 
@@ -284,26 +285,67 @@ interop claim.
   on the reader thread at prompt dispatch, not in the worker, so a cancel
   arriving right behind a prompt is not erased.
 
+### Local engine wiring (second pass, 2026-11-14)
+
+Decision taken (reversible): the real engine lives in `crates/cli`, not in
+`crates/acp`, so `crates/acp` stays `serde` + `serde_json` only.
+
+* `turbospark acp --model M [--allow-root D]... [--state-dir D | --no-persist]`
+  runs the new peer binary `turbospark-acp-agent` (`crates/cli/src/bin/acp.rs`;
+  not named `turbospark-acp`, which is `crates/acp`'s protocol-only binary).
+  New files: `acp_engine.rs` (portable worker-thread engine over a
+  `ChatBackend` trait), `acp_real.rs` (macOS backend over
+  `generate::Session`), `acp_lock.rs` (refusal policy). Shared-file edits:
+  `Cargo.toml` (bin plus the `turbospark-acp` path dep), `bin/turbospark.rs`
+  (the `Acp` passthrough and one help row), `Cargo.lock`.
+* The model session is opened with `generate::open_session` and every turn is
+  rendered through the checkpoint's chat template and window-fit, as in
+  `--chat`. Decode uses the runtime's cancellable loops (plain and chunked), so
+  cancel is honored between tokens. Speculation is off. Reasoning is dropped.
+  `stream_turn` is not reused because it writes to stdout, the protocol channel.
+* One worker thread owns the model (no `unsafe impl Send`); it loads lazily on
+  the first prompt and is joined and dropped at stdin EOF.
+* Refusal policy for a held model: advisory `flock` per model directory plus a
+  live-daemon check; the app is not covered (see `docs/ACP.md`).
+* **Tools are not wired.** A Rust splitter exists (`TurnSplitter`, used by the
+  server), so this is not for lack of a parser: the tool schema is not rendered
+  into the template and tool results are not fed back. Deferred. Until then the
+  permission gate is not reachable from a real model, and permissions stay
+  default-deny.
+* Tests: 5 fake-backend engine tests (stream order, load once, cancel between
+  tokens, release on drop, load failure retried, panic isolated), 4 lock/daemon
+  tests (real `flock` conflicts), process tests (flag errors, an unloadable
+  model fails the turn and EOF exits 0, the front door lists `acp`), and one
+  `#[ignore]`d real-model smoke test. Mutation check: dropping the cancel
+  propagation fails the cancel test.
+* **Not run:** the real-model smoke test. The host load average was 24 to 29
+  with other sessions building and testing, so it was not quiet. No claim is
+  made that a real model streamed through ACP.
+
 ### Remaining (why this is Partial)
 
-1. **Real-engine wiring**: an `Engine` implementation over the runtime. It
-   needs the chat template, the tool-call format and parser for local models
-   (the server's `guardrails` and `ChatModel` are the existing pieces), and a
-   decision on whether it lives in `crates/acp` behind a macOS feature or in
-   `crates/cli` (`turbospark acp`, draft item 6, not done). Until then the
-   binary answers prompts with an explicit error.
-2. **Editor interop**: drive the adapter from a scripted client of an
+1. **Real-model run**: run the ignored smoke test
+   (`TURBOSPARK_ACP_SMOKE_MODEL=<model> cargo test -p turbospark-cli --test
+   acp_agent -- --ignored --nocapture`) on a quiet host.
+2. **Tools for a local model**: render the tool schema, parse calls with
+   `TurnSplitter`, feed results back, then run the permission gate from a real
+   model. Without it the adapter is a chat-only agent.
+3. **Editor interop**: drive the adapter from a scripted client of an
    independent ACP implementation, then from Zed (streaming, permission
    forwarding, abort). Not run.
-3. **Latency and memory**: first-token overhead and the one-engine-per-process
-   policy are unmeasured; the refusal-when-the-app-holds-the-model policy from
-   review item M3 is not implemented.
-4. **CI and release (workflow changes, not made here)**: add `-p turbospark-acp`
-   to the explicit crate lists in `.github/workflows/ci.yml` (around line 115),
-   and to `publish-crates.yml` then flip `publish = false`.
-5. **CHANGELOG entry** (draft item 8): not written per the task's instruction.
-6. **`session/load`** and a record loader with quarantine, if resumption is
-   wanted.
+4. **Latency and memory**: first-token overhead is unmeasured.
+5. **App as a model holder**: the app takes no lock, so the refusal policy does
+   not cover it.
+6. **CI and release (workflow changes, not made here)**: add
+   `-p turbospark-acp` to the explicit crate lists in
+   `.github/workflows/ci.yml` (around line 115). In `publish-crates.yml`, list
+   `turbospark-acp` ahead of `turbospark-cli` and flip `publish = false`.
+   **`turbospark-cli` now depends on `turbospark-acp`, so `cargo publish -p
+   turbospark-cli` fails until that lands.** Also decide whether the release
+   and app-bundle scripts must ship `turbospark-acp-agent` beside `turbospark`.
+7. **CHANGELOG entry** (draft item 8): not written per the task's instruction.
+8. **`session/load`** and a record loader with quarantine, if resumption is
+   wanted. Also `--max-context`, `--max-new` and sampling flags on `acp`.
 
 --------------------------------------------------------------------------------
 
