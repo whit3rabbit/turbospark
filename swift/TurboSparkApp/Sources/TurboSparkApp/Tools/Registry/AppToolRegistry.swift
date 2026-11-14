@@ -809,6 +809,85 @@ public enum AppToolRegistry {
                 }
                 output = try await stopper(agentID, chatID)
 
+            case "send_message", "sendmessage":
+                // Coordinator-only: only the main conversation (depth 0)
+                // launched the background children this reaches, and a
+                // subagent continuing a sibling would be a second, unaudited
+                // way to spend the run cap.
+                guard subagentDepth == 0 else {
+                    throw NSError(domain: "TurboSparkTool", code: 28, userInfo: [
+                        NSLocalizedDescriptionKey: "send_message is only available to the main "
+                            + "conversation, not to a subagent."
+                    ])
+                }
+                let targetID = (call.arguments["id"]
+                    ?? call.arguments["to"]
+                    ?? call.arguments["agent_id"]
+                    ?? call.arguments["agentId"]
+                    ?? call.arguments["task_id"]
+                    ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let followUp = call.arguments["message"]
+                    ?? call.arguments["prompt"]
+                    ?? call.arguments["text"]
+                    ?? ""
+                guard !targetID.isEmpty else {
+                    throw NSError(domain: "TurboSparkTool", code: 27, userInfo: [
+                        NSLocalizedDescriptionKey: "Missing 'id' argument: give the finished "
+                            + "background subagent's id (the `id:` line from its launch result)."
+                    ])
+                }
+                guard !followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw NSError(domain: "TurboSparkTool", code: 27, userInfo: [
+                        NSLocalizedDescriptionKey: "Missing 'message' argument: say what the "
+                            + "subagent should do next."
+                    ])
+                }
+                guard let continuer = backgroundAgentContinuer else {
+                    throw NSError(domain: "TurboSparkTool", code: 26, userInfo: [
+                        NSLocalizedDescriptionKey: "Background subagents are unavailable: no "
+                            + "continue handler is installed (the app wires one at startup)."
+                    ])
+                }
+                output = try await continuer(targetID, followUp, chatID)
+
+            case "respond_to_coordinator", "respondtocoordinator":
+                // The sender is the task-local channel the launcher set, never
+                // an argument: the model cannot name another child or chat.
+                // The depth match refuses a grandchild that inherited it.
+                guard let channel = SubagentCoordinatorChannel.current,
+                    channel.depth == subagentDepth
+                else {
+                    throw NSError(domain: "TurboSparkTool", code: 28, userInfo: [
+                        NSLocalizedDescriptionKey: "respond_to_coordinator is only available inside "
+                            + "a background subagent."
+                    ])
+                }
+                // The call's own chat must be the child's owner. They are the
+                // same value by construction; checking it keeps a future
+                // caller that passes the wrong chat from crossing the wall.
+                guard channel.chatID == chatID else {
+                    throw NSError(domain: "TurboSparkTool", code: 27, userInfo: [
+                        NSLocalizedDescriptionKey: "respond_to_coordinator: this run does not belong "
+                            + "to the calling conversation."
+                    ])
+                }
+                let text = call.arguments["message"]
+                    ?? call.arguments["text"]
+                    ?? call.arguments["content"]
+                    ?? ""
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw NSError(domain: "TurboSparkTool", code: 27, userInfo: [
+                        NSLocalizedDescriptionKey: "Missing 'message' argument."
+                    ])
+                }
+                guard let poster = subagentCoordinatorPoster else {
+                    throw NSError(domain: "TurboSparkTool", code: 26, userInfo: [
+                        NSLocalizedDescriptionKey: "Coordinator messaging is unavailable: no handler "
+                            + "is installed (the app wires one at startup)."
+                    ])
+                }
+                output = try await poster(channel.childID, channel.chatID, text)
+
             case "askuserquestion", "ask_user_question", "ask_question", "question":
                 if AskUserQuestionExecutor.answerWaiter != nil {
                     // Interactive: the result does not exist until the user

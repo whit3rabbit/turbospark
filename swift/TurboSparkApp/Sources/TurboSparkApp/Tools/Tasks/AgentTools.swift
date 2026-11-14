@@ -172,5 +172,50 @@ public enum AgentToolDefinitions {
         )
     )
 
-    public static let all: [OpenAITool] = [agent, stopAgent]
+    /// Continues a FINISHED background subagent with its own context intact.
+    ///
+    /// Coordinator-only (depth 0): a subagent's catalog filters it out, and
+    /// the executor refuses it below depth 0 as well. The resumed run is a
+    /// background run again, so this returns at once and a
+    /// `<task-notification>` follows.
+    public static let sendMessage = OpenAITool.function(
+        name: "send_message",
+        description: "Continue a background subagent that has FINISHED, by its id. The subagent "
+            + "resumes with its earlier context (its own prompt, tool calls and answers), reads "
+            + "your message as its next instruction, runs more turns and reports again with a "
+            + "<task-notification>. It runs with the same tools and permissions as before. A "
+            + "subagent that is still running cannot be messaged: wait for its notification. "
+            + "Only subagents launched from this conversation are reachable, and only while "
+            + "their record is retained (the 20 most recent finished ones).",
+        parameters: .object(
+            properties: [
+                "id": .string(description: "The background subagent id from its launch result (the `id:` line)."),
+                "message": .string(description: "The follow-up instruction for the subagent, at most \(SubagentMessageHub.maxFollowUpBytes) bytes.")
+            ],
+            required: ["id", "message"]
+        )
+    )
+
+    /// Child-only: a RUNNING background subagent reports to the chat that
+    /// launched it and keeps working. Deliberately NOT in `all`: the
+    /// coordinator's catalog never contains it. `SubagentRunner` adds it to
+    /// a background child's capture when the agent definition lists it.
+    public static let respondToCoordinator = OpenAITool.function(
+        name: "respond_to_coordinator",
+        description: "Send a short message to the coordinator that launched you, without ending "
+            + "your task: use it when the task's premise is wrong or you found something the "
+            + "coordinator needs before you finish. You keep running. The coordinator reads it as "
+            + "data you wrote, at its next step. Your final answer is still delivered "
+            + "separately. At most \(SubagentMessageHub.maxMessageBytes) bytes per message (longer text "
+            + "is cut) and \(SubagentMessageHub.maxMessagesPerRun) messages per run.",
+        parameters: .object(
+            properties: [
+                "message": .string(description: "What the coordinator needs to know now.")
+            ],
+            required: ["message"]
+        )
+    )
+
+    /// What the COORDINATOR is offered. `respondToCoordinator` is excluded on purpose.
+    public static let all: [OpenAITool] = [agent, stopAgent, sendMessage]
 }

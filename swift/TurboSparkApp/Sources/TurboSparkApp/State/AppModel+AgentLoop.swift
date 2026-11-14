@@ -96,6 +96,10 @@ extension AppModel {
         }
         let maxSteps = project?.maxAutonomousSteps ?? 5
         if currentStep + 1 < maxSteps {
+            // A background child's mid-task message lands as a user turn the
+            // next model step reads. Only when a next step exists: past the
+            // last one there is no boundary left, and the turn tail delivers.
+            deliverSubagentMessagesAtBoundary(chatID: chatID)
             continueAgentLoop(step: currentStep + 1, chatID: chatID)
         } else {
             _ = await dispatchStopAndContinueIfBlocked(

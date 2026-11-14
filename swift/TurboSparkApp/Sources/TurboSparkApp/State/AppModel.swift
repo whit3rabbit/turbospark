@@ -768,6 +768,12 @@ public final class AppModel: ObservableObject {
     /// is the whole point -- chat Stop must not kill an agent the model was
     /// told runs independently.
     var backgroundAgentTasks: [String: Task<SubagentRunResult, Never>] = [:]
+    /// Launch parameters and last transcript per background agent id, for
+    /// `send_message` continuation. In memory, pruned with `backgroundAgentRuns`.
+    var retainedBackgroundChildren: [String: RetainedBackgroundChild] = [:]
+    /// Mid-task messages from running background children, parked per chat
+    /// until a step boundary or turn tail delivers them (`respond_to_coordinator`).
+    var subagentMessageHub = SubagentMessageHub()
     /// Ids the user or the model asked to stop, so their completion reads
     /// `killed` rather than `cancelled`.
     var killedBackgroundAgentIDs: Set<String> = []
@@ -1301,6 +1307,22 @@ public final class AppModel: ObservableObject {
                 ])
             }
             return try await self.stopBackgroundAgent(id, callerChatID: callerChatID)
+        }
+        AppToolRegistry.backgroundAgentContinuer = { [weak self] id, message, callerChatID in
+            guard let self else {
+                throw NSError(domain: "TurboSparkTool", code: 26, userInfo: [
+                    NSLocalizedDescriptionKey: "Background subagents are unavailable: the app model is gone."
+                ])
+            }
+            return try await self.resumeBackgroundAgent(id, message: message, callerChatID: callerChatID)
+        }
+        AppToolRegistry.subagentCoordinatorPoster = { [weak self] childID, chatID, text in
+            guard let self else {
+                throw NSError(domain: "TurboSparkTool", code: 26, userInfo: [
+                    NSLocalizedDescriptionKey: "Coordinator messaging is unavailable: the app model is gone."
+                ])
+            }
+            return try await self.postSubagentMessage(childID: childID, chatID: chatID, text: text)
         }
         AppToolRegistry.observationRecaller = { [weak self] chatID, id, offset, maximum in
             guard let self else {

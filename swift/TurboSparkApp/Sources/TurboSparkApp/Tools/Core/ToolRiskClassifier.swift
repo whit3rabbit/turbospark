@@ -253,7 +253,8 @@ public enum ToolRiskClassifier {
              "task_get", "taskoutput", "task_output", "sleep", "delay", "askuserquestion", "ask_user_question",
              "ask_question", "question", "enterplanmode", "enter_plan_mode", "plan_mode", "plan",
              "exitplanmode", "exit_plan_mode", "reportfindings", "report_findings", "findings",
-             "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "senduserfile", "send_user_file":
+             "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "senduserfile", "send_user_file",
+             "respond_to_coordinator", "respondtocoordinator":
             // Check if read_file or snip is accessing a sensitive credential path
             // Every spelling the executor accepts is checked, not just
             // `path`: `AbsolutePath`/`TargetFile` reads reached the executor

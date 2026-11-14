@@ -132,6 +132,17 @@ extension AppToolRegistry {
     /// neither stoppable nor listed in the error.
     public static var backgroundAgentStopper: (@Sendable (String, UUID?) async throws -> String)?
 
+    /// Continues a FINISHED background subagent with a follow-up message
+    /// (`send_message`). Arguments: the subagent id, the message, and the
+    /// calling chat. Throws for an unknown id, an id owned by another chat,
+    /// a still-running subagent, or a run whose context is no longer retained.
+    public static var backgroundAgentContinuer: (@Sendable (String, String, UUID?) async throws -> String)?
+
+    /// Queues a mid-task message from a RUNNING background subagent to the
+    /// chat that launched it (`respond_to_coordinator`). Arguments: the
+    /// child's run id, its owning chat, and the message text.
+    public static var subagentCoordinatorPoster: (@Sendable (String, UUID?, String) async throws -> String)?
+
     /// Installed by `AppModel` so registry execution can recall a normal
     /// on-disk observation or an encrypted Ghost observation without knowing
     /// which transcript implementation owns the chat.
@@ -185,6 +196,8 @@ extension AppToolRegistry {
         "codesearch", "code_search",
         "multiedit", "multi_edit",
         "stop_agent", "agentstop", "kill_agent", "stopagent",
+        "send_message", "sendmessage",
+        "respond_to_coordinator", "respondtocoordinator",
         "askuserquestion", "ask_user_question", "ask_question", "question",
         "enterplanmode", "enter_plan_mode", "plan_mode", "plan",
         "exitplanmode", "exit_plan_mode",

@@ -6,6 +6,15 @@ struct PendingTaskNotification: Equatable, Sendable {
     let note: String
 }
 
+/// What `send_message` needs to run a finished background child again: the
+/// launch parameters it ran under (so the continuation keeps the same agent
+/// definition, project, depth and permission gate) and the transcript its last
+/// run ended with. In memory only, and pruned with the run's record.
+struct RetainedBackgroundChild {
+    let launch: BackgroundAgentLaunch
+    var transcript: [ChatMessage]?
+}
+
 /// Everything needed to launch one background subagent, carried across the
 /// provider boundary from `AppToolRegistry` into `AppModel`.
 ///
@@ -167,7 +176,9 @@ extension AppModel {
                     + "stop it with stop_agent before launching another."
             ])
         }
-        guard let session = session else {
+        // The runner's own test seam counts as a model: it is the same port
+        // the production session is wrapped in.
+        guard session != nil || SubagentGenerationPortContext.current != nil else {
             throw NSError(domain: "TurboSparkTool", code: 26, userInfo: [
                 NSLocalizedDescriptionKey: "No active model session to run the background subagent "
                     + "on. Load a model first."
@@ -183,29 +194,11 @@ extension AppModel {
             promptHead: headOfPrompt(launch.taskPrompt))
         backgroundAgentRuns[id] = state
 
-        let sink = AppToolRegistry.subagentProgressSink
-        let agent = launch.agent
-        let prompt = launch.taskPrompt
-        let project = launch.project
-        let chatID = launch.chatID
-        let depth = launch.depth
-        let userSystemPrompt = launch.userSystemPrompt
-        let description = launch.taskDescription
-        let options = launch.samplingOptions
-        let runTask = Task<SubagentRunResult, Never> {
-            await SubagentRunner.run(
-                agent: agent, taskPrompt: prompt, session: session, project: project,
-                chatID: chatID, depth: depth, userSystemPrompt: userSystemPrompt,
-                samplingOptions: options,
-                progress: { event in await sink?(id, event) },
-                taskDescription: description)
-        }
-        backgroundAgentTasks[id] = runTask
-
-        Task { [weak self] in
-            let result = await runTask.value
-            await self?.completeBackgroundAgent(id: id, result: result)
-        }
+        // Retained for `send_message`: what is needed to run this child again.
+        // The transcript arrives with the result.
+        retainedBackgroundChildren[id] = RetainedBackgroundChild(launch: launch, transcript: nil)
+        startBackgroundRun(
+            id: id, launch: launch, session: session, taskPrompt: launch.taskPrompt, prior: [])
 
         return """
             Background subagent launched; it does not block this conversation.
@@ -218,6 +211,50 @@ extension AppModel {
             wait for it; continue with other work or end your turn. Stop it with stop_agent \
             using the id above.
             """
+    }
+
+    /// Starts (or restarts, for `send_message`) the run behind a `bga_N` id and
+    /// the watcher that delivers its completion.
+    ///
+    /// **`prior` IS NEVER NIL.** A non-nil `priorHistory` is what makes the
+    /// runner hand its transcript back, and that transcript is the retained
+    /// context a later `send_message` resumes from. A first launch passes an
+    /// empty array, which leaves the run itself unchanged.
+    ///
+    /// The coordinator channel is bound here, as a task-local around the run:
+    /// the child's `respond_to_coordinator` calls resolve their sender (this
+    /// id) and chat from it, not from anything the model writes.
+    private func startBackgroundRun(
+        id: String, launch: BackgroundAgentLaunch, session: TurboSparkSession?,
+        taskPrompt: String, prior: [ChatMessage]
+    ) {
+        let sink = AppToolRegistry.subagentProgressSink
+        let agent = launch.agent
+        let project = launch.project
+        let chatID = launch.chatID
+        let depth = launch.depth
+        let userSystemPrompt = launch.userSystemPrompt
+        let description = launch.taskDescription
+        let options = launch.samplingOptions
+        let channel = SubagentCoordinatorChannel(
+            childID: id, chatID: chatID, agentName: agent.name, depth: depth)
+        let runTask = Task<SubagentRunResult, Never> {
+            await SubagentCoordinatorChannel.$current.withValue(channel) {
+                await SubagentRunner.run(
+                    agent: agent, taskPrompt: taskPrompt, session: session, project: project,
+                    chatID: chatID, depth: depth, userSystemPrompt: userSystemPrompt,
+                    samplingOptions: options,
+                    progress: { event in await sink?(id, event) },
+                    taskDescription: description,
+                    priorHistory: prior)
+            }
+        }
+        backgroundAgentTasks[id] = runTask
+
+        Task { [weak self] in
+            let result = await runTask.value
+            await self?.completeBackgroundAgent(id: id, result: result)
+        }
     }
 
     private func headOfPrompt(_ prompt: String) -> String {
@@ -239,6 +276,14 @@ extension AppModel {
         let status = wasKilled && result.status == "cancelled"
             ? "killed" : result.status
         state.status = status
+        // Context for `send_message`: kept only for a run that ended in a
+        // shape worth continuing. A run that failed to start or overflowed its
+        // window has nothing (or too much) to resume from.
+        if let transcript = result.transcript,
+            ["completed", "max_turns", "cancelled", "killed"].contains(status)
+        {
+            retainedBackgroundChildren[id]?.transcript = transcript
+        }
         pruneFinishedBackgroundAgents()
 
         // Marked on every exit path from here, including the one below: once
@@ -251,6 +296,8 @@ extension AppModel {
         defer { state.isRecordedComplete = true }
 
         guard let chatID = state.chatID, chats.contains(where: { $0.id == chatID }) else {
+            // Nobody left to read what the child sent mid-task.
+            subagentMessageHub.discard(childID: id)
             return
         }
         let note = BackgroundAgentNotification.text(
@@ -301,6 +348,158 @@ extension AppModel {
             + "follow."
     }
 
+    // MARK: - Coordinator messaging
+
+    /// `respond_to_coordinator`: queues a mid-task message from a RUNNING
+    /// background child and delivers it to the chat that launched it.
+    ///
+    /// Delivery rides the `<task-notification>` queue: an idle coordinator is
+    /// woken the same way a completion wakes it, a busy one reads the message
+    /// at its next step boundary or at the turn tail. Nothing here interrupts
+    /// a model call in flight.
+    func postSubagentMessage(childID: String, chatID: UUID?, text: String) async throws -> String {
+        guard let state = backgroundAgentRuns[childID], state.chatID == chatID,
+            state.mode == .background, let chatID,
+            chats.contains(where: { $0.id == chatID })
+        else {
+            throw NSError(domain: "TurboSparkTool", code: 27, userInfo: [
+                NSLocalizedDescriptionKey: "This run has no coordinator to message."
+            ])
+        }
+        guard state.status == "running" else {
+            throw NSError(domain: "TurboSparkTool", code: 27, userInfo: [
+                NSLocalizedDescriptionKey: "This run has already finished; its final answer is "
+                    + "its report."
+            ])
+        }
+        switch subagentMessageHub.post(
+            childID: childID, chatID: chatID, agentName: state.agentName, text: text)
+        {
+        case .empty:
+            throw NSError(domain: "TurboSparkTool", code: 27, userInfo: [
+                NSLocalizedDescriptionKey: "The message is empty."
+            ])
+        case .budgetExhausted:
+            throw NSError(domain: "TurboSparkTool", code: 27, userInfo: [
+                NSLocalizedDescriptionKey: "Message budget reached (\(SubagentMessageHub.maxMessagesPerRun) "
+                    + "per run). Keep working and put the rest in your final answer."
+            ])
+        case .queued(let truncated, let droppedOldest):
+            drainPendingTaskNotificationsIfIdle(chatID: chatID)
+            var reply = "Message queued for the coordinator; keep working."
+            if truncated {
+                reply += " It was cut to \(SubagentMessageHub.maxMessageBytes) bytes."
+            }
+            if droppedOldest {
+                reply += " Your mailbox was full "
+                    + "(\(SubagentMessageHub.maxQueuedPerChild) unread), so the oldest unread "
+                    + "message was dropped. Send fewer, shorter messages."
+            }
+            return reply
+        }
+    }
+
+    /// Appends any queued child messages to the chat as a user turn at a step
+    /// boundary of a RUNNING agent loop, so the next model step reads them.
+    /// Returns whether anything was appended. Refuses at an approval card or
+    /// a pending cancel, for the same reason the steer boundary does.
+    @discardableResult
+    func deliverSubagentMessagesAtBoundary(chatID: UUID) -> Bool {
+        guard pendingToolCall == nil, !isCancellationPending,
+            subagentMessageHub.pendingCount(chatID: chatID) > 0
+        else { return false }
+        let batch = subagentMessageHub.drain(chatID: chatID)
+        guard !batch.isEmpty else { return false }
+        mutateTurnMessages(for: chatID) {
+            $0.append(MidTurnInputPresentation.taskNotification.makeUserMessage(
+                SubagentMessageHub.carrier(for: batch)))
+        }
+        return true
+    }
+
+    /// `send_message`: resumes a FINISHED background child with its retained
+    /// context and a follow-up instruction.
+    ///
+    /// Ownership is the same wall `stop_agent` has: an id owned by another
+    /// chat reads exactly like an unknown one. The resumed run is a background
+    /// run again under the SAME agent definition, project, depth, tool filter
+    /// and permission gate it launched with, and it counts against the
+    /// running-agent cap, so continuing a child grants nothing a fresh launch
+    /// would not.
+    func resumeBackgroundAgent(_ id: String, message: String, callerChatID: UUID?) async throws -> String {
+        guard let state = backgroundAgentRuns[id], state.chatID == callerChatID else {
+            let known = backgroundAgentRuns.filter { $0.value.chatID == callerChatID }
+                .keys.sorted().joined(separator: ", ")
+            throw NSError(domain: "TurboSparkTool", code: 27, userInfo: [
+                NSLocalizedDescriptionKey: "No background subagent with id '\(id)'. "
+                    + (known.isEmpty ? "None are registered." : "Known ids: \(known).")
+            ])
+        }
+        guard state.status != "running" else {
+            throw NSError(domain: "TurboSparkTool", code: 29, userInfo: [
+                NSLocalizedDescriptionKey: "Background subagent '\(id)' is still running. Wait for "
+                    + "its <task-notification>, or stop it with stop_agent."
+            ])
+        }
+        guard state.isRecordedComplete else {
+            throw NSError(domain: "TurboSparkTool", code: 29, userInfo: [
+                NSLocalizedDescriptionKey: "Background subagent '\(id)' is still finishing. Try "
+                    + "again after its <task-notification>."
+            ])
+        }
+        guard let retained = retainedBackgroundChildren[id], let transcript = retained.transcript else {
+            throw NSError(domain: "TurboSparkTool", code: 30, userInfo: [
+                NSLocalizedDescriptionKey: "Background subagent '\(id)' cannot be continued: its "
+                    + "context was not retained (it ended with status '\(state.status)', or the "
+                    + "app restarted). Launch a new subagent and include what it needs in the prompt."
+            ])
+        }
+        let followUp = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard followUp.utf8.count <= SubagentMessageHub.maxFollowUpBytes else {
+            throw NSError(domain: "TurboSparkTool", code: 27, userInfo: [
+                NSLocalizedDescriptionKey: "The message is over \(SubagentMessageHub.maxFollowUpBytes) "
+                    + "bytes. Send a shorter instruction."
+            ])
+        }
+        let running = backgroundAgentRuns.values.filter { $0.status == "running" }.count
+        guard running < Self.maxRunningBackgroundAgents else {
+            throw NSError(domain: "TurboSparkTool", code: 41, userInfo: [
+                NSLocalizedDescriptionKey: "Too many background subagents are already running "
+                    + "(\(running) of \(Self.maxRunningBackgroundAgents)). Wait for one to finish or "
+                    + "stop it with stop_agent before continuing another."
+            ])
+        }
+        // The runner's own test seam counts as a model: it is the same port
+        // the production session is wrapped in.
+        guard session != nil || SubagentGenerationPortContext.current != nil else {
+            throw NSError(domain: "TurboSparkTool", code: 26, userInfo: [
+                NSLocalizedDescriptionKey: "No active model session to run the background subagent "
+                    + "on. Load a model first."
+            ])
+        }
+
+        state.status = "running"
+        state.result = nil
+        state.isRecordedComplete = false
+        state.turns = 0
+        state.streamedText = ""
+        state.toolRows = []
+        state.promptHead = headOfPrompt(followUp)
+        // The retained context stays with the record while it runs again; the
+        // new result replaces it on completion.
+        retainedBackgroundChildren[id]?.transcript = nil
+        subagentMessageHub.resetBudget(childID: id)
+        startBackgroundRun(
+            id: id, launch: retained.launch, session: session,
+            taskPrompt: "Follow-up from the coordinator:\n\(followUp)", prior: transcript)
+
+        return """
+            Background subagent '\(id)' (\(state.displayName)) resumed with its earlier context. \
+            It runs in the background with the same tools and permissions as before; you will \
+            receive a <task-notification> when it finishes. Stop it with stop_agent.
+            """
+    }
+
     // MARK: - Notification injection
 
     /// Whether an input may be injected into this chat now. A turn in flight
@@ -347,8 +546,17 @@ extension AppModel {
     /// the generation-turn tail (where `generating` just went false under
     /// the epoch guard) and from completion when the chat looked idle.
     func drainPendingTaskNotificationsIfIdle(chatID: UUID) {
-        guard canInjectTaskNotification(into: chatID),
-            let notes = pendingTaskNotifications[chatID], !notes.isEmpty else { return }
+        guard canInjectTaskNotification(into: chatID) else { return }
+        var notes: [PendingTaskNotification] = []
+        // Mid-task child messages first: they were sent before the child's
+        // own completion notification, which may be parked behind them.
+        let batch = subagentMessageHub.drain(chatID: chatID)
+        if !batch.isEmpty {
+            notes.append(PendingTaskNotification(
+                kind: .taskNotification, note: SubagentMessageHub.carrier(for: batch)))
+        }
+        notes.append(contentsOf: pendingTaskNotifications[chatID] ?? [])
+        guard !notes.isEmpty else { return }
         pendingTaskNotifications[chatID] = nil
         for notification in notes {
             mutateTurnMessages(for: chatID) {
@@ -378,6 +586,8 @@ extension AppModel {
               state.status != "running", state.isRecordedComplete else { return }
         backgroundAgentRuns.removeValue(forKey: id)
         killedBackgroundAgentIDs.remove(id)
+        retainedBackgroundChildren.removeValue(forKey: id)
+        subagentMessageHub.resetBudget(childID: id)
     }
 
     /// Drops the oldest finished background records past the keep count.
@@ -397,6 +607,8 @@ extension AppModel {
         for state in doomed {
             backgroundAgentRuns.removeValue(forKey: state.id)
             killedBackgroundAgentIDs.remove(state.id)
+            retainedBackgroundChildren.removeValue(forKey: state.id)
+            subagentMessageHub.resetBudget(childID: state.id)
         }
     }
 }
