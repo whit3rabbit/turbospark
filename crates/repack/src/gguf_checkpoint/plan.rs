@@ -28,6 +28,10 @@ pub struct Plan<'a> {
     /// `lfm3`'s `rope_freqs.weight`, verified by value before any write
     /// (`rope_freqs::verify_zero_tail`).
     pub rope_freqs: Option<&'a str>,
+    /// Muse Glimmer's synthesized `attn_q_norm` / `attn_k_norm` tensors
+    /// (`(name, is_q)`), verified by value before any write
+    /// (`muse_qk_norms::verify_plan`).
+    pub muse_qk_norms: Vec<(&'a str, bool)>,
 }
 
 /// The block index of a `blk.<n>.` tensor that sits ABOVE the trunk, or
@@ -61,6 +65,7 @@ pub fn classify<'a>(
         routed: BTreeMap::new(),
         ignored: Vec::new(),
         rope_freqs: None,
+        muse_qk_norms: Vec::new(),
     };
     for name in header.tensors.keys() {
         if family == ModelFamily::Qwen4Exp && name == "per_layer_token_embd.weight" {
@@ -113,6 +118,13 @@ pub fn classify<'a>(
             }
             GgufMapping::Ignored { reason } => {
                 plan.ignored.push(format!("{name} ({reason})"));
+            }
+            GgufMapping::MuseQkNorm { is_q } => {
+                plan.muse_qk_norms.push((name.as_str(), is_q));
+                plan.ignored.push(format!(
+                    "{name} (synthesized by the converter; the flow keeps the q scale and the \
+                     identity k norm as constants once the values are verified)"
+                ));
             }
             GgufMapping::ZeroTailRopeFreqs => {
                 plan.rope_freqs = Some(name.as_str());
@@ -463,6 +475,7 @@ mod tests {
             routed,
             ignored: Vec::new(),
             rope_freqs: None,
+            muse_qk_norms: Vec::new(),
         }
     }
 

@@ -38,6 +38,7 @@ mod gpt_oss;
 mod lfm3;
 mod llama;
 mod minimax;
+mod muse;
 mod qwen;
 mod spark;
 
@@ -125,6 +126,12 @@ pub enum GgufMapping {
     /// refuses any value but that exact pattern, because the same tensor
     /// name in Llama 3.1 is learned scaling (`UnsupportedRopeScaling`).
     ZeroTailRopeFreqs,
+    /// Muse Glimmer's synthesized `attn_q_norm` / `attn_k_norm`: a constant
+    /// vector the converter fills with `qk_scale_factor` (Q) or ones (K). The
+    /// flow keeps both as constants, so the tensors are not carried, and not
+    /// accepted by NAME either: the walk checks every element first
+    /// (`gguf_checkpoint::muse_qk_norms`).
+    MuseQkNorm { is_q: bool },
 }
 
 /// Canonical prefix for per-layer tensors.
@@ -181,6 +188,7 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
             ModelFamily::MiniMaxM2 => minimax::map_layer(suffix, layer),
             ModelFamily::Deepseek2 => deepseek2::map_deepseek2_layer(suffix, layer),
             ModelFamily::Lfm3 => lfm3::map_lfm3_layer(suffix, layer),
+            ModelFamily::MuseGlimmer => muse::map_muse_layer(suffix, layer),
             // Neither of the first two is published as a GGUF; an unmapped
             // name is the right answer rather than a neighbour's table,
             // which would map names these families do not have.
@@ -199,7 +207,6 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
             // its MLX safetensors, so unmapped until the whole file has a
             // table.
             ModelFamily::DeepseekV4Flash
-            | ModelFamily::MuseGlimmer
             | ModelFamily::Qwen3Vl
             | ModelFamily::Flint
             | ModelFamily::UnlimitedOcr2 => None,
@@ -270,6 +277,9 @@ pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
         // Read off `LiquidAI/LFM3-1.7B-GGUF`; agrees with the HF
         // `model_type`.
         ModelFamily::Lfm3 => Some("lfm3"),
+        // Read off `ggml-org/Muse-Glimmer-30B-GGUF`: llama.cpp HYPHENATES it,
+        // where the HF `model_type` is `muse_glimmer`.
+        ModelFamily::MuseGlimmer => Some("muse-glimmer"),
         // Neither of the first two is published as a GGUF. `None` is the
         // honest answer: inventing a string here would make
         // `family_for_architecture` claim to recognize a file that does not
@@ -286,7 +296,6 @@ pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
         // `qwen3_vl` is in `qwen4_exp`'s position: GGUFs exist and this
         // port ingests the MLX safetensors instead.
         ModelFamily::DeepseekV4Flash
-        | ModelFamily::MuseGlimmer
         | ModelFamily::Qwen4Exp
         | ModelFamily::Qwen3Vl
         // llama.cpp's port (ggml-org/llama.cpp#30928) is unmerged and the

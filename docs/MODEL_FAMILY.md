@@ -159,12 +159,15 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
     `LiquidAI/LFM3-1.7B` and its MLX conversion. `parse_lfm3_config` and
     `write_lfm3_install_streamed` serve `probe` and `pull`; the 4-bit MLX
     install decodes coherently ([Phase 0](LFM3_PHASE0.md)).
-  - Muse Glimmer and `qwen4_exp` are HF-ONLY in the registry: published GGUF
-    conversions of both now exist (`muse-glimmer` and `qwen4exp`,
-    witnessed off unsloth's conversions, 2026-09-06 -- note the third
-    naming drift, HF underscores where GGUF hyphenates or drops the
-    underscore), but the GGUF table above has no row for either, so
-    `pull`ing those files refuses at the registry until rows land.
+  - `qwen4_exp` was HF-ONLY in the registry; its GGUF row has since landed.
+    Muse Glimmer's GGUF row landed 2026-11-14 (`muse-glimmer`, read off
+    `ggml-org/Muse-Glimmer-30B-GGUF` -- note the third naming drift, HF
+    underscores where GGUF hyphenates). Its GGUF conventions are applied by
+    the walk, not by the name table: the four per-layer norms carry the
+    converter's `+1` (subtracted again, since the flow applies `1 + w`), q/k
+    rows are un-permuted from ggml's interleaved RoPE order, and the
+    converter's synthesized q/k norm tensors are checked by value and
+    dropped ([`gguf_names/muse.rs`](../crates/repack/src/gguf_names/muse.rs)).
   - `"minimax_m2"` -> `ModelFamily::MiniMaxM2` for recognition and foreign-config
     rejection; safetensors intake remains explicitly refused.
   - The `_text` spellings are what the multimodal checkpoints' `text_config`
@@ -235,7 +238,7 @@ specific "recognized, needs X" refusal.
 | **Llama 3.1 / 3.2 / 3.3** (`llama`, dense) | The above plus LEARNED RoPE frequency scaling, which ships as a TENSOR (`rope_freqs.weight`) and has no kernel input here | *Refused at open, by name* | *Planned* | Full Support | Full Support | *dense: whole model resident* |
 | **Llama 4 Scout / Maverick** (`llama4`) | MoE with interleaved chunked attention | *Registered, planned* | *Planned* | Full Support | Full Support | *MoE, keeps the ceiling* |
 | **gpt-oss 20B / 120B** (`gpt-oss`) | MXFP4 experts, attention sinks, per-projection biases, YaRN, clamped SwiGLU | **Full Support** | *Planned* | Full Support | Full Support | *MoE at 12.6 MiB per expert; 20B keeps the ceiling at 4.73 GiB of slot cache, 120B does not stream usefully* |
-| **Muse Glimmer 30B** (`muse_glimmer`, HF only) | Dense GQA, 3-sliding/1-full 2048 window, **NoPE on the full layers**, separate attention output gate, CENTERED per-layer norms against a PLAIN final one, TWO RMS epsilons, logit softcap behind an output multiplier | **Full Support** | *Not supported* | Full Support (`muse-glimmer`, published after this row was written) | Full Support (mlx-vlm) | **~535 MiB RAM** (dense at 8,192 context; see note) |
+| **Muse Glimmer 30B** (`muse_glimmer`; GGUF `muse-glimmer`) | Dense GQA, 3-sliding/1-full 2048 window, **NoPE on the full layers**, separate attention output gate, CENTERED per-layer norms against a PLAIN final one, TWO RMS epsilons, logit softcap behind an output multiplier | **Full Support** (MLX intake). GGUF intake read off the real files 2026-11-14: arch, names, norm and RoPE conventions match the MLX conversion and the official BF16 on bytes; a real Q4_K_M pull and install (17.9 GiB) decodes coherently under the chat template (2026-11-14: a factual answer, correct Python, `17 * 23 = 391`, a clean end-of-turn stop; ~6.3 tok/s, speculation off). **No logit or perplexity parity against llama.cpp or MLX, and no frozen quality or memory row, yet** | *Not supported* | Full Support (`muse-glimmer`) | Full Support (mlx-vlm) | **~535 MiB RAM** (dense at 8,192 context; see note) |
 | **Spark-X2.5-4B** (`spark2_5`) | Dense GQA, the muse window at 512 (3 sliding : 1 full), **per-class RoPE** (full: theta 5e6 over the leading quarter; SWA: theta 1e4 whole head), fused `q_k_v_proj`, **headwise scalar sigmoid output gate**, exact-erf GELU, tied head, 1M trained context | **Full Support** (GGUF intake; HF safetensors intake deferred) | *Not supported* | Full Support (upstream PR 27868, 2026-09-06; this port mirrors its conventions) | Full Support (community MLX conversions) | *dense at 8,192 context; oracle passed. See [measured peak and KV verification](TRUBOQUANT.md#spark-real-install-probe)* |
 | **MiniMax-M2** (`minimax-m2`) | Full GQA, whole-projection Q/K RMS norm, 64-of-128 RoPE, 256 experts top-8, sigmoid router with selection-only bias | *Implemented; low-temperature smoke fails* ([record](MINIMAX_M2_PHASE0.md)) | Not assessed | Implemented | Implemented | Oracle passed at 8192 context / 8 slots; no frozen baseline ([record](MINIMAX_M2_PHASE0.md)) |
 | **LFM3 1.7B** (`lfm3`, GGUF and HF agree) | DENSE hybrid: 13 gated short-conv layers (mask 6, a fixed 6-row tail, no KV), 6 full and 5 sliding (256) GQA layers, zero-tail partial RoPE on the full layers, per-head QK norm, headwise sigmoid output gate, sandwich norms, tied head | **Full Support** (MLX 4-bit and GGUF Q8_0, both catalog `verified` with frozen memory and quality gates. Q8_0 greedy matches llama.cpp token for token. [Phase 0](LFM3_PHASE0.md)) | Not assessed | Full Support | Not supported (no `lfm3` file in mlx-lm, checked 2026-10-27; LiquidAI ships its own MLX code) | *dense: KV-dominated, no streamed-expert advantage* |

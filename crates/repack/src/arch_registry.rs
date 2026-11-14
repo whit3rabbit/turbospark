@@ -156,6 +156,16 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // rotary and is verified by value at repack. Agrees with the HF
     // `model_type` below.
     ("lfm3", ModelFamily::Lfm3),
+    // Read off `ggml-org/Muse-Glimmer-30B-GGUF`'s Q4_K_M header, 2026-11-14:
+    // 731 tensors (14 per layer over 52 layers plus the three globals),
+    // untied head, a 52-entry bool `sliding_window_pattern`, `logit_scale`
+    // and `final_logit_softcapping`, and `tokenizer.ggml.pre` `llama4`. The
+    // architecture string is llama.cpp's, HYPHENATED, where the HF
+    // `model_type` below is `muse_glimmer`: the third naming drift. The
+    // converter bakes `+1` into the four per-layer norms, synthesizes the q/k
+    // norms and permutes q/k rows for ggml's interleaved RoPE; the name
+    // table and `gguf_checkpoint` undo or verify each (`gguf_names/muse.rs`).
+    ("muse-glimmer", ModelFamily::MuseGlimmer),
 ];
 
 /// HF `config.json -> model_type` -> family, for the architectures that run.

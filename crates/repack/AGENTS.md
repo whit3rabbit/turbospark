@@ -66,6 +66,16 @@ Checkpoint intake and `.gturbo` writing.
   both layouts, so `canonicalize_for_family` must not run the qwen35 prefix
   map on it (it would rename a bare `lm_head.` and the later
   `canonicalize_qwen2_header` refuses the file as mixed).
+- Muse Glimmer GGUF (`muse-glimmer`) is installed by VALUE conventions, not a
+  plain name map, and each was read off real bytes (`tests/muse_gguf_network.rs`):
+  the converter adds 1 to every `*layernorm.weight` (the four per-layer norms,
+  not the final one), so the walk subtracts it again; q/k rows are permuted for
+  ggml's interleaved RoPE, undone by the `llama` un-permute; and `attn_q_norm`
+  (the constant `qk_scale_factor`, 3.87) and `attn_k_norm` (ones) are
+  synthesized, so they are verified by value and dropped, never carried. The
+  file's `rope.freq_base` is the SLIDING base: the full layers have NO RoPE
+  (`full_rope_theta` 0), and `sliding_window_pattern` is a bool array (true =
+  slides). A missed `-1` or a missed un-permute gives fluent wrong output.
 - Quantize-on-install for the Qwen MoE (`qwen3_5_moe`) reads the FUSED HF
   experts (`experts.gate_up_proj [E, 2I, H]`, gate = first half, and
   `experts.down_proj`, no `.weight` suffix) and serves them as rank-3

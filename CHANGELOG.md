@@ -14,6 +14,13 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Muse Glimmer GGUF files (`ggml-org`, `unsloth`, `meta-models`) are recognized
+  and walked: the `muse-glimmer` architecture, its tensor names, the
+  converter's baked-in norm `+1`, its interleaved RoPE row order and its
+  synthesized q/k norms are all handled, and a conversion whose q scale,
+  epsilon or output multiplier disagrees with the runtime's refuses instead of
+  installing. Checked against the real GGUF, MLX and official BF16 bytes, and a
+  real Q4_K_M install decodes coherently; no parity or frozen quality row yet.
 - `turbospark-model pull --repo` installs unquantized (BF16, FP16 or F32)
   Qwen 3.5 dense, Qwen 3.6 MoE, dense Gemma 4, Muse Glimmer, Qwen2 and Qwen3-VL checkpoints, such as fine-tunes
   published only in full precision. The weights are quantized to MLX affine

@@ -150,11 +150,32 @@ fn rotary_row_source(i: usize, head_dim: usize) -> usize {
     (i % half) * 2 + i / half
 }
 
-/// True for the two tensors that need it, on the one family that does.
+/// True for the two tensors that need it, on the families that do: `llama`,
+/// and Muse Glimmer, whose converter applies the same permutation
+/// (`conversion/muse_glimmer.py::_unpermute_for_rope`, the inverse of
+/// transformers' `_permute_for_rope`, so ggml gets interleaved pairs).
 fn needs_rotary_unpermute(canonical: &str, arch: &ArchConfig) -> bool {
-    arch.family == ModelFamily::Llama
+    matches!(arch.family, ModelFamily::Llama | ModelFamily::MuseGlimmer)
         && (canonical.ends_with("self_attn.q_proj.weight")
             || canonical.ends_with("self_attn.k_proj.weight"))
+}
+
+/// Muse Glimmer's four per-layer norms. The converter adds 1 to every tensor
+/// named `*layernorm.weight` (`MuseGlimmerModel.norm_shift`), and this
+/// family's flow applies `1 + w` itself, so the install needs the stored
+/// value back. The final norm (`model.norm.weight`) is not shifted by the
+/// converter and is not matched here.
+fn is_muse_centered_norm(canonical: &str, arch: &ArchConfig) -> bool {
+    arch.family == ModelFamily::MuseGlimmer
+        && canonical.starts_with("language_model.model.layers.")
+        && [
+            "input_layernorm",
+            "post_attention_layernorm",
+            "pre_feedforward_layernorm",
+            "post_feedforward_layernorm",
+        ]
+        .iter()
+        .any(|n| canonical.ends_with(&format!(".{n}.weight")))
 }
 
 fn unpermute_rotary_rows(
@@ -198,6 +219,15 @@ pub(crate) fn apply_source_convention(
     cols: usize,
     values: &mut [f32],
 ) -> Result<(), GgufRepackError> {
+    if is_muse_centered_norm(canonical, arch) {
+        // Exact for the published file: the converter's `w + 1` is computed
+        // in f32 on a BF16 weight, and the difference reproduces that weight
+        // (measured against `mlx-community/Muse-Glimmer-30B-4bit`).
+        for v in values.iter_mut() {
+            *v -= 1.0;
+        }
+        return Ok(());
+    }
     let Some(axis) = v_head_axis(name, canonical, arch)? else {
         return Ok(());
     };
@@ -457,6 +487,88 @@ mod tests {
         ];
         for (actual, expected) in values.into_iter().zip(expected) {
             assert!((actual - expected).abs() < 1e-6, "{actual} != {expected}");
+        }
+    }
+    #[test]
+    fn muse_per_layer_norms_lose_the_converters_plus_one_and_the_final_norm_keeps_its_value() {
+        let arch = model_io::known_architecture(ModelFamily::MuseGlimmer);
+        for tail in [
+            "input_layernorm",
+            "post_attention_layernorm",
+            "pre_feedforward_layernorm",
+            "post_feedforward_layernorm",
+        ] {
+            let mut values = [1.0f32, 1.5, 0.25, 4.5];
+            apply_source_convention(
+                "blk.3.some_norm.weight",
+                &format!("language_model.model.layers.3.{tail}.weight"),
+                &arch,
+                1,
+                &mut values,
+            )
+            .unwrap();
+            assert_eq!(values, [0.0, 0.5, -0.75, 3.5], "{tail}");
+        }
+        // The final norm is unshifted in the file and must stay as it is.
+        let mut values = [0.0169f32, 2.0];
+        apply_source_convention(
+            "output_norm.weight",
+            "language_model.model.norm.weight",
+            &arch,
+            1,
+            &mut values,
+        )
+        .unwrap();
+        assert_eq!(values, [0.0169, 2.0]);
+        // Another family's norm of the same name is not touched.
+        let other = model_io::known_architecture(ModelFamily::Gemma4);
+        let mut values = [1.0f32];
+        apply_source_convention(
+            "blk.0.attn_norm.weight",
+            "language_model.model.layers.0.input_layernorm.weight",
+            &other,
+            1,
+            &mut values,
+        )
+        .unwrap();
+        assert_eq!(values, [1.0]);
+    }
+
+    #[test]
+    fn muse_q_and_k_rows_take_the_rotary_unpermute_and_v_does_not() {
+        let arch = model_io::known_architecture(ModelFamily::MuseGlimmer);
+        let head_dim = arch.full_head_dim as usize;
+        let rows = 2 * head_dim;
+        // One byte per row, so a row's value is its source index.
+        let source: Vec<u8> = (0..rows).map(|r| (r % 251) as u8).collect();
+        for (canonical, permuted) in [
+            (
+                "language_model.model.layers.0.self_attn.q_proj.weight",
+                true,
+            ),
+            (
+                "language_model.model.layers.0.self_attn.k_proj.weight",
+                true,
+            ),
+            (
+                "language_model.model.layers.0.self_attn.v_proj.weight",
+                false,
+            ),
+        ] {
+            let mut bytes = source.clone();
+            apply_source_convention_bytes("n", canonical, &arch, (rows, 1), 1, &mut bytes).unwrap();
+            if !permuted {
+                assert_eq!(bytes, source, "{canonical}");
+                continue;
+            }
+            // Install row i reads GGUF row (i % half) * 2 + i / half, per head.
+            let half = head_dim / 2;
+            for head in 0..2 {
+                for i in 0..head_dim {
+                    let want = source[head * head_dim + (i % half) * 2 + i / half];
+                    assert_eq!(bytes[head * head_dim + i], want, "{canonical} row {i}");
+                }
+            }
         }
     }
 }
