@@ -50,6 +50,20 @@ Checkpoint intake and `.gturbo` writing.
   time; `rebalance_install_in_place`, driven by the `flint_rebalance`
   example, migrates an older install in place, and the example refuses a
   second application or an undo of an unshifted install.
+- Quantize-on-install (`quantize_on_install.rs`) rewrites the SOURCE, not a
+  writer: a BF16 checkpoint is served to the walk as the checkpoint
+  `mlx_lm.convert` would publish, so both writers, MTP and vision need no
+  change. Quantize with `compute::quant_mlx`, never `quantize_int4_affine`:
+  MLX snaps the scale to the larger-magnitude edge and the two differ in
+  bytes. Byte parity against the published mlx-community `-bf16`/`-4bit`
+  pair is the gate (`tests/mlx_quantize_parity_network.rs`), not
+  correlation, which the wrong quantizer also passes.
+- An HF transformers export of `qwen3_5` stores trunk RMSNorms zero-centred.
+  mlx-vlm adds 1 to `input_layernorm`, `post_attention_layernorm`, `q_norm`,
+  `k_norm` and `model.norm`, and the runtime expects that. `linear_attn.norm`
+  and `mtp.*` are NOT shifted. Missing the shift, or applying it twice, gives
+  fluent wrong output, so the layout is decided by name prefix and refused
+  when the layernorm mean disagrees with it.
 - Flint expert blob files are numbered by position (layer minus the dense
   lead), not by checkpoint layer, because the lead's dense layers write no
   expert file. `manifest.json` and `packed_experts/layout.json` index them
@@ -60,6 +74,7 @@ Checkpoint intake and `.gturbo` writing.
 ```sh
 cargo test -p turbospark-repack
 cargo test -p turbospark-repack --test gguf_checkpoint_network --release -- --ignored --nocapture
+cargo test -p turbospark-repack --test mlx_quantize_parity_network --release -- --ignored --nocapture
 ```
 
 Run only the network target relevant to the changed intake path. Build the

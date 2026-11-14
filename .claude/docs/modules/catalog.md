@@ -158,7 +158,13 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
    the key's PRESENCE separately, before parsing. This is AGENTS.md Gotcha 39's
    shape one layer out -- a default is a claim about what silence means, and
    this module's question makes silence mean something else. Audit any other
-   parser default this crate reads for the same inversion.
+   parser default this crate reads for the same inversion. Since
+   quantize-on-install, an absent block on a family
+   `repack::quantize_on_install::family_admits_quantize_on_install` admits
+   (`qwen35` only) probes Runnable with a warning, and `stream_mlx` builds the
+   4- or 8-bit `Gemma4Quant` explicitly from `InstallPlan::quantize_bits`
+   rather than from the parser's default. Every other family keeps the
+   refusal.
 
 4. **A later gate must not overwrite an earlier refusal.** `ProbeReport::refuse`
    keeps the FIRST one, because the gates run cheapest-first which is also

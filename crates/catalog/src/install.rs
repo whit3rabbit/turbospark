@@ -113,6 +113,12 @@ pub struct InstallPlan {
     /// every other install kind, and for a vision-only one whose index
     /// already lists a matching shard.
     pub vision_file: Option<String>,
+    /// Quantize-on-install width for an UNQUANTIZED checkpoint (4 or 8, at
+    /// group 64), from `pull --quantize`. `None` means 4 when the checkpoint
+    /// needs quantizing and nothing otherwise; `Some` on an already-quantized
+    /// checkpoint is refused rather than ignored, since it asks for
+    /// something the walk will not do.
+    pub quantize_bits: Option<u32>,
 }
 
 impl InstallPlan {
@@ -136,6 +142,7 @@ impl InstallPlan {
             reuse_trunk_from: None,
             vision_only: entry.kind == EntryKind::VisionTower,
             vision_file: None,
+            quantize_bits: None,
         }
     }
 
@@ -164,6 +171,7 @@ impl InstallPlan {
             mtp: None,
             vision_only: false,
             vision_file: None,
+            quantize_bits: None,
         }
     }
 
@@ -188,6 +196,7 @@ impl InstallPlan {
             reuse_trunk_from: None,
             vision_only: true,
             vision_file,
+            quantize_bits: None,
         }
     }
 }

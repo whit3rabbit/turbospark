@@ -34,6 +34,7 @@ mod install_verifier;
 mod lfm3_config;
 mod manifest_peek;
 mod museglimmer_config;
+pub mod quantize_on_install;
 mod qwen2_config;
 mod qwen36_config;
 mod qwen3vl_config;
