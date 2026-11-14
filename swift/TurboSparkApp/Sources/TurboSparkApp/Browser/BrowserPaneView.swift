@@ -471,7 +471,18 @@ public struct BrowserPaneView: View {
                 // prompt carries over to the next queued dialog's origin.
                 .id(request.id)
                 .zIndex(4)
+            } else if let prompt = engine.pendingSitePermissions.first {
+                SitePermissionBubbleView(prompt: prompt) { answer in
+                    engine.sitePermissions.answer(promptID: prompt.id, answer)
+                }
+                // Fresh state per question, same as dialogs above.
+                .id(prompt.id)
+                .zIndex(4)
             }
+        }
+        // A bubble belongs to the tab being viewed. Switching away denies it.
+        .onChange(of: model.selectedTabID) { _, tabID in
+            engine.sitePermissions.cancelPromptsOutside(activeTabID: tabID)
         }
     }
 

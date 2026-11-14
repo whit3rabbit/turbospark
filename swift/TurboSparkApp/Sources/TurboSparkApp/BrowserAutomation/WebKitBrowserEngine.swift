@@ -263,8 +263,13 @@ private final class ManagedBrowserTab {
 public final class WebKitBrowserEngine: NSObject, ObservableObject {
     @Published public private(set) var tabStates: [BrowserTabID: BrowserEngineTabState] = [:]
     @Published public private(set) var pendingDialogs: [BrowserDialogRequest] = []
+    /// Camera, microphone and location questions awaiting the user, in a
+    /// user-owned tab. Never populated for an agent-owned tab.
+    @Published public private(set) var pendingSitePermissions: [SitePermissionPrompt] = []
 
     public let tabStore: BrowserTabStore
+    /// Default-deny page permission governance (ZP-14).
+    public let sitePermissions: SitePermissionPolicy
     public var onDialogResolved: BrowserDialogResolutionHandler?
 
     private let authorizeNavigation: BrowserNavigationAuthorizer
@@ -284,9 +289,17 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
         dialogPolicyProvider: @escaping BrowserDialogPolicyProvider = {
             MacAppSettingsFileStore.load().browser.dialogPolicy
         },
-        dialogDecisionTimeout: TimeInterval = 60
+        dialogDecisionTimeout: TimeInterval = 60,
+        sitePermissionStore: SitePermissionStore? = nil,
+        sitePermissionScheduler: SitePermissionScheduler? = nil
     ) {
         self.tabStore = tabStore
+        self.sitePermissions = SitePermissionPolicy(
+            store: sitePermissionStore ?? SitePermissionStore.shared,
+            ownerProvider: { [tabStore] in tabStore.tab(id: $0)?.owner },
+            activeTabProvider: { [tabStore] in tabStore.activeTabID },
+            scheduler: sitePermissionScheduler
+        )
         self.authorizeNavigation = authorizeNavigation
         self.onUserTakeover = onUserTakeover
         self.dialogPolicyProvider = dialogPolicyProvider
@@ -296,6 +309,9 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
         )
         self.screenshotSnapshotter = Self.captureWebViewSnapshot
         super.init()
+        sitePermissions.onPendingPromptsChanged = { [weak self] prompts in
+            self?.pendingSitePermissions = prompts
+        }
         // Warm the compile so the first agent navigation rarely waits on it.
         AgentBrowserNetworkRules.shared.withRules { _ in }
 
@@ -391,6 +407,7 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
 
         try tabStore.startNavigation(in: tabID, to: destination.url.absoluteString)
         managedTab.screenshotRevision &+= 1
+        sitePermissions.cancelPrompts(for: tabID, reason: .navigation)
         managedTab.pendingResponseOrigins.removeAll()
         managedTab.authorizedFrameOrigins = [destination.origin.canonicalString]
         managedTab.explicitNavigationURLs[destination.url.absoluteString, default: 0] += 1
@@ -450,6 +467,10 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
         dismissPendingDialogs(for: tabID, resolution: .userTakeover)
         guard tab.owner == .agent else { return }
 
+        // Ownership is about to change: nothing pending may be answered
+        // against the old owner.
+        sitePermissions.cancelPrompts(for: tabID, reason: .ownershipChanged)
+
         cancelPendingPolicyGates(for: tabID)
         try? tabStore.transferOwnershipToUser(of: tabID)
         // User browsing is outside the agent policy, so the private-network
@@ -465,6 +486,7 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
         guard let managedTab = managedTabs[tabID] else { return }
         managedTab.screenshotRevision &+= 1
         dismissPendingDialogs(for: tabID, resolution: .cancelled)
+        sitePermissions.cancelPrompts(for: tabID, reason: .navigation)
         managedTab.webView.stopLoading()
         let message = "Navigation was stopped."
         if tabStore.tab(id: tabID)?.loadState == .loading {
@@ -482,6 +504,7 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
             throw BrowserTabStoreError.tabNotFound(tabID)
         }
         dismissPendingDialogs(for: tabID, resolution: .tabClosed)
+        sitePermissions.cancelPrompts(for: tabID, reason: .tabClosed)
         cancelPendingPolicyGates(for: tabID)
         managedTab.snapshotService?.invalidate()
         managedTab.observations.removeAll()
@@ -814,6 +837,8 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
 
     public func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         guard let tabID = tabID(for: webView) else { return }
+        // A committed navigation replaces the page the bubble was raised for.
+        sitePermissions.cancelPrompts(for: tabID, reason: .navigation)
         if let managedTab = managedTabs[tabID], let generation = managedTab.snapshotGeneration {
             managedTab.snapshotService?.navigationCommitted(generation: generation)
         }
@@ -933,6 +958,7 @@ public final class WebKitBrowserEngine: NSObject, ObservableObject {
         guard let tabID = tabID(for: webView), let managedTab = managedTabs[tabID] else { return }
         managedTab.screenshotRevision &+= 1
         dismissPendingDialogs(for: tabID, resolution: .engineFailure)
+        sitePermissions.cancelPrompts(for: tabID, reason: .processTerminated)
         cancelPendingPolicyGates(for: tabID)
         managedTab.pendingResponseOrigins.removeAll()
         managedTab.authorizedFrameOrigins.removeAll()
@@ -1491,4 +1517,83 @@ extension WebKitBrowserEngine: WKNavigationDelegate {
 
 extension WebKitBrowserEngine: WKUIDelegate {
     // The UI delegate conformance is explicit so popup routing stays at the engine boundary.
+
+    // Page permissions (ZP-14). Only the classes WKUIDelegate can intercept are
+    // here; the rest have no hook (see `SitePermissionClassifier`). Every path
+    // answers `.grant` or `.deny`, never `.prompt`, so WebKit's own prompt and
+    // the system TCC prompt are reached only after an explicit app-level allow.
+
+    public func webView(
+        _ webView: WKWebView,
+        requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        type: WKMediaCaptureType,
+        decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
+    ) {
+        routeSitePermission(
+            webView: webView,
+            origin: origin,
+            classes: SitePermissionClassifier.classes(forCapture: type),
+            decisionHandler: decisionHandler
+        )
+    }
+
+    /// macOS 27 only. On macOS 14 through 26 the app has no usage string for
+    /// location, so WebKit fails the request without a prompt.
+    @available(macOS 27.0, *)
+    @objc(webView:requestGeolocationPermissionForOrigin:initiatedByFrame:decisionHandler:)
+    public func webView(
+        _ webView: WKWebView,
+        requestGeolocationPermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
+    ) {
+        routeSitePermission(
+            webView: webView,
+            origin: origin,
+            classes: SitePermissionClassifier.geolocation,
+            decisionHandler: decisionHandler
+        )
+    }
+
+    private func routeSitePermission(
+        webView: WKWebView,
+        origin: WKSecurityOrigin,
+        classes: [SitePermissionClass],
+        decisionHandler: @escaping @MainActor @Sendable (WKPermissionDecision) -> Void
+    ) {
+        let decision = SingleShotPermissionDecision { allow in
+            Self.deliverOnMain { decisionHandler(allow ? .grant : .deny) }
+        }
+        guard let tabID = tabID(for: webView), managedTabs[tabID] != nil else {
+            decision.resolve(false)
+            return
+        }
+        handleSitePermissionRequest(
+            SitePermissionRequest(
+                tabID: tabID,
+                requestingOrigin: SitePermissionClassifier.origin(
+                    scheme: origin.protocol, host: origin.host, port: origin.port),
+                topLevelOrigin: webView.url.flatMap(BrowserOrigin.init(url:)),
+                classes: classes
+            ),
+            decision: decision
+        )
+    }
+
+    /// The seam tests drive without WebKit objects.
+    func handleSitePermissionRequest(
+        _ request: SitePermissionRequest,
+        decision: SingleShotPermissionDecision
+    ) {
+        sitePermissions.decide(request, decision: decision)
+    }
+
+    private nonisolated static func deliverOnMain(_ work: @escaping @MainActor @Sendable () -> Void) {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated(work)
+        } else {
+            Task { @MainActor in work() }
+        }
+    }
 }
