@@ -188,7 +188,7 @@ struct OutputPaneView: View {
     }
 
     private var transcript: some View {
-        ChatTranscriptView(model: model)
+        ChatTranscriptView(model: model, chatID: model.selectedChatID)
             .id(model.selectedChatID)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }

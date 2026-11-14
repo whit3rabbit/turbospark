@@ -255,12 +255,32 @@ removed ambiguity (see `docs/egm-reviews/opencode2-parity/OC-04/`).
   New Tab"), `Localizable.xcstrings` (8 keys, 21 languages).
 * Tests: `SessionTabStoreTests.swift`.
 
+### Follow-up (2026-11-14): scroll memory and sidebar Recently Closed
+
+* **Per-tab scroll memory**, in memory only (nothing on disk, as the draft
+  allows). `State/TranscriptScrollMemory.swift` holds one position per chat
+  that has a tab: `.followLatest` when the reader was pinned to the live end
+  (never an offset, so a returning reader lands at the live end even if the
+  transcript grew), otherwise the viewport's top offset. `ChatTranscriptView`
+  (keyed per chat, so it is rebuilt on a tab switch) records on disappear
+  and restores on appear. The restore is an unanimated clip-view scroll, so
+  Reduce Motion needs nothing special; it unpins the follower, retries for
+  up to about a second while lazy content is still short, and stops on the
+  reader's own scroll or an OC-09 reveal. A pending reveal for that chat
+  wins over a remembered position. A transcript torn down before it settled
+  records nothing. Only chats with a tab are remembered, and only while tabs
+  are active. ZP-23 lane and park rules are untouched.
+* **Recently Closed in the sidebar chat row context menu**, reusing the
+  existing string and stack.
+* Tests: `TranscriptScrollMemoryTests.swift` (pure rules, AppModel gate,
+  restore and cancel on a real `NSScrollView`).
+* Not verified: the restore in the running app (the accuracy of the offset
+  over lazily sized rows, with images or collapsed turns whose height
+  changes while away, was only exercised on uniform rows), and the sidebar
+  menu by eye.
+
 ### Deferred
 
-* Per-tab scroll memory (review M9: no storage, not restored). The draft
-  and composer text persist; scroll position does not.
-* Recently Closed in the sidebar context menu: it is in the Chat menu bar
-  menu and the strip's "All Tabs" menu; the sidebar copy is not built.
 * Panes excluding the selected tab's chat, and any per-tab pane layout.
 * Simultaneous approvals, background prompt submission and real parallel
   decode (ZP-23 partial): tabs add no decode lane; one turn runs at a time.

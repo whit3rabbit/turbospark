@@ -646,6 +646,9 @@ public final class AppModel: ObservableObject {
     /// True while a tab command creates or moves a chat itself, so the
     /// selection follower does not retarget the current tab (OC-04).
     var sessionTabFollowSuppressed = false
+    /// OC-04: per-tab transcript scroll positions. Memory only; it gates
+    /// nothing a view observes, so it is not published.
+    var transcriptScroll = TranscriptScrollMemory()
     /// Working tree model for git status and diffs when a project is selected.
     @Published public var worktree: WorktreeModel? = nil {
         didSet {

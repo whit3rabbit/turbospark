@@ -61,6 +61,29 @@ extension AppModel {
         if listChanged { persistSessionTabs() }
     }
 
+    // MARK: - Per-tab transcript scroll (memory only)
+
+    /// A transcript left `chatID` at this position. Only chats with a tab are
+    /// remembered, and only while tabs are active.
+    func recordTranscriptScroll(chatID: UUID, pinned: Bool, offset: CGFloat?) {
+        guard sessionTabsActive else { return }
+        transcriptScroll.record(
+            chatID: chatID, pinned: pinned, offset: offset, keeping: Set(sessionTabs.tabs))
+    }
+
+    /// What a transcript that just appeared for `chatID` should do. nil: the
+    /// default (follow the latest). A pending tool-card reveal for this chat
+    /// outranks a remembered position.
+    func transcriptScrollRestore(for chatID: UUID) -> TranscriptScrollMemory.Position? {
+        guard sessionTabsActive, sessionTabs.tabs.contains(chatID) else { return nil }
+        let revealPending = toolCardReveal.map { reveal in
+            isToolCardRevealPending(reveal)
+                && chats.first(where: { $0.id == chatID })?.messages
+                    .contains(where: { $0.id == reveal.messageID }) == true
+        } ?? false
+        return transcriptScroll.restore(for: chatID, revealPending: revealPending)
+    }
+
     // MARK: - Following the app's own selection
 
     /// Called from `selectedChatID.didSet`.

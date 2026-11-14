@@ -4,6 +4,14 @@ import SwiftUI
 @MainActor
 struct ChatTranscriptView: View {
     @ObservedObject var model: AppModel
+    /// The chat this view was built for. The parent keys the view by chat, so
+    /// on teardown this is still the chat being left, not the new selection.
+    let chatID: UUID
+
+    init(model: AppModel, chatID: UUID? = nil) {
+        self.model = model
+        self.chatID = chatID ?? model.selectedChatID
+    }
     /// Whether the reader is at the bottom. Streaming output scrolls the
     /// transcript only while pinned, so scrolling up to reread is not undone
     /// by the next token. The parent keys this view by chat, so a chat switch
@@ -172,7 +180,21 @@ struct ChatTranscriptView: View {
                 }
             }
             .onAppear {
-                followBottom(proxy, force: true)
+                // OC-04: a tab returning to a remembered spot lands there. No
+                // memory, or a pending reveal, keeps the old behavior.
+                switch model.transcriptScrollRestore(for: chatID) {
+                case .offset(let offset):
+                    Task { @MainActor in await follower.restore(offset: offset) }
+                case .followLatest, nil:
+                    followBottom(proxy, force: true)
+                    follower.markSettled()
+                }
+            }
+            .onDisappear {
+                if let snapshot = follower.memorySnapshot {
+                    model.recordTranscriptScroll(
+                        chatID: chatID, pinned: snapshot.pinned, offset: snapshot.offset)
+                }
             }
             // Turn navigation (qwen-code parity): the menu commands and
             // chords bump a token; this is where the jump actually lands.
@@ -187,6 +209,7 @@ struct ChatTranscriptView: View {
             // yield once before asking the proxy to scroll.
             .onChange(of: model.toolCardReveal) { _, reveal in
                 guard let reveal else { return }
+                follower.cancelRestore()
                 Task { @MainActor in
                     await Task.yield()
                     TSMotion.animate(TSMotion.pane) {

@@ -108,6 +108,18 @@ struct ChatSidebarChatRowView: View {
                 model.openChatInSessionTab(id: chat.id)
             } label: { Text("Open in New Tab", bundle: .module) }
             .disabled(chat.isGhost || chat.isArchived)
+            // OC-04: the same Recently Closed stack the Chat menu and the
+            // strip's All Tabs menu show. Disabled while it is empty.
+            Menu {
+                ForEach(model.sessionTabs.closed.reversed(), id: \.chatID) { entry in
+                    Button {
+                        model.reopenClosedSessionTab(chatID: entry.chatID)
+                    } label: {
+                        Text(verbatim: model.sessionTabTitle(for: entry.chatID))
+                    }
+                }
+            } label: { Text("Recently Closed", bundle: .module) }
+            .disabled(model.sessionTabs.closed.isEmpty)
             Button(role: .destructive) {
                 chatPendingDeletion = chat
             } label: { Text("Delete", bundle: .module) }
