@@ -2336,6 +2336,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "turbospark-acp"
+version = "0.8.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "turbospark-audio"
 version = "0.8.0"
 dependencies = [

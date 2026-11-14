@@ -8,7 +8,7 @@ and
 [session adapter](https://github.com/anomalyco/opencode/blob/dev/packages/cli/src/acp/sessions.ts).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Partial (protocol core implemented; real-engine wiring and editor interop pending, see Implementation Record)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -178,6 +178,132 @@ editor transcript in the app.
   then from Zed with a small project, confirming streaming, permission
   forwarding, and abort. Per the repo's verification rules, the manual
   ACP run is a real-engine check on this Mac, not a release gate.
+
+--------------------------------------------------------------------------------
+
+## Implementation Record
+
+Implemented 2026-11-14 as the new crate `crates/acp` (package
+`turbospark-acp`, lib `turbospark_acp`, binary `turbospark-acp`). **Status
+Partial**: the stdio JSON-RPC core, session registry, file tools, permission
+gate and cancellation are done and tested against a fake engine and a real
+child process. Real-model generation is not wired, and no editor (Zed or any
+other ACP client) has been run against the adapter. Nothing here is an editor
+interop claim.
+
+### Open Question resolutions
+
+* **Where the adapter lives**: (a), a new Rust crate beside `crates/server`,
+  per the draft's lean. It depends only on `serde` and `serde_json`; it does
+  not link `turbospark-server`, `runtime` or any GPU crate, so it builds and
+  tests off-device. The EGM review's B1 (the Rust crate cannot reuse
+  `AppToolPermissionEngine`) stands and is accepted: this is a second, narrower
+  agent surface, not the Swift loop. "Same risk classification" therefore means
+  this ladder: reads (`read_file`, `list_dir`) run unprompted inside the
+  workspace root; writes (`write_file`, `edit_file`) require editor approval;
+  nothing else exists. It is not the app's full ladder and does not read the
+  app's stored Always-allow decisions.
+* **Permission default without client support**: deny-with-message (lean).
+  ACP has no capability flag for `session/request_permission` (every client is
+  expected to answer it), so "unsupported" is detected by outcome, not at
+  `initialize`: an error reply (for example method not found), silence past
+  the timeout (60 s, `AcpConfig::permission_timeout`), a `cancelled` outcome,
+  an option id the adapter never offered, a malformed reply, a cancelled turn,
+  or a closed connection are all refusals. There is no allowlist and no
+  auto-approve flag.
+* **Tool surface in v1**: file tools only (read, list, write, edit), per the
+  lean. No shell.
+
+### Decisions on the review's findings
+
+* **Protocol subset (M4)**: ACP protocol version 1. Methods: `initialize`,
+  `session/new`, `session/prompt`, `session/cancel`, `session/update`,
+  `session/request_permission`, `fs/read_text_file`, `fs/write_text_file`
+  (table in `protocol.rs`). "session/request elicitation" from the Goals is
+  not an ACP method and is not implemented. `authenticate` is not offered
+  (no login). Prompt content: `text` and `resource_link` only; the
+  `initialize` result advertises no image, audio or embedded-context support.
+  The fixtures are hand-written from the spec, not captured from an editor.
+* **File access path (M4)**: when the client advertises
+  `fs.readTextFile` / `fs.writeTextFile`, reads and writes go through the
+  editor (unsaved buffers win); otherwise the disk. An editor failure fails the
+  tool, it never falls back to disk. `list_dir` is always disk, inside the root.
+* **Workspace root (M2)**: must be an existing absolute directory, not `/`,
+  not the home directory itself, and inside `--allow-root` when given. Paths
+  are normalized lexically, then the longest existing prefix is canonicalized
+  (symlinks, `/var` vs `/private/var`) and the result must stay under the
+  root. Escapes are refused before any permission prompt. A symlink swap
+  between check and use is not closed (documented, same-user threat model).
+* **Persistence (M5)**: records are written (JSON, atomic tmp+rename, 0600 in a
+  0700 directory, `$TURBOSPARK_STATE_DIR/acp-sessions`, else
+  `$TURBOSPARK_HOME/acp-sessions`, else `~/.turbospark/acp-sessions`) but not
+  read back: `session/load` is not advertised, so the `AppJSONStore`
+  quarantine rule has nothing to apply to yet. `--no-persist` keeps sessions in
+  memory only. Separate from the app's chats by design; `docs/ACP.md` says so.
+* **Concurrency and stdio (M3, M9)**: one engine per adapter process; two
+  editor windows are two processes. stdout is protocol only, diagnostics go to
+  stderr and never include bodies. stdin EOF cancels running turns and the
+  process exits. Frames are capped at 1 MiB (oversized lines are discarded and
+  answered with an error, the stream stays aligned); `read_file` output is
+  capped at 256 KiB, edits at 1 MiB files, listings at 1000 entries, 64 tool
+  calls per turn, 32 sessions. The "adapter adds serialization only" latency
+  claim was not measured (no engine is wired).
+* **Cargo**: `publish = false` for now (the crate is not in
+  `publish-crates.yml`); MSRV 1.82 and edition 2021 inherited from the
+  workspace.
+
+### What changed
+
+* `crates/acp/` (new): `framing.rs` (bounded line reader), `protocol.rs`
+  (JSON-RPC envelope and ACP subset), `paths.rs` (root validation and
+  containment), `tools.rs` (file tools and risk classification), `engine.rs`
+  (the `Engine` / `TurnHost` seam and `UnwiredEngine`), `sessions.rs`
+  (registry state and records), `server.rs` (dispatch, permission forwarding,
+  cancellation, editor fs bridge), `main.rs` (binary), tests under
+  `crates/acp/tests/`.
+* Root `Cargo.toml`: member line; `Cargo.lock`: the `turbospark-acp` entry only.
+* `docs/ACP.md` (new).
+
+### Verification run
+
+* `cargo test -p turbospark-acp`: 28 unit, 2 process (real child over pipes:
+  protocol-only stdout, clean EOF exit, bad flag exits 2), 15 permission/path,
+  13 protocol/session tests, repeated three times without flakes.
+  `cargo clippy -p turbospark-acp --tests` clean. Built with a private
+  `CARGO_TARGET_DIR` because other sessions held the shared target lock.
+* Mutation checks (each applied, test failure observed, then restored):
+  timeout treated as approval fails the headless-client test; an unrecognized
+  option id treated as approval fails the non-approval matrix; containment
+  check removed fails the escape tests; frame bound removed fails the
+  oversized-frame tests; `cancelled` mapping removed fails the cancel test;
+  shutdown not cancelling or closing fails the EOF test. One mutation
+  survived and is equivalent: removing only the per-session cancel in
+  `begin_shutdown` changes nothing because the `closed` flag already stops
+  turns and pending requests.
+* A test-harness race found and fixed along the way: the cancel flag is reset
+  on the reader thread at prompt dispatch, not in the worker, so a cancel
+  arriving right behind a prompt is not erased.
+
+### Remaining (why this is Partial)
+
+1. **Real-engine wiring**: an `Engine` implementation over the runtime. It
+   needs the chat template, the tool-call format and parser for local models
+   (the server's `guardrails` and `ChatModel` are the existing pieces), and a
+   decision on whether it lives in `crates/acp` behind a macOS feature or in
+   `crates/cli` (`turbospark acp`, draft item 6, not done). Until then the
+   binary answers prompts with an explicit error.
+2. **Editor interop**: drive the adapter from a scripted client of an
+   independent ACP implementation, then from Zed (streaming, permission
+   forwarding, abort). Not run.
+3. **Latency and memory**: first-token overhead and the one-engine-per-process
+   policy are unmeasured; the refusal-when-the-app-holds-the-model policy from
+   review item M3 is not implemented.
+4. **CI and release (workflow changes, not made here)**: add `-p turbospark-acp`
+   to the explicit crate lists in `.github/workflows/ci.yml` (around line 115),
+   and to `publish-crates.yml` then flip `publish = false`.
+5. **CHANGELOG entry** (draft item 8): not written per the task's instruction.
+6. **`session/load`** and a record loader with quarantine, if resumption is
+   wanted.
 
 --------------------------------------------------------------------------------
 
