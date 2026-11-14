@@ -29,6 +29,35 @@ cannot drift between the three.
 | `Cmd+-` | Make Text Smaller | Steps the text size down toward Small (Small, Default, Large, Extra Large). |
 | `Cmd+0` | Default Text Size | Resets text size to Default and the base sizes to the factory 14px UI and 12px code. |
 
+### Customizing shortcuts (OC-01)
+
+Settings > Keyboard Shortcuts lets you rebind any command a menu item carries.
+Select the shortcut button on a row (Return or Space on the focused button
+works), press the new keys, and the menu item, the pane and the Help sheet
+show it immediately. Escape cancels a recording. The restore button on a
+changed row brings back its default, and Reset All Shortcuts (confirmed)
+clears every change.
+
+- A chord needs Command or Control. Supported keys are printable characters,
+  Space, Return, Tab, Delete and the arrows. Function keys are not supported.
+- A chord is refused, with the holder named, when another command or another
+  command's hidden alternate already uses it. Restoring a default is refused
+  the same way when someone has since taken that chord.
+- Text editing chords and well-known system chords (quit, close, hide,
+  minimize, settings, app switcher, Spotlight, screenshots, Mission Control
+  arrows) are refused. The list is static: a system shortcut the user has
+  rebound in System Settings cannot be seen, and a chord it takes never
+  reaches the menu.
+- Rows marked Fixed (Generate Response, Cancel Generation, Add Files or
+  Photos, Start Recording) share their chord with a button in the window and
+  cannot be changed. The alternate chords ("also ...") are mirrors of the menu
+  item and stay fixed.
+- A chord is stored as a character plus modifiers, so it follows the keyboard
+  layout it was recorded on; record it again after switching layouts.
+- Overrides live in `keybind_overrides.json` under the app's storage root. An
+  unreadable file is quarantined (`keybind_overrides.corrupt-...json`) and the
+  defaults apply, with a toast.
+
 ### Conversations (Chat Menu)
 
 | Shortcut | Action | Description |

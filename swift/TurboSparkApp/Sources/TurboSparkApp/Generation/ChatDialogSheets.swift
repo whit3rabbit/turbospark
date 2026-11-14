@@ -124,12 +124,14 @@ struct SessionStatsSheet: View {
 }
 
 /// The `/help` sheet: every slash command the composer offers plus the
-/// fixed keyboard shortcuts. Presented from `OutputPaneView` while
+/// keyboard shortcuts in effect. Presented from `OutputPaneView` while
 /// `model.showHelpSheet` is true.
 struct HelpSheetView: View {
     @Environment(\.appTheme) private var theme
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var model: AppModel
+    // OC-01: the chords listed are the resolved ones, not the defaults.
+    @ObservedObject private var keybinds = KeybindOverrideStore.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -163,7 +165,7 @@ struct HelpSheetView: View {
                         }
                     }
                     helpSection("Keyboard shortcuts", bundle: .module) {
-                        ForEach(KeyboardShortcutCatalog.sections) { section in
+                        ForEach(KeyboardShortcutCatalog.sections(using: keybinds.map)) { section in
                             // Section titles and row labels are catalog keys
                             // (`KeyboardShortcutCatalog`); the chords are glyphs.
                             Text(LocalizedStringKey(section.title), bundle: .module)
