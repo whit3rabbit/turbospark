@@ -456,6 +456,18 @@ public final class AppModel: ObservableObject {
     }
     /// Whether the browser side pane currently owns the shared right column.
     @Published public var browserPaneIsOpen = false
+    /// Whether the whiteboard side pane currently owns the shared right
+    /// column (ZP-10). Mutually exclusive with `browserPaneIsOpen`.
+    @Published public var whiteboardPaneIsOpen = false
+    /// Built on first use so a model that never opens a board never reads or
+    /// creates the whiteboard folder.
+    private(set) var whiteboardStoreIfCreated: WhiteboardStore?
+    var whiteboardStore: WhiteboardStore {
+        if let whiteboardStoreIfCreated { return whiteboardStoreIfCreated }
+        let store = WhiteboardStore()
+        whiteboardStoreIfCreated = store
+        return store
+    }
     public lazy var browserAutomationCoordinator = AppBrowserAutomationCoordinator(
         authorizeNavigation: { [weak self] request in
             guard let self else { return .deny }

@@ -666,6 +666,7 @@ extension AppModel {
         prepareModelDownloadsForShutdown()
         imageSession?.cancel()
         audioWorkspace.shutdown()
+        flushWhiteboardsForShutdown()
         imageSession = nil
         imageSessionPath = nil
         // Background work is NOT reachable by `cancel()`: shells are

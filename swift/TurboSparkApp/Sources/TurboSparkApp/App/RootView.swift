@@ -182,6 +182,8 @@ struct RootView: View {
             // none of them does.
             if rightColumnClaimant.isBrowserPane {
                 model.setBrowserPaneOpen(false)
+            } else if rightColumnClaimant.isWhiteboardPane {
+                model.setWhiteboardPaneOpen(false)
             } else if rightColumnClaimant.isPreviewPane {
                 model.dismissArtifact()
                 model.dismissHTMLPreview()
@@ -226,7 +228,10 @@ struct RootView: View {
             if !enabled { model.setBrowserPaneOpen(false) }
         }
         .onChange(of: model.activeSection) { _, section in
-            if section.hidesChatPanes { model.setBrowserPaneOpen(false) }
+            if section.hidesChatPanes {
+                model.setBrowserPaneOpen(false)
+                model.setWhiteboardPaneOpen(false)
+            }
         }
         // Theme the complete scene once. Applying this to an overlay also
         // paints its empty space, hiding every pane underneath it.
@@ -237,6 +242,11 @@ struct RootView: View {
         guard !model.activeSection.hidesChatPanes else { return }
         if rightColumnClaimant.isBrowserPane {
             model.setBrowserPaneOpen(false)
+            isInspectorVisible = true
+            return
+        }
+        if rightColumnClaimant.isWhiteboardPane {
+            model.setWhiteboardPaneOpen(false)
             isInspectorVisible = true
             return
         }
@@ -286,7 +296,8 @@ struct RootView: View {
             previewAttachmentID: model.previewAttachmentID,
             isInspectorVisible: isInspectorVisible,
             showProjectSummary: hasProjectSummary && canPinSummary && isSummaryVisible,
-            showBrowserPane: model.browserSettings.enabled && model.browserPaneIsOpen)
+            showBrowserPane: model.browserSettings.enabled && model.browserPaneIsOpen,
+            showWhiteboardPane: model.whiteboardPaneIsOpen)
     }
 
     @ViewBuilder
@@ -328,6 +339,11 @@ struct RootView: View {
                 verticalHairline
                 rightPane(width: AppChromeLayout.browserPanelWidth) {
                     BrowserPaneView(engine: model.browserAutomationCoordinator.engine, appModel: model)
+                }
+            case .whiteboard:
+                verticalHairline
+                rightPane(width: AppChromeLayout.whiteboardPanelWidth) {
+                    WhiteboardPaneView(model: model)
                 }
             case .inspector:
                 verticalHairline

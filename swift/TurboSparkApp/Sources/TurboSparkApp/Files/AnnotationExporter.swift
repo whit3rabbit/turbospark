@@ -174,12 +174,17 @@ enum AnnotationExporter {
 
     /// The flattened image as PNG data.
     static func flatten(_ base: CGImage, annotations: [ImageAnnotation]) throws -> Data {
-        let rendered = try render(base, annotations: annotations)
+        try pngData(from: render(base, annotations: annotations))
+    }
+
+    /// PNG-encodes a finished bitmap. Shared with the whiteboard export
+    /// (ZP-10) so both produce PNGs the same way.
+    static func pngData(from image: CGImage) throws -> Data {
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
             data, UTType.png.identifier as CFString, 1, nil)
         else { throw ExportError.encodeFailed }
-        CGImageDestinationAddImage(destination, rendered, nil)
+        CGImageDestinationAddImage(destination, image, nil)
         guard CGImageDestinationFinalize(destination) else { throw ExportError.encodeFailed }
         return data as Data
     }
@@ -193,33 +198,46 @@ enum AnnotationExporter {
 }
 
 extension AppModel {
-    /// Stores a flattened PNG in the managed asset store and attaches it to the
-    /// prompt, the same way an imported picture is carried (by asset
-    /// reference, empty extracted text).
-    func attachAnnotatedImage(_ png: Data, sourceName: String) {
+    /// Stores a PNG in the managed asset store and appends it to the focused
+    /// chat's draft as an image attachment (by asset reference, empty
+    /// extracted text), the same way an imported picture is carried. Returns
+    /// whether it attached; a failure has already toasted.
+    @discardableResult
+    func attachPNGToPrompt(
+        _ png: Data, fileName: String, failureMessage: (String) -> String
+    ) -> Bool {
         // `addPromptAttachment` refuses mid-turn without throwing, so check
         // first rather than toast a success that did not happen.
         guard !generating, !submitting else {
             showToast(AppStrings.localized("Cannot attach files while generating."), style: .warning)
-            return
+            return false
         }
-        let name = AnnotationExporter.annotatedFileName(from: sourceName)
         do {
             let asset = try ManagedAssetStore.shared.store(
-                data: png, fileName: name, mimeType: "image/png")
+                data: png, fileName: fileName, mimeType: "image/png")
             let attachment = AppPromptAttachment(
-                fileName: name,
+                fileName: fileName,
                 formatLabel: "Image",
                 extractedText: "",
                 wasTruncatedDuringExtraction: false,
                 sourcePath: asset.storedReference,
                 sourceByteSize: Int(asset.byteCount))
             addPromptAttachment(attachment, toChatID: nil)
-            showToast(AppStrings.localized("Annotated image attached to the prompt."), style: .success)
+            return true
         } catch {
-            showToast(
-                AppStrings.localized("Could not attach the annotated image: \(error.localizedDescription)"),
-                style: .error)
+            showToast(failureMessage(error.localizedDescription), style: .error)
+            return false
+        }
+    }
+
+    /// Attaches a flattened annotation export to the prompt.
+    func attachAnnotatedImage(_ png: Data, sourceName: String) {
+        let name = AnnotationExporter.annotatedFileName(from: sourceName)
+        let attached = attachPNGToPrompt(png, fileName: name) { detail in
+            AppStrings.localized("Could not attach the annotated image: \(detail)")
+        }
+        if attached {
+            showToast(AppStrings.localized("Annotated image attached to the prompt."), style: .success)
         }
     }
 }
