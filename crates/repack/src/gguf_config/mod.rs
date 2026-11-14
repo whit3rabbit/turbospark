@@ -198,6 +198,26 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         }
     }
 
+    if family == ModelFamily::Qwen3Vl {
+        // The multimodal rope sections the flow's mRoPE dispatch is built for
+        // (`docs/QWEN3VL_PHASE0.md`). Text positions collapse to plain RoPE,
+        // but a conversion with other sections is another model.
+        let key = m.key("rope.dimension_sections");
+        let sections: Option<Vec<u64>> = m
+            .opt("rope.dimension_sections")
+            .and_then(GgufValue::as_array)
+            .map(|a| a.iter().filter_map(GgufValue::as_u64).collect());
+        match sections.as_deref() {
+            Some([24, 20, 20]) | Some([24, 20, 20, 0]) => {}
+            other => {
+                return Err(GgufConfigError::BadValue {
+                    key,
+                    detail: format!("Qwen3-VL requires sections [24, 20, 20], got {other:?}"),
+                })
+            }
+        }
+    }
+
     // `block_count` COUNTS THE MULTI-TOKEN-PREDICTION BLOCK, and this port's
     // `num_layers` is the trunk alone. llama.cpp writes the head as one more
     // `blk.<n>.` block and declares how many of the trailing ones are hers in
@@ -298,6 +318,7 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         ModelFamily::Llama
         | ModelFamily::Qwen3Moe
         | ModelFamily::Qwen3Dense
+        | ModelFamily::Qwen3Vl
         | ModelFamily::Qwen2Dense
         | ModelFamily::MiniMaxM2 => {
             vec![1u8; num_layers_usize]
@@ -323,10 +344,7 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         // intake this port built.
         // `flint` has no GGUF intake here (Q4_1 is not an executable block
         // type and the llama.cpp port is unmerged): refuse, never invent.
-        ModelFamily::DeepseekV4Flash
-        | ModelFamily::Qwen3Vl
-        | ModelFamily::Flint
-        | ModelFamily::UnlimitedOcr2 => {
+        ModelFamily::DeepseekV4Flash | ModelFamily::Flint | ModelFamily::UnlimitedOcr2 => {
             return Err(GgufConfigError::UnsupportedArchitecture {
                 architecture: architecture.to_string(),
             })
@@ -488,6 +506,56 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         }
         if let Some(k) = m.opt_i64("attention.key_length_swa")? {
             arch.head_dim = k;
+        }
+    }
+
+    // Granite (`ibm-granite/granite-4.x`) rides the Llama flow, which reads
+    // `attention_scale` and nothing else of IBM's four scalars: the other
+    // three must be the identity, and a file that says otherwise is refused
+    // rather than decoded fluently with the wrong residual or logit scale.
+    if architecture == "granite" {
+        let rms = m
+            .opt_f64("attention.layer_norm_rms_epsilon")
+            .map(|v| v as f32);
+        if rms != Some(1e-5f32) {
+            return Err(GgufConfigError::BadValue {
+                key: m.key("attention.layer_norm_rms_epsilon"),
+                detail: "Granite requires RMS epsilon 1e-5".into(),
+            });
+        }
+        for key in ["embedding_scale", "residual_scale", "logit_scale"] {
+            if m.opt_f64(key).is_some_and(|v| v != 1.0) {
+                return Err(GgufConfigError::BadValue {
+                    key: m.key(key),
+                    detail: "this port's Llama flow expresses only an identity Granite \
+                             multiplier here (Granite 3.x carries non-identity ones)"
+                        .into(),
+                });
+            }
+        }
+        let scale = m
+            .opt_f64("attention.scale")
+            .ok_or_else(|| GgufConfigError::MissingKey {
+                key: m.key("attention.scale"),
+            })?;
+        if !(scale.is_finite() && scale > 0.0) {
+            return Err(GgufConfigError::BadValue {
+                key: m.key("attention.scale"),
+                detail: format!("{scale} is not a usable attention scale"),
+            });
+        }
+        arch.attention_scale = scale;
+        // Full rotary over the head, as the Llama flow assumes.
+        if let Some(dims) = m.opt_i64("rope.dimension_count")? {
+            if dims != arch.full_head_dim {
+                return Err(GgufConfigError::BadValue {
+                    key: m.key("rope.dimension_count"),
+                    detail: format!(
+                        "{dims} of a {}-wide head is partial rotary",
+                        arch.full_head_dim
+                    ),
+                });
+            }
         }
     }
 

@@ -29,6 +29,17 @@ when this file gets updated relative to the version bump and the tag.
   name; the MLX `gemma3_text` path is not implemented and is refused. Checked
   against the public bf16 copy on bytes (norms exact after `-1`, q/k order,
   embedding) and by a real Q4_K_M and Q8_0 decode; no logit parity yet.
+- Granite 4.x GGUF files (`ibm-granite/granite-4.x-*-GGUF`) install on the Llama
+  flow with their 1/head_dim attention scale; Granite 3.x, whose residual,
+  embedding and logit multipliers are not identity, refuses. The ChatML
+  tokenizer dialect accepts a table with no `<|endoftext|>` when its config
+  declares an EOS. Checked against the real GGUF and official BF16 bytes, and a
+  real 3B install decodes correctly.
+- Qwen3-VL GGUF files (`Qwen/Qwen3-VL-*-GGUF`) install their text trunk: the
+  `qwen3vl` architecture, the dense Qwen3 tensor names, and a guard on the
+  multimodal rope sections. The vision projector (`mmproj`) is not read. Checked
+  against the real GGUF, MLX and official BF16 bytes; a real 4B install matched
+  the MLX reference on greedy prompts at Q8_0.
 - Muse Glimmer GGUF files (`ggml-org`, `unsloth`, `meta-models`) are recognized
   and walked: the `muse-glimmer` architecture, its tensor names, the
   converter's baked-in norm `+1`, its interleaved RoPE row order and its
