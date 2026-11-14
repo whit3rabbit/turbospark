@@ -126,6 +126,9 @@ pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
         // (`docs/QWEN3_PHASE0.md`). UNVERIFIED until an install exists, same
         // as every other row in this arm.
         ModelFamily::Gemma4
+        // `gemma3` rides Gemma 4's row on tokenizer evidence only: both
+        // declare a 262,144-entry vocab. UNVERIFIED until an install runs it.
+        | ModelFamily::Gemma3
         | ModelFamily::QwenGdnMoe
         | ModelFamily::QwenGdnDense
         | ModelFamily::Qwen3Moe

@@ -139,11 +139,35 @@ pub(crate) struct BatchedPrefillScratch {
 /// `ModelFamily::Gemma4` (MoE and dense, split on `num_experts`) is the only
 /// family `real_forward_open` routes here.
 fn check_gemma_flow(arch: &ArchConfig) -> Result<(), RealForwardError> {
-    if arch.family != model_io::ModelFamily::Gemma4 {
+    if !matches!(
+        arch.family,
+        model_io::ModelFamily::Gemma4 | model_io::ModelFamily::Gemma3
+    ) {
         return Err(RealForwardError::Unsupported(format!(
-            "the real-checkpoint Gemma flow runs only family gemma4, not {}",
+            "the real-checkpoint Gemma flow runs only families gemma4 and gemma3, not {}",
             arch.family.as_str()
         )));
+    }
+    if arch.family == model_io::ModelFamily::Gemma3 {
+        // Gemma 3 is the dense arm only, with sandwich norms and no router.
+        // The switches that make this flow exact for it (no V norm, no layer
+        // scalar, centered norms) are keyed on the family, so anything that
+        // would reach a router-shaped or Gemma-4-only branch is refused.
+        if !arch.ffn_sandwich_norms
+            || arch.router_scaled
+            || arch.num_experts != 0
+            || arch.attention_k_eq_v
+            || arch.final_logit_softcap != 0.0
+            || arch.rope_scaling != model_io::RopeScalingConfig::NONE
+            || arch.partial_rotary_factor != 1.0
+        {
+            return Err(RealForwardError::Unsupported(
+                "the Gemma 3 flow is the dense sandwich-norm arm with whole-head rope, no \
+                 softcap, no k=v sharing and no rope scaling"
+                    .to_string(),
+            ));
+        }
+        return Ok(());
     }
     if !arch.ffn_sandwich_norms || !arch.router_scaled {
         return Err(RealForwardError::Unsupported(
@@ -195,6 +219,12 @@ impl RealGemmaState {
             // `layer_scalar` is not router-shaped: the dense Gemma 4 trunk
             // carries it per layer, and the dense FFN arm scales the
             // residual with it exactly as the MoE tail does.
+            // Gemma 3 has no per-layer scalar (the layer output is not
+            // rescaled), which is exactly a scalar of 1.0.
+            if arch.family == model_io::ModelFamily::Gemma3 {
+                layer_scalar.push(1.0);
+                continue;
+            }
             let scalar = read_bf16_host(weights, index, &layer_tensor(layer, "layer_scalar"))?;
             layer_scalar.push(*scalar.first().ok_or_else(|| {
                 RealForwardError::Unsupported(format!("layer_scalar layer {layer} is empty"))
@@ -344,7 +374,10 @@ mod flow_check_tests {
         arch.family = ModelFamily::Llama;
         match check_gemma_flow(&arch) {
             Err(RealForwardError::Unsupported(detail)) => {
-                assert!(detail.contains("only family gemma4"), "{detail}")
+                assert!(
+                    detail.contains("only families gemma4 and gemma3"),
+                    "{detail}"
+                )
             }
             other => panic!("expected Unsupported, got {other:?}"),
         }
@@ -358,5 +391,46 @@ mod flow_check_tests {
             check_gemma_flow(&arch),
             Err(RealForwardError::Unsupported(_))
         ));
+    }
+
+    #[test]
+    fn gemma3_passes_only_as_the_dense_sandwich_arm() {
+        check_gemma_flow(&model_io::gemma3_1b()).unwrap();
+        // Each Gemma 4 feature the Gemma 3 switches do not cover is refused.
+        type Edit = fn(&mut ArchConfig);
+        let edits: [(&str, Edit); 7] = [
+            ("router", |a| a.router_scaled = true),
+            ("experts", |a| a.num_experts = 8),
+            ("k=v", |a| a.attention_k_eq_v = true),
+            ("softcap", |a| a.final_logit_softcap = 30.0),
+            ("partial rotary", |a| a.partial_rotary_factor = 0.25),
+            ("sandwich", |a| a.ffn_sandwich_norms = false),
+            ("rope scaling", |a| {
+                a.rope_scaling = model_io::RopeScalingConfig {
+                    factor: 8.0,
+                    ..model_io::RopeScalingConfig::NONE
+                }
+            }),
+        ];
+        for (what, edit) in edits {
+            let mut arch = model_io::gemma3_1b();
+            edit(&mut arch);
+            assert!(
+                matches!(
+                    check_gemma_flow(&arch),
+                    Err(RealForwardError::Unsupported(_))
+                ),
+                "{what}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_norm_switches_are_keyed_on_the_family() {
+        use super::super::norm::{applies_v_norm, centered_norms};
+        let g3 = model_io::gemma3_1b();
+        let g4 = known_architecture(ModelFamily::Gemma4);
+        assert!(centered_norms(&g3) && !applies_v_norm(&g3));
+        assert!(!centered_norms(&g4) && applies_v_norm(&g4));
     }
 }

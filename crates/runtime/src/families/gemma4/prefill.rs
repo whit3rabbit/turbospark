@@ -14,6 +14,45 @@ use crate::steering::encode_steering;
 const RMS_EPS: f32 = 1e-6;
 
 impl RealForwardRunner {
+    /// Why a Gemma 3 install cannot take the chunked prefill driver, or
+    /// `None` when it can (and always `None` for another family).
+    ///
+    /// The dense driver's FFN runs M-row GEMMs, and those exist only for the
+    /// affine dtypes (INT4 4, INT8 5, 1-bit 15, 2-bit 16). A Gemma 3 GGUF
+    /// carries block-quantized matrices (Q8_0, Q4_K, Q6_K) and BF16 ones (the
+    /// Q5_0 transcode), which only the per-token GEMVs serve. One predicate
+    /// answers both `supports_chunked_prefill` and the driver's own refusal,
+    /// so a caller routed to the sequential path and a hard refusal cannot
+    /// disagree, and a run never measures the wrong engine under a chunked
+    /// label.
+    pub(crate) fn gemma3_chunked_refusal(&self) -> Option<String> {
+        if self.arch.family != model_io::ModelFamily::Gemma3 {
+            return None;
+        }
+        for layer in 0..self.arch.num_layers as usize {
+            for tail in [
+                "mlp.gate_proj.weight",
+                "mlp.up_proj.weight",
+                "mlp.down_proj.weight",
+            ] {
+                let name = crate::real_forward_utils::layer_tensor(layer, tail);
+                match self.index.entries.get(&name) {
+                    Some(e) if matches!(e.dtype, 4 | 5 | 15 | 16) => {}
+                    Some(e) => {
+                        return Some(format!(
+                            "{name} is dtype {}, and the dense chunk driver's M-row FFN GEMMs \
+                             exist only for the affine dtypes (4, 5, 15, 16); the install \
+                             decodes through the per-token path",
+                            e.dtype
+                        ))
+                    }
+                    None => return Some(format!("{name} is missing from the resident index")),
+                }
+            }
+        }
+        None
+    }
+
     /// Runs a whole prefill chunk, writing the logits for the position
     /// after its last token. The chunk is walked in micro-batches of at
     /// most [`MAX_PREFILL_BATCH`]; only the final token of the final
@@ -29,6 +68,9 @@ impl RealForwardRunner {
             return Err(RealForwardError::Unsupported(
                 "prefill_chunk called with an empty chunk".to_string(),
             ));
+        }
+        if let Some(reason) = self.gemma3_chunked_refusal() {
+            return Err(RealForwardError::Unsupported(reason));
         }
         // The batched scratch the dense FFN's M-row GEMMs write into is
         // allocated HERE for both arms, exactly once per chunk and never at
@@ -222,7 +264,8 @@ impl RealForwardRunner {
                 "language_model.model.norm.weight",
                 hidden,
             )?;
-            gpu::encode_rms_norm_bf16w(
+            super::norm::encode_norm(
+                &arch,
                 &mut self.context,
                 &pass,
                 (&self.scratch.x, last_off),
@@ -448,7 +491,8 @@ impl RealForwardRunner {
                 "language_model.model.norm.weight",
                 hidden,
             )?;
-            gpu::encode_rms_norm_bf16w(
+            super::norm::encode_norm(
+                &arch,
                 &mut self.context,
                 &pass,
                 (&self.scratch.x, last_off),

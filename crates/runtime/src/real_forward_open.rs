@@ -400,7 +400,10 @@ impl RealForwardRunner {
             real_lfm3: None,
         };
         match runner.arch.family {
-            model_io::ModelFamily::Gemma4 => {
+            // `gemma3` runs the Gemma 4 flow's dense arm, with the family-keyed
+            // switches in `families/gemma4/` (no V norm, no layer scalar,
+            // centered norms).
+            model_io::ModelFamily::Gemma4 | model_io::ModelFamily::Gemma3 => {
                 if runner
                     .index
                     .entries

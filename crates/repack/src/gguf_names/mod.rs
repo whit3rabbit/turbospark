@@ -33,6 +33,7 @@
 //! and the rows below spell them out.
 
 mod deepseek2;
+mod gemma3;
 mod gemma4;
 mod gpt_oss;
 mod lfm3;
@@ -176,6 +177,7 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
         }
         return match family {
             ModelFamily::Gemma4 => gemma4::map_gemma4_layer(suffix, layer),
+            ModelFamily::Gemma3 => gemma3::map_gemma3_layer(suffix, layer),
             ModelFamily::Qwen4Exp => qwen::map_qwen4_exp_layer(suffix, layer),
             ModelFamily::QwenGdnMoe => qwen::map_qwen_gdn_moe_layer(suffix, layer),
             ModelFamily::Llama => llama::map_llama_layer(suffix, layer),
@@ -253,6 +255,8 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
 pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
     match family {
         ModelFamily::Gemma4 => Some("gemma4"),
+        // Read off `ggml-org/gemma-3-1b-it-GGUF`.
+        ModelFamily::Gemma3 => Some("gemma3"),
         ModelFamily::QwenGdnMoe => Some("qwen35moe"),
         ModelFamily::Llama => Some("llama"),
         ModelFamily::Qwen3Moe => Some("qwen3moe"),

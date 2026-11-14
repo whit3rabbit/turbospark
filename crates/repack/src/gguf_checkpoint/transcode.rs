@@ -46,6 +46,15 @@ pub fn qwen4exp_tensor_is_transcoded(canonical: &str, ggml_type: u32) -> bool {
             && QWEN4EXP_SSM_OUT_TRANSCODE_TYPES.contains(&ggml_type))
 }
 
+/// Whether the Gemma 3 walk converts this source tensor to BF16. The 1B
+/// Q4_K_M mixes in Q5_0 for 117 of its tensors, and Q5_0 has no resident
+/// GEMV here, so those dequantize to BF16 at repack (the Qwen4Exp precedent,
+/// `transcode_q5_0`). Larger than the source (about 3x on those tensors) but
+/// the install stays inside 1.5 GiB on a 1B, and no kernel is added.
+pub fn gemma3_tensor_is_transcoded(ggml_type: u32) -> bool {
+    ggml_type == GGML_TYPE_Q5_0
+}
+
 fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
     match family {
         ModelFamily::Gemma4 => &["router.proj.weight"],
@@ -102,6 +111,8 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
         ModelFamily::DeepseekV4Flash
         | ModelFamily::QwenGdnDense
         | ModelFamily::MuseGlimmer
+        // `gemma3` is DENSE: no router and no per-layer scalar to transcode.
+        | ModelFamily::Gemma3
         | ModelFamily::Spark25
         | ModelFamily::Qwen3Dense
         | ModelFamily::Qwen2Dense
@@ -419,8 +430,11 @@ pub fn resident_entries(
         let GgufMapping::Resident(canonical) = map_gguf_name(name, family)? else {
             continue;
         };
-        let qwen4exp_dequantized_type = family == ModelFamily::Qwen4Exp
-            && qwen4exp_tensor_is_transcoded(&canonical, info.ggml_type);
+        let gemma3_q5_0 =
+            family == ModelFamily::Gemma3 && gemma3_tensor_is_transcoded(info.ggml_type);
+        let qwen4exp_dequantized_type = (family == ModelFamily::Qwen4Exp
+            && qwen4exp_tensor_is_transcoded(&canonical, info.ggml_type))
+            || gemma3_q5_0;
         let dtype = if qwen4exp_dequantized_type {
             crate::resident_writer::DTYPE_BF16
         } else {
@@ -452,7 +466,7 @@ pub fn resident_entries(
             }
         }
         let bytes = read_tensor(header, source, name)?;
-        if family == ModelFamily::Qwen4Exp {
+        if family == ModelFamily::Qwen4Exp || gemma3_q5_0 {
             let t = match info.ggml_type {
                 GGML_TYPE_F16 => Some(transcode_f16(
                     name,

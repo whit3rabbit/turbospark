@@ -178,6 +178,16 @@ fn is_muse_centered_norm(canonical: &str, arch: &ArchConfig) -> bool {
         .any(|n| canonical.ends_with(&format!(".{n}.weight")))
 }
 
+/// Every Gemma 3 norm tensor. llama.cpp's converter adds 1 to each tensor
+/// whose name ends `norm.weight` (the four per-layer norms, the per-head q/k
+/// norms AND the final norm), because Gemma 3's RMSNorm computes
+/// `x * (1 + w)`. This family's flow applies `1 + w` itself
+/// (`encode_rms_norm_bf16w_centered`), so the install needs the stored value
+/// back. Unlike Muse Glimmer the FINAL norm is shifted too.
+fn is_gemma3_centered_norm(canonical: &str, arch: &ArchConfig) -> bool {
+    arch.family == ModelFamily::Gemma3 && canonical.ends_with("norm.weight")
+}
+
 fn unpermute_rotary_rows(
     name: &str,
     rows: usize,
@@ -219,7 +229,7 @@ pub(crate) fn apply_source_convention(
     cols: usize,
     values: &mut [f32],
 ) -> Result<(), GgufRepackError> {
-    if is_muse_centered_norm(canonical, arch) {
+    if is_muse_centered_norm(canonical, arch) || is_gemma3_centered_norm(canonical, arch) {
         // Exact for the published file: the converter's `w + 1` is computed
         // in f32 on a BF16 weight, and the difference reproduces that weight
         // (measured against `mlx-community/Muse-Glimmer-30B-4bit`).
@@ -569,6 +579,48 @@ mod tests {
                     assert_eq!(bytes[head * head_dim + i], want, "{canonical} row {i}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn gemma3_shifts_every_norm_including_qk_and_final_and_never_permutes_rows() {
+        let arch = model_io::known_architecture(ModelFamily::Gemma3);
+        for canonical in [
+            "language_model.model.layers.3.input_layernorm.weight",
+            "language_model.model.layers.3.post_attention_layernorm.weight",
+            "language_model.model.layers.3.pre_feedforward_layernorm.weight",
+            "language_model.model.layers.3.post_feedforward_layernorm.weight",
+            "language_model.model.layers.3.self_attn.q_norm.weight",
+            "language_model.model.layers.3.self_attn.k_norm.weight",
+            // Unlike Muse Glimmer the final norm is shifted by the converter.
+            "language_model.model.norm.weight",
+        ] {
+            let mut values = [1.0f32, 1.5, 0.25, 4.5];
+            apply_source_convention("n", canonical, &arch, 1, &mut values).unwrap();
+            assert_eq!(values, [0.0, 0.5, -0.75, 3.5], "{canonical}");
+        }
+        // A projection matrix is not a norm.
+        let mut values = [1.0f32, 2.0];
+        apply_source_convention(
+            "n",
+            "language_model.model.layers.0.mlp.gate_proj.weight",
+            &arch,
+            1,
+            &mut values,
+        )
+        .unwrap();
+        assert_eq!(values, [1.0, 2.0]);
+        // llama.cpp applies no rotary permutation to Gemma 3 (read off the
+        // real file against the HF q_proj/k_proj), so q/k rows stay put.
+        let rows = 2 * arch.full_head_dim as usize;
+        let source: Vec<u8> = (0..rows).map(|r| (r % 251) as u8).collect();
+        for canonical in [
+            "language_model.model.layers.0.self_attn.q_proj.weight",
+            "language_model.model.layers.0.self_attn.k_proj.weight",
+        ] {
+            let mut bytes = source.clone();
+            apply_source_convention_bytes("n", canonical, &arch, (rows, 1), 1, &mut bytes).unwrap();
+            assert_eq!(bytes, source, "{canonical}");
         }
     }
 }

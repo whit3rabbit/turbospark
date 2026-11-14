@@ -465,6 +465,9 @@ pub fn family_dispatches_steering(family: model_io::ModelFamily) -> bool {
         // the post-FFN add is the layer's whole contribution). Wired with the
         // flow.
         F::Spark25 => true,
+        // `gemma3` shares the Gemma 4 dense tail, but steering has not been run
+        // against a real Gemma 3 install, so the gate stays shut.
+        F::Gemma3 => false,
         // No hook in the flow yet: DeepSeek-V4-Flash's compressed-attention
         // kernels are unported, so it is refused at open before any decode
         // flow -- there is no layer loop for a hook to sit in.

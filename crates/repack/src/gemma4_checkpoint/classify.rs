@@ -362,6 +362,8 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
         // than one that cannot match. `spark2_5` is dense in the same way
         // and is GGUF-intake-only this pass, so it rides along.
         ModelFamily::Gemma4
+        // `gemma3` is DENSE and GGUF-only this pass; the marker can never match.
+        | ModelFamily::Gemma3
         | ModelFamily::DeepseekV4Flash
         | ModelFamily::Llama
         | ModelFamily::Qwen3Moe
@@ -387,6 +389,7 @@ fn is_dense_family(family: ModelFamily) -> bool {
     matches!(
         family,
         ModelFamily::QwenGdnDense
+            | ModelFamily::Gemma3
             | ModelFamily::MuseGlimmer
             | ModelFamily::Spark25
             | ModelFamily::Qwen3Dense

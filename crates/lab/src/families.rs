@@ -114,6 +114,18 @@ pub fn facts(f: ModelFamily) -> FamilyFacts {
             probe_and_standin: false,
             notes: &["sliding and full attention layers with different head shapes"],
         },
+        // The Gemma 4 flow's dense arm, behind family-keyed switches. Never
+        // measured in the lab, so the facts below are the flow's defaults.
+        Gemma3 => FamilyFacts {
+            flow: "gemma4",
+            chunked_prefill: Support::Yes,
+            drafters: &[],
+            steel_prefill: false,
+            decode_attention: "barrier",
+            phase_buckets: "final_only",
+            probe_and_standin: false,
+            notes: &["dense Gemma 4 arm: no V norm, no layer scalar, centered norms"],
+        },
         Llama | Qwen3Dense | Qwen2Dense | Qwen3Vl => llama_flow,
         // Held at barrier: its gqa arm decoded different tokens with no
         // moe_kl gate run (`crates/lab/families/qwen3moe.json`).

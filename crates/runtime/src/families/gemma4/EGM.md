@@ -23,6 +23,8 @@ The real-checkpoint Gemma 4 decode and prefill flow, implemented as `impl RealFo
 - `span_attention_range` [vision_prefill.rs:span_attention_range]: sliding/full key range for a row inside an image span
 
 ## Invariants
+- `ModelFamily::Gemma3` runs the DENSE arm of this flow behind family-keyed switches [norm.rs:centered_norms, norm.rs:applies_v_norm, state.rs:check_gemma_flow]: every norm uses the centered `1 + w` kernels, the weightless V norm is skipped, `layer_scalar` is 1.0, and `check_gemma_flow` refuses a Gemma 3 arch with a router, experts, k=v sharing, softcap, partial rotary or rope scaling
+- A Gemma 3 GGUF install takes the per-token prefill path unless every dense FFN matrix is affine [prefill.rs:gemma3_chunked_refusal]
 - Acceptance is family-keyed first: any `ModelFamily` other than `Gemma4` is refused, then `ffn_sandwich_norms` and `router_scaled` must both be set [state.rs:check_gemma_flow]
 - Dense vs MoE is keyed on `arch.num_experts == 0`; MoE needs positive `top_k_experts` not above `gpu::MAX_STREAMED_EXPERTS` [state.rs:build]
 - Decode positions must be sequential with the KV cache, and token ids must be below vocab [mod.rs:produce_real_gemma4_inner]

@@ -88,7 +88,8 @@ impl RealForwardRunner {
             &layer_tensor(layer, "post_feedforward_layernorm.weight"),
             hidden,
         )?;
-        gpu::encode_rms_norm_bf16w(
+        super::norm::encode_norm(
+            &self.arch,
             &mut self.context,
             pass,
             (&real.h1, 0),
@@ -208,7 +209,8 @@ impl RealForwardRunner {
         )?;
         for t in 0..m {
             let row = (t * hidden * 2) as u64;
-            gpu::encode_rms_norm_bf16w(
+            super::norm::encode_norm(
+                &self.arch,
                 &mut self.context,
                 pass,
                 (&h1, row),
@@ -325,7 +327,8 @@ impl RealForwardRunner {
             &layer_tensor(layer, "post_feedforward_layernorm_1.weight"),
             hidden,
         )?;
-        gpu::encode_rms_norm_bf16w(
+        super::norm::encode_norm(
+            &self.arch,
             &mut self.context,
             &shared_pass,
             h1_out,
@@ -431,7 +434,8 @@ impl RealForwardRunner {
         )?;
         for t in 0..m {
             let row = (t * hidden * 2) as u64;
-            gpu::encode_rms_norm_bf16w(
+            super::norm::encode_norm(
+                &self.arch,
                 &mut self.context,
                 &shared_pass,
                 (&h1, row),
