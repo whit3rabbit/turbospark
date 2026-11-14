@@ -50,6 +50,8 @@ mod synthetic_lfm3;
 mod synthetic_llama;
 mod synthetic_model;
 mod synthetic_muse;
+#[cfg(test)]
+mod synthetic_muse_qoi_tests;
 mod synthetic_qwen;
 mod synthetic_real;
 mod synthetic_spark;
