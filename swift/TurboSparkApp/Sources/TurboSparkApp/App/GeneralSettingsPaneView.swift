@@ -40,6 +40,8 @@ struct GeneralSettingsPaneView: View {
 
             LspSettingsSectionView()
 
+            FormatterSettingsSectionView()
+
             compactionSection
 
             chatRuntimeSection

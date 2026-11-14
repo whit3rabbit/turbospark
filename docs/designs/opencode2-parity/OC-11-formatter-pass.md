@@ -8,7 +8,7 @@ and
 [builtins table](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/formatter/builtins.ts).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Partial (formatter step, registry, runner, settings rows and tests ship behind a default-off app-level switch; see Implementation Record)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -223,6 +223,111 @@ Edit tool success
 * **Manual**: enable the pass in a project with swift-format
   available. Have the agent write a badly styled file and confirm the
   pass, the note, and the silent-skip path.
+
+## Implementation Record
+
+Implemented 2026-11-14 on top of OC-10's `PostEditSeam`.
+
+### What shipped
+
+* `Tools/Format/FormatterRegistry.swift`: `FormatterRow` (name,
+  extensions, command, argument vector with a `{file}` placeholder),
+  `FormatterSettings` (app-level `UserDefaults` keys `formatter.enabled`,
+  default off, and `formatter.rows`, at most 8), extension matching, and
+  `FormatterLaunchPolicy`. The policy mirrors `LSPLaunchPolicy`: a
+  workspace-relative command and any binary (or PATH hit, symlinks
+  resolved) inside the project is refused; the child environment is
+  `McpClientEngine.childEnvironment` (PATH, HOME, LANG, TMPDIR only);
+  nothing is read from a project. The one built-in row, swift-format
+  (`swift-format format --in-place {file}`), resolves from fixed Xcode,
+  Command Line Tools and Homebrew locations by file existence only, and a
+  hand-edited stored row can never give it another command.
+* `Tools/Format/FormatterRunner.swift`: one file per call. Skips (silently)
+  a path outside the project after symlink resolution, a sensitive path
+  (`ToolRiskClassifier.isSensitivePath`, raw and resolved), anything under
+  `.git`, a non-regular file, a file over 1 MB or not UTF-8. The formatter
+  runs on a temporary sibling copy (`.tsfmt-<id>.<ext>`, created
+  `O_EXCL|O_NOFOLLOW`, same mode) through `ProcessExecutor` with cwd at the
+  project root, a 10 s timeout (kill on expiry, cancelled with the turn),
+  merged output capped at 16 KB. The real file is replaced only on exit 0,
+  when the output is non-empty text, and when the file still holds the exact
+  bytes that were copied. Otherwise the file keeps the agent's content.
+* `Tools/Format/FormatterPostEditStep.swift`: registered FIRST in
+  `PostEditSeam.steps`, so diagnostics read the formatted file. Success with
+  no change adds nothing. A rewrite adds a `<formatter_note>` with the
+  changed line count and the current text of up to 30 changed lines
+  (line numbers, 200 chars each). A failure adds the tail (2 KB, ANSI
+  stripped, `<` and `>` escaped).
+* `FileSnapshotStore.refreshAfterFormat`: refreshes the recorded hash (only
+  for an already-tracked path, so `isTracked` is not loosened) and the undo
+  backup's expected hash. The undo backup keeps the pre-edit content.
+* `Components/FormatterSettingsSectionView.swift` in the General pane,
+  `SettingsControlCatalog` regenerated, 5 new strings in 21 languages.
+* Tests: `FormatterRunnerTests`, `FormatterRegistryTests`,
+  `FormatterTestSupport` (bash fixture, no real formatter binary).
+
+### Open Questions, as decided
+
+The draft said none were open; its "(author to confirm)" items resolved as:
+
+* **swift-format command line**: `swift-format format --in-place <temp
+  copy>`, as drafted.
+* **Timeout, error tail**: 10 s and 2 KB, as drafted.
+* **Post-format content in the tool result**: the note carries the changed
+  lines of the new text with line numbers (capped at 30 lines), not the whole
+  file, because a whole file can be 1 MB. A file with more than 4000 lines
+  gets "read it again before your next edit". The snapshot is refreshed in
+  both cases, so the staleness check does not reject the next edit.
+* **Where the toggle lives**: see Deviations.
+* **Built-in row default**: the swift-format row starts enabled, because the
+  master switch (off) is the user's grant. OC-10's discovered row starts
+  off; a second opt-in here would add a step and no safety.
+* **Argument syntax for user rows**: whitespace-split, no quoting (there is
+  no shell), `{file}` placeholder, appended when absent.
+
+### Deviations
+
+* **App-level switch, not a per-project toggle.** The task for this change
+  fixed command rows in app-level defaults, and OC-10 shipped the same
+  shape. A per-project toggle (Goals, files 4 and 5 of the plan:
+  `ProjectPermissionsSectionView`, `AppModel+Persistence`) is NOT built.
+  Project-level control today is the project's File write permission, which
+  gates the edit that triggers the pass. Deferred below.
+* **`LoginShellPath` was not moved** to a shared folder. The move rewrites
+  links in `OPENCODE2_COMPARISON.md` and the OC-10 review reports and
+  nothing depends on it; OC-10 already imports it from `Tools/MCP/`.
+* **Notes are English, not localized.** They are model-facing text (like
+  `<lsp_diagnostics>`), not UI. Every UI string is localized.
+* The temp copy is a sibling in the target's directory, not in the system
+  temp folder, so the formatter finds the project's own config (`.swift-format`,
+  `.prettierrc`). The cost is a short-lived dot-file in the workspace; a crash
+  mid-run can leave one (`.tsfmt-*`).
+* The diagram's "exit 0 and file unchanged: replace original" is read as
+  "exit 0 and output differs: replace, if the original is unchanged since the
+  copy".
+
+### Deferred (needs a dependency, a download or a security-policy call)
+
+* **Per-project toggle** and its persistence in the project archive.
+* **No network for the formatter process.** Not enforceable without a
+  sandbox profile. Mitigations shipped: scrubbed environment (no proxy or
+  credential variables), user-installed binaries only, no in-project
+  executables. Same open call as OC-10: wrap launch in a seatbelt profile or
+  leave it. Formatter config files in the repo (a prettier plugin, for
+  example) remain trusted input once the switch is on; the settings text
+  says so.
+* A Settings "Test" button for a row (the row shows whether its command
+  resolves, using the PATH captured so far, and never runs the login shell).
+* Per-formatter circuit breaker for a formatter that fails on every write
+  (review N9; rejected for v1).
+* Moving `LoginShellPath` to a shared folder.
+* Manual check with a real swift-format, not run here.
+
+### Verification run
+
+`FormatterRunnerTests` and `FormatterRegistryTests` (bash fixture only),
+plus `LSPToolsTests` and `LocalizationParityTests`. Mutation checks are listed
+in the implementing session's final report.
 
 --------------------------------------------------------------------------------
 

@@ -649384,6 +649384,661 @@
           }
         }
       }
+    },
+    "Formatters": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "المنسِّقات"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formatierer"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formatters"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formateadores"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formateurs"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מעצבי קוד"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "फ़ॉर्मैटर"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formatter"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formattatori"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォーマッタ"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "포매터"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formatters"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formatery"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formatadores"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Форматтеры"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formaterare"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Biçimlendiriciler"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Форматувальники"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trình định dạng"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "格式化工具"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "格式化工具"
+          }
+        }
+      }
+    },
+    "Format files after the agent edits them": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تنسيق الملفات بعد أن يعدّلها الوكيل"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dateien nach der Bearbeitung durch den Agenten formatieren"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Format files after the agent edits them"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dar formato a los archivos después de que el agente los edite"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mettre en forme les fichiers après leur modification par l'agent"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "עיצוב קבצים לאחר שהסוכן עורך אותם"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "एजेंट के फ़ाइल संपादित करने के बाद फ़ाइलों को फ़ॉर्मैट करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Format file setelah agen mengeditnya"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formatta i file dopo la modifica dell'agente"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エージェントが編集したあとにファイルを整形する"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "에이전트가 편집한 뒤 파일 서식 지정"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bestanden opmaken nadat de agent ze bewerkt heeft"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formatuj pliki po edycji przez agenta"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formatar arquivos depois que o agente os editar"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Форматировать файлы после правок агента"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formatera filer efter att agenten har redigerat dem"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aracı dosyaları düzenledikten sonra biçimlendir"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Форматувати файли після редагування агентом"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Định dạng tệp sau khi tác tử chỉnh sửa"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "代理编辑文件后自动格式化"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "代理編輯檔案後自動格式化"
+          }
+        }
+      }
+    },
+    "After the agent writes or edits a file, runs a formatter you installed yourself on that one file, and tells the agent when the file changed. Nothing is downloaded or installed. A formatter can run code from a project's own config files, so turn this on only for projects you trust.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "بعد أن يكتب الوكيل ملفًا أو يعدّله، يشغّل منسِّقًا ثبّتَّه بنفسك على هذا الملف وحده، ويُعلم الوكيل إذا تغيّر الملف. لا يتم تنزيل أي شيء أو تثبيته. قد يشغّل المنسِّق شيفرة من ملفات إعداد المشروع نفسه، لذا فعّل هذا الخيار فقط للمشاريع التي تثق بها."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nachdem der Agent eine Datei geschrieben oder bearbeitet hat, wird ein von dir selbst installierter Formatierer auf genau diese Datei angewendet, und der Agent erfährt, wenn sich die Datei geändert hat. Es wird nichts heruntergeladen oder installiert. Ein Formatierer kann Code aus den Konfigurationsdateien eines Projekts ausführen. Aktiviere dies daher nur für Projekte, denen du vertraust."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "After the agent writes or edits a file, runs a formatter you installed yourself on that one file, and tells the agent when the file changed. Nothing is downloaded or installed. A formatter can run code from a project's own config files, so turn this on only for projects you trust."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Después de que el agente escriba o edite un archivo, ejecuta sobre ese único archivo un formateador que instalaste tú mismo y avisa al agente si el archivo cambió. No se descarga ni se instala nada. Un formateador puede ejecutar código de los archivos de configuración de un proyecto, así que actívalo solo en proyectos de confianza."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Après que l'agent a écrit ou modifié un fichier, exécute sur ce seul fichier un formateur que vous avez installé vous-même et prévient l'agent lorsque le fichier a changé. Rien n'est téléchargé ni installé. Un formateur peut exécuter du code issu des fichiers de configuration d'un projet : ne l'activez que pour les projets de confiance."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "לאחר שהסוכן כותב או עורך קובץ, מופעל על הקובץ הזה בלבד מעצב קוד שהתקנת בעצמך, והסוכן מקבל הודעה אם הקובץ השתנה. דבר אינו מורד או מותקן. מעצב קוד יכול להריץ קוד מקובצי התצורה של הפרויקט עצמו, ולכן הפעל זאת רק בפרויקטים שאתה סומך עליהם."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "एजेंट के किसी फ़ाइल को लिखने या संपादित करने के बाद, आपके द्वारा स्वयं इंस्टॉल किया गया फ़ॉर्मैटर केवल उसी फ़ाइल पर चलता है और फ़ाइल बदलने पर एजेंट को बताता है। कुछ भी डाउनलोड या इंस्टॉल नहीं किया जाता। फ़ॉर्मैटर प्रोजेक्ट की अपनी कॉन्फ़िग फ़ाइलों से कोड चला सकता है, इसलिए इसे केवल उन्हीं प्रोजेक्ट के लिए चालू करें जिन पर आप भरोसा करते हैं।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Setelah agen menulis atau mengedit file, formatter yang Anda pasang sendiri dijalankan pada file itu saja, dan agen diberi tahu jika file berubah. Tidak ada yang diunduh atau dipasang. Formatter dapat menjalankan kode dari file konfigurasi proyek itu sendiri, jadi aktifkan hanya untuk proyek yang Anda percaya."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dopo che l'agente ha scritto o modificato un file, esegue su quel solo file un formattatore installato da te e avvisa l'agente se il file è cambiato. Non viene scaricato né installato nulla. Un formattatore può eseguire codice dai file di configurazione di un progetto, quindi attivalo solo per progetti di cui ti fidi."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エージェントがファイルを書き込むか編集したあと、ご自身でインストールしたフォーマッタをそのファイルだけに実行し、ファイルが変わった場合はエージェントに伝えます。ダウンロードやインストールは行いません。フォーマッタはプロジェクト自身の設定ファイルからコードを実行することがあるため、信頼できるプロジェクトでのみオンにしてください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "에이전트가 파일을 쓰거나 편집하면 직접 설치한 포매터를 그 파일 하나에만 실행하고, 파일이 바뀌면 에이전트에게 알려 줍니다. 아무것도 다운로드하거나 설치하지 않습니다. 포매터는 프로젝트 자체의 설정 파일에 있는 코드를 실행할 수 있으므로 신뢰하는 프로젝트에서만 켜세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nadat de agent een bestand heeft geschreven of bewerkt, wordt een formatter die je zelf hebt geïnstalleerd op alleen dat bestand uitgevoerd, en de agent hoort het als het bestand veranderd is. Er wordt niets gedownload of geïnstalleerd. Een formatter kan code uitvoeren uit de eigen configuratiebestanden van een project, dus zet dit alleen aan voor projecten die je vertrouwt."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gdy agent zapisze lub zmieni plik, uruchamia na tym jednym pliku formater zainstalowany przez Ciebie i informuje agenta, jeśli plik się zmienił. Nic nie jest pobierane ani instalowane. Formater może uruchamiać kod z plików konfiguracyjnych samego projektu, więc włączaj tę opcję tylko dla projektów, którym ufasz."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Depois que o agente grava ou edita um arquivo, executa somente nesse arquivo um formatador que você mesmo instalou e avisa o agente se o arquivo mudou. Nada é baixado nem instalado. Um formatador pode executar código dos arquivos de configuração do próprio projeto, então ative isso apenas em projetos em que você confia."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "После того как агент запишет или изменит файл, запускает установленный вами форматтер только для этого файла и сообщает агенту, если файл изменился. Ничего не загружается и не устанавливается. Форматтер может выполнять код из конфигурационных файлов самого проекта, поэтому включайте это только для проектов, которым вы доверяете."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "När agenten har skrivit eller redigerat en fil körs en formaterare som du själv har installerat på just den filen, och agenten får veta om filen ändrades. Ingenting laddas ned eller installeras. En formaterare kan köra kod från ett projekts egna konfigurationsfiler, så aktivera detta bara för projekt du litar på."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aracı bir dosyayı yazdıktan veya düzenledikten sonra, kendi kurduğunuz bir biçimlendiriciyi yalnızca o dosyada çalıştırır ve dosya değiştiyse aracıya haber verir. Hiçbir şey indirilmez veya kurulmaz. Bir biçimlendirici projenin kendi yapılandırma dosyalarındaki kodu çalıştırabilir, bu yüzden bunu yalnızca güvendiğiniz projeler için açın."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Після того як агент запише або змінить файл, запускає встановлений вами форматувальник лише для цього файлу й повідомляє агентові, якщо файл змінився. Нічого не завантажується й не встановлюється. Форматувальник може виконувати код із конфігураційних файлів самого проєкту, тож вмикайте це лише для проєктів, яким довіряєте."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sau khi tác tử ghi hoặc chỉnh sửa một tệp, trình định dạng do chính bạn cài sẽ chạy trên đúng tệp đó và báo cho tác tử nếu tệp thay đổi. Không có gì được tải xuống hay cài đặt. Trình định dạng có thể chạy mã từ các tệp cấu hình của chính dự án, vì vậy chỉ bật tính năng này cho những dự án bạn tin tưởng."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "代理写入或编辑文件后，会只对该文件运行您自己安装的格式化工具，并在文件发生变化时告知代理。不会下载或安装任何内容。格式化工具可能运行项目自身配置文件中的代码，因此请仅对您信任的项目开启。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "代理寫入或編輯檔案後，會只對該檔案執行您自己安裝的格式化工具，並在檔案變更時告知代理。不會下載或安裝任何內容。格式化工具可能執行專案自身設定檔中的程式碼，因此請僅對您信任的專案開啟。"
+          }
+        }
+      }
+    },
+    "Arguments (use {file} for the file)": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الوسائط (استخدم {file} للملف)"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumente ({file} steht für die Datei)"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arguments (use {file} for the file)"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumentos (usa {file} para el archivo)"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arguments (utilisez {file} pour le fichier)"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ארגומנטים (השתמש ב-{file} עבור הקובץ)"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "आर्गुमेंट ({file} का उपयोग फ़ाइल के लिए करें)"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumen (gunakan {file} untuk file)"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argomenti (usa {file} per il file)"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "引数（ファイルには {file} を使用）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "인수 (파일에는 {file} 사용)"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumenten (gebruik {file} voor het bestand)"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumenty (użyj {file} dla pliku)"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumentos (use {file} para o arquivo)"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Аргументы ({file} обозначает файл)"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argument (använd {file} för filen)"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bağımsız değişkenler (dosya için {file} kullanın)"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Аргументи ({file} позначає файл)"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Đối số (dùng {file} cho tệp)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "参数（用 {file} 表示文件）"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "參數（以 {file} 表示檔案）"
+          }
+        }
+      }
+    },
+    "Add formatter": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إضافة منسِّق"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formatierer hinzufügen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add formatter"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Añadir formateador"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajouter un formateur"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הוספת מעצב קוד"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "फ़ॉर्मैटर जोड़ें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tambah formatter"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aggiungi formattatore"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "フォーマッタを追加"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "포매터 추가"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formatter toevoegen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dodaj formater"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adicionar formatador"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Добавить форматтер"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lägg till formaterare"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Biçimlendirici ekle"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Додати форматувальник"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thêm trình định dạng"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加格式化工具"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新增格式化工具"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

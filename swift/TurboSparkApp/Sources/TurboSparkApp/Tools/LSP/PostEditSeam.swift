@@ -30,9 +30,9 @@ enum PostEditSeam {
         .union(AppToolRegistry.editFileAliases)
         .union(["apply_patch", "applypatch", "multiedit", "multi_edit"])
 
-    /// Registered steps, in run order. OC-11 inserts its formatter ahead of
+    /// Registered steps, in run order. The OC-11 formatter runs ahead of
     /// `LSPDiagnosticsStep`.
-    static var steps: [any PostEditStep] = [LSPDiagnosticsStep()]
+    static var steps: [any PostEditStep] = [FormatterPostEditStep(), LSPDiagnosticsStep()]
 
     static let maximumPaths = 5
 
