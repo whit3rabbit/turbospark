@@ -8,8 +8,9 @@ and the
 [session idle deactivation doc](https://github.com/zai-org/ZCode/blob/main/docs/session-idle-deactivation.md).
 
 * Author: whit3rabbit
-* Status: Implemented (partial). See "Implementation Record" for what
-  shipped, what the review changed, and the exact remainder.
+* Status: Partial. Every item that needs no engine change is implemented
+  (see "Second pass"); the remainder is real parallel decode, per-chat KV
+  release, releasing the lane during a question, and hardware verification.
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -331,28 +332,97 @@ change supplies the per-row state it needs (`chatTurnState(for:)`). ZP-21
 (workspace tabs) composes later. ZP-01 (off-peak tasks) now dispatches into
 a background chat: `offPeakCanDispatch` no longer requires selection.
 
-Remainder (not done, with the reason):
+Remainder after the first pass (kept for the record; the second pass below
+resolves items 1 to 4):
 
-1. Two chats awaiting approval at once (CUJ 2). The approval slot is one set
-   of fields on `AppModel`; an approval card in the selected chat still pins
-   the user to it. Needs the per-chat approval store (swap-on-select) and
-   changes to about 30 read sites.
-2. A question for the user (`AskUserQuestion`) holds the lane while it waits:
-   it blocks inside the running tool's execution task, so `generating` stays
-   up. Releasing it needs the turn and the tool task decoupled.
-3. A typed prompt parked in a background chat waits until that chat is
-   selected, because submission goes through the composer. A composer-free
-   `run()` is the fix. Background agent completion notifications keep the
-   same selection requirement (`canInjectTaskNotification`, pinned by
-   `BackgroundAgentTests`); only scheduled prompts (cron, off-peak) start in
-   a background chat.
-4. Cross-project chat switching, project creation and `clearOutput`,
-   `duplicateChat`, message editing and split-pane moves keep the blanket
-   guard: they touch workspace-global or selection-bound state.
+1. Two chats awaiting approval at once (CUJ 2).
+2. A question for the user (`AskUserQuestion`) holds the lane while it waits.
+3. A typed prompt parked in a background chat waits until selected.
+4. Cross-project chat switching and project creation keep the blanket guard.
 5. Cmd+. and the menu Stop act on the running turn wherever the user is.
-6. Real two-turn concurrency, per-chat KV release, and any performance claim:
-   engine work with hardware gates. Hardware verification (two chats on one
-   resident model, switching mid-run, quit mid-run) was not run here.
+6. Real two-turn concurrency, per-chat KV release, and any performance claim.
+
+### Second pass: approvals, questions, background prompts, projects
+
+What shipped (all Swift, no Rust or FFI change, no dependency):
+
+* **Two approvals (CUJ 2).** The approval slot (`pendingToolCall` and its six
+  siblings) now describes the selected chat only. Leaving a chat parks its
+  card in `AppModel.parkedApprovals` (keyed by chat, `ParkedApproval`);
+  selecting the chat moves it back, and the turn tail's `admitParkedWork`
+  does the same for the foreground chat once the lane frees. The card is
+  never answerable while parked, because approve and deny read the slot and
+  match its call id: chat A's approval cannot be applied to chat B. The
+  coordinator verdict no longer pins the user to a chat with a card; only an
+  approval with no chat of its own (legacy) still does. `createChat`,
+  `selectChat` and `openChat` park; deleting or clearing a chat drops its
+  parked card; the sidebar reads a parked card as `awaitingTool`.
+* **Replay re-validation.** Restoring a parked card re-runs
+  `AppToolPermissionEngine` against the LIVE project (looked up by id, not
+  the snapshot). A refusal denies the call with the engine's reason and says
+  so to the model and hooks (`denyPendingToolCall(policyReason:)`), not "the
+  user said no". A project deleted in the meantime denies too. Anything else
+  shows the card: a policy that was relaxed never auto-approves. A parked
+  `DeferredToolProposal` now replays against the live project as well (it
+  used the proposal-time snapshot before), and is dropped as an interrupted
+  row when its project is gone. PreToolUse hooks are NOT re-run for a parked
+  card (they ran when it was proposed and the card is the human decision);
+  a deferred proposal replays through the full ladder, hooks included.
+* **AskUserQuestion.** The lane stays held while the card is open (releasing
+  it needs the turn and the tool task decoupled, which is the engine-adjacent
+  refactor this draft defers). What changed is correctness of the hold: the
+  coordinator records `awaitingQuestion` for the holder and clears it on
+  answer, stop or turn end; `chatTurnState` now ranks a question above
+  `generating` (it never surfaced before, because the asking chat is the
+  running chat); nothing else starts beside it; the answer routes by the
+  question's own chat key wherever the user is looking.
+* **Background typed prompts.** A typed prompt parked in a chat the user is
+  not looking at starts when the lane frees, without the composer
+  (`startBackgroundTypedPrompt`): the steer assembly (mentions, attachments,
+  `UserPromptSubmit`, sanitization) runs for the first entry only, under
+  `submitting` and `submissionTask` so Stop reaches it, then the turn starts
+  in the chat's own id. Slash, bang and `#` entries still wait for selection
+  (`run()` dispatches them off the composer). A hook block re-parks the entry
+  and shows its error, as for a mid-turn steer.
+* **Cross-project.** `openChat` to another project parks the selected chat's
+  card first (checking the move is legal before parking, so a refused move
+  never strands a card). Parked work replays only in its chat's own
+  workspace: `alignWorkspace` makes the project selection match, and while a
+  turn runs, where a project switch is still refused, the work stays parked
+  with a toast on the explicit path. A card keeps the project it was
+  evaluated against and is refreshed to the live one.
+* Two strings added in 21 languages; tests in
+  `ConcurrentApprovalsTests.swift` and an updated
+  `ChatGenerationCoordinatorTests.swift`.
+
+Still deferred, with the reason:
+
+1. **Real parallel decode, per-chat KV release, any performance claim.**
+   Engine work: `crates/ffi/src/session.rs` holds one `Engine` behind a
+   mutex and nothing steps two turns. Lane capacity stays 1. Needs Rust
+   changes plus the real-hardware memory and quality gates. Hardware
+   verification (two chats on one resident model, switching mid-run, quit
+   mid-run) was not run.
+2. **Releasing the lane during an AskUserQuestion.** Needs the turn and the
+   tool task decoupled so a second turn can start while the first is
+   suspended and its tail still runs against the right epoch. About 25 guard
+   sites plus a reclaim step on answer. The risk is not testable without a
+   loaded model. A decision for the author: accept the hold (current), or
+   fund the refactor.
+3. **Background task-notification injection** (`canInjectTaskNotification`,
+   pinned by `BackgroundAgentTests`) still requires its chat to be selected,
+   by design: the notification wording reads the composer-empty rule.
+4. **Project-level operations** (`selectProject`, `createProject`,
+   `deleteProject`, root change) keep their blanket guard, including the
+   approval slot term: they rebind the worktree, snapshot store and hook
+   store under whatever runs. `duplicateChat`, message editing and
+   split-pane moves keep theirs: they touch selection-bound state.
+5. **Stop acts on the running turn wherever the user is** (Cmd+. and the
+   menu). Kept: a stop that depended on selection would be harder to trust.
+   Parked cards are not stopped by it.
+6. **PreToolUse hooks on a parked card** are not re-run at restore (see
+   above); re-running them needs the proposal's pre-hook arguments, which the
+   transcript row no longer holds.
 
 --------------------------------------------------------------------------------
 

@@ -372,22 +372,28 @@ final class SessionTabStoreTests: XCTestCase {
         XCTAssertEqual(model.sessionTabs.tabs, [c.c1.id, c.c3.id])
     }
 
-    func testAnApprovalCardPinsTheUserToItsTabAndAClosingMoveIsRefused() {
+    func testAnApprovalCardParksWhenTheUserLeavesItsTabAndComesBackOnReturn() {
         let c = seed()
         openAllThree(c)
         model.activateSessionTab(chatID: c.c1.id)
-        model.pendingToolCall = AppToolCall(
+        let call = AppToolCall(
             name: "list_directory", arguments: ["path": "/tmp"], category: .fileRead)
+        model.pendingToolCall = call
         model.pendingToolCallChatID = c.c1.id
 
+        // ZP-23: the card no longer pins the user. It parks under its chat.
         model.activateSessionTab(chatID: c.c2.id)
-        XCTAssertEqual(model.selectedChatID, c.c1.id)
-        XCTAssertNotNil(model.activeToast)
+        XCTAssertEqual(model.selectedChatID, c.c2.id)
+        XCTAssertNil(model.pendingToolCall)
+        XCTAssertNotNil(model.parkedApprovals[c.c1.id])
 
-        let before = model.sessionTabs.tabs
-        model.closeSessionTab(chatID: c.c1.id)
-        XCTAssertEqual(model.sessionTabs.tabs, before, "A refused move keeps the tab.")
+        // Closing a tab with a parked card moves away and keeps the card.
+        model.closeSessionTab(chatID: c.c3.id)
+        XCTAssertNotNil(model.parkedApprovals[c.c1.id])
+
+        model.activateSessionTab(chatID: c.c1.id)
         XCTAssertEqual(model.selectedChatID, c.c1.id)
+        XCTAssertEqual(model.pendingToolCall?.id, call.id, "The card comes back with its chat.")
     }
 
     func testATabSwitchToAnotherProjectIsRefusedWhileATurnRunsButSameProjectIsNot() {

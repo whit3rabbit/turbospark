@@ -719,7 +719,11 @@ public final class AppModel: ObservableObject {
             // OC-02: a card that just opened is a chat waiting on the user.
             // The chat id is assigned right after this, so the cue is read
             // one hop later.
-            if oldValue == nil, pendingToolCall != nil { scheduleNeedsPermissionCue() }
+            // A card restored from the parked store (ZP-23) is not news: the
+            // cue already fired when it first opened.
+            if oldValue == nil, pendingToolCall != nil, !restoringParkedApproval {
+                scheduleNeedsPermissionCue()
+            }
         }
     }
     let browserPermissionApprovalCoordinator = BrowserPermissionApprovalCoordinator()
@@ -1001,6 +1005,14 @@ public final class AppModel: ObservableObject {
     /// the background, so the proposal parks here whole, and is replayed
     /// through the ordinary permission path once the chat is foreground.
     @Published var deferredToolProposals: [UUID: DeferredToolProposal] = [:]
+    /// Approval cards whose chat the user switched away from (ZP-23). The
+    /// approval slot (`pendingToolCall` and its siblings) describes the
+    /// SELECTED chat only: leaving the chat moves the card here, selecting it
+    /// again moves it back after re-validation. Keyed by chat, so two chats
+    /// each hold their own approval and neither can answer the other's.
+    @Published var parkedApprovals: [UUID: ParkedApproval] = [:]
+    /// True only while `restoreParkedApproval` refills the slot.
+    var restoringParkedApproval = false
     /// Whether `run()` has accepted a submission and not yet reached
     /// `executeGenerationTurn`.
     ///

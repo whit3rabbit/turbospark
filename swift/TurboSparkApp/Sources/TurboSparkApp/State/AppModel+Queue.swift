@@ -140,7 +140,11 @@ extension AppModel {
         // through the composer, which describes only the selected chat.
         guard first.isScheduled
             ? canStartTurn(inChat: chatID) : canInjectChatInput(into: chatID)
-        else { return nil }
+        else {
+            // A typed prompt parked in a background chat starts without the
+            // composer (ZP-23); commands still wait for selection.
+            return first.isScheduled ? nil : startBackgroundTypedPrompt(chatID: chatID)
+        }
         if first.isScheduled {
             // Model-origin text: appended as a plain user turn, composer and
             // draft untouched, no bang/slash parsing. Waits (stays parked)
@@ -222,7 +226,7 @@ extension AppModel {
     /// drain's. Boundary first, tail second -- the same priority order the
     /// two modes have in the contract this ports.
     func deliverSteersAtBoundary(
-        chatID: UUID, project: AppProject?, visionAvailable: Bool
+        chatID: UUID, project: AppProject?, visionAvailable: Bool, maxEntries: Int = .max
     ) async -> Bool {
         // An approval card means the loop is parked between steps: the next
         // boundary is whichever `continueOrStop` the approved (or denied)
@@ -230,11 +234,12 @@ extension AppModel {
         // already leaving; a steer must not outrun the Stop.
         guard pendingToolCall == nil, !isCancellationPending else { return false }
         var delivered = false
+        var deliveredCount = 0
         // Cancel is checked per entry, and the entry in flight is re-parked:
         // the loop runs inside the turn's `runTask`, and a Stop pressed while
         // a slow hook runs must not have its remaining steers appended after
         // the turn it stopped (state#38's shape).
-        while !Task.isCancelled,
+        while !Task.isCancelled, deliveredCount < maxEntries,
             let queue = pendingUserMessages[chatID], let entry = queue.first {
             pendingUserMessages[chatID] = Array(queue.dropFirst())
 
@@ -326,6 +331,7 @@ extension AppModel {
                 })
             mutateTurnMessages(for: chatID) { $0.append(userMessage) }
             delivered = true
+            deliveredCount += 1
         }
         return delivered
     }

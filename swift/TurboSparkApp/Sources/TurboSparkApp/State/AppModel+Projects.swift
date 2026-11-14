@@ -134,13 +134,18 @@ extension AppModel {
     public func openChat(id: UUID) {
         guard let chat = chats.first(where: { $0.id == id }), !chat.isGhost else { return }
         if selectedProjectID != chat.projectID {
+            // A project switch needs a quiet app; check that BEFORE parking
+            // the selected chat's card, or a refused switch would leave the
+            // user in the chat with its card in the store.
+            guard !generating, !submitting, !slotHoldsForeignApproval else { return }
+            if id != selectedChatID { parkSlotApproval() }
             guard applyProjectSelection(id: chat.projectID) else { return }
         }
         selectChat(id: id)
     }
 
     /// The project switch itself. Returns false when refused mid-turn.
-    private func applyProjectSelection(id: UUID?) -> Bool {
+    func applyProjectSelection(id: UUID?) -> Bool {
         // **THE THREE FLAGS, NOT ONE** (state#77). The chat-side siblings
         // grew `pendingToolCall` and `submitting` (state#33, state#49) and
         // the project-side ones never did -- which is backwards, because a

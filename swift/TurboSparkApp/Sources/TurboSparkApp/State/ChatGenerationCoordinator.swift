@@ -14,9 +14,11 @@ public enum ChatTurnState: Equatable, Sendable {
     case generating
     /// Parked on a tool call that needs the user. Holds no lane.
     case awaitingTool
-    /// Parked on a question for the user. Holds the lane today (see
+    /// Parked on a question for the user. HOLDS the lane (see
     /// `ChatGenerationCoordinator.park`): the question blocks inside the
-    /// tool's own execution task, which is the app's single turn slot.
+    /// tool's own execution task, which is the app's single turn slot. The
+    /// chat still reads as `.awaitingQuestion`, not `.generating`, so the
+    /// sidebar says what it is waiting for.
     case awaitingQuestion
 }
 
@@ -49,20 +51,17 @@ public struct ChatLaneSnapshot: Equatable, Sendable {
     /// means the work is not a chat turn.
     public var generatingChatID: UUID?
     public var submitting: Bool
-    /// The chat whose approval card sits in the one approval slot, if any.
-    public var approvalChatID: UUID?
-    /// An approval exists but names no chat (legacy writers).
+    /// An approval sits in the slot but names no chat (legacy writers), so it
+    /// cannot be parked under a chat key and must keep pinning the user.
     public var hasUnattributedApproval: Bool
 
     public init(
         generating: Bool = false, generatingChatID: UUID? = nil,
-        submitting: Bool = false, approvalChatID: UUID? = nil,
-        hasUnattributedApproval: Bool = false
+        submitting: Bool = false, hasUnattributedApproval: Bool = false
     ) {
         self.generating = generating
         self.generatingChatID = generatingChatID
         self.submitting = submitting
-        self.approvalChatID = approvalChatID
         self.hasUnattributedApproval = hasUnattributedApproval
     }
 }
@@ -153,6 +152,8 @@ public struct ChatGenerationCoordinator: Equatable, Sendable {
     /// The lane's holder is gone without a named owner (the app-wide flag
     /// dropped). Unconditional by design, the flag is the source of truth.
     public mutating func releaseHolder() {
+        // A question parks under the holder and dies with the turn.
+        if let holder = laneHolder, parked[holder] == .awaitingQuestion { parked[holder] = nil }
         laneHolder = nil
     }
 
@@ -173,7 +174,9 @@ public struct ChatGenerationCoordinator: Equatable, Sendable {
     /// the turn and the approval needs no engine. `.awaitingQuestion` does
     /// not: the question is answered inside the running tool's execution
     /// task, so the app's single turn slot stays occupied until it is
-    /// answered. The state is recorded either way.
+    /// answered. Releasing it needs the turn and the tool task decoupled
+    /// (`docs/designs/zcode-parity/ZP-23-concurrent-chats.md`). The state is
+    /// recorded either way, and `unpark` clears it when the answer lands.
     public mutating func park(_ chat: UUID, as state: ChatTurnState) {
         guard state == .awaitingTool || state == .awaitingQuestion else { return }
         if state == .awaitingTool, laneHolder == chat { laneHolder = nil }
@@ -193,7 +196,7 @@ public struct ChatGenerationCoordinator: Equatable, Sendable {
     }
 
     public func state(of chat: UUID) -> ChatTurnState {
-        if laneHolder == chat { return .generating }
+        if laneHolder == chat { return parked[chat] == .awaitingQuestion ? .awaitingQuestion : .generating }
         if let state = parked[chat] { return state }
         if admissionQueue.contains(chat) { return .queued }
         return .idle
@@ -209,9 +212,9 @@ public struct ChatGenerationCoordinator: Equatable, Sendable {
     /// - `submitting` blocks selection and deletion (the hook window has no
     ///   turn yet, and `run()` captured the chat it will append into);
     /// - work that is not a chat turn keeps the blanket refusal;
-    /// - an approval card in the one approval slot pins the user to its
-    ///   chat until it is answered (multiple simultaneous approvals are
-    ///   deferred, see the draft).
+    /// - an approval with no chat of its own cannot be parked, so it still
+    ///   pins the user. An attributed approval does not: `selectChat` parks
+    ///   it under its chat and restores it, re-validated, on return.
     public static func verdict(_ op: ChatLaneOperation, _ snapshot: ChatLaneSnapshot)
         -> ChatLaneVerdict
     {
@@ -227,9 +230,6 @@ public struct ChatGenerationCoordinator: Equatable, Sendable {
                 return .refused(blockingChat: nil)
             }
             if snapshot.hasUnattributedApproval { return .refused(blockingChat: nil) }
-            if let approval = snapshot.approvalChatID, approval != target {
-                return .refused(blockingChat: approval)
-            }
             return .allowed
         case .delete(let chat):
             if snapshot.submitting { return .refused(blockingChat: nil) }

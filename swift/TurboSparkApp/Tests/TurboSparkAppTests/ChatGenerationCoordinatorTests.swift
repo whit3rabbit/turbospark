@@ -99,7 +99,11 @@ final class ChatGenerationCoordinatorTests: XCTestCase {
         c.requestLane(for: question)
         c.park(question, as: .awaitingQuestion)
         XCTAssertEqual(c.laneHolder, question, "The question blocks inside the running tool.")
-        XCTAssertEqual(c.state(of: question), .generating, "The holder reads as generating.")
+        XCTAssertEqual(
+            c.state(of: question), .awaitingQuestion,
+            "The holder says what it is waiting for, and still holds the lane.")
+        c.unpark(question)
+        XCTAssertEqual(c.state(of: question), .generating, "Answered: the holder runs again.")
         c.unpark(tool)
         XCTAssertEqual(c.state(of: tool), .idle)
     }
@@ -133,14 +137,8 @@ final class ChatGenerationCoordinatorTests: XCTestCase {
             "Work that is not a chat turn keeps the blanket refusal.")
         XCTAssertEqual(v(.init(submitting: true)), .refused(blockingChat: nil))
         XCTAssertEqual(
-            v(.init(approvalChatID: a)), .refused(blockingChat: a),
-            "An approval card pins the user to its chat.")
-        XCTAssertEqual(v(.init(approvalChatID: b)), .allowed)
-        XCTAssertEqual(
-            v(.init(approvalChatID: a), target: nil), .refused(blockingChat: a),
-            "Creating a chat is a selection.")
-        XCTAssertEqual(
-            v(.init(hasUnattributedApproval: true)), .refused(blockingChat: nil))
+            v(.init(hasUnattributedApproval: true)), .refused(blockingChat: nil),
+            "An approval with no chat cannot be parked, so it still pins the user.")
     }
 
     func testDeletionBlocksOnlyTheChatThatOwnsTheRunningTurn() {
@@ -390,12 +388,13 @@ final class ChatGenerationCoordinatorTests: XCTestCase {
             "A chat that cannot start (typed prompt, needs the composer) is not retried forever.")
     }
 
-    func testATypedPromptParkedInABackgroundChatWaitsForSelection() {
+    func testATypedCommandParkedInABackgroundChatWaitsForSelection() {
         let (_, b) = leaveAGenerating()
         let c = AppChat(title: "Gamma")
         appModel.chats.append(c)
         appModel.selectChat(id: b)
-        appModel.pendingUserMessages[c.id] = [QueuedUserPrompt(text: "typed")]
+        appModel.scheduledDeliveryModelReadyOverride = true
+        appModel.pendingUserMessages[c.id] = [QueuedUserPrompt(text: "/compact")]
         appModel.noteParkedWork(chatID: c.id)
         appModel.generating = false
 
@@ -403,7 +402,7 @@ final class ChatGenerationCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(
             appModel.pendingUserMessages[c.id]?.count, 1,
-            "A typed prompt goes through the composer, which describes only the selected chat.")
+            "A command is dispatched off the composer, which describes only the selected chat.")
         XCTAssertEqual(appModel.chatTurnState(for: c.id), .queued)
     }
 

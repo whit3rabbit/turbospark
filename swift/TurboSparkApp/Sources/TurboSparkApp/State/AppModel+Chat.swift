@@ -202,6 +202,8 @@ extension AppModel {
         }
         let chat = AppChat(projectID: assignedProjectID)
         chats.insert(chat, at: 0)
+        // Leaving a chat that shows an approval card parks the card (ZP-23).
+        parkSlotApproval()
         selectedChatID = chat.id
         resetLiveOutputIfNoTurnRuns()
         persistChats()
@@ -230,6 +232,10 @@ extension AppModel {
         guard laneVerdict(.select(target: id)) == .allowed else { return }
         activeSection = .chat
         guard id != selectedChatID else { return }
+        // **LEAVING AN APPROVAL PARKS IT** (ZP-23, CUJ 2). The card moves to
+        // the per-chat store, so the slot describes the chat now on screen
+        // and each chat answers only its own approval.
+        parkSlotApproval()
         selectedChatID = id
         resetLiveOutputIfNoTurnRuns()
         persistChats()
@@ -237,6 +243,8 @@ extension AppModel {
         // A proposal this chat parked while it was in the background replays
         // now that the user is looking at it (or waits for the lane).
         if resumeDeferredProposalIfPossible(chatID: id) { return }
+        // A card this chat parked when it was left comes back, re-validated.
+        if restoreParkedApprovalIfPossible(chatID: id) { return }
         // Queued prompts drain on selection too. The turn tail covers the
         // chat the user STAYED on; this covers the chat the user LEFT and
         // came back to (and is how a cron prompt parked for a background
@@ -422,6 +430,9 @@ extension AppModel {
         if pendingToolCallChatID == clearedChatID {
             clearPendingToolCall()
         }
+        // A parked card describes the transcript just erased.
+        parkedApprovals[clearedChatID] = nil
+        turnCoordinator.unpark(clearedChatID)
         // A goal and queued prompts belong to the conversation just erased:
         // left behind, the goal loop would keep judging the old condition
         // and the idle timer would inject check-ins into the empty chat.

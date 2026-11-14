@@ -650170,6 +650170,268 @@
           }
         }
       }
+    },
+    "A tool call was dropped because its project no longer exists.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تم إسقاط استدعاء أداة لأن مشروعه لم يعد موجودًا."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ein Werkzeugaufruf wurde verworfen, weil das zugehörige Projekt nicht mehr existiert."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A tool call was dropped because its project no longer exists."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Se descartó una llamada a una herramienta porque su proyecto ya no existe."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un appel d'outil a été abandonné, car son projet n'existe plus."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "קריאה לכלי בוטלה כי הפרויקט שלה כבר לא קיים."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "एक टूल कॉल हटा दी गई क्योंकि उसका प्रोजेक्ट अब मौजूद नहीं है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Panggilan alat dibatalkan karena proyeknya sudah tidak ada."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Una chiamata a uno strumento è stata scartata perché il suo progetto non esiste più."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プロジェクトが存在しなくなったため、ツール呼び出しを破棄しました。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "프로젝트가 더 이상 존재하지 않아 도구 호출을 취소했습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Een toolaanroep is verwijderd omdat het bijbehorende project niet meer bestaat."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wywołanie narzędzia zostało odrzucone, ponieważ jego projekt już nie istnieje."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uma chamada de ferramenta foi descartada porque o projeto dela não existe mais."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Вызов инструмента отброшен, потому что его проекта больше не существует."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ett verktygsanrop togs bort eftersom dess projekt inte längre finns."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bir araç çağrısı, projesi artık var olmadığı için atıldı."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Виклик інструмента скасовано, бо його проєкту більше не існує."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Một lệnh gọi công cụ đã bị loại bỏ vì dự án của nó không còn tồn tại."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "由于所属项目已不存在，已丢弃一次工具调用。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "由於所屬專案已不存在，已捨棄一次工具呼叫。"
+          }
+        }
+      }
+    },
+    "Finish the running turn before opening this approval. It belongs to another project.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "أنهِ الدور الجاري قبل فتح هذه الموافقة. فهي تخص مشروعًا آخر."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beende zuerst den laufenden Durchgang, bevor du diese Freigabe öffnest. Sie gehört zu einem anderen Projekt."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Finish the running turn before opening this approval. It belongs to another project."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Termina el turno en curso antes de abrir esta aprobación. Pertenece a otro proyecto."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Terminez le tour en cours avant d'ouvrir cette approbation. Elle appartient à un autre projet."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "סיימו את התור הפעיל לפני פתיחת האישור הזה. הוא שייך לפרויקט אחר."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस अनुमोदन को खोलने से पहले चल रहे टर्न को पूरा करें। यह किसी दूसरे प्रोजेक्ट का है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Selesaikan giliran yang sedang berjalan sebelum membuka persetujuan ini. Persetujuan ini milik proyek lain."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Termina il turno in corso prima di aprire questa approvazione. Appartiene a un altro progetto."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この承認を開く前に、実行中のターンを完了してください。別のプロジェクトのものです。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 승인을 열기 전에 실행 중인 턴을 끝내세요. 다른 프로젝트에 속한 승인입니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rond de lopende beurt af voordat je deze goedkeuring opent. Ze hoort bij een ander project."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zakończ trwającą turę, zanim otworzysz to zatwierdzenie. Należy do innego projektu."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Conclua o turno em andamento antes de abrir esta aprovação. Ela pertence a outro projeto."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Завершите текущий ход, прежде чем открывать это подтверждение. Оно относится к другому проекту."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Slutför den pågående turen innan du öppnar det här godkännandet. Det tillhör ett annat projekt."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu onayı açmadan önce çalışan turu bitirin. Başka bir projeye ait."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Завершіть поточний хід, перш ніж відкривати це підтвердження. Воно належить іншому проєкту."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hãy hoàn tất lượt đang chạy trước khi mở phê duyệt này. Phê duyệt này thuộc về dự án khác."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请先完成正在运行的回合，再打开此审批。它属于另一个项目。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請先完成正在執行的回合，再開啟此核准。它屬於另一個專案。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
