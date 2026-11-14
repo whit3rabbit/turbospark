@@ -23,6 +23,9 @@ struct RootView: View {
     @ObservedObject private var appearanceManager = AppearanceManager.shared
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var isChatSearchPresented = false
+    /// OC-06: the collapsed sidebar's hover peek. Never touches
+    /// `isSidebarExpanded`.
+    @StateObject private var sidebarPeek = SidebarPeekController()
     /// What the command center's field starts with: empty from Cmd+K, `>`
     /// from Cmd+Shift+P. `paletteSeedToken` bumps when a seeded open
     /// arrives while the palette is already showing.
@@ -50,8 +53,62 @@ struct RootView: View {
     /// has nothing to toggle, so the preference is left alone there rather
     /// than flipped invisibly.
     private func toggleSidebarPanel() {
+        // A toggle during a peek cancels it and then applies the normal
+        // toggle: the toggle is the deliberate path.
+        sidebarPeek.cancel()
         guard model.activeSection.hasSidebarPanel else { return }
         isSidebarExpanded.toggle()
+    }
+
+    /// Peek applies only while the panel is collapsed in a section that has
+    /// one.
+    private var isPeekEligible: Bool {
+        !isSidebarExpanded && model.activeSection.hasSidebarPanel
+    }
+
+    /// The edge trigger strip and, while peeking, the live panel over the
+    /// content. Both are hidden from accessibility: the toggle stays the
+    /// keyboard and VoiceOver path, and the peek is pointer-only.
+    @ViewBuilder
+    private var sidebarPeekLayer: some View {
+        if isPeekEligible {
+            ZStack(alignment: .topLeading) {
+                // Below the top bar so a pointer arriving from the toggle
+                // never starts a dwell. Inside the rail's trailing edge,
+                // where no rail control sits.
+                Color.clear
+                    .frame(width: SidebarPeekController.triggerStripWidth)
+                    .frame(maxHeight: .infinity)
+                    .padding(.top, AppChromeLayout.topBarHeight)
+                    .contentShape(Rectangle())
+                    .onHover { inside in
+                        if inside { sidebarPeek.pointerEntered() } else { sidebarPeek.pointerExited() }
+                    }
+                    .offset(x: AppChromeLayout.navigationRailWidth - SidebarPeekController.triggerStripWidth)
+
+                if sidebarPeek.isPeeking {
+                    HStack(spacing: 0) {
+                        SidebarPanelSurface(model: model, clearsTopBar: false)
+                            .overlay(alignment: .trailing) {
+                                Rectangle().fill(.appBorder).frame(width: AppChromeLayout.dividerWidth)
+                            }
+                            .shadow(color: .black.opacity(0.18), radius: 12, x: 4, y: 0)
+                        // Grace band: still corridor, but transparent.
+                        Color.clear
+                            .frame(width: SidebarPeekController.corridorGrace)
+                            .frame(maxHeight: .infinity)
+                            .contentShape(Rectangle())
+                    }
+                    .onHover { inside in
+                        if inside { sidebarPeek.pointerEntered() } else { sidebarPeek.pointerExited() }
+                    }
+                    .padding(.leading, AppChromeLayout.navigationRailWidth)
+                    .padding(.top, AppChromeLayout.topBarHeight)
+                    .transition(.move(edge: .leading))
+                }
+            }
+            .accessibilityHidden(true)
+        }
     }
 
     private var effectiveReduceMotion: Bool {
@@ -116,6 +173,7 @@ struct RootView: View {
                 StatusBarView(model: model)
             }
         }
+        .overlay(alignment: .topLeading) { sidebarPeekLayer }
         .frame(
             minWidth: minimumWindowSize.width,
             minHeight: minimumWindowSize.height)
@@ -123,6 +181,21 @@ struct RootView: View {
         .clipped()
         .background(.appPage)
         .tsAnimation(TSMotion.pane, value: isSidebarExpanded)
+        .tsAnimation(TSMotion.pane, value: sidebarPeek.isPeeking)
+        .onChange(of: isPeekEligible, initial: true) { _, eligible in
+            sidebarPeek.setEligible(eligible)
+        }
+        .onChange(of: isChatSearchPresented, initial: true) { _, open in
+            sidebarPeek.paletteOpen = open
+            if open { sidebarPeek.cancel() }
+        }
+        // A chat or section switch ends the peek: the click that caused it
+        // was the peek's job, and the panel should not linger over the pane.
+        .onChange(of: model.selectedChatID) { _, _ in sidebarPeek.cancel() }
+        .onChange(of: model.activeSection) { _, _ in sidebarPeek.cancel() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            sidebarPeek.cancel()
+        }
         .tsAnimation(TSMotion.pane, value: isInspectorVisible)
         .tsAnimation(TSMotion.pane, value: model.previewAttachmentID)
         .tsAnimation(TSMotion.pane, value: model.openArtifactID)

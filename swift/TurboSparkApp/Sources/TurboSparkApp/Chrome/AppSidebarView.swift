@@ -38,17 +38,7 @@ struct AppSidebarView: View {
             NavigationRailView(
                 model: model, isPanelVisible: isPanelVisible, isPanelPreferred: isPanelPreferred)
             if isPanelVisible {
-                panel
-                    .frame(width: AppChromeLayout.sidebarPanelWidth)
-                    // Starts below the top bar's height so the first row
-                    // clears the traffic lights, which a `.hiddenTitleBar`
-                    // window draws over the rail and the panel's first 14pt.
-                    .padding(.top, AppChromeLayout.topBarHeight + 6)
-                    .frame(maxHeight: .infinity)
-                    // The rail paints its own background; painting this one
-                    // under both would stack two translucent layers there.
-                    .background(TurboSparkTheme.sidebarBackgroundColor(
-                        isDark: theme.isDark, reduceTransparency: theme.reduceTransparency))
+                SidebarPanelSurface(model: model)
             }
         }
         .frame(width: AppChromeLayout.leftChromeWidth(isPanelVisible: isPanelVisible))
@@ -56,6 +46,34 @@ struct AppSidebarView: View {
         .font(theme.ui(.small))
         .foregroundStyle(.appText)
         .clipped()
+    }
+}
+
+/// The section's panel with its frame, top inset and background. The docked
+/// sidebar and the OC-06 hover peek both render this view, so the two cannot
+/// drift.
+@MainActor
+struct SidebarPanelSurface: View {
+    @Environment(\.appTheme) private var theme
+    @ObservedObject var model: AppModel
+    /// The docked panel runs up behind the top bar's height; the peek starts
+    /// below the top bar so the toggle stays uncovered.
+    var clearsTopBar = true
+
+    var body: some View {
+        panel
+            .font(theme.ui(.small))
+            .foregroundStyle(.appText)
+            .frame(width: AppChromeLayout.sidebarPanelWidth)
+            // Starts below the top bar's height so the first row
+            // clears the traffic lights, which a `.hiddenTitleBar`
+            // window draws over the rail and the panel's first 14pt.
+            .padding(.top, clearsTopBar ? AppChromeLayout.topBarHeight + 6 : 6)
+            .frame(maxHeight: .infinity)
+            // The rail paints its own background; painting this one
+            // under both would stack two translucent layers there.
+            .background(TurboSparkTheme.sidebarBackgroundColor(
+                isDark: theme.isDark, reduceTransparency: theme.reduceTransparency))
     }
 
     @ViewBuilder
