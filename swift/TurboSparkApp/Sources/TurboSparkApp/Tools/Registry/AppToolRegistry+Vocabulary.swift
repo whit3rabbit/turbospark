@@ -200,6 +200,7 @@ extension AppToolRegistry {
         "send_message", "sendmessage",
         "respond_to_coordinator", "respondtocoordinator",
         "askuserquestion", "ask_user_question", "ask_question", "question",
+        "gen_ui_render",
         "enterplanmode", "enter_plan_mode", "plan_mode", "plan",
         "exitplanmode", "exit_plan_mode",
         "reportfindings", "report_findings", "findings",

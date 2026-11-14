@@ -10,7 +10,7 @@ revision `a60ba6a7` (v3.17.1), audited 2026-10-31
 ([INDEX.md](INDEX.md)).
 
 * Author: whit3rabbit
-* Status: Implemented (partial): phases A and B (page host, sandbox, bridge, failure card, manifest model, opt-in, registry, side pane) landed; Gen UI remains, see Implementation notes
+* Status: Implemented. Phases A (sandbox, bridge, failure card), B (opt-in, registry, side pane) and C (Gen UI as a closed native schema, not HTML) landed; deviations and deferrals are in Implementation notes
 * Date: 2026-11-11
 
 Terms: ZCode and the ZP set are defined in [INDEX.md](INDEX.md);
@@ -448,6 +448,63 @@ Mutation checks run on the host: cap loop disabled; interacting-page
 protection dropped; opt-in guard dropped; teardown call dropped; reconcile
 opt-out check dropped; chat-switch close disabled. Each failed its test.
 
-Remaining: phase C (Gen UI).
+### Phase C (Gen UI)
+
+`GenUiSpec.swift` (closed schema, parser, value expansion),
+`GenUiCardView.swift` (native renderer), `GenUiTool.swift`
+(`gen_ui_render`), wired through `AppToolCatalog`, `AppToolRegistry`,
+`ToolRiskClassifier`, `ToolPresentation` and `ToolCallCardView`.
+
+Deviations, the first being a change of direction:
+
+* **Gen UI does not render model HTML.** The draft's Alternative B (a native
+  rendering of a declarative schema) was rejected for "HTML is the
+  interchange format of the ecosystem", and the draft chose agent-written
+  self-contained HTML. The implementation task for this work set the
+  opposite rule: model-emitted UI must render through a closed schema and
+  component set, never raw HTML or script from the model. So Alternative B is
+  adopted for Gen UI. Plugin pages (shipped by a plugin author, behind an
+  opt-in, in the sandbox) remain HTML; model output never is. The ecosystem
+  argument still applies to plugins, which is where MCP Apps HTML would
+  arrive, and is unaffected.
+* **One tool, not two.** The draft had a write-page tool (content only,
+  generated filename, artifact registrar) and a render tool. With no file
+  there is nothing to write, name, sanitize or register, so
+  `gen_ui_render` takes the spec and the chat draws it. The artifact write
+  path is not touched.
+* **Ladder.** Category `automation`, risk `safe`, works without a project.
+  The draft said render is not low until the page has no tool authority;
+  that condition is true by construction here (no tool, file, network or
+  script path exists in the schema), and `testToolSitsAtTheSafeAutomationRung`
+  pins it. Adding any component with an effect means moving this entry up
+  first.
+* **Inline in the transcript.** The card is drawn by `ToolCallCardView`
+  under the tool's summary row once the call has a non-error result, so
+  `TranscriptPluginCardView` is not needed.
+* **`sendFollowUp`** is the `follow_up` component: it substitutes `{id}`
+  with control values into plain text and fills the composer draft, labeled
+  with the card title. It needs no gesture because it is a visible button
+  the person presses, in native code.
+* **Components** (the closed set): text, slider, stepper, toggle, picker,
+  readout (bound to a control id), table, bars, follow_up. No expressions,
+  no formulas, no charts library. Limits: 16 KiB, 40 components, 120-char
+  labels, 1000-char text, 12 options, 20 table rows by 8 columns, 24 bars,
+  10,000 slider steps.
+
+Mutation checks run: unknown-field check dropped; unknown component type
+skipped instead of rejected; component cap dropped; spec size cap dropped;
+control-character stripping dropped; readout bind check dropped; follow-up
+clip dropped; tool dropped from the safe rung. Each failed its test.
+
+Deferred, not decided here (none needs a dependency, crypto or CI change):
+
+* A tool-result "Open" row from `_meta.ui.resourceUri`: needs
+  `McpClientEngine` to keep result `_meta`; today it flattens to a string.
+* An approval card for a page-originated tool call that asks. Pages can
+  only run tools the permission engine allows without asking.
+* Inline placement for plugin pages (parsed, treated as side pane).
+* A bundled charts helper for plugin pages.
+* Re-prompting the opt-in when a plugin update adds surfaces.
+
 
 *Drafted with EGM*

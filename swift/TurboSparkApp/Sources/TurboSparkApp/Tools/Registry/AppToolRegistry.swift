@@ -918,6 +918,11 @@ public enum AppToolRegistry {
             case "proposeskills", "propose_skills":
                 output = try ProposeSkillsExecutor.execute(arguments: call.arguments, projectRootURL: resolvedRoot)
 
+            case "gen_ui_render":
+                // Validates the closed card schema only; the chat draws the
+                // card from the same spec. No file, network or tool effect.
+                output = try GenUiRenderExecutor.execute(arguments: call.arguments)
+
             case "proposegoal", "propose_goal":
                 output = try ProposeGoalExecutor.execute(arguments: call.arguments)
 

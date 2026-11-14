@@ -358,7 +358,21 @@ second loss, a refused page document, or a missing offline rule list shows a
 bounded failure card with Try again (`PluginPageFailureCard`, the contract
 ZP-17 deferred here).
 
+### Gen UI
+
+`gen_ui_render` takes a JSON `spec` and draws a native SwiftUI card in the
+chat. It is NOT HTML: the component set is closed (text, slider, stepper,
+toggle, picker, readout, table, bars, follow_up), every field is validated
+(`GenUiParser`), an unknown type or field rejects the whole spec naming its
+path, and all model text is drawn verbatim. There is no web view, script,
+network or tool authority on this path; a `follow_up` button only fills the
+composer draft, labeled with the card title. Limits: 16 KiB, 40 components,
+20 table rows, 24 bars. Ladder: category `automation`, risk `safe`, works
+without a project; any future component with an effect must move the tool
+up the ladder first.
+
 ### Tests
 
 `PluginPageSandboxTests` (real WKWebView through the real scheme handler,
-loopback fixture that must record zero requests) and `PluginUiHostTests`.
+loopback fixture that must record zero requests), `PluginUiHostTests`,
+`GenUiTests`.

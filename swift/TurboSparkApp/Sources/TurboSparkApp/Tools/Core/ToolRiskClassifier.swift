@@ -251,7 +251,7 @@ public enum ToolRiskClassifier {
              "ctxinspect", "ctx_inspect", "listmcpresources", "list_mcp_resources", "list_resources",
              "readmcpresource", "read_mcp_resource", "read_resource", "tasklist", "task_list", "taskget",
              "task_get", "taskoutput", "task_output", "sleep", "delay", "askuserquestion", "ask_user_question",
-             "ask_question", "question", "enterplanmode", "enter_plan_mode", "plan_mode", "plan",
+             "ask_question", "question", "gen_ui_render", "enterplanmode", "enter_plan_mode", "plan_mode", "plan",
              "exitplanmode", "exit_plan_mode", "reportfindings", "report_findings", "findings",
              "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "senduserfile", "send_user_file",
              "respond_to_coordinator", "respondtocoordinator":

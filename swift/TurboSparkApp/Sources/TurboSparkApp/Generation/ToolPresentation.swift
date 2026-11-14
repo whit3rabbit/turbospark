@@ -50,6 +50,7 @@ struct ToolPresentation: Equatable {
         register("Stop Agent", "bot-off", "stop_agent agentstop kill_agent")
         register("Send Message", "message-square", "send_message sendmessage")
         register("Message Coordinator", "message-square", "respond_to_coordinator respondtocoordinator")
+        register("Show Card", "layers", "gen_ui_render")
         register("Ask Question", "circle-help", "askuserquestion ask_user_question ask_question question")
         register("Enter Plan Mode", "clipboard-list", "enterplanmode enter_plan_mode plan_mode plan")
         register("Exit Plan Mode", "clipboard-check", "exitplanmode exit_plan_mode")

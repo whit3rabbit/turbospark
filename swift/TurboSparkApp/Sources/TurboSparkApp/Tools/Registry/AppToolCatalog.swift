@@ -37,7 +37,7 @@ public enum AppToolCatalog {
     public static var codemodeTools: [OpenAITool] { CodemodeToolDefinitions.all }
 
     /// Interactive questions, plan mode, findings, skills, and feedback tools.
-    public static let planningInteractiveTools: [OpenAITool] = PlanningInteractiveToolDefinitions.all + SkillToolDefinitions.all
+    public static let planningInteractiveTools: [OpenAITool] = PlanningInteractiveToolDefinitions.all + SkillToolDefinitions.all + GenUiToolDefinitions.all
 
     /// Persistent project memory. Computed: `MemoryToolDefinitions.all` is
     /// empty while the memory feature is off, so the gate is read every time
@@ -223,7 +223,7 @@ public enum AppToolCatalog {
             return .browser
         case _ where ComputerUseToolDefinitions.toolNames.contains(name):
             return .computerUse
-        case "batch", "schedule", "cron", "offpeakenqueue", "offpeak_enqueue", "offpeaklist", "offpeak_list", "offpeakcancel", "offpeak_cancel", "manage_task", "monitoring", "notify", "notification", "sleep", "delay", "pushnotification", "push_notification", "config", "config_tool", "ctxinspect", "ctx_inspect", "askuserquestion", "ask_user_question", "ask_question", "question", "enterplanmode", "enter_plan_mode", "plan_mode", "plan", "exitplanmode", "exit_plan_mode", "reportfindings", "report_findings", "findings", "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "agent", "subagent", "task", "stop_agent", "agentstop", "kill_agent", "stopagent", "send_message", "sendmessage", "taskcreate", "task_create", "task_add", "taskget", "task_get", "tasklist", "task_list", "taskupdate", "task_update", "taskstop", "task_stop", "task_cancel", "taskoutput", "task_output":
+        case "batch", "schedule", "cron", "offpeakenqueue", "offpeak_enqueue", "offpeaklist", "offpeak_list", "offpeakcancel", "offpeak_cancel", "manage_task", "monitoring", "notify", "notification", "sleep", "delay", "pushnotification", "push_notification", "config", "config_tool", "ctxinspect", "ctx_inspect", "askuserquestion", "ask_user_question", "ask_question", "question", "gen_ui_render", "enterplanmode", "enter_plan_mode", "plan_mode", "plan", "exitplanmode", "exit_plan_mode", "reportfindings", "report_findings", "findings", "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "agent", "subagent", "task", "stop_agent", "agentstop", "kill_agent", "stopagent", "send_message", "sendmessage", "taskcreate", "task_create", "task_add", "taskget", "task_get", "tasklist", "task_list", "taskupdate", "task_update", "taskstop", "task_stop", "task_cancel", "taskoutput", "task_output":
             return .automation
         case "tool_call", "call_mcp_tool", "callmcptool", "mcp_tool", "list_resources", "listmcpresources", "list_mcp_resources", "read_resource", "readmcpresource", "read_mcp_resource", "codemode":
             return .mcp
