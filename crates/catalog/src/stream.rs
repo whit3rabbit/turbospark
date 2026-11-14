@@ -246,14 +246,14 @@ pub(crate) fn stream_mlx(
         }
         let bits = plan.quantize_bits.unwrap_or(4);
         if !repack::quantize_on_install::is_supported_quantize_bits(bits) {
-            return Err(format!("--quantize {bits}: only 4 or 8 is supported"));
+            return Err(format!("--quantize {bits}: only 2, 4 or 8 is supported"));
         }
         Some(bits)
     };
     let quant = if let Some(bits) = quantize_on_install {
         repack::Gemma4Quant {
             default_bits: bits,
-            group_size: repack::quantize_on_install::QUANTIZE_ON_INSTALL_GROUP,
+            group_size: repack::quantize_on_install::group_for(bits),
             ..Default::default()
         }
     } else if family == ModelFamily::Flint {
@@ -347,8 +347,8 @@ pub(crate) fn stream_mlx(
             .map_err(|e| format!("{}: {e}", plan.weights))?;
         progress(&format!(
             "unquantized checkpoint ({layout:?} layout): quantizing to {}-bit affine at group \
-             64 on install",
-            quant.default_bits
+             {} on install",
+            quant.default_bits, quant.group_size
         ));
         Some(layout)
     } else {

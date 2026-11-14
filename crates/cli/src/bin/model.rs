@@ -110,9 +110,10 @@ OPTIONS:
     --sidecar-repo <REPO>[@REV] take tokenizer files from another repo. A GGUF
                                 carries llama.cpp's tokenizer, not an HF
                                 tokenizer.json, so a GGUF pull needs this
-    --quantize <4|8>            for a --repo pull of an UNQUANTIZED (BF16/FP16)
+    --quantize <2|4|8>          for a --repo pull of an UNQUANTIZED (BF16/FP16)
                                 checkpoint: the MLX affine width to quantize to
-                                at group 64 (default 4). Refused on a
+                                at group 64 (2-bit: group 128; default 4).
+                                Refused on a
                                 checkpoint that is already quantized
     --reuse-trunk-from <ALIAS>  for a row naming an mtp source: read an
                                 already-installed alias's resident trunk back
@@ -217,7 +218,7 @@ pub struct Options {
     pub kind: Option<String>,
     pub file: Option<String>,
     pub sidecar_repo: Option<String>,
-    /// `--quantize <4|8>`: quantize-on-install width for a `--repo` pull.
+    /// `--quantize <2|4|8>`: quantize-on-install width for a `--repo` pull.
     pub quantize: Option<u32>,
     /// An already-installed alias to reuse the trunk's resident bytes from,
     /// instead of re-streaming them, when the row being pulled names an
@@ -508,9 +509,10 @@ fn parse(args: &[String]) -> Result<(Vec<String>, Options), Error> {
                 options.quantize = Some(match value.as_str() {
                     "4" => 4,
                     "8" => 8,
+                    "2" => 2,
                     _ => {
                         return Err(Error::Usage(format!(
-                            "--quantize {value:?}: only 4 or 8 is supported"
+                            "--quantize {value:?}: only 2, 4 or 8 is supported"
                         )))
                     }
                 });

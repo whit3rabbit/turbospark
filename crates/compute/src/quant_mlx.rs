@@ -111,10 +111,79 @@ pub fn quantize_int8_affine_mlx(row: &[f32]) -> Int8AffineRow {
     }
 }
 
+/// Group size the 2-bit kernels dispatch (`quant_2bit::GROUP_SIZE`).
+pub const INT2_GROUP_SIZE: usize = 128;
+
+/// `mx.quantize(w, group_size=128, bits=2)` for one row of a FLOAT16 weight.
+///
+/// MLX stores the companions in the input dtype, and the runtime's 2-bit
+/// path reads F16 companions (`narrow.rs`), so this stores F16 where the 4-
+/// and 8-bit functions store BF16. A BF16 `mlx_lm.convert` would store BF16
+/// companions, so byte parity holds only against a float16 conversion.
+/// Packing is four values per byte, first value in the low bits.
+pub fn quantize_int2_affine_mlx(row: &[f32]) -> crate::quant_2bit::Int2AffineRow {
+    assert!(
+        row.len() % INT2_GROUP_SIZE == 0,
+        "row length {} is not a multiple of {INT2_GROUP_SIZE}",
+        row.len()
+    );
+    let n_groups = row.len() / INT2_GROUP_SIZE;
+    let mut packed = vec![0u8; row.len() / 4];
+    let mut scales = vec![0u16; n_groups];
+    let mut biases = vec![0u16; n_groups];
+    for g in 0..n_groups {
+        let group = &row[g * INT2_GROUP_SIZE..(g + 1) * INT2_GROUP_SIZE];
+        let (scale, bias) = group_params(group, 3.0);
+        scales[g] = crate::quant_1bit::f32_to_f16(scale);
+        biases[g] = crate::quant_1bit::f32_to_f16(bias);
+        for (k, quad) in group.chunks_exact(4).enumerate() {
+            let q = |i: usize| quantize_value(quad[i], scale, bias, 3.0);
+            packed[g * (INT2_GROUP_SIZE / 4) + k] = q(0) | (q(1) << 2) | (q(2) << 4) | (q(3) << 6);
+        }
+    }
+    crate::quant_2bit::Int2AffineRow {
+        packed,
+        scales,
+        biases,
+        group_size: INT2_GROUP_SIZE,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::quant::{bf16_to_f32, dequantize_int4_affine, dequantize_int8_affine};
+
+    #[test]
+    fn int2_round_trip_error_is_within_one_step() {
+        let r = row(5, 256);
+        let q = quantize_int2_affine_mlx(&r);
+        assert_eq!(q.packed.len(), 64);
+        let d = crate::quant_2bit::dequantize_int2_affine(&q, r.len());
+        for g in 0..r.len() / INT2_GROUP_SIZE {
+            let step = crate::quant_1bit::f16_to_f32(q.scales[g]).abs();
+            for k in 0..INT2_GROUP_SIZE {
+                let i = g * INT2_GROUP_SIZE + k;
+                // Snapping the far edge to a level can shrink the step so the
+                // near edge clamps; at 3 bins that costs up to one step
+                // (measured, same behaviour as the Metal kernel).
+                assert!((d[i] - r[i]).abs() <= step * 1.0 + 1e-3, "i={i}");
+            }
+        }
+    }
+
+    #[test]
+    fn int2_uses_all_four_levels_low_bits_first() {
+        // Range [-1, 0.5]: the larger-magnitude edge is -1, so scale = 0.5
+        // and bias = -1, and -1, -0.5, 0, 0.5 land on levels 0..3. (A tie in
+        // magnitude would flip the sign convention, so avoid one.)
+        let mut r = vec![-1.0f32; 128];
+        r[1] = -0.5;
+        r[2] = 0.0;
+        r[3] = 0.5;
+        let q = quantize_int2_affine_mlx(&r);
+        assert_eq!(q.packed[0], 0b11_10_01_00);
+    }
 
     fn row(seed: u32, n: usize) -> Vec<f32> {
         // Deterministic, mixed-sign, BF16-representable values.

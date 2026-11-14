@@ -113,8 +113,8 @@ pub struct InstallPlan {
     /// every other install kind, and for a vision-only one whose index
     /// already lists a matching shard.
     pub vision_file: Option<String>,
-    /// Quantize-on-install width for an UNQUANTIZED checkpoint (4 or 8, at
-    /// group 64), from `pull --quantize`. `None` means 4 when the checkpoint
+    /// Quantize-on-install width for an UNQUANTIZED checkpoint (2, 4 or 8, at
+    /// group 64, or 128 for 2-bit), from `pull --quantize`. `None` means 4 when the checkpoint
     /// needs quantizing and nothing otherwise; `Some` on an already-quantized
     /// checkpoint is refused rather than ignored, since it asks for
     /// something the walk will not do.
