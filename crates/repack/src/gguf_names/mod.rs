@@ -185,6 +185,9 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
             ModelFamily::QwenGdnDense => qwen::map_qwen_gdn_dense_layer(suffix, layer),
             ModelFamily::Spark25 => spark::map_spark_layer(suffix, layer),
             ModelFamily::Qwen3Dense => qwen::map_qwen3_dense_layer(suffix, layer),
+            // The text trunk of Qwen3-VL is dense `qwen3`'s: same 11 tensors per
+            // layer under the same names (read off the real 4B header).
+            ModelFamily::Qwen3Vl => qwen::map_qwen3_dense_layer(suffix, layer),
             ModelFamily::MiniMaxM2 => minimax::map_layer(suffix, layer),
             ModelFamily::Deepseek2 => deepseek2::map_deepseek2_layer(suffix, layer),
             ModelFamily::Lfm3 => lfm3::map_lfm3_layer(suffix, layer),
@@ -206,10 +209,7 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
             // converter's tower naming is unparsed here. This port ingests
             // its MLX safetensors, so unmapped until the whole file has a
             // table.
-            ModelFamily::DeepseekV4Flash
-            | ModelFamily::Qwen3Vl
-            | ModelFamily::Flint
-            | ModelFamily::UnlimitedOcr2 => None,
+            ModelFamily::DeepseekV4Flash | ModelFamily::Flint | ModelFamily::UnlimitedOcr2 => None,
         }
         .ok_or_else(unmapped);
     }
@@ -280,6 +280,9 @@ pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
         // Read off `ggml-org/Muse-Glimmer-30B-GGUF`: llama.cpp HYPHENATES it,
         // where the HF `model_type` is `muse_glimmer`.
         ModelFamily::MuseGlimmer => Some("muse-glimmer"),
+        // Read off `Qwen/Qwen3-VL-4B-Instruct-GGUF`: llama.cpp's text-trunk
+        // architecture, distinct from `qwen3vlmoe` (the MoE family's row).
+        ModelFamily::Qwen3Vl => Some("qwen3vl"),
         // Neither of the first two is published as a GGUF. `None` is the
         // honest answer: inventing a string here would make
         // `family_for_architecture` claim to recognize a file that does not
@@ -297,7 +300,6 @@ pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
         // port ingests the MLX safetensors instead.
         ModelFamily::DeepseekV4Flash
         | ModelFamily::Qwen4Exp
-        | ModelFamily::Qwen3Vl
         // llama.cpp's port (ggml-org/llama.cpp#30928) is unmerged and the
         // published Q4_1 is not an executable block type here.
         | ModelFamily::Flint

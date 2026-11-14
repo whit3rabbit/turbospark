@@ -198,6 +198,26 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         }
     }
 
+    if family == ModelFamily::Qwen3Vl {
+        // The multimodal rope sections the flow's mRoPE dispatch is built for
+        // (`docs/QWEN3VL_PHASE0.md`). Text positions collapse to plain RoPE,
+        // but a conversion with other sections is another model.
+        let key = m.key("rope.dimension_sections");
+        let sections: Option<Vec<u64>> = m
+            .opt("rope.dimension_sections")
+            .and_then(GgufValue::as_array)
+            .map(|a| a.iter().filter_map(GgufValue::as_u64).collect());
+        match sections.as_deref() {
+            Some([24, 20, 20]) | Some([24, 20, 20, 0]) => {}
+            other => {
+                return Err(GgufConfigError::BadValue {
+                    key,
+                    detail: format!("Qwen3-VL requires sections [24, 20, 20], got {other:?}"),
+                })
+            }
+        }
+    }
+
     // `block_count` COUNTS THE MULTI-TOKEN-PREDICTION BLOCK, and this port's
     // `num_layers` is the trunk alone. llama.cpp writes the head as one more
     // `blk.<n>.` block and declares how many of the trailing ones are hers in
@@ -296,6 +316,7 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         ModelFamily::Llama
         | ModelFamily::Qwen3Moe
         | ModelFamily::Qwen3Dense
+        | ModelFamily::Qwen3Vl
         | ModelFamily::Qwen2Dense
         | ModelFamily::MiniMaxM2 => {
             vec![1u8; num_layers_usize]
@@ -321,10 +342,7 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         // intake this port built.
         // `flint` has no GGUF intake here (Q4_1 is not an executable block
         // type and the llama.cpp port is unmerged): refuse, never invent.
-        ModelFamily::DeepseekV4Flash
-        | ModelFamily::Qwen3Vl
-        | ModelFamily::Flint
-        | ModelFamily::UnlimitedOcr2 => {
+        ModelFamily::DeepseekV4Flash | ModelFamily::Flint | ModelFamily::UnlimitedOcr2 => {
             return Err(GgufConfigError::UnsupportedArchitecture {
                 architecture: architecture.to_string(),
             })

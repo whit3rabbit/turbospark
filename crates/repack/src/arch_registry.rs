@@ -175,6 +175,14 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // scale, and `arch_from_gguf` REFUSES any file whose other scalars differ
     // (Granite 3.x carries 12.0 / 0.22 / 16.0, which the flow cannot express).
     ("granite", ModelFamily::Llama),
+    // Read off `Qwen/Qwen3-VL-4B-Instruct-GGUF`'s Q4_K_M header, 2026-11-14:
+    // the TEXT trunk only (398 tensors: 11 per layer over 36 layers plus
+    // `token_embd` and `output_norm`, tied head), with the vision tower in a
+    // SEPARATE `mmproj-*.gguf` this row does not read. The names are the dense
+    // `qwen3` table's, and the file adds `rope.dimension_sections` and
+    // `n_deepstack_layers` metadata (the deepstack mergers live in the
+    // mmproj). One word from `qwen3vlmoe`, which is the MoE family's row.
+    ("qwen3vl", ModelFamily::Qwen3Vl),
 ];
 
 /// HF `config.json -> model_type` -> family, for the architectures that run.

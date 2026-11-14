@@ -20,6 +20,11 @@ when this file gets updated relative to the version bump and the tag.
   tokenizer dialect accepts a table with no `<|endoftext|>` when its config
   declares an EOS. Checked against the real GGUF and official BF16 bytes, and a
   real 3B install decodes correctly.
+- Qwen3-VL GGUF files (`Qwen/Qwen3-VL-*-GGUF`) install their text trunk: the
+  `qwen3vl` architecture, the dense Qwen3 tensor names, and a guard on the
+  multimodal rope sections. The vision projector (`mmproj`) is not read. Checked
+  against the real GGUF, MLX and official BF16 bytes; a real 4B install matched
+  the MLX reference on greedy prompts at Q8_0.
 - Muse Glimmer GGUF files (`ggml-org`, `unsloth`, `meta-models`) are recognized
   and walked: the `muse-glimmer` architecture, its tensor names, the
   converter's baked-in norm `+1`, its interleaved RoPE row order and its
