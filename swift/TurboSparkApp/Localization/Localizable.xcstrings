@@ -650825,6 +650825,399 @@
           }
         }
       }
+    },
+    "Allow formatters in this project": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow formatters in this project"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permitir formateadores en este proyecto"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Autoriser les formateurs dans ce projet"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formatierer in diesem Projekt erlauben"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consenti i formattatori in questo progetto"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permitir formatadores neste projeto"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить форматтеры в этом проекте"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このプロジェクトでフォーマッタを許可"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 프로젝트에서 포맷터 허용"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许在此项目中使用格式化工具"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許在此專案中使用格式化工具"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "السماح بالمنسّقات في هذا المشروع"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "אפשר מעצבים בפרויקט זה"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस प्रोजेक्ट में फ़ॉर्मैटर की अनुमति दें"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formatters toestaan in dit project"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zezwalaj na formatery w tym projekcie"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu projede biçimlendiricilere izin ver"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Дозволити форматувальники в цьому проєкті"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tillåt formaterare i det här projektet"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cho phép trình định dạng trong dự án này"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Izinkan formatter di proyek ini"
+          }
+        }
+      }
+    },
+    "Needs the Formatters switch in Settings. Turn this off to never run a formatter on this project's files.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Needs the Formatters switch in Settings. Turn this off to never run a formatter on this project's files."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Requiere el interruptor Formateadores en Ajustes. Desactívalo para no ejecutar nunca un formateador sobre los archivos de este proyecto."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nécessite l'interrupteur Formateurs dans les Réglages. Désactivez-le pour ne jamais exécuter de formateur sur les fichiers de ce projet."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erfordert den Schalter „Formatierer“ in den Einstellungen. Deaktivieren, damit nie ein Formatierer auf Dateien dieses Projekts läuft."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Richiede l'interruttore Formattatori nelle Impostazioni. Disattivalo per non eseguire mai un formattatore sui file di questo progetto."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Requer o interruptor Formatadores nos Ajustes. Desative para nunca executar um formatador nos arquivos deste projeto."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Требуется переключатель «Форматтеры» в настройках. Выключите, чтобы форматтеры никогда не запускались для файлов этого проекта."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定の「フォーマッタ」スイッチが必要です。オフにすると、このプロジェクトのファイルでフォーマッタは実行されません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설정의 포맷터 스위치가 필요합니다. 끄면 이 프로젝트의 파일에서 포맷터가 실행되지 않습니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要在设置中打开“格式化工具”开关。关闭后，此项目的文件将不会运行格式化工具。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要在設定中開啟「格式化工具」開關。關閉後，此專案的檔案將不會執行格式化工具。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يتطلب مفتاح المنسّقات في الإعدادات. أوقفه كي لا يعمل أي منسّق على ملفات هذا المشروع أبدًا."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "דורש את מתג המעצבים בהגדרות. כבה כדי שלא יופעל לעולם מעצב על קובצי הפרויקט."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "सेटिंग्स में फ़ॉर्मैटर स्विच ज़रूरी है। इसे बंद करने पर इस प्रोजेक्ट की फ़ाइलों पर कभी कोई फ़ॉर्मैटर नहीं चलेगा।"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vereist de schakelaar Formatters in Instellingen. Zet dit uit om nooit een formatter op de bestanden van dit project uit te voeren."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wymaga przełącznika Formatery w Ustawieniach. Wyłącz, aby nigdy nie uruchamiać formatera na plikach tego projektu."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ayarlar'daki Biçimlendiriciler anahtarı gerekir. Bu projenin dosyalarında hiçbir biçimlendirici çalışmasın diye kapatın."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Потрібен перемикач «Форматувальники» в налаштуваннях. Вимкніть, щоб форматувальники ніколи не запускалися для файлів цього проєкту."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kräver reglaget Formaterare i Inställningar. Stäng av för att aldrig köra en formaterare på det här projektets filer."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cần công tắc Trình định dạng trong Cài đặt. Tắt để không bao giờ chạy trình định dạng trên các tệp của dự án này."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Memerlukan sakelar Formatter di Pengaturan. Matikan agar formatter tidak pernah dijalankan pada berkas proyek ini."
+          }
+        }
+      }
+    },
+    "Formatters are off in Settings, so none run in any project.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formatters are off in Settings, so none run in any project."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los formateadores están desactivados en Ajustes, así que no se ejecuta ninguno en ningún proyecto."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les formateurs sont désactivés dans les Réglages : aucun ne s'exécute dans aucun projet."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formatierer sind in den Einstellungen ausgeschaltet, daher läuft in keinem Projekt einer."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "I formattatori sono disattivati nelle Impostazioni, quindi non ne viene eseguito nessuno in nessun progetto."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Os formatadores estão desativados nos Ajustes, então nenhum é executado em nenhum projeto."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Форматтеры выключены в настройках, поэтому ни в одном проекте они не запускаются."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定でフォーマッタがオフのため、どのプロジェクトでも実行されません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설정에서 포맷터가 꺼져 있어 어떤 프로젝트에서도 실행되지 않습니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置中已关闭格式化工具，因此任何项目都不会运行。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定中已關閉格式化工具，因此任何專案都不會執行。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "المنسّقات متوقفة في الإعدادات، لذا لا يعمل أي منها في أي مشروع."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "המעצבים כבויים בהגדרות, ולכן אף אחד מהם לא רץ באף פרויקט."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "सेटिंग्स में फ़ॉर्मैटर बंद हैं, इसलिए किसी भी प्रोजेक्ट में कोई नहीं चलता।"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formatters staan uit in Instellingen, dus er draait er geen in enig project."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formatery są wyłączone w Ustawieniach, więc nie działają w żadnym projekcie."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Biçimlendiriciler Ayarlar'da kapalı, bu yüzden hiçbir projede çalışmaz."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Форматувальники вимкнено в налаштуваннях, тому в жодному проєкті вони не запускаються."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formaterare är avstängda i Inställningar, så ingen körs i något projekt."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trình định dạng đang tắt trong Cài đặt, nên không có trình nào chạy trong bất kỳ dự án nào."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Formatter dimatikan di Pengaturan, sehingga tidak ada yang berjalan di proyek mana pun."
+          }
+        }
+      }
     }
   },
   "version": "1.0"

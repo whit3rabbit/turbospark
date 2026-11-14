@@ -36,6 +36,10 @@ struct ProjectPermissionsSectionView: View {
     @Binding var browserOriginAllowlist: [String]
     @Binding var computerUsePermission: AppToolPermission
     @Binding var guardrailsOption: AppProjectGuardrailsOption
+    @Binding var formatterMode: ProjectFormatterMode
+    /// The app-wide formatter switch, read live so the note below follows a
+    /// change made in Settings while this sheet is open.
+    @AppStorage(FormatterSettings.enabledKey) private var formatterAppWideEnabled = false
     @StateObject private var browserPermissionModel: BrowserProjectPermissionsSettingsViewModel
 
     init(
@@ -49,7 +53,8 @@ struct ProjectPermissionsSectionView: View {
         browserPermission: Binding<AppToolPermission>,
         browserOriginAllowlist: Binding<[String]>,
         computerUsePermission: Binding<AppToolPermission>,
-        guardrailsOption: Binding<AppProjectGuardrailsOption>
+        guardrailsOption: Binding<AppProjectGuardrailsOption>,
+        formatterMode: Binding<ProjectFormatterMode>
     ) {
         _permissionMode = permissionMode
         _fileReadPermission = fileReadPermission
@@ -62,6 +67,7 @@ struct ProjectPermissionsSectionView: View {
         _browserOriginAllowlist = browserOriginAllowlist
         _computerUsePermission = computerUsePermission
         _guardrailsOption = guardrailsOption
+        _formatterMode = formatterMode
         _browserPermissionModel = StateObject(wrappedValue: BrowserProjectPermissionsSettingsViewModel(
             permission: browserPermission.wrappedValue,
             originAllowlist: browserOriginAllowlist.wrappedValue
@@ -172,7 +178,39 @@ struct ProjectPermissionsSectionView: View {
             }
             .padding(12)
             .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
+
+            formatterRow
         }
+    }
+
+    /// The per-project formatter toggle (OC-11). On follows the app-wide
+    /// Formatters switch; off keeps every formatter away from this project.
+    /// It can only narrow the app-wide switch, so with that switch off the
+    /// toggle has nothing to grant and the note says why.
+    private var formatterRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: Binding(
+                get: { formatterMode == .inherit },
+                set: { formatterMode = $0 ? .inherit : .off }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Allow formatters in this project", bundle: .module)
+                        .themedFont(.base, weight: .medium)
+                    Text("Needs the Formatters switch in Settings. Turn this off to never run a formatter on this project's files.", bundle: .module)
+                        .themedFont(.tiny)
+                        .foregroundStyle(.appSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if !formatterAppWideEnabled {
+                Text("Formatters are off in Settings, so none run in any project.", bundle: .module)
+                    .themedFont(.tiny)
+                    .foregroundStyle(.appSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     /// What the engine ignores in the selected mode, so a row's value is

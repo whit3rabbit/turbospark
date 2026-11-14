@@ -4,7 +4,8 @@ import Foundation
 /// `LSPDiagnosticsStep`, so diagnostics read the formatted file. It is
 /// app-initiated (not a model tool call) and runs only after an edit tool has
 /// already passed the permission ladder; the master switch, off by default, is
-/// the user's trust grant. Success adds a note only when the file changed.
+/// the user's trust grant, and a project may narrow it (`ProjectFormatterMode`)
+/// but never widen it. Success adds a note only when the file changed.
 struct FormatterPostEditStep: PostEditStep {
     let identifier = "formatter"
     var isEnabled: @Sendable () -> Bool = { FormatterSettings.isEnabled() }
@@ -13,7 +14,9 @@ struct FormatterPostEditStep: PostEditStep {
     var searchPath: @Sendable () async -> String? = { await LoginShellPath.resolved() }
 
     func run(_ context: PostEditContext) async -> String? {
-        guard isEnabled() else { return nil }
+        guard ProjectFormatterMode.allowsPass(
+            appWideEnabled: isEnabled(), project: context.formatterMode)
+        else { return nil }
         let rows = rows()
         // Resolve the login-shell PATH lazily: only when a row covers a path.
         var resolvedPath: String??

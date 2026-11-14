@@ -8,7 +8,7 @@ and
 [builtins table](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/formatter/builtins.ts).
 
 * Author: whit3rabbit
-* Status: Partial (formatter step, registry, runner, settings rows and tests ship behind a default-off app-level switch; see Implementation Record)
+* Status: Partial (per-project toggle shipped 2026-11-14; remaining items listed under Deferred)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -308,7 +308,8 @@ The draft said none were open; its "(author to confirm)" items resolved as:
 
 ### Deferred (needs a dependency, a download or a security-policy call)
 
-* **Per-project toggle** and its persistence in the project archive.
+* ~~Per-project toggle and its persistence in the project archive.~~ Done in
+  the follow-up record below.
 * **No network for the formatter process.** Not enforceable without a
   sandbox profile. Mitigations shipped: scrubbed environment (no proxy or
   credential variables), user-installed binaries only, no in-project
@@ -328,6 +329,55 @@ The draft said none were open; its "(author to confirm)" items resolved as:
 `FormatterRunnerTests` and `FormatterRegistryTests` (bash fixture only),
 plus `LSPToolsTests` and `LocalizationParityTests`. Mutation checks are listed
 in the implementing session's final report.
+
+## Implementation record: per-project toggle (2026-11-14)
+
+The draft's Goals said "per-project toggle, default off". The user did not
+answer whether the app-wide switch is enough, so this follows the draft as
+far as it can without breaking the shipped launch policy (untouched): the
+pass needs BOTH the app-wide switch and the project's say, and the project
+can only NARROW.
+
+* `Tools/Format/ProjectFormatterMode.swift`: `ProjectFormatterMode`
+  (`inherit`, `off`) and `allowsPass(appWideEnabled:project:)`. There is no
+  "on" case on purpose: with the app-wide switch off (the shipped default)
+  a project can never turn a formatter on, so a cloned or imported project
+  record cannot widen what runs a command on disk.
+* `AppProject.formatterMode` in the project archive (`AppProjectFileStore`,
+  via `AppProject`'s own Codable). Decoded with `decodeTolerant`: a missing
+  key (an archive from before the field), an unknown value and a wrong
+  type all load as `inherit`, so an old archive does not throw.
+* `PostEditContext.formatterMode`, filled by `PostEditSeam.note` from the
+  project; `FormatterPostEditStep` returns nothing unless the app-wide switch
+  allows it AND the mode is not `off`.
+* `ProjectPermissionsSectionView`: one toggle row, "Allow formatters in this
+  project" (on = inherit, off = never), below the guardrails row, with a note
+  while the app-wide switch is off (read live through `@AppStorage`).
+  `ProjectSettingsSheet` and `AppModel.createProject` carry the field.
+* 3 new strings in 21 languages. No Settings row was added, so
+  `SettingsControlCatalog` is unchanged (`generate-settings-catalog.py
+  --check` clean).
+* Tests (`FormatterProjectToggleTests`): old archive decodes to inherit,
+  unknown and mistyped values decode to inherit, `off` round-trips, project
+  off beats app on, app off beats project inherit, the control case formats,
+  and the seam carries the mode. Mutation checks, each caught by named
+  tests: `&&` to `||` in `allowsPass`; the step ignoring the mode; the seam
+  dropping the mode; the decode fallback set to `off`.
+
+Remaining: the toggle default is "inherit", not the draft's literal
+"default off per project"; with the app-wide switch off the effective
+default is still off everywhere, so behavior matches. A project-level "on"
+that could enable the pass where the app-wide switch is off is NOT built
+(decision below). Manual check of the sheet row (text sizes, themes,
+VoiceOver, RTL, DESIGN.md section 9) was not run from this session. The
+other Deferred items above (network isolation, Settings "Test" button,
+circuit breaker, `LoginShellPath` move, real swift-format check) are
+unchanged.
+
+Decision needed: keep the project toggle narrow-only (current), or allow a
+project to opt IN when the app-wide switch is off. The second is a
+security-policy change (a project record could then widen what runs) and
+should be the user's call.
 
 --------------------------------------------------------------------------------
 

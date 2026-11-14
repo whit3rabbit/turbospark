@@ -29,6 +29,7 @@ struct ProjectSettingsSheet: View {
     @State private var skillStateEnabled: Bool = false
     @State private var rulePreference: AppRulePreference = .agentsFirst
     @State private var guardrailsOption: AppProjectGuardrailsOption = .auto
+    @State private var formatterMode: ProjectFormatterMode = .inherit
     @State private var rulesAutoDetectedMessage: String?
     @State private var showingMcpSheet = false
     @State private var showingSkills = false
@@ -62,7 +63,8 @@ struct ProjectSettingsSheet: View {
                                 browserPermission: $browserPermission,
                                 browserOriginAllowlist: $browserOriginAllowlist,
                                 computerUsePermission: $computerUsePermission,
-                                guardrailsOption: $guardrailsOption
+                                guardrailsOption: $guardrailsOption,
+                                formatterMode: $formatterMode
                             )
                             mcpSection
                             if editingProject != nil {
@@ -469,12 +471,14 @@ struct ProjectSettingsSheet: View {
             skillStateEnabled = editing.skillStateEnabled
             guardrailsOption = AppProjectGuardrailsOption.from(optionalBool: editing.forgeGuardrailsEnabled)
             syntextIndexEnabled = editing.syntextIndexEnabled
+            formatterMode = editing.formatterMode
             refreshIndexStats()
         } else {
             name = ""
             agentType = .coder
             rulePreference = .agentsFirst
             guardrailsOption = .auto
+            formatterMode = .inherit
             // `.standard`, matching `AppProject.init`, its decode fallback,
             // and `AppModel.createProject`. This branch used to seed
             // `.auto`, which is `terminal: .allow` / `fileWrite: .allow` /
@@ -633,6 +637,7 @@ struct ProjectSettingsSheet: View {
             updated.skillStateEnabled = skillStateEnabled
             updated.forgeGuardrailsEnabled = guardrailsPref
             updated.syntextIndexEnabled = syntextIndexEnabled
+            updated.formatterMode = formatterMode
             // `editing` is the snapshot from sheet-open. The nested MCP
             // sheet edited the LIVE project (servers, allow/deny rules),
             // so carrying the snapshot's stale copies over `updateProject`
@@ -657,7 +662,8 @@ struct ProjectSettingsSheet: View {
                 maxAutonomousSteps: Int(maxAutonomousSteps),
                 skillStateEnabled: skillStateEnabled,
                 forgeGuardrailsEnabled: guardrailsPref,
-                syntextIndexEnabled: syntextIndexEnabled
+                syntextIndexEnabled: syntextIndexEnabled,
+                formatterMode: formatterMode
             )
         }
         onDismiss()

@@ -7,6 +7,9 @@ struct PostEditContext: Sendable {
     var relativePaths: [String]
     var rootURL: URL
     var chatID: UUID?
+    /// The project's say over the formatter pass (OC-11); `.inherit` unless
+    /// the project narrowed it.
+    var formatterMode: ProjectFormatterMode = .inherit
 }
 
 /// One step run after a successful edit tool call. A step returns text to
@@ -49,7 +52,9 @@ enum PostEditSeam {
         guard !isError, isEditTool(call.name), let root = project?.rootDirectoryURL else { return nil }
         let paths = Array(ToolActionFusion.targetPaths(for: call).prefix(maximumPaths))
         guard !paths.isEmpty else { return nil }
-        let context = PostEditContext(toolName: call.name, relativePaths: paths, rootURL: root, chatID: chatID)
+        let context = PostEditContext(
+            toolName: call.name, relativePaths: paths, rootURL: root, chatID: chatID,
+            formatterMode: project?.formatterMode ?? .inherit)
         var notes: [String] = []
         for step in override ?? steps {
             if let text = await step.run(context), !text.isEmpty { notes.append(text) }

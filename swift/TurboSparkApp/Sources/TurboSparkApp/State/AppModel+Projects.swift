@@ -71,7 +71,8 @@ extension AppModel {
         maxAutonomousSteps: Int = 5,
         skillStateEnabled: Bool = false,
         forgeGuardrailsEnabled: Bool? = nil,
-        syntextIndexEnabled: Bool = false
+        syntextIndexEnabled: Bool = false,
+        formatterMode: ProjectFormatterMode = .inherit
     ) -> AppProject {
         // **THE SAME GUARD `selectProject` CARRIES** (state#55). Creating a
         // project SELECTS it, rebinds `worktree` and rebinds `AppHookStore`,
@@ -90,7 +91,8 @@ extension AppModel {
             maxAutonomousSteps: maxAutonomousSteps,
             forgeGuardrailsEnabled: forgeGuardrailsEnabled,
             skillStateEnabled: skillStateEnabled,
-            syntextIndexEnabled: syntextIndexEnabled
+            syntextIndexEnabled: syntextIndexEnabled,
+            formatterMode: formatterMode
         )
 
         projects.insert(project, at: 0)
