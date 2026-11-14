@@ -985,6 +985,17 @@ public final class AppModel: ObservableObject {
     /// and overwrites `runTask`. This flag is set SYNCHRONOUSLY, before the
     /// `Task`, which is the only place a second `run()` can be refused.
     @Published public var submitting: Bool = false
+    /// Set while the engine has gone silent mid-generate for the watchdog
+    /// window and the user has not answered (OC-14). Cleared by the next
+    /// stream event, Keep Waiting, Stop, or the end of the call.
+    @Published var generationStallNotice: GenerationStallNotice?
+    /// Lazily built by `AppModel+StallWatchdog`; armed per generate call.
+    var stallWatchdog: GenerationStallWatchdog?
+    /// Test seam: replaces the live relaunch so a test never quits or
+    /// spawns anything. Nil means the real one.
+    var guardedRelaunchOverride: GuardedRelaunch?
+    /// The live relaunch, kept so a double click hits its in-progress latch.
+    var stallRelaunch: GuardedRelaunch?
     /// Current phase of the generation runner.
     @Published public var phase: GenerationPhase = .idle
     /// Number of prompt tokens processed so far during prefill.

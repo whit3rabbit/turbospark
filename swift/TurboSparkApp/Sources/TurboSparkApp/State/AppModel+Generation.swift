@@ -342,8 +342,14 @@ extension AppModel {
                     }
                     generationRequestIndex += 1
                     var segmentResult: GenerationResult?
+                    // OC-14: armed only while inside one engine generate call
+                    // awaiting its next event. Tools, approvals and remote
+                    // turns are silent for long stretches and stay outside.
+                    self.stallWatchdogBegin()
+                    defer { self.stallWatchdogEnd() }
                     for try await event in session.generate(requestMessages, options: requestOptions) {
                         try Task.checkCancellation()
+                        self.stallWatchdogNoteActivity()
                         switch event {
                         case .prefill(let done, let total):
                             self.phase = .prefill

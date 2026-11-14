@@ -19,6 +19,7 @@ struct ConversationPaneView: View {
 
     private var conversationChrome: some View {
         VStack(spacing: 8) {
+            StallRecoveryBannerView(model: model)
             ErrorBanner(model: model)
             if model.showsNoModelInstalledBanner {
                 NoModelInstalledBanner(model: model)

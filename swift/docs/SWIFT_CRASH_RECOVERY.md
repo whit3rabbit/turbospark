@@ -40,6 +40,21 @@ quit cleanly", never "crashed". A marker that cannot be written costs only the
 next run its notice. The vault lock keeps the process alive, so it never
 clears the marker, and a second `beginSession` in one process returns clean.
 
+## Stalled engine and guarded relaunch (OC-14)
+
+A turn whose engine goes silent for 90 seconds inside one generate call
+shows a strip above the composer: Keep Waiting, Stop Turn, Restart TurboSpark
+(`Diagnostics/GenerationStallWatchdog.swift`,
+`Generation/StallRecoveryBannerView.swift`). Stop cannot free a wedged
+engine, only end the turn. Restart (`Diagnostics/GuardedRelaunch.swift`)
+flushes chats first (`AppModel.flushForRelaunch`), spawns a detached `open`
+helper, and quits through the normal path, with a 10 second hard exit
+behind it. The hard exit clears `session-marker.json` only when the flush
+finished. Relaunches are capped at 2 per 10 minutes in
+`relaunch-guard.json`. Nothing is logged, reported or sent. A wedged main
+thread cannot show this strip; there is no heartbeat for it yet. Record:
+`docs/designs/opencode2-parity/OC-14-hang-watchdog.md`.
+
 ## Coding rule
 
 No force unwrap (`!`), `try!` or unchecked subscript on data that came from

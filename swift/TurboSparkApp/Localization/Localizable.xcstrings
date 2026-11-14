@@ -638249,6 +638249,1447 @@
           }
         }
       }
+    },
+    "The model has stopped responding": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "توقف النموذج عن الاستجابة"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Das Modell antwortet nicht mehr"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The model has stopped responding"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El modelo ha dejado de responder"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le modèle ne répond plus"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "המודל הפסיק להגיב"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "मॉडल ने जवाब देना बंद कर दिया है"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model berhenti merespons"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il modello ha smesso di rispondere"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "モデルが応答しなくなりました"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "모델이 응답하지 않습니다"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Het model reageert niet meer"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model przestał odpowiadać"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O modelo parou de responder"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Модель перестала отвечать"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modellen svarar inte längre"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Model yanıt vermeyi bıraktı"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Модель перестала відповідати"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mô hình đã ngừng phản hồi"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型已停止响应"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模型已停止回應"
+          }
+        }
+      }
+    },
+    "No output for about %lld seconds. A very large prompt can take this long.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لا يوجد خرج منذ نحو %lld ثانية. قد يستغرق موجّه كبير جدًا هذا الوقت."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Seit etwa %lld Sekunden keine Ausgabe. Ein sehr großer Prompt kann so lange dauern."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No output for about %lld seconds. A very large prompt can take this long."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sin salida desde hace unos %lld segundos. Un prompt muy grande puede tardar tanto."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aucune sortie depuis environ %lld secondes. Un très gros prompt peut prendre ce temps."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "אין פלט כבר כ-%lld שניות. פרומפט גדול מאוד יכול לקחת כל כך הרבה זמן."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "लगभग %lld सेकंड से कोई आउटपुट नहीं आया। बहुत बड़े प्रॉम्प्ट में इतना समय लग सकता है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tidak ada keluaran selama sekitar %lld detik. Prompt yang sangat besar bisa selama itu."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nessun output da circa %lld secondi. Un prompt molto grande può richiedere questo tempo."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "約%lld秒間、出力がありません。非常に大きなプロンプトではこのくらいかかることがあります。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "약 %lld초 동안 출력이 없습니다. 매우 큰 프롬프트는 이 정도 걸릴 수 있습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Al ongeveer %lld seconden geen uitvoer. Een zeer grote prompt kan zo lang duren."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Brak danych wyjściowych od około %lld s. Bardzo duży prompt może trwać tak długo."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sem saída há cerca de %lld segundos. Um prompt muito grande pode levar esse tempo."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нет вывода уже около %lld с. Очень большой промпт может занимать столько времени."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ingen utdata på cirka %lld sekunder. En mycket stor prompt kan ta så lång tid."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yaklaşık %lld saniyedir çıktı yok. Çok büyük bir istem bu kadar sürebilir."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Немає виводу вже близько %lld с. Дуже великий промпт може тривати стільки."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không có đầu ra trong khoảng %lld giây. Một prompt rất lớn có thể mất chừng đó thời gian."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已约 %lld 秒没有输出。非常大的提示词可能需要这么久。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已約 %lld 秒沒有輸出。非常大的提示詞可能需要這麼久。"
+          }
+        }
+      }
+    },
+    "Stop ends this turn, but a stuck engine keeps later messages waiting. Restart saves your chats and reopens TurboSpark.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يُنهي الإيقاف هذه الجولة، لكن المحرك العالق يُبقي الرسائل اللاحقة في الانتظار. تحفظ إعادة التشغيل محادثاتك وتعيد فتح TurboSpark."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stopp beendet diese Runde, aber eine hängende Engine lässt spätere Nachrichten warten. Neustart sichert Ihre Chats und öffnet TurboSpark neu."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stop ends this turn, but a stuck engine keeps later messages waiting. Restart saves your chats and reopens TurboSpark."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Detener finaliza este turno, pero un motor bloqueado hace esperar a los mensajes siguientes. Reiniciar guarda tus chats y vuelve a abrir TurboSpark."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arrêter met fin à ce tour, mais un moteur bloqué fait attendre les messages suivants. Redémarrer enregistre vos discussions et rouvre TurboSpark."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "עצירה מסיימת את התור הזה, אבל מנוע תקוע גורם להודעות הבאות להמתין. הפעלה מחדש שומרת את הצ'אטים שלך ופותחת את TurboSpark שוב."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "रोकने से यह टर्न खत्म हो जाता है, लेकिन अटका हुआ इंजन बाद के संदेशों को इंतज़ार कराता है। पुनः आरंभ करने पर आपकी चैट सहेजी जाती हैं और TurboSpark फिर खुलता है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hentikan mengakhiri giliran ini, tetapi mesin yang macet membuat pesan berikutnya menunggu. Mulai ulang menyimpan obrolan Anda dan membuka TurboSpark lagi."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Interrompi termina questo turno, ma un motore bloccato fa attendere i messaggi successivi. Riavvia salva le chat e riapre TurboSpark."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止するとこのターンは終了しますが、エンジンが固まっていると後続のメッセージは待たされます。再起動するとチャットを保存してTurboSparkを開き直します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "중지하면 이 턴이 끝나지만, 엔진이 멈춰 있으면 이후 메시지는 계속 대기합니다. 다시 시작하면 채팅을 저장하고 TurboSpark를 다시 엽니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stoppen beëindigt deze beurt, maar een vastgelopen engine laat latere berichten wachten. Herstarten bewaart je chats en opent TurboSpark opnieuw."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zatrzymanie kończy tę turę, ale zawieszony silnik każe czekać kolejnym wiadomościom. Restart zapisuje czaty i ponownie otwiera TurboSpark."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parar encerra este turno, mas um mecanismo travado faz as mensagens seguintes esperarem. Reiniciar salva suas conversas e reabre o TurboSpark."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Остановка завершает этот ход, но зависший движок заставит ждать следующие сообщения. Перезапуск сохранит чаты и снова откроет TurboSpark."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stoppa avslutar den här omgången, men en fastnad motor låter senare meddelanden vänta. Starta om sparar dina chattar och öppnar TurboSpark igen."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Durdur bu turu bitirir, ancak takılmış bir motor sonraki mesajları bekletir. Yeniden başlat sohbetlerinizi kaydeder ve TurboSpark'ı yeniden açar."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Зупинка завершує цей хід, але завислий рушій змусить наступні повідомлення чекати. Перезапуск збереже чати й знову відкриє TurboSpark."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dừng sẽ kết thúc lượt này, nhưng một engine bị treo sẽ khiến các tin nhắn sau phải chờ. Khởi động lại sẽ lưu các cuộc trò chuyện và mở lại TurboSpark."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止会结束本轮，但卡住的引擎会让之后的消息继续等待。重新启动会保存你的聊天并重新打开 TurboSpark。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止會結束本輪，但卡住的引擎會讓之後的訊息繼續等待。重新啟動會儲存你的聊天並重新開啟 TurboSpark。"
+          }
+        }
+      }
+    },
+    "Keep Waiting": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "واصل الانتظار"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Weiter warten"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep Waiting"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Seguir esperando"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continuer à attendre"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "המשך להמתין"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इंतज़ार करते रहें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tetap menunggu"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continua ad attendere"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "待ち続ける"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "계속 기다리기"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Blijf wachten"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Czekaj dalej"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continuar esperando"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Продолжить ожидание"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fortsätt vänta"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beklemeye devam et"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Чекати далі"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tiếp tục chờ"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "继续等待"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "繼續等待"
+          }
+        }
+      }
+    },
+    "Stop Turn": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إيقاف الجولة"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runde stoppen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stop Turn"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Detener turno"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arrêter le tour"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "עצור תור"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "टर्न रोकें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hentikan giliran"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Interrompi turno"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ターンを停止"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "턴 중지"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Beurt stoppen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zatrzymaj turę"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parar turno"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Остановить ход"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stoppa omgången"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turu durdur"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Зупинити хід"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dừng lượt"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止本轮"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "停止本輪"
+          }
+        }
+      }
+    },
+    "Restart TurboSpark": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إعادة تشغيل TurboSpark"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark neu starten"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restart TurboSpark"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reiniciar TurboSpark"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Redémarrer TurboSpark"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הפעל מחדש את TurboSpark"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark पुनः आरंभ करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mulai ulang TurboSpark"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Riavvia TurboSpark"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSparkを再起動"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark 다시 시작"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark herstarten"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Uruchom ponownie TurboSpark"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reiniciar o TurboSpark"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перезапустить TurboSpark"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Starta om TurboSpark"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark'ı yeniden başlat"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перезапустити TurboSpark"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Khởi động lại TurboSpark"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新启动 TurboSpark"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新啟動 TurboSpark"
+          }
+        }
+      }
+    },
+    "Hide this notice. It returns if there is still no progress.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "أخفِ هذا الإشعار. سيعود إن ظل التقدم متوقفًا."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diesen Hinweis ausblenden. Er kehrt zurück, wenn weiterhin kein Fortschritt erfolgt."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hide this notice. It returns if there is still no progress."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oculta este aviso. Vuelve a aparecer si sigue sin haber progreso."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Masquer cet avis. Il revient s'il n'y a toujours pas de progression."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הסתר הודעה זו. היא תחזור אם עדיין אין התקדמות."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस सूचना को छिपाएँ। अगर अब भी प्रगति नहीं हुई तो यह फिर दिखेगी।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sembunyikan pemberitahuan ini. Pemberitahuan muncul lagi jika masih tidak ada kemajuan."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nascondi questo avviso. Ricompare se non ci sono ancora progressi."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この通知を隠します。進捗がないままの場合は再び表示されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 알림을 숨깁니다. 진행이 없으면 다시 나타납니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Verberg deze melding. Ze komt terug als er nog steeds geen voortgang is."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ukryj to powiadomienie. Wróci, jeśli nadal nie będzie postępu."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Oculta este aviso. Ele volta se ainda não houver progresso."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Скрыть это уведомление. Оно вернётся, если прогресса по-прежнему нет."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dölj den här notisen. Den kommer tillbaka om det fortfarande inte sker någon framgång."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu bildirimi gizle. Hâlâ ilerleme yoksa geri gelir."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сховати це сповіщення. Воно повернеться, якщо прогресу досі немає."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ẩn thông báo này. Thông báo sẽ quay lại nếu vẫn chưa có tiến triển."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "隐藏此通知。若仍无进展，它会再次出现。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "隱藏此通知。若仍無進展，它會再次出現。"
+          }
+        }
+      }
+    },
+    "End this turn and keep the partial reply": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إنهاء هذه الجولة مع الاحتفاظ بالرد الجزئي"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diese Runde beenden und die Teilantwort behalten"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "End this turn and keep the partial reply"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Finalizar este turno y conservar la respuesta parcial"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Terminer ce tour et conserver la réponse partielle"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "סיים את התור הזה ושמור את התשובה החלקית"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस टर्न को खत्म करें और अधूरा जवाब रखें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Akhiri giliran ini dan simpan balasan parsial"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Termina questo turno e mantieni la risposta parziale"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このターンを終了し、途中までの返信を残します"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 턴을 끝내고 부분 응답을 유지합니다"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deze beurt beëindigen en het gedeeltelijke antwoord bewaren"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zakończ tę turę i zachowaj częściową odpowiedź"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Encerrar este turno e manter a resposta parcial"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Завершить этот ход и сохранить частичный ответ"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Avsluta den här omgången och behåll det delvisa svaret"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu turu bitir ve kısmi yanıtı koru"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Завершити цей хід і зберегти часткову відповідь"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kết thúc lượt này và giữ phần phản hồi dở dang"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "结束本轮并保留部分回复"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "結束本輪並保留部分回覆"
+          }
+        }
+      }
+    },
+    "Save your chats and reopen the app": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "احفظ محادثاتك وأعد فتح التطبيق"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chats sichern und die App neu öffnen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Save your chats and reopen the app"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Guardar tus chats y volver a abrir la app"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Enregistrer vos discussions et rouvrir l'app"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "שמור את הצ'אטים ופתח את האפליקציה מחדש"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "अपनी चैट सहेजें और ऐप फिर खोलें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Simpan obrolan Anda dan buka kembali aplikasi"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Salva le chat e riapri l'app"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "チャットを保存してアプリを開き直します"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "채팅을 저장하고 앱을 다시 엽니다"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Je chats bewaren en de app opnieuw openen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zapisz czaty i ponownie otwórz aplikację"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Salvar suas conversas e reabrir o app"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сохранить чаты и снова открыть приложение"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spara dina chattar och öppna appen igen"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sohbetlerinizi kaydedip uygulamayı yeniden aç"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Зберегти чати й знову відкрити застосунок"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lưu các cuộc trò chuyện và mở lại ứng dụng"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "保存你的聊天并重新打开应用"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "儲存你的聊天並重新開啟 App"
+          }
+        }
+      }
+    },
+    "TurboSpark already restarted twice in the last few minutes. Quit and reopen it yourself.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "أُعيد تشغيل TurboSpark مرتين خلال الدقائق الماضية. أغلقه وافتحه بنفسك."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark wurde in den letzten Minuten schon zweimal neu gestartet. Beenden Sie die App und öffnen Sie sie selbst neu."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark already restarted twice in the last few minutes. Quit and reopen it yourself."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark ya se reinició dos veces en los últimos minutos. Ciérralo y ábrelo tú mismo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark a déjà redémarré deux fois ces dernières minutes. Quittez-le et rouvrez-le vous-même."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark כבר הופעל מחדש פעמיים בדקות האחרונות. סגור אותו ופתח אותו בעצמך."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark पिछले कुछ मिनटों में पहले ही दो बार पुनः आरंभ हो चुका है। इसे बंद करके खुद फिर खोलें।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark sudah dimulai ulang dua kali dalam beberapa menit terakhir. Tutup dan buka sendiri."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark si è già riavviato due volte negli ultimi minuti. Chiudilo e riaprilo tu stesso."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSparkは直近の数分間にすでに2回再起動しています。終了して自分で開き直してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark가 최근 몇 분 안에 이미 두 번 다시 시작되었습니다. 종료한 뒤 직접 다시 여세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark is de afgelopen minuten al twee keer herstart. Sluit het af en open het zelf opnieuw."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark już dwa razy uruchomił się ponownie w ciągu ostatnich minut. Zamknij go i otwórz samodzielnie."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O TurboSpark já reiniciou duas vezes nos últimos minutos. Feche e reabra você mesmo."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark уже дважды перезапускался за последние минуты. Закройте его и откройте сами."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark har redan startat om två gånger de senaste minuterna. Avsluta och öppna den själv."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark son dakikalarda zaten iki kez yeniden başladı. Kapatıp kendiniz yeniden açın."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark уже двічі перезапускався за останні хвилини. Закрийте його й відкрийте самі."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark đã khởi động lại hai lần trong vài phút qua. Hãy tự thoát và mở lại."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark 在最近几分钟内已重新启动两次。请退出后自行重新打开。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "TurboSpark 在最近幾分鐘內已重新啟動兩次。請結束後自行重新開啟。"
+          }
+        }
+      }
+    },
+    "Restart is not available here. Quit and reopen TurboSpark yourself.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إعادة التشغيل غير متاحة هنا. أغلق TurboSpark وافتحه بنفسك."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Neustart ist hier nicht verfügbar. Beenden Sie TurboSpark und öffnen Sie es selbst neu."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Restart is not available here. Quit and reopen TurboSpark yourself."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reiniciar no está disponible aquí. Cierra TurboSpark y ábrelo tú mismo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le redémarrage n'est pas disponible ici. Quittez TurboSpark et rouvrez-le vous-même."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הפעלה מחדש אינה זמינה כאן. סגור את TurboSpark ופתח אותו בעצמך."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "यहाँ पुनः आरंभ उपलब्ध नहीं है। TurboSpark को बंद करके खुद फिर खोलें।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mulai ulang tidak tersedia di sini. Tutup TurboSpark dan buka sendiri."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il riavvio non è disponibile qui. Chiudi TurboSpark e riaprilo tu stesso."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ここでは再起動できません。TurboSparkを終了して自分で開き直してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "여기서는 다시 시작할 수 없습니다. TurboSpark를 종료한 뒤 직접 다시 여세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Herstarten is hier niet beschikbaar. Sluit TurboSpark af en open het zelf opnieuw."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ponowne uruchomienie jest tu niedostępne. Zamknij TurboSpark i otwórz go samodzielnie."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reiniciar não está disponível aqui. Feche o TurboSpark e reabra você mesmo."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перезапуск здесь недоступен. Закройте TurboSpark и откройте его сами."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Omstart är inte tillgänglig här. Avsluta TurboSpark och öppna det själv."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yeniden başlatma burada kullanılamıyor. TurboSpark'ı kapatıp kendiniz yeniden açın."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перезапуск тут недоступний. Закрийте TurboSpark і відкрийте його самі."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không thể khởi động lại ở đây. Hãy tự thoát và mở lại TurboSpark."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此处无法重新启动。请退出 TurboSpark 后自行重新打开。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此處無法重新啟動。請結束 TurboSpark 後自行重新開啟。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

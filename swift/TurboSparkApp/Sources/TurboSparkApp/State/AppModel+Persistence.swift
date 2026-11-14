@@ -661,26 +661,7 @@ extension AppModel {
         stopInstalledListFollowing()
         moveStoreMigration?.stop()
 
-        // A reply that is still streaming exists only in `outputText`; the
-        // runTask tail that would normally preserve it never runs before the
-        // process exits (or before a vault lock replaces the profile). Save
-        // it as an interrupted row now so Continue/Retry has an anchor.
-        // Only when the selected chat ends in a non-assistant row, i.e. it
-        // is the chat awaiting this reply; the epoch bump keeps the late
-        // tail from preserving it a second time.
-        //
-        // **THE RUNNING TURN'S CHAT, NOT THE SELECTION** (ZP-23). The buffer
-        // belongs to the chat that owns the turn, which may be a background
-        // chat; flushing it into the selected chat would put another
-        // conversation's reply in the wrong transcript. Chats parked on a
-        // tool proposal flush from their own captured content.
-        let flushChatID = shutdownFlushChatID
-        if generating, !audioSummaryInFlight, !outputText.isEmpty || !outputReasoningText.isEmpty,
-            turnMessages(for: flushChatID).last.map({ $0.role != .assistant }) ?? false
-        {
-            finishCancelled(chatID: flushChatID, reason: "cancelled")
-            generationEpoch += 1
-        }
+        flushStreamingReplyForShutdown()
         flushDeferredProposalsForShutdown()
         // Deliberately NOT `unloadModel()`: that refuses while `generating`,
         // which is exactly the case where the flush below matters most.
@@ -721,6 +702,48 @@ extension AppModel {
 
         // Both force the pending debounces through rather than waiting on
         // them, so the last keystroke and the last setting reach disk.
+        persistChats()
+        persistSettings()
+        AppChatFileStore.flush()
+    }
+
+    /// Saves the reply that is still streaming as an interrupted row.
+    ///
+    /// Split out of `shutdown()` so the guarded relaunch (OC-14) can run it,
+    /// and the persists below, FIRST: `shutdown()` is one synchronous
+    /// function, and a step in it that blocks on a wedged engine would
+    /// otherwise take the partial reply with it. Idempotent: after the first
+    /// call the chat ends in an assistant row, so a second call is a no-op.
+    func flushStreamingReplyForShutdown() {
+        // A reply that is still streaming exists only in `outputText`; the
+        // runTask tail that would normally preserve it never runs before the
+        // process exits (or before a vault lock replaces the profile). Save
+        // it as an interrupted row now so Continue/Retry has an anchor.
+        // Only when the selected chat ends in a non-assistant row, i.e. it
+        // is the chat awaiting this reply; the epoch bump keeps the late
+        // tail from preserving it a second time.
+        //
+        // **THE RUNNING TURN'S CHAT, NOT THE SELECTION** (ZP-23). The buffer
+        // belongs to the chat that owns the turn, which may be a background
+        // chat; flushing it into the selected chat would put another
+        // conversation's reply in the wrong transcript. Chats parked on a
+        // tool proposal flush from their own captured content.
+        let flushChatID = shutdownFlushChatID
+        if generating, !audioSummaryInFlight, !outputText.isEmpty || !outputReasoningText.isEmpty,
+            turnMessages(for: flushChatID).last.map({ $0.role != .assistant }) ?? false
+        {
+            finishCancelled(chatID: flushChatID, reason: "cancelled")
+            generationEpoch += 1
+        }
+    }
+
+    /// The data that must reach disk before a relaunch: the streaming reply,
+    /// any draft that has no chat yet, and both debounced stores. A subset of
+    /// `shutdown()` that touches no engine, server or session object, so it
+    /// cannot block on a stuck engine.
+    func flushForRelaunch() {
+        flushStreamingReplyForShutdown()
+        materializeDraftChatIfNeeded()
         persistChats()
         persistSettings()
         AppChatFileStore.flush()
