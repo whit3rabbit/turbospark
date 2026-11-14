@@ -34,6 +34,8 @@ cannot drift between the three.
 | `Cmd+N` | New Chat | Starts a new chat session in the currently active project. |
 | `Cmd+[` | Previous Chat | Switches focus to the previous conversation in chronological history. |
 | `Cmd+]` | Next Chat | Switches focus to the next conversation in chronological history. |
+| `Ctrl+Tab` | Next Workspace Tab | Moves to the next open project tab, wrapping. Enabled only with two or more tabs in Projects mode; refused with a toast while a turn runs (ZP-21). |
+| `Ctrl+Shift+Tab` | Previous Workspace Tab | Moves to the previous open project tab, wrapping. Same conditions. |
 | `Cmd+L` | Focus Prompt | Moves first-responder focus directly into the prompt editor. |
 | `Cmd+K` | Command Center | Opens the palette over commands, chats and project files (`>` commands, `#` chats, `@` files, Tab switches scope). |
 | `Cmd+Shift+P` | Run Command | Opens the same palette on the commands scope. |

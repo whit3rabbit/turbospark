@@ -456,6 +456,24 @@ struct TurboSparkModelCommands: Commands {
                 .keyboardShortcut("]", modifiers: .command)
                 .disabled(model.isRunning || model.orderedChats.isEmpty)
 
+                // ZP-21. Ctrl+Tab, as in a browser: Cmd+W stays the window's
+                // close, and Cmd+[ / Cmd+] stay the chat cycle above.
+                Button {
+                    model.cycleWorkspaceTab(delta: 1)
+                } label: {
+                    Text("Next Workspace Tab", bundle: .module)
+                }
+                .keyboardShortcut(.tab, modifiers: .control)
+                .disabled(!model.workspaceTabsActive || model.interactionMode != .projects)
+
+                Button {
+                    model.cycleWorkspaceTab(delta: -1)
+                } label: {
+                    Text("Previous Workspace Tab", bundle: .module)
+                }
+                .keyboardShortcut(.tab, modifiers: [.control, .shift])
+                .disabled(!model.workspaceTabsActive || model.interactionMode != .projects)
+
                 Divider()
 
                 Button {

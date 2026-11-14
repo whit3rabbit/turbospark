@@ -239,6 +239,11 @@ struct ChatSidebarGroupedProjectsView: View {
                     } label: {
                         Label { Text("New Task", bundle: .module) } icon: { Image(systemName: "plus") }
                     }
+                    Button {
+                        model.openWorkspaceTab(projectID: project.id)
+                    } label: {
+                        Label { Text("Open in New Tab", bundle: .module) } icon: { Image(systemName: "rectangle.on.rectangle") }
+                    }
                     Divider()
                     Button {
                         projectBeingEdited = project

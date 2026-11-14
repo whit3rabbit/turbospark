@@ -576,7 +576,14 @@ public final class AppModel: ObservableObject {
     /// All configured codebase projects.
     @Published public var projects: [AppProject] = []
     /// Currently active project filter (nil = all chats).
-    @Published public var selectedProjectID: UUID? = nil
+    @Published public var selectedProjectID: UUID? = nil {
+        didSet {
+            if oldValue != selectedProjectID { workspaceTabsFollowProjectSelection() }
+        }
+    }
+    /// ZP-21: open workspace tabs. Empty (dormant) until the user opens a
+    /// second tab; see `AppModel+TabContext.swift`.
+    @Published var workspaceTabs = WorkspaceTabStore()
     /// Working tree model for git status and diffs when a project is selected.
     @Published public var worktree: WorktreeModel? = nil {
         didSet {
@@ -862,6 +869,7 @@ public final class AppModel: ObservableObject {
                 activeDraftChat = AppChat(id: selectedChatID, projectID: selectedProjectID)
             }
             selectionChangedForReadState(from: oldValue)
+            workspaceTabsNoteSelectedChat()
         }
     }
     /// Transient active chat draft when the chats list is empty.
@@ -1260,6 +1268,7 @@ public final class AppModel: ObservableObject {
         }
         loadProjects()
         loadChats()
+        loadWorkspaceTabs()
         try? MemoryLedgerStore.shared.importLegacyIfNeeded()
         installBackgroundShellObserver()
         // Ghost Mode opt-in, AFTER `loadChats`: the restored archive is

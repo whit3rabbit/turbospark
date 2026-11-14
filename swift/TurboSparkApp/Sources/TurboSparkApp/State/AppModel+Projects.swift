@@ -290,6 +290,7 @@ extension AppModel {
         }
         persistProjects()
         persistChats()
+        pruneWorkspaceTabs()
         reloadSkills()
         reloadAgents()
         if wasSelected {

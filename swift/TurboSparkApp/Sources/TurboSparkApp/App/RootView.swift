@@ -100,6 +100,14 @@ struct RootView: View {
                         }
                     })
 
+                // ZP-21: a row of the top-bar band, drawn only with two or
+                // more tabs open and only where a project is in play.
+                if model.workspaceTabsActive, model.interactionMode == .projects,
+                    !model.activeSection.hidesChatPanes
+                {
+                    WorkspaceTabStripView(model: model)
+                }
+
                 workingArea
                     // Reserve room for Downloads so its collapsed control
                     // never covers the composer or model selector.

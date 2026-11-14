@@ -86,6 +86,9 @@ public enum KeyboardShortcutCatalog {
                 label: "Next Chat",
                 keys: "\(command) ]",
                 altKeys: "\(shift) \(command) ]"),
+            KeyboardShortcutRow(label: "Next Workspace Tab", keys: "\(control) \u{21E5}"),
+            KeyboardShortcutRow(
+                label: "Previous Workspace Tab", keys: "\(shift) \(control) \u{21E5}"),
             KeyboardShortcutRow(label: "Focus Prompt", keys: "\(command) L"),
             KeyboardShortcutRow(label: "Command Center", keys: "\(command) K"),
             KeyboardShortcutRow(label: "Run Command", keys: "\(shift) \(command) P"),
