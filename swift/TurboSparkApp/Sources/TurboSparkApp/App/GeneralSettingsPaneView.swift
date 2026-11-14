@@ -34,6 +34,8 @@ struct GeneralSettingsPaneView: View {
 
             temporaryChatSection
 
+            NotificationsSettingsSection(model: model, center: model.attentionCenter)
+
             compactionSection
 
             chatRuntimeSection

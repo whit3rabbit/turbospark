@@ -589,6 +589,11 @@ final class LocalizationParityTests: XCTestCase {
         for kind in InstalledModelKind.allCases {
             values.append(("InstalledModelKind.title", kind.title))
         }
+        // OC-02: the Notifications section renders these as keys.
+        for event in AttentionEvent.allCases {
+            values.append(("AttentionEvent.settingsTitle", event.settingsTitle))
+        }
+        values.append(("AttentionSound.none", AttentionSound.none.settingsTitle))
         for mode in WorktreeTabMode.allCases {
             values.append(("WorktreeTabMode.title", mode.title))
         }

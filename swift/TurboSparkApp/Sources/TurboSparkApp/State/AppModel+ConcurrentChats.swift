@@ -109,6 +109,8 @@ extension AppModel {
     /// is a bug to heal, not a reason to refuse the turn.
     func claimLane(for chatID: UUID) {
         generatingChatID = chatID
+        // A new turn starts clean: a stale error mark must not mute its finish cue.
+        attentionErroredChats.remove(chatID)
         if turnCoordinator.laneHolder != chatID { turnCoordinator.releaseHolder() }
         turnCoordinator.requestLane(for: chatID)
     }
@@ -156,6 +158,7 @@ extension AppModel {
     func deferToolProposal(_ proposal: DeferredToolProposal, chatID: UUID) {
         deferredToolProposals[chatID] = proposal
         turnCoordinator.park(chatID, as: .awaitingTool)
+        raiseAttention(.needsPermission, chatID: chatID, tool: proposal.calls.first?.name)
     }
 
     /// Replays a parked proposal through the ordinary path once the chat is

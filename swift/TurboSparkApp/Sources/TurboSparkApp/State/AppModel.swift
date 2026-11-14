@@ -444,6 +444,16 @@ public final class AppModel: ObservableObject {
 
     /// Current UI interaction mode (Chat vs Projects / Coding).
     @Published public var interactionMode: AppInteractionMode = .chat
+    /// OC-02: per-event notification toggles and sounds. Persisted in
+    /// `MacAppSettings`; everything is off until the user turns it on.
+    @Published var attentionPreferences = AttentionPreferences()
+    /// OC-02: the one owner of attention notifications. Holds no system
+    /// state until the user opts in from Settings.
+    var attentionCenter = AppNotificationCenter()
+    var attentionActivationObserver: NSObjectProtocol?
+    /// Chats whose turn ended in an error this tail, so the finish cue is
+    /// not also sent for them.
+    var attentionErroredChats: Set<UUID> = []
     /// OC-03: how the chat sidebar groups rows. Persisted in `MacAppSettings`.
     @Published var chatSidebarMode: ChatSidebarMode = .chats
     /// OC-03: the chat the user just opened from a Finished inbox row. Opening
@@ -680,7 +690,14 @@ public final class AppModel: ObservableObject {
     }
 
     /// Currently pending tool call requiring user approval.
-    @Published public var pendingToolCall: AppToolCall? = nil
+    @Published public var pendingToolCall: AppToolCall? = nil {
+        didSet {
+            // OC-02: a card that just opened is a chat waiting on the user.
+            // The chat id is assigned right after this, so the cue is read
+            // one hop later.
+            if oldValue == nil, pendingToolCall != nil { scheduleNeedsPermissionCue() }
+        }
+    }
     let browserPermissionApprovalCoordinator = BrowserPermissionApprovalCoordinator()
     /// The chat the pending tool call was proposed in, captured at proposal
     /// time. Approving/denying appends to THIS chat, never to whatever
@@ -1300,6 +1317,7 @@ public final class AppModel: ObservableObject {
     /// Creates and initializes the application model, restoring saved settings and chats.
     public init() {
         loadSettings()
+        installAttentionEvents()
         loadProfiles()
         restoreModelDownloads()
         modelInstallOwnershipObserver = Self.modelInstallOwnershipChanged.sink { [weak self] in

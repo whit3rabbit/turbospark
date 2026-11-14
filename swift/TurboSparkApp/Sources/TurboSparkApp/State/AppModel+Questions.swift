@@ -25,6 +25,7 @@ extension AppModel {
         let mine = PendingUserQuestions(
             id: UUID(), chatID: chatID, toolCallID: toolCallID, items: items)
         pendingUserQuestions = mine
+        if let chatID { raiseAttention(.needsAnswer, chatID: chatID) }
         let answer = await withCheckedContinuation { continuation in
             AskUserQuestionExecutor.waitForAnswer(chatID: chatID, continuation: continuation)
         }

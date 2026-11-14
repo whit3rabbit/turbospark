@@ -161,6 +161,9 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// Chat sidebar grouping ("chats" or "inbox", OC-03). Unknown values load
     /// as "chats".
     public var chatSidebarMode: String
+    /// Out-of-app notification toggles and sounds per event (OC-02). Empty
+    /// means every event is off, which is the default.
+    var attentionEvents: AttentionPreferences
     /// Whether the app opens a temporary (Ghost Mode) chat on launch.
     public var alwaysStartInGhostMode: Bool
     /// Whether queued off-peak tasks may run (admission gate). Off by default.
@@ -364,6 +367,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         modelReasoningDefaults: [String: String] = [:],
         interactionMode: String = "chat",
         chatSidebarMode: String = "chats",
+        attentionEvents: AttentionPreferences = AttentionPreferences(),
         alwaysStartInGhostMode: Bool = false,
         offPeakEnabled: Bool = false,
         rootlessPermissionMode: String = "auto",
@@ -460,6 +464,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.modelReasoningDefaults = modelReasoningDefaults
         self.interactionMode = interactionMode
         self.chatSidebarMode = chatSidebarMode
+        self.attentionEvents = attentionEvents
         self.alwaysStartInGhostMode = alwaysStartInGhostMode
         self.offPeakEnabled = offPeakEnabled
         self.rootlessPermissionMode = rootlessPermissionMode
@@ -611,6 +616,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.interactionMode = c.decodeLenient(String.self, forKey: .interactionMode, fallback: "chat")
         self.chatSidebarMode = c.decodeLenient(
             String.self, forKey: .chatSidebarMode, fallback: "chats")
+        self.attentionEvents = c.decodeLenient(
+            AttentionPreferences.self, forKey: .attentionEvents, fallback: AttentionPreferences())
         self.alwaysStartInGhostMode = c.decodeLenient(
             Bool.self, forKey: .alwaysStartInGhostMode, fallback: false)
         self.offPeakEnabled = c.decodeLenient(

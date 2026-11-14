@@ -594,6 +594,9 @@ extension AppModel {
         self.offPeakTurnDidFinish(
             chatID: turnChatID, cancelled: wasCancelled,
             stillBusy: self.generating || self.pendingToolCall != nil)
+        // OC-02: last, so a drain that started the next turn has already
+        // raised `generating` and the finish cue stays quiet.
+        self.raiseTurnFinishedIfIdle(chatID: turnChatID, wasCancelled: wasCancelled)
     }
 
     private func finishProseTurn(
