@@ -132,6 +132,30 @@ else `~/.turbospark/acp-sessions`), one JSON file per session, mode 0600 in a
 0700 directory. The macOS app does not read them: an editor transcript does not
 appear in the app. v1 writes records but cannot resume them.
 
+## Scripted-client interop
+
+An independent scripted client (`crates/acp/tests/scripted/client.rs`) speaks
+line-delimited JSON-RPC to the agent over pipes. It was written from the ACP
+text and JSON-RPC 2.0, shares no code or types with `turbospark_acp`, and
+checks the envelope itself (`jsonrpc: "2.0"`, exactly one of `result`/`error`).
+It covers initialize, `session/new` (and refused cwds), streamed
+`session/prompt` updates, `session/cancel` mid-stream, the permission request
+shape, default-deny when the client is silent, rejects, cancels or errors, an
+explicit allow, garbage input, and stdin EOF (also mid-turn).
+
+* CI-safe: `cargo test -p turbospark-acp --test scripted_client` drives the
+  real `serve` loop as a child process with a scripted fake engine
+  (`crates/acp/examples/scripted_agent.rs`, an example so it is never
+  installed). Examples are built by `cargo test -p turbospark-acp` (or
+  `--workspace`); `--test scripted_client` alone needs the example built first.
+* Real model: `TURBOSPARK_ACP_SMOKE_MODEL=<model> cargo test --release -p
+  turbospark-cli --test acp_scripted_real -- --ignored --nocapture` runs the
+  same client against `turbospark-acp-agent` (Metal and an installed chat model
+  required).
+
+**Scripted client only.** This is not Zed or any other editor, and it proves
+nothing about how one behaves.
+
 ## Limits
 
 Not a sandbox: a check-then-use race on symlinks is not closed, and the

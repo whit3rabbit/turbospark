@@ -332,6 +332,26 @@ Decision taken (reversible): the real engine lives in `crates/cli`, not in
   no first-token latency is claimed. Text only at that point: no tool call
   reached the model.
 
+### Scripted-client interop (third pass, 2026-11-14)
+
+`crates/acp/tests/scripted/client.rs` is a hand-written ACP client that does
+not use `turbospark_acp` types. `crates/acp/tests/scripted_client.rs` (9 tests)
+drives the real `serve` loop as a child process with a scripted fake engine
+(`crates/acp/examples/scripted_agent.rs`): ordered streaming before the
+response, cancel mid-stream and a usable session afterwards, a permission
+request of the spec shape, deny on silence, reject, `cancelled` and
+method-not-found, allow-once as the only way a write lands (and not sticky),
+reads without a prompt, JSON-RPC errors with an aligned stream, refused cwds,
+EOF mid-turn exits 0. `crates/cli/tests/acp_scripted_real.rs` (`#[ignore]`)
+runs the same client against the real agent and the installed 9B: passed
+(streamed, cancel landed in 35 to 145 ms across two runs, EOF exit 53 ms).
+Mutation checks, each applied, failure observed, then restored: timeout
+approves (fails the silent-client test), any non-explicit option approves,
+`cancelled` outcome approves, an editor error approves (each fails the
+reject/cancel/error test). A first version of the suite shared one workspace
+across parallel tests and flaked; each test now gets its own directory.
+**Scripted client only: no editor was run.**
+
 ### Remaining (why this is Partial)
 
 1. **Real-model run: done functionally** (see the bullet above); a timing
@@ -339,8 +359,8 @@ Decision taken (reversible): the real engine lives in `crates/cli`, not in
 2. **Tools for a local model**: render the tool schema, parse calls with
    `TurnSplitter`, feed results back, then run the permission gate from a real
    model. Without it the adapter is a chat-only agent.
-3. **Editor interop**: drive the adapter from a scripted client of an
-   independent ACP implementation, then from Zed (streaming, permission
+3. **Editor interop**: a scripted client written independently from the spec
+   has been run (below); a real editor (Zed) has not (streaming, permission
    forwarding, abort). Not run.
 4. **Latency and memory**: first-token overhead is unmeasured.
 5. **App as a model holder**: the app takes no lock, so the refusal policy does
