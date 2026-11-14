@@ -646110,133 +646110,133 @@
         }
       }
     },
-    "Off by default. When on, the loaded model on this Mac checks each finished sentence and sends it only if it is clearly a complete request to the assistant. Anything that mentions running, deleting, sending, paying or changing settings, and anything unclear, still waits in the message box for you to press Send. Nothing leaves this Mac.": {
+    "Experimental: it can still make mistakes. Off by default. When on, the loaded model on this Mac checks each finished sentence and sends it only if it is clearly a complete request to the assistant. Anything that mentions running, deleting, sending, paying or changing settings, and anything unclear, still waits in the message box for you to press Send. Nothing leaves this Mac.": {
       "extractionState": "manual",
       "localizations": {
         "ar": {
           "stringUnit": {
             "state": "translated",
-            "value": "متوقف افتراضيًا. عند التشغيل، يفحص النموذج المحمّل على هذا الـ Mac كل جملة منتهية ويرسلها فقط إذا كانت بوضوح طلبًا كاملًا موجّهًا إلى المساعد. أي شيء يذكر التشغيل أو الحذف أو الإرسال أو الدفع أو تغيير الإعدادات، وأي شيء غير واضح، يبقى في مربع الرسالة لتضغط أنت على إرسال. لا شيء يغادر هذا الـ Mac."
+            "value": "تجريبي: قد يخطئ. متوقف افتراضيًا. عند التشغيل، يفحص النموذج المحمّل على هذا الـ Mac كل جملة منتهية ويرسلها فقط إذا كانت بوضوح طلبًا كاملًا موجّهًا إلى المساعد. أي شيء يذكر التشغيل أو الحذف أو الإرسال أو الدفع أو تغيير الإعدادات، وأي شيء غير واضح، يبقى في مربع الرسالة لتضغط أنت على إرسال. لا شيء يغادر هذا الـ Mac."
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Standardmäßig aus. Wenn aktiv, prüft das geladene Modell auf diesem Mac jeden fertigen Satz und sendet ihn nur, wenn er eindeutig eine vollständige Anfrage an den Assistenten ist. Alles, was Ausführen, Löschen, Senden, Bezahlen oder Einstellungsänderungen erwähnt, und alles Unklare, wartet im Nachrichtenfeld, bis Sie auf Senden drücken. Nichts verlässt diesen Mac."
+            "value": "Experimentell: Fehler sind möglich. Standardmäßig aus. Wenn aktiv, prüft das geladene Modell auf diesem Mac jeden fertigen Satz und sendet ihn nur, wenn er eindeutig eine vollständige Anfrage an den Assistenten ist. Alles, was Ausführen, Löschen, Senden, Bezahlen oder Einstellungsänderungen erwähnt, und alles Unklare, wartet im Nachrichtenfeld, bis Sie auf Senden drücken. Nichts verlässt diesen Mac."
           }
         },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Off by default. When on, the loaded model on this Mac checks each finished sentence and sends it only if it is clearly a complete request to the assistant. Anything that mentions running, deleting, sending, paying or changing settings, and anything unclear, still waits in the message box for you to press Send. Nothing leaves this Mac."
+            "value": "Experimental: it can still make mistakes. Off by default. When on, the loaded model on this Mac checks each finished sentence and sends it only if it is clearly a complete request to the assistant. Anything that mentions running, deleting, sending, paying or changing settings, and anything unclear, still waits in the message box for you to press Send. Nothing leaves this Mac."
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Desactivado por defecto. Si se activa, el modelo cargado en este Mac revisa cada frase terminada y la envía solo si es claramente una petición completa al asistente. Todo lo que mencione ejecutar, borrar, enviar, pagar o cambiar ajustes, y todo lo poco claro, espera en el cuadro de mensaje hasta que pulses Enviar. Nada sale de este Mac."
+            "value": "Experimental: aún puede equivocarse. Desactivado por defecto. Si se activa, el modelo cargado en este Mac revisa cada frase terminada y la envía solo si es claramente una petición completa al asistente. Todo lo que mencione ejecutar, borrar, enviar, pagar o cambiar ajustes, y todo lo poco claro, espera en el cuadro de mensaje hasta que pulses Enviar. Nada sale de este Mac."
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Désactivé par défaut. Une fois activé, le modèle chargé sur ce Mac examine chaque phrase terminée et ne l'envoie que s'il s'agit clairement d'une demande complète adressée à l'assistant. Tout ce qui évoque l'exécution, la suppression, l'envoi, un paiement ou un changement de réglages, et tout ce qui est ambigu, reste dans la zone de message jusqu'à ce que vous appuyiez sur Envoyer. Rien ne quitte ce Mac."
+            "value": "Expérimental : des erreurs restent possibles. Désactivé par défaut. Une fois activé, le modèle chargé sur ce Mac examine chaque phrase terminée et ne l'envoie que s'il s'agit clairement d'une demande complète adressée à l'assistant. Tout ce qui évoque l'exécution, la suppression, l'envoi, un paiement ou un changement de réglages, et tout ce qui est ambigu, reste dans la zone de message jusqu'à ce que vous appuyiez sur Envoyer. Rien ne quitte ce Mac."
           }
         },
         "he": {
           "stringUnit": {
             "state": "translated",
-            "value": "כבוי כברירת מחדל. כשהאפשרות פעילה, המודל הטעון ב-Mac הזה בודק כל משפט שהסתיים ושולח אותו רק אם הוא בבירור בקשה שלמה אל העוזר. כל מה שמזכיר הרצה, מחיקה, שליחה, תשלום או שינוי הגדרות, וכל מה שלא ברור, ממתין בתיבת ההודעה עד שתלחצו על שליחה. שום דבר לא עוזב את ה-Mac הזה."
+            "value": "ניסיוני: עדיין עלולות להיות טעויות. כבוי כברירת מחדל. כשהאפשרות פעילה, המודל הטעון ב-Mac הזה בודק כל משפט שהסתיים ושולח אותו רק אם הוא בבירור בקשה שלמה אל העוזר. כל מה שמזכיר הרצה, מחיקה, שליחה, תשלום או שינוי הגדרות, וכל מה שלא ברור, ממתין בתיבת ההודעה עד שתלחצו על שליחה. שום דבר לא עוזב את ה-Mac הזה."
           }
         },
         "hi": {
           "stringUnit": {
             "state": "translated",
-            "value": "डिफ़ॉल्ट रूप से बंद। चालू होने पर, इस Mac पर लोड किया गया मॉडल हर पूरे वाक्य की जाँच करता है और उसे तभी भेजता है जब वह स्पष्ट रूप से सहायक से किया गया पूरा अनुरोध हो। चलाने, मिटाने, भेजने, भुगतान करने या सेटिंग बदलने का ज़िक्र करने वाली और अस्पष्ट हर बात संदेश बॉक्स में रुकी रहती है, जब तक आप भेजें न दबाएँ। कुछ भी इस Mac से बाहर नहीं जाता।"
+            "value": "प्रायोगिक: इसमें अब भी गलतियाँ हो सकती हैं। डिफ़ॉल्ट रूप से बंद। चालू होने पर, इस Mac पर लोड किया गया मॉडल हर पूरे वाक्य की जाँच करता है और उसे तभी भेजता है जब वह स्पष्ट रूप से सहायक से किया गया पूरा अनुरोध हो। चलाने, मिटाने, भेजने, भुगतान करने या सेटिंग बदलने का ज़िक्र करने वाली और अस्पष्ट हर बात संदेश बॉक्स में रुकी रहती है, जब तक आप भेजें न दबाएँ। कुछ भी इस Mac से बाहर नहीं जाता।"
           }
         },
         "id": {
           "stringUnit": {
             "state": "translated",
-            "value": "Nonaktif secara bawaan. Saat aktif, model yang dimuat di Mac ini memeriksa setiap kalimat yang selesai dan hanya mengirimnya jika jelas merupakan permintaan lengkap kepada asisten. Apa pun yang menyebut menjalankan, menghapus, mengirim, membayar, atau mengubah pengaturan, dan apa pun yang tidak jelas, tetap menunggu di kotak pesan sampai Anda menekan Kirim. Tidak ada yang keluar dari Mac ini."
+            "value": "Eksperimental: masih bisa keliru. Nonaktif secara bawaan. Saat aktif, model yang dimuat di Mac ini memeriksa setiap kalimat yang selesai dan hanya mengirimnya jika jelas merupakan permintaan lengkap kepada asisten. Apa pun yang menyebut menjalankan, menghapus, mengirim, membayar, atau mengubah pengaturan, dan apa pun yang tidak jelas, tetap menunggu di kotak pesan sampai Anda menekan Kirim. Tidak ada yang keluar dari Mac ini."
           }
         },
         "it": {
           "stringUnit": {
             "state": "translated",
-            "value": "Disattivato per impostazione predefinita. Se attivo, il modello caricato su questo Mac controlla ogni frase conclusa e la invia solo se è chiaramente una richiesta completa all'assistente. Tutto ciò che menziona eseguire, eliminare, inviare, pagare o cambiare le impostazioni, e tutto ciò che non è chiaro, resta nella casella del messaggio finché non premi Invia. Nulla lascia questo Mac."
+            "value": "Sperimentale: può ancora sbagliare. Disattivato per impostazione predefinita. Se attivo, il modello caricato su questo Mac controlla ogni frase conclusa e la invia solo se è chiaramente una richiesta completa all'assistente. Tutto ciò che menziona eseguire, eliminare, inviare, pagare o cambiare le impostazioni, e tutto ciò che non è chiaro, resta nella casella del messaggio finché non premi Invia. Nulla lascia questo Mac."
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "初期設定ではオフです。オンにすると、この Mac に読み込まれたモデルが話し終えた文を確認し、アシスタントへの完結した依頼だと明確な場合にだけ送信します。実行、削除、送信、支払い、設定変更に触れる内容や、はっきりしない内容は、送信を押すまでメッセージ欄に残ります。データはこの Mac の外に出ません。"
+            "value": "試験的な機能です。誤りが起こる可能性があります。 初期設定ではオフです。オンにすると、この Mac に読み込まれたモデルが話し終えた文を確認し、アシスタントへの完結した依頼だと明確な場合にだけ送信します。実行、削除、送信、支払い、設定変更に触れる内容や、はっきりしない内容は、送信を押すまでメッセージ欄に残ります。データはこの Mac の外に出ません。"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "기본값은 꺼짐입니다. 켜면 이 Mac에 로드된 모델이 끝난 문장을 확인하고, 어시스턴트에게 하는 완전한 요청이 분명할 때만 전송합니다. 실행, 삭제, 전송, 결제, 설정 변경을 언급하는 내용과 불분명한 내용은 보내기를 누를 때까지 메시지 입력란에 남습니다. 어떤 것도 이 Mac 밖으로 나가지 않습니다."
+            "value": "실험적 기능: 여전히 실수할 수 있습니다. 기본값은 꺼짐입니다. 켜면 이 Mac에 로드된 모델이 끝난 문장을 확인하고, 어시스턴트에게 하는 완전한 요청이 분명할 때만 전송합니다. 실행, 삭제, 전송, 결제, 설정 변경을 언급하는 내용과 불분명한 내용은 보내기를 누를 때까지 메시지 입력란에 남습니다. 어떤 것도 이 Mac 밖으로 나가지 않습니다."
           }
         },
         "nl": {
           "stringUnit": {
             "state": "translated",
-            "value": "Standaard uit. Indien aan controleert het geladen model op deze Mac elke afgeronde zin en verstuurt die alleen als het duidelijk een volledig verzoek aan de assistent is. Alles wat uitvoeren, verwijderen, versturen, betalen of instellingen wijzigen noemt, en alles wat onduidelijk is, blijft in het berichtvak staan tot je op Verstuur drukt. Er verlaat niets deze Mac."
+            "value": "Experimenteel: fouten zijn nog mogelijk. Standaard uit. Indien aan controleert het geladen model op deze Mac elke afgeronde zin en verstuurt die alleen als het duidelijk een volledig verzoek aan de assistent is. Alles wat uitvoeren, verwijderen, versturen, betalen of instellingen wijzigen noemt, en alles wat onduidelijk is, blijft in het berichtvak staan tot je op Verstuur drukt. Er verlaat niets deze Mac."
           }
         },
         "pl": {
           "stringUnit": {
             "state": "translated",
-            "value": "Domyślnie wyłączone. Po włączeniu załadowany na tym Macu model sprawdza każde zakończone zdanie i wysyła je tylko wtedy, gdy wyraźnie jest kompletną prośbą do asystenta. Wszystko, co wspomina o uruchamianiu, usuwaniu, wysyłaniu, płaceniu lub zmianie ustawień, oraz wszystko niejasne, czeka w polu wiadomości, aż naciśniesz Wyślij. Nic nie opuszcza tego Maca."
+            "value": "Eksperymentalne: nadal może się mylić. Domyślnie wyłączone. Po włączeniu załadowany na tym Macu model sprawdza każde zakończone zdanie i wysyła je tylko wtedy, gdy wyraźnie jest kompletną prośbą do asystenta. Wszystko, co wspomina o uruchamianiu, usuwaniu, wysyłaniu, płaceniu lub zmianie ustawień, oraz wszystko niejasne, czeka w polu wiadomości, aż naciśniesz Wyślij. Nic nie opuszcza tego Maca."
           }
         },
         "pt-BR": {
           "stringUnit": {
             "state": "translated",
-            "value": "Desativado por padrão. Quando ativado, o modelo carregado neste Mac verifica cada frase concluída e só a envia se for claramente um pedido completo ao assistente. Tudo o que mencionar executar, apagar, enviar, pagar ou alterar ajustes, e tudo o que não estiver claro, espera na caixa de mensagem até você tocar em Enviar. Nada sai deste Mac."
+            "value": "Experimental: ainda pode errar. Desativado por padrão. Quando ativado, o modelo carregado neste Mac verifica cada frase concluída e só a envia se for claramente um pedido completo ao assistente. Tudo o que mencionar executar, apagar, enviar, pagar ou alterar ajustes, e tudo o que não estiver claro, espera na caixa de mensagem até você tocar em Enviar. Nada sai deste Mac."
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "По умолчанию выключено. Если включено, загруженная на этом Mac модель проверяет каждую законченную фразу и отправляет её, только если это явно полный запрос к ассистенту. Всё, что упоминает запуск, удаление, отправку, оплату или смену настроек, и всё неясное остаётся в поле сообщения, пока вы не нажмёте «Отправить». Ничего не покидает этот Mac."
+            "value": "Экспериментально: возможны ошибки. По умолчанию выключено. Если включено, загруженная на этом Mac модель проверяет каждую законченную фразу и отправляет её, только если это явно полный запрос к ассистенту. Всё, что упоминает запуск, удаление, отправку, оплату или смену настроек, и всё неясное остаётся в поле сообщения, пока вы не нажмёте «Отправить». Ничего не покидает этот Mac."
           }
         },
         "sv": {
           "stringUnit": {
             "state": "translated",
-            "value": "Av som standard. När det är på granskar den inlästa modellen på den här Macen varje avslutad mening och skickar den bara om den tydligt är en komplett begäran till assistenten. Allt som nämner att köra, radera, skicka, betala eller ändra inställningar, och allt oklart, väntar i meddelanderutan tills du trycker på Skicka. Inget lämnar den här Macen."
+            "value": "Experimentell: fel kan fortfarande inträffa. Av som standard. När det är på granskar den inlästa modellen på den här Macen varje avslutad mening och skickar den bara om den tydligt är en komplett begäran till assistenten. Allt som nämner att köra, radera, skicka, betala eller ändra inställningar, och allt oklart, väntar i meddelanderutan tills du trycker på Skicka. Inget lämnar den här Macen."
           }
         },
         "tr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Varsayılan olarak kapalı. Açıkken, bu Mac'te yüklü model biten her cümleyi denetler ve yalnızca asistana yöneltilmiş açıkça eksiksiz bir istekse gönderir. Çalıştırma, silme, gönderme, ödeme veya ayar değiştirmeden söz eden her şey ve belirsiz olan her şey, siz Gönder'e basana kadar mesaj kutusunda bekler. Hiçbir şey bu Mac'ten çıkmaz."
+            "value": "Deneysel: hâlâ hata yapabilir. Varsayılan olarak kapalı. Açıkken, bu Mac'te yüklü model biten her cümleyi denetler ve yalnızca asistana yöneltilmiş açıkça eksiksiz bir istekse gönderir. Çalıştırma, silme, gönderme, ödeme veya ayar değiştirmeden söz eden her şey ve belirsiz olan her şey, siz Gönder'e basana kadar mesaj kutusunda bekler. Hiçbir şey bu Mac'ten çıkmaz."
           }
         },
         "uk": {
           "stringUnit": {
             "state": "translated",
-            "value": "За замовчуванням вимкнено. Якщо ввімкнено, завантажена на цьому Mac модель перевіряє кожну завершену фразу й надсилає її, лише якщо це явно повний запит до асистента. Усе, що згадує запуск, видалення, надсилання, оплату чи зміну налаштувань, і все неясне залишається в полі повідомлення, доки ви не натиснете «Надіслати». Ніщо не залишає цей Mac."
+            "value": "Експериментально: можливі помилки. За замовчуванням вимкнено. Якщо ввімкнено, завантажена на цьому Mac модель перевіряє кожну завершену фразу й надсилає її, лише якщо це явно повний запит до асистента. Усе, що згадує запуск, видалення, надсилання, оплату чи зміну налаштувань, і все неясне залишається в полі повідомлення, доки ви не натиснете «Надіслати». Ніщо не залишає цей Mac."
           }
         },
         "vi": {
           "stringUnit": {
             "state": "translated",
-            "value": "Mặc định tắt. Khi bật, mô hình đã tải trên Mac này kiểm tra từng câu vừa nói xong và chỉ gửi khi đó rõ ràng là một yêu cầu hoàn chỉnh gửi đến trợ lý. Mọi nội dung nhắc đến chạy, xóa, gửi, thanh toán hoặc đổi cài đặt, và mọi nội dung chưa rõ, vẫn nằm trong khung tin nhắn cho đến khi bạn nhấn Gửi. Không có gì rời khỏi Mac này."
+            "value": "Thử nghiệm: vẫn có thể nhầm lẫn. Mặc định tắt. Khi bật, mô hình đã tải trên Mac này kiểm tra từng câu vừa nói xong và chỉ gửi khi đó rõ ràng là một yêu cầu hoàn chỉnh gửi đến trợ lý. Mọi nội dung nhắc đến chạy, xóa, gửi, thanh toán hoặc đổi cài đặt, và mọi nội dung chưa rõ, vẫn nằm trong khung tin nhắn cho đến khi bạn nhấn Gửi. Không có gì rời khỏi Mac này."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "默认关闭。开启后，这台 Mac 上已加载的模型会检查每一句说完的话，只有明确是对助手的完整请求时才会发送。凡是提到运行、删除、发送、付款或更改设置的内容，以及任何不明确的内容，都会留在消息框中，等你按下发送。任何内容都不会离开这台 Mac。"
+            "value": "实验性功能:仍可能出错。 默认关闭。开启后，这台 Mac 上已加载的模型会检查每一句说完的话，只有明确是对助手的完整请求时才会发送。凡是提到运行、删除、发送、付款或更改设置的内容，以及任何不明确的内容，都会留在消息框中，等你按下发送。任何内容都不会离开这台 Mac。"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "預設為關閉。開啟後，這台 Mac 上已載入的模型會檢查每一句說完的話，只有明確是對助理的完整請求時才會傳送。凡是提到執行、刪除、傳送、付款或更改設定的內容，以及任何不明確的內容，都會留在訊息框中，等你按下傳送。任何內容都不會離開這台 Mac。"
+            "value": "實驗性功能:仍可能出錯。 預設為關閉。開啟後，這台 Mac 上已載入的模型會檢查每一句說完的話，只有明確是對助理的完整請求時才會傳送。凡是提到執行、刪除、傳送、付款或更改設定的內容，以及任何不明確的內容，都會留在訊息框中，等你按下傳送。任何內容都不會離開這台 Mac。"
           }
         }
       }

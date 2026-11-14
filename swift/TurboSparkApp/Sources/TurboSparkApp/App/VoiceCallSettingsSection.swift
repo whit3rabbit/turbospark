@@ -35,7 +35,7 @@ struct VoiceCallSettingsSection: View {
             .disabled(!model.voiceCallEnabled)
             .settingsControl("Auto-send voice utterances", pane: .general, timing: .immediate)
             Text(
-                "Off by default. When on, the loaded model on this Mac checks each finished sentence and sends it only if it is clearly a complete request to the assistant. Anything that mentions running, deleting, sending, paying or changing settings, and anything unclear, still waits in the message box for you to press Send. Nothing leaves this Mac.",
+                "Experimental: it can still make mistakes. Off by default. When on, the loaded model on this Mac checks each finished sentence and sends it only if it is clearly a complete request to the assistant. Anything that mentions running, deleting, sending, paying or changing settings, and anything unclear, still waits in the message box for you to press Send. Nothing leaves this Mac.",
                 bundle: .module
             )
             .font(theme.ui(.small))

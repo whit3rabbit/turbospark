@@ -59,6 +59,11 @@ enum VoiceCallSubmitPreFilter {
         "allow", "deny", "grant", "revoke", "chmod", "chown", "git", "curl", "wget", "ssh", "npm", "pip", "brew",
         "password", "passwords", "token", "tokens", "secret", "secrets", "credential", "credentials", "keychain",
         "ignore", "disregard", "override", "bypass", "jailbreak",
+        // The rubric's own vocabulary and the usual injection verbs. Speech
+        // that names a label or the instructions is talking to the decider,
+        // not to the assistant. Downgrade-only, so a miss costs one Send press.
+        "request", "noise", "partial", "dictation", "unsure", "label", "labels", "labeled", "labelled",
+        "rubric", "instruction", "instructions", "forget", "previous", "prompt", "prompts",
     ]
 
     /// Multi-word phrases, matched as lowercase substrings.

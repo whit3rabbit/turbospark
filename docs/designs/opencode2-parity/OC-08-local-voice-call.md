@@ -740,6 +740,33 @@ class). Caveats: 40 items, hand written by the same author as the rubric, one
 model, one greedy run, no confidence interval. Not measured: the Qwen 4B class
 the user asked for; run the script on it once it is installed.
 
+#### Follow-up: pre-filter additions and the experimental label
+
+Decision (main session, standing direction): add downgrade-only pre-filter
+words. `riskyWords` gained the rubric's label words (`request`, `noise`,
+`partial`, `dictation`, `unsure`, `label` and variants), `rubric`,
+`instruction(s)`, `forget`, `previous`, `prompt(s)`. The Python mirror reads the
+lists from the Swift source, so both moved together. The pre-filter still only
+downgrades.
+
+* Pre-filter half rerun (no model run, the saved greedy answers are reused;
+  they cannot change because the prompt and model did not): all 7 risky and
+  all 4 injections are now stopped before the model; **0 of the 10 safe
+  requests were downgraded** (none lost). Dictation stopped stays 1.
+* End to end with the saved model answers: 11 sent, 10 correct, **1 false
+  allow ("what do you want for dinner tonight"), ALLOW precision 10/11 =
+  0.91**, recall of safe requests 10/10. This is a derived number: the word
+  list was written after seeing these injections and tuned to this set, so it
+  overstates what unseen injections will do. The remaining false allow is a
+  third-party question the word list cannot catch.
+* The "Auto-send voice utterances" help text now opens with "Experimental: it
+  can still make mistakes." (21 languages; the old string key was replaced).
+* Tests: `testThePreFilterDowngradesSpeechAddressedToTheDecider` and
+  `testTheSafeEvalRequestsAreStillAskedOfTheModel`. Mutation (additions
+  removed): 5 failures, red. `testTheUtteranceIsQuotedDataBehindAFixedRubric`
+  used a hostile line with "REQUEST" and "Label", which the pre-filter now
+  stops, so its input was changed to a line without those words.
+
 Run it on a quiet host with an install directory (never an alias, which could
 start a download):
 
