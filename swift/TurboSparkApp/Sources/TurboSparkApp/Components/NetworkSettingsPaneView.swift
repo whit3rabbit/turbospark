@@ -25,6 +25,7 @@ struct NetworkSettingsPaneView: View {
             if policy.mode == .custom {
                 customSection
             }
+            ImageSearchSettingsSectionView()
             coverageSection
         }
         .formStyle(.grouped)

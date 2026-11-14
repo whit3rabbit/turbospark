@@ -316,6 +316,19 @@ public enum ToolRiskClassifier {
 
         // 4. Web & Network Risk
         if category == .web {
+            // image_fetch writes a downloaded file, so its destination gets
+            // the same sensitive-path test a file write does. The executor
+            // enforces it again; this only makes the card honest and keeps
+            // an auto-approve from covering it.
+            if name.lowercased() == "image_fetch",
+               let path = arguments["path"] ?? arguments["file_path"],
+               isSensitivePath(path)
+            {
+                return ToolRiskAssessment(
+                    level: .high, category: category,
+                    reasons: ["Saving a downloaded image to sensitive or system file: '\(path)'"],
+                    hardGated: true)
+            }
             let urlString = ToolApprovalPreviewSummary.httpURL(arguments) ?? ""
             if !urlString.isEmpty {
                 guard let url = URL(string: urlString), let host = url.host, !host.isEmpty else {

@@ -216,7 +216,7 @@ public enum AppToolCatalog {
             return .fileWrite
         case "bash", "run_command", "repl", "shell", "exec", "terminal", "bashoutput", "bash_output", "killshell", "kill_shell", "enterworktree", "enter_worktree", "exitworktree", "exit_worktree":
             return .terminal
-        case "websearch", "web_search", "webfetch", "web_fetch", "fetch_url", "search_web", "read_url_content", "codesearch", "code_search", "http_request", "httprequest":
+        case "websearch", "web_search", "webfetch", "web_fetch", "fetch_url", "search_web", "read_url_content", "codesearch", "code_search", "http_request", "httprequest", "image_search", "image_fetch":
             return .web
         case "browser_navigate", "browser_click", "browser_type", "browser_press_key",
             "browser_scroll", "browser_screenshot", "browser_snapshot", "browser_wait":

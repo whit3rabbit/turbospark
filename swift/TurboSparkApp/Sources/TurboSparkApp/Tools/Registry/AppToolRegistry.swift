@@ -440,6 +440,42 @@ public enum AppToolRegistry {
                 )
                 output = searchOutput.formatMarkdown()
 
+            case "image_search":
+                guard let query = call.arguments["query"] ?? call.arguments["q"] ?? call.arguments["search_query"] else {
+                    throw NSError(domain: "TurboSparkTool", code: 24, userInfo: [NSLocalizedDescriptionKey: "Missing 'query' argument for image_search tool call."])
+                }
+                let count = Int(call.arguments["count"] ?? call.arguments["num_results"] ?? call.arguments["limit"] ?? "")
+                func domainList(_ raw: String?) -> [String]? {
+                    raw?.components(separatedBy: ",")
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+                }
+                // The key is read here, per call: nothing touches the
+                // Keychain at launch (ImageSearchCredentials).
+                let imageOutput = try await ImageSearchExecutor.search(
+                    query: query,
+                    count: count,
+                    allowedDomains: domainList(call.arguments["allowed_domains"] ?? call.arguments["allowedDomains"]),
+                    blockedDomains: domainList(call.arguments["blocked_domains"] ?? call.arguments["blockedDomains"]),
+                    apiKey: ImageSearchCredentials.resolveKey())
+                output = imageOutput.formatForModel()
+
+            case "image_fetch":
+                guard let urlString = call.arguments["url"] ?? call.arguments["image_url"] else {
+                    throw NSError(domain: "TurboSparkTool", code: 23, userInfo: [NSLocalizedDescriptionKey: "Missing 'url' argument for image_fetch tool call."])
+                }
+                guard let relPath = call.arguments["path"] ?? call.arguments["file_path"] else {
+                    throw NSError(domain: "TurboSparkTool", code: 23, userInfo: [NSLocalizedDescriptionKey: "Missing 'path' argument for image_fetch tool call."])
+                }
+                output = try await ImageFetchExecutor.fetch(
+                    url: urlString, path: relPath,
+                    sourcePage: call.arguments["source_page"],
+                    rootURL: rootURL,
+                    timeout: Int(call.arguments["timeout"] ?? call.arguments["timeout_seconds"] ?? ""))
+                if let targetURL = try? resolveSecurePath(relPath: relPath, rootURL: rootURL) {
+                    producedFiles.append(ArtifactRegistrar.ProducedFile(
+                        url: targetURL, toolCallID: call.id, toolName: call.name, origin: .fileWrite))
+                }
+
             case "webfetch", "web_fetch", "fetch_url", "read_url_content":
                 guard let urlString = call.arguments["url"]
                     ?? call.arguments["uri"]
