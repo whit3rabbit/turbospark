@@ -376,6 +376,89 @@ default-off setting; the items under "Deferred" are not.
 * **Non-English speech**, local TTS, echo cancellation, wake word,
   delegation tools: still out of scope as written.
 
+### Auto-submit via the OpenKind decision model: findings and proposal
+
+Status: blocked on user decisions. No code was written. The stop condition
+for this follow-up applied, so nothing below is implemented.
+
+**What OpenKind is.** The sibling repo `openkind` is a typed classifier
+service, not a policy engine. It speaks the Jev protocol: a request carries a
+`state` string and named questions of kind `Noul` (free typed answer),
+`Choice` (pick one of N options, optionally with a `__none__` option) or
+`Score` (a number). `POST /v1/systemone` returns one typed answer per
+question. It has no concept of allow, deny, consent or "may this run". Any
+allow/deny meaning is something the caller encodes in the question text and
+the thresholds it applies to the answer.
+
+**How the app consumes it today.** `swift/TurboSparkApp/Package.swift`
+depends on the `OpenKind` product (path `../../../openkind`, or a pinned
+revision in release builds). The only consumer is the TypeSafe pane
+(`AppModel+TypeSafeAPI.swift`): it starts a separate `openkindd` child on
+`127.0.0.1` through `OpenKindServer`, with `models: ["mock"]`, a user-entered
+API key (Keychain only on opt-in, `TypeSafeKeychain`), and
+`--playground on`. It is a manual playground. Nothing in the app calls
+`OpenKindClient.systemOne` on behalf of another feature, and the daemon only
+runs while the user starts it from the TypeSafe tab.
+
+**Why this does not fit as asked.**
+
+1. No allow/deny API exists. A gate needs a rule: which question, which
+   options, which model, what confidence counts as allow. That is a policy
+   decision about an agent that can run tools, and it has not been made.
+2. The daemon serves only `mock` in the app. A real decision needs a pulled
+   profile (for example `laya:typed-decisions`, `qwen3guard`, or `kev`), which
+   is a multi-GB download and a catalog choice. Confidence calibration is
+   model specific (the OpenKind docs say to validate thresholds on your own
+   data), and a mis-calibrated gate fails open in the way this feature must
+   not.
+3. Lifecycle and credentials: the voice call would depend on the TypeSafe
+   daemon being running, on its port, and on its API key. Reusing the
+   TypeSafe key or Keychain item from the call changes credential handling
+   (needs approval). A second daemon or an in-process engine is a new
+   dependency or a change to openkind.
+4. Latency: a decision call sits between end-of-speech and the send, on top
+   of recognition. It needs a hard timeout, and the only safe timeout result
+   is draft-first.
+
+**Proposal (for the user to accept or change).**
+
+* Gate shape: one extra stage in `VoiceCallController` after a final,
+  non-empty, unmuted utterance. A `VoiceCallSubmitDecider` protocol (async,
+  returns `allow`, `confirm`, or `deny`) injected like the other seams, with
+  a production adapter over `OpenKindClient` and a fake for tests. Anything
+  except an explicit `allow` within the timeout (error, timeout, daemon down,
+  `confirm`, `deny`, ambiguous) lands the text in the composer as today.
+* Narrow submit path: a single `submitAutoVoiceUtterance(_:chatID:)` on
+  `AppModel`, reachable only from that stage, which re-checks at call time
+  that the setting is on, the decision was `allow`, no tool approval is
+  pending, no turn is busy (ZP-23 lane), the call is unmuted, and the text
+  is unchanged since the decision. The source-scan test is updated to allow
+  exactly that one call site and mutation-checked.
+* Setting: "Auto-send voice utterances", default off, with a
+  `SettingsControlCatalog` row and all 21 languages.
+* Question encoding (needs the user's call): a `Choice` question over the
+  utterance and the last assistant turn, options such as `dictation`,
+  `command`, `unclear`, `risky`, with `__none__` present, where only
+  `dictation` or `command` above a threshold maps to `allow`. Utterances that
+  mention shell, delete, install, push or similar, and everything while a
+  pending approval exists, map to `confirm` without calling the model.
+* Model: a dedicated small profile, pulled on demand, never bundled. Until
+  one is chosen and its threshold validated on recorded utterances, the
+  `mock` model must not be accepted as a decider (the adapter refuses it).
+
+**Decisions needed from the user.**
+
+1. Which OpenKind profile is the decider, and who downloads it (opt-in pull
+   from the settings row, or manual).
+2. The decision rule: question text, options, confidence threshold, and the
+   keyword pre-filter list. Or a different, simpler mapping.
+3. Daemon ownership: reuse the TypeSafe daemon (needs it running, and the
+   call reading its key) or a separate voice-gate daemon with its own key.
+   Either touches credentials or process lifecycle.
+4. Timeout budget (proposal: 1.5 s, fail closed).
+5. Whether a rare-but-allowed `allow` on a `command` class is acceptable at
+   all, or auto-send should be limited to plain dictation with no tools.
+
 --------------------------------------------------------------------------------
 
 *Drafted with EGM*
