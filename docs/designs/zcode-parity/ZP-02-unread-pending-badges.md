@@ -7,7 +7,7 @@ and
 [TaskListItem](https://github.com/zai-org/ZCode/blob/main/packages/ui/src/TaskListItem.tsx).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented (phase 1). See "Implementation Record".
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -212,6 +212,45 @@ No revision token or compare step is needed.
   `LocalizationParityTests` must stay green.
 * **Manual**: generate a reply into a non-selected chat (enabled by
   ZP-23), verify the dot; open an approval card, verify the pill.
+
+--------------------------------------------------------------------------------
+
+## Implementation Record
+
+Phase 1 shipped on top of the ZP-23 turn states (commit message
+"app: unread dot and pending pill on chat rows (ZP-02)"). Phase 2 (countdown,
+snooze, auto-resolve) is not built: the review (B2) cut it, and resolving an
+approval without a user answer needs its own permission design.
+
+What shipped:
+
+* `AppChat.lastReadAt` (non-optional, tolerant decode) and
+  `AppChat.hasUnreadReply`: unread = an assistant, non-synthetic, non-blank
+  row created after the marker.
+* `ChatRowSlot.resolve` (State/ChatSidebarOrganizer.swift): the pure slot
+  function. `AppModel+ChatReadState.swift`: the marker advances on selection
+  and when leaving a chat (`selectedChatID.didSet`), and the selected chat is
+  stamped in the archive at save time. Writes happen only when a marker moves.
+* `ChatSidebarChatRowView`: static "Needs Approval" pill (hand glyph plus
+  text), unread dot, existing flame and queued clock; VoiceOver value joins
+  "Unread" with the preview. Two catalog keys, all 21 languages.
+* Tests: `ChatBadgeStateTests` (16), mutation-checked (inverted marker
+  comparison and swapped slot priority both fail tests).
+
+Deviations from the draft:
+
+* Priority is pending > running > unread > default (review M4 offered
+  running above unread), so a background chat that is generating shows the
+  spinner and becomes a dot only once its reply is in.
+* `lastReadAt` is a non-optional Date, not `Date?`: a missing value decodes
+  to the load time, because a nil marker would never light for the first
+  reply after an upgrade.
+* The pending pill reuses the existing "Needs Approval" string for questions
+  too, and the selected row keeps the ZP-23 hand glyph instead of a pill.
+* No dock badge feed and no system notification: both stay with the
+  `desktop-shell-hardening` spec (no permission request is added here).
+  `chats.filter(\.hasUnreadReply)` minus the selected chat is the count that
+  work can use.
 
 --------------------------------------------------------------------------------
 

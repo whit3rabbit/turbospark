@@ -464,7 +464,14 @@ extension AppModel {
     /// repair a stale id anyway, but a file that references an absent row is
     /// its own trap.
     func makeChatArchive() -> AppChatArchive {
-        let archivable = archivableChats
+        // The selected chat is on screen at save time: stamp its marker on
+        // disk so a relaunch that opens another chat does not show it unread.
+        var archivable = archivableChats
+        let savedAt = Date()
+        for index in archivable.indices
+        where archivable[index].id == selectedChatID && archivable[index].hasUnreadReply {
+            archivable[index].lastReadAt = savedAt
+        }
         assert(
             chats.allSatisfy { chat in
                 !chat.isGhost || (chat.messages.isEmpty && chat.todos.isEmpty

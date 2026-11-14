@@ -496,6 +496,11 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
     /// sidebar's Archived section brings it back. OPTIONAL for the decoder,
     /// like every field after the first release.
     public var isArchived: Bool
+    /// Last-read watermark (ZP-02). A chat is unread when it holds an
+    /// assistant reply created after this moment and is not selected. A
+    /// chat written before the field existed decodes with the load time, so
+    /// nothing lights up after an upgrade. A new chat starts at creation.
+    public var lastReadAt: Date
 
     /// Creates a new chat session.
     public init(
@@ -521,7 +526,8 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         isArchived: Bool = false,
         titleProvenance: AppChatTitleProvenance? = nil,
         titleGenerationAttempted: Bool? = nil,
-        recoveryAnchor: RecoveryAnchor? = nil
+        recoveryAnchor: RecoveryAnchor? = nil,
+        lastReadAt: Date? = nil
     ) {
         self.id = id
         self.projectID = projectID
@@ -558,6 +564,7 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         self.usage = usage
         self.goal = goal
         self.isArchived = isArchived
+        self.lastReadAt = lastReadAt ?? Date()
     }
 
     /// Tolerant decode, for the reason given on `AppChatMessage.init(from:)`:
@@ -624,6 +631,21 @@ public struct AppChat: Identifiable, Codable, Equatable, Sendable {
         // THIS field, not the chat.
         goal = ((try? container.decodeIfPresent(ChatGoalState.self, forKey: .goal)) ?? nil)
         isArchived = try container.decodeIfPresent(Bool.self, forKey: .isArchived) ?? false
+        // Lenient: a wrong-typed marker costs this watermark, not the chat.
+        lastReadAt = ((try? container.decodeIfPresent(Date.self, forKey: .lastReadAt)) ?? nil)
+            ?? Date()
+    }
+
+    /// Whether the chat holds assistant text newer than its read marker.
+    /// Tool-only rows and the app's own synthetic rows do not count (ZP-02).
+    public var hasUnreadReply: Bool {
+        guard let reply = messages.last(where: Self.countsAsReply) else { return false }
+        return reply.createdAt > lastReadAt
+    }
+
+    private static func countsAsReply(_ message: AppChatMessage) -> Bool {
+        message.role == .assistant && !message.isSynthetic
+            && !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Single-line preview text for sidebar display.

@@ -230,30 +230,66 @@ struct ChatSidebarChatRowView: View {
         }
     }
 
-    /// What this chat is doing in the single turn lane (ZP-23). A glyph with
-    /// a text equivalent (help and VoiceOver), never color alone. Generating
-    /// is the animated flame in the icon slot, so it has no badge here.
+    private var slot: ChatRowSlot { model.chatRowSlot(for: chat) }
+
+    /// The trailing half of the row's one status slot (ZP-02 on the ZP-23
+    /// turn state). Pending pill, else unread dot, else the queued clock or
+    /// the selected row's hand glyph. Each carries text (the pill) or help
+    /// and a VoiceOver value (the dot, the glyphs), never color alone.
+    /// Generating is the animated flame in the icon slot, so it has no badge.
     @ViewBuilder
     private var stateBadge: some View {
-        switch model.chatTurnState(for: chat.id) {
-        case .awaitingTool, .awaitingQuestion:
-            Image(systemName: "hand.raised.fill")
-                .font(theme.ui(.tiny))
-                .foregroundStyle(AppAttention.color)
-                .help(Text("Needs Approval", bundle: .module))
+        switch slot {
+        case .pending:
+            HStack(spacing: 3) {
+                Image(systemName: "hand.raised.fill")
+                Text("Needs Approval", bundle: .module)
+                    .lineLimit(1)
+            }
+            .font(theme.ui(.micro, weight: .semibold))
+            .foregroundStyle(AppAttention.color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .overlay(Capsule().stroke(AppAttention.color, lineWidth: 1))
+            .fixedSize()
+            .padding(.trailing, 4)
+            .help(Text("Needs Approval", bundle: .module))
+            .accessibilityHidden(true)
+        case .unread:
+            Circle()
+                .fill(theme.accent)
+                .frame(width: 8, height: 8)
+                .padding(.trailing, 6)
+                .help(Text("Unread", bundle: .module))
                 .accessibilityHidden(true)
-        case .queued:
-            Image(systemName: "clock")
-                .font(theme.ui(.tiny))
-                .foregroundStyle(.appSecondary)
-                .help(Text("Queued", bundle: .module))
-                .accessibilityHidden(true)
-        case .generating, .idle:
-            EmptyView()
+        case .running, .normal:
+            switch model.chatTurnState(for: chat.id) {
+            case .awaitingTool, .awaitingQuestion:
+                // The selected row: the pill is for rows the user is not on.
+                Image(systemName: "hand.raised.fill")
+                    .font(theme.ui(.tiny))
+                    .foregroundStyle(AppAttention.color)
+                    .help(Text("Needs Approval", bundle: .module))
+                    .accessibilityHidden(true)
+            case .queued:
+                Image(systemName: "clock")
+                    .font(theme.ui(.tiny))
+                    .foregroundStyle(.appSecondary)
+                    .help(Text("Queued", bundle: .module))
+                    .accessibilityHidden(true)
+            case .generating, .idle:
+                EmptyView()
+            }
         }
     }
 
     private var stateAccessibilityValue: Text {
+        // The same slot the eye reads, so VoiceOver and the dot agree.
+        if slot == .unread {
+            return chat.preview.isEmpty
+                ? Text("Unread", bundle: .module)
+                : Text("Unread: \(chat.preview)", bundle: .module)
+        }
         switch model.chatTurnState(for: chat.id) {
         case .generating: return Text("Generating", bundle: .module)
         case .awaitingTool, .awaitingQuestion: return Text("Needs Approval", bundle: .module)

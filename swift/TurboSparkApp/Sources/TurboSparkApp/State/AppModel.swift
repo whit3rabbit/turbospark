@@ -861,6 +861,7 @@ public final class AppModel: ObservableObject {
                 // every one of those is resolved from the chat's project.
                 activeDraftChat = AppChat(id: selectedChatID, projectID: selectedProjectID)
             }
+            selectionChangedForReadState(from: oldValue)
         }
     }
     /// Transient active chat draft when the chats list is empty.

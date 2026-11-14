@@ -84,6 +84,31 @@ struct ChatSidebarLayout {
     }
 }
 
+/// The one status slot a sidebar row shows (ZP-02), built on the ZP-23 turn
+/// state. Priority: a prompt waiting for the user, then a running turn, then
+/// an unread reply, then nothing. Running outranks unread so a streaming
+/// background chat reads as busy and only turns into the dot once its reply
+/// is in. Pure so the priority is pinned by tests; badges never reorder rows.
+enum ChatRowSlot: Equatable {
+    case pending
+    case running
+    case unread
+    case normal
+
+    /// The pill and the dot appear on unselected rows only: on the selected
+    /// row the in-transcript card is the cue and the reply is already on screen.
+    static func resolve(
+        turnState: ChatTurnState, isSelected: Bool, hasUnreadReply: Bool
+    ) -> ChatRowSlot {
+        if !isSelected, turnState == .awaitingTool || turnState == .awaitingQuestion {
+            return .pending
+        }
+        if turnState == .generating { return .running }
+        if !isSelected, hasUnreadReply { return .unread }
+        return .normal
+    }
+}
+
 /// The six-preset palette qwen-code's `workspaceColor` cycles through, in
 /// its order. The pick is a hash of the project's stable id, not its name:
 /// a rename must not repaint a project the user has already learned.
