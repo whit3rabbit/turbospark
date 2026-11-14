@@ -75,6 +75,7 @@ pub fn family_admits_quantize_on_install(family: ModelFamily) -> bool {
             | ModelFamily::Qwen2Dense
             | ModelFamily::Qwen3Vl
             | ModelFamily::Gemma4
+            | ModelFamily::MuseGlimmer
     )
 }
 
@@ -94,6 +95,19 @@ pub fn family_admits_quantize_on_install(family: ModelFamily) -> bool {
 ///   INT8 router are not synthesized for Gemma4;
 /// - the `gemma4_unified` root (12B), whose HF layout was not read.
 pub fn quantize_refusal(family: ModelFamily, config: &serde_json::Value) -> Option<String> {
+    if family == ModelFamily::MuseGlimmer {
+        // The family string also reaches the DFlash drafter
+        // (`Muse-Glimmer-30B-assistant`) and any wrapper; only the plain
+        // model's layout was read.
+        let root = config.get("model_type").and_then(|v| v.as_str());
+        if root.is_some() && root != Some("muse_glimmer") {
+            return Some(format!(
+                "quantize-on-install is verified for model_type muse_glimmer only, not {}",
+                root.unwrap_or_default()
+            ));
+        }
+        return None;
+    }
     if family != ModelFamily::Gemma4 {
         return None;
     }
@@ -197,6 +211,7 @@ pub fn canonicalize_for_family(
             Ok(SourceLayout::Mlx)
         }
         ModelFamily::Gemma4 => canonicalize_gemma4_hf_headers(headers),
+        ModelFamily::MuseGlimmer => canonicalize_muse_hf_headers(headers),
         other => Err(format!(
             "quantize-on-install is not wired for the {} family",
             other.as_str()
@@ -258,6 +273,38 @@ pub fn canonicalize_gemma4_hf_headers(
         }
         header.tensors = renamed;
     }
+    Ok(SourceLayout::Mlx)
+}
+
+/// HF to MLX spelling for a Muse Glimmer checkpoint, read off
+/// `meta-models/Muse-Glimmer-30B` against `mlx-community/Muse-Glimmer-30B-4bit`:
+/// the same prefix map as qwen35 (`model.language_model.` to
+/// `language_model.model.`, bare `lm_head.` to `language_model.lm_head.`), and
+/// the four per-layer norms plus the final norm are byte-identical in both
+/// (centered values stored as they are), so there is no shift.
+///
+/// The vision tensors are DROPPED, in either spelling, so the install is
+/// text-only. The MLX conversion quantizes the three vision-adapter matrices
+/// and the combined-vision reader expects that; the HF tower's layout against
+/// the MLX one was not read, so carrying it would build an install the reader
+/// refuses or, worse, mis-reads. Vision comes from `pull-vision`.
+pub fn canonicalize_muse_hf_headers(
+    headers: &mut [SafetensorsHeader],
+) -> Result<SourceLayout, String> {
+    const VISION: [&str; 6] = [
+        "model.vision_tower.",
+        "model.vision_adapter.",
+        "model.vision_projection.",
+        "vision_tower.",
+        "vision_adapter.",
+        "vision_projection.",
+    ];
+    for header in headers.iter_mut() {
+        header
+            .tensors
+            .retain(|name, _| !VISION.iter().any(|p| name.starts_with(p)));
+    }
+    canonicalize_qwen35_hf_headers(headers)?;
     Ok(SourceLayout::Mlx)
 }
 

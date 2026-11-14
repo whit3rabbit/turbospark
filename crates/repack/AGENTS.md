@@ -89,6 +89,15 @@ Checkpoint intake and `.gturbo` writing.
   E2B/E4B would install and decode wrongly: refuse them by config, never by
   hope. 26B-A4B (MoE) and the `gemma4_unified` 12B are refused too (12B's HF
   layout was not read).
+- Quantize-on-install for Muse Glimmer reads `meta-models/Muse-Glimmer-30B`:
+  the qwen35 prefix map (`model.language_model.` and a bare, untied `lm_head.`),
+  and NO norm shift -- the four per-layer norms and the final norm are
+  byte-identical to the MLX conversion (centered values stored as they are;
+  `tests/mlx_quantize_parity_muse_network.rs`, 0 mismatches). The view DROPS
+  the vision tensors in either spelling, so the install is text-only: the MLX
+  conversion quantizes the three vision-adapter matrices and the combined
+  reader expects that, and the HF tower layout was not read. Only
+  `model_type muse_glimmer` is admitted (`quantize_refusal`).
 - `mx.quantize` rounds exact ties differently per backend: Metal half away
   from zero, the CPU kernel half to even. `DeepSeek-V4-Pro-Qwen3.5-9B-4bit`
   is exact under `Rounding::HalfAway` and `Qwen3.6-35B-A3B-4bit` under

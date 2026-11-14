@@ -184,11 +184,19 @@ pub fn evaluate_config(
                     .to_string(),
             );
         }
+        if family == model_io::ModelFamily::MuseGlimmer {
+            report.warnings.push(
+                "quantize-on-install for Muse Glimmer installs the text trunk only; the vision \
+                 tower is not carried (use pull-vision for images)"
+                    .to_string(),
+            );
+        }
         if !matches!(
             family,
             model_io::ModelFamily::QwenGdnDense
                 | model_io::ModelFamily::QwenGdnMoe
                 | model_io::ModelFamily::Gemma4
+                | model_io::ModelFamily::MuseGlimmer
         ) {
             // Only the qwen35 trunks (dense and MoE) have been diffed byte for
             // byte against a published mlx-community conversion; say so
