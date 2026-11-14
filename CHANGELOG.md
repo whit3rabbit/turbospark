@@ -15,13 +15,16 @@ when this file gets updated relative to the version bump and the tag.
 
 ### Added
 - `turbospark-model pull --repo` installs unquantized (BF16, FP16 or F32)
-  Qwen 3.5 dense, Qwen 3.6 MoE, Qwen2 and Qwen3-VL checkpoints, such as fine-tunes
+  Qwen 3.5 dense, Qwen 3.6 MoE, dense Gemma 4, Qwen2 and Qwen3-VL checkpoints, such as fine-tunes
   published only in full precision. The weights are quantized to MLX affine
   4-bit at group 64 as they stream, 8-bit with `--quantize 8`, or 2-bit at
   group 128 with `--quantize 2`. For Qwen 3.5 the 4-bit install is
   byte-identical to what `mlx_lm.convert` produces on Metal; the Qwen MoE is
   4-bit only and matches a published conversion made with the CPU tie rule
-  (see `compute::quant_mlx::Rounding`); Qwen2 and Qwen3-VL are
+  (see `compute::quant_mlx::Rounding`); dense Gemma 4 (`gemma-4-31B-it`)
+  matches its published 4-bit conversion byte for byte on the text trunk,
+  installs text-only, and refuses the per-layer-embedding (E2B, E4B), MoE
+  (26B-A4B) and `gemma4_unified` (12B) variants; Qwen2 and Qwen3-VL are
   not yet byte-checked against a published conversion, and 2-bit matches
   `mlx_lm.convert` only for a float16 source. Both the MLX and the Hugging
   Face transformers tensor layouts are accepted. Other families still refuse

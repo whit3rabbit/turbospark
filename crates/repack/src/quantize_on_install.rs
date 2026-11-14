@@ -74,7 +74,60 @@ pub fn family_admits_quantize_on_install(family: ModelFamily) -> bool {
             | ModelFamily::QwenGdnMoe
             | ModelFamily::Qwen2Dense
             | ModelFamily::Qwen3Vl
+            | ModelFamily::Gemma4
     )
+}
+
+/// A reason this CONFIG cannot be quantized on install, for the families
+/// where some variants share a `model_type` with a supported one.
+///
+/// Gemma4 is admitted for the dense text trunk of `gemma-4-31B-it` only
+/// (the one layout read off real bytes). The same family also covers variants
+/// whose tensors this view does not model, and `parse_gemma4_config` ignores
+/// the fields that mark them, so without this an install would be written
+/// and run with wrong output:
+///
+/// - per-layer embeddings (`hidden_size_per_layer_input > 0`: E2B, E4B),
+///   which the runtime hardcodes off (`PleConfig::NONE`);
+/// - shared KV layers (`num_kv_shared_layers > 0`, the same models);
+/// - the MoE block (`enable_moe_block`: 26B-A4B), whose rank-3 experts and
+///   INT8 router are not synthesized for Gemma4;
+/// - the `gemma4_unified` root (12B), whose HF layout was not read.
+pub fn quantize_refusal(family: ModelFamily, config: &serde_json::Value) -> Option<String> {
+    if family != ModelFamily::Gemma4 {
+        return None;
+    }
+    let tc = config.get("text_config").unwrap_or(config);
+    let num = |k: &str| tc.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+    if num("hidden_size_per_layer_input") > 0 {
+        return Some(
+            "this Gemma 4 variant uses per-layer embeddings (E2B/E4B), which quantize-on-install              does not support"
+                .into(),
+        );
+    }
+    if num("num_kv_shared_layers") > 0 {
+        return Some(
+            "this Gemma 4 variant shares KV across layers, which quantize-on-install does not \
+             support"
+                .into(),
+        );
+    }
+    if tc.get("enable_moe_block").and_then(|v| v.as_bool()) == Some(true) || num("num_experts") > 0
+    {
+        return Some(
+            "quantize-on-install is not wired for the Gemma 4 MoE variant (26B-A4B); only the \
+             dense text trunk is"
+                .into(),
+        );
+    }
+    let root = config.get("model_type").and_then(|v| v.as_str());
+    if root != Some("gemma4") && root.is_some() {
+        return Some(format!(
+            "quantize-on-install is verified for model_type gemma4 only, not {}",
+            root.unwrap_or_default()
+        ));
+    }
+    None
 }
 
 /// Whether `family` can write `bits` through quantize-on-install. The Qwen
@@ -143,11 +196,69 @@ pub fn canonicalize_for_family(
             }
             Ok(SourceLayout::Mlx)
         }
+        ModelFamily::Gemma4 => canonicalize_gemma4_hf_headers(headers),
         other => Err(format!(
             "quantize-on-install is not wired for the {} family",
             other.as_str()
         )),
     }
+}
+
+/// HF transformers to MLX spelling for a Gemma 4 checkpoint, across all
+/// shards. Read off `google/gemma-4-31B-it` against
+/// `mlx-community/gemma-4-31b-it-4bit`: the trunk moves from
+/// `model.language_model.*` to `language_model.model.*`, the towers from
+/// `model.vision_tower.*` / `model.embed_vision.*` to their bare names (the
+/// walk then buckets them as excluded), layer tensor names are identical, and
+/// norms and `layer_scalar` carry the same bytes in both, so the layout is
+/// always [`SourceLayout::Mlx`]. A name still under `model.` afterwards is one
+/// this mapping has not seen, and is refused rather than passed on.
+pub fn canonicalize_gemma4_hf_headers(
+    headers: &mut [SafetensorsHeader],
+) -> Result<SourceLayout, String> {
+    const MAP: [(&str, &str); 5] = [
+        ("model.language_model.", "language_model.model."),
+        ("model.vision_tower.", "vision_tower."),
+        ("model.embed_vision.", "embed_vision."),
+        ("model.audio_tower.", "audio_tower."),
+        ("lm_head.", "language_model.lm_head."),
+    ];
+    let any = |pred: &dyn Fn(&str) -> bool| {
+        headers
+            .iter()
+            .any(|h| h.tensors.keys().any(|k| pred(k.as_str())))
+    };
+    let has_hf = any(&|k| MAP.iter().any(|(src, _)| k.starts_with(src)));
+    if has_hf && any(&|k| k.starts_with("language_model.")) {
+        return Err(
+            "checkpoint mixes the HF (model.language_model.*) and MLX (language_model.*) \
+             tensor namespaces"
+                .into(),
+        );
+    }
+    if !has_hf {
+        return Ok(SourceLayout::Mlx);
+    }
+    for header in headers.iter_mut() {
+        let mut renamed = BTreeMap::new();
+        for (name, info) in std::mem::take(&mut header.tensors) {
+            let canonical = MAP
+                .iter()
+                .find_map(|(src, dst)| name.strip_prefix(src).map(|t| format!("{dst}{t}")))
+                .unwrap_or(name);
+            if canonical.starts_with("model.") {
+                return Err(format!(
+                    "{canonical}: a Gemma 4 tensor outside the trunk and tower prefixes this \
+                     mapping was read against"
+                ));
+            }
+            if renamed.insert(canonical.clone(), info).is_some() {
+                return Err(format!("renaming creates duplicate tensor {canonical}"));
+            }
+        }
+        header.tensors = renamed;
+    }
+    Ok(SourceLayout::Mlx)
 }
 
 /// Drop a stray `lm_head.weight` from a checkpoint whose config ties the

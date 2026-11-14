@@ -78,6 +78,17 @@ Checkpoint intake and `.gturbo` writing.
   or 4-bit). The per-expert HF spelling is refused, not guessed. The real gate
   is `tests/mlx_quantize_parity_moe_network.rs` (ignored, ranged reads);
   holding one layer's fused gate_up in memory costs about 1.5 GiB.
+- Quantize-on-install for Gemma 4 covers the DENSE text trunk of
+  `gemma-4-31B-it` only (`quantize_refusal`). HF to MLX is the prefix rename
+  `model.language_model.` to `language_model.model.` (towers lose their
+  `model.`; the walk excludes them, so the install is text-only); layer
+  names, norms and `layer_scalar` are byte-identical, so there is NO norm
+  shift, and there are no per-tensor width overrides. Read off
+  `tests/mlx_quantize_parity_gemma4_network.rs` (0 mismatches). The config
+  parser ignores `hidden_size_per_layer_input` and `num_kv_shared_layers`, so
+  E2B/E4B would install and decode wrongly: refuse them by config, never by
+  hope. 26B-A4B (MoE) and the `gemma4_unified` 12B are refused too (12B's HF
+  layout was not read).
 - `mx.quantize` rounds exact ties differently per backend: Metal half away
   from zero, the CPU kernel half to even. `DeepSeek-V4-Pro-Qwen3.5-9B-4bit`
   is exact under `Rounding::HalfAway` and `Qwen3.6-35B-A3B-4bit` under

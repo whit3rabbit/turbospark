@@ -156,6 +156,10 @@ pub fn evaluate_config(
     // family, each on its own real gate; every other family keeps the
     // refusal below verbatim.
     if unquantized && repack::quantize_on_install::family_admits_quantize_on_install(family) {
+        if let Some(why) = repack::quantize_on_install::quantize_refusal(family, &config) {
+            report.refuse(why);
+            return Ok(report);
+        }
         report.affine = Some((4, repack::quantize_on_install::group_for(4)));
         report.warnings.push(
             "config.json declares no quantization block: the install quantizes the BF16 \
@@ -173,9 +177,18 @@ pub fn evaluate_config(
                     .to_string(),
             );
         }
+        if family == model_io::ModelFamily::Gemma4 {
+            report.warnings.push(
+                "quantize-on-install for Gemma 4 covers the dense text trunk only; the vision \
+                 tower is not installed"
+                    .to_string(),
+            );
+        }
         if !matches!(
             family,
-            model_io::ModelFamily::QwenGdnDense | model_io::ModelFamily::QwenGdnMoe
+            model_io::ModelFamily::QwenGdnDense
+                | model_io::ModelFamily::QwenGdnMoe
+                | model_io::ModelFamily::Gemma4
         ) {
             // Only the qwen35 trunks (dense and MoE) have been diffed byte for
             // byte against a published mlx-community conversion; say so

@@ -244,6 +244,9 @@ pub(crate) fn stream_mlx(
                 family.as_str()
             ));
         }
+        if let Some(why) = repack::quantize_on_install::quantize_refusal(family, &config) {
+            return Err(format!("{}: {why}", plan.weights));
+        }
         let bits = plan.quantize_bits.unwrap_or(4);
         if !repack::quantize_on_install::is_supported_quantize_bits(bits) {
             return Err(format!("--quantize {bits}: only 2, 4 or 8 is supported"));
