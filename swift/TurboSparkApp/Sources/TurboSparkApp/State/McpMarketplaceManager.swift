@@ -257,6 +257,10 @@ public final class McpMarketplaceManager: @unchecked Sendable {
 
         case .directory(let path):
             return try readManifest(in: URL(fileURLWithPath: path), path: nil)
+
+        case .builtin, .cdnZip:
+            // Plugin-only sources (ZP-05): an MCP catalog has neither.
+            throw MarketplaceError.invalidURL("builtin / cdnZip sources apply to plugin marketplaces only")
         }
     }
 

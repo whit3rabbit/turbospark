@@ -7,7 +7,7 @@ and the
 [plugin CDN zip source doc](https://github.com/zai-org/ZCode/blob/main/docs/plugin-cdn-zip-source.md).
 
 * Author: whit3rabbit
-* Status: Implemented (seeding half; `cdnZip` deferred)
+* Status: Implemented (seeding 2026-11-14, `cdnZip` and source cases 2026-11-14)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -218,6 +218,75 @@ Deviations from the draft:
   symlink, escape, and size-cap refusals (2,000 files, 64 MiB per plugin).
 * **Mutation checks run**: bypassing the lock, the suppression check, and the
   symlink check each fail their tests.
+
+## Implementation record: `cdnZip` (2026-11-14)
+
+Delivered the deferred half. Files: `State/MarketplaceSource.swift` (new
+`builtin` and `cdnZip(url, sha256)` cases, tolerant decode),
+`State/CdnZipDownloader.swift` (download and digest), `State/ZipSafeExtractor.swift`
+(bounded in-process extractor), `State/PluginMarketplaceManager.swift` (the
+`cdnZip` install branch, `builtin` fetch, internal test policy init),
+exhaustive-switch refusals in `SkillMarketplaceManager` and
+`McpMarketplaceManager`, `Tests/.../CdnZipSourceTests.swift`, and the
+`SWIFT_PLUGINS.md` section (full guard list there).
+
+Decisions that resolve the deferral note:
+
+* **Zip extractor: in-process, no dependency, no subprocess.** The ZP-08
+  `unzip` wrapper and the profile-backup `ditto` path were not reused:
+  `unzip -p` is read-only (fine for one entry) but extraction by `unzip` or
+  `ditto` writes symlinks and special files itself, entry names are wildcards,
+  and neither can enforce a cap on bytes actually written or report a lying
+  size table. The new extractor decides everything from the central directory
+  before writing, using Compression for raw deflate (the same primitive ZP-09's
+  writer and reader use) and the shared `CRC32` and
+  `ProfileBackupImport.isSafeArchiveEntry`.
+* **Digest placement.** One zip per plugin, digest in the row's `source`
+  object (the draft's lean). A malformed or missing digest refuses the install
+  before any request; the row still decodes.
+* **Network.** Only inside `install` (the user's Install action). https only,
+  bounded redirects (https only), 64 MiB cap, idle and total timeouts, SHA-256
+  over the exact streamed bytes, mismatch deletes the file and throws before
+  extraction.
+* **Trust gates untouched.** Extraction targets the install's staging dir and
+  the existing stage-move-rollback installer runs unchanged; no hook, trust
+  store or loader file was edited. Hooks from a zip stay untrusted until the
+  user approves them.
+* **No new localized strings.** Failures surface through the existing
+  "Install failed: ..." toast with English reasons, like the other installer
+  errors (`PluginLoadError`), so the 21-language catalog is unchanged.
+
+Deviations and what is left:
+
+* The builtin row is still injected as a `directory` source; the `builtin`
+  case exists and resolves to the bundle but injection was not switched to it
+  (would change seeded behavior for no benefit).
+* The ledger does not record a source kind (its v2 format is shared with
+  Claude Code; adding a key is a separate decision).
+* No UI: no official-segment styling and no way to add a `cdnZip` source from
+  the sheet (it is declared per entry by a marketplace file; there is no
+  consumer or hosted catalog).
+* Trust anchor: a digest in the same row as the URL catches corruption or a
+  swapped CDN object, not a malicious marketplace. A signed catalog or pinned
+  digests in the bundle remain an open decision (draft review B2/M5).
+* Plugin must sit at the zip root; a single wrapper directory is not stripped.
+
+Verification: `swift test --filter` over `CdnZipSourceTests` (24 tests, loopback
+fixture server) plus the plugin, marketplace, builtin-seeder, MCP and skill
+marketplace, settings-scope and localization-parity suites (116 tests) pass;
+`make design-check` passes; no new localized strings. Mutation checks (each
+fails at least one test): skip digest compare, relax digest format, accept any
+redirect scheme, drop the redirect hop bound, drop the streaming download cap,
+accept non-loopback http under the test policy, allow symlink/special modes,
+drop the name policy (and with the prefix guard), drop the ratio checks, drop
+the CRC check, drop the actual-size cap with the CRC, drop the overlap check,
+fold-case duplicates, drop the encryption check. The Content-Length early
+refusal survives its mutation by design: the streaming cap refuses the same
+download with the same error. The name policy and the destination-prefix guard
+are redundant on purpose, and the zip-slip test asserts nothing lands outside
+the staging directory (the mutation run with both removed wrote outside and
+the test caught it). Not mutation-checked: the 0644/0755 permission mapping
+(the first mutation did not compile).
 
 --------------------------------------------------------------------------------
 

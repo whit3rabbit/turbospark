@@ -235,8 +235,9 @@ one: add the folder, add `.copy("BuiltinPlugins")` to the
   hook trust gate are unchanged. Seeding copies files and never runs code; a
   seeded plugin's hooks stay untrusted until approved.
 - **Builtin row.** Injected by `AppModel.marketplaceSources(kind: .plugins)`,
-  never persisted (no new `MarketplaceSource` case, so no downgrade decode
-  risk), and it wins a name clash so a hand-edited
+  never persisted, injected as a `directory` source (the `builtin` case
+  exists for hand-written rows but the injection does not use it, so the
+  seeded path is unchanged), and it wins a name clash so a hand-edited
   `known_marketplaces.json` cannot repoint it. Hidden when the bundle is empty.
 - **State.** One file, `builtin_seed.json` beside the ledger, one record per
   builtin (`seeded` with version, or `suppressed`). `seed()` reconciles it
@@ -256,10 +257,50 @@ one: add the folder, add `.copy("BuiltinPlugins")` to the
   the integrity anchor; there is no second digest.
 - **Profiles.** The state file and seeded copies live under the profile's
   plugin root, so profiles stay isolated.
-- **Deferred: `cdnZip`.** A CDN zip source needs a zip extractor (none in the
-  app; a new dependency or an `unzip` subprocess), a trust anchor beyond a
-  digest in the same row as the URL, and a named consumer. None exists, so
-  it is not built. See the ZP-05 draft.
+- **`cdnZip` source (ZP-05).** A marketplace entry whose `source` is
+  `{"type": "cdnZip", "url": "https://...", "sha256": "<64 lowercase hex>"}`
+  installs one plugin from a zip. `MarketplaceSource` also gained `builtin`
+  (resolves to the bundle directory) and `cdnZip`; decoding is tolerant, so a
+  row with no digest still loads and an unknown `type` keeps the old `url`
+  fallback. It is an install source only (a catalog cannot be a `cdnZip`) and
+  the skills and MCP marketplaces refuse both new kinds.
+  - **User-initiated only.** The download runs inside
+    `PluginMarketplaceManager.install`, the Install action. Listing a
+    marketplace, launch, and seeding never fetch it.
+  - **Download** (`State/CdnZipDownloader.swift`): https only, no userinfo;
+    the digest must be exactly 64 lowercase hex or the install is refused
+    before any request; redirects are followed at most 3 times and only to
+    https; the body streams to a temp file under a 64 MiB cap (early refusal
+    from Content-Length, hard stop for a server that omits it) with an
+    idle and a total timeout; the SHA-256 is computed over exactly those bytes
+    and a mismatch deletes the file and throws before extraction.
+  - **Extraction** (`State/ZipSafeExtractor.swift`): in-process (Compression
+    framework, no subprocess, no dependency). `unzip` and `ditto` were not
+    reused because they write to disk themselves and would create symlinks,
+    read names as wildcards, and cannot report a lying size table. Stored and
+    deflate only; no encryption or zip64; entry names through
+    `ProfileBackupImport.isSafeArchiveEntry` plus no `.` component and
+    case-folded uniqueness; regular files and directories only (a symlink,
+    device, fifo or socket mode is refused); at most 2,000 entries, 16 MiB
+    per entry, 64 MiB total, ratio 100:1 (declared and actual); overlapping
+    members, a local header that disagrees with the directory, and a CRC
+    mismatch are refused. Files land 0644 (0755 if the archive marked them
+    owner-executable), never setuid.
+  - **Same installer.** The zip is extracted into the install's staging
+    directory and goes through the existing stage-move-rollback path, so
+    version resolution, the ledger and the hook trust gate are unchanged:
+    nothing in the archive runs at install, and its hooks stay untrusted until
+    the user approves them. The plugin must sit at the zip root (no wrapper
+    directory is stripped).
+  - **Trust anchor.** The digest sits in the same row as the URL, so it
+    proves the bytes are the ones the row names, not that the row is
+    trustworthy. The marketplace the user added is the anchor; a signed
+    catalog is a separate decision. The ledger does not record the source kind
+    (its format is shared with Claude Code).
+  - **Tests.** `CdnZipSourceTests`: a loopback fixture server (good zip, bad
+    and malformed digest, zip-slip, symlink, bomb, lying size table, oversize,
+    redirect to http), extractor limits at unit level. Plain http to
+    127.0.0.1 is reachable only through the internal test policy.
 - **Tests.** `BuiltinPluginSeederTests` (fixture bundle, temp root).
 
 ## Where things live
