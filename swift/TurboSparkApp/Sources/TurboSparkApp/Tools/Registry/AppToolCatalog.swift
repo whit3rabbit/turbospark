@@ -8,7 +8,12 @@ public enum AppToolCatalog {
     private static let agentDescriptionCharacterLimit = 200
 
     /// File and codebase navigation tools.
-    public static let fileTools: [OpenAITool] = FileReadWriteToolDefinitions.all + FileSearchToolDefinitions.all + ApplyPatchToolDefinitions.all + MultiEditToolDefinitions.all + ToolObservationToolDefinitions.all + DocumentWriteToolDefinitions.all
+    ///
+    /// Computed: the language server tools (OC-10) are empty while their
+    /// master switch is off, so the gate is read every time a list is built.
+    public static var fileTools: [OpenAITool] {
+        FileReadWriteToolDefinitions.all + FileSearchToolDefinitions.all + ApplyPatchToolDefinitions.all + MultiEditToolDefinitions.all + ToolObservationToolDefinitions.all + DocumentWriteToolDefinitions.all + LSPToolDefinitions.all
+    }
 
     /// Terminal and execution tools.
     public static let terminalTools: [OpenAITool] = TerminalToolDefinitions.all
@@ -229,7 +234,7 @@ public enum AppToolCatalog {
             return .mcp
         case "tool_search", "tool_describe":
             return .fileRead
-        case "read_file", "view_file", "cat", "fileread", "read", "list_directory", "list_dir", "ls", "glob", "search_code", "grep", "search", "grep_search", "snip", "extract_snippet", "senduserfile", "send_user_file", "recall_tool_output", "memory_search", "memory_explain", "respond_to_coordinator", "respondtocoordinator":
+        case "read_file", "view_file", "cat", "fileread", "read", "list_directory", "list_dir", "ls", "glob", "search_code", "grep", "search", "grep_search", "snip", "extract_snippet", "senduserfile", "send_user_file", "recall_tool_output", "memory_search", "memory_explain", "respond_to_coordinator", "respondtocoordinator", "project_diagnostics", "document_symbols", "workspace_symbols":
             return .fileRead
         default:
             return nil

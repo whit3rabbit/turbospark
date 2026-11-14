@@ -38,6 +38,8 @@ struct GeneralSettingsPaneView: View {
 
             VoiceCallSettingsSection(model: model)
 
+            LspSettingsSectionView()
+
             compactionSection
 
             chatRuntimeSection

@@ -484,6 +484,12 @@ public enum AppToolRegistry {
                 producedFiles.append(ArtifactRegistrar.ProducedFile(
                     url: written.url, toolCallID: call.id, toolName: call.name, origin: .sentToUser))
 
+            case "project_diagnostics", "document_symbols", "workspace_symbols":
+                // OC-10: read-only language server queries. Disabled by the
+                // master switch, rooted, bounded; see `LSPToolDefinitions`.
+                output = try await LSPToolExecutor.execute(
+                    name: lowerName, arguments: call.arguments, rootURL: rootURL)
+
             case "webfetch", "web_fetch", "fetch_url", "read_url_content":
                 guard let urlString = call.arguments["url"]
                     ?? call.arguments["uri"]

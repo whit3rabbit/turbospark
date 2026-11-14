@@ -273,6 +273,8 @@ extension AppModel {
         let projectToDelete = projects.first { $0.id == id }
         projects.removeAll { $0.id == id }
         if let rootURL = projectToDelete?.rootDirectoryURL {
+            // OC-10: the project's language servers die with the project.
+            Task { await LanguageServerRegistry.shared.stop(root: rootURL) }
             Task.detached(priority: .utility) {
                 try? await SyntextIndexManager.shared.deleteIndex(for: rootURL)
             }

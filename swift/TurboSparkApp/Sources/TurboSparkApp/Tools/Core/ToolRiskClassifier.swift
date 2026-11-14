@@ -254,7 +254,8 @@ public enum ToolRiskClassifier {
              "ask_question", "question", "gen_ui_render", "enterplanmode", "enter_plan_mode", "plan_mode", "plan",
              "exitplanmode", "exit_plan_mode", "reportfindings", "report_findings", "findings",
              "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "senduserfile", "send_user_file",
-             "respond_to_coordinator", "respondtocoordinator":
+             "respond_to_coordinator", "respondtocoordinator",
+             "project_diagnostics", "document_symbols", "workspace_symbols":
             // Check if read_file or snip is accessing a sensitive credential path
             // Every spelling the executor accepts is checked, not just
             // `path`: `AbsolutePath`/`TargetFile` reads reached the executor

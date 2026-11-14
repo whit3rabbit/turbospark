@@ -174,6 +174,13 @@ extension SubagentRunner {
         if let ctx = postVerdict.additionalContext, !ctx.isEmpty {
             output += "\n\n<hook_context>\n\(ctx)\n</hook_context>"
         }
+        // OC-10: a subagent's edit gets the same post-edit seam as the main
+        // loop's (`applyPostToolUse`).
+        if let note = await PostEditSeam.note(
+            call: call, isError: toolResult.isError, project: project, chatID: chatID)
+        {
+            output += "\n\n" + note
+        }
 
         let media = AppToolMediaHistoryAdapter.project(
             toolResult.mediaReferences,

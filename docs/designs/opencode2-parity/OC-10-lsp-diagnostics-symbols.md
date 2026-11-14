@@ -10,7 +10,7 @@ and
 One system, two findings.
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Partial (client, process manager, post-edit seam, three tools and the settings rows ship behind a default-off setting; see Implementation Record)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -202,3 +202,100 @@ existing Decodable conventions.
 --------------------------------------------------------------------------------
 
 *Drafted with EGM*
+
+## Implementation Record
+
+Status is **Partial**. Everything below shipped behind the default-off
+master switch "Use language servers" (Settings > General > Language
+servers). Nothing starts, is advertised or runs a process until the user
+turns it on AND enables a server row.
+
+### What shipped
+
+* `Tools/LSP/LSPFraming.swift`: Content-Length codec. Frames above 8 MiB
+  and header blocks above 4 KiB are protocol violations that kill the
+  server (bounded while reading).
+* `LSPProtocol.swift`, `LSPClient.swift`: the typed subset (initialize,
+  shutdown, didOpen/didChange (full text)/didSave, publishDiagnostics,
+  documentSymbol, workspace/symbol), over an `LSPTransport` seam. Request
+  timeout 8 s, initialize 15 s, shutdown 2 s. Server-initiated requests
+  are answered (empty success or method-not-found) and never performed.
+  A publish counts as fresh only if it follows the sync and, when the
+  server reports a version, is not older than ours.
+* `LSPProcessTransport.swift`: spawn by resolved absolute path, scrubbed
+  environment (`McpClientEngine.childEnvironment` allowlist: PATH, HOME,
+  LANG, TMPDIR; no passthrough), cwd is the project root, stderr drained
+  to a 4 KiB tail, pids in `LSPProcessRegistry` (killed on app quit via
+  `stopAllBackgroundWorkForShutdown`). Launch policy refuses a
+  workspace-relative command and any binary (or PATH hit) that resolves
+  inside the project.
+* `LanguageServerManager.swift`: one manager per project root, lazy start,
+  shared start task, strike policy (a crash or failed start gets one
+  retry, the second strike marks the server unavailable until its row
+  changes), idle stop after 10 minutes, `stopAll` on project delete,
+  settings off, row removal and quit. `LSPBudget` releases the caller at
+  the budget even while a cold start is still running.
+* `PostEditSeam.swift`: `PostEditStep` list run from
+  `applyPostToolUse` (main loop) and the subagent gate, after hook
+  feedback. Order contract: OC-11's formatter registers before
+  `LSPDiagnosticsStep`.
+* `LSPTools.swift`: `project_diagnostics`, `document_symbols`,
+  `workspace_symbols`. Settings: `Components/LspSettingsSectionView.swift`
+  (master switch, per-server toggle, Test, add and remove rows).
+
+### Open Questions, as decided
+
+* **Post-edit wait policy**: fixed 2 s budget (`LSPDiagnosticsStep`).
+  No late-delivery into the next turn: late results stay in the client
+  store and `project_diagnostics` returns them. A cold first edit
+  usually reports "had not reported", by design. Not measured against a
+  real server (none is run in tests); the constant is the thing to tune.
+* **Default server set**: sourcekit-lsp only, discovered by file
+  existence in fixed Xcode and Command Line Tools paths (nothing is
+  executed, no PATH or workspace lookup), and OFF until the user enables
+  it. Other servers are user-added rows.
+* **Permission ladder position**: category `.fileRead` (the same class as
+  `read_file`), workspace-rooted, risk safe with the sensitive-path hard
+  gate applied to every path spelling. A project denies them with its
+  File read permission. No new category (it would change the permission
+  UI and every language for no added control), so the draft's "project
+  category" is the existing File read category. Conflicting path
+  spellings are refused like the file tools.
+* **Config location** (review M4): app-level `UserDefaults` keys
+  `lsp.enabled` and `lsp.servers`, never read from a project, so a clone
+  cannot add or enable a server. Rows start disabled for the discovered
+  server and enabled for a row the user types in themselves.
+* **Review adoptions**: tool count is three; one toggle; `workspace_symbols`
+  drops locations outside the project; diagnostics summary format is
+  `path: N errors, M warnings (server)` then up to 10 lines of
+  `severity line:col message [code]` (1-based, errors first, hints and
+  info omitted, message 240 chars, `<` and `>` escaped); "no errors or
+  warnings" is stated for a clean file and a dead or timed-out server is
+  never reported as clean; project root is the tool root
+  (`project.rootDirectoryURL`), file to server mapping is the first
+  enabled row covering the extension; restart policy as above.
+
+### Deferred (needs a dependency, a download or a security-policy call)
+
+* **No network for the server process.** There is no no-network switch
+  for a child process without a sandbox profile, and sourcekit-lsp runs
+  SwiftPM manifests under its own sandbox, which cannot be nested. The
+  mitigations shipped are the scrubbed environment (no proxy or
+  credential variables), user-installed binaries only, and the warning in
+  the settings text. Decide whether to wrap launch in a seatbelt profile
+  and accept breaking sourcekit-lsp, or to leave it.
+* Per-server environment passthrough and extra arguments in the UI
+  (`LSPServerConfig.args` exists, the form does not edit it).
+* Per-project server enablement (v1 is app-wide rows with a per-project
+  File read deny).
+* Measuring the 2 s budget and settle window against a real sourcekit-lsp
+  (manual verification step below, not run here).
+* goto-definition, rename and refactor tools (non-goal, unchanged).
+
+### Verification run
+
+Focused suites `LSPClientTests`, `LSPToolsTests` and
+`LSPProcessFixtureTests` (fake in-process server plus a bash fixture; no
+real language server). Mutation checks are listed in the final report of
+the implementing session. Manual check with a real Xcode toolchain is
+still to do.
