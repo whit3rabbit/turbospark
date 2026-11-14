@@ -156,14 +156,23 @@ pub fn evaluate_config(
     // family, each on its own real gate; every other family keeps the
     // refusal below verbatim.
     if unquantized && repack::quantize_on_install::family_admits_quantize_on_install(family) {
-        report.affine = Some((4, repack::quantize_on_install::QUANTIZE_ON_INSTALL_GROUP));
+        report.affine = Some((4, repack::quantize_on_install::group_for(4)));
         report.warnings.push(
             "config.json declares no quantization block: the install quantizes the BF16 \
-             weights to MLX affine 4-bit at group 64 as they stream (byte-identical to \
-             mlx_lm.convert), or 8-bit with --quantize 8. The download is the full-precision \
-             size; the install is about a quarter of it."
+             weights to MLX affine 4-bit at group 64 as they stream, or 8-bit with \
+             --quantize 8 or 2-bit (group 128) with --quantize 2. The download is the \
+             full-precision size; the install is about a quarter of it."
                 .to_string(),
         );
+        if family != model_io::ModelFamily::QwenGdnDense {
+            // Only qwen35 has been diffed byte for byte against a published
+            // mlx-community conversion; say so rather than imply it.
+            report.warnings.push(format!(
+                "quantize-on-install for the {} family has not been byte-checked against a \
+                 published MLX conversion; judge the install on its own output",
+                family.as_str()
+            ));
+        }
         return Ok(report);
     }
     if unquantized {

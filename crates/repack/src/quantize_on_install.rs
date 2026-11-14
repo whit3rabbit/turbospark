@@ -37,18 +37,97 @@ use model_io::ModelFamily;
 use crate::ranged_download::{DownloadError, RangeSource};
 use crate::safetensors_header::{SafetensorsHeader, TensorInfo};
 
-/// The only group size quantize-on-install writes: the one the 4- and 8-bit
-/// kernels dispatch.
-pub const QUANTIZE_ON_INSTALL_GROUP: u32 = 64;
-
-/// Bit widths quantize-on-install can write (both have kernels at group 64).
+/// Bit widths quantize-on-install can write. Each has kernels only at its own
+/// group size ([`group_for`]), the shapes `is_supported_affine_shape` admits.
 pub fn is_supported_quantize_bits(bits: u32) -> bool {
-    matches!(bits, 4 | 8)
+    matches!(bits, 2 | 4 | 8)
+}
+
+/// The group size the kernels dispatch for `bits`: 64 for 4- and 8-bit, 128
+/// for 2-bit.
+pub fn group_for(bits: u32) -> u32 {
+    if bits == 2 {
+        128
+    } else {
+        64
+    }
+}
+
+/// The companion (scales and biases) dtype the walk reads for `bits`: the
+/// 1- and 2-bit paths require F16, the 4- and 8-bit paths take BF16.
+fn companion_dtype(bits: u32) -> &'static str {
+    if bits <= 2 {
+        "F16"
+    } else {
+        "BF16"
+    }
 }
 
 /// Families whose unquantized checkpoints may be quantized on install.
+///
+/// Each was admitted against its own tensor relations, not qwen35's: see
+/// [`shifts_norms`] and [`canonicalize_for_family`].
 pub fn family_admits_quantize_on_install(family: ModelFamily) -> bool {
+    matches!(
+        family,
+        ModelFamily::QwenGdnDense | ModelFamily::Qwen2Dense | ModelFamily::Qwen3Vl
+    )
+}
+
+/// Whether the family's MLX conversion bakes a `+1` into its trunk RMSNorms.
+///
+/// Only the qwen35 GDN trunk is zero-centred (`docs/MTP.md`). The Qwen2 and
+/// Qwen3-VL runtime reads plain `x * w` norms (`encode_rms_norm_bf16w`), so
+/// HF and MLX carry the same bytes there and the view must not shift them.
+pub fn shifts_norms(family: ModelFamily) -> bool {
     family == ModelFamily::QwenGdnDense
+}
+
+/// Rename a checkpoint's HF trunk spelling onto the MLX one the walk
+/// classifies, by family. The returned layout only ever drives the norm shift
+/// and the conv relabel, so a family without either always answers `Mlx`.
+///
+/// Qwen2 text-only checkpoints spell the trunk `model.*` in BOTH HF and MLX;
+/// `canonicalize_qwen2_header` renames that and runs later in the install
+/// walk, so nothing happens here (running the qwen35 map first would turn a
+/// bare `lm_head.` into `language_model.lm_head.` and make that second pass
+/// refuse the file as mixed). A Qwen2.5-VL export uses
+/// `model.language_model.*`, which the shared map handles.
+pub fn canonicalize_for_family(
+    family: ModelFamily,
+    headers: &mut [SafetensorsHeader],
+) -> Result<SourceLayout, String> {
+    match family {
+        ModelFamily::QwenGdnDense => canonicalize_qwen35_hf_headers(headers),
+        ModelFamily::Qwen3Vl => {
+            canonicalize_qwen35_hf_headers(headers)?;
+            Ok(SourceLayout::Mlx)
+        }
+        ModelFamily::Qwen2Dense => {
+            let nested = headers.iter().any(|h| {
+                h.tensors
+                    .keys()
+                    .any(|k| k.starts_with("model.language_model."))
+            });
+            if nested {
+                canonicalize_qwen35_hf_headers(headers)?;
+            }
+            Ok(SourceLayout::Mlx)
+        }
+        other => Err(format!(
+            "quantize-on-install is not wired for the {} family",
+            other.as_str()
+        )),
+    }
+}
+
+/// Drop a stray `lm_head.weight` from a checkpoint whose config ties the
+/// head to the embedding (mlx-lm's `sanitize` does the same). Left in, the
+/// view would quantize it into a second matrix the tied install never reads.
+pub fn drop_tied_lm_head(headers: &mut [SafetensorsHeader]) {
+    for h in headers {
+        h.tensors.remove("language_model.lm_head.weight");
+    }
 }
 
 /// Where a qwen3_5 checkpoint's tensors live.
@@ -119,13 +198,24 @@ fn takes_norm_shift(name: &str) -> bool {
             || name == "language_model.model.norm.weight")
 }
 
-/// A trunk matrix this view quantizes.
-fn quantizes(name: &str, info: &TensorInfo) -> bool {
+/// A trunk matrix this view quantizes at `bits` (columns must be whole groups).
+fn quantizes(name: &str, info: &TensorInfo, bits: u32) -> bool {
     name.starts_with("language_model.")
         && name.ends_with(".weight")
         && info.shape.len() == 2
         && matches!(info.dtype.as_str(), "BF16" | "F16" | "F32")
-        && info.shape[1] % QUANTIZE_ON_INSTALL_GROUP as u64 == 0
+        && info.shape[1] % group_for(bits) as u64 == 0
+}
+
+/// A rank-2 float trunk matrix the view would have to serve raw because its
+/// columns are not whole groups. Serving it raw yields an install with no
+/// kernel for it, so refuse instead.
+fn is_unalignable_trunk_matrix(name: &str, info: &TensorInfo, bits: u32) -> bool {
+    name.starts_with("language_model.")
+        && name.ends_with(".weight")
+        && info.shape.len() == 2
+        && matches!(info.dtype.as_str(), "BF16" | "F16" | "F32")
+        && info.shape[1] % group_for(bits) as u64 != 0
 }
 
 fn elem_bytes(dtype: &str) -> Result<usize, String> {
@@ -275,7 +365,7 @@ impl<'a> QuantizedShard<'a> {
 fn quantize_matrix(dtype: &str, raw: &[u8], rows: usize, cols: usize, bits: u32) -> Quantized {
     let eb = if dtype == "F32" { 4 } else { 2 };
     let row_w = cols * bits as usize / 8;
-    let row_g = cols / QUANTIZE_ON_INSTALL_GROUP as usize * 2;
+    let row_g = cols / group_for(bits) as usize * 2;
     let mut weight = vec![0u8; rows * row_w];
     let mut scales = vec![0u8; rows * row_g];
     let mut biases = vec![0u8; rows * row_g];
@@ -295,12 +385,22 @@ fn quantize_matrix(dtype: &str, raw: &[u8], rows: usize, cols: usize, bits: u32)
                 let mut row = Vec::with_capacity(cols);
                 for (i, src) in r.chunks_exact(cols * eb).enumerate() {
                     decode_into(dtype, src, &mut row);
-                    let (p, sv, bv) = if bits == 4 {
-                        let q = compute::quant_mlx::quantize_int4_affine_mlx(&row);
-                        (q.packed, q.scales, q.biases)
-                    } else {
-                        let q = compute::quant_mlx::quantize_int8_affine_mlx(&row);
-                        (q.packed, q.scales, q.biases)
+                    // Exhaustive on purpose: a new width must not fall into
+                    // the 8-bit arm.
+                    let (p, sv, bv) = match bits {
+                        2 => {
+                            let q = compute::quant_mlx::quantize_int2_affine_mlx(&row);
+                            (q.packed, q.scales, q.biases)
+                        }
+                        4 => {
+                            let q = compute::quant_mlx::quantize_int4_affine_mlx(&row);
+                            (q.packed, q.scales, q.biases)
+                        }
+                        8 => {
+                            let q = compute::quant_mlx::quantize_int8_affine_mlx(&row);
+                            (q.packed, q.scales, q.biases)
+                        }
+                        other => unreachable!("bits {other} checked by is_supported_quantize_bits"),
                     };
                     w[i * row_w..(i + 1) * row_w].copy_from_slice(&p);
                     for (j, (s16, b16)) in sv.iter().zip(&bv).enumerate() {
@@ -389,7 +489,8 @@ pub fn quantize_on_install_shards<'a>(
 ) -> Result<Vec<QuantizedShard<'a>>, String> {
     if !is_supported_quantize_bits(bits) {
         return Err(format!(
-            "quantize-on-install writes 4- or 8-bit at group 64, not {bits}-bit"
+            "quantize-on-install writes 4- or 8-bit at group 64 or 2-bit at group 128, not \
+             {bits}-bit"
         ));
     }
     let mut out = Vec::with_capacity(headers.len());
@@ -434,7 +535,17 @@ pub fn quantize_on_install_shards<'a>(
             let (a, b) = h
                 .absolute_range(name)
                 .ok_or_else(|| format!("{name}: range overflows"))?;
-            if quantizes(name, info) {
+            if is_unalignable_trunk_matrix(name, info, bits) {
+                return Err(format!(
+                    "{name}: shape {:?} has columns that are not a multiple of the {}-bit \
+                     group size {}; the install has no kernel for an unquantized matrix, so \
+                     this checkpoint cannot be quantized at {bits}-bit",
+                    info.shape,
+                    bits,
+                    group_for(bits)
+                ));
+            }
+            if quantizes(name, info, bits) {
                 let rows = info.shape[0] as usize;
                 let cols = info.shape[1] as usize;
                 let eb = elem_bytes(&info.dtype)?;
@@ -443,7 +554,7 @@ pub fn quantize_on_install_shards<'a>(
                 }
                 let base = name.strip_suffix(".weight").unwrap().to_string();
                 let w_cols = (cols * bits as usize / 32) as u64;
-                let g = (cols / QUANTIZE_ON_INSTALL_GROUP as usize) as u64;
+                let g = (cols / group_for(bits) as usize) as u64;
                 let r = rows as u64;
                 push(
                     name.clone(),
@@ -460,7 +571,7 @@ pub fn quantize_on_install_shards<'a>(
                 for (suffix, plane) in [("scales", Plane::Scales), ("biases", Plane::Biases)] {
                     push(
                         format!("{base}.{suffix}"),
-                        "BF16",
+                        companion_dtype(bits),
                         vec![r, g],
                         r * g * 2,
                         Item::Plane {
@@ -615,6 +726,102 @@ mod tests {
             let sc: Vec<u8> = q.scales.iter().flat_map(|v| v.to_le_bytes()).collect();
             assert_eq!(&got_s[r * 4..(r + 1) * 4], &sc[..]);
         }
+    }
+
+    #[test]
+    fn two_bit_writes_f16_companions_at_group_128() {
+        let name = "language_model.model.layers.0.mlp.up_proj";
+        let wname = format!("{name}.weight");
+        let m = matrix(3, 256);
+        let (hs, file, layout) = view(&[(&wname, "BF16", vec![3, 256], bf16_bytes(&m))]);
+        let src = MemoryRangeSource::new(&file);
+        let shards = quantize_on_install_shards(&hs, &[&src], 2, layout).unwrap();
+        let s = &shards[0];
+        let h = s.header();
+        let t = &h.tensors;
+        assert_eq!(
+            (t[&wname].dtype.as_str(), t[&wname].shape.clone()),
+            ("U32", vec![3, 16])
+        );
+        for plane in ["scales", "biases"] {
+            let i = &t[&format!("{name}.{plane}")];
+            assert_eq!((i.dtype.as_str(), i.shape.clone()), ("F16", vec![3, 2]));
+        }
+        let read = |n: &str| {
+            let (a, b) = h.absolute_range(n).unwrap();
+            s.read_range(a, b).unwrap()
+        };
+        let (w, sc) = (read(&wname), read(&format!("{name}.scales")));
+        for r in 0..3 {
+            let row: Vec<f32> = m[r * 256..(r + 1) * 256]
+                .iter()
+                .map(|&x| compute::bf16_to_f32(compute::f32_to_bf16(x)))
+                .collect();
+            let q = compute::quant_mlx::quantize_int2_affine_mlx(&row);
+            assert_eq!(&w[r * 64..(r + 1) * 64], &q.packed[..]);
+            let want: Vec<u8> = q.scales.iter().flat_map(|v| v.to_le_bytes()).collect();
+            assert_eq!(&sc[r * 4..(r + 1) * 4], &want[..]);
+        }
+    }
+
+    #[test]
+    fn a_trunk_matrix_that_is_not_whole_groups_is_refused() {
+        // 64 columns is one group at 4-bit but not a whole 2-bit group, and
+        // serving it raw would leave an install with no kernel for it.
+        let (hs, file, layout) = view(&[(
+            "language_model.model.layers.0.mlp.narrow.weight",
+            "BF16",
+            vec![2, 64],
+            bf16_bytes(&matrix(2, 64)),
+        )]);
+        let src = MemoryRangeSource::new(&file);
+        assert!(quantize_on_install_shards(&hs, &[&src], 4, layout).is_ok());
+        let err = quantize_on_install_shards(&hs, &[&src], 2, layout)
+            .err()
+            .expect("2-bit must refuse a 64-column matrix");
+        assert!(err.contains("not a multiple"), "{err}");
+    }
+
+    #[test]
+    fn plain_norm_families_keep_their_names_and_their_norms() {
+        // Qwen2 text-only: HF and MLX both say `model.*`; the shared qwen35
+        // map must not touch it (it would rename a bare lm_head and break
+        // the later qwen2 canonicalizer).
+        let norm = bf16_bytes(&[0.25f32; 64]);
+        let (h, _) = blob(&[
+            (
+                "model.layers.0.input_layernorm.weight",
+                "BF16",
+                vec![64],
+                norm.clone(),
+            ),
+            (
+                "lm_head.weight",
+                "BF16",
+                vec![2, 64],
+                bf16_bytes(&matrix(2, 64)),
+            ),
+        ]);
+        let mut hs = vec![h];
+        let layout = canonicalize_for_family(ModelFamily::Qwen2Dense, &mut hs).unwrap();
+        assert_eq!(layout, SourceLayout::Mlx);
+        assert!(hs[0].tensors.contains_key("lm_head.weight"));
+        // Qwen3-VL HF: trunk renamed, but never shifted.
+        let (h, _) = blob(&[(
+            "model.language_model.layers.0.input_layernorm.weight",
+            "BF16",
+            vec![64],
+            norm,
+        )]);
+        let mut hs = vec![h];
+        let layout = canonicalize_for_family(ModelFamily::Qwen3Vl, &mut hs).unwrap();
+        assert_eq!(layout, SourceLayout::Mlx);
+        assert!(hs[0]
+            .tensors
+            .contains_key("language_model.model.layers.0.input_layernorm.weight"));
+        assert!(!shifts_norms(ModelFamily::Qwen3Vl));
+        assert!(!shifts_norms(ModelFamily::Qwen2Dense));
+        assert!(shifts_norms(ModelFamily::QwenGdnDense));
     }
 
     #[test]

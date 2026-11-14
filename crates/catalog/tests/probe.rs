@@ -304,12 +304,18 @@ fn an_unregistered_model_type_is_refused_and_the_string_is_still_reported() {
 /// every BF16 checkpoint on Hugging Face reports as runnable INT4.
 #[test]
 fn an_unquantized_checkpoint_is_refused_by_name() {
-    // A family quantize-on-install does NOT admit keeps the refusal. Qwen2 is
+    // A family quantize-on-install does NOT admit keeps the refusal. Flint is
     // the witness because it has a safetensors intake, so the refusal is the
     // quantization one rather than "no intake".
-    let config = qwen2_config(4, 64).replace(r#""quantization":{"bits":4,"group_size":64},"#, "");
+    let mut value: serde_json::Value = serde_json::from_str(&flint_mixed_config(None)).unwrap();
+    assert!(value
+        .as_object_mut()
+        .unwrap()
+        .remove("quantization")
+        .is_some());
+    let config = value.to_string();
     assert!(
-        !config.contains("quantization"),
+        !config.contains("\"quantization\""),
         "fixture edit missed: {config}"
     );
     let report = evaluate_config(&config, &repo(), None).expect("the config parses");
@@ -320,6 +326,25 @@ fn an_unquantized_checkpoint_is_refused_by_name() {
         ),
         other => panic!("expected a refusal, got {other:?}"),
     }
+}
+
+#[test]
+fn an_unquantized_qwen2_checkpoint_is_runnable_with_an_unverified_parity_warning() {
+    let config = qwen2_config(4, 64).replace(r#""quantization":{"bits":4,"group_size":64},"#, "");
+    assert!(
+        !config.contains("quantization"),
+        "fixture edit missed: {config}"
+    );
+    let report = evaluate_config(&config, &repo(), None).expect("the config parses");
+    assert_eq!(report.verdict, Verdict::Runnable, "{:?}", report.verdict);
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.contains("not been byte-checked")),
+        "{:?}",
+        report.warnings
+    );
 }
 
 #[test]

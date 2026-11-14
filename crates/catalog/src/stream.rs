@@ -246,14 +246,14 @@ pub(crate) fn stream_mlx(
         }
         let bits = plan.quantize_bits.unwrap_or(4);
         if !repack::quantize_on_install::is_supported_quantize_bits(bits) {
-            return Err(format!("--quantize {bits}: only 4 or 8 is supported"));
+            return Err(format!("--quantize {bits}: only 2, 4 or 8 is supported"));
         }
         Some(bits)
     };
     let quant = if let Some(bits) = quantize_on_install {
         repack::Gemma4Quant {
             default_bits: bits,
-            group_size: repack::quantize_on_install::QUANTIZE_ON_INSTALL_GROUP,
+            group_size: repack::quantize_on_install::group_for(bits),
             ..Default::default()
         }
     } else if family == ModelFamily::Flint {
@@ -343,12 +343,12 @@ pub(crate) fn stream_mlx(
     // Quantize-on-install takes the HF transformers spelling as well as the
     // MLX one; the layout also decides the norm shift further down.
     let source_layout = if quantize_on_install.is_some() {
-        let layout = repack::quantize_on_install::canonicalize_qwen35_hf_headers(&mut headers)
+        let layout = repack::quantize_on_install::canonicalize_for_family(family, &mut headers)
             .map_err(|e| format!("{}: {e}", plan.weights))?;
         progress(&format!(
             "unquantized checkpoint ({layout:?} layout): quantizing to {}-bit affine at group \
-             64 on install",
-            quant.default_bits
+             {} on install",
+            quant.default_bits, quant.group_size
         ));
         Some(layout)
     } else {
@@ -437,18 +437,27 @@ pub(crate) fn stream_mlx(
         }
     }
 
+    // A tied head is the embedding; a stray HF `lm_head.weight` would become a
+    // second quantized matrix nothing reads.
+    if quantize_on_install.is_some() && arch.tie_word_embeddings {
+        repack::quantize_on_install::drop_tied_lm_head(&mut headers);
+    }
     // The quantized VIEW of the shards: the walk below then sees exactly the
     // checkpoint `mlx_lm.convert` would have written, so no writer changes.
     let source_refs: Vec<&dyn RangeSource> =
         sources.iter().map(|s| s as &dyn RangeSource).collect();
     let quantized = match (quantize_on_install, source_layout) {
         (Some(bits), Some(layout)) => {
-            let mean =
-                repack::quantize_on_install::check_norm_layout(&headers, &source_refs, layout)
-                    .map_err(|e| format!("{}: {e}", plan.weights))?;
-            progress(&format!(
-                "trunk layernorm mean {mean:.3}, consistent with {layout:?}"
-            ));
+            // The mean cross-checks a norm SHIFT, so only a family that shifts
+            // has anything to check.
+            if repack::quantize_on_install::shifts_norms(family) {
+                let mean =
+                    repack::quantize_on_install::check_norm_layout(&headers, &source_refs, layout)
+                        .map_err(|e| format!("{}: {e}", plan.weights))?;
+                progress(&format!(
+                    "trunk layernorm mean {mean:.3}, consistent with {layout:?}"
+                ));
+            }
             let v = repack::quantize_on_install::quantize_on_install_shards(
                 &headers,
                 &source_refs,
