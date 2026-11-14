@@ -64,8 +64,70 @@ fn companion_dtype(bits: u32) -> &'static str {
 }
 
 /// Families whose unquantized checkpoints may be quantized on install.
+///
+/// Each was admitted against its own tensor relations, not qwen35's: see
+/// [`shifts_norms`] and [`canonicalize_for_family`].
 pub fn family_admits_quantize_on_install(family: ModelFamily) -> bool {
+    matches!(
+        family,
+        ModelFamily::QwenGdnDense | ModelFamily::Qwen2Dense | ModelFamily::Qwen3Vl
+    )
+}
+
+/// Whether the family's MLX conversion bakes a `+1` into its trunk RMSNorms.
+///
+/// Only the qwen35 GDN trunk is zero-centred (`docs/MTP.md`). The Qwen2 and
+/// Qwen3-VL runtime reads plain `x * w` norms (`encode_rms_norm_bf16w`), so
+/// HF and MLX carry the same bytes there and the view must not shift them.
+pub fn shifts_norms(family: ModelFamily) -> bool {
     family == ModelFamily::QwenGdnDense
+}
+
+/// Rename a checkpoint's HF trunk spelling onto the MLX one the walk
+/// classifies, by family. The returned layout only ever drives the norm shift
+/// and the conv relabel, so a family without either always answers `Mlx`.
+///
+/// Qwen2 text-only checkpoints spell the trunk `model.*` in BOTH HF and MLX;
+/// `canonicalize_qwen2_header` renames that and runs later in the install
+/// walk, so nothing happens here (running the qwen35 map first would turn a
+/// bare `lm_head.` into `language_model.lm_head.` and make that second pass
+/// refuse the file as mixed). A Qwen2.5-VL export uses
+/// `model.language_model.*`, which the shared map handles.
+pub fn canonicalize_for_family(
+    family: ModelFamily,
+    headers: &mut [SafetensorsHeader],
+) -> Result<SourceLayout, String> {
+    match family {
+        ModelFamily::QwenGdnDense => canonicalize_qwen35_hf_headers(headers),
+        ModelFamily::Qwen3Vl => {
+            canonicalize_qwen35_hf_headers(headers)?;
+            Ok(SourceLayout::Mlx)
+        }
+        ModelFamily::Qwen2Dense => {
+            let nested = headers.iter().any(|h| {
+                h.tensors
+                    .keys()
+                    .any(|k| k.starts_with("model.language_model."))
+            });
+            if nested {
+                canonicalize_qwen35_hf_headers(headers)?;
+            }
+            Ok(SourceLayout::Mlx)
+        }
+        other => Err(format!(
+            "quantize-on-install is not wired for the {} family",
+            other.as_str()
+        )),
+    }
+}
+
+/// Drop a stray `lm_head.weight` from a checkpoint whose config ties the
+/// head to the embedding (mlx-lm's `sanitize` does the same). Left in, the
+/// view would quantize it into a second matrix the tied install never reads.
+pub fn drop_tied_lm_head(headers: &mut [SafetensorsHeader]) {
+    for h in headers {
+        h.tensors.remove("language_model.lm_head.weight");
+    }
 }
 
 /// Where a qwen3_5 checkpoint's tensors live.
@@ -143,6 +205,17 @@ fn quantizes(name: &str, info: &TensorInfo, bits: u32) -> bool {
         && info.shape.len() == 2
         && matches!(info.dtype.as_str(), "BF16" | "F16" | "F32")
         && info.shape[1] % group_for(bits) as u64 == 0
+}
+
+/// A rank-2 float trunk matrix the view would have to serve raw because its
+/// columns are not whole groups. Serving it raw yields an install with no
+/// kernel for it, so refuse instead.
+fn is_unalignable_trunk_matrix(name: &str, info: &TensorInfo, bits: u32) -> bool {
+    name.starts_with("language_model.")
+        && name.ends_with(".weight")
+        && info.shape.len() == 2
+        && matches!(info.dtype.as_str(), "BF16" | "F16" | "F32")
+        && info.shape[1] % group_for(bits) as u64 != 0
 }
 
 fn elem_bytes(dtype: &str) -> Result<usize, String> {
@@ -462,6 +535,16 @@ pub fn quantize_on_install_shards<'a>(
             let (a, b) = h
                 .absolute_range(name)
                 .ok_or_else(|| format!("{name}: range overflows"))?;
+            if is_unalignable_trunk_matrix(name, info, bits) {
+                return Err(format!(
+                    "{name}: shape {:?} has columns that are not a multiple of the {}-bit \
+                     group size {}; the install has no kernel for an unquantized matrix, so \
+                     this checkpoint cannot be quantized at {bits}-bit",
+                    info.shape,
+                    bits,
+                    group_for(bits)
+                ));
+            }
             if quantizes(name, info, bits) {
                 let rows = info.shape[0] as usize;
                 let cols = info.shape[1] as usize;
@@ -650,17 +733,7 @@ mod tests {
         let name = "language_model.model.layers.0.mlp.up_proj";
         let wname = format!("{name}.weight");
         let m = matrix(3, 256);
-        let (hs, file, layout) = view(&[
-            (&wname, "BF16", vec![3, 256], bf16_bytes(&m)),
-            // 64 columns is one group at 4-bit but not a whole 2-bit group,
-            // so the view leaves it verbatim rather than inventing a shape.
-            (
-                "language_model.model.layers.0.mlp.narrow.weight",
-                "BF16",
-                vec![2, 64],
-                bf16_bytes(&matrix(2, 64)),
-            ),
-        ]);
+        let (hs, file, layout) = view(&[(&wname, "BF16", vec![3, 256], bf16_bytes(&m))]);
         let src = MemoryRangeSource::new(&file);
         let shards = quantize_on_install_shards(&hs, &[&src], 2, layout).unwrap();
         let s = &shards[0];
@@ -674,10 +747,6 @@ mod tests {
             let i = &t[&format!("{name}.{plane}")];
             assert_eq!((i.dtype.as_str(), i.shape.clone()), ("F16", vec![3, 2]));
         }
-        assert_eq!(
-            t["language_model.model.layers.0.mlp.narrow.weight"].dtype,
-            "BF16"
-        );
         let read = |n: &str| {
             let (a, b) = h.absolute_range(n).unwrap();
             s.read_range(a, b).unwrap()
@@ -693,6 +762,66 @@ mod tests {
             let want: Vec<u8> = q.scales.iter().flat_map(|v| v.to_le_bytes()).collect();
             assert_eq!(&sc[r * 4..(r + 1) * 4], &want[..]);
         }
+    }
+
+    #[test]
+    fn a_trunk_matrix_that_is_not_whole_groups_is_refused() {
+        // 64 columns is one group at 4-bit but not a whole 2-bit group, and
+        // serving it raw would leave an install with no kernel for it.
+        let (hs, file, layout) = view(&[(
+            "language_model.model.layers.0.mlp.narrow.weight",
+            "BF16",
+            vec![2, 64],
+            bf16_bytes(&matrix(2, 64)),
+        )]);
+        let src = MemoryRangeSource::new(&file);
+        assert!(quantize_on_install_shards(&hs, &[&src], 4, layout).is_ok());
+        let err = quantize_on_install_shards(&hs, &[&src], 2, layout)
+            .err()
+            .expect("2-bit must refuse a 64-column matrix");
+        assert!(err.contains("not a multiple"), "{err}");
+    }
+
+    #[test]
+    fn plain_norm_families_keep_their_names_and_their_norms() {
+        // Qwen2 text-only: HF and MLX both say `model.*`; the shared qwen35
+        // map must not touch it (it would rename a bare lm_head and break
+        // the later qwen2 canonicalizer).
+        let norm = bf16_bytes(&[0.25f32; 64]);
+        let (h, _) = blob(&[
+            (
+                "model.layers.0.input_layernorm.weight",
+                "BF16",
+                vec![64],
+                norm.clone(),
+            ),
+            (
+                "lm_head.weight",
+                "BF16",
+                vec![2, 64],
+                bf16_bytes(&matrix(2, 64)),
+            ),
+        ]);
+        let mut hs = vec![h];
+        let layout = canonicalize_for_family(ModelFamily::Qwen2Dense, &mut hs).unwrap();
+        assert_eq!(layout, SourceLayout::Mlx);
+        assert!(hs[0].tensors.contains_key("lm_head.weight"));
+        // Qwen3-VL HF: trunk renamed, but never shifted.
+        let (h, _) = blob(&[(
+            "model.language_model.layers.0.input_layernorm.weight",
+            "BF16",
+            vec![64],
+            norm,
+        )]);
+        let mut hs = vec![h];
+        let layout = canonicalize_for_family(ModelFamily::Qwen3Vl, &mut hs).unwrap();
+        assert_eq!(layout, SourceLayout::Mlx);
+        assert!(hs[0]
+            .tensors
+            .contains_key("language_model.model.layers.0.input_layernorm.weight"));
+        assert!(!shifts_norms(ModelFamily::Qwen3Vl));
+        assert!(!shifts_norms(ModelFamily::Qwen2Dense));
+        assert!(shifts_norms(ModelFamily::QwenGdnDense));
     }
 
     #[test]
