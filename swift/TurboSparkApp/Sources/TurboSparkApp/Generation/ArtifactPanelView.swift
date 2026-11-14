@@ -290,6 +290,12 @@ struct ArtifactPanelView: View {
             } else {
                 unavailableView("The file is no longer at its written path.")
             }
+        case .docx, .xlsx, .pptx:
+            if artifact.existsOnDisk, let url = artifact.url {
+                OfficeDocumentView(url: url, revision: artifact.revision)
+            } else {
+                unavailableView("The file is no longer at its written path.")
+            }
         case .opaque:
             if artifact.existsOnDisk, let url = artifact.url {
                 VStack(spacing: 0) {
@@ -403,6 +409,21 @@ struct ArtifactPanelView: View {
         let byteSize = attributes?[.size] as? Int
         guard byteSize ?? 0 <= 4_000_000 else {
             sourceReadFailed = true
+            return
+        }
+        if OfficeFormat.forExtension(url.pathExtension) != nil {
+            // The Source arm of an office document is the text the model
+            // receives, the same extraction the attachment path uses. It
+            // runs off the main actor (it spawns unzip, bounded by a timeout).
+            let expected = artifact.id
+            Task {
+                let text = await Task.detached(priority: .utility) {
+                    try? DocumentTextExtractor.extract(from: url).text
+                }.value
+                guard resolvedArtifact?.id == expected else { return }
+                sourceText = text
+                sourceReadFailed = text == nil
+            }
             return
         }
         sourceText = try? String(contentsOf: url, encoding: .utf8)

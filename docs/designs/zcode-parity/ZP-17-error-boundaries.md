@@ -239,8 +239,11 @@ draft. Each surface draft owns its failure card: ZP-03 `RolloutStore` skips a
 truncated final line with a count notice (CUJ 3; done in ZP-03, see its
 Implementation notes), ZP-08 `OfficeRenderModel`
 renders a bounded error card on malformed XML with an external-opener
-fallback (CUJ 2), ZP-06 `PluginPageWebView` renders a load-failure card. None
-of those files exist yet.
+fallback (CUJ 2; done in ZP-08, see its Implementation notes:
+`OfficeRenderError` is the typed error, `OfficeRenderFailureView` the card,
+and `testMalformedXMLGivesATypedBoundedErrorNotACrash` the test), ZP-06
+`PluginPageWebView` renders a load-failure card. The ZP-06 file does not
+exist yet.
 
 --------------------------------------------------------------------------------
 

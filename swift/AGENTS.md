@@ -67,6 +67,11 @@ staging files changed.
   UI strings without `Text`. `Localization/Info.plist` declares
   `CFBundleLocalizations` for all 21 languages so menu bar and system dialogs
   follow the in-app picker after relaunch.
+- Office documents (docx, xlsx, pptx and the macro-enabled variants) are
+  hostile input. `OfficeRenderModel` renders them read-only inside the bounds
+  in `OfficeRenderLimits`; keep every read behind `OfficePackage`, never
+  follow an external relationship, never enable entity resolution, and fall
+  back to QuickLook on any failure (`docs/designs/zcode-parity/ZP-08-office-document-rendering.md`).
 - Containment: SwiftUI cannot catch a trap in a view body, so do not add a
   wrapper that claims to. Parse and decode untrusted or truncated input with
   typed errors and render a failure state, and avoid force unwraps, `try!` and

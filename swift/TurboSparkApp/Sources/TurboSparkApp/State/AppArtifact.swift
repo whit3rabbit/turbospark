@@ -40,9 +40,23 @@ public enum AppArtifactRenderKind: String, Codable, Sendable {
     case text
     case image
     case pdf
-    /// Renderable by nothing here: docx, xlsx, zip. The panel offers the
-    /// external opener instead, which is the whole point of the case.
+    /// OOXML documents the native read-only viewer renders (ZP-08). The
+    /// viewer falls back to QuickLook plus the external opener on any parse
+    /// failure, so these kinds never make a file less viewable than `.opaque`.
+    case docx
+    case xlsx
+    case pptx
+    /// Renderable by nothing here: legacy .doc/.xls/.ppt, zip. The panel shows
+    /// the system QuickLook preview and the external opener instead.
     case opaque
+
+    /// Never persisted today (`AppArtifact.renderKind` is computed), but the
+    /// type is Codable: an unknown raw value from a newer build degrades to
+    /// the always-safe `.opaque` rather than failing a whole decode.
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = AppArtifactRenderKind(rawValue: raw) ?? .opaque
+    }
 
     /// The extensions this app renders as markdown.
     ///
@@ -74,6 +88,12 @@ public enum AppArtifactRenderKind: String, Codable, Sendable {
         if htmlExtensions.contains(ext) { return .html }
         if ext == "pdf" { return .pdf }
         if AppPromptAttachment.imageFileExtensions.contains(ext) { return .image }
+        switch OfficeFormat.forExtension(ext) {
+        case .docx: return .docx
+        case .xlsx: return .xlsx
+        case .pptx: return .pptx
+        case nil: break
+        }
         if plainTextExtensions.contains(ext) { return .text }
         return .opaque
     }
@@ -236,7 +256,7 @@ public struct AppArtifact: Identifiable, Codable, Equatable, Sendable {
         case .pdf: return "PDF"
         case .image: return "Image"
         case .text: return fileExtension.isEmpty ? "Text" : fileExtension.uppercased()
-        case .opaque: return fileExtension.isEmpty ? "File" : fileExtension.uppercased()
+        case .opaque, .docx, .xlsx, .pptx: return fileExtension.isEmpty ? "File" : fileExtension.uppercased()
         }
     }
 

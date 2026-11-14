@@ -113,7 +113,11 @@ struct FilePreviewView: View {
             case .image:
                 imageView
             case .text:
-                textOrQuickLookView
+                if let url = officeURL {
+                    OfficeDocumentView(url: url)
+                } else {
+                    textOrQuickLookView
+                }
             }
         }
     }
@@ -190,6 +194,16 @@ struct FilePreviewView: View {
         return attachment.sourceURL
     }
 
+    /// The source to hand the native office viewer (docx, xlsx, pptx and the
+    /// macro-enabled variants), or nil for any other attachment. The viewer
+    /// reads only; its own failure card keeps QuickLook beneath it, and the
+    /// Model-text toggle still reaches the extraction.
+    private var officeURL: URL? {
+        guard attachment.sourceExists, let url = attachment.sourceURL,
+              OfficeFormat.forExtension(url.pathExtension) != nil else { return nil }
+        return url
+    }
+
     /// Whether `content` shows anything other than the extracted text, and so
     /// whether the Model-text toggle has work to do.
     ///
@@ -199,7 +213,7 @@ struct FilePreviewView: View {
     private var hasRenderedAlternative: Bool {
         switch attachment.previewKind {
         case .pdf, .image: return true
-        case .text: return quickLookURL != nil
+        case .text: return quickLookURL != nil || officeURL != nil
         }
     }
 
