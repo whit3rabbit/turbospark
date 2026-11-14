@@ -166,6 +166,9 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     var attentionEvents: AttentionPreferences
     /// Whether voice call mode is offered (OC-08). Off by default.
     public var voiceCallEnabled: Bool
+    /// Whether a final voice utterance may be sent without pressing Send,
+    /// after a local decider says allow (OC-08). Off by default.
+    public var voiceCallAutoSendEnabled: Bool
     /// Whether the app opens a temporary (Ghost Mode) chat on launch.
     public var alwaysStartInGhostMode: Bool
     /// Whether queued off-peak tasks may run (admission gate). Off by default.
@@ -371,6 +374,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         chatSidebarMode: String = "chats",
         attentionEvents: AttentionPreferences = AttentionPreferences(),
         voiceCallEnabled: Bool = false,
+        voiceCallAutoSendEnabled: Bool = false,
         alwaysStartInGhostMode: Bool = false,
         offPeakEnabled: Bool = false,
         rootlessPermissionMode: String = "auto",
@@ -469,6 +473,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.chatSidebarMode = chatSidebarMode
         self.attentionEvents = attentionEvents
         self.voiceCallEnabled = voiceCallEnabled
+        self.voiceCallAutoSendEnabled = voiceCallAutoSendEnabled
         self.alwaysStartInGhostMode = alwaysStartInGhostMode
         self.offPeakEnabled = offPeakEnabled
         self.rootlessPermissionMode = rootlessPermissionMode
@@ -624,6 +629,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             AttentionPreferences.self, forKey: .attentionEvents, fallback: AttentionPreferences())
         self.voiceCallEnabled = c.decodeLenient(
             Bool.self, forKey: .voiceCallEnabled, fallback: false)
+        self.voiceCallAutoSendEnabled = c.decodeLenient(
+            Bool.self, forKey: .voiceCallAutoSendEnabled, fallback: false)
         self.alwaysStartInGhostMode = c.decodeLenient(
             Bool.self, forKey: .alwaysStartInGhostMode, fallback: false)
         self.offPeakEnabled = c.decodeLenient(

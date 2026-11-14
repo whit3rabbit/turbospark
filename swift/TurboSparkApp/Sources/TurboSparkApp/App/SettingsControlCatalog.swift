@@ -69,6 +69,7 @@ enum SettingsControlCatalog {
         .init(title: "Allow Notifications", pane: .general, timing: .action),
         .init(title: "Always start in Ghost Mode", pane: .general, timing: .relaunch),
         .init(title: "Auto-load skills, agents, plugins, and hooks from other agent tools", pane: .general, timing: .immediate),
+        .init(title: "Auto-send voice utterances", pane: .general, timing: .immediate),
         .init(title: "Automatically check for updates", pane: .general, timing: .immediate),
         .init(title: "Automatically start server on app launch", pane: .general, timing: .relaunch),
         .init(title: "Chat Runtime", pane: .general, timing: .nextTurn),

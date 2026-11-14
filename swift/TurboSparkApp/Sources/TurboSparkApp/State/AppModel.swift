@@ -463,6 +463,9 @@ public final class AppModel: ObservableObject {
             if !voiceCallEnabled, voiceCallBuilt { voiceCall.end() }
         }
     }
+    /// OC-08: auto-send of a voice utterance after a local decider allows it.
+    /// Off by default. Needs `voiceCallEnabled` and a loaded local model.
+    @Published var voiceCallAutoSendEnabled = false
     /// OC-08: the one call controller, built on first use so a launch with
     /// the setting off creates no audio objects.
     var voiceCallBuilt = false

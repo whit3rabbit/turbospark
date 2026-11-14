@@ -101,9 +101,11 @@ enum VoiceCallChatEvent: Equatable, Sendable {
 }
 
 /// The call's whole view of the chat. It can read the turn state and write
-/// the composer draft. There is deliberately no `send`: the user's own press
-/// of Send is the only thing that starts a turn (draft-first, so misheard or
-/// echoed speech never reaches an agent that can run tools).
+/// the composer draft. There is deliberately no general `send`: the user's own
+/// press of Send starts a turn (draft-first, so misheard or echoed speech never
+/// reaches an agent that can run tools). The single exception is
+/// `submitAutoVoiceUtterance`, reachable only with an explicit `allow` from the
+/// submit decider while "Auto-send voice utterances" is on.
 @MainActor
 protocol VoiceCallChatPort: AnyObject {
     var selectedChatID: UUID { get }
@@ -113,6 +115,10 @@ protocol VoiceCallChatPort: AnyObject {
     var hasPendingApproval: Bool { get }
     var draft: String { get set }
     var onEvent: (@MainActor (VoiceCallChatEvent) -> Void)? { get set }
+    /// OC-08 auto-send. Sends the composer's text as a turn only if every
+    /// guard in `VoiceCallAutoSubmitGate` still holds. Returns whether a turn
+    /// was started. The controller's one call site is after an `.allow`.
+    func submitAutoVoiceUtterance(_ text: String, chatID: UUID, decision: VoiceCallSubmitDecision) -> Bool
 }
 
 // MARK: Audio

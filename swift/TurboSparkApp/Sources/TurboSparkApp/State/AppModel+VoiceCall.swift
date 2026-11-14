@@ -72,6 +72,10 @@ final class AppModelVoiceCallPort: VoiceCallChatPort {
         set { model.promptText = newValue }
     }
 
+    func submitAutoVoiceUtterance(_ text: String, chatID: UUID, decision: VoiceCallSubmitDecision) -> Bool {
+        model.submitAutoVoiceUtterance(text, chatID: chatID, decision: decision)
+    }
+
     private func busyChanged(_ nowBusy: Bool) {
         if nowBusy {
             guard !busy else { return }
@@ -137,7 +141,55 @@ extension AppModel {
                         return try AudioStreamSession(modelPath: path)
                     },
                     onEvent: onEvent)
+            },
+            submitDecider: voiceCallSubmitDecider(),
+            autoSendEnabled: { [weak self] in
+                guard let self else { return false }
+                return self.voiceCallEnabled && self.voiceCallAutoSendEnabled
             })
+    }
+
+    /// The decider runs on the local model that is already loaded: no
+    /// network, no new credential, no download. With no model loaded it
+    /// throws, which the race turns into draft-first.
+    private func voiceCallSubmitDecider() -> VoiceCallSubmitDeciding {
+        VoiceCallLocalDecider { [weak self] messages, options in
+            guard let session = await self?.session else {
+                throw TurboSparkError(code: .invalidArgument, message: "no local model loaded")
+            }
+            var response = ""
+            for try await event in session.generate(messages, options: options) {
+                try Task.checkCancellation()
+                if case .content(let chunk) = event { response += chunk }
+            }
+            return response
+        }
+    }
+
+    /// OC-08: the ONE path that sends a voice utterance without the user's
+    /// press of Send. Every guard is re-checked here, at the moment of
+    /// sending, whatever the caller believes. A refusal changes nothing and
+    /// the text stays in the composer.
+    func submitAutoVoiceUtterance(_ text: String, chatID: UUID, decision: VoiceCallSubmitDecision) -> Bool {
+        let permitted = VoiceCallAutoSubmitGate.permits(.init(
+            settingOn: voiceCallAutoSendEnabled,
+            callEnabled: voiceCallEnabled,
+            decision: decision,
+            sameChat: selectedChatID == chatID,
+            approvalPending: pendingToolCall != nil || pendingUserQuestions != nil,
+            turnBusy: generating || submitting,
+            canRun: canRun && !imageModeEnabled,
+            text: text,
+            composerText: promptText))
+        guard permitted else { return false }
+        run()
+        return true
+    }
+
+    func setVoiceCallAutoSendEnabled(_ enabled: Bool) {
+        guard voiceCallAutoSendEnabled != enabled else { return }
+        voiceCallAutoSendEnabled = enabled
+        persistSettings()
     }
 
     /// The call uses the live text model the Record page uses.

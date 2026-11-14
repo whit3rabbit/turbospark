@@ -27,6 +27,10 @@ protocol VoiceCallSpeechDetecting {
 /// Constants for the call. Not settings in v1: a setting would be a
 /// `MacAppSettings` field with a default so old files decode.
 enum VoiceCallTuning {
+    /// Auto-send decision budget. Past it the utterance stays in the composer.
+    /// Covers prefill of a short fixed prompt plus a few tokens on the loaded
+    /// model; a longer wait would delay every turn for a convenience.
+    static let decisionTimeout: Duration = .milliseconds(2_000)
     /// Silence after speech that ends an utterance (OC-08 NFR default).
     static let silenceWindowSeconds: Double = 0.7
     /// Speech must sustain this long before it counts as an onset, so a

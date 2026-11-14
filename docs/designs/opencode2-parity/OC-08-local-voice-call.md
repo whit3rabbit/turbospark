@@ -9,7 +9,7 @@ and
 [call transport](https://github.com/anomalyco/opencode/blob/dev/packages/app/src/voice/transport.ts).
 
 * Author: whit3rabbit
-* Status: Partial (core loop implemented behind a default-off setting; see Implementation Record)
+* Status: Partial (core loop and default-off auto-send implemented; manual hardware verification, a measured decider eval and a dedicated small model remain; see Implementation Record)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -363,8 +363,8 @@ default-off setting; the items under "Deferred" are not.
 
 ### Deferred (needs a dependency, a download, or a decision)
 
-* **Auto-submit** of a final utterance. Draft-first stays until the user
-  decides; it is a safety call about an agent that can run tools.
+* **Auto-submit** was deferred here and is now implemented behind its own
+  default-off setting (see "Auto-send: implementation record" below).
 * **Streaming Silero VAD** (better onset than energy in noise). Needs the
   optional VAD model install and a streaming wrapper over a batch API.
 * **Measured latency** (end-of-speech to first spoken word) and the cost of
@@ -378,8 +378,9 @@ default-off setting; the items under "Deferred" are not.
 
 ### Auto-submit via the OpenKind decision model: findings and proposal
 
-Status: blocked on user decisions. No code was written. The stop condition
-for this follow-up applied, so nothing below is implemented.
+Status: superseded. These were the findings and proposal written before the
+user delegated the five open questions; the decisions and the build are in
+"Auto-send: implementation record" below.
 
 **What OpenKind is.** The sibling repo `openkind` is a typed classifier
 service, not a policy engine. It speaks the Jev protocol: a request carries a
@@ -458,6 +459,163 @@ runs while the user starts it from the TypeSafe tab.
 4. Timeout budget (proposal: 1.5 s, fail closed).
 5. Whether a rare-but-allowed `allow` on a `command` class is acceptable at
    all, or auto-send should be limited to plain dictation with no tools.
+
+--------------------------------------------------------------------------------
+
+## Auto-send: implementation record
+
+Implemented 2026-11-14, same branch, committed through a private index. Status
+of the OC-08 doc stays **Partial**; the Remaining list is at the end.
+
+### Direction received
+
+The user delegated the five open questions (profile, rule, daemon ownership,
+timeout, tool-triggering scope) with: use best judgement or research what
+agent harnesses do for auto approval with Jev-like systems, and use a small
+model such as Qwen 4B. Earlier they said the decision model should come from
+OpenKind and is integrated into Swift. Every choice below is mine and is
+reversible.
+
+### Research summary (used, not copied)
+
+Sources are secondary (blogs and analyses); I did not confirm them against
+vendor documentation, so treat them as design pressure, not as specification.
+
+* Claude Code auto mode analyses: the classifier is described as failing closed
+  (unparseable output means block), sees the actions and not the assistant's
+  own explanations (so the actor cannot argue past it), and falls back to manual
+  approval when unstable. A security researcher reported a multi-step bypass and
+  the vendor reportedly called it a best-effort convenience feature; a
+  commissioned test reported zero successes on a held-out set. Lesson: a
+  model-based gate is a convenience layer, never the security boundary.
+  ([CSA research note](https://labs.cloudsecurityalliance.org/research/csa-research-note-claude-code-automode-prompt-injection-2026/),
+  [Inside Claude Code's YOLO Classifier](https://finisky.github.io/en/claude-code-auto-mode-security),
+  [Auto Mode Is Not a Security Boundary](https://blakecrosley.com/blog/auto-mode-is-not-a-boundary))
+* Codex CLI guardian / auto-review: a reviewer model auto-approves only below a
+  risk threshold; timeouts, parse failures and reviewer errors fail closed and
+  escalate to the human; there are circuit breakers on repeated denials; the
+  timeout default quoted in a guide is long (90 s) because the reviewer is
+  hosted. ([OpenAI auto-review docs](https://developers.openai.com/codex/auto-review),
+  [failure modes](https://codex.danielvaughan.com/2026/04/20/when-guardian-approval-goes-wrong-failure-modes-escalation-patterns/),
+  [internals](https://codex.danielvaughan.com/2026/05/12/codex-cli-auto-review-internals-circuit-breakers-denial-handling-custom-policies/))
+* OpenKind / Jev (read locally, not edited): typed `Choice` with an explicit
+  none option and `Score` answers, thresholded by the caller; it has no allow or
+  deny concept and its own docs say to validate thresholds on your own data.
+* Not searched or not found: a dedicated source on voice-assistant endpointing
+  and intent confirmation. The "complete, intentional request vs noise,
+  self-talk, partial, dictation, third party" rubric is my own, from how the
+  call's failure modes already look (echo, dictation-in-progress).
+
+Lessons applied: fail closed on every non-allow; narrow typed output with an
+explicit abstain label; the decider sees only the quoted utterance, never tool
+output or history; a deterministic pre-filter that can only downgrade; a short
+timeout; the permission ladder, not the decider, stays the tool authority;
+the decider is not trusted with what a small model is bad at (judging whether a
+command is safe to run, counting, or resisting a determined injection), so those
+cases never reach it.
+
+### Decisions
+
+| Question | Decision and reasoning |
+|---|---|
+| Profile and daemon ownership | None of the OpenKind options. The decider is one short completion on the local model already loaded in the app, through the same `session.generate` the title generator uses. Reasons: OpenKind in the app serves only `mock` and needs a pulled multi-GB profile plus its own daemon and API key (new credential surface and process lifecycle); a second daemon or an in-process OpenKind engine is a new dependency or an openkind change (out of bounds); no Qwen 4B is installed or in the catalog (`~/.turbospark/models/text` holds a 9B, a 27B and flint; the catalog entry would be a `crates/` change that is not mine). The user's own words (a small Qwen) are met by the adapter being model-agnostic and the prompt being tiny; a dedicated 4B is a follow-up (see Remaining). No Keychain change, no network, no dependency, no download. |
+| Rule | Fixed rubric, one label out of REQUEST, NOISE, PARTIAL, DICTATION, THIRD_PARTY, UNSURE (UNSURE is the explicit abstain, the Choice-with-none shape). Only an answer that is exactly `REQUEST` maps to allow; NOISE and THIRD_PARTY map to deny; everything else, including a label followed by words, is confirm. Deny and confirm both fall back to the composer. Greedy (temperature 0), reasoning off, 6 new tokens. |
+| Threshold on score | Not available: the generate API exposes no logprobs, so there is no calibrated score to threshold. A self-reported number from a small model is not a probability, so I did not fake one. The compensation is a closed label set plus exact-match parsing plus the pre-filter. If the engine later exposes the label's logprob, add a margin test here. |
+| Timeout | 2.0 s (`VoiceCallTuning.decisionTimeout`), a constant. Fail closed. The race delivers its result once and does not wait for a decider that ignores cancellation. |
+| Tool-triggering scope | Auto-send of an utterance is not tool authority. A deterministic pre-filter downgrades allow to confirm for: a leading `/`, `!`, `#` or any `@` (the composer would treat the text as a slash, bang, memory or mention command), backticks, `$(`; fewer than 3 words (so "yes" and "go ahead" never send); more than 400 characters (dictation); and whole words about running, deleting, installing, pushing, sending, paying, changing settings, credentials, or instruction override (the list is in `VoiceCallSubmitPreFilter.riskyWords`, deliberately broad: a false hit costs one press of Send). It is English only because the streaming recognizer is English only. A "command" class is therefore not auto-sent by the pre-filter, and anything it misses still hits the permission ladder and the call's approval pause. |
+| Cost of a hit | None of this changes `AppToolPermissionEngine`. |
+
+### What shipped
+
+* `Audio/VoiceCallSubmitDecider.swift`: `VoiceCallSubmitDecision`
+  (allow, confirm, deny), the `VoiceCallSubmitDeciding` seam, the
+  `VoiceCallSubmitPreFilter` (downgrade only), `VoiceCallSubmitRubric`
+  (fixed system rubric, JSON-quoted utterance, exact-label parser),
+  `VoiceCallLocalDecider` (the production adapter over an injected completion),
+  `VoiceCallDecisionRace` (timeout race), and `VoiceCallAutoSubmitGate` (the
+  pure re-check of every send-time condition).
+* `VoiceCallController`: after a final utterance lands in the composer (only when
+  the composer was empty before it), and only when a decider is wired, the
+  setting is on, the call is listening, no turn is busy and no approval is
+  pending, it asks the decider. The recognizer stays closed during the decision
+  (model and recognizer never overlap); audio is kept and recognized afterward.
+  A turn from any source, Mute, an approval, a failure or End cancels the
+  decision. The one send is `chat.submitAutoVoiceUtterance`, behind an explicit
+  allow, and only if the composer still holds exactly the decided text.
+* `AppModel.submitAutoVoiceUtterance(_:chatID:decision:)` is the one path that
+  can send without the user's Send press. It re-checks the gate at send time
+  (setting and call on, allow, same chat, no approval, no turn or submission
+  busy, `canRun`, composer text unchanged, pre-filter again) and then calls the
+  ordinary `run()`, so hooks, steering, permissions and accounting are the
+  composer's.
+* Setting: General > Voice call > "Auto-send voice utterances"
+  (`MacAppSettings.voiceCallAutoSendEnabled`, default false, old files decode),
+  disabled while Voice call mode is off, with a warning line when no model is
+  loaded (it stays draft-first). `SettingsControlCatalog` regenerated. 3 strings
+  in 20 languages plus English.
+
+### Verification run
+
+* `swift test --filter VoiceCall`: all VoiceCall suites green (80 tests at the
+  last full run, 1 pre-existing skip). Fake decider, fake clock (sleep closure),
+  fake chat; no microphone, no model.
+* Mutation checks: see the table below, each applied, run, restored.
+* `make compile-strings` (29 languages compiled), `make design-check` (passed),
+  `scripts/generate-settings-catalog.py --check` (167 entries, current) and
+  `LocalizationParityTests` all passed.
+* The source-scan test now pins exactly two textual call sites of
+  `submitAutoVoiceUtterance(` (the controller after an allow, and the port's
+  forward to the model), one `run()` in `AppModel+VoiceCall.swift`, and no
+  network or credential API in the decider file. The old "the call cannot submit
+  a turn" test keeps forbidding every other send entry point.
+* Decider eval: **not run**. The host was loaded (load average about 19 to 25 on
+  16 cores at the time) and no small Qwen is installed; the only installed
+  models are a 9B abliterated build, a 27B and flint. No precision number is
+  claimed. The rubric and the 2 s budget are untested against a real model.
+
+### Mutation checks (auto-send)
+
+Each mutation was applied to the source, `VoiceCallSubmitDeciderTests` run, and
+the source restored (the suite is green again, 96 focused tests including the
+localization and shortcut gates). Red means at least one test failed.
+
+| Mutation | Result |
+|---|---|
+| send without requiring `allow` | red (non-allow, error, timeout, call-site tests) |
+| busy-lane re-check removed | red (`testABusyLaneAtDecisionTimeBlocksTheSend`) |
+| pending-approval re-check removed | red (`testAPendingApprovalBlocksTheSend`) |
+| composer-unchanged check removed | red (`testAnEditToTheComposerSinceTheDecisionBlocksTheSend`) |
+| setting re-check at send time removed | red (setting-turned-off test, call-site scan) |
+| setting check at decision start removed | red (`testTheSettingOffNeverAsksTheDecider...`) |
+| typed composer text made eligible | red (`testTypedTextAlreadyInTheComposerIsNeverAutoSent`) |
+| timeout resolves allow | red (timeout tests) |
+| decider error resolves allow | red (error tests) |
+| unknown label, or a label prefix, maps to allow | red (`testOnlyTheExactLabelMapsToAllow`) |
+| pre-filter risky words, or command prefix, removed | red (pre-filter, gate tests) |
+| local decider skips the pre-filter | red (`testARiskyUtteranceNeverReachesTheModel`) |
+| gate: setting, decision, same chat, approval, busy, composer match, pre-filter re-check (each removed) | red (`testTheGatePermitsOnlyWhenEverythingHolds`) |
+| `AppModel` gate bypassed | red (call-site scan) |
+| mute cancels the decision, removed alone | **survived**: the `state == .listening` guard at decision time also blocks it |
+| a turn cancels the decision, removed alone | **survived**: the busy re-check and the state guard also block it |
+| mute cancel AND state guard removed together | red (`testMutingDuringTheDecisionBlocksTheSend`) |
+| turn cancel AND busy re-check removed together | red (`testABusyLaneAtDecisionTimeBlocksTheSend`) |
+
+The two single survivors are overlapping layers, not untested guards; the paired
+mutations show each pair is covered.
+
+### Remaining
+
+* Run a labeled eval of the decider on about 30 hand-written utterances on a
+  quiet host with the loaded model, and report allow precision. Until then
+  treat the setting as experimental. A false allow is bounded by the pre-filter
+  and the permission ladder, but its rate is unmeasured.
+* A dedicated small decider (Qwen3 4B class). Needs a catalog entry (a crates
+  change, not mine) and an explicit user click to download; the adapter already
+  takes any completion.
+* Label logprob margin, if the engine ever exposes it.
+* Everything in the first Implementation Record's Deferred list (manual call
+  with headphones, DESIGN.md section 9 pass, measured latency).
+* A non-English pre-filter, when non-English recognition exists.
 
 --------------------------------------------------------------------------------
 

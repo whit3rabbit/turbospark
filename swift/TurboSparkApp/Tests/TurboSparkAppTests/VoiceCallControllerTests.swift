@@ -391,7 +391,9 @@ final class VoiceCallControllerTests: XCTestCase {
         let seams = try String(contentsOf: sources.appendingPathComponent("VoiceCallSeams.swift"), encoding: .utf8)
         let controller = try String(contentsOf: sources.appendingPathComponent("VoiceCallController.swift"), encoding: .utf8)
         let port = try XCTUnwrap(seams.range(of: "protocol VoiceCallChatPort")).lowerBound
-        let portBody = String(seams[port...].prefix(while: { _ in true }))
+        // The one allowed entry (auto-send) is named here and pinned by
+        // VoiceCallSubmitDeciderTests.testTheAutoSubmitHasExactlyOneCallSite.
+        let portBody = String(seams[port...]).replacingOccurrences(of: "func submitAutoVoiceUtterance", with: "")
         for forbidden in ["func send", "func run", "func submit", "func generate"] {
             XCTAssertFalse(portBody.contains(forbidden), "the chat port offers \(forbidden)")
         }

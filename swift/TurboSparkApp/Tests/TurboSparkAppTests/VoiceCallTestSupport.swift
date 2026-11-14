@@ -13,6 +13,16 @@ final class FakeCallChat: VoiceCallChatPort {
     var hasPendingApproval = false
     var draft = ""
     var onEvent: (@MainActor (VoiceCallChatEvent) -> Void)?
+    var autoSubmits: [(text: String, chatID: UUID, decision: VoiceCallSubmitDecision)] = []
+    var autoSubmitAccepts = true
+    func submitAutoVoiceUtterance(_ text: String, chatID: UUID, decision: VoiceCallSubmitDecision) -> Bool {
+        autoSubmits.append((text, chatID, decision))
+        guard autoSubmitAccepts else { return false }
+        // The real model raises the turn immediately after run().
+        isTurnBusy = true
+        onEvent?(.turnStarted)
+        return true
+    }
     func emit(_ event: VoiceCallChatEvent) { onEvent?(event) }
 }
 
@@ -71,11 +81,14 @@ final class CallHarness {
     var model: VoiceCallSpeechModelStatus = .ready
     var nextText = "hello there"
     private(set) var controller: VoiceCallController!
+    var autoSendOn = false
 
     static let placeholders = VoiceCallSpeechPlanner.Placeholders(
         code: "Code block skipped.", path: "a file path", link: "a link")
 
-    init() {
+    init(decider: VoiceCallSubmitDeciding? = nil, autoSend: Bool = false,
+         sleep: @escaping VoiceCallDecisionRace.Sleep = { _ in try await Task.sleep(for: .seconds(3_600)) }) {
+        autoSendOn = autoSend
         let environment = VoiceCallEnvironment(
             microphoneAllowed: { [unowned self] in self.microphoneAllowed },
             recordingActive: { [unowned self] in self.recordingActive },
@@ -90,7 +103,28 @@ final class CallHarness {
                 if self.autoReady { onEvent(.ready) }
                 return transcriber
             },
-            placeholders: Self.placeholders)
+            placeholders: Self.placeholders,
+            submitDecider: decider,
+            autoSendEnabled: { [unowned self] in self.autoSendOn },
+            decisionTimeout: .milliseconds(10), decisionSleep: sleep)
+    }
+
+    /// Polls for a condition that depends on unstructured tasks.
+    func eventually(_ condition: @MainActor () -> Bool) async -> Bool {
+        for _ in 0..<300 {
+            if condition() { return true }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return condition()
+    }
+
+    /// One spoken utterance, finished by the silence window.
+    func speakUtterance(_ text: String) async {
+        nextText = text
+        transcribers.last?.text = text
+        talk(1)
+        silence(1)
+        await settle()
     }
 
     var live: FakeCallTranscriber? { transcribers.last.flatMap { $0.cancelled ? nil : $0 } }

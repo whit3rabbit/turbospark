@@ -25,6 +25,31 @@ struct VoiceCallSettingsSection: View {
             .font(theme.ui(.small))
             .foregroundStyle(.appSecondary)
             .fixedSize(horizontal: false, vertical: true)
+
+            Toggle(isOn: Binding(
+                get: { model.voiceCallAutoSendEnabled },
+                set: { model.setVoiceCallAutoSendEnabled($0) })
+            ) {
+                Text("Auto-send voice utterances", bundle: .module)
+            }
+            .disabled(!model.voiceCallEnabled)
+            .settingsControl("Auto-send voice utterances", pane: .general, timing: .immediate)
+            Text(
+                "Off by default. When on, the loaded model on this Mac checks each finished sentence and sends it only if it is clearly a complete request to the assistant. Anything that mentions running, deleting, sending, paying or changing settings, and anything unclear, still waits in the message box for you to press Send. Nothing leaves this Mac.",
+                bundle: .module
+            )
+            .font(theme.ui(.small))
+            .foregroundStyle(.appSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+            if model.voiceCallAutoSendEnabled, model.session == nil {
+                Text(
+                    "No model is loaded, so spoken text stays in the message box until you load one.",
+                    bundle: .module
+                )
+                .font(theme.ui(.small))
+                .foregroundStyle(.appWarning)
+                .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }

@@ -39,6 +39,14 @@ final class VoiceCallController: ObservableObject {
     private let speaker: VoiceCallSpeaking
     private let environment: VoiceCallEnvironment
     private let makeTranscriber: VoiceCallTranscriberFactory
+    /// Auto-send (OC-08). nil means draft-first only.
+    private let submitDecider: VoiceCallSubmitDeciding?
+    private let autoSendEnabled: @MainActor () -> Bool
+    private let decisionTimeout: Duration
+    private let decisionSleep: VoiceCallDecisionRace.Sleep
+    /// Identifies the decision in flight; nil when none. Clearing it is how
+    /// a decision is cancelled, so a late result is dropped.
+    private var decisionToken: UUID?
     private var detector: VoiceCallSpeechDetecting
     private var planner: VoiceCallSpeechPlanner
 
@@ -68,7 +76,15 @@ final class VoiceCallController: ObservableObject {
     init(chat: VoiceCallChatPort, audio: VoiceCallAudioSource, speaker: VoiceCallSpeaking,
          environment: VoiceCallEnvironment, makeTranscriber: @escaping VoiceCallTranscriberFactory,
          detector: VoiceCallSpeechDetecting = VoiceCallEnergyDetector(),
-         placeholders: VoiceCallSpeechPlanner.Placeholders = .localized) {
+         placeholders: VoiceCallSpeechPlanner.Placeholders = .localized,
+         submitDecider: VoiceCallSubmitDeciding? = nil,
+         autoSendEnabled: @escaping @MainActor () -> Bool = { false },
+         decisionTimeout: Duration = VoiceCallTuning.decisionTimeout,
+         decisionSleep: @escaping VoiceCallDecisionRace.Sleep = { try await Task.sleep(for: $0) }) {
+        self.submitDecider = submitDecider
+        self.autoSendEnabled = autoSendEnabled
+        self.decisionTimeout = decisionTimeout
+        self.decisionSleep = decisionSleep
         self.chat = chat
         self.audio = audio
         self.speaker = speaker
@@ -148,6 +164,7 @@ final class VoiceCallController: ObservableObject {
     func dismissRefusal() { refusal = nil }
 
     private func resetSession() {
+        decisionToken = nil
         utterance = .none
         finishInFlight = false
         rollingBuffer.removeAll()
@@ -165,6 +182,7 @@ final class VoiceCallController: ObservableObject {
 
     private func fail(_ reason: String) {
         guard state.isActive else { return }
+        decisionToken = nil
         speaker.stop()
         cancelTranscriber()
         releaseMicrophone()
@@ -181,6 +199,7 @@ final class VoiceCallController: ObservableObject {
     /// recording indicator goes away. Only from listening.
     func mute() {
         guard state == .listening || state == .preparing else { return }
+        decisionToken = nil
         cancelTranscriber()
         utterance = .none
         rollingBuffer.removeAll()
@@ -232,6 +251,7 @@ final class VoiceCallController: ObservableObject {
 
     private func pauseForApproval() {
         guard state != .paused else { return }
+        decisionToken = nil
         speaker.stop()
         cancelTranscriber()
         utterance = .none
@@ -374,21 +394,64 @@ final class VoiceCallController: ObservableObject {
         if utterance == .ended { utterance = .none }
         // Mute, a turn or a failure can land while the recognizer closes.
         guard state == .listening || state == .preparing else { return }
-        deliver(text)
+        let candidate = deliver(text)
+        if let candidate, beginDecision(candidate, epoch: mine) { return }
         openTranscriber()
     }
 
     /// The transcript goes to the composer draft and the captions. The user
     /// sends it; nothing here starts a turn.
-    private func deliver(_ text: String) {
+    /// Returns the text only when the composer was empty before it, which is
+    /// the one case auto-send may consider (it never sends text the user
+    /// typed).
+    @discardableResult
+    private func deliver(_ text: String) -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else { return nil }
         // A call writes into the chat it was bound to, never another.
-        guard chat.selectedChatID == boundChatID else { end(); return }
+        guard chat.selectedChatID == boundChatID else { end(); return nil }
         addCaption(.you, trimmed)
         let existing = chat.draft.trimmingCharacters(in: .whitespacesAndNewlines)
         chat.draft = existing.isEmpty ? trimmed : existing + " " + trimmed
         draftReady = true
+        return existing.isEmpty ? trimmed : nil
+    }
+
+    // MARK: Auto-send
+
+    /// Starts a decision when auto-send is on and nothing blocks it. Returns
+    /// whether one is in flight; the recognizer stays closed until it ends,
+    /// so the model and the recognizer never overlap.
+    private func beginDecision(_ text: String, epoch mine: Int) -> Bool {
+        guard let decider = submitDecider, autoSendEnabled(), state == .listening,
+              !chat.isTurnBusy, !chat.hasPendingApproval else { return false }
+        let token = UUID()
+        decisionToken = token
+        let timeout = decisionTimeout
+        let sleep = decisionSleep
+        Task { [weak self] in
+            let decision = await VoiceCallDecisionRace.run(
+                decider: decider, utterance: text, timeout: timeout, sleep: sleep)
+            self?.decisionFinished(decision, text: text, token: token, epoch: mine)
+        }
+        return true
+    }
+
+    private func decisionFinished(_ decision: VoiceCallSubmitDecision, text: String, token: UUID, epoch mine: Int) {
+        // Cancelled by End, Mute, an approval, a failure or a turn.
+        guard decisionToken == token else { return }
+        decisionToken = nil
+        guard epoch == mine, state == .listening else { return }
+        // Every other result leaves the text in the composer, as before.
+        if decision == .allow, autoSendEnabled(), !chat.isTurnBusy, !chat.hasPendingApproval,
+           chat.selectedChatID == boundChatID,
+           chat.draft.trimmingCharacters(in: .whitespacesAndNewlines) == text,
+           chat.submitAutoVoiceUtterance(text, chatID: boundChatID ?? UUID(), decision: decision) {
+            draftReady = false
+        }
+        // A sent turn moved the state to thinking; otherwise listening resumes.
+        openTranscriber()
+        finishUtteranceIfPossible()
     }
 
     // MARK: Chat events
@@ -410,6 +473,8 @@ final class VoiceCallController: ObservableObject {
 
     private func turnStarted() {
         turnRunning = true
+        // A turn from any source beats a decision in flight: never two sends.
+        decisionToken = nil
         draftReady = false
         liveReply = ""
         planner.reset()
