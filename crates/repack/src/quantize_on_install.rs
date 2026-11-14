@@ -70,17 +70,44 @@ fn companion_dtype(bits: u32) -> &'static str {
 pub fn family_admits_quantize_on_install(family: ModelFamily) -> bool {
     matches!(
         family,
-        ModelFamily::QwenGdnDense | ModelFamily::Qwen2Dense | ModelFamily::Qwen3Vl
+        ModelFamily::QwenGdnDense
+            | ModelFamily::QwenGdnMoe
+            | ModelFamily::Qwen2Dense
+            | ModelFamily::Qwen3Vl
     )
+}
+
+/// Whether `family` can write `bits` through quantize-on-install. The Qwen
+/// MoE routed kernels read 3- or 4-bit experts only, and 3-bit has no group-64
+/// affine writer here, so a MoE install is 4-bit.
+pub fn family_supports_bits(family: ModelFamily, bits: u32) -> bool {
+    is_supported_quantize_bits(bits) && (family != ModelFamily::QwenGdnMoe || bits == 4)
+}
+
+/// Tensors `mlx_lm.convert` quantizes at 8 bits whatever the model's width:
+/// the Qwen MoE router and the shared-expert gate (read off the published
+/// `mlx-community/Qwen3.6-35B-A3B-4bit` config, which lists exactly these two
+/// per layer; the shared-expert projections stay at the default width).
+fn forced_bits(family: ModelFamily, name: &str, bits: u32) -> u32 {
+    if family == ModelFamily::QwenGdnMoe
+        && (name.ends_with(".mlp.gate.weight") || name.ends_with(".mlp.shared_expert_gate.weight"))
+    {
+        8
+    } else {
+        bits
+    }
 }
 
 /// Whether the family's MLX conversion bakes a `+1` into its trunk RMSNorms.
 ///
-/// Only the qwen35 GDN trunk is zero-centred (`docs/MTP.md`). The Qwen2 and
-/// Qwen3-VL runtime reads plain `x * w` norms (`encode_rms_norm_bf16w`), so
-/// HF and MLX carry the same bytes there and the view must not shift them.
+/// The qwen35 GDN trunks, dense and MoE, are zero-centred (`docs/MTP.md`; the
+/// MoE relation was read off Qwen/Qwen3.6-35B-A3B against its mlx-community
+/// 4-bit copy: +1 on the five trunk norms, none on `linear_attn.norm`). The
+/// Qwen2 and Qwen3-VL runtime reads plain `x * w` norms
+/// (`encode_rms_norm_bf16w`), so HF and MLX carry the same bytes there and the
+/// view must not shift them.
 pub fn shifts_norms(family: ModelFamily) -> bool {
-    family == ModelFamily::QwenGdnDense
+    matches!(family, ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe)
 }
 
 /// Rename a checkpoint's HF trunk spelling onto the MLX one the walk
@@ -98,7 +125,9 @@ pub fn canonicalize_for_family(
     headers: &mut [SafetensorsHeader],
 ) -> Result<SourceLayout, String> {
     match family {
-        ModelFamily::QwenGdnDense => canonicalize_qwen35_hf_headers(headers),
+        ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe => {
+            canonicalize_qwen35_hf_headers(headers)
+        }
         ModelFamily::Qwen3Vl => {
             canonicalize_qwen35_hf_headers(headers)?;
             Ok(SourceLayout::Mlx)
@@ -218,6 +247,34 @@ fn is_unalignable_trunk_matrix(name: &str, info: &TensorInfo, bits: u32) -> bool
         && info.shape[1] % group_for(bits) as u64 != 0
 }
 
+/// `(prefix, role)` of a fused HF routed-expert tensor
+/// (`<prefix>.experts.gate_up_proj` or `<prefix>.experts.down_proj`, rank 3,
+/// no `.weight` suffix).
+fn fused_experts(name: &str, info: &TensorInfo) -> Option<(String, &'static str)> {
+    if !name.starts_with("language_model.")
+        || info.shape.len() != 3
+        || !matches!(info.dtype.as_str(), "BF16" | "F16" | "F32")
+    {
+        return None;
+    }
+    [("gate_up_proj", "gate_up"), ("down_proj", "down")]
+        .iter()
+        .find_map(|(tail, role)| {
+            name.strip_suffix(&format!(".experts.{tail}"))
+                .map(|p| (p.to_string(), *role))
+        })
+}
+
+/// `<prefix>.experts.<N>.<proj>.weight`: the per-expert HF spelling of an
+/// older MoE export. Not read off any real checkpoint here, so it is refused
+/// rather than guessed at.
+fn is_per_expert_name(name: &str) -> bool {
+    name.split(".experts.")
+        .nth(1)
+        .and_then(|t| t.split('.').next())
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()))
+}
+
 fn elem_bytes(dtype: &str) -> Result<usize, String> {
     match dtype {
         "BF16" | "F16" => Ok(2),
@@ -303,6 +360,31 @@ enum Item {
     Shifted { start: u64, end: u64, dtype: String },
     /// One plane of the quantized triple for `base`.
     Plane { base: String, plane: Plane },
+    /// One plane of a rank-3 routed-expert tensor `[experts, out_rows, ..]`
+    /// cut out of the quantized fused matrix `base`
+    /// (`[experts * src_rows, cols]` as rows). Quantization is per row, so
+    /// quantizing the fused matrix once and gathering rows `row_off..row_off +
+    /// out_rows` of every expert gives exactly what quantizing the split
+    /// tensor would.
+    Expert {
+        base: String,
+        plane: Plane,
+        experts: usize,
+        out_rows: usize,
+        src_rows: usize,
+        row_off: usize,
+    },
+}
+
+/// A float source tensor the view quantizes, as a `rows x cols` matrix.
+#[derive(Debug, Clone)]
+struct QSource {
+    dtype: String,
+    rows: usize,
+    cols: usize,
+    start: u64,
+    end: u64,
+    bits: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -324,13 +406,20 @@ pub struct QuantizedShard<'a> {
     inner: &'a dyn RangeSource,
     /// `(virtual absolute start, end, item)`, sorted by start.
     items: Vec<(u64, u64, Item)>,
-    /// `base -> (source dtype, rows, cols, source abs start, end)`.
-    sources: BTreeMap<String, (String, usize, usize, u64, u64)>,
-    bits: u32,
-    /// The last base quantized. The walk reads a triple's planes back to
-    /// back, so one entry turns three quantizations into one.
-    cache: RefCell<Option<(String, std::rc::Rc<Quantized>)>>,
+    sources: BTreeMap<String, QSource>,
+    /// `(base, bits)` for every tensor quantized at a width other than the
+    /// install's default, which the writer needs as `bits_overrides`.
+    overrides: Vec<(String, u32)>,
+    /// The most recent quantized bases, oldest first. The walk reads a
+    /// triple's planes back to back, and a routed layer's gate and up planes
+    /// are both cut from one fused matrix, so a few entries turn many
+    /// quantizations into one.
+    cache: RefCell<Vec<(String, std::rc::Rc<Quantized>)>>,
 }
+
+/// Quantized matrices kept at once: the fused gate_up matrix and the down
+/// matrix of one routed layer, plus one spare.
+const CACHE_ENTRIES: usize = 3;
 
 impl<'a> QuantizedShard<'a> {
     /// The virtual header to register in `Gemma4Shards`.
@@ -343,20 +432,37 @@ impl<'a> QuantizedShard<'a> {
         self.sources.len()
     }
 
+    /// `(base path, bits)` for every tensor written at a width other than the
+    /// install's default (the Qwen MoE router and shared-expert gate), to be
+    /// merged into the writer's `Gemma4Quant::bits_overrides`.
+    pub fn bits_overrides(&self) -> &[(String, u32)] {
+        &self.overrides
+    }
+
     fn planes(&self, base: &str) -> Result<std::rc::Rc<Quantized>, DownloadError> {
-        if let Some((b, q)) = self.cache.borrow().as_ref() {
-            if b == base {
-                return Ok(q.clone());
-            }
+        // A separate statement: an `if let` on the borrow would hold it across
+        // the `borrow_mut` below.
+        let hit_at = self.cache.borrow().iter().position(|(b, _)| b == base);
+        if let Some(i) = hit_at {
+            let mut c = self.cache.borrow_mut();
+            let hit = c.remove(i);
+            let q = hit.1.clone();
+            c.push(hit);
+            return Ok(q);
         }
-        let (dtype, rows, cols, a, b) = self
+        let src = self
             .sources
             .get(base)
-            .cloned()
             .ok_or_else(|| DownloadError::Request(format!("no source for {base}")))?;
-        let raw = self.inner.read_range(a, b)?;
-        let q = std::rc::Rc::new(quantize_matrix(&dtype, &raw, rows, cols, self.bits));
-        *self.cache.borrow_mut() = Some((base.to_string(), q.clone()));
+        let raw = self.inner.read_range(src.start, src.end)?;
+        let q = std::rc::Rc::new(quantize_matrix(
+            &src.dtype, &raw, src.rows, src.cols, src.bits,
+        ));
+        let mut c = self.cache.borrow_mut();
+        if c.len() >= CACHE_ENTRIES {
+            c.remove(0);
+        }
+        c.push((base.to_string(), q.clone()));
         Ok(q)
     }
 }
@@ -473,6 +579,38 @@ impl RangeSource for QuantizedShard<'_> {
                 };
                 return Ok(v[lo..hi].to_vec());
             }
+            Item::Expert {
+                base,
+                plane,
+                experts,
+                out_rows,
+                src_rows,
+                row_off,
+            } => {
+                let q = self.planes(base)?;
+                let src = &self.sources[base];
+                let v = match plane {
+                    Plane::Weight => &q.weight,
+                    Plane::Scales => &q.scales,
+                    Plane::Biases => &q.biases,
+                };
+                // Bytes of one row of this plane, then walk the requested
+                // byte range one output row at a time.
+                let row_w = v.len() / src.rows;
+                debug_assert_eq!(src.rows, experts * src_rows);
+                let mut out = Vec::with_capacity(hi - lo);
+                let mut pos = lo;
+                while pos < hi {
+                    let r = pos / row_w;
+                    let within = pos % row_w;
+                    let take = (row_w - within).min(hi - pos);
+                    let (e, i) = (r / out_rows, r % out_rows);
+                    let s = (e * src_rows + row_off + i) * row_w + within;
+                    out.extend_from_slice(&v[s..s + take]);
+                    pos += take;
+                }
+                return Ok(out);
+            }
         };
         Ok(bytes[lo..hi].to_vec())
     }
@@ -487,12 +625,28 @@ pub fn quantize_on_install_shards<'a>(
     bits: u32,
     layout: SourceLayout,
 ) -> Result<Vec<QuantizedShard<'a>>, String> {
-    if !is_supported_quantize_bits(bits) {
+    quantize_on_install_shards_for(ModelFamily::QwenGdnDense, headers, sources, bits, layout)
+}
+
+/// [`quantize_on_install_shards`] for a named family, which decides the
+/// tensors served at a forced width ([`forced_bits`]) and the routed-expert
+/// synthesis of the Qwen MoE.
+pub fn quantize_on_install_shards_for<'a>(
+    family: ModelFamily,
+    headers: &[SafetensorsHeader],
+    sources: &[&'a dyn RangeSource],
+    bits: u32,
+    layout: SourceLayout,
+) -> Result<Vec<QuantizedShard<'a>>, String> {
+    if !family_supports_bits(family, bits) {
         return Err(format!(
-            "quantize-on-install writes 4- or 8-bit at group 64 or 2-bit at group 128, not \
-             {bits}-bit"
+            "quantize-on-install writes 4- or 8-bit at group 64 or 2-bit at group 128, and \
+             only 4-bit for the Qwen MoE (its routed kernels read 3- or 4-bit experts); \
+             not {bits}-bit for {}",
+            family.as_str()
         ));
     }
+    let default_bits = bits;
     let mut out = Vec::with_capacity(headers.len());
     for (h, &src) in headers.iter().zip(sources) {
         // A real header never carries an MLX companion next to a float
@@ -509,6 +663,7 @@ pub fn quantize_on_install_shards<'a>(
         let mut tensors = BTreeMap::new();
         let mut items = Vec::new();
         let mut qsources = BTreeMap::new();
+        let mut overrides: Vec<(String, u32)> = Vec::new();
         // Virtual data region starts right after an empty header.
         let header_len = 0u64;
         let base_abs = 8 + header_len;
@@ -535,6 +690,84 @@ pub fn quantize_on_install_shards<'a>(
             let (a, b) = h
                 .absolute_range(name)
                 .ok_or_else(|| format!("{name}: range overflows"))?;
+            if family == ModelFamily::QwenGdnMoe && is_per_expert_name(name) {
+                return Err(format!(
+                    "{name}: per-expert routed weights are not supported; quantize-on-install \
+                     reads the fused experts.gate_up_proj / experts.down_proj layout of the \
+                     published Qwen 3.6 MoE checkpoints"
+                ));
+            }
+            if family == ModelFamily::QwenGdnMoe {
+                if let Some((prefix, role)) = fused_experts(name, info) {
+                    let (experts, rows, cols) = (
+                        info.shape[0] as usize,
+                        info.shape[1] as usize,
+                        info.shape[2] as usize,
+                    );
+                    let eb = elem_bytes(&info.dtype)?;
+                    if (b - a) as usize != experts * rows * cols * eb {
+                        return Err(format!("{name}: byte length does not match its shape"));
+                    }
+                    if cols % group_for(bits) as usize != 0 {
+                        return Err(format!(
+                            "{name}: {cols} columns are not a multiple of the group size {}",
+                            group_for(bits)
+                        ));
+                    }
+                    // (output name, rows per expert out, first source row)
+                    let parts: Vec<(&str, usize, usize)> = if role == "gate_up" {
+                        if rows % 2 != 0 {
+                            return Err(format!("{name}: fused gate_up rows {rows} are odd"));
+                        }
+                        // gate is the first half of the fused rows, up the
+                        // second (the transformers `chunk(2)` order).
+                        vec![("gate_proj", rows / 2, 0), ("up_proj", rows / 2, rows / 2)]
+                    } else {
+                        vec![("down_proj", rows, 0)]
+                    };
+                    qsources.insert(
+                        name.clone(),
+                        QSource {
+                            dtype: info.dtype.clone(),
+                            rows: experts * rows,
+                            cols,
+                            start: a,
+                            end: b,
+                            bits,
+                        },
+                    );
+                    let w_cols = (cols * bits as usize / 32) as u64;
+                    let g = (cols / group_for(bits) as usize) as u64;
+                    for (proj, out_rows, row_off) in parts {
+                        let base = format!("{prefix}.switch_mlp.{proj}");
+                        let (e, r) = (experts as u64, out_rows as u64);
+                        for (suffix, plane, dtype, last, width) in [
+                            ("weight", Plane::Weight, "U32", w_cols, 4u64),
+                            ("scales", Plane::Scales, companion_dtype(bits), g, 2),
+                            ("biases", Plane::Biases, companion_dtype(bits), g, 2),
+                        ] {
+                            push(
+                                format!("{base}.{suffix}"),
+                                dtype,
+                                vec![e, r, last],
+                                e * r * last * width,
+                                Item::Expert {
+                                    base: name.clone(),
+                                    plane,
+                                    experts,
+                                    out_rows,
+                                    src_rows: rows,
+                                    row_off,
+                                },
+                                &mut tensors,
+                                &mut items,
+                            );
+                        }
+                    }
+                    continue;
+                }
+            }
+            let bits = forced_bits(family, name, bits);
             if is_unalignable_trunk_matrix(name, info, bits) {
                 return Err(format!(
                     "{name}: shape {:?} has columns that are not a multiple of the {}-bit \
@@ -582,7 +815,20 @@ pub fn quantize_on_install_shards<'a>(
                         &mut items,
                     );
                 }
-                qsources.insert(base, (info.dtype.clone(), rows, cols, a, b));
+                if bits != default_bits {
+                    overrides.push((base.clone(), bits));
+                }
+                qsources.insert(
+                    base,
+                    QSource {
+                        dtype: info.dtype.clone(),
+                        rows,
+                        cols,
+                        start: a,
+                        end: b,
+                        bits,
+                    },
+                );
             } else if layout == SourceLayout::HfTransformers && takes_norm_shift(name) {
                 elem_bytes(&info.dtype).map_err(|e| format!("{name}: {e}"))?;
                 push(
@@ -632,8 +878,8 @@ pub fn quantize_on_install_shards<'a>(
             inner: src,
             items,
             sources: qsources,
-            bits,
-            cache: RefCell::new(None),
+            overrides,
+            cache: RefCell::new(Vec::new()),
         });
     }
     Ok(out)

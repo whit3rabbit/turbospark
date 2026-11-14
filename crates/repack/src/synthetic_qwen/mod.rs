@@ -7,6 +7,8 @@ mod drama3;
 mod moe;
 mod moe_mxfp4;
 #[cfg(test)]
+mod quantize_on_install_moe_tests;
+#[cfg(test)]
 mod quantize_on_install_tests;
 mod qwen4;
 mod qwen4_decode;

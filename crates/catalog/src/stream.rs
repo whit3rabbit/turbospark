@@ -248,9 +248,16 @@ pub(crate) fn stream_mlx(
         if !repack::quantize_on_install::is_supported_quantize_bits(bits) {
             return Err(format!("--quantize {bits}: only 2, 4 or 8 is supported"));
         }
+        if !repack::quantize_on_install::family_supports_bits(family, bits) {
+            return Err(format!(
+                "--quantize {bits}: the {} family quantizes on install at 4-bit only \
+                 (its routed experts read 3- or 4-bit)",
+                family.as_str()
+            ));
+        }
         Some(bits)
     };
-    let quant = if let Some(bits) = quantize_on_install {
+    let mut quant = if let Some(bits) = quantize_on_install {
         repack::Gemma4Quant {
             default_bits: bits,
             group_size: repack::quantize_on_install::group_for(bits),
@@ -458,13 +465,21 @@ pub(crate) fn stream_mlx(
                     "trunk layernorm mean {mean:.3}, consistent with {layout:?}"
                 ));
             }
-            let v = repack::quantize_on_install::quantize_on_install_shards(
+            let v = repack::quantize_on_install::quantize_on_install_shards_for(
+                family,
                 &headers,
                 &source_refs,
                 bits,
                 layout,
             )
             .map_err(|e| format!("{}: {e}", plan.weights))?;
+            // Tensors the conversion writes at another width (the Qwen MoE
+            // router and shared-expert gate) must be declared to the walk.
+            for shard in &v {
+                for (base, b) in shard.bits_overrides() {
+                    quant.bits_overrides.insert(base.clone(), *b);
+                }
+            }
             progress(&format!(
                 "{} trunk matrices will be quantized as they stream",
                 v.iter().map(|s| s.quantized_count()).sum::<usize>()

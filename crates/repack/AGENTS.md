@@ -66,6 +66,24 @@ Checkpoint intake and `.gturbo` writing.
   both layouts, so `canonicalize_for_family` must not run the qwen35 prefix
   map on it (it would rename a bare `lm_head.` and the later
   `canonicalize_qwen2_header` refuses the file as mixed).
+- Quantize-on-install for the Qwen MoE (`qwen3_5_moe`) reads the FUSED HF
+  experts (`experts.gate_up_proj [E, 2I, H]`, gate = first half, and
+  `experts.down_proj`, no `.weight` suffix) and serves them as rank-3
+  `switch_mlp.*` planes cut from one quantized fused matrix per layer
+  (`Item::Expert`). `mlp.gate` and `shared_expert_gate` are written at 8-bit
+  (declared through `QuantizedShard::bits_overrides`, which `stream.rs` merges
+  into `Gemma4Quant`); the shared-expert projections stay at the default 4-bit
+  (read off the published config, unlike the older INT8-shared-expert
+  fixture). MoE is 4-bit only (`family_supports_bits`: routed kernels read 3-
+  or 4-bit). The per-expert HF spelling is refused, not guessed. The real gate
+  is `tests/mlx_quantize_parity_moe_network.rs` (ignored, ranged reads);
+  holding one layer's fused gate_up in memory costs about 1.5 GiB.
+- `mx.quantize` rounds exact ties differently per backend: Metal half away
+  from zero, the CPU kernel half to even. `DeepSeek-V4-Pro-Qwen3.5-9B-4bit`
+  is exact under `Rounding::HalfAway` and `Qwen3.6-35B-A3B-4bit` under
+  `Rounding::HalfEven`; scales, biases and every non-tie code agree either
+  way. Installs use `HalfAway`. Do not "fix" a one-code, ours-higher diff by
+  changing the default: check which backend made the reference first.
 - 2-bit quantize-on-install writes group 128 with F16 scales and biases (the
   walk requires F16 for 1- and 2-bit). `mx.quantize` stores companions in the
   input dtype, so byte parity with `mlx_lm.convert` holds only against a

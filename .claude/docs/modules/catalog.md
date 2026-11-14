@@ -161,7 +161,7 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
    parser default this crate reads for the same inversion. Since
    quantize-on-install, an absent block on a family
    `repack::quantize_on_install::family_admits_quantize_on_install` admits
-   (`qwen35`, `qwen2`, `qwen3_vl`) probes Runnable with a warning, and `stream_mlx` builds the
+   (`qwen35`, `qwen3_5_moe`, `qwen2`, `qwen3_vl`) probes Runnable with a warning, and `stream_mlx` builds the
    4- or 8-bit `Gemma4Quant` explicitly from `InstallPlan::quantize_bits`
    rather than from the parser's default. Every other family keeps the
    refusal.
