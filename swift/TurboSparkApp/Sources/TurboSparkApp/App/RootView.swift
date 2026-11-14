@@ -165,6 +165,11 @@ struct RootView: View {
                     WorkspaceTabStripView(model: model)
                 }
 
+                // OC-04: the session tab row, under the workspace row.
+                if model.sessionTabsActive, !model.activeSection.hidesChatPanes {
+                    SessionTabStripView(model: model)
+                }
+
                 workingArea
                     // Reserve room for Downloads so its collapsed control
                     // never covers the composer or model selector.

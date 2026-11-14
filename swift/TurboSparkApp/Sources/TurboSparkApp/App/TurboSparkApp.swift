@@ -513,6 +513,64 @@ struct TurboSparkModelCommands: Commands {
 
                 Divider()
 
+                // OC-04: session tabs. Close Tab is Cmd+Shift+W because Cmd+W
+                // stays the window's close.
+                Button {
+                    model.openNewSessionTab()
+                } label: {
+                    Text("New Tab", bundle: .module)
+                }
+                .keyboardChord(.newSessionTab, keybinds)
+
+                Button {
+                    if let id = model.sessionTabs.selectedChatID {
+                        model.closeSessionTab(chatID: id)
+                    }
+                } label: {
+                    Text("Close Tab", bundle: .module)
+                }
+                .keyboardChord(.closeSessionTab, keybinds)
+                .disabled(!model.sessionTabsActive || model.sessionTabs.selectedChatID == nil)
+
+                Button {
+                    model.reopenClosedSessionTab()
+                } label: {
+                    Text("Reopen Closed Tab", bundle: .module)
+                }
+                .keyboardChord(.reopenSessionTab, keybinds)
+                .disabled(model.sessionTabs.closed.isEmpty)
+
+                Menu {
+                    ForEach(model.sessionTabs.closed.reversed(), id: \.chatID) { entry in
+                        Button {
+                            model.reopenClosedSessionTab(chatID: entry.chatID)
+                        } label: {
+                            Text(verbatim: model.sessionTabTitle(for: entry.chatID))
+                        }
+                    }
+                } label: {
+                    Text("Recently Closed", bundle: .module)
+                }
+                .disabled(model.sessionTabs.closed.isEmpty)
+
+                Button {
+                    model.cycleSessionTab(delta: 1)
+                } label: {
+                    Text("Next Session Tab", bundle: .module)
+                }
+                .keyboardChord(.nextSessionTab, keybinds)
+                .disabled(!model.sessionTabsActive)
+
+                Button {
+                    model.cycleSessionTab(delta: -1)
+                } label: {
+                    Text("Previous Session Tab", bundle: .module)
+                }
+                .keyboardChord(.previousSessionTab, keybinds)
+                .disabled(!model.sessionTabsActive)
+
+                Divider()
+
                 Button {
                     NotificationCenter.default.post(name: .showChatSearch, object: nil)
                 } label: {

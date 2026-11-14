@@ -342,6 +342,9 @@ extension AppModel {
         // otherwise fire for a chat with no row and re-arm forever.
         teardownGoal(chatID: id)
         chats.remove(at: index)
+        // Before the fallback selection below, so the follower does not
+        // retarget the dead tab onto the replacement chat (OC-04).
+        pruneSessionTabs()
         if chats.isEmpty {
             selectedChatID = UUID()
         } else if selectedChatID == id {

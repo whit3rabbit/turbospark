@@ -254,6 +254,7 @@ extension AppModel {
         guard chats[index].isArchived != archived else { return }
         chats[index].isArchived = archived
         persistChats()
+        pruneSessionTabs()
         showToast(
             archived ? AppStrings.localized("Chat archived.") : AppStrings.localized("Chat restored."),
             style: .success)

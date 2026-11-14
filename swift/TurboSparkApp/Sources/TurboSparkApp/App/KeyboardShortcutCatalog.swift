@@ -26,6 +26,11 @@ public struct KeyboardCommandID: RawRepresentable, Hashable, Sendable, Expressib
     static let nextChat: KeyboardCommandID = "chat.next"
     static let nextWorkspaceTab: KeyboardCommandID = "workspace.nextTab"
     static let previousWorkspaceTab: KeyboardCommandID = "workspace.previousTab"
+    static let newSessionTab: KeyboardCommandID = "session.newTab"
+    static let closeSessionTab: KeyboardCommandID = "session.closeTab"
+    static let reopenSessionTab: KeyboardCommandID = "session.reopenTab"
+    static let nextSessionTab: KeyboardCommandID = "session.nextTab"
+    static let previousSessionTab: KeyboardCommandID = "session.previousTab"
     static let focusPrompt: KeyboardCommandID = "prompt.focus"
     static let commandCenter: KeyboardCommandID = "palette.open"
     static let runCommand: KeyboardCommandID = "palette.runCommand"
@@ -160,6 +165,15 @@ public enum KeyboardShortcutCatalog {
             command(.nextChat, "Next Chat", "]", cmd, alt: chord("]", shiftCmd)),
             command(.nextWorkspaceTab, "Next Workspace Tab", "tab", ctrl),
             command(.previousWorkspaceTab, "Previous Workspace Tab", "tab", [.control, .shift]),
+            // OC-04. Cmd+W is the window's (reserved, OC-01), so Close Tab is
+            // Cmd+Shift+W; Option+Arrow is word navigation in the composer,
+            // Cmd+[ / ] is the chat cycle and Cmd+Option+Left/Right is
+            // history, so the cycle takes Cmd+Option+[ / ].
+            command(.newSessionTab, "New Tab", "t", cmd),
+            command(.closeSessionTab, "Close Tab", "w", shiftCmd),
+            command(.reopenSessionTab, "Reopen Closed Tab", "t", shiftCmd),
+            command(.nextSessionTab, "Next Session Tab", "]", [.command, .option]),
+            command(.previousSessionTab, "Previous Session Tab", "[", [.command, .option]),
             command(.focusPrompt, "Focus Prompt", "l", cmd),
             command(.commandCenter, "Command Center", "k", cmd),
             command(.runCommand, "Run Command", "p", shiftCmd),

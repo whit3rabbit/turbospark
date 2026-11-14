@@ -622,6 +622,12 @@ public final class AppModel: ObservableObject {
     /// ZP-21: open workspace tabs. Empty (dormant) until the user opens a
     /// second tab; see `AppModel+TabContext.swift`.
     @Published var workspaceTabs = WorkspaceTabStore()
+    /// OC-04: open session tabs (chat ids) and the in-memory Recently Closed
+    /// stack. Dormant until a second tab opens; see `AppModel+SessionTabs.swift`.
+    @Published var sessionTabs = SessionTabStore()
+    /// True while a tab command creates or moves a chat itself, so the
+    /// selection follower does not retarget the current tab (OC-04).
+    var sessionTabFollowSuppressed = false
     /// Working tree model for git status and diffs when a project is selected.
     @Published public var worktree: WorktreeModel? = nil {
         didSet {
@@ -927,6 +933,7 @@ public final class AppModel: ObservableObject {
             }
             selectionChangedForReadState(from: oldValue)
             workspaceTabsNoteSelectedChat()
+            sessionTabsFollowChatSelection()
         }
     }
     /// Transient active chat draft when the chats list is empty.
@@ -1338,6 +1345,7 @@ public final class AppModel: ObservableObject {
         loadProjects()
         loadChats()
         loadWorkspaceTabs()
+        loadSessionTabs()
         try? MemoryLedgerStore.shared.importLegacyIfNeeded()
         installBackgroundShellObserver()
         // Ghost Mode opt-in, AFTER `loadChats`: the restored archive is

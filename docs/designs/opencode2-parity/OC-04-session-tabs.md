@@ -10,7 +10,7 @@ and
 [closed-tab stack](https://github.com/anomalyco/opencode/blob/dev/packages/app/src/shell/tabs/closed.ts).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Partial (implemented 2026-11-14; see Implementation Record for the deferred items)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -186,6 +186,87 @@ ids, never transcript content outside the existing chat archive.
 * **Manual**: the three CUJs. Then the DESIGN.md section 9 checklist on
   the strip. Cover text sizes, window width, themes, keyboard-only use,
   VoiceOver, motion settings, German, and an RTL language.
+
+## Implementation Record (2026-11-14)
+
+Implemented with the EGM review's recommendations adopted where they
+removed ambiguity (see `docs/egm-reviews/opencode2-parity/OC-04/`).
+
+### Decisions (Open Questions and review blockers)
+
+* **Strip placement**: (a), a row directly above the working area, under
+  the ZP-21 workspace row, drawn only with two or more tabs (the review's
+  M10: two, not "one plus a draft", so Cmd+T is never inert). It is a row
+  of the existing bands, not a fifth band. Overflow: the row scrolls and an
+  "All Tabs" menu lists every tab and Recently Closed; titles are not cut
+  to nothing.
+* **Split panes**: a tab does not hold a layout. Panes stay window-level.
+  The review's "panes exclude the selected tab's chat" rule is deferred;
+  `toggleSplitPane` already refuses the selected chat.
+* **Recently Closed**: 20 entries, in memory only. A relaunch clears it
+  (review M6); the persisted file holds only chat ids in order.
+* **A tab is a chat id, a draft tab is a chat row** (review M1, B3). There
+  is no second draft store: draft text stays on `AppChat.draft` and rides
+  the chat archive, so ghost chats cannot reach disk through tabs and the
+  ghost filter in `makeChatArchive` still covers everything. Promotion is
+  therefore in place by construction: sending adds messages to the same
+  chat, the tab is not swapped, and no empty state can flash.
+* **Empty draft discard**: closing a draft tab that has no messages, text,
+  attachments, checklist or sampling edit deletes its row and does not
+  enter Recently Closed. Cmd+T reuses an open empty draft tab instead of
+  piling up another.
+* **One tab per chat**; opening an open chat selects it. Selecting a chat
+  that has no tab (sidebar, palette, history) retargets the selected tab in
+  place, as ZP-21 does for projects.
+* **Chords (review B4, M4)**: Cmd+W stays the window's (OC-01 reserved
+  list). New Tab Cmd+T, Close Tab Cmd+Shift+W, Reopen Closed Tab
+  Cmd+Shift+T, next/previous tab Cmd+Option+] / [ (Option+Arrow is word
+  navigation in the composer; Cmd+[ / ] is the chat cycle; Cmd+Option+Left
+  and Right is history; Ctrl+Tab is the ZP-21 workspace cycle). All five
+  are catalog commands (`session.newTab`, `session.closeTab`,
+  `session.reopenTab`, `session.nextTab`, `session.previousTab`), rebindable
+  through OC-01. Closing down to one tab makes the strip dormant and leaves
+  that chat on screen; the last chat is never closed, so no chord can quit
+  the app.
+* **ZP-23 (review M3)**: switching between chats of one project follows the
+  coordinator verdict (a background turn does not block it; an open
+  approval card or a submitting turn does). Switching to a chat under
+  another project is a workspace switch and is refused with a toast while a
+  turn runs, is submitting or an approval is open, exactly as ZP-21.
+  Closing the selected tab moves to its neighbor first, so a refused move
+  keeps the tab.
+* **History (OC-03/OC-05)**: tab selection is ordinary chat selection, so
+  `selectedChatID` feeds `NavigationHistory` unchanged.
+* **Restore (review M5, M8)**: the chat archive owns `selectedChatID`;
+  tabs load after the chats and drop ids that are deleted, archived or
+  ghost. Reopen drops entries whose chat is gone and skips them silently.
+
+### Files
+
+* `State/SessionTabStore.swift` (new): value, archive, `SessionTabFileStore`
+  (`session_tabs.json`, `AppJSONStore`, quarantine on corruption).
+* `State/AppModel+SessionTabs.swift` (new): commands, follower, restore.
+* `Generation/SessionTabStripView.swift` (new): the strip.
+* Modified: `AppModel.swift` (state, follower hook, restore),
+  `AppModel+Chat.swift` (prune on delete), `AppModel+SlashParity.swift`
+  (prune on archive), `RootView.swift`, `TurboSparkApp.swift` (Chat menu:
+  New Tab, Close Tab, Reopen Closed Tab, Recently Closed, next/previous),
+  `KeyboardShortcutCatalog.swift`, `ChatSidebarChatRowView.swift` ("Open in
+  New Tab"), `Localizable.xcstrings` (8 keys, 21 languages).
+* Tests: `SessionTabStoreTests.swift`.
+
+### Deferred
+
+* Per-tab scroll memory (review M9: no storage, not restored). The draft
+  and composer text persist; scroll position does not.
+* Recently Closed in the sidebar context menu: it is in the Chat menu bar
+  menu and the strip's "All Tabs" menu; the sidebar copy is not built.
+* Panes excluding the selected tab's chat, and any per-tab pane layout.
+* Simultaneous approvals, background prompt submission and real parallel
+  decode (ZP-23 partial): tabs add no decode lane; one turn runs at a time.
+* Manual passes not run in this change: the three CUJs in the app,
+  VoiceOver, German and RTL layout, text sizes and the DESIGN.md section 9
+  checklist.
 
 --------------------------------------------------------------------------------
 

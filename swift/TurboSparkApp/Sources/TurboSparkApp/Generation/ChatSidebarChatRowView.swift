@@ -101,6 +101,13 @@ struct ChatSidebarChatRowView: View {
                 model.toggleSplitPane(chatID: chat.id)
             } label: { (model.isSplitPane(chatID: chat.id) ? Text("Close Split Pane", bundle: .module) : Text("Open in Split View", bundle: .module)) }
             .disabled(chat.isGhost || model.isRunning || chat.id == model.selectedChatID)
+            // OC-04: the chat joins the session tab strip and becomes the
+            // selected tab. The model refuses (with a toast) while the lane
+            // verdict forbids the move.
+            Button {
+                model.openChatInSessionTab(id: chat.id)
+            } label: { Text("Open in New Tab", bundle: .module) }
+            .disabled(chat.isGhost || chat.isArchived)
             Button(role: .destructive) {
                 chatPendingDeletion = chat
             } label: { Text("Delete", bundle: .module) }
