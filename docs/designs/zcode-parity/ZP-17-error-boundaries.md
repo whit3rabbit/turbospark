@@ -242,8 +242,12 @@ renders a bounded error card on malformed XML with an external-opener
 fallback (CUJ 2; done in ZP-08, see its Implementation notes:
 `OfficeRenderError` is the typed error, `OfficeRenderFailureView` the card,
 and `testMalformedXMLGivesATypedBoundedErrorNotACrash` the test), ZP-06
-`PluginPageWebView` renders a load-failure card. The ZP-06 file does not
-exist yet.
+`PluginPageWebView.swift` renders a load-failure card (done in ZP-06:
+`PluginPageFailureCard` shows a typed `PluginPageError` with Try again, for
+a refused page document, a missing offline rule list, a failed load, and a
+second web content process loss after the one automatic reload;
+`PluginPageSandboxTests.testMissingPageGivesATypedFailureNotABlankView` and
+`testProcessTerminationReloadsOnceThenShowsTheCard`).
 
 --------------------------------------------------------------------------------
 

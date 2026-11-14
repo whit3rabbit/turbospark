@@ -14722,6 +14722,268 @@
         }
       }
     },
+    "A file of this page is over the size limit.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A file of this page is over the size limit."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un archivo de esta página supera el límite de tamaño."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un fichier de cette page dépasse la limite de taille."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eine Datei dieser Seite überschreitet das Größenlimit."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un file di questa pagina supera il limite di dimensione."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Um arquivo desta página excede o limite de tamanho."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Een bestand van deze pagina overschrijdt de groottelimiet."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En fil på den här sidan överskrider storleksgränsen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plik tej strony przekracza limit rozmiaru."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu sayfanın bir dosyası boyut sınırını aşıyor."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Satu berkas halaman ini melebihi batas ukuran."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Файл этой страницы превышает ограничение по размеру."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Файл цієї сторінки перевищує обмеження розміру."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Một tệp của trang này vượt quá giới hạn kích thước."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このページのファイルがサイズ上限を超えています。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 페이지의 파일이 크기 제한을 초과했습니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此页面的某个文件超过了大小限制。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此頁面的某個檔案超過了大小限制。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "أحد ملفات هذه الصفحة يتجاوز حد الحجم."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "אחד מקובצי הדף חורג ממגבלת הגודל."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस पृष्ठ की एक फ़ाइल आकार सीमा से अधिक है।"
+          }
+        }
+      }
+    },
+    "A file this page needs is missing, undeclared, or not allowed. The plugin's manifest decides what a page may load.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A file this page needs is missing, undeclared, or not allowed. The plugin's manifest decides what a page may load."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Falta un archivo que necesita esta página, no está declarado o no está permitido. El manifiesto del complemento decide qué puede cargar una página."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un fichier dont cette page a besoin est manquant, non déclaré ou non autorisé. Le manifeste du plug-in décide de ce qu'une page peut charger."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eine von dieser Seite benötigte Datei fehlt, ist nicht deklariert oder nicht erlaubt. Das Manifest des Plug-ins legt fest, was eine Seite laden darf."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Un file necessario a questa pagina manca, non è dichiarato o non è consentito. Il manifest del plugin decide cosa può caricare una pagina."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Um arquivo de que esta página precisa está ausente, não foi declarado ou não é permitido. O manifesto do plugin define o que uma página pode carregar."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Een bestand dat deze pagina nodig heeft ontbreekt, is niet gedeclareerd of is niet toegestaan. Het manifest van de plugin bepaalt wat een pagina mag laden."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "En fil som sidan behöver saknas, är inte deklarerad eller är inte tillåten. Pluginets manifest avgör vad en sida får läsa in."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Brakuje pliku potrzebnego tej stronie, nie jest zadeklarowany lub jest niedozwolony. Manifest wtyczki określa, co strona może ładować."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu sayfanın ihtiyaç duyduğu bir dosya eksik, bildirilmemiş veya izin verilmemiş. Bir sayfanın neleri yükleyebileceğine eklentinin bildirimi karar verir."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Berkas yang dibutuhkan halaman ini hilang, tidak dideklarasikan, atau tidak diizinkan. Manifes plugin menentukan apa yang boleh dimuat halaman."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Нужный странице файл отсутствует, не объявлен или не разрешён. Манифест плагина определяет, что может загружать страница."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Потрібний сторінці файл відсутній, не оголошений або не дозволений. Маніфест плагіна визначає, що може завантажувати сторінка."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Một tệp mà trang này cần bị thiếu, chưa được khai báo hoặc không được phép. Tệp kê khai của plugin quyết định trang được tải những gì."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このページに必要なファイルが見つからない、宣言されていない、または許可されていません。ページが読み込める内容はプラグインのマニフェストで決まります。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 페이지에 필요한 파일이 없거나, 선언되지 않았거나, 허용되지 않습니다. 페이지가 불러올 수 있는 항목은 플러그인의 매니페스트가 결정합니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此页面所需的文件缺失、未声明或不被允许。页面可加载的内容由插件的清单决定。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此頁面所需的檔案遺失、未宣告或不被允許。頁面可載入的內容由外掛的資訊清單決定。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ملف تحتاجه هذه الصفحة مفقود أو غير مُعلن أو غير مسموح به. يحدد بيان الملحق ما يمكن للصفحة تحميله."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "קובץ שהדף זקוק לו חסר, לא הוצהר או אינו מותר. מניפסט התוסף קובע מה דף רשאי לטעון."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस पृष्ठ को चाहिए एक फ़ाइल गायब है, घोषित नहीं है या अनुमत नहीं है। पृष्ठ क्या लोड कर सकता है, यह प्लगइन का मैनिफ़ेस्ट तय करता है।"
+          }
+        }
+      }
+    },
     "A GitHub source is owner/repo, e.g. anthropics/claude-plugins-official.": {
       "extractionState": "manual",
       "localizations": {
@@ -100219,6 +100481,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "清除金鑰"
+          }
+        }
+      }
+    },
+    "From the page %@ of the plugin %@:": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "From the page %@ of the plugin %@:"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De la página %@ del complemento %@:"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De la page %@ du plug-in %@ :"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Von der Seite %@ des Plug-ins %@:"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dalla pagina %@ del plugin %@:"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Da página %@ do plugin %@:"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Van de pagina %@ van de plugin %@:"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Från sidan %@ i pluginet %@:"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ze strony %@ wtyczki %@:"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ sayfasından (eklenti: %@):"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dari halaman %@ plugin %@:"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Со страницы %@ плагина %@:"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Зі сторінки %@ плагіна %@:"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Từ trang %@ của plugin %@:"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ページ %@(プラグイン %@)から:"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "페이지 %@(플러그인 %@)에서:"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "来自页面 %@（插件 %@）："
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "來自頁面 %@（外掛 %@）："
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "من الصفحة %@ في الملحق %@:"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מהדף %@ של התוסף %@:"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पृष्ठ %@ (प्लगइन %@) से:"
           }
         }
       }
@@ -341673,6 +342066,137 @@
         }
       }
     },
+    "Plugin page %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plugin page %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Página del complemento %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Page du plug-in %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plug-in-Seite %@"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pagina del plugin %@"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Página do plugin %@"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pluginpagina %@"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pluginsida %@"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Strona wtyczki %@"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eklenti sayfası %@"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Halaman plugin %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Страница плагина %@"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сторінка плагіна %@"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trang plugin %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プラグインページ %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "플러그인 페이지 %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "插件页面 %@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外掛頁面 %@"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "صفحة الملحق %@"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "דף התוסף %@"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्लगइन पृष्ठ %@"
+          }
+        }
+      }
+    },
     "Plugins": {
       "extractionState": "manual",
       "localizations": {
@@ -481358,6 +481882,399 @@
         }
       }
     },
+    "The offline sandbox is unavailable, so the page was not loaded.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The offline sandbox is unavailable, so the page was not loaded."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El entorno aislado sin conexión no está disponible, por lo que no se cargó la página."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le bac à sable hors ligne est indisponible, la page n'a donc pas été chargée."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Offline-Sandbox ist nicht verfügbar, daher wurde die Seite nicht geladen."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La sandbox offline non è disponibile, quindi la pagina non è stata caricata."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O sandbox offline não está disponível, então a página não foi carregada."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De offline sandbox is niet beschikbaar, dus de pagina is niet geladen."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Offline-sandlådan är inte tillgänglig, så sidan lästes inte in."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Piaskownica offline jest niedostępna, więc strona nie została załadowana."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Çevrimdışı korumalı alan kullanılamıyor, bu nedenle sayfa yüklenmedi."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sandbox offline tidak tersedia, sehingga halaman tidak dimuat."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Автономная песочница недоступна, поэтому страница не загружена."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Офлайн-пісочниця недоступна, тому сторінку не завантажено."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hộp cát ngoại tuyến không khả dụng nên trang chưa được tải."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "オフラインのサンドボックスを利用できないため、ページを読み込みませんでした。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "오프라인 샌드박스를 사용할 수 없어 페이지를 불러오지 않았습니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "离线沙盒不可用，因此未加载该页面。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "離線沙盒無法使用，因此未載入該頁面。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "صندوق الحماية دون اتصال غير متاح، لذا لم يتم تحميل الصفحة."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ארגז החול הלא מקוון אינו זמין, ולכן הדף לא נטען."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ऑफ़लाइन सैंडबॉक्स उपलब्ध नहीं है, इसलिए पृष्ठ लोड नहीं हुआ।"
+          }
+        }
+      }
+    },
+    "The page failed to load.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The page failed to load."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo cargar la página."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La page n'a pas pu être chargée."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Seite konnte nicht geladen werden."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossibile caricare la pagina."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível carregar a página."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De pagina kon niet worden geladen."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sidan kunde inte läsas in."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie udało się załadować strony."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sayfa yüklenemedi."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Halaman gagal dimuat."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось загрузить страницу."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не вдалося завантажити сторінку."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không thể tải trang."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ページを読み込めませんでした。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "페이지를 불러오지 못했습니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "页面加载失败。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "頁面載入失敗。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "فشل تحميل الصفحة."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "טעינת הדף נכשלה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पृष्ठ लोड नहीं हो सका।"
+          }
+        }
+      }
+    },
+    "The page stopped, usually because the Mac was short on memory. Closing other pages can help.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The page stopped, usually because the Mac was short on memory. Closing other pages can help."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La página se detuvo, normalmente porque el Mac se quedó sin memoria. Cerrar otras páginas puede ayudar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La page s'est arrêtée, en général parce que le Mac manquait de mémoire. Fermer d'autres pages peut aider."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Seite wurde beendet, meist weil dem Mac der Speicher ausging. Das Schließen anderer Seiten kann helfen."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La pagina si è interrotta, di solito perché il Mac aveva poca memoria. Chiudere altre pagine può aiutare."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A página parou, geralmente porque o Mac ficou com pouca memória. Fechar outras páginas pode ajudar."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De pagina is gestopt, meestal omdat de Mac te weinig geheugen had. Andere pagina's sluiten kan helpen."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sidan stoppade, vanligtvis för att Macen fick slut på minne. Att stänga andra sidor kan hjälpa."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Strona zatrzymała się, zwykle z powodu braku pamięci na Macu. Zamknięcie innych stron może pomóc."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sayfa durdu; genellikle Mac'in belleği yetersiz kaldığı için olur. Diğer sayfaları kapatmak yardımcı olabilir."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Halaman berhenti, biasanya karena memori Mac tidak cukup. Menutup halaman lain dapat membantu."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Страница остановилась, обычно из-за нехватки памяти на Mac. Закрытие других страниц может помочь."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сторінка зупинилася, зазвичай через брак пам'яті на Mac. Закриття інших сторінок може допомогти."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trang đã dừng, thường do Mac thiếu bộ nhớ. Đóng các trang khác có thể giúp ích."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ページが停止しました。多くの場合、Macのメモリ不足が原因です。他のページを閉じると改善することがあります。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "페이지가 중지되었습니다. 대개 Mac의 메모리가 부족해서 발생합니다. 다른 페이지를 닫으면 도움이 될 수 있습니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "页面已停止，通常是因为 Mac 内存不足。关闭其他页面可能会有帮助。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "頁面已停止，通常是因為 Mac 記憶體不足。關閉其他頁面可能會有幫助。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "توقفت الصفحة، وغالبًا بسبب نقص الذاكرة في جهاز Mac. قد يساعد إغلاق الصفحات الأخرى."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הדף נעצר, בדרך כלל בגלל מחסור בזיכרון ב-Mac. סגירת דפים אחרים עשויה לעזור."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पृष्ठ रुक गया, आमतौर पर Mac की मेमोरी कम होने के कारण। अन्य पृष्ठ बंद करने से मदद मिल सकती है।"
+          }
+        }
+      }
+    },
     "The provider did not respond in time.": {
       "extractionState": "manual",
       "localizations": {
@@ -499683,6 +500600,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "這將永久刪除此對話已儲存的記錄。對話本身不會改變。"
+          }
+        }
+      }
+    },
+    "This plugin page could not be shown": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This plugin page could not be shown"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pudo mostrar esta página del complemento"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cette page du plug-in n'a pas pu être affichée"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diese Plug-in-Seite konnte nicht angezeigt werden"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Impossibile mostrare questa pagina del plugin"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não foi possível mostrar esta página do plugin"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deze pluginpagina kon niet worden getoond"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Den här pluginsidan kunde inte visas"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie można wyświetlić tej strony wtyczki"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu eklenti sayfası gösterilemedi"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Halaman plugin ini tidak dapat ditampilkan"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не удалось показать эту страницу плагина"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не вдалося показати цю сторінку плагіна"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không thể hiển thị trang plugin này"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このプラグインページを表示できませんでした"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 플러그인 페이지를 표시할 수 없습니다"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法显示此插件页面"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "無法顯示此外掛頁面"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تعذر عرض صفحة الملحق هذه"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "לא ניתן להציג את דף התוסף הזה"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "यह प्लगइन पृष्ठ दिखाया नहीं जा सका"
           }
         }
       }

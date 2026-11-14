@@ -132,6 +132,7 @@ public enum PluginManifestParser {
         parseHooks(json["hooks"], into: &manifest, notes: &notes)
         parseMcpServers(json["mcpServers"], into: &manifest, notes: &notes)
         manifest.userConfig = parseUserConfig(json["userConfig"], notes: &notes)
+        manifest.uiSurfaces = parseUiSurfaces(json["ui"], notes: &notes)
         manifest.unsupportedNotes = collectUnsupportedNotes(json)
 
         // Record what was ignored so a plugin author can see why a surface
@@ -348,6 +349,132 @@ public enum PluginManifestParser {
                 isSensitive: (entryDict["sensitive"] as? Bool) ?? false))
         }
         return options
+    }
+
+    /// `ui.surfaces` (ZP-06). A malformed surface is dropped with a named
+    /// diagnostic and its siblings load; an unknown capability is dropped
+    /// from its surface alone (fail closed: the page simply cannot do it).
+    /// Every path goes through `PluginPageResolver.normalizeRelativePath`,
+    /// the same function the scheme handler uses, so the parser and the
+    /// server cannot disagree about what a safe path is.
+    static func parseUiSurfaces(_ value: Any?, notes: inout [String]) -> [PluginUiSurface] {
+        guard let value else { return [] }
+        guard let ui = value as? [String: Any] else {
+            notes.append("ui: unusable shape; field dropped")
+            return []
+        }
+        guard let rawSurfaces = ui["surfaces"] else { return [] }
+        guard let entries = rawSurfaces as? [Any] else {
+            notes.append("ui.surfaces: not an array; field dropped")
+            return []
+        }
+        var surfaces: [PluginUiSurface] = []
+        var seen = Set<String>()
+        for (index, entry) in entries.enumerated() {
+            let label = "ui.surfaces[\(index)]"
+            if surfaces.count >= PluginPageLimits.maxSurfacesPerPlugin {
+                notes.append("\(label): more than \(PluginPageLimits.maxSurfacesPerPlugin) surfaces; dropped")
+                continue
+            }
+            guard let dict = entry as? [String: Any] else {
+                notes.append("\(label): not an object; dropped")
+                continue
+            }
+            guard let id = dict["id"] as? String,
+                id.range(of: "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$", options: .regularExpression) != nil
+            else {
+                notes.append("\(label): id must match [A-Za-z0-9][A-Za-z0-9_-]{0,63}; dropped")
+                continue
+            }
+            guard seen.insert(id).inserted else {
+                notes.append("\(label): duplicate surface id '\(id)'; dropped")
+                continue
+            }
+            guard let rawPage = dict["resourceUri"] as? String,
+                let page = PluginPageResolver.normalizeRelativePath(rawPage)
+            else {
+                notes.append("\(label) '\(id)': resourceUri is missing or not a safe bundle-relative path; dropped")
+                continue
+            }
+            guard page.lowercased().hasSuffix(".html") || page.lowercased().hasSuffix(".htm") else {
+                notes.append("\(label) '\(id)': resourceUri must be an .html file; dropped")
+                continue
+            }
+
+            var resources: [String] = []
+            if let rawResources = dict["resources"] {
+                if let array = rawResources as? [Any] {
+                    for item in array {
+                        guard resources.count < PluginPageLimits.maxResourcesPerSurface else {
+                            notes.append("\(label) '\(id)': more than \(PluginPageLimits.maxResourcesPerSurface) resources; extras dropped")
+                            break
+                        }
+                        if let raw = item as? String,
+                            let normalized = PluginPageResolver.normalizeRelativePath(raw),
+                            PluginPageResolver.mimeType(forPath: normalized) != nil
+                        {
+                            resources.append(normalized)
+                        } else {
+                            notes.append("\(label) '\(id)': a resource is not a safe path to a served file type; dropped")
+                        }
+                    }
+                } else {
+                    notes.append("\(label) '\(id)': resources is not an array; dropped")
+                }
+            }
+
+            var capabilities: [PluginUiCapability] = []
+            if let rawCaps = dict["capabilities"] {
+                if let array = rawCaps as? [Any] {
+                    for item in array {
+                        if let name = item as? String, let cap = PluginUiCapability(rawValue: name) {
+                            if !capabilities.contains(cap) { capabilities.append(cap) }
+                        } else {
+                            notes.append("\(label) '\(id)': unknown capability \(item); dropped")
+                        }
+                    }
+                } else {
+                    notes.append("\(label) '\(id)': capabilities is not an array; dropped")
+                }
+            }
+
+            var placement = PluginUiPlacement.sidePane
+            if let rawPlacement = dict["placement"] {
+                if let name = rawPlacement as? String, let parsed = PluginUiPlacement(rawValue: name) {
+                    placement = parsed
+                } else {
+                    notes.append("\(label) '\(id)': unknown placement \(rawPlacement); using sidePane")
+                }
+            }
+
+            var tools: [String] = []
+            if let rawTools = dict["tools"] {
+                if let array = rawTools as? [Any] {
+                    for item in array {
+                        if let name = item as? String,
+                            name.range(
+                                of: "^[A-Za-z0-9_.-]{1,64}/[A-Za-z0-9_.-]{1,64}$",
+                                options: .regularExpression) != nil
+                        {
+                            tools.append(name)
+                        } else {
+                            notes.append("\(label) '\(id)': tools entries must be \"server/tool\"; dropped")
+                        }
+                    }
+                } else {
+                    notes.append("\(label) '\(id)': tools is not an array; dropped")
+                }
+            }
+            if !tools.isEmpty, !capabilities.contains(.invokeTool) {
+                notes.append("\(label) '\(id)': tools declared without the invokeTool capability; the page cannot call them")
+            }
+
+            let title = (dict["title"] as? String).flatMap { $0.isEmpty ? nil : String($0.prefix(80)) }
+            surfaces.append(PluginUiSurface(
+                id: id, title: title, resourceUri: page, resources: resources,
+                capabilities: capabilities, placement: placement, tools: tools))
+        }
+        return surfaces
     }
 
     private static func collectUnsupportedNotes(_ json: [String: Any]) -> [String] {

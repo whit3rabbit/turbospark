@@ -10,7 +10,7 @@ revision `a60ba6a7` (v3.17.1), audited 2026-10-31
 ([INDEX.md](INDEX.md)).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented (partial): phase A (page host, sandbox, bridge, failure card, manifest model) landed; plugin UI declaration wiring and Gen UI remain, see Implementation notes
 * Date: 2026-11-11
 
 Terms: ZCode and the ZP set are defined in [INDEX.md](INDEX.md);
@@ -351,5 +351,69 @@ script-to-app methods, each validated against the manifest.
   explicit grant.
 
 --------------------------------------------------------------------------------
+
+## Implementation notes
+
+### Phase A (host, sandbox, bridge, failure card, manifest model)
+
+Landed in `Plugins/UI/` plus `PluginModels.swift` and
+`PluginManifestParser.swift`. Contract and limits are in
+[SWIFT_PLUGINS.md](../../../swift/docs/SWIFT_PLUGINS.md) (UI plugins section).
+
+Deviations from the draft, and why:
+
+* **A sibling `PluginPageWebView`, not parameters on `ArtifactWebView`.**
+  The draft (Alternative C, EGM finding M2) said to extend `ArtifactWebView`.
+  The implemented host differs in three ways that cannot be representable
+  parameters without weakening the artifact host: every byte is served by a
+  `WKURLSchemeHandler` (CSP and the file root are enforced by app code),
+  the bridge handler is installed, and the session outlives any one SwiftUI
+  view. It reuses `ArtifactContentRuleList` so there is one definition of
+  "no network". ZP-17 named `PluginPageWebView.swift` for the failure card,
+  which also matches this.
+* **Origin model.** `WKContentConfiguration` does not exist and
+  `nonPersistent()` returns a fresh store per call (EGM B3). Pages load from
+  `tsplugin://<random token>/`; the token is the per-load origin, the data
+  store is non-persistent per page. "Partition per identity" is therefore
+  "one store and one origin per live page".
+* **Declared-files-only.** The draft allowed the plugin's resource root. The
+  handler serves only the page and the resources the manifest lists, which
+  is stricter and makes CSP derivable.
+* **`invokeTool` and the approval prompt.** A page cannot show an approval
+  card, so a call goes through `executeDeferredMcpCall` (the same path
+  codemode uses) and an `ask` verdict is refused as `permission_denied`.
+  The "prompt names the page and plugin" item is therefore moot: nothing
+  prompts. Pages can only run tools the engine already allows without
+  asking. Numbers chosen for the draft's N and M: 2 pending, 12 per minute,
+  5 s user-gesture window, 16 KiB message, 16 KiB widget state per message,
+  64 KiB tool result, 2 MiB per served file.
+* **User gesture** is a real AppKit mouse-down or key-down reaching the web
+  view (`PluginGestureWebView`), not a page-supplied flag. `sendFollowUp`
+  also needs it (the draft asked only for `invokeTool`).
+* **No `_meta.ui.resourceUri` parsing.** `McpClientEngine.callTool` returns
+  a flattened string, so there is no `_meta` to read. Surfaces open from the
+  Plugins pane (phase B). A tool-result "Open" row is deferred.
+* **`displayMode`** stays deferred as the draft said.
+* **Camera, microphone, location** are denied by default in the page, the
+  same default as ZP-14. In a test run without capture hardware WebKit leaves
+  `getUserMedia` pending instead of rejecting, so the test asserts "never
+  granted"; the delegate's `.deny` cannot be unit-called because
+  `WKSecurityOrigin` has no public initializer.
+
+Mutation checks run (each mutation applied, the named tests failed, source
+restored): hidden or dot path segment allowed; declared-files allow-list
+dropped; symlink refusal, belt check and `O_NOFOLLOW` dropped; resource size
+cap dropped; CSP connect, img and frame sources opened plus navigation policy
+opened; offline rule list not installed (killed by the CSP-relaxed probe
+`testOfflineRuleListAloneKeepsTheNetworkOut`, since the first version of the
+network test survived it); bridge capability check dropped; main-frame and
+origin check dropped; message size cap dropped; user-gesture check dropped;
+declared-tool allow-list dropped; rate limit dropped.
+
+ZP-17's deferred page-load failure card is implemented as
+`PluginPageFailureCard`; its note is updated.
+
+Remaining: phase B (plugin UI declaration wiring: per-plugin opt-in, host
+registry and cap, side pane, Plugins pane Open), phase C (Gen UI).
 
 *Drafted with EGM*
