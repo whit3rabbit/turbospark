@@ -158,7 +158,9 @@ struct FilePreviewView: View {
     @ViewBuilder
     private var imageView: some View {
         if let url = attachment.sourceURL, let image = NSImage(contentsOf: url) {
-            ImagePreviewView(image: image)
+            ImagePreviewView(image: image) { png in
+                model.attachAnnotatedImage(png, sourceName: attachment.fileName)
+            }
                 .accessibilityLabel(Text("Image preview of \(attachment.fileName)", bundle: .module))
         } else {
             unavailableView

@@ -278,7 +278,9 @@ struct ArtifactPanelView: View {
             }
         case .image:
             if let url = artifact.url, let image = NSImage(contentsOf: url) {
-                ImagePreviewView(image: image)
+                ImagePreviewView(image: image) { png in
+                    model.attachAnnotatedImage(png, sourceName: url.lastPathComponent)
+                }
             } else {
                 unavailableView("The image is no longer at its written path.")
             }
