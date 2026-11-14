@@ -9,7 +9,8 @@ and the
 [provider JSON schema doc](https://github.com/zai-org/ZCode/blob/main/docs/model-provider-json-schema.md).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented (partial). See "Implementation Record" for what
+  shipped, the seam finding, and the exact remainder.
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -356,6 +357,149 @@ concerns and stay untouched.
   deterministic checks; one real-provider smoke by the user; verify key
   absence from settings.json and logs; verify interrupt, steering, and
   tool approval on a remote chat.
+
+## Implementation Record
+
+Author decisions applied 2026-11-14: upstream APIs, API keys only, never
+cloud OAuth. This increment ships the foundation layers and none of the
+user-visible wiring. Behavior of the app is unchanged: nothing calls
+`RemoteProviderService` yet. Subsystem doc:
+`swift/docs/SWIFT_REMOTE_PROVIDERS.md`.
+
+### Turn-loop seam: verified 2026-11-14 (resolves B1)
+
+Read of `State/AppModel+Generation.swift` (`executeGenerationTurn`),
+`State/AppModel+AgentLoop.swift` and the ZP-23 record (d0f056cb). Findings,
+which change the plan above:
+
+* The draft's `ModelStep` protocol is the wrong cut. The engine-neutral event
+  type already exists: `GenerationEvent` (`prefill`, `content`, `reasoning`,
+  `toolCall`, `stopped`, `finished`) from `session.generate`, with the
+  `GenerationResult` it ends in. The loop consumes exactly that stream at one
+  call site (the closure passed to `AppStreamRecovery.generateUntilComplete`).
+  A remote step should emit `GenerationEvent`, not a second protocol. The
+  tail (`ToolCallDispatchGate`, `finishProseTurn`, `handleExtractedToolCalls`,
+  `AppStreamRecovery.commitAssistantRow`, `finishCancelled`) takes
+  `GenerationResult`, so it stays untouched. `GenerationResult` is
+  `Decodable` only (no memberwise init, in the `TurboSpark` package), so the
+  remote path builds the final result through `JSONDecoder` from a dictionary
+  (promptTokens, newTokens, stopReason, content, reasoning, toolCalls, with
+  zero timings). `GenerationToolCall` has only an internal
+  `init?(parsingJSON:)` in the `TurboSpark` package, so the remote step needs a
+  small public initializer added there (Swift only, no Rust or ABI change),
+  or must hand `RemoteToolCall` to the dispatch gate as `AppToolCall`
+  directly. Decide at step 1 below after reading `ToolCallDispatchGate`.
+* The real coupling is not the call site, it is `session`. `executeGenerationTurn`
+  begins with `guard let session`, and the code before the call reads
+  `session.info.maxContext`, `session.info.vision`, `session.countTokens`,
+  `fitWindow`, instruction pinning, conversation recall, auto-compaction and
+  `session.phases()`. A remote chat has no local session, and with no model
+  loaded the turn would not start at all. So the remote path is a sibling,
+  `executeRemoteGenerationTurn(step:chatID:)`, that reuses the same prologue
+  facts (turn project, tool capture, `claimLane`, epoch, `outputText`) and the
+  same tail, and replaces the fit and compaction block with the remote
+  context rule (option (a) below). It must not be a branch threaded through
+  the 280-line local block.
+* ZP-23 rules the remote turn must follow: it raises `generating` only after
+  `claimLane(for: chatID)`; chat-level guards ask `laneVerdict`; a tool
+  proposal from a chat that is not selected parks and replays in the
+  foreground (the same `handleExtractedToolCalls` path, so remote turns get
+  it for free); one turn at a time app-wide, so a remote turn holds the same
+  lane as a local one and ZP-22 does not need its own scheduler. Cancellation
+  uses the same epoch and `isCancellationPending` flags: the stream's
+  `onTermination` cancels the connection.
+* `finishTurnTail` calls `drainPendingTitleGenerationIfIdle(session:)` and
+  other `session`-typed helpers. Those take an optional session today, which
+  is the one place a remote-only chat (no model loaded) must be proven not to
+  start a local title or memory run (Non-Goal: no background feature selects a
+  remote model, and with no chat context it stays local).
+* Rollout log (ZP-03, 7c22dec2): `logTrajectoryModelCall(result:step:chatID:)`
+  is the call site. It is off by default and writes plaintext, so the remote
+  turn calls it only when the existing setting is on, with a `remote: true`
+  marker and the provider host, and every field passes
+  `TrajectoryRedactor` already (the same pattern set `RemoteProviderRedactor`
+  layers the exact key on top of). The request body is never logged.
+
+### What shipped
+
+* `Networking/` (new): `SSEParser`, `RemoteProviderTypes`,
+  `RemoteEndpointPolicy`, `RemoteProviderRedactor`, `RemoteHTTPTransport`
+  (protocol plus the URLSession transport), `RemoteStreamRunner`,
+  `AnthropicClient`, `OpenAICompatClient`, `RemoteJSON`.
+* `State/`: `RemoteProviderKeyStore` (opt-in per credential, `SystemKeychainBackend`),
+  `RemoteProviderStore` (shape in `remote_providers.json` through
+  `AppJSONStore`, no key field; picker entries; `RemoteConsentLedger` and
+  `sendDecision`), `RemoteProviderService`.
+* `RemoteProviderTests.swift`: 44 tests, scripted transport and fake Keychain
+  backend, no network.
+* One catalog key, "Remote providers", the `AppJSONStore` label.
+
+Review disposition (docs/egm-reviews/zcode-parity/ZP-22): B1 resolved by the
+seam record above. B2 applied (saving is the opt-in, first-send read, named
+denied-read error, `ServerKeychain` pattern, no toggle). B3 and M1 to M16 were
+already folded into this draft before this pass. Decisions closed here:
+probe is models-list with a one-token completion fallback only when the list
+is absent (404 or 405), never after an auth failure; no ATS exception is
+needed (https needs none, and the loopback `http` allowance is the one open
+item, see below); the private-address refusal is not applied to provider
+hosts; Test connection needs no chat consent because it sends no
+conversation. The persisted shape lives in its own `remote_providers.json`
+rather than `settings.json`, so no `MacAppSettings` or settings-catalog change
+was needed; CUJ 4's "settings.json" reads as that file.
+
+Fixed values: first-byte 60 s, stall 90 s, request 8 MiB, response 32 MiB,
+SSE event 1 MiB, error body 16 KiB, 3 same-host redirects, no retry.
+Redaction patterns: exact key, Authorization and x-api-key values, `sk-` and
+`sk-ant-` followed by 16 or more key characters (`TrajectoryRedactor`).
+
+Mutation checks (each applied, observed failing, restored):
+* Exact-key redaction removed from `RemoteProviderRedactor`: the redaction
+  test failed.
+* Cross-host redirect rule bypassed in `RemoteEndpointPolicy.mayFollow`:
+  three runner tests failed (cross-host, downgrade, and the never-sent
+  assertion).
+* Keychain read without the per-credential opt-in in `keyForSend`: the
+  no-touch test failed.
+* Per-chat consent check skipped in `sendDecision`: the confirmation test
+  failed.
+The tool-ladder mutation is deferred with step 8 below. An earlier M2 attempt
+did not compile (a bad edit) and was redone; only the redo is counted.
+
+### Remaining steps (exact)
+
+1. `executeRemoteGenerationTurn` in `State/AppModel+Generation.swift`: sibling
+   of the local path per the seam record. Maps `RemoteStepEvent` to
+   `GenerationEvent` and builds `GenerationResult` via `JSONDecoder`. Calls
+   `claimLane`, honors epoch and cancel flags, runs the same tail. Chooses the
+   path from a per-chat remote selection (new `AppChat` field or a per-chat
+   map persisted without keys).
+2. Context rule for remote chats: ring shows API usage; pre-send estimate is
+   characters divided by 4 labeled "estimate"; compaction triggers on the
+   watermark or estimate against the model entry's window; overflow offers
+   compaction; the summarizer runs on the selected remote model.
+   Files: `State/AppContextUsage.swift`, the compaction entry in
+   `AppModel+Compaction`.
+3. `State/AppChatUsage.swift`: provider-tagged ledger entries.
+4. Settings: `App/SettingsTab.swift`, `App/AppSettingsView.swift`,
+   `Components/RemoteProviderSettingsPaneView.swift` (provider list, key field
+   with an explicit "Save to Keychain" action, model editor, Test connection,
+   the leaves-this-machine statement). Read DESIGN.md and the design-system
+   README first; run `make design-check`.
+5. Composer: `Generation/PromptContextPills.swift` Remote section (hidden with
+   no usable provider, labeled with a cloud glyph and the provider name,
+   persistent "content leaves this Mac" indicator while a remote model is
+   selected), first-send and local-to-remote confirmation sheet from
+   `RemoteProviderStore.sendDecision`.
+6. Localization: every user string in the catalog, 21 languages, parity gates;
+   map each `RemoteProviderError` to the local engine error row type and a
+   localized message (confirm the row type by reading the local error code).
+7. Rollout-log call with remote marker (only when ZP-03 logging is enabled).
+8. Tool ladder equality test against the remote turn once step 1 exists
+   (mutation: skip the ladder, expect failure). Not testable before then.
+9. ATS: confirm `Info.plist` allows loopback `http` (local-networking), or
+   keep loopback http unsupported in the app and update the policy.
+10. Manual: local mock SSE server for both families, one real-provider smoke by
+    the user, verify key absence from settings and logs.
 
 --------------------------------------------------------------------------------
 

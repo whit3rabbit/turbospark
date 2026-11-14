@@ -23,6 +23,7 @@ Short seams. Verify each one before release.
 - [Swift storage](docs/storage.md)
 - [Crash recovery and containment limits](docs/SWIFT_CRASH_RECOVERY.md)
 - [Trajectory log (local, off by default, plaintext)](docs/SWIFT_TRAJECTORY.md)
+- [Remote providers (API keys only, opt-in, foundation layers)](docs/SWIFT_REMOTE_PROVIDERS.md)
 - [Swift memory architecture](docs/SWIFT_MEMORY.md)
 - [Syntext code search](docs/SYNTEXT.md) and
   [conversation recall (Syntext context engine)](docs/SYNTEXT_CONTEXT.md)
