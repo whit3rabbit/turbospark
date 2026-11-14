@@ -749,6 +749,14 @@ public final class AppModel: ObservableObject {
     /// -- a direct write there would be clobbered by this model's own
     /// debounced settings save.
     @Published public var pluginEnableState: [String: Bool] = [:]
+    /// The plugin page the right column shows, if any (ZP-06). Written only by
+    /// `PluginUiHost` through `onSidePaneChange`, so the claimant and the
+    /// live-page registry cannot disagree.
+    @Published public var openPluginPageID: UUID? = nil
+    /// The plugin page host: live pages, the cap, teardown, the per-plugin
+    /// opt-in. Lazy so an app that never opens a page builds nothing.
+    lazy var pluginUiHost: PluginUiHost = makePluginUiHost()
+    var pluginUiHostIsLive = false
     /// Whether user-global skills, agents, plugins, and hooks are discovered
     /// live from other agent tools' home folders. Mirrors
     /// `MacAppSettings.autoLoadExternalAgentContent`; off by default, and the

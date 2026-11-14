@@ -127,6 +127,12 @@ struct RootView: View {
         .tsAnimation(TSMotion.pane, value: model.previewAttachmentID)
         .tsAnimation(TSMotion.pane, value: model.openArtifactID)
         .tsAnimation(TSMotion.pane, value: model.htmlPreviewID)
+        .tsAnimation(TSMotion.pane, value: model.openPluginPageID)
+        // Plugin pages belong to the chat they were opened from: switching
+        // chats tears them down and clears their widget state.
+        .onChange(of: model.selectedChatID) { _, newID in
+            model.pluginUiHost.closePages(exceptSession: newID.uuidString)
+        }
         .overlay(alignment: .trailing) {
             // Share the available height so a toast cannot cover the manager
             // when the window is short or interface text is enlarged.
@@ -336,7 +342,8 @@ struct RootView: View {
             isInspectorVisible: isInspectorVisible,
             showProjectSummary: hasProjectSummary && canPinSummary && isSummaryVisible,
             showBrowserPane: model.browserSettings.enabled && model.browserPaneIsOpen,
-            showWhiteboardPane: model.whiteboardPaneIsOpen)
+            showWhiteboardPane: model.whiteboardPaneIsOpen,
+            pluginPageID: model.openPluginPageID)
     }
 
     @ViewBuilder
@@ -360,6 +367,13 @@ struct RootView: View {
                 verticalHairline
                 rightPane(width: AppChromeLayout.artifactPanelWidth) {
                     ArtifactPanelView(model: model, source: .inlinePreview)
+                }
+            case .pluginPage(let id):
+                if let session = model.pluginUiHost.session(id: id) {
+                    verticalHairline
+                    rightPane(width: AppChromeLayout.artifactPanelWidth) {
+                        PluginPagePanelView(model: model, session: session).id(id)
+                    }
                 }
             case .filePreview:
                 // The claimant is keyed on the id; the attachment lookup can

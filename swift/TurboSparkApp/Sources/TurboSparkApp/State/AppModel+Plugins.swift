@@ -73,6 +73,11 @@ extension AppModel {
         reloadAgents()
         AppHookStore.shared.refresh(projectDirectory: selectedProject?.rootDirectoryPath)
         refreshMcpToolCatalog(for: selectedProject)
+        // A page of a plugin that was just disabled or removed must not
+        // outlive that decision (ZP-06). After the cache invalidation, so the
+        // host reads the new state; only when the lazy host already exists,
+        // so an app that never opened a page builds nothing here.
+        if pluginUiHostIsLive { pluginUiHost.reconcile() }
     }
 
     // MARK: - Local folder plugins

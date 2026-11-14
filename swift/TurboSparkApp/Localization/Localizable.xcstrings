@@ -21141,6 +21141,137 @@
         }
       }
     },
+    "Allow this plugin to show UI pages": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow this plugin to show UI pages"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permitir que este complemento muestre páginas de interfaz"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Autoriser ce plug-in à afficher des pages d'interface"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diesem Plug-in erlauben, UI-Seiten anzuzeigen"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consenti a questo plugin di mostrare pagine dell'interfaccia"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permitir que este plugin mostre páginas de interface"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deze plugin toestaan UI-pagina's te tonen"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Låt det här pluginet visa gränssnittssidor"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zezwól tej wtyczce na wyświetlanie stron interfejsu"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu eklentinin arayüz sayfaları göstermesine izin ver"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Izinkan plugin ini menampilkan halaman UI"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить этому плагину показывать страницы интерфейса"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Дозволити цьому плагіну показувати сторінки інтерфейсу"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cho phép plugin này hiển thị trang giao diện"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このプラグインにUIページの表示を許可する"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 플러그인이 UI 페이지를 표시하도록 허용"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许此插件显示界面页面"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許此外掛顯示介面頁面"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "السماح لهذا الملحق بعرض صفحات الواجهة"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "אפשר לתוסף זה להציג דפי ממשק"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस प्लगइन को UI पृष्ठ दिखाने की अनुमति दें"
+          }
+        }
+      }
+    },
     "ANE+Steel Prefill Split": {
       "extractionState": "manual",
       "localizations": {
@@ -77050,6 +77181,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "已依大小上限截斷"
+          }
+        }
+      }
+    },
+    "Close page": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close page"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cerrar página"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fermer la page"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Seite schließen"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chiudi pagina"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fechar página"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pagina sluiten"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Stäng sidan"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zamknij stronę"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sayfayı kapat"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tutup halaman"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Закрыть страницу"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Закрити сторінку"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Đóng trang"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ページを閉じる"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "페이지 닫기"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭页面"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "關閉頁面"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "إغلاق الصفحة"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "סגור דף"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पृष्ठ बंद करें"
           }
         }
       }
@@ -316280,6 +316542,137 @@
         }
       }
     },
+    "Open this page beside the chat": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Open this page beside the chat"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Abrir esta página junto al chat"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ouvrir cette page à côté de la conversation"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Diese Seite neben dem Chat öffnen"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apri questa pagina accanto alla chat"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Abrir esta página ao lado do chat"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deze pagina naast de chat openen"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Öppna den här sidan bredvid chatten"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Otwórz tę stronę obok czatu"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu sayfayı sohbetin yanında aç"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Buka halaman ini di samping obrolan"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открыть эту страницу рядом с чатом"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Відкрити цю сторінку поруч із чатом"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mở trang này bên cạnh cuộc trò chuyện"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このページをチャットの横に開く"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 페이지를 채팅 옆에 열기"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在聊天旁打开此页面"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在聊天旁開啟此頁面"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "فتح هذه الصفحة بجانب الدردشة"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "פתח דף זה לצד הצ'אט"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस पृष्ठ को चैट के बगल में खोलें"
+          }
+        }
+      }
+    },
     "OpenAI-compatible": {
       "extractionState": "manual",
       "localizations": {
@@ -331586,6 +331979,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "頁面只載入成品自身資料夾中的本機檔案。"
+          }
+        }
+      }
+    },
+    "Pages run in a sandbox: no network, no files beyond the plugin's own, and no camera, microphone or location. Tools a page calls still go through the normal permission prompts.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pages run in a sandbox: no network, no files beyond the plugin's own, and no camera, microphone or location. Tools a page calls still go through the normal permission prompts."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Las páginas se ejecutan en un entorno aislado: sin red, sin archivos aparte de los del propio complemento y sin cámara, micrófono ni ubicación. Las herramientas que llame una página siguen pasando por los avisos de permiso habituales."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les pages s'exécutent dans un bac à sable : pas de réseau, pas de fichiers hors de ceux du plug-in, ni caméra, ni micro, ni position. Les outils qu'une page appelle passent toujours par les demandes d'autorisation habituelles."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Seiten laufen in einer Sandbox: kein Netzwerk, keine Dateien außer denen des Plug-ins selbst und kein Zugriff auf Kamera, Mikrofon oder Standort. Von einer Seite aufgerufene Werkzeuge durchlaufen weiterhin die üblichen Berechtigungsabfragen."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le pagine vengono eseguite in una sandbox: niente rete, nessun file oltre a quelli del plugin e nessun accesso a fotocamera, microfono o posizione. Gli strumenti richiamati da una pagina passano comunque dalle normali richieste di autorizzazione."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "As páginas rodam em um sandbox: sem rede, sem arquivos além dos do próprio plugin e sem câmera, microfone ou localização. As ferramentas chamadas por uma página continuam passando pelos avisos de permissão normais."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pagina's draaien in een sandbox: geen netwerk, geen bestanden buiten die van de plugin zelf en geen camera, microfoon of locatie. Tools die een pagina aanroept doorlopen nog steeds de gewone toestemmingsvragen."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sidor körs i en sandlåda: inget nätverk, inga filer utöver pluginets egna och ingen kamera, mikrofon eller plats. Verktyg som en sida anropar går fortfarande genom de vanliga behörighetsfrågorna."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Strony działają w piaskownicy: bez sieci, bez plików poza własnymi plikami wtyczki i bez kamery, mikrofonu czy lokalizacji. Narzędzia wywoływane przez stronę nadal przechodzą zwykłe monity o zgodę."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sayfalar korumalı bir alanda çalışır: ağ yok, eklentinin kendi dosyaları dışında dosya yok, kamera, mikrofon veya konum yok. Bir sayfanın çağırdığı araçlar yine olağan izin istemlerinden geçer."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Halaman berjalan di sandbox: tanpa jaringan, tanpa berkas selain milik plugin sendiri, dan tanpa kamera, mikrofon, atau lokasi. Alat yang dipanggil halaman tetap melalui permintaan izin biasa."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Страницы работают в песочнице: без сети, без файлов, кроме собственных файлов плагина, и без камеры, микрофона и геопозиции. Инструменты, которые вызывает страница, по-прежнему проходят обычные запросы разрешений."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сторінки працюють у пісочниці: без мережі, без файлів, окрім власних файлів плагіна, і без камери, мікрофона чи геолокації. Інструменти, які викликає сторінка, як і раніше проходять звичайні запити дозволів."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Các trang chạy trong hộp cát: không có mạng, không có tệp ngoài tệp của chính plugin, và không có camera, micrô hay vị trí. Các công cụ mà trang gọi vẫn đi qua các lời nhắc cấp quyền thông thường."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ページはサンドボックス内で動作します。ネットワーク、プラグイン自身のファイル以外のファイル、カメラ、マイク、位置情報は使えません。ページが呼び出すツールは、通常の許可確認を引き続き経由します。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "페이지는 샌드박스에서 실행됩니다. 네트워크, 플러그인 자체 파일 외의 파일, 카메라, 마이크, 위치 정보는 사용할 수 없습니다. 페이지가 호출하는 도구는 기존과 같이 일반 권한 확인을 거칩니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "页面在沙盒中运行：无网络，除插件自身文件外无其他文件，也无摄像头、麦克风或位置信息。页面调用的工具仍会经过常规的权限提示。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "頁面在沙盒中執行：無網路，除外掛自身檔案外無其他檔案，也無相機、麥克風或位置資訊。頁面呼叫的工具仍會經過一般的權限提示。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تعمل الصفحات داخل صندوق حماية: بلا شبكة، وبلا ملفات سوى ملفات الملحق نفسه، وبلا كاميرا أو ميكروفون أو موقع. تظل الأدوات التي تستدعيها الصفحة تمر عبر طلبات الأذونات المعتادة."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הדפים פועלים בארגז חול: ללא רשת, ללא קבצים מלבד קבצי התוסף עצמו, וללא מצלמה, מיקרופון או מיקום. כלים שדף קורא להם עדיין עוברים את בקשות ההרשאה הרגילות."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पृष्ठ सैंडबॉक्स में चलते हैं: कोई नेटवर्क नहीं, प्लगइन की अपनी फ़ाइलों के अलावा कोई फ़ाइल नहीं, और कोई कैमरा, माइक्रोफ़ोन या स्थान नहीं। पृष्ठ द्वारा बुलाए गए टूल अब भी सामान्य अनुमति संकेतों से गुज़रते हैं।"
           }
         }
       }
@@ -482275,6 +482799,137 @@
         }
       }
     },
+    "The plugin no longer declares this page.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The plugin no longer declares this page."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El complemento ya no declara esta página."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le plug-in ne déclare plus cette page."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Das Plug-in deklariert diese Seite nicht mehr."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il plugin non dichiara più questa pagina."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O plugin não declara mais esta página."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "De plugin declareert deze pagina niet meer."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pluginet deklarerar inte längre den här sidan."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wtyczka nie deklaruje już tej strony."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Eklenti artık bu sayfayı bildirmiyor."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plugin tidak lagi mendeklarasikan halaman ini."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Плагин больше не объявляет эту страницу."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Плагін більше не оголошує цю сторінку."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plugin không còn khai báo trang này."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "プラグインはこのページを宣言しなくなりました。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "플러그인이 더 이상 이 페이지를 선언하지 않습니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "插件不再声明此页面。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "外掛不再宣告此頁面。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لم يعد الملحق يعلن عن هذه الصفحة."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "התוסף אינו מצהיר עוד על דף זה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "प्लगइन अब इस पृष्ठ की घोषणा नहीं करता।"
+          }
+        }
+      }
+    },
     "The provider did not respond in time.": {
       "extractionState": "manual",
       "localizations": {
@@ -500604,6 +501259,137 @@
         }
       }
     },
+    "This plugin is disabled or no longer installed.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This plugin is disabled or no longer installed."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este complemento está desactivado o ya no está instalado."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ce plug-in est désactivé ou n'est plus installé."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dieses Plug-in ist deaktiviert oder nicht mehr installiert."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Questo plugin è disattivato o non più installato."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Este plugin está desativado ou não está mais instalado."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Deze plugin is uitgeschakeld of niet meer geïnstalleerd."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Det här pluginet är inaktiverat eller inte längre installerat."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ta wtyczka jest wyłączona lub nie jest już zainstalowana."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu eklenti devre dışı veya artık yüklü değil."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plugin ini dinonaktifkan atau tidak lagi terpasang."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Этот плагин отключён или больше не установлен."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Цей плагін вимкнено або більше не встановлено."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Plugin này đã bị tắt hoặc không còn được cài đặt."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このプラグインは無効か、インストールされていません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 플러그인은 비활성화되었거나 더 이상 설치되어 있지 않습니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此插件已停用或不再安装。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此外掛已停用或不再安裝。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "هذا الملحق معطّل أو لم يعد مثبتًا."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "תוסף זה מושבת או שאינו מותקן עוד."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "यह प्लगइन अक्षम है या अब इंस्टॉल नहीं है।"
+          }
+        }
+      }
+    },
     "This plugin page could not be shown": {
       "extractionState": "manual",
       "localizations": {
@@ -514088,6 +514874,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "過大"
+          }
+        }
+      }
+    },
+    "Too many plugin pages are open. Close one and try again.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Too many plugin pages are open. Close one and try again."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hay demasiadas páginas de complementos abiertas. Cierra una e inténtalo de nuevo."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trop de pages de plug-ins sont ouvertes. Fermez-en une et réessayez."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zu viele Plug-in-Seiten sind geöffnet. Schließen Sie eine und versuchen Sie es erneut."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ci sono troppe pagine di plugin aperte. Chiudine una e riprova."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Há muitas páginas de plugins abertas. Feche uma e tente novamente."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Er zijn te veel pluginpagina's geopend. Sluit er een en probeer het opnieuw."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "För många pluginsidor är öppna. Stäng en och försök igen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Otwartych jest zbyt wiele stron wtyczek. Zamknij jedną i spróbuj ponownie."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Çok fazla eklenti sayfası açık. Birini kapatıp tekrar deneyin."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Terlalu banyak halaman plugin yang terbuka. Tutup satu dan coba lagi."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Открыто слишком много страниц плагинов. Закройте одну и повторите попытку."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Відкрито забагато сторінок плагінів. Закрийте одну й повторіть спробу."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Đang mở quá nhiều trang plugin. Hãy đóng một trang rồi thử lại."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開いているプラグインページが多すぎます。1つ閉じてからもう一度お試しください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "열려 있는 플러그인 페이지가 너무 많습니다. 하나를 닫고 다시 시도하세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "打开的插件页面过多。请关闭一个后重试。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "開啟的外掛頁面過多。請關閉一個後再試。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "عدد صفحات الملحقات المفتوحة كبير جدًا. أغلق واحدة وحاول مرة أخرى."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "יותר מדי דפי תוספים פתוחים. סגור אחד ונסה שוב."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "बहुत अधिक प्लगइन पृष्ठ खुले हैं। एक बंद करें और फिर प्रयास करें।"
           }
         }
       }
@@ -527594,6 +528511,137 @@
         }
       }
     },
+    "Turn on UI pages for this plugin first.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Turn on UI pages for this plugin first."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activa primero las páginas de interfaz para este complemento."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activez d'abord les pages d'interface pour ce plug-in."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktivieren Sie zuerst die UI-Seiten für dieses Plug-in."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Attiva prima le pagine dell'interfaccia per questo plugin."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ative primeiro as páginas de interface para este plugin."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Schakel eerst UI-pagina's in voor deze plugin."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktivera först gränssnittssidor för det här pluginet."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Najpierw włącz strony interfejsu dla tej wtyczki."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Önce bu eklenti için arayüz sayfalarını açın."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktifkan dulu halaman UI untuk plugin ini."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сначала включите страницы интерфейса для этого плагина."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Спершу ввімкніть сторінки інтерфейсу для цього плагіна."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trước tiên hãy bật trang giao diện cho plugin này."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "まず、このプラグインのUIページをオンにしてください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "먼저 이 플러그인의 UI 페이지를 켜세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请先为此插件开启界面页面。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請先為此外掛開啟介面頁面。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "فعّل صفحات الواجهة لهذا الملحق أولًا."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הפעל תחילה דפי ממשק עבור תוסף זה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पहले इस प्लगइन के लिए UI पृष्ठ चालू करें।"
+          }
+        }
+      }
+    },
     "Turn stopped by hook: %@": {
       "extractionState": "manual",
       "localizations": {
@@ -529291,6 +530339,137 @@
           "stringUnit": {
             "state": "translated",
             "value": "TypeSafe 服務已停止"
+          }
+        }
+      }
+    },
+    "UI pages": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "UI pages"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Páginas de interfaz"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pages d'interface"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "UI-Seiten"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pagine dell'interfaccia"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Páginas de interface"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "UI-pagina's"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gränssnittssidor"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Strony interfejsu"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arayüz sayfaları"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Halaman UI"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Страницы интерфейса"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Сторінки інтерфейсу"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Trang giao diện"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "UIページ"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "UI 페이지"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "界面页面"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "介面頁面"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "صفحات الواجهة"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "דפי ממשק"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "UI पृष्ठ"
           }
         }
       }

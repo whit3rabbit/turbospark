@@ -10,7 +10,7 @@ revision `a60ba6a7` (v3.17.1), audited 2026-10-31
 ([INDEX.md](INDEX.md)).
 
 * Author: whit3rabbit
-* Status: Implemented (partial): phase A (page host, sandbox, bridge, failure card, manifest model) landed; plugin UI declaration wiring and Gen UI remain, see Implementation notes
+* Status: Implemented (partial): phases A and B (page host, sandbox, bridge, failure card, manifest model, opt-in, registry, side pane) landed; Gen UI remains, see Implementation notes
 * Date: 2026-11-11
 
 Terms: ZCode and the ZP set are defined in [INDEX.md](INDEX.md);
@@ -413,7 +413,41 @@ declared-tool allow-list dropped; rate limit dropped.
 ZP-17's deferred page-load failure card is implemented as
 `PluginPageFailureCard`; its note is updated.
 
-Remaining: phase B (plugin UI declaration wiring: per-plugin opt-in, host
-registry and cap, side pane, Plugins pane Open), phase C (Gen UI).
+### Phase B (plugin UI declaration wiring)
+
+`PluginUiHost` (registry, cap 8, eviction, teardown), `PluginUiOptInStore`
+(`plugin_ui_optin.json`), `PluginPagePanelView` (the side pane), the
+`.pluginPage` right-column claimant, `PluginUiPagesSection` in the plugin
+detail pane, and `AppModel+PluginUi`. Deviations:
+
+* **Side pane is a new claimant, not `ArtifactPanelView`.** The draft said to
+  route through the artifact panel. That panel renders artifact files and
+  inline previews; a plugin page has neither a file nor an artifact id, so
+  it joins the right column as its own claimant (`.pluginPage(UUID)`, a
+  preview pane for the inspector shortcut, same width as the artifact
+  panel). `SplitChatPanes` is untouched, as the draft agreed.
+* **No transcript card for plugin pages.** The draft's
+  `TranscriptPluginCardView` is not built: plugin pages open in the side
+  pane (draft Open Question 1: side pane for tool-result pages, inline for
+  Gen UI). `placement: inline` parses and is treated as `sidePane` in v1.
+* **Opt-in is per plugin and off by default** (new; the draft had no
+  consent step). It is a separate file rather than a `MacAppSettings` field
+  so no settings migration is involved. It is keyed by plugin id, not
+  version: a plugin update that adds surfaces does not re-ask, because the
+  sandbox, not the opt-in, is the control, and every tool call still goes
+  through the permission engine.
+* **First consumer** is the test fixtures in `PluginPageSandboxTests` and
+  `PluginUiHostTests`; no plugin ships a surface yet (the draft's "starts
+  only when a real plugin declares a surface" is therefore still true of
+  shipped content).
+* **Quit teardown** is the process exit: pages and widget state are in
+  memory only. Pane close, chat switch and plugin disable or opt-out tear
+  the page down explicitly.
+
+Mutation checks run on the host: cap loop disabled; interacting-page
+protection dropped; opt-in guard dropped; teardown call dropped; reconcile
+opt-out check dropped; chat-switch close disabled. Each failed its test.
+
+Remaining: phase C (Gen UI).
 
 *Drafted with EGM*

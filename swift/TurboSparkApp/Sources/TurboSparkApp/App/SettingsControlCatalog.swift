@@ -125,6 +125,7 @@ enum SettingsControlCatalog {
         .init(title: "Grant Access", pane: .permissions, timing: .immediate),
         .init(title: "macOS Protected Folders", pane: .permissions, timing: .immediate),
         .init(title: "macOS System Settings Links", pane: .permissions, timing: .immediate),
+        .init(title: "Allow this plugin to show UI pages", pane: .plugins, timing: .immediate),
         .init(title: "Inherit user setting", pane: .plugins, timing: .nextTurn),
         .init(title: "Options", pane: .plugins, timing: .nextTurn),
         .init(title: "Project override", pane: .plugins, timing: .nextTurn),

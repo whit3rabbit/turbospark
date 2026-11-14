@@ -275,3 +275,90 @@ writes), `Components/PluginSettingsPaneView.swift` +
 `Components/PluginMarketplaceSheet.swift` (UI). Tests:
 `PluginSystemTests`, `PluginManagerTests`, `PluginHookTests`,
 `PluginMarketplaceTests`, all over injectable temp roots.
+
+## UI plugins, page sandbox, and Gen UI (ZP-06)
+
+A plugin can ship HTML pages that open in the right column. Design and
+decisions: `docs/designs/zcode-parity/ZP-06-ui-plugins-sandbox-gen-ui.md`.
+Code: `Sources/TurboSparkApp/Plugins/UI/`.
+
+### Manifest
+
+```json
+{ "ui": { "surfaces": [ { "id": "chart", "title": "Chart", "resourceUri": "ui/chart.html",
+    "resources": ["ui/chart.js", "ui/chart.css"],
+    "capabilities": ["invokeTool", "widgetState", "sendFollowUp"],
+    "tools": ["myserver/run_report"], "placement": "sidePane" } ] } }
+```
+
+- `resourceUri` and `resources` are bundle-relative paths (no `..`, no
+  absolute path, no dot segment, no scheme). Only the page and the listed
+  resources can ever be served; everything else is `not_declared`.
+- Served types: html, js, css, json, txt, png, jpg, gif, webp, svg, woff2.
+- `capabilities`: `invokeTool`, `widgetState`, `sendFollowUp`. An unknown
+  one is dropped with a diagnostic. `tools` is `"<server>/<tool>"` over the
+  plugin's OWN servers; the app builds `mcp__plugin:<plugin>:<server>__<tool>`
+  itself, so a page cannot name another server.
+- A malformed surface is dropped with a named diagnostic in the plugin's
+  "Not applied by this client" list; siblings load. At most 8 surfaces and 64
+  resources per surface.
+- `placement` is parsed; v1 opens every plugin page in the side pane.
+
+### Opt-in and opening
+
+Pages are OFF for every plugin. The plugin detail pane shows a "UI pages"
+block (only when surfaces exist) with an "Allow this plugin to show UI
+pages" switch, stored in `plugin_ui_optin.json` (`PluginUiOptInStore`; a
+corrupt file means nothing is opted in). Open buttons are disabled until it
+is on. Disabling the plugin, removing it, or switching the opt-in off closes
+its pages (`PluginUiHost.reconcile`). The plugin hook trust gate is not
+involved and is unchanged.
+
+### Sandbox contract
+
+| Layer | Rule | Where |
+| --- | --- | --- |
+| Origin | every byte is served by a `WKURLSchemeHandler` under `tsplugin://<random token>/`; no `file:` or network origin exists; two pages never share an origin | `PluginPageSchemeHandler` |
+| Files | declared paths only, no symlink on any component, `O_NOFOLLOW`, real path under the real root, 2 MiB per file | `PluginPageResolver.load` |
+| CSP | derived per surface: `default-src 'none'`, `connect-src 'none'`, `frame-src 'none'`, no inline script, `script-src 'self'` only when a script is declared | `PluginPageCSP` |
+| Network | the offline content rule list (shared with `ArtifactWebView`) blocks http(s) and ws(s) before the page loads; a missing rule list refuses to load | `PluginPageSession.load` |
+| Navigation | only the page's own initial load; links, forms, `location`, subframes, new windows, `file:`, `data:`, `javascript:`, `blob:` are cancelled | `PluginPageNavigationPolicy` |
+| Permissions | camera, microphone, geolocation denied; alert, confirm, prompt, file chooser and popups answered with nothing | `PluginPageSession` (WKUIDelegate) |
+| Storage | `WKWebsiteDataStore.nonPersistent()` per page; widget state in memory only, cleared with the page | `PluginPageSession`, `PluginWidgetStateStore` |
+| Menu | no context menu (its items are navigation and download paths) | `PluginGestureWebView` |
+
+### Bridge: `window.turbospark`
+
+Injected at document start, main frame only. The native handler is the
+authority; the JavaScript shim is a convenience.
+
+| Method | Needs | Rules |
+| --- | --- | --- |
+| `invokeTool(name, args)` | `invokeTool` + the tool in `tools` | recent real click or key press in the page (5 s), at most 2 in flight, 12 per minute, runs through `executeDeferredMcpCall` (hooks, deny rules, session approvals, permission engine). An `ask` verdict cannot show a card from a page, so it is refused as `permission_denied` |
+| `getWidgetState()`, `setWidgetState(state)` | `widgetState` | keyed by page identity (plugin + surface + chat), 16 KiB per message |
+| `sendFollowUp(text)` | `sendFollowUp` | recent gesture, 6 per minute, 4000 characters, control characters stripped; fills the composer draft labeled with the page title and plugin name. NEVER sends |
+
+Errors reach the page as `error.code`: `undeclared_method`,
+`tool_not_declared`, `permission_denied`, `payload_too_large`,
+`rate_limited`, `gesture_required`, `too_many_pending`, `invalid_request`,
+`bad_frame`, `tool_failed`. Messages from a subframe or another origin are
+`bad_frame`. A genuine gesture is an AppKit mouse-down or key-down reaching
+the page's web view (`PluginGestureWebView`); a page cannot fake it.
+
+### Lifecycle
+
+Page identity is plugin id + surface id + chat id. `PluginUiHost.maxLivePages`
+is 8 (provisional: the app shares unified memory with model weights).
+Opening past it tears down the least recently visible page that has had no
+click or key press for 30 s and no tool call in flight; if every page is in
+use, the new one is refused with a toast. Closing the pane, switching chat
+and disabling the plugin tear the page down (web view released, widget state
+cleared). A web content process loss reloads once from the stored page; a
+second loss, a refused page document, or a missing offline rule list shows a
+bounded failure card with Try again (`PluginPageFailureCard`, the contract
+ZP-17 deferred here).
+
+### Tests
+
+`PluginPageSandboxTests` (real WKWebView through the real scheme handler,
+loopback fixture that must record zero requests) and `PluginUiHostTests`.

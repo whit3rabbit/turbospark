@@ -15,6 +15,8 @@ public enum AppRightColumnClaimant: Equatable, Sendable {
     /// memory, opened by an explicit click on a "Preview" button.
     case htmlPreview(UUID)
     case filePreview(UUID)
+    /// A plugin's sandboxed page (ZP-06), opened from the Plugins pane.
+    case pluginPage(UUID)
     case browser
     /// The whiteboard drawing pane (ZP-10), opened by its top bar button.
     case whiteboard
@@ -47,11 +49,13 @@ public enum AppRightColumnClaimant: Equatable, Sendable {
         isInspectorVisible: Bool,
         showProjectSummary: Bool = false,
         showBrowserPane: Bool = false,
-        showWhiteboardPane: Bool = false
+        showWhiteboardPane: Bool = false,
+        pluginPageID: UUID? = nil
     ) -> AppRightColumnClaimant {
         if let openArtifactID { return .artifact(openArtifactID) }
         if let htmlPreviewID { return .htmlPreview(htmlPreviewID) }
         if let previewAttachmentID { return .filePreview(previewAttachmentID) }
+        if let pluginPageID { return .pluginPage(pluginPageID) }
         if showBrowserPane { return .browser }
         if showWhiteboardPane { return .whiteboard }
         if isInspectorVisible { return .inspector }
@@ -78,7 +82,7 @@ public enum AppRightColumnClaimant: Equatable, Sendable {
     /// the user can see, whichever kind it is.
     public var isPreviewPane: Bool {
         switch self {
-        case .artifact, .htmlPreview, .filePreview: return true
+        case .artifact, .htmlPreview, .filePreview, .pluginPage: return true
         case .none, .browser, .whiteboard, .inspector, .projectSummary: return false
         }
     }
@@ -111,7 +115,7 @@ extension AppChromeLayout {
         case .projectSummary: return ProjectChatSummary.width
         case .browser: return browserPanelWidth
         case .whiteboard: return whiteboardPanelWidth
-        case .artifact, .htmlPreview: return artifactPanelWidth
+        case .artifact, .htmlPreview, .pluginPage: return artifactPanelWidth
         case .filePreview: return inspectorWidth
         case .inspector: return inspectorWidth(isExpanded: isExpandedWorktree)
         }
