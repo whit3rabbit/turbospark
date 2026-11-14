@@ -409,11 +409,13 @@ across parallel tests and flaked; each test now gets its own directory.
    `turbospark-acp` (input choices and `ALL_CRATES`) ahead of `turbospark-cli`.
    `docs/RELEASE.md` publish order updated. Not verified: a real publish
    (`turbospark-cli` cannot dry-run until acp is on crates.io). The release and
-   app-bundle scripts enumerate bins explicitly (`bins=(...)` in `release.yml`,
-   `scripts/make-app-bundle.sh`, `scripts/make-dmg.sh`) and do NOT ship
-   `turbospark-acp-agent`: omission breaks nothing today (no editor has been run
-   against it), so it is left out until the real-model and editor-interop items
-   above pass. Bundling it is a deliberate follow-up in those three lists.
+   app-bundle scripts enumerate bins explicitly (`bins=(...)` and the two cask
+   `binary` lists in `release.yml`, `scripts/make-app-bundle.sh`,
+   `scripts/make-dmg.sh`). An earlier decision left `turbospark-acp-agent` out
+   until editor checks passed; that was wrong because `turbospark acp`
+   dispatches to it, and `verify-app-bundle.sh` failed a clean bundle for the
+   missing peer. It now ships in all of those lists. Not verified: a real
+   bundle rebuild and verify run.
 7. **CHANGELOG entry** (draft item 8): not written per the task's instruction.
 8. **`session/load`** and a record loader with quarantine, if resumption is
    wanted. Also `--max-context`, `--max-new` and sampling flags on `acp`.

@@ -23,8 +23,12 @@ every prompt with a "no local model" error.
 
 Release: `turbospark-acp` is a published crate (listed before `turbospark-cli`
 in `publish-crates.yml`, because the CLI depends on it). The release archive,
-app bundle and DMG do not ship `turbospark-acp-agent`; their bin lists are
-explicit and it was left out until the real-model and editor checks pass.
+app bundle, DMG and both casks ship `turbospark-acp-agent` because
+`turbospark acp` dispatches to it and the dispatch must resolve wherever
+`turbospark` is installed. The bin lists are `release.yml` (`bins=(...)` and the
+cask `binary` stanzas), `scripts/make-app-bundle.sh` and `scripts/make-dmg.sh`;
+`scripts/verify-app-bundle.sh` derives its expectation from the dispatch table.
+Shipping it is not an editor-interop claim: no editor has been run against it.
 
 ## Transport and safety
 
