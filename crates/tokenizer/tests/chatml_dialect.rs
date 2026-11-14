@@ -197,3 +197,57 @@ fn detokenizer_push_and_flush_reproduce_full_decode() {
     let full = tok.decode(&ids, true);
     assert_eq!(streamed, full);
 }
+
+/// The ChatML fixture with `<|endoftext|>` removed from the vocabulary and
+/// `eos_token` set to `eos`: Granite's shape (`<|im_end|>` is EOS and PAD).
+fn load_without_endoftext(tag: &str, eos: serde_json::Value) -> Result<MfTokenizer, String> {
+    let dir = std::env::temp_dir().join(format!(
+        "turbospark-tokenizer-noeot-{tag}-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("create dir");
+    std::fs::copy(
+        fixture_dir().join("chat_template.jinja"),
+        dir.join("chat_template.jinja"),
+    )
+    .expect("copy template");
+    let mut tokenizer: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(fixture_dir().join("tokenizer.json")).unwrap(),
+    )
+    .unwrap();
+    let kept: Vec<serde_json::Value> = tokenizer["added_tokens"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| t["content"].as_str() != Some("<|endoftext|>"))
+        .cloned()
+        .collect();
+    tokenizer["added_tokens"] = serde_json::Value::Array(kept);
+    std::fs::write(dir.join("tokenizer.json"), tokenizer.to_string()).unwrap();
+    let mut config: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(fixture_dir().join("tokenizer_config.json")).unwrap(),
+    )
+    .unwrap();
+    config["eos_token"] = eos;
+    std::fs::write(dir.join("tokenizer_config.json"), config.to_string()).unwrap();
+    MfTokenizer::load_from_dir(&dir).map_err(|e| e.to_string())
+}
+
+#[test]
+fn a_chatml_table_without_endoftext_uses_its_declared_eos() {
+    let tok = load_without_endoftext("declared", serde_json::json!("<|im_end|>"))
+        .expect("Granite-shaped table should load");
+    assert_eq!(tok.dialect, ChatDialect::ChatMl);
+    let im_end = tok.token_to_id("<|im_end|>");
+    assert!(im_end.is_some());
+    assert_eq!(Some(tok.eos_id), im_end);
+}
+
+#[test]
+fn a_chatml_table_without_endoftext_and_without_an_eos_still_refuses() {
+    let err = match load_without_endoftext("none", serde_json::Value::Null) {
+        Ok(_) => panic!("no <|endoftext|> and no declared EOS must refuse"),
+        Err(e) => e,
+    };
+    assert!(err.contains("<|endoftext|>"), "{err}");
+}

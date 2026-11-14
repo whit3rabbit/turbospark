@@ -507,6 +507,56 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         }
     }
 
+    // Granite (`ibm-granite/granite-4.x`) rides the Llama flow, which reads
+    // `attention_scale` and nothing else of IBM's four scalars: the other
+    // three must be the identity, and a file that says otherwise is refused
+    // rather than decoded fluently with the wrong residual or logit scale.
+    if architecture == "granite" {
+        let rms = m
+            .opt_f64("attention.layer_norm_rms_epsilon")
+            .map(|v| v as f32);
+        if rms != Some(1e-5f32) {
+            return Err(GgufConfigError::BadValue {
+                key: m.key("attention.layer_norm_rms_epsilon"),
+                detail: "Granite requires RMS epsilon 1e-5".into(),
+            });
+        }
+        for key in ["embedding_scale", "residual_scale", "logit_scale"] {
+            if m.opt_f64(key).is_some_and(|v| v != 1.0) {
+                return Err(GgufConfigError::BadValue {
+                    key: m.key(key),
+                    detail: "this port's Llama flow expresses only an identity Granite \
+                             multiplier here (Granite 3.x carries non-identity ones)"
+                        .into(),
+                });
+            }
+        }
+        let scale = m
+            .opt_f64("attention.scale")
+            .ok_or_else(|| GgufConfigError::MissingKey {
+                key: m.key("attention.scale"),
+            })?;
+        if !(scale.is_finite() && scale > 0.0) {
+            return Err(GgufConfigError::BadValue {
+                key: m.key("attention.scale"),
+                detail: format!("{scale} is not a usable attention scale"),
+            });
+        }
+        arch.attention_scale = scale;
+        // Full rotary over the head, as the Llama flow assumes.
+        if let Some(dims) = m.opt_i64("rope.dimension_count")? {
+            if dims != arch.full_head_dim {
+                return Err(GgufConfigError::BadValue {
+                    key: m.key("rope.dimension_count"),
+                    detail: format!(
+                        "{dims} of a {}-wide head is partial rotary",
+                        arch.full_head_dim
+                    ),
+                });
+            }
+        }
+    }
+
     // DeepSeek V2 MLA: the head geometry lives in `mla`, not in the
     // `head_dim` pair, and the cache is ONE shared row per layer. The
     // checkpoint's `attention.head_count_kv = 16` describes its EXPANDED

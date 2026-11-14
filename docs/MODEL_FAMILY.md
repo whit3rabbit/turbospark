@@ -168,6 +168,14 @@ naming schemes genuinely differ and none is derivable from another: Qwen 3.6 is
     rows are un-permuted from ggml's interleaved RoPE order, and the
     converter's synthesized q/k norm tensors are checked by value and
     dropped ([`gguf_names/muse.rs`](../crates/repack/src/gguf_names/muse.rs)).
+  - Granite 4.x GGUFs (`granite`, 2026-11-14, read off
+    `ibm-granite/granite-4.2-3b-GGUF`) resolve to the `Llama` family with
+    `attention.scale` (1/head_dim, not Llama's 1/sqrt) as `attention_scale`.
+    `embedding_scale`, `residual_scale` and `logit_scale` must be 1.0 or absent
+    and the RMS epsilon 1e-5, so Granite 3.x (12.0 / 0.22 / 16.0) refuses. The
+    ChatML tokenizer dialect now falls back to the config's EOS when the table
+    has no `<|endoftext|>` (Granite reuses that id for `<|im_end|>`). A real 3B
+    Q4_K_M install decodes correctly; no parity or frozen row yet.
   - `"minimax_m2"` -> `ModelFamily::MiniMaxM2` for recognition and foreign-config
     rejection; safetensors intake remains explicitly refused.
   - The `_text` spellings are what the multimodal checkpoints' `text_config`

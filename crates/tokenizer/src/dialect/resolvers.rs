@@ -326,7 +326,17 @@ pub(crate) fn resolve_chatml(
 ) -> Result<Resolved, TokenizerError> {
     let _im_start = required_id(tokenizer, IM_START_MARK)?;
     let im_end = required_id(tokenizer, IM_END_MARK)?;
-    let end_of_text = required_id(tokenizer, "<|endoftext|>")?;
+    // Qwen's end-of-text and pad token. A ChatML table WITHOUT it falls back to
+    // the EOS its own config declares: Granite 4.x registers no `<|endoftext|>`
+    // and reuses that id (100257) for `<|im_end|>`, which its config names as
+    // both EOS and PAD. A table with neither still refuses, as before.
+    let end_of_text = match special_token_id(tokenizer, "<|endoftext|>") {
+        Some(id) => id,
+        None => match config.eos_token.content() {
+            Some(token) => required_id(tokenizer, token)?,
+            None => required_id(tokenizer, "<|endoftext|>")?,
+        },
+    };
     // BOS IS THE CONFIG'S WHEN IT DECLARES ONE. Qwen declares `bos_token:
     // null` and its templates never print one, so `<|endoftext|>` stands in,
     // as before. LFM3 declares `<|startoftext|>` and its template opens with

@@ -14,6 +14,12 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Granite 4.x GGUF files (`ibm-granite/granite-4.x-*-GGUF`) install on the Llama
+  flow with their 1/head_dim attention scale; Granite 3.x, whose residual,
+  embedding and logit multipliers are not identity, refuses. The ChatML
+  tokenizer dialect accepts a table with no `<|endoftext|>` when its config
+  declares an EOS. Checked against the real GGUF and official BF16 bytes, and a
+  real 3B install decodes correctly.
 - Qwen3-VL GGUF files (`Qwen/Qwen3-VL-*-GGUF`) install their text trunk: the
   `qwen3vl` architecture, the dense Qwen3 tensor names, and a guard on the
   multimodal rope sections. The vision projector (`mmproj`) is not read. Checked
