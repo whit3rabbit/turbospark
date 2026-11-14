@@ -436,13 +436,13 @@ extension AppModel {
             ])
         }
         guard state.status != "running" else {
-            throw NSError(domain: "TurboSparkTool", code: 29, userInfo: [
+            throw NSError(domain: "TurboSparkTool", code: 55, userInfo: [
                 NSLocalizedDescriptionKey: "Background subagent '\(id)' is still running. Wait for "
                     + "its <task-notification>, or stop it with stop_agent."
             ])
         }
         guard state.isRecordedComplete else {
-            throw NSError(domain: "TurboSparkTool", code: 29, userInfo: [
+            throw NSError(domain: "TurboSparkTool", code: 55, userInfo: [
                 NSLocalizedDescriptionKey: "Background subagent '\(id)' is still finishing. Try "
                     + "again after its <task-notification>."
             ])

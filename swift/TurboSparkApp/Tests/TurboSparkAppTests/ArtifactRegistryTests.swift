@@ -202,7 +202,12 @@ final class ArtifactRegistryTests: XCTestCase {
         XCTAssertEqual(AppArtifactRenderKind.forFileName("notes.txt"), .text)
         XCTAssertEqual(AppArtifactRenderKind.forFileName("shot.png"), .image)
         XCTAssertEqual(AppArtifactRenderKind.forFileName("paper.pdf"), .pdf)
-        XCTAssertEqual(AppArtifactRenderKind.forFileName("report.docx"), .opaque)
+        // OOXML renders natively (ZP-08); legacy binary Office and archives stay opaque.
+        XCTAssertEqual(AppArtifactRenderKind.forFileName("report.docx"), .docx)
+        XCTAssertEqual(AppArtifactRenderKind.forFileName("sheet.xlsx"), .xlsx)
+        XCTAssertEqual(AppArtifactRenderKind.forFileName("deck.pptx"), .pptx)
+        XCTAssertEqual(AppArtifactRenderKind.forFileName("report.doc"), .opaque)
+        XCTAssertEqual(AppArtifactRenderKind.forFileName("bundle.zip"), .opaque)
     }
 
     func testHTMLIsARenderKindAndNoLongerASourceKind() {
