@@ -1,5 +1,8 @@
 # GGUF quantizer
 
+For every supported type, the architectures that run and the Unsloth Dynamic
+files, read [GGUF.md](GGUF.md) first.
+
 `turbospark_repack::gguf_quantize` rewrites a float GGUF under a recipe that
 picks a target type per tensor. It is separate from the MLX `--quantize 4|8`
 install flag (`quantize_on_install.rs`), which targets MLX affine weights.
@@ -87,8 +90,8 @@ This copies the *type assignment* only. The values come from your source and
 your imatrix (Unsloth says it publishes its imatrix). Your source must use the
 same tensor names and shapes (a `convert_hf_to_gguf.py` output of the same
 model). A source tensor the reference does not name is kept as it is, and a
-reference tensor of a type this crate cannot produce (Q2_0, MXFP4, the fork's
-IQ1_XS family) is an error naming it. It reproduces the *types* of the file you
+reference tensor of a type this crate cannot produce (Q8_1, or a type id from a
+fork it has not read) is an error naming it. It reproduces the *types* of the file you
 point it at, not its quality: nothing here has been compared against a UD file's
 perplexity or KL divergence.
 
