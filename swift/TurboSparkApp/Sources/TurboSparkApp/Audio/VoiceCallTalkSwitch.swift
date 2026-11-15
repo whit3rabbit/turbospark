@@ -29,7 +29,14 @@ final class VoiceCallTalkSwitch: ObservableObject {
     /// A press shorter than this is a tap (latch); longer is a hold.
     static let latchThreshold: TimeInterval = 0.35
 
-    @Published private(set) var isTalking = false
+    /// A LATCHED Talk (tap or toggle) clears itself after this long with no
+    /// speech onset, so a forgotten Talk cannot silently restore the
+    /// unaddressed-speech precision problem. A held pointer press is exempt.
+    static let idleTimeout: TimeInterval = 45
+
+    @Published private(set) var isTalking = false {
+        didSet { if !isTalking { idleWatch?.cancel(); idleWatch = nil } }
+    }
 
     /// Set by the controller. A switch nobody owns cannot be turned on, so
     /// Talk never lingers outside a live call with auto-send on.
@@ -40,11 +47,30 @@ final class VoiceCallTalkSwitch: ObservableObject {
     var onCleared: (@MainActor () -> Void)?
 
     private let now: () -> TimeInterval
+    private let tick: @Sendable (Duration) async throws -> Void
+    private var idleWatch: Task<Void, Never>?
+    private var lastActivity: TimeInterval = 0
     private var pointerDownAt: TimeInterval?
     private var swallowNextPointerUp = false
 
-    init(now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+    init(now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         tick: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }) {
         self.now = now
+        self.tick = tick
+    }
+
+    /// Talk is on and no pointer press is holding it.
+    private var latched: Bool { isTalking && pointerDownAt == nil }
+
+    /// A speech onset restarts the idle window of a latched Talk.
+    func speechOnset() { if isTalking { lastActivity = now() } }
+
+    /// Clears a latched Talk that has been idle for `idleTimeout`. The
+    /// watcher calls it every second; tests call it on a fake clock.
+    func checkIdle() {
+        guard latched, now() - lastActivity >= Self.idleTimeout else { return }
+        // A plain stop, like a user release: nothing was being said.
+        isTalking = false
     }
 
     // MARK: Toggle form
@@ -72,7 +98,7 @@ final class VoiceCallTalkSwitch: ObservableObject {
         pointerDownAt = nil
         guard isTalking else { return }
         // A hold ends with the release. A tap stays on until toggled off.
-        if now() - down >= Self.latchThreshold { isTalking = false }
+        if now() - down >= Self.latchThreshold { isTalking = false } else { lastActivity = now() }
     }
 
     // MARK: Forced stop
@@ -87,6 +113,15 @@ final class VoiceCallTalkSwitch: ObservableObject {
     private func start() -> Bool {
         guard !isTalking, canTalk() else { return false }
         isTalking = true
+        lastActivity = now()
+        let tick = self.tick
+        idleWatch = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await tick(.seconds(1))
+                if Task.isCancelled { return }
+                await self?.checkIdle()
+            }
+        }
         onStarted?()
         return true
     }

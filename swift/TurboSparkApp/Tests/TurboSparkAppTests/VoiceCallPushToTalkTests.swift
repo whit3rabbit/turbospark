@@ -323,6 +323,71 @@ final class VoiceCallPushToTalkTests: XCTestCase {
         XCTAssertFalse(s.isTalking, "a release after a forced clear must not latch it back on")
     }
 
+    // MARK: Idle timeout of a latched Talk
+
+    private func idleSwitch(_ c: Clock) -> VoiceCallTalkSwitch {
+        let s = VoiceCallTalkSwitch(now: { c.now }, tick: { _ in try await Task.sleep(for: .seconds(3_600)) })
+        s.canTalk = { true }
+        return s
+    }
+
+    func testALatchedTalkClearsAtTheIdleBoundary() {
+        let c = Clock(); let s = idleSwitch(c)
+        s.toggle()
+        c.now = VoiceCallTalkSwitch.idleTimeout - 0.01; s.checkIdle()
+        XCTAssertTrue(s.isTalking, "just before the boundary")
+        c.now = VoiceCallTalkSwitch.idleTimeout; s.checkIdle()
+        XCTAssertFalse(s.isTalking, "at the boundary")
+    }
+
+    func testASpeechOnsetRestartsTheIdleWindow() {
+        let c = Clock(); let s = idleSwitch(c)
+        s.toggle()
+        c.now = 40; s.speechOnset()
+        c.now = 80; s.checkIdle()
+        XCTAssertTrue(s.isTalking, "40 s after the onset")
+        c.now = 85; s.checkIdle()
+        XCTAssertFalse(s.isTalking, "45 s after the onset")
+    }
+
+    func testATapLatchIsSubjectToTheTimeoutAndAHeldPressIsNot() {
+        let c = Clock(); let s = idleSwitch(c)
+        s.pointerDown(); c.now = 0.1; s.pointerUp()
+        c.now = 0.1 + VoiceCallTalkSwitch.idleTimeout; s.checkIdle()
+        XCTAssertFalse(s.isTalking, "a tap latch times out")
+        c.now = 100; s.pointerDown()
+        c.now = 100 + 10 * VoiceCallTalkSwitch.idleTimeout; s.checkIdle()
+        XCTAssertTrue(s.isTalking, "a pointer press that is still held is exempt")
+        s.pointerUp()
+        XCTAssertFalse(s.isTalking)
+    }
+
+    func testMuteAndEndStillClearImmediatelyWithTheTimeoutArmed() async {
+        let (h, _) = harness()
+        await h.startCall()
+        h.talkSwitch.toggle()
+        h.controller.mute()
+        XCTAssertFalse(h.talkSwitch.isTalking)
+        await h.controller.unmute(); await h.settle()
+        h.talkSwitch.toggle()
+        h.controller.end()
+        XCTAssertFalse(h.talkSwitch.isTalking)
+    }
+
+    func testTheControllerRestartsTheWindowOnSpeechOnset() async {
+        let (h, _) = harness(body: { _ in .confirm })
+        await h.startCall()
+        h.talkSwitch.toggle()
+        h.clock = 40
+        h.talk(0.5)              // speech onset at t=40
+        h.clock = 80
+        h.talkSwitch.checkIdle()
+        XCTAssertTrue(h.talkSwitch.isTalking)
+        h.clock = 85
+        h.talkSwitch.checkIdle()
+        XCTAssertFalse(h.talkSwitch.isTalking)
+    }
+
     func testASwitchNobodyOwnsCannotTalk() {
         let s = VoiceCallTalkSwitch(now: { 0 })
         s.toggle(); s.pointerDown()

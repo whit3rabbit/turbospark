@@ -1216,6 +1216,20 @@ How addressing is carried (explicit, false by default).
   exactly the allowed call sites was updated deliberately for the new condition
   text only; the call-site count (two) and the single `run()` are unchanged.
 
+Idle timeout of a latched Talk (follow-up, approved by the coordinator for the
+user): a latched Talk (tap or chord) clears itself after 45 s
+(`VoiceCallTalkSwitch.idleTimeout`) with no speech onset. The controller calls
+`talk.speechOnset()` on each onset and barge-in, which restarts the window. A
+pointer press that is still held is exempt, and mute, End and the other forced
+clears still clear at once. The switch checks on a one-second watcher task
+(injectable tick) and the same `checkIdle()` is what tests call on a fake
+clock. It is a plain stop like a user release, so the panel's existing
+"Not talking" announcement and the Talk state reflect it; no new string.
+Tap-to-latch on the pointer button was kept. Five tests added (boundary, onset
+restart, tap latch versus held press, mute and End, controller onset). Mutations,
+all caught: held press not exempt (1 failing), no restart on onset (2), `>`
+instead of `>=` at the boundary (5).
+
 Strings (21 languages, string catalog, `--patience` diff, additions only): the
 settings help gets a second paragraph saying auto-send applies only while Talk is
 on, and the panel adds "Talk", "Talking", "Not talking", "Toggle Talk" and a
@@ -1224,7 +1238,7 @@ tooltip. The existing help paragraph and the setting title are unchanged, so
 passes). Microphone permission is untouched: `RecordingPermissions` still asks,
 only after Allow.
 
-Tests (`VoiceCallPushToTalkTests`, 23 tests, fake switch clock, synthetic audio,
+Tests (`VoiceCallPushToTalkTests`, 28 tests including the timeout ones, fake switch clock, synthetic audio,
 closure decider, no real microphone): an utterance without Talk never reaches the
 decider or the send and stays in the draft; an addressed utterance sends and
 reports `addressed == true`; the decider remains the second check; boundaries
@@ -1266,10 +1280,7 @@ Not verified (owed, so the doc stays Partial):
   scope here). The risky and injection leaks (5 on the 9B) are not addressed by
   addressing: a user who holds Talk and says "how do i turn off two factor on my
   account" is still judged by the same allowlist, deny list and model.
-* A latched Talk (tap or chord) stays on until toggled, a turn starts, or the app
-  loses focus. There is no idle timeout, so a user who forgets it is back to the
-  pre-change condition for as long as it stays on. It is visible in the panel
-  and announced, but a timeout would be a product decision.
+* The 45 s idle timeout (below) is a fake-clock behavior; the real one-second watcher task was not observed running on hardware.
 
 ### Remaining (first auto-send pass)
 

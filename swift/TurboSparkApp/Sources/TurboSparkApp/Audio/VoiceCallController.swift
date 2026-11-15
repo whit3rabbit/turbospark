@@ -361,6 +361,7 @@ final class VoiceCallController: ObservableObject {
                 // Addressed if Talk is on now, or this merges into an
                 // utterance that already was (never stale: `.none` means new).
                 utteranceAddressed = talk.isTalking || (utterance != .none && utteranceAddressed)
+                talk.speechOnset()
                 utterance = .active
             case .thinking:
                 // Speech while a turn runs is dropped, never queued.
@@ -384,6 +385,7 @@ final class VoiceCallController: ObservableObject {
         speaker.stop()
         replySuppressed = true
         utteranceAddressed = talk.isTalking
+        talk.speechOnset()
         utterance = .active
         setState(.listening, resetDetector: false)
         openTranscriber()
