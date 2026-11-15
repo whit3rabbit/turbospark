@@ -29,6 +29,7 @@ extension AppModel {
         continuationsUsed: Int = 0
     ) {
         let targetID = chatID ?? selectedChatID
+        noteTurnStopped(chatID: targetID, reason: reason)
         let targetProject = turnProject(chatID: targetID)
         let recoveryRetryAttempt = pendingRecoveryRetryCounts.removeValue(forKey: targetID)
         let hasFreshReplacement = recoveryRetryAttempt == nil

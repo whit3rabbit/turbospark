@@ -188,7 +188,17 @@ public final class SkillMarketplaceManager: @unchecked Sendable {
             let manifestFile = dirURL.appendingPathComponent("marketplace.json")
             let data = try Data(contentsOf: manifestFile)
             return try JSONDecoder().decode(MarketplaceManifest.self, from: data)
+
+        case .builtin, .cdnZip:
+            throw Self.unsupportedPluginOnlySource()
         }
+    }
+
+    /// `builtin` and `cdnZip` are plugin marketplace sources (ZP-05); a skills
+    /// marketplace has no bundled catalog and no zip install path.
+    private static func unsupportedPluginOnlySource() -> NSError {
+        NSError(domain: "SkillMarketplace", code: 8, userInfo: [
+            NSLocalizedDescriptionKey: "The builtin and cdnZip sources apply to plugin marketplaces only."])
     }
 
     // MARK: - Git Operations
@@ -275,6 +285,9 @@ public final class SkillMarketplaceManager: @unchecked Sendable {
             let sourceURL = URL(fileURLWithPath: dirPath)
             try copyDirectoryContents(from: sourceURL, to: targetSkillDir)
             installedMdURL = targetSkillDir.appendingPathComponent("SKILL.md")
+
+        case .builtin, .cdnZip:
+            throw Self.unsupportedPluginOnlySource()
         }
 
         guard let skillFile = installedMdURL, fileManager.fileExists(atPath: skillFile.path) else {

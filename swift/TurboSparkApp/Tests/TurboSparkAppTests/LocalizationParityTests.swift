@@ -589,8 +589,22 @@ final class LocalizationParityTests: XCTestCase {
         for kind in InstalledModelKind.allCases {
             values.append(("InstalledModelKind.title", kind.title))
         }
+        // OC-02: the Notifications section renders these as keys.
+        for event in AttentionEvent.allCases {
+            values.append(("AttentionEvent.settingsTitle", event.settingsTitle))
+        }
+        values.append(("AttentionSound.none", AttentionSound.none.settingsTitle))
+        // OC-08: the call panel renders each state's title as a key.
+        let callStates: [VoiceCallState] = [.idle, .preparing, .listening, .thinking, .speaking, .paused, .failed("")]
+        for state in callStates {
+            values.append(("VoiceCallState.titleKey", state.titleKey))
+        }
         for mode in WorktreeTabMode.allCases {
             values.append(("WorktreeTabMode.title", mode.title))
+        }
+        // The treemap reads the status label through AppStrings.localized.
+        for status in [WorktreeFileChange.Status.modified, .added, .deleted, .renamed, .untracked, .ignored, .unknown] {
+            values.append(("WorktreeFileChange.Status.label", status.label))
         }
         // Audio model pickers render the engine name and its tooltip as keys.
         for label in AudioEngineLabel.allCases {

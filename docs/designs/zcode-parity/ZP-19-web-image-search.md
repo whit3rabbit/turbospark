@@ -6,7 +6,37 @@ Parity target: ZCode's
 (hosted MCP `image_search` server).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented (2026-11-13). Deviations from the draft, following the
+  EGM review (docs/egm-reviews/zcode-parity/ZP-19/):
+  * Day one is Brave Image Search only. The MCP-first backend precedence was
+    dropped (B2): `WebSearchExecutor` has hardcoded providers and no user MCP
+    calls, and a user's MCP image server is already callable as an ordinary
+    `mcp__server__tool`.
+  * `image_fetch` is a real tool (B1), not an assumed attachment path. It is
+    in `Tools/Web/ImageFetchExecutor.swift`: it saves one PNG, JPEG, GIF or
+    WebP into the project (never SVG, never overwrite, 10 MiB cap, magic bytes
+    checked, extension must match, path resolved through `resolveSecurePath`,
+    sensitive paths refused) over WebFetch's destination validator, redirect
+    revalidation and rebinding check.
+  * Ladder (M1): both tools are category `.web`, so project Web permission,
+    the network policy (Block all refuses `image_search`; `image_fetch` is
+    judged per host), and the composer Search toggle apply. `image_fetch` also
+    answers to the project's File write permission (the stricter of the two),
+    a sensitive destination is high risk and hard-gated, and it needs a
+    project root. `image_search` is risk safe, like `WebSearch`.
+  * Timeout and count (M2): inherits the text search's 25 s, not 90 s; default
+    8 rows, clamp 20.
+  * Availability (M3): the tool is always listed; with no key it returns a
+    named configuration error (Settings > Network > Image search).
+  * Key (B3): there was no existing Brave key storage. The key is held in
+    memory for the session; Keychain storage (`TurboSpark.image-search`) is
+    opt-in and read only inside an `image_search` call, never at launch. The
+    settings section lives in the Network pane
+    (`Components/ImageSearchSettingsSectionView.swift`), because
+    `SearchSettingsPaneView.swift` does not exist. `WebSearch` does not use
+    this key yet.
+  * Not done: the ZP-09 pptx embed (CUJ 1 ends at the saved image with its
+    source retained), an MCP backend contract, license or safe-search fields.
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------

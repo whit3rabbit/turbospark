@@ -6,7 +6,8 @@ Cron parity target: ZCode's off-peak automation domain
 [offPeakTaskStore](https://github.com/zai-org/ZCode/blob/main/packages/ui/src/store/offPeakTaskStore.ts)).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented (2026-11-13). Deviations are listed under
+  "Implementation notes" at the end of this file.
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -236,6 +237,51 @@ a crash leaves recoverable state.
 * **Manual**: enqueue a task, lock the screen, verify dispatch and
   assertion (system profiler power assertions or Energy pane), quit
   mid-run, verify recovery.
+
+## Implementation notes
+
+Built as the EGM review (`docs/egm-reviews/zcode-parity/ZP-01/`) asked, scoped
+to the originating-chat mode. ZP-23 (concurrent chats) is not built, so a task
+runs only while its chat is selected, idle and has a model loaded, the same
+delivery conditions cron has.
+
+Deviations from the draft text above:
+
+* **Admission signal**: option (b), the user toggle ("Run off-peak tasks",
+  default off). No idle heuristic and no screen-lock observer in v1; the
+  existing lock observers (`ProfileVaultCoordinator`) were not reused. The
+  no-sleep hold is an output of a running task, not part of the gate.
+* **Power API**: `ProcessInfo.beginActivity(.idleSystemSleepDisabled)`. A
+  hold that cannot be taken lets the task run anyway. No AC check: battery
+  drain is accepted and stated in the pane copy.
+* **Store and timer**: own `offpeak_tasks.json`, own lock, own 5 second timer.
+  `CronScheduler.swift` is unchanged. The cap is an atomic check-and-insert in
+  the off-peak store.
+* **Knobs**: toggle only. Fixed cap of 20 active tasks, no staleness skip, no
+  priority, no constraints. Task state is queued, running, completed,
+  interrupted, cancelled, skipped (chat deleted); `admitted` is folded into
+  `running` (the claim is the persisted write).
+* **Recovery**: a launch sweep turns a persisted `running` row into
+  `interrupted` (crash path). Quit records `app_quit` through
+  `AppModel.shutdown`. Re-run requeues at the tail.
+* **Unattended policy**: one ladder position (`.automation`, same as cron
+  tools). A run parked on a tool approval ends as interrupted
+  (`approval_needed`) and releases the hold. The dispatcher never approves a
+  tool. A turn started by an off-peak task cannot queue another (model-origin
+  enqueue from a chat with a running task is refused). Ghost chats are
+  refused. If the user chose an auto-approving mode for that chat it applies
+  as it does for cron; this feature adds no approval of its own.
+* **Cancel**: only queued tasks. Stopping a running task is done by stopping
+  its generation in its chat (recorded as interrupted, `stopped`).
+* **Files**: the dispatcher is split across `OffPeakTaskStore.swift`,
+  `OffPeakTaskDispatcher.swift`, `OffPeakTaskTools.swift` (all under
+  `Tools/Automation/`), `State/AppModel+OffPeak.swift` (host),
+  `Components/OffPeakTasksSectionView.swift` (pane section, embedded in
+  `CronJobsSettingsPaneView`), instead of `AppModel+LocalCommands.swift` and
+  `SettingsPanes.swift`. The user-facing add field queues into the selected
+  chat; the model path is the tool.
+* **Deferred**: dedicated or scratch chats and running in a non-selected chat
+  (ZP-23), a screen-lock or idle-time admission signal, AC-power gating.
 
 --------------------------------------------------------------------------------
 

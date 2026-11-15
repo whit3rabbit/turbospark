@@ -23,6 +23,9 @@ final class AudioLiveTranscriber: @unchecked Sendable {
     enum Event: Sendable, Equatable {
         /// The model is loading; text starts when it is ready.
         case preparing
+        /// The model finished loading and the backlog is being caught up.
+        /// A voice call (OC-08) waits for this before it ends an utterance.
+        case ready
         case update(AudioStreamUpdate)
         /// Live text stopped for this take; the reason is user-facing.
         case stopped(String)
@@ -83,6 +86,7 @@ final class AudioLiveTranscriber: @unchecked Sendable {
             // Stopped while loading: nothing more to transcribe.
             if ended { s.close(); return }
             stream = s
+            onEvent(.ready)
             pump(flush: false)
         case .failure(let error):
             stop(reason: AppStrings.localized("Live text is unavailable for this recording: \(error.localizedDescription)"))

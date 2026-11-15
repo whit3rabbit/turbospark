@@ -63,6 +63,10 @@ extension AppModel {
         do {
             try manager.uninstall(pluginID: id, scope: scope.ledgerValue, projectRootURL: scope.projectRootURL)
             setPluginPreference(id: id, enabled: nil, scope: scope)
+            // A builtin the user removes must stay removed across restarts.
+            if scope == .user, let name = Self.builtinPluginName(of: id) {
+                try? BuiltinPluginSeeder.shared.recordUninstalled(pluginName: name)
+            }
             showToast(AppStrings.localized("Removed from \(scope.label)."), style: .info)
             return true
         } catch {

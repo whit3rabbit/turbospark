@@ -26,7 +26,7 @@ Prompt composer
 
 Sidebars and search
 - `ChatSidebarView`, `ChatSidebarChatRowView`, `ChatSidebarProjectsSectionView`, `ChatSidebarGroupedProjectsView`, `ChatSystemPromptSheet`, `ChatShareButton` [ChatSidebarView.swift:ChatSidebarView] [ChatSidebarChatRowView.swift:ChatSidebarChatRowView]
-- `ChatSearch` (`Query.parse`, `buildDocuments`, `hits`, `makeSnippet`, `dateBucket`), `ChatSearchOverlayView`, `ChatSearchResultRowView` [ChatSearch.swift:ChatSearch] [ChatSearchOverlayView.swift:ChatSearchOverlayView]
+- `ChatSearch` (`Query.parse`, `buildDocuments`, `hits`, `makeSnippet`, `dateBucket`), `CommandPaletteView` (the Cmd+K command center; replaced `ChatSearchOverlayView`), `PaletteProviders` (prefix parser, chat, command and file providers, history, action router), `ChatSearchResultRowView` [ChatSearch.swift:ChatSearch] [ChatSearchOverlayView.swift:ChatSearchOverlayView]
 
 Sheets and panels
 - `SessionStatsSheet`, `HelpSheetView`, `GitInfoSheet`, `ContextUsageSheet`, `TasksStatusSheet`, `ToolsListSheet`, `StatusSheet`, `RewindSheet`, `RecapSheet`, `ProfileMemoryCaptureSheet` [ChatDialogSheets.swift:HelpSheetView] [ChatGitSheets.swift:GitInfoSheet] [ChatParitySheets.swift:RewindSheet]

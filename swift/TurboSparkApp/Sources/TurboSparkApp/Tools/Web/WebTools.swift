@@ -188,7 +188,41 @@ public enum WebToolDefinitions {
         )
     )
 
+    public static let imageSearch = OpenAITool.function(
+        name: "image_search",
+        description: "Search the web for images (needs the user's Brave Search API key). Returns rows of title, image_url, source_page and size, never image bytes. Cite source_page when you use an image. Save one with image_fetch.",
+        parameters: .object(
+            properties: [
+                "query": .string(description: "What the image should show."),
+                "count": .integer(description: "Optional number of results (default: 8, maximum: 20)."),
+                "allowed_domains": .array(
+                    items: .string(),
+                    description: "Optional list of domains to restrict results to (matches the image host or the source page host)."
+                ),
+                "blocked_domains": .array(
+                    items: .string(),
+                    description: "Optional list of domains to exclude from results."
+                )
+            ],
+            required: ["query"]
+        )
+    )
+
+    public static let imageFetch = OpenAITool.function(
+        name: "image_fetch",
+        description: "Download one PNG, JPEG, GIF or WebP image from an image_url into the project. Never overwrites a file. The path must end in the matching extension.",
+        parameters: .object(
+            properties: [
+                "url": .string(description: "The image_url from an image_search row."),
+                "path": .string(description: "Project-relative path to save to, such as assets/hawk.jpg."),
+                "source_page": .string(description: "Optional: the row's source_page, echoed back so it can be cited."),
+                "timeout": .integer(description: "Optional timeout in seconds (maximum: 120, default: 30).")
+            ],
+            required: ["url", "path"]
+        )
+    )
+
     public static let all: [OpenAITool] = [
-        webSearch, webFetch, HttpRequestToolDefinitions.httpRequest
+        webSearch, webFetch, HttpRequestToolDefinitions.httpRequest, imageSearch, imageFetch
     ]
 }

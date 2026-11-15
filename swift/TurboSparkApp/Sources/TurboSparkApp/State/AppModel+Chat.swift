@@ -183,7 +183,11 @@ extension AppModel {
         // `UserPromptSubmit` hook with `generating` still false, and a chat
         // created in that window is one the awaited submission then appends
         // its user turn into by captured id.
-        guard !generating, !submitting, pendingToolCall == nil else { return selectedChatID }
+        //
+        // **PER-CHAT, NOT BLANKET** (ZP-23): a turn that belongs to a chat
+        // does not block creating another one, so a long reply no longer
+        // freezes the sidebar. Work that is not a chat turn still does.
+        guard laneVerdict(.select(target: nil)) == .allowed else { return selectedChatID }
         activeSection = .chat
         let assignedProjectID = projectID ?? selectedProjectID
         // If current chat is already empty and matches the target project, reset and stay on it.
@@ -192,18 +196,16 @@ extension AppModel {
         // check alone would reset and keep the user in Ghost Mode after
         // they explicitly asked for a persisted chat.
         if !selectedChat.isGhost && selectedChat.messages.isEmpty && selectedChat.draft.isEmpty && selectedChat.draftAttachments.isEmpty && selectedChat.projectID == assignedProjectID {
-            outputText = ""
-            outputReasoningText = ""
-            outputPromptText = ""
+            resetLiveOutputIfNoTurnRuns()
             updateTokenEstimate()
             return selectedChatID
         }
         let chat = AppChat(projectID: assignedProjectID)
         chats.insert(chat, at: 0)
+        // Leaving a chat that shows an approval card parks the card (ZP-23).
+        parkSlotApproval()
         selectedChatID = chat.id
-        outputText = ""
-        outputReasoningText = ""
-        outputPromptText = ""
+        resetLiveOutputIfNoTurnRuns()
         persistChats()
         updateTokenEstimate()
         let createdID = chat.id
@@ -222,15 +224,27 @@ extension AppModel {
         // approval, with `generating` already false, read as an ordinary
         // chat switch and made it easy to lose track of which chat is
         // waiting on a decision.
-        guard !generating, !submitting, pendingToolCall == nil else { return }
+        //
+        // **A GENERATING CHAT NO LONGER PINS THE USER TO IT** (ZP-23). Only
+        // the cases `ChatGenerationCoordinator.verdict` names block a switch.
+        // The live buffer is left alone while a turn runs: it belongs to that
+        // turn's chat, and the views scope it by `generatingChatID`.
+        guard laneVerdict(.select(target: id)) == .allowed else { return }
         activeSection = .chat
         guard id != selectedChatID else { return }
+        // **LEAVING AN APPROVAL PARKS IT** (ZP-23, CUJ 2). The card moves to
+        // the per-chat store, so the slot describes the chat now on screen
+        // and each chat answers only its own approval.
+        parkSlotApproval()
         selectedChatID = id
-        outputText = ""
-        outputReasoningText = ""
-        outputPromptText = ""
+        resetLiveOutputIfNoTurnRuns()
         persistChats()
         updateTokenEstimate()
+        // A proposal this chat parked while it was in the background replays
+        // now that the user is looking at it (or waits for the lane).
+        if resumeDeferredProposalIfPossible(chatID: id) { return }
+        // A card this chat parked when it was left comes back, re-validated.
+        if restoreParkedApprovalIfPossible(chatID: id) { return }
         // Queued prompts drain on selection too. The turn tail covers the
         // chat the user STAYED on; this covers the chat the user LEFT and
         // came back to (and is how a cron prompt parked for a background
@@ -274,7 +288,11 @@ extension AppModel {
         // id before awaiting its hook and re-creates the row under the SAME
         // UUID if it is gone, so a chat deleted in that window comes back
         // carrying the prompt the user thought they had thrown away.
-        guard !generating, !submitting, let index = chats.firstIndex(where: { $0.id == id })
+        //
+        // **ONLY THE CHAT THAT OWNS THE RUNNING TURN IS PINNED** (ZP-23);
+        // deleting any other chat while one generates is legal.
+        guard laneVerdict(.delete(chat: id)) == .allowed,
+            let index = chats.firstIndex(where: { $0.id == id })
         else { return }
         if let imageJob, imageJob.chatID == id,
             imageJob.status == .completed,
@@ -314,6 +332,7 @@ extension AppModel {
             ToolObservationStore.shared.delete(chatID: id)
             try? MemoryLedgerStore.shared.invalidateEvidence(chatID: id, messages: [])
             forgetConversationRecall(chatID: id)
+            RolloutStore.shared.delete(chatID: id)
         }
         invalidatePendingTitleGeneration(for: id)
         // A deleted chat's queued drafts are discarded WITH it: the user's
@@ -321,6 +340,7 @@ extension AppModel {
         // no row would sit in `pendingUserMessages` forever (nothing else
         // removes entries keyed by a dead chat).
         pendingUserMessages[id] = nil
+        forgetLaneState(chatID: id)
         // Its background work dies with it too: an agent would run to
         // completion for an audience of nobody (the completion path drops
         // its notification once the chat row is gone), and a shell would
@@ -330,6 +350,9 @@ extension AppModel {
         // otherwise fire for a chat with no row and re-arm forever.
         teardownGoal(chatID: id)
         chats.remove(at: index)
+        // Before the fallback selection below, so the follower does not
+        // retarget the dead tab onto the replacement chat (OC-04).
+        pruneSessionTabs()
         if chats.isEmpty {
             selectedChatID = UUID()
         } else if selectedChatID == id {
@@ -352,8 +375,7 @@ extension AppModel {
                 selectedChatID = UUID()
             }
         }
-        outputText = ""
-        outputReasoningText = ""
+        resetLiveOutputIfNoTurnRuns()
         persistChats()
         updateTokenEstimate()
         Task {
@@ -395,6 +417,7 @@ extension AppModel {
                 } else {
                     chats[index].messages.removeAll()
                     forgetConversationRecall(chatID: chats[index].id)
+                    RolloutStore.shared.delete(chatID: chats[index].id)
                     chats[index].contextSummary = nil
                     chats[index].compactedMessageCount = 0
                     chats[index].skillState = nil
@@ -407,6 +430,9 @@ extension AppModel {
         if pendingToolCallChatID == clearedChatID {
             clearPendingToolCall()
         }
+        // A parked card describes the transcript just erased.
+        parkedApprovals[clearedChatID] = nil
+        turnCoordinator.unpark(clearedChatID)
         // A goal and queued prompts belong to the conversation just erased:
         // left behind, the goal loop would keep judging the old condition
         // and the idle timer would inject check-ins into the empty chat.

@@ -451,6 +451,7 @@ extension AppModel {
         // EXECUTION, so Send cannot start a second turn beside the tool and
         // Stop is enabled for exactly the window a shell command runs in.
         generating = true
+        claimLane(for: chatID)
         isCancellationPending = false
         // **THE DEFER BELOW MUST NOT LOWER A FLAG A LATER TURN RAISED**
         // (state#29). `continueOrStop` runs SYNCHRONOUSLY inside this task and
@@ -530,7 +531,12 @@ extension AppModel {
     }
 
     /// User denial action for a pending tool call.
-    public func denyPendingToolCall(id: UUID) {
+    ///
+    /// `policyReason` is set only by the parked-approval replay (ZP-23): the
+    /// call was refused by the CURRENT permission state, not by a click, and
+    /// the transcript, the model and the hooks must not claim the user said
+    /// no.
+    public func denyPendingToolCall(id: UUID, policyReason: String? = nil) {
         // The same guard approve carries (state#76): deny raises `generating`
         // and installs its own `toolExecutionTask` too.
         guard !generating, !submitting else { return }
@@ -541,6 +547,9 @@ extension AppModel {
         let project = pendingToolCallProject ?? selectedProject
         let batchCalls = pendingBatchCalls
         clearPendingToolCall()
+        let rejectionOutput = policyReason.map { "Tool execution denied: \($0)" }
+            ?? TOOL_REJECTED_MESSAGE
+        let hookReason = policyReason ?? "Denied by the user at the approval card."
 
         // **A PARKED BATCH DENIES AS ONE**: every call is updated in place
         // on the parked message, and configured hooks hear a
@@ -551,14 +560,14 @@ extension AppModel {
                 self.appendToolExecutionTurn(
                     call: batchCall,
                     result: AppToolResult(
-                        callID: batchCall.id, output: TOOL_REJECTED_MESSAGE,
+                        callID: batchCall.id, output: rejectionOutput,
                         isError: true, durationSeconds: 0.0),
                     chatID: chatID)
             }
         } else {
             let result = AppToolResult(
                 callID: call.id,
-                output: TOOL_REJECTED_MESSAGE,
+                output: rejectionOutput,
                 isError: true,
                 durationSeconds: 0.0
             )
@@ -571,6 +580,7 @@ extension AppModel {
         // started a second `generate()` on the serial session beside the deny
         // path's own. Mirrors the approve path above, epoch guard included.
         generating = true
+        claimLane(for: chatID)
         isCancellationPending = false
         generationEpoch += 1
         let myEpoch = generationEpoch
@@ -588,21 +598,21 @@ extension AppModel {
             // notification above. A denied batch hears one per call.
             if let batchCalls, batchCalls.count > 1 {
                 _ = await self.dispatchNotification(
-                    message: "\(batchCalls.count) tool calls were denied by the user.",
+                    message: "\(batchCalls.count) tool calls were denied" + (policyReason == nil ? " by the user." : ": \(hookReason)"),
                     chatID: chatID, project: project)
                 for batchCall in batchCalls {
                     _ = await self.dispatchPermissionDenied(
                         toolName: batchCall.name, toolArguments: batchCall.arguments,
-                        reason: "Denied by the user at the approval card.",
+                        reason: hookReason,
                         chatID: chatID, project: project)
                 }
             } else {
                 _ = await self.dispatchNotification(
-                    message: "Tool call '\(call.name)' was denied by the user.",
+                    message: "Tool call '\(call.name)' was denied" + (policyReason == nil ? " by the user." : ": \(hookReason)"),
                     chatID: chatID, project: project)
                 _ = await self.dispatchPermissionDenied(
                     toolName: call.name, toolArguments: call.arguments,
-                    reason: "Denied by the user at the approval card.",
+                    reason: hookReason,
                     chatID: chatID, project: project)
             }
             await self.continueOrStop(afterStep: originStep, chatID: chatID, project: project)
@@ -620,6 +630,10 @@ extension AppModel {
     public func appendToolExecutionTurn(call: AppToolCall, result: AppToolResult, chatID: UUID? = nil) {
         let targetID = chatID ?? selectedChatID
         guard chats.contains(where: { $0.id == targetID }) else { return }
+        // Every tool outcome funnels through here, so this is the one place
+        // that sees each call finish (ZP-03). A call is logged once per
+        // outcome; the approval card's proposal is not an outcome.
+        if call.status != .pendingApproval { logTrajectoryToolExec(call: call, result: result, chatID: targetID) }
 
         let existingMessages = turnMessages(for: targetID)
         if let msgIndex = existingMessages.lastIndex(where: { msg in

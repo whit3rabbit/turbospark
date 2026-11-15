@@ -114,6 +114,9 @@ extension AudioWorkspaceController {
         switch event {
         case .preparing:
             live.status = AppStrings.localized("Preparing live text. The first time on this Mac can take a few minutes.")
+        case .ready:
+            // The status stays until the first words arrive, as before.
+            break
         case .update(let update):
             live.status = nil
             live.apply(update)

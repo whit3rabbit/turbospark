@@ -27,15 +27,10 @@ struct CronJobsSettingsPaneView: View {
     }
 
     var body: some View {
-        Group {
-            if jobs.isEmpty {
-                emptyState
-            } else {
-                VStack(spacing: 0) {
-                    header
-                    jobList
-                }
-            }
+        VStack(spacing: 0) {
+            cronContent
+            Divider()
+            OffPeakTasksSectionView(model: model)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .confirmationDialog(
@@ -50,6 +45,18 @@ struct CronJobsSettingsPaneView: View {
             Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
         } message: { job in
             Text("The schedule \"\(job.cron)\" will stop firing.", bundle: .module)
+        }
+    }
+
+    @ViewBuilder
+    private var cronContent: some View {
+        if jobs.isEmpty {
+            emptyState
+        } else {
+            VStack(spacing: 0) {
+                header
+                jobList
+            }
         }
     }
 

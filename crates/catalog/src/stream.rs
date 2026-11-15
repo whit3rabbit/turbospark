@@ -199,6 +199,9 @@ pub(crate) fn stream_mlx(
         ModelFamily::Qwen2Dense => {
             repack::parse_qwen2_config(&config_text).map_err(|e| e.to_string())
         }
+        ModelFamily::Qwen3Dense => {
+            repack::parse_qwen3_config(&config_text).map_err(|e| e.to_string())
+        }
         ModelFamily::Qwen3Vl => {
             repack::parse_qwen3_vl_config(&config_text).map_err(|e| e.to_string())
         }
@@ -364,7 +367,8 @@ pub(crate) fn stream_mlx(
     } else {
         None
     };
-    if family == ModelFamily::Qwen2Dense {
+    // Text-only MLX Qwen3 spells the trunk `model.*` just as Qwen2 does.
+    if matches!(family, ModelFamily::Qwen2Dense | ModelFamily::Qwen3Dense) {
         for header in &mut headers {
             repack::canonicalize_qwen2_header(header).map_err(|e| e.to_string())?;
         }
@@ -537,6 +541,9 @@ pub(crate) fn stream_mlx(
             repack::write_qwen4_exp_install_streamed(dir, &arch, &model_id, &shards, &quant, report)
         }
         ModelFamily::Qwen2Dense => repack::write_qwen2_dense_install_streamed(
+            dir, &arch, &model_id, &shards, &quant, report,
+        ),
+        ModelFamily::Qwen3Dense => repack::write_qwen3_dense_install_streamed(
             dir, &arch, &model_id, &shards, &quant, report,
         ),
         ModelFamily::Qwen3Vl => {

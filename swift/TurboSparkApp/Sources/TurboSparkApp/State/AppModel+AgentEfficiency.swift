@@ -101,6 +101,16 @@ extension AppModel {
             result.output += addition
             result.archivalOutput? += addition
         }
+        // OC-10: the post-edit seam (formatter, then language server
+        // diagnostics). After the hooks so hook feedback keeps its place, and
+        // only for a successful edit tool call.
+        if let note = await PostEditSeam.note(
+            call: call, isError: result.isError, project: project, chatID: chatID)
+        {
+            let addition = "\n\n" + note
+            result.output += addition
+            result.archivalOutput? += addition
+        }
         return (result, verdict.preventContinuation ? verdict.continuationStopReason : nil)
     }
 

@@ -15,6 +15,29 @@ extension AppModel {
         pluginLoadDiagnostics = resolution.loadErrors
     }
 
+    // MARK: - Builtin seeding
+
+    /// `<name>` of a `<name>@turbospark-plugins-builtin` id, else nil.
+    static func builtinPluginName(of pluginID: String) -> String? {
+        let suffix = "@" + BuiltinPluginSeeder.marketplaceName
+        guard pluginID.hasSuffix(suffix) else { return nil }
+        let name = String(pluginID.dropLast(suffix.count))
+        return name.isEmpty ? nil : name
+    }
+
+    /// Copies the bundled plugins into the profile at launch (local files
+    /// only: no network, no code run; hooks still need trust approval). A
+    /// no-op when the app ships no builtins. Runs off the main actor and
+    /// refreshes the plugin surfaces only if something was installed.
+    public func seedBuiltinPlugins() {
+        guard BuiltinPluginSeeder.shared.hasBuiltins else { return }
+        Task.detached(priority: .utility) { [weak self] in
+            let report = try? await BuiltinPluginSeeder.shared.seed()
+            guard let report, !report.seeded.isEmpty else { return }
+            await MainActor.run { self?.pluginStateChanged() }
+        }
+    }
+
     // MARK: - Enable / disable
 
     /// Toggles a plugin at USER scope and persists it. Project-scope
@@ -50,6 +73,11 @@ extension AppModel {
         reloadAgents()
         AppHookStore.shared.refresh(projectDirectory: selectedProject?.rootDirectoryPath)
         refreshMcpToolCatalog(for: selectedProject)
+        // A page of a plugin that was just disabled or removed must not
+        // outlive that decision (ZP-06). After the cache invalidation, so the
+        // host reads the new state; only when the lazy host already exists,
+        // so an app that never opened a page builds nothing here.
+        if pluginUiHostIsLive { pluginUiHost.reconcile() }
     }
 
     // MARK: - Local folder plugins
@@ -123,6 +151,11 @@ extension AppModel {
             // Default ON: an explicit `false` from a previous install would
             // otherwise survive a reinstall and read as a broken install.
             setPluginPreference(id: outcome.pluginID, enabled: true, scope: scope)
+            // Installing a builtin from its row clears its suppression.
+            if marketplaceName == BuiltinPluginSeeder.marketplaceName, scope == .user {
+                try? BuiltinPluginSeeder.shared.recordInstalled(
+                    pluginName: outcome.pluginName, version: outcome.version)
+            }
             pluginStateChanged()
             showToast(
                 AppStrings.localized("Installed \(outcome.pluginName) \(outcome.version)."),

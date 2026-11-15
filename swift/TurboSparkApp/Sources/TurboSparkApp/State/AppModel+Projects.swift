@@ -71,7 +71,9 @@ extension AppModel {
         maxAutonomousSteps: Int = 5,
         skillStateEnabled: Bool = false,
         forgeGuardrailsEnabled: Bool? = nil,
-        syntextIndexEnabled: Bool = false
+        syntextIndexEnabled: Bool = false,
+        formatterMode: ProjectFormatterMode = .inherit,
+        lspMode: ProjectLSPMode = .inherit
     ) -> AppProject {
         // **THE SAME GUARD `selectProject` CARRIES** (state#55). Creating a
         // project SELECTS it, rebinds `worktree` and rebinds `AppHookStore`,
@@ -90,7 +92,9 @@ extension AppModel {
             maxAutonomousSteps: maxAutonomousSteps,
             forgeGuardrailsEnabled: forgeGuardrailsEnabled,
             skillStateEnabled: skillStateEnabled,
-            syntextIndexEnabled: syntextIndexEnabled
+            syntextIndexEnabled: syntextIndexEnabled,
+            formatterMode: formatterMode,
+            lspMode: lspMode
         )
 
         projects.insert(project, at: 0)
@@ -134,13 +138,18 @@ extension AppModel {
     public func openChat(id: UUID) {
         guard let chat = chats.first(where: { $0.id == id }), !chat.isGhost else { return }
         if selectedProjectID != chat.projectID {
+            // A project switch needs a quiet app; check that BEFORE parking
+            // the selected chat's card, or a refused switch would leave the
+            // user in the chat with its card in the store.
+            guard !generating, !submitting, !slotHoldsForeignApproval else { return }
+            if id != selectedChatID { parkSlotApproval() }
             guard applyProjectSelection(id: chat.projectID) else { return }
         }
         selectChat(id: id)
     }
 
     /// The project switch itself. Returns false when refused mid-turn.
-    private func applyProjectSelection(id: UUID?) -> Bool {
+    func applyProjectSelection(id: UUID?) -> Bool {
         // **THE THREE FLAGS, NOT ONE** (state#77). The chat-side siblings
         // grew `pendingToolCall` and `submitting` (state#33, state#49) and
         // the project-side ones never did -- which is backwards, because a
@@ -221,8 +230,14 @@ extension AppModel {
         updated.updatedAt = Date()
         let previousRoot = projects[index].rootDirectoryPath ?? ""
         let policyChanged = !projects[index].permissions.hasSameApprovalPolicy(as: updated.permissions)
+        let lspNarrowed = ProjectLSPMode.isNarrowing(from: projects[index].lspMode, to: updated.lspMode)
         projects[index] = updated
         persistProjects()
+        if lspNarrowed, let rootURL = updated.rootDirectoryURL {
+            // OC-10: a project that just turned its language servers off
+            // loses the ones already running, now and not at the next use.
+            Task { await LanguageServerRegistry.shared.stop(root: rootURL) }
+        }
         if policyChanged {
             clearSessionApprovals { $0.projectID == project.id }
         }
@@ -273,6 +288,8 @@ extension AppModel {
         let projectToDelete = projects.first { $0.id == id }
         projects.removeAll { $0.id == id }
         if let rootURL = projectToDelete?.rootDirectoryURL {
+            // OC-10: the project's language servers die with the project.
+            Task { await LanguageServerRegistry.shared.stop(root: rootURL) }
             Task.detached(priority: .utility) {
                 try? await SyntextIndexManager.shared.deleteIndex(for: rootURL)
             }
@@ -290,6 +307,7 @@ extension AppModel {
         }
         persistProjects()
         persistChats()
+        pruneWorkspaceTabs()
         reloadSkills()
         reloadAgents()
         if wasSelected {

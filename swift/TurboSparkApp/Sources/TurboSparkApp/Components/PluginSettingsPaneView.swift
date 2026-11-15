@@ -125,7 +125,10 @@ public struct PluginSettingsPaneView: View {
             AppSearchField(text: $searchQuery, prompt: Text("Search plugins...", bundle: .module))
         } actions: {
             ExtensionRefreshButton(label: Text("Refresh", bundle: .module), action: refresh)
-            ExtensionImportMenu { addLocalFolderItem }
+            ExtensionImportMenu {
+                addLocalFolderItem
+                createPluginItem
+            }
             browseMarketplaceButton
         } compactActions: {
             ExtensionMoreMenu {
@@ -134,6 +137,7 @@ public struct PluginSettingsPaneView: View {
                 }
                 Divider()
                 addLocalFolderItem
+                createPluginItem
             }
             browseMarketplaceButton
         }
@@ -145,6 +149,24 @@ public struct PluginSettingsPaneView: View {
         } label: {
             Label { Text("Add Local Folder...", bundle: .module) } icon: { Image(systemName: "folder.badge.plus") }
         }
+    }
+
+    /// Plugins are authored by asking the assistant, which loads the bundled
+    /// `plugin-creator` skill (ZP-07). The draft is only filled in: the user
+    /// completes and sends it, and nothing is written until the agent's own
+    /// file writes pass the usual tool permissions.
+    private var createPluginItem: some View {
+        Button {
+            model.composeInChat(Self.createPluginDraft)
+        } label: {
+            Label { Text("Create Plugin...", bundle: .module) } icon: { Image(systemName: "wand.and.stars") }
+        }
+    }
+
+    /// The prefilled request. Localized because it lands in the composer as
+    /// the user's own message.
+    static var createPluginDraft: String {
+        AppStrings.localized("Use the plugin-creator skill to create a new plugin for me.\nPlugin name: \nWhat it does: \nComponents (skills, commands, agents, MCP servers): \nFolder to create it in: ")
     }
 
     private var browseMarketplaceButton: some View {

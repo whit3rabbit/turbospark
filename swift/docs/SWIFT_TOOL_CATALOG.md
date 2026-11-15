@@ -716,6 +716,17 @@ TurboSpark enforces two primary tool environments:
 
 ---
 
+### offpeakenqueue / offpeaklist / offpeakcancel - Off-Peak Queue
+
+- **Category**: `.automation` (same ladder position as the cron tools)
+- **Workspace Rooted**: No
+- **Permission Tier**: Automation gated
+- **Source**: `Tools/Automation/OffPeakTaskTools.swift`, `Tools/Automation/OffPeakTaskStore.swift`, `Tools/Automation/OffPeakTaskDispatcher.swift`
+
+**Purpose**: Queue a prompt to run later in the same chat, one task at a time, only while the user has turned on "Run off-peak tasks" (default off) and the chat is open and idle. Fixed cap of 20 active tasks. A turn started by an off-peak task cannot queue another one, a run that parks on a tool approval ends instead of waiting, and temporary (ghost) chats are refused.
+
+---
+
 ### sleep / delay - Bounded Delays
 
 - **Category**: `.automation`

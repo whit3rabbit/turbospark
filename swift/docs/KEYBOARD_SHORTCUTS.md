@@ -21,11 +21,42 @@ cannot drift between the three.
 | `Cmd+6` | API | Opens the API workspace. |
 | `Cmd+7` | Audio | Opens Audio Studio. |
 | `Cmd+8` | Humanize | Opens the Humanize workspace. |
+| `Cmd+Option+Left` | Go Back | Walks back through section and chat switches (OC-05, 100 entries, not kept across relaunch). Skips deleted chats. Disabled at the start of the history and while a turn runs. Cmd+[ stays Previous Chat. |
+| `Cmd+Option+Right` | Go Forward | Walks forward after a Go Back. A new switch after going back discards the forward entries. |
 | `Ctrl+Cmd+S` | Toggle Sidebar | Shows or hides the panel beside the icon rail (the chat list in Chat, the page list in Audio). The rail stays. Disabled in sections without a panel. |
 | `Cmd+Shift+I` | Toggle Inspector | Expands or collapses the right-hand model and runtime inspector. |
 | `Cmd++` | Make Text Bigger | Increases in-app text readability and Dynamic Type scale. |
 | `Cmd+-` | Make Text Smaller | Steps the text size down toward Small (Small, Default, Large, Extra Large). |
 | `Cmd+0` | Default Text Size | Resets text size to Default and the base sizes to the factory 14px UI and 12px code. |
+
+### Customizing shortcuts (OC-01)
+
+Settings > Keyboard Shortcuts lets you rebind any command a menu item carries.
+Select the shortcut button on a row (Return or Space on the focused button
+works), press the new keys, and the menu item, the pane and the Help sheet
+show it immediately. Escape cancels a recording. The restore button on a
+changed row brings back its default, and Reset All Shortcuts (confirmed)
+clears every change.
+
+- A chord needs Command or Control. Supported keys are printable characters,
+  Space, Return, Tab, Delete and the arrows. Function keys are not supported.
+- A chord is refused, with the holder named, when another command or another
+  command's hidden alternate already uses it. Restoring a default is refused
+  the same way when someone has since taken that chord.
+- Text editing chords and well-known system chords (quit, close, hide,
+  minimize, settings, app switcher, Spotlight, screenshots, Mission Control
+  arrows) are refused. The list is static: a system shortcut the user has
+  rebound in System Settings cannot be seen, and a chord it takes never
+  reaches the menu.
+- Rows marked Fixed (Generate Response, Cancel Generation, Add Files or
+  Photos, Start Recording) share their chord with a button in the window and
+  cannot be changed. The alternate chords ("also ...") are mirrors of the menu
+  item and stay fixed.
+- A chord is stored as a character plus modifiers, so it follows the keyboard
+  layout it was recorded on; record it again after switching layouts.
+- Overrides live in `keybind_overrides.json` under the app's storage root. An
+  unreadable file is quarantined (`keybind_overrides.corrupt-...json`) and the
+  defaults apply, with a toast.
 
 ### Conversations (Chat Menu)
 
@@ -34,7 +65,16 @@ cannot drift between the three.
 | `Cmd+N` | New Chat | Starts a new chat session in the currently active project. |
 | `Cmd+[` | Previous Chat | Switches focus to the previous conversation in chronological history. |
 | `Cmd+]` | Next Chat | Switches focus to the next conversation in chronological history. |
+| `Ctrl+Tab` | Next Workspace Tab | Moves to the next open project tab, wrapping. Enabled only with two or more tabs in Projects mode; refused with a toast while a turn runs (ZP-21). |
+| `Ctrl+Shift+Tab` | Previous Workspace Tab | Moves to the previous open project tab, wrapping. Same conditions. |
+| `Cmd+T` | New Tab | Opens a new session tab (OC-04). |
+| `Cmd+Shift+W` | Close Tab | Closes the current session tab. `Cmd+W` stays the window's. |
+| `Cmd+Shift+T` | Reopen Closed Tab | Reopens the most recently closed session tab. |
+| `Cmd+Option+]` | Next Session Tab | Moves to the next session tab. |
+| `Cmd+Option+[` | Previous Session Tab | Moves to the previous session tab. |
 | `Cmd+L` | Focus Prompt | Moves first-responder focus directly into the prompt editor. |
+| `Cmd+K` | Command Center | Opens the palette over commands, chats and project files (`>` commands, `#` chats, `@` files, Tab switches scope). |
+| `Cmd+Shift+P` | Run Command | Opens the same palette on the commands scope. |
 | `Cmd+Shift+K` | Clear Chat History | Clears all turns from the active conversation transcript. |
 
 ### Model Execution and Generation (Generation Menu)
@@ -44,6 +84,8 @@ cannot drift between the three.
 | `Cmd+Return` | Generate Response / Queue Message | Submits the chat prompt, or queues it while a turn is running. The label reads Queue Message only when the draft would actually queue. |
 | `Cmd+.` or `Escape` | Cancel Generation | Interrupts active prefill or token decoding immediately. |
 | `Cmd+Shift+.` | Stop All | Stops the turn, every running background agent and shell, and an in-flight model install. The server and the loaded model are untouched. |
+| `Cmd+Shift+Y` | Start Voice Call | Starts or ends a local voice call (OC-08, off by default). Id `call.toggle`. |
+| `Cmd+Shift+Space` | Toggle Talk | Push to talk for voice call auto-send (OC-08). Press once to start talking and again to stop; enabled only in a live call with Auto-send voice utterances on. A toggle, not a hold, because a menu chord is key-down only. The Talk button in the call panel also holds to talk. |
 
 Generation menu scope: Generate/Queue acts only while Chat is the active
 section, because it sends the chat draft. Images, Audio and Humanize bind

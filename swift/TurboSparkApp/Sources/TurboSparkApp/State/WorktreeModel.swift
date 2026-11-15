@@ -115,12 +115,14 @@ public enum WorktreeViewMode: String, CaseIterable, Sendable {
 public enum WorktreeTabMode: String, CaseIterable, Sendable {
     case changes
     case timeline
+    case activity
     case worktrees
 
     public var title: String {
         switch self {
         case .changes: return "Changes"
         case .timeline: return "Timeline"
+        case .activity: return "Activity"
         case .worktrees: return "Worktrees"
         }
     }
@@ -129,6 +131,7 @@ public enum WorktreeTabMode: String, CaseIterable, Sendable {
         switch self {
         case .changes: return "arrow.triangle.swap"
         case .timeline: return "clock.arrow.circlepath"
+        case .activity: return "square.grid.2x2"
         case .worktrees: return "folder.badge.gearshape"
         }
     }

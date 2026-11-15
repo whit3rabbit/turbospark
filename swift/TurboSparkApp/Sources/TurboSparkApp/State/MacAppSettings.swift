@@ -158,8 +158,25 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     public var modelReasoningDefaults: [String: String]
     /// Last-used primary interaction mode ("chat" or "projects").
     public var interactionMode: String
+    /// Chat sidebar grouping ("chats" or "inbox", OC-03). Unknown values load
+    /// as "chats".
+    public var chatSidebarMode: String
+    /// Out-of-app notification toggles and sounds per event (OC-02). Empty
+    /// means every event is off, which is the default.
+    var attentionEvents: AttentionPreferences
+    /// Whether voice call mode is offered (OC-08). Off by default.
+    public var voiceCallEnabled: Bool
+    /// Whether a final voice utterance may be sent without pressing Send,
+    /// after a local decider says allow (OC-08). Off by default.
+    public var voiceCallAutoSendEnabled: Bool
+    /// The installed model that answers the auto-send check (`installId`), or
+    /// nil for Automatic (the loaded chat model). An id that no longer
+    /// resolves behaves as Automatic and the setting says so.
+    public var voiceCallDeciderModelID: String?
     /// Whether the app opens a temporary (Ghost Mode) chat on launch.
     public var alwaysStartInGhostMode: Bool
+    /// Whether queued off-peak tasks may run (admission gate). Off by default.
+    public var offPeakEnabled: Bool
     /// `AppPermissionMode` raw value for chats with no project. An unknown
     /// value loads as Auto, the default it had before it was stored.
     public var rootlessPermissionMode: String
@@ -300,6 +317,11 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
     /// (`ChatRecallStore`). On by default; never for Ghost chats or a
     /// passphrase-protected profile, whatever this says.
     public var conversationRecallEnabled: Bool
+    /// Whether each chat keeps a local call-by-call trajectory log
+    /// (`RolloutStore`, ZP-03). Off by default: the log holds model output
+    /// and tool arguments and results. Never for Ghost chats or a
+    /// passphrase-protected profile, whatever this says.
+    public var trajectoryLoggingEnabled: Bool
     /// Global browser preferences. Project permissions and origin grants are stored separately.
     public var browser: BrowserSettings
     /// Global computer-use preferences. Per-app grants live only in memory.
@@ -353,7 +375,13 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         guardrailsMode: String = "select",
         modelReasoningDefaults: [String: String] = [:],
         interactionMode: String = "chat",
+        chatSidebarMode: String = "chats",
+        attentionEvents: AttentionPreferences = AttentionPreferences(),
+        voiceCallEnabled: Bool = false,
+        voiceCallAutoSendEnabled: Bool = false,
+        voiceCallDeciderModelID: String? = nil,
         alwaysStartInGhostMode: Bool = false,
+        offPeakEnabled: Bool = false,
         rootlessPermissionMode: String = "auto",
         autoCompact: Bool = true,
         actionFusion: Bool = true,
@@ -397,6 +425,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         agentModeHints: AgentModeHints = AgentModeHints(),
         syntextIndexingEnabled: Bool = true,
         conversationRecallEnabled: Bool = true,
+        trajectoryLoggingEnabled: Bool = false,
         browser: BrowserSettings = BrowserSettings(),
         computerUse: ComputerUseSettings = ComputerUseSettings(),
         networkPolicy: AppNetworkPolicy = AppNetworkPolicy()
@@ -446,7 +475,13 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.minAutoContextTokens = minAutoContextTokens
         self.modelReasoningDefaults = modelReasoningDefaults
         self.interactionMode = interactionMode
+        self.chatSidebarMode = chatSidebarMode
+        self.attentionEvents = attentionEvents
+        self.voiceCallEnabled = voiceCallEnabled
+        self.voiceCallAutoSendEnabled = voiceCallAutoSendEnabled
+        self.voiceCallDeciderModelID = voiceCallDeciderModelID
         self.alwaysStartInGhostMode = alwaysStartInGhostMode
+        self.offPeakEnabled = offPeakEnabled
         self.rootlessPermissionMode = rootlessPermissionMode
         self.autoCompact = autoCompact
         self.actionFusion = actionFusion
@@ -524,6 +559,7 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.agentModeHints = agentModeHints
         self.syntextIndexingEnabled = syntextIndexingEnabled
         self.conversationRecallEnabled = conversationRecallEnabled
+        self.trajectoryLoggingEnabled = trajectoryLoggingEnabled
         self.browser = browser
         self.computerUse = computerUse
         self.networkPolicy = networkPolicy
@@ -593,8 +629,21 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
         self.minAutoContextTokens = c.decodeLenient(UInt32.self, forKey: .minAutoContextTokens, fallback: 0)
         self.modelReasoningDefaults = c.decodeLenient([String: String].self, forKey: .modelReasoningDefaults, fallback: [:])
         self.interactionMode = c.decodeLenient(String.self, forKey: .interactionMode, fallback: "chat")
+        self.chatSidebarMode = c.decodeLenient(
+            String.self, forKey: .chatSidebarMode, fallback: "chats")
+        self.attentionEvents = c.decodeLenient(
+            AttentionPreferences.self, forKey: .attentionEvents, fallback: AttentionPreferences())
+        self.voiceCallEnabled = c.decodeLenient(
+            Bool.self, forKey: .voiceCallEnabled, fallback: false)
+        self.voiceCallAutoSendEnabled = c.decodeLenient(
+            Bool.self, forKey: .voiceCallAutoSendEnabled, fallback: false)
+        // A wrong-typed value decodes as Automatic, never fails the file.
+        self.voiceCallDeciderModelID = c.decodeLenient(
+            String?.self, forKey: .voiceCallDeciderModelID, fallback: nil)
         self.alwaysStartInGhostMode = c.decodeLenient(
             Bool.self, forKey: .alwaysStartInGhostMode, fallback: false)
+        self.offPeakEnabled = c.decodeLenient(
+            Bool.self, forKey: .offPeakEnabled, fallback: false)
         self.rootlessPermissionMode = c.decodeLenient(
             String.self, forKey: .rootlessPermissionMode, fallback: "auto")
         self.autoCompact = c.decodeLenient(Bool.self, forKey: .autoCompact, fallback: true)
@@ -741,6 +790,8 @@ public struct MacAppSettings: Codable, Equatable, Sendable {
             Bool.self, forKey: .syntextIndexingEnabled, fallback: true)
         self.conversationRecallEnabled = c.decodeLenient(
             Bool.self, forKey: .conversationRecallEnabled, fallback: true)
+        self.trajectoryLoggingEnabled = c.decodeLenient(
+            Bool.self, forKey: .trajectoryLoggingEnabled, fallback: false)
         self.browser = c.decodeLenient(
             BrowserSettings.self, forKey: .browser, fallback: BrowserSettings())
         self.computerUse = c.decodeLenient(

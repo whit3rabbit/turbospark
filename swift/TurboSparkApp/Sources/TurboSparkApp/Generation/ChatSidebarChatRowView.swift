@@ -27,6 +27,9 @@ struct ChatSidebarChatRowView: View {
 
     @State private var isHovered = false
     private var actionButtonSize: CGFloat { theme.sidebarActionSize }
+    /// Whether the running work pins THIS chat (ZP-23): its own turn, or work
+    /// that is not a chat turn. Another chat's turn does not.
+    private var isChatBusy: Bool { model.isChatBusyForRowActions(chat.id) }
 
     var body: some View {
         let isSelected = chat.id == model.selectedChatID
@@ -73,15 +76,19 @@ struct ChatSidebarChatRowView: View {
                 renameText = chat.title
                 chatBeingRenamed = chat
             } label: { Text("Rename", bundle: .module) }
-            .disabled(model.isRunning || chat.isGhost)
+            .disabled(isChatBusy || chat.isGhost)
             Button {
                 chatForSystemPrompt = chat
             } label: { Text("Chat System Prompt", bundle: .module) }
-            .disabled(model.isRunning)
+            .disabled(isChatBusy)
             Button {
                 _ = model.duplicateChat(id: chat.id)
             } label: { Text("Duplicate", bundle: .module) }
             .disabled(model.isRunning || chat.isGhost)
+            Button {
+                model.trajectoryPaneChatID = chat.id
+            } label: { Text("View Trajectory", bundle: .module) }
+            .disabled(chat.isGhost)
             Button {
                 model.setChatArchived(id: chat.id, archived: !chat.isArchived)
             } label: { (chat.isArchived ? Text("Unarchive", bundle: .module) : Text("Archive", bundle: .module)) }
@@ -94,24 +101,46 @@ struct ChatSidebarChatRowView: View {
                 model.toggleSplitPane(chatID: chat.id)
             } label: { (model.isSplitPane(chatID: chat.id) ? Text("Close Split Pane", bundle: .module) : Text("Open in Split View", bundle: .module)) }
             .disabled(chat.isGhost || model.isRunning || chat.id == model.selectedChatID)
+            // OC-04: the chat joins the session tab strip and becomes the
+            // selected tab. The model refuses (with a toast) while the lane
+            // verdict forbids the move.
+            Button {
+                model.openChatInSessionTab(id: chat.id)
+            } label: { Text("Open in New Tab", bundle: .module) }
+            .disabled(chat.isGhost || chat.isArchived)
+            // OC-04: the same Recently Closed stack the Chat menu and the
+            // strip's All Tabs menu show. Disabled while it is empty.
+            Menu {
+                ForEach(model.sessionTabs.closed.reversed(), id: \.chatID) { entry in
+                    Button {
+                        model.reopenClosedSessionTab(chatID: entry.chatID)
+                    } label: {
+                        Text(verbatim: model.sessionTabTitle(for: entry.chatID))
+                    }
+                }
+            } label: { Text("Recently Closed", bundle: .module) }
+            .disabled(model.sessionTabs.closed.isEmpty)
             Button(role: .destructive) {
                 chatPendingDeletion = chat
             } label: { Text("Delete", bundle: .module) }
-            .disabled(model.isRunning)
+            .disabled(isChatBusy)
         }
         .accessibilityAction(named: (chat.isPinned ? Text("Unpin", bundle: .module) : Text("Pin", bundle: .module))) {
             model.setChatPinned(id: chat.id, pinned: !chat.isPinned)
         }
         .accessibilityAction(named: Text("Rename", bundle: .module)) {
-            if !model.isRunning && !chat.isGhost {
+            if !isChatBusy && !chat.isGhost {
                 renameText = chat.title
                 chatBeingRenamed = chat
             }
         }
         .accessibilityAction(named: Text("Chat System Prompt", bundle: .module)) {
-            if !model.isRunning {
+            if !isChatBusy {
                 chatForSystemPrompt = chat
             }
+        }
+        .accessibilityAction(named: Text("View Trajectory", bundle: .module)) {
+            if !chat.isGhost { model.trajectoryPaneChatID = chat.id }
         }
         .accessibilityAction(named: Text("Duplicate", bundle: .module)) {
             if !model.isRunning && !chat.isGhost {
@@ -129,7 +158,7 @@ struct ChatSidebarChatRowView: View {
             }
         }
         .accessibilityAction(named: Text("Delete", bundle: .module)) {
-            if !model.isRunning {
+            if !isChatBusy {
                 chatPendingDeletion = chat
             }
         }
@@ -178,18 +207,19 @@ struct ChatSidebarChatRowView: View {
                     }
                 }
                 Spacer(minLength: 0)
+                stateBadge
             }
             .padding(.leading, 9)
             .padding(.vertical, 8)
             .contentShape(.rect)
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.985))
-        .disabled(model.isRunning && !isSelected)
-        .help(model.isRunning && !isSelected
+        .disabled(!model.canSelectChat(id: chat.id))
+        .help(!model.canSelectChat(id: chat.id)
             ? Text("Cannot switch chats while generation is running", bundle: .module)
             : Text("Switch to \(chat.title)", bundle: .module))
         .accessibilityLabel(chat.title)
-        .accessibilityValue(Text(verbatim: chat.preview))
+        .accessibilityValue(stateAccessibilityValue)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
@@ -208,7 +238,7 @@ struct ChatSidebarChatRowView: View {
                 .font(theme.ui(.tiny))
                 .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
                 .accessibilityHidden(true)
-        } else if isSelected && model.isRunning {
+        } else if model.chatTurnState(for: chat.id) == .generating {
             TaskProgressFlameIcon(size: 13)
         } else {
             Image(systemName: isSelected ? "bubble.left.fill" : "bubble.left")
@@ -216,6 +246,74 @@ struct ChatSidebarChatRowView: View {
                 .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
                 .contentTransition(.symbolEffect(.replace))
                 .accessibilityHidden(true)
+        }
+    }
+
+    private var slot: ChatRowSlot { model.chatRowSlot(for: chat) }
+
+    /// The trailing half of the row's one status slot (ZP-02 on the ZP-23
+    /// turn state). Pending pill, else unread dot, else the queued clock or
+    /// the selected row's hand glyph. Each carries text (the pill) or help
+    /// and a VoiceOver value (the dot, the glyphs), never color alone.
+    /// Generating is the animated flame in the icon slot, so it has no badge.
+    @ViewBuilder
+    private var stateBadge: some View {
+        switch slot {
+        case .pending:
+            HStack(spacing: 3) {
+                Image(systemName: "hand.raised.fill")
+                Text("Needs Approval", bundle: .module)
+                    .lineLimit(1)
+            }
+            .font(theme.ui(.micro, weight: .semibold))
+            .foregroundStyle(AppAttention.color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .overlay(Capsule().stroke(AppAttention.color, lineWidth: 1))
+            .fixedSize()
+            .padding(.trailing, 4)
+            .help(Text("Needs Approval", bundle: .module))
+            .accessibilityHidden(true)
+        case .unread:
+            Circle()
+                .fill(theme.accent)
+                .frame(width: 8, height: 8)
+                .padding(.trailing, 6)
+                .help(Text("Unread", bundle: .module))
+                .accessibilityHidden(true)
+        case .running, .normal:
+            switch model.chatTurnState(for: chat.id) {
+            case .awaitingTool, .awaitingQuestion:
+                // The selected row: the pill is for rows the user is not on.
+                Image(systemName: "hand.raised.fill")
+                    .font(theme.ui(.tiny))
+                    .foregroundStyle(AppAttention.color)
+                    .help(Text("Needs Approval", bundle: .module))
+                    .accessibilityHidden(true)
+            case .queued:
+                Image(systemName: "clock")
+                    .font(theme.ui(.tiny))
+                    .foregroundStyle(.appSecondary)
+                    .help(Text("Queued", bundle: .module))
+                    .accessibilityHidden(true)
+            case .generating, .idle:
+                EmptyView()
+            }
+        }
+    }
+
+    private var stateAccessibilityValue: Text {
+        // The same slot the eye reads, so VoiceOver and the dot agree.
+        if slot == .unread {
+            return chat.preview.isEmpty
+                ? Text("Unread", bundle: .module)
+                : Text("Unread: \(chat.preview)", bundle: .module)
+        }
+        switch model.chatTurnState(for: chat.id) {
+        case .generating: return Text("Generating", bundle: .module)
+        case .awaitingTool, .awaitingQuestion: return Text("Needs Approval", bundle: .module)
+        case .queued: return Text("Queued", bundle: .module)
+        case .idle: return Text(verbatim: chat.preview)
         }
     }
 
@@ -262,7 +360,7 @@ struct ChatSidebarChatRowView: View {
         .accessibilityLabel(Text("Chat actions for \(chat.title)", bundle: .module))
         .opacity(showsActions ? 1 : 0)
         .scaleEffect(showsActions ? 1 : 0.85)
-        .disabled(model.isRunning)
+        .disabled(isChatBusy)
         .padding(.trailing, 5)
     }
 }

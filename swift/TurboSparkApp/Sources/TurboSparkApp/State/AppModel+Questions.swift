@@ -25,6 +25,11 @@ extension AppModel {
         let mine = PendingUserQuestions(
             id: UUID(), chatID: chatID, toolCallID: toolCallID, items: items)
         pendingUserQuestions = mine
+        // The lane stays held while the question is open (the tool task that
+        // awaits it is the app's single turn slot); the coordinator records
+        // what the holder is waiting for so the row says so.
+        if let chatID { turnCoordinator.park(chatID, as: .awaitingQuestion) }
+        if let chatID { raiseAttention(.needsAnswer, chatID: chatID) }
         let answer = await withCheckedContinuation { continuation in
             AskUserQuestionExecutor.waitForAnswer(chatID: chatID, continuation: continuation)
         }
@@ -34,6 +39,9 @@ extension AppModel {
         // card, which would park the second waiter with no UI.
         if pendingUserQuestions?.id == mine.id {
             pendingUserQuestions = nil
+        }
+        if let chatID, turnCoordinator.parked[chatID] == .awaitingQuestion {
+            turnCoordinator.unpark(chatID)
         }
         return answer
     }

@@ -32,6 +32,7 @@ on:
           - turbospark-gpu
           - turbospark-image
           - turbospark-runtime
+          - turbospark-acp
           - turbospark-cli
           - turbospark-server
 
@@ -78,6 +79,7 @@ jobs:
             turbospark-gpu
             turbospark-image
             turbospark-runtime
+            turbospark-acp
             turbospark-cli
             turbospark-server
           )

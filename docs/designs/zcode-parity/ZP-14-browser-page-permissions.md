@@ -6,7 +6,7 @@ Parity target: ZCode's
 added after a CNVD finding.
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented (2026-11-13), deviations below
 * Date: 2026-11-11
 * Depends on: `BrowserOrigin`, the browser log, the per-profile store.
   Related: ZP-15 (browser recording) also touches `WebKitBrowserEngine`;
@@ -302,6 +302,67 @@ All mitigations are deny-by-default (needs author confirmation).
   timeout paths in both tab ownership modes.
 * **Exit criterion**: all of the above pass plus the manual run. Local
   green is not release evidence; follow `.claude/docs/verification.md`.
+
+## Implementation notes and deviations
+
+Conservative choices where the draft left a choice open: deny by default
+everywhere, nothing auto-granted, records per profile and per exact origin
+(`BrowserOrigin.canonicalString`) and class, no expiry, no cross-profile sync.
+
+* **Selected design**: Alternative B's hard deny for agent-owned tabs plus the
+  bubble for user-owned tabs. New `SitePermissionPolicy` and
+  `SitePermissionStore` (not an extension of `BrowserPermissionRuleStore`),
+  sharing only `BrowserOrigin`. Alternative D (session-only) was not chosen:
+  the draft requires persistent "for site" records.
+* **Files** (all under `swift/TurboSparkApp/Sources/TurboSparkApp/`):
+  `BrowserAutomation/SitePermissionPolicy.swift`,
+  `BrowserAutomation/SitePermissionStore.swift`, delegate methods in
+  `BrowserAutomation/WebKitBrowserEngine.swift`,
+  `Browser/SitePermissionBubbleView.swift`,
+  `Browser/SitePermissionsSettingsSection.swift` (wired into
+  `BrowserSettingsPaneView.swift`), overlay in `BrowserPaneView.swift`, tests
+  in `SitePermissionTests.swift`.
+* **Persistence**: `AppJSONStore` file `browser_site_permissions.json` under
+  `AppStorageRoot.directory` (the profile boundary), loaded on first use.
+  Corrupt files are quarantined by `AppJSONStore`; the store then starts empty,
+  so every request is a miss. Records cap at 500, audit at 200. A full store
+  turns a "for site" answer into a once-only one.
+* **Audit sink (deviation)**: no concrete `BrowserAutomationLogSink` exists in
+  the checkout, so `BrowserPermissionDiagnosticEvent` entries (class, decision,
+  canonical origin, optional auto-deny reason, timestamp) live in the same
+  store file, newest first, and the settings pane is the one viewer. Auto
+  denies carry a reason (agent tab, timeout, navigation, background, tab
+  closed, ownership change, process terminated, unclassified, unknown origin,
+  too many requests, other class denied). Stored-record hits are audited too.
+* **Bubble model (deviation)**: the policy owns its pending prompts and the
+  engine publishes them as `pendingSitePermissions`, rendered in the same
+  overlay slot as page dialogs (dialogs win). It does not extend
+  `BrowserDialogRequest`, because dialogs resolve through a JavaScript
+  completion handler and a permission needs a four-state answer and a
+  countdown. The bubble defaults and cancels to "Deny Once"; Allow actions have
+  no key equivalent.
+* **Classes**: camera, microphone (also the combined capture type), and
+  geolocation (macOS 27 hook behind `@available`, with an explicit `@objc`
+  selector so older SDKs still compile). An unknown capture type, an empty
+  class list, or a non-HTTP(S) origin is denied. A combined camera and
+  microphone request is denied if either class has a deny record, and prompts
+  only for classes without a record.
+* **Edge cases**: one pending bubble per tab; an identical repeat coalesces onto
+  it, anything else is denied. A request from a background tab is denied at
+  once; switching tabs, main-frame commit, `navigate`, `stopLoading`, tab
+  close, content-process termination and takeover each deny the pending bubble.
+  The answer re-reads ownership and the active tab, so a late Allow grants
+  nothing. The WebKit handler is wrapped in `SingleShotPermissionDecision`,
+  which also denies on deinit.
+* **Timeout**: `sitePermissionPromptTimeout = 30` seconds (still needs author
+  confirmation).
+* **Not done / unverified**: the baseline per-class WebKit behavior was not
+  measured with a test page, and the manual run against local test pages in
+  both ownership modes was not performed (no bundled-app run in this change).
+  The geolocation delegate cannot be exercised on this macOS version.
+  `make swift-lib` and `make app-bundle` were not run. Localization: 19 new
+  keys in all 21 languages (machine-drafted translations, worth a native
+  review).
 
 --------------------------------------------------------------------------------
 

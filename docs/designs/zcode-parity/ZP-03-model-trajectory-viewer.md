@@ -6,7 +6,7 @@ Parity target: ZCode's
 which reads bounded tails of `model-io-*.jsonl` rollouts.
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented (Swift only; on-disk encryption and a database table deferred, see Implementation notes)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -179,6 +179,88 @@ flush bounds crash loss to the in-flight turn.
 * **Manual**: run a chat with tool calls, open the pane, expand entries,
   search, page back, export redacted, and confirm the on-disk file
   retains unredacted content.
+
+--------------------------------------------------------------------------------
+
+## Implementation notes
+
+Applies the EGM review (`docs/egm-reviews/zcode-parity/ZP-03`) Blockers and
+Majors. Swift only, no Rust change, no model gate: it reads the existing
+`GenerationResult` the app already receives.
+
+### Decisions
+
+* **Store**: per-chat JSONL sidecar files, not a `ProfileDatabase` table. A
+  table is a schema migration and the review's Alternative B is open; the
+  bounded-tail read the draft wants is natural on a file. The rollout lives
+  under `trajectories/` in the profile store root (`AppStorageRoot.directory`),
+  mode 0600 in a 0700 folder.
+* **Encryption is NOT applied (deferred, needs sign-off)**. The vault's
+  SQLCipher database cannot hold an append-only JSONL file, and encrypting
+  lines needs a key and a crypto decision (CLAUDE.md: ask first). The
+  mitigation is the same posture as conversation recall (`ChatRecallStore`):
+  **off by default** (`MacAppSettings.trajectoryLoggingEnabled`, General
+  settings), never recorded for a Ghost chat or a passphrase-protected profile
+  (the store also refuses to write when the profile is protected, and
+  protecting a profile deletes every log), and turning the setting off deletes
+  every log. Options for the encrypted version: a `rollout` table in
+  `ProfileDatabase`, or per-line AES-GCM under an HKDF label from the profile
+  master key.
+* **Redaction at write time** (deviation from "on-disk data stays
+  unredacted"): `TrajectoryRedactor` removes private keys, Authorization and
+  cookie headers, Bearer tokens, secret-named variables and JSON members,
+  URL credentials and well-known token shapes before a line is written, then
+  the text is clipped (redact first, so a clip cannot leave half a secret).
+  Argument values under secret-named keys are dropped entirely. Export runs the
+  same pass again. This is best effort and the export panel says so.
+* **Size caps**: 4,000 characters per text field, 1,000 per argument value,
+  16 arguments, 4 MiB per chat (the oldest whole lines are dropped down to
+  3 MiB), 30 day retention (`pruneExpired` at launch). The pane renders the
+  last 500 entries, never the whole file.
+* **What is logged**: model name (file base name only), prompt, output and
+  cached token counts, latency (engine prefill plus decode seconds), finish
+  reason, the model's output text (clipped), tool name, arguments, result and
+  error. NOT logged: the prompt, reasoning text, sampling parameters, any
+  directory path. Each continuation segment is its own model-call line.
+* **Seam**: `.finished(result)` in `executeGenerationTurn` (model call) and
+  `appendToolExecutionTurn` (every tool outcome). A call whose result is later
+  replaced by a todo-boundary result is logged twice (accepted).
+* **Lifecycle**: keyed by chat id; deleting or clearing a chat deletes its log.
+  Duplicate creates a new id and so starts with no log. Edit, retry and rewind
+  do not touch the log: it records the calls that actually happened.
+* **Crash safety (CUJ 3)**: lines are appended whole, after the call, never
+  during streaming. A crash can leave an unterminated last line: readers skip
+  it and show a count notice; the next append closes it with a newline first
+  so entries never fuse. "Marked truncated" is dropped: the in-flight call is
+  simply absent. There is no quit flush (a crash cannot run one); the append is
+  queued on one serial queue and the loss bound is the call in flight.
+* **Corruption**: a file whose first complete line is not a versioned JSON
+  object is renamed `corrupt-<stamp>-...` before any append (the
+  `AppJSONStore` rule), never overwritten. A bad line in the middle is skipped
+  and counted.
+* **Placement** (deviation): the pane is a sheet opened from the sidebar chat
+  row's context menu ("View Trajectory", also a VoiceOver action), not from
+  `ChatTranscriptView`. Search is the loaded window by default plus "Search
+  entire log", which scans the file off the main thread. Pane state lives in
+  `Generation/TrajectoryPaneState.swift`.
+* **Dependencies**: ZP-23 hooks, if they add model calls, must call the same
+  `logTrajectoryModelCall` keyed by chat id. No new dependency, no CI change.
+
+### Files
+
+`Diagnostics/RolloutStore.swift`, `State/AppModel+Trajectory.swift`,
+`Generation/TrajectoryPaneView.swift`, `Generation/TrajectoryPaneState.swift`,
+`RolloutStoreTests.swift`; hooks in `AppModel+Generation.swift`,
+`AppModel+Tools.swift`, `AppModel+Chat.swift`, `ProfileVaultCoordinator.swift`;
+setting in `MacAppSettings`, `AppModel`, `GeneralSettingsPaneView`.
+Doc: `swift/docs/SWIFT_TRAJECTORY.md`.
+
+### Not verified here
+
+The pane was not exercised in the running app, and none of the Small/Extra
+Large text, narrow window, theme, VoiceOver, Reduce Motion or RTL checks of
+DESIGN.md section 9 were run. Unit tests cover the store, redaction and the
+eligibility rule.
 
 --------------------------------------------------------------------------------
 

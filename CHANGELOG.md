@@ -29,6 +29,19 @@ when this file gets updated relative to the version bump and the tag.
   name; the MLX `gemma3_text` path is not implemented and is refused. Checked
   against the public bf16 copy on bytes (norms exact after `-1`, q/k order,
   embedding) and by a real Q4_K_M and Q8_0 decode; no logit parity yet.
+- Plain dense Qwen3 installs from safetensors: pre-quantized MLX conversions
+  (`mlx-community/Qwen3-4B-4bit` and siblings) and, through quantize-on-install,
+  the unquantized `Qwen/Qwen3-4B` (4-bit group 64 by default). The quantizer was
+  checked against the published 4-bit file: every norm, bias plane and tensor
+  layout matches, and weights and scales match its half-to-even rounding
+  exactly. The install uses the Metal tie rule, so it differs from that file on
+  exact ties only (0.35 percent of weight and scale bytes). No qwen3
+  safetensors memory, quality or paired-performance gate has been run. The
+  byte check is the local test `crates/repack/tests/qwen3_quantize_parity_local.rs`.
+  It needs the two public repos downloaded again to run (`Qwen/Qwen3-4B` at
+  `1cfa9a7208912126459214e8b04321603b3df60c` into `TS_QWEN3_BF16_DIR` and
+  `mlx-community/Qwen3-4B-4bit` at `4dcb3d101c2a062e5c1d4bb173588c54ea6c4d25`
+  into `TS_QWEN3_Q4_DIR`). The earlier local copies were deleted.
 - Granite 4.x GGUF files (`ibm-granite/granite-4.x-*-GGUF`) install on the Llama
   flow with their 1/head_dim attention scale; Granite 3.x, whose residual,
   embedding and logit multipliers are not identity, refuses. The ChatML
@@ -62,8 +75,9 @@ when this file gets updated relative to the version bump and the tag.
   for byte on the text trunk and installs text-only; Qwen2 and Qwen3-VL are
   not yet byte-checked against a published conversion, and 2-bit matches
   `mlx_lm.convert` only for a float16 source. Both the MLX and the Hugging
-  Face transformers tensor layouts are accepted. Other families still refuse
-  an unquantized checkpoint.
+  Face transformers tensor layouts are accepted. Plain dense Qwen3 also
+  quantizes on install (see the first entry). Other families still refuse an
+  unquantized checkpoint.
 - Music and Voice Cloning ask for a model before they open. While none of the
   page's curated models is on the Mac, a card over the page lists each one with
   its download size and estimated memory, flags a model that may not fit this
@@ -73,6 +87,74 @@ when this file gets updated relative to the version bump and the tag.
   Audio Drama 3 and MegaTTS3. They also appear in Discover under Voice
   Cloning. Fish Audio Drama 3 downloads a large source checkpoint (about
   23.8 GB) and converts it to a smaller install.
+- Parity program with two reference desktop agents (ZP-01..ZP-23 and
+  OC-01..OC-14). Chat and workspace:
+  - Workspace tabs and session tabs. Session tabs keep draft tabs, a Recently
+    Closed list and the scroll position of each chat. Back and forward walk the
+    section and chat history, and a collapsed sidebar shows a peek on hover.
+  - Sidebar rows carry unread, running and waiting-for-you badges, and an Inbox
+    sidebar mode groups chats by what needs attention. Chats can run in the
+    background next to the one you are reading (partial: the turn-level lease
+    shipped, but one chat still decodes at a time).
+  - A command palette jumps to commands and chats. Keyboard shortcuts can be
+    rebound in Settings.
+  - Notifications and sounds for four events (turn finished, needs approval,
+    has a question, error), all off by default. The agent PushNotification tool
+    is opt-in and shares that path (partial: the dock badge is deferred to the
+    desktop-shell-hardening spec).
+  - First-run onboarding, a splash screen shown only when launch is slow, and
+    Help > Show Welcome Tour.
+  - A hang watchdog notices 90 seconds without stream activity and offers
+    Restart, Keep Waiting or Stop. Restart is limited to two relaunches in 10
+    minutes. If the last run did not exit cleanly, the app says so once. The
+    menu bar shows a warning when the running daemon is an older engine than
+    the app (partial: no HTTP health fields yet).
+- Agents and tools:
+  - Off-peak tasks (opt-in, off by default) queue prompts that run one at a
+    time in the chat that queued them, while it is open and idle. A running
+    task keeps the Mac from sleeping on idle.
+  - Subagents can message the coordinator that launched them
+    (`respond_to_coordinator`), and the coordinator can continue a finished
+    subagent with `send_message`.
+  - Image search and image fetch tools. `document_write` creates .docx, .xlsx,
+    .pptx and .pdf files from a JSON spec, and the file pane previews docx,
+    xlsx and pptx, with Quick Look as the fallback.
+  - Sources panel lists the web sources a reply used (from web search and
+    fetch calls). Reveal scrolls to and expands the tool card that produced
+    the source.
+  - Language-server diagnostics and symbol tools, and a formatter pass after
+    edits, both off by default. A per-project setting can only narrow them, and
+    the built-in swift-format row starts off. Partial: the formatter has no
+    per-process network isolation yet.
+  - Remote providers (OpenAI-compatible and Anthropic APIs) use API keys only,
+    never OAuth. Nothing is contacted until you add a provider.
+- Skills and plugins: bundled skills `plugin-creator`, `turbospark-guide`,
+  `visualize`, `ios-simulator`, `android-emulator`, `docx`, `xlsx`, `pptx` and
+  `pdf`. Builtin plugin seeding is in place but the app bundles no builtin plugin
+  yet, and a marketplace entry can point at a `cdnZip` plugin installed on
+  your Install click. UI plugin
+  pages run in a sandboxed web view and need a per-plugin opt-in. Gen UI cards
+  render a closed native schema, not HTML.
+- Canvas and files: a whiteboard pane, image annotation in the image preview,
+  and an activity treemap tab in the Git inspector. Dev builds wear an icon
+  badge so they are not mistaken for a release.
+- Browser: per-site permission decisions and recording of a tab to a local MP4
+  file (stitched page snapshots).
+- Rollout trajectory logs record each model call for a trajectory viewer. They
+  are plaintext and off by default.
+- Local voice call (off by default). Start Voice Call is Shift+Cmd+Y and Toggle
+  Talk is Shift+Cmd+Space, a toggle rather than a hold. Experimental
+  push-to-talk auto-send is also off by default. It considers only speech
+  heard while Talk is on. A pre-filter and a local model then decide whether
+  it is a plain informational question, and anything else stays in the
+  composer for you to press Send.
+- `turbospark acp` and the new `turbospark-acp-agent` binary speak the Agent
+  Client Protocol over stdio so an editor can drive local checkpoints. Verified
+  with a scripted client only, not a real editor.
+- Known limits of this program: per-tab pane layout is deferred, translations
+  for the new strings are machine-written and not native-reviewed, and the
+  hardware and manual app passes (real editor, real remote provider, live hang
+  soak, voice call on hardware) were not run.
 
 ### Changed
 - The Music page uses one fixed model, MiniMax Music 3 Turbo, and shows its
@@ -82,6 +164,19 @@ when this file gets updated relative to the version bump and the tag.
   bottom. Scrolling up to reread stays put until you scroll back down, send a
   message, or press the new "Jump to latest" button. Split panes follow new
   messages the same way.
+- `gradle` is no longer on the Terminal Auto-mode build allow list, because
+  running it executes the workspace's build scripts. It now asks like any
+  other command.
+- The new crate `turbospark-acp` is published ahead of `turbospark-cli`.
+  `turbospark-acp-agent` now ships in the app bundle, the DMG, the CLI zip and
+  the Homebrew casks.
+
+### Security
+- The agent PushNotification tool is opt-in and never requests notification
+  authorization at call time. Only the Settings switch asks the user.
+- UI plugin pages are sandboxed and need a per-plugin opt-in. A `cdnZip`
+  install requires a SHA-256 digest in the marketplace entry and is refused,
+  with nothing extracted, on a mismatch.
 
 ## [0.8.0] - 2026-11-09
 

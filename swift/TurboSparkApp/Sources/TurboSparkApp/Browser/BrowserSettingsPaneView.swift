@@ -27,6 +27,7 @@ struct BrowserSettingsPaneView: View {
             automationSection
             viewportSection
             bookmarksSection
+            SitePermissionsSettingsSection(store: SitePermissionStore.shared)
         }
         .formStyle(.grouped)
         // The grouped Form paints its own system gray, which ignores the theme.

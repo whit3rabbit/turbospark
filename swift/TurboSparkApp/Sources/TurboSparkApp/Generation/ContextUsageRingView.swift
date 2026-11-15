@@ -16,7 +16,17 @@ struct ContextUsageRingView: View {
     @State private var showsPopover = false
     @State private var isHovered = false
 
+    /// A chat on a remote model reads its own window: the provider's last
+    /// reported usage, or the labeled estimate before one arrives.
+    private var remote: RemoteContextReading? {
+        model.remoteContextReading(chatID: model.selectedChatID)
+    }
+
     private var fraction: Double {
+        if let remote {
+            guard remote.windowTokens > 0 else { return 0 }
+            return min(1, Double(remote.usedTokens) / Double(remote.windowTokens))
+        }
         guard model.session != nil else { return 0 }
         let limit = model.resolvedContextTokens
         guard limit > 0 else { return 0 }
@@ -32,7 +42,7 @@ struct ContextUsageRingView: View {
     }
 
     var body: some View {
-        if model.session != nil {
+        if model.session != nil || remote != nil {
             Button {
                 showsPopover.toggle()
             } label: {
@@ -55,7 +65,11 @@ struct ContextUsageRingView: View {
                 attachmentAnchor: .point(.top),
                 arrowEdge: .top
             ) {
-                ContextUsagePopoverView(model: model)
+                if let remote {
+                    RemoteContextPopoverView(reading: remote)
+                } else {
+                    ContextUsagePopoverView(model: model)
+                }
             }
         }
     }
@@ -215,5 +229,39 @@ struct ContextUsagePopoverView: View {
             .font(theme.ui(.tiny))
             .foregroundStyle(.appSecondary)
             .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// The ring's popover for a remote chat: one headline and where it came from.
+struct RemoteContextPopoverView: View {
+    @Environment(\.appTheme) private var theme
+    let reading: RemoteContextReading
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Context window", bundle: .module)
+                .font(theme.ui(.callout, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
+            let used = reading.usedTokens.formatted(.number.notation(.compactName))
+            let window = reading.windowTokens.formatted(.number.notation(.compactName))
+            Text(verbatim: "\(used) / \(window)")
+                .monospacedDigit()
+                .font(theme.ui(.callout))
+            if reading.isEstimate {
+                Text("Estimate", bundle: .module)
+                    .font(theme.ui(.tiny, weight: .semibold))
+                    .foregroundStyle(.appWarning)
+                Text("Estimated from text length. The provider has not reported usage yet.", bundle: .module)
+                    .font(theme.ui(.tiny))
+                    .foregroundStyle(.appSecondary)
+            } else {
+                Text("Reported by the provider.", bundle: .module)
+                    .font(theme.ui(.tiny))
+                    .foregroundStyle(.appSecondary)
+            }
+        }
+        .padding(14)
+        .frame(minWidth: 240, alignment: .leading)
+        .background(.appSurface)
     }
 }

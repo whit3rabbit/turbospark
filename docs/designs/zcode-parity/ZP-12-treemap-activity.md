@@ -5,7 +5,7 @@ Parity target: ZCode's
 [TreemappingPane](https://github.com/zai-org/ZCode/blob/main/packages/ui/src/TreemappingPane.tsx).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -142,6 +142,39 @@ function, unit-testable without UI. No new persistence.
 * **Localization**: catalog additions in 21 languages.
 * **Manual**: run a chat that edits files, open the pane, drill down,
   verify totals against the change list.
+
+## Implementation notes and deviations
+
+Applied the EGM review (docs/egm-reviews/zcode-parity/ZP-12/) Blocker and
+Major fixes:
+
+* **Data source decided once**: v1 reads `WorktreeModel.scopedFiles`, the
+  worktree change list (uncommitted by default, or the active branch or
+  commit comparison). It has no per-chat attribution, so the pane makes no
+  "current chat" claim. Viewed-only files and pending counts are cut, since
+  no data backs them. Per-turn snapshots stay a later enhancement.
+* **Summary row** is computed from the same file list as the tree
+  (`ActivitySummary`): added plus removed lines, files, and counts for
+  added (added and untracked), modified, deleted, renamed. Files with zero
+  line changes count in the summary but take no area; a footnote reports
+  them.
+* **Placement**: new `WorktreeTabMode.activity` tab. Files sit in
+  `Generation/` beside the other Worktree views, not `Diagnostics/`, because
+  they read `WorktreeModel` and route from `WorktreeView`. `ActivityTreemap`
+  (own file, own tests) reuses `WorktreeModel.buildTree(from:)`.
+* **Accessibility**: each rectangle is a native `Button` with a combined
+  label, hint, and keyboard focus, instead of a Canvas. File status is a
+  glyph plus tint, never color alone.
+* **Risks handled**: tree memoized per change list; drill state keyed by
+  path and popped to the nearest surviving ancestor on refresh; zero-weight
+  items omitted; at most 200 rectangles per level with the remainder
+  reported.
+* **Tests**: layout invariants (proportional area, tiling, no overlap,
+  containment, near-square cells), input-order determinism with id
+  tie-break (mutation-checked: dropping the tie-break fails it), summary
+  totals, drill paths, caps, deep nesting.
+* **Localization**: 14 new catalog keys in all 21 languages (the INDEX
+  "ten parity gates" are the gates, the languages are 21).
 
 --------------------------------------------------------------------------------
 

@@ -108,6 +108,65 @@ public struct PluginCommandSpec: Sendable, Equatable {
     }
 }
 
+/// What a plugin page may ask the app to do through `window.turbospark`.
+/// A surface gets only what its manifest declares; anything else is refused
+/// with `undeclared_method` (ZP-06).
+public enum PluginUiCapability: String, Sendable, CaseIterable, Equatable {
+    /// Call one of the plugin's own declared MCP tools through the ordinary
+    /// permission engine.
+    case invokeTool
+    /// Read and write this page's own session-scoped state.
+    case widgetState
+    /// Put text in the composer draft. Never sends.
+    case sendFollowUp
+}
+
+/// Where a surface opens. The side pane is the default for tool-result
+/// pages; inline renders as a card in the transcript.
+public enum PluginUiPlacement: String, Sendable, Equatable {
+    case sidePane
+    case inline
+}
+
+/// One `ui.surfaces` entry: an HTML page shipped in the plugin bundle plus
+/// the resources it may load and the bridge methods it may call. Every path
+/// is bundle-relative and was normalized by the parser.
+public struct PluginUiSurface: Sendable, Equatable, Identifiable {
+    public var id: String
+    public var title: String
+    /// The page document, a bundle-relative `.html` path.
+    public var resourceUri: String
+    /// Additional files the page may load (scripts, styles, images).
+    public var resources: [String]
+    public var capabilities: [PluginUiCapability]
+    public var placement: PluginUiPlacement
+    /// MCP tools the page may invoke, `"<server>/<tool>"` over the plugin's
+    /// own servers. Meaningful only with the `invokeTool` capability.
+    public var tools: [String]
+
+    public init(
+        id: String,
+        title: String? = nil,
+        resourceUri: String,
+        resources: [String] = [],
+        capabilities: [PluginUiCapability] = [],
+        placement: PluginUiPlacement = .sidePane,
+        tools: [String] = []
+    ) {
+        self.id = id
+        self.title = title ?? id
+        self.resourceUri = resourceUri
+        self.resources = resources
+        self.capabilities = capabilities
+        self.placement = placement
+        self.tools = tools
+    }
+
+    public func declares(_ capability: PluginUiCapability) -> Bool {
+        capabilities.contains(capability)
+    }
+}
+
 /// The parsed `.claude-plugin/plugin.json`.
 ///
 /// Unknown TOP-LEVEL keys are ignored (Claude Code's own rule: one unknown
@@ -141,6 +200,9 @@ public struct PluginManifest: Sendable, Equatable {
     /// The inline form of `mcpServers`, a `Record<name, server config>`.
     public var inlineMcpServersJSON: Data?
     public var userConfig: [PluginUserConfigOption]
+    /// `ui.surfaces`, validated. Pages open only after the user opts the
+    /// plugin into showing UI pages (`PluginUiOptInStore`).
+    public var uiSurfaces: [PluginUiSurface]
     /// Surfaces this client does not implement (LSP servers, output styles,
     /// channels, .mcpb bundles, the `settings` contribution). One line each;
     /// loading continues.
@@ -164,6 +226,7 @@ public struct PluginManifest: Sendable, Equatable {
         mcpServerFilePaths: [String] = [],
         inlineMcpServersJSON: Data? = nil,
         userConfig: [PluginUserConfigOption] = [],
+        uiSurfaces: [PluginUiSurface] = [],
         unsupportedNotes: [String] = []
     ) {
         self.name = name
@@ -183,6 +246,7 @@ public struct PluginManifest: Sendable, Equatable {
         self.mcpServerFilePaths = mcpServerFilePaths
         self.inlineMcpServersJSON = inlineMcpServersJSON
         self.userConfig = userConfig
+        self.uiSurfaces = uiSurfaces
         self.unsupportedNotes = unsupportedNotes
     }
 }

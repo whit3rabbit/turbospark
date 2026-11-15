@@ -23,6 +23,14 @@ struct RootView: View {
     @ObservedObject private var appearanceManager = AppearanceManager.shared
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var isChatSearchPresented = false
+    /// OC-06: the collapsed sidebar's hover peek. Never touches
+    /// `isSidebarExpanded`.
+    @StateObject private var sidebarPeek = SidebarPeekController()
+    /// What the command center's field starts with: empty from Cmd+K, `>`
+    /// from Cmd+Shift+P. `paletteSeedToken` bumps when a seeded open
+    /// arrives while the palette is already showing.
+    @State private var paletteInitialQuery = ""
+    @State private var paletteSeedToken = 0
     @State private var isSummaryVisible = true
     @State private var workingWidth: CGFloat = 0
     @State private var downloadControlHeight: CGFloat = 38
@@ -45,8 +53,62 @@ struct RootView: View {
     /// has nothing to toggle, so the preference is left alone there rather
     /// than flipped invisibly.
     private func toggleSidebarPanel() {
+        // A toggle during a peek cancels it and then applies the normal
+        // toggle: the toggle is the deliberate path.
+        sidebarPeek.cancel()
         guard model.activeSection.hasSidebarPanel else { return }
         isSidebarExpanded.toggle()
+    }
+
+    /// Peek applies only while the panel is collapsed in a section that has
+    /// one.
+    private var isPeekEligible: Bool {
+        !isSidebarExpanded && model.activeSection.hasSidebarPanel
+    }
+
+    /// The edge trigger strip and, while peeking, the live panel over the
+    /// content. Both are hidden from accessibility: the toggle stays the
+    /// keyboard and VoiceOver path, and the peek is pointer-only.
+    @ViewBuilder
+    private var sidebarPeekLayer: some View {
+        if isPeekEligible {
+            ZStack(alignment: .topLeading) {
+                // Below the top bar so a pointer arriving from the toggle
+                // never starts a dwell. Inside the rail's trailing edge,
+                // where no rail control sits.
+                Color.clear
+                    .frame(width: SidebarPeekController.triggerStripWidth)
+                    .frame(maxHeight: .infinity)
+                    .padding(.top, AppChromeLayout.topBarHeight)
+                    .contentShape(Rectangle())
+                    .onHover { inside in
+                        if inside { sidebarPeek.pointerEntered() } else { sidebarPeek.pointerExited() }
+                    }
+                    .offset(x: AppChromeLayout.navigationRailWidth - SidebarPeekController.triggerStripWidth)
+
+                if sidebarPeek.isPeeking {
+                    HStack(spacing: 0) {
+                        SidebarPanelSurface(model: model, clearsTopBar: false)
+                            .overlay(alignment: .trailing) {
+                                Rectangle().fill(.appBorder).frame(width: AppChromeLayout.dividerWidth)
+                            }
+                            .shadow(color: .black.opacity(0.18), radius: 12, x: 4, y: 0)
+                        // Grace band: still corridor, but transparent.
+                        Color.clear
+                            .frame(width: SidebarPeekController.corridorGrace)
+                            .frame(maxHeight: .infinity)
+                            .contentShape(Rectangle())
+                    }
+                    .onHover { inside in
+                        if inside { sidebarPeek.pointerEntered() } else { sidebarPeek.pointerExited() }
+                    }
+                    .padding(.leading, AppChromeLayout.navigationRailWidth)
+                    .padding(.top, AppChromeLayout.topBarHeight)
+                    .transition(.move(edge: .leading))
+                }
+            }
+            .accessibilityHidden(true)
+        }
     }
 
     private var effectiveReduceMotion: Bool {
@@ -95,6 +157,19 @@ struct RootView: View {
                         }
                     })
 
+                // ZP-21: a row of the top-bar band, drawn only with two or
+                // more tabs open and only where a project is in play.
+                if model.workspaceTabsActive, model.interactionMode == .projects,
+                    !model.activeSection.hidesChatPanes
+                {
+                    WorkspaceTabStripView(model: model)
+                }
+
+                // OC-04: the session tab row, under the workspace row.
+                if model.sessionTabsActive, !model.activeSection.hidesChatPanes {
+                    SessionTabStripView(model: model)
+                }
+
                 workingArea
                     // Reserve room for Downloads so its collapsed control
                     // never covers the composer or model selector.
@@ -103,6 +178,7 @@ struct RootView: View {
                 StatusBarView(model: model)
             }
         }
+        .overlay(alignment: .topLeading) { sidebarPeekLayer }
         .frame(
             minWidth: minimumWindowSize.width,
             minHeight: minimumWindowSize.height)
@@ -110,10 +186,35 @@ struct RootView: View {
         .clipped()
         .background(.appPage)
         .tsAnimation(TSMotion.pane, value: isSidebarExpanded)
+        .tsAnimation(TSMotion.pane, value: sidebarPeek.isPeeking)
+        .onChange(of: isPeekEligible, initial: true) { _, eligible in
+            sidebarPeek.setEligible(eligible)
+        }
+        .onChange(of: isChatSearchPresented, initial: true) { _, open in
+            sidebarPeek.paletteOpen = open
+            if open { sidebarPeek.cancel() }
+        }
+        // A chat or section switch ends the peek: the click that caused it
+        // was the peek's job, and the panel should not linger over the pane.
+        .onChange(of: model.selectedChatID) { _, _ in sidebarPeek.cancel() }
+        .onChange(of: model.activeSection) { _, _ in
+            sidebarPeek.cancel()
+            // OC-08: a call belongs to the chat pane; leaving it ends the call.
+            if model.voiceCallBuilt { model.voiceCall.end() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            sidebarPeek.cancel()
+        }
         .tsAnimation(TSMotion.pane, value: isInspectorVisible)
         .tsAnimation(TSMotion.pane, value: model.previewAttachmentID)
         .tsAnimation(TSMotion.pane, value: model.openArtifactID)
         .tsAnimation(TSMotion.pane, value: model.htmlPreviewID)
+        .tsAnimation(TSMotion.pane, value: model.openPluginPageID)
+        // Plugin pages belong to the chat they were opened from: switching
+        // chats tears them down and clears their widget state.
+        .onChange(of: model.selectedChatID) { _, newID in
+            model.pluginUiHost.closePages(exceptSession: newID.uuidString)
+        }
         .overlay(alignment: .trailing) {
             // Share the available height so a toast cannot cover the manager
             // when the window is short or interface text is enlarged.
@@ -129,10 +230,12 @@ struct RootView: View {
             .padding(.bottom, AppChromeLayout.statusBarHeight + 12)
         }
         .overlay {
-            // The Search Chats palette. Sits above every pane so Cmd+K
-            // works from any section.
+            // The command center (commands, chats, files). Sits above every
+            // pane so Cmd+K works from any section.
             if isChatSearchPresented {
-                ChatSearchOverlayView(model: model, isPresented: $isChatSearchPresented)
+                CommandPaletteView(
+                    model: model, isPresented: $isChatSearchPresented,
+                    initialQuery: paletteInitialQuery, seedToken: paletteSeedToken)
             }
         }
         .overlay {
@@ -167,11 +270,27 @@ struct RootView: View {
         // The one "Load anyway" question: every interactive load reaches it
         // through `AppModel.requestLoad`, and no picker carries a dialog.
         .modifier(LoadAnywayConfirmation(model: model))
+        // OC-07: the first-run welcome flow, present only on a new install.
+        .modifier(FirstRunHost(model: model))
         .onReceive(NotificationCenter.default.publisher(for: .toggleChatSidebar)) { _ in
             toggleSidebarPanel()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .showChatSearch)) { _ in
-            isChatSearchPresented.toggle()
+        .onReceive(NotificationCenter.default.publisher(for: .showChatSearch)) { note in
+            // No payload (Cmd+K, `/resume`): toggle, as before. A seeded
+            // post (Cmd+Shift+P sends `>`) opens the palette pre-filtered,
+            // and re-seeds it when it is already open instead of closing it.
+            let seed = note.userInfo?[PaletteQuery.seedUserInfoKey] as? String
+            if let seed {
+                paletteInitialQuery = seed
+                if isChatSearchPresented {
+                    paletteSeedToken += 1
+                } else {
+                    isChatSearchPresented = true
+                }
+            } else {
+                paletteInitialQuery = ""
+                isChatSearchPresented.toggle()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .toggleInspector)) { _ in
             guard !model.activeSection.hidesChatPanes else { return }
@@ -182,6 +301,8 @@ struct RootView: View {
             // none of them does.
             if rightColumnClaimant.isBrowserPane {
                 model.setBrowserPaneOpen(false)
+            } else if rightColumnClaimant.isWhiteboardPane {
+                model.setWhiteboardPaneOpen(false)
             } else if rightColumnClaimant.isPreviewPane {
                 model.dismissArtifact()
                 model.dismissHTMLPreview()
@@ -209,6 +330,16 @@ struct RootView: View {
             // Not in `AppModel.init`: a model built in a test must not
             // register with the workspace.
             model?.startLibraryMonitoring()
+            // After the vault gate: RootView only exists once a profile is
+            // open. Idempotent per process, so a vault lock and unlock does
+            // not read this run's own marker as a crash.
+            if case .previousEndedAbnormally = CrashRecoveryStore.shared.beginSession() {
+                model?.showToast(
+                    AppStrings.localized(
+                        "TurboSpark did not quit cleanly last time. A reply that was in progress may be incomplete."),
+                    style: .warning,
+                    duration: 12)
+            }
         }
         .onChange(of: model.hasOutputTranscript, initial: true) { _, hasTranscript in
             if hasTranscript, model.activeSection == .chat { isInspectorVisible = false }
@@ -226,7 +357,10 @@ struct RootView: View {
             if !enabled { model.setBrowserPaneOpen(false) }
         }
         .onChange(of: model.activeSection) { _, section in
-            if section.hidesChatPanes { model.setBrowserPaneOpen(false) }
+            if section.hidesChatPanes {
+                model.setBrowserPaneOpen(false)
+                model.setWhiteboardPaneOpen(false)
+            }
         }
         // Theme the complete scene once. Applying this to an overlay also
         // paints its empty space, hiding every pane underneath it.
@@ -237,6 +371,11 @@ struct RootView: View {
         guard !model.activeSection.hidesChatPanes else { return }
         if rightColumnClaimant.isBrowserPane {
             model.setBrowserPaneOpen(false)
+            isInspectorVisible = true
+            return
+        }
+        if rightColumnClaimant.isWhiteboardPane {
+            model.setWhiteboardPaneOpen(false)
             isInspectorVisible = true
             return
         }
@@ -286,7 +425,9 @@ struct RootView: View {
             previewAttachmentID: model.previewAttachmentID,
             isInspectorVisible: isInspectorVisible,
             showProjectSummary: hasProjectSummary && canPinSummary && isSummaryVisible,
-            showBrowserPane: model.browserSettings.enabled && model.browserPaneIsOpen)
+            showBrowserPane: model.browserSettings.enabled && model.browserPaneIsOpen,
+            showWhiteboardPane: model.whiteboardPaneIsOpen,
+            pluginPageID: model.openPluginPageID)
     }
 
     @ViewBuilder
@@ -311,6 +452,13 @@ struct RootView: View {
                 rightPane(width: AppChromeLayout.artifactPanelWidth) {
                     ArtifactPanelView(model: model, source: .inlinePreview)
                 }
+            case .pluginPage(let id):
+                if let session = model.pluginUiHost.session(id: id) {
+                    verticalHairline
+                    rightPane(width: AppChromeLayout.artifactPanelWidth) {
+                        PluginPagePanelView(model: model, session: session).id(id)
+                    }
+                }
             case .filePreview:
                 // The claimant is keyed on the id; the attachment lookup can
                 // still miss (a detached draft). Missing falls through to the
@@ -328,6 +476,11 @@ struct RootView: View {
                 verticalHairline
                 rightPane(width: AppChromeLayout.browserPanelWidth) {
                     BrowserPaneView(engine: model.browserAutomationCoordinator.engine, appModel: model)
+                }
+            case .whiteboard:
+                verticalHairline
+                rightPane(width: AppChromeLayout.whiteboardPanelWidth) {
+                    WhiteboardPaneView(model: model)
                 }
             case .inspector:
                 verticalHairline

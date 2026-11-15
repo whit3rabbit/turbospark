@@ -6,7 +6,7 @@ Parity target: ZCode's
 and its SKILL.md, a builtin plugin whose skill scaffolds plugins.
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented (2026-11-13). Deviations: see Implementation Notes
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -161,3 +161,34 @@ Plugins pane Import menu "Create Plugin"
 --------------------------------------------------------------------------------
 
 *Drafted with EGM*
+
+## Implementation Notes
+
+Implemented as written in the EGM review (docs/egm-reviews/zcode-parity/ZP-07/),
+with these deviations from the draft:
+
+* **Skill path.** `Sources/TurboSparkAppResources/BundledSkills/plugin-creator/SKILL.md`,
+  not `Resources/bundled-skills/` under the app target. It is a `.copy`
+  resource added to the `TurboSparkAppResources` target in `Package.swift`
+  because `.process("Resources")` flattens directories (verified: a skill
+  there lands as a bare `SKILL.md`). The app target still declares no
+  resources.
+* **Scope.** `SkillScope.bundled` already existed; no new scope was added.
+  `SkillManager.discoverBundledSkills()` feeds `resolveEffectiveSkills` at the
+  lowest precedence. Bundled skills are not yet listed in the Skills settings
+  pane (they reach the skill tool and the prompt listing as `[Bundled]`);
+  the pane's toggle and project override paths assume user and project scope.
+* **Containment is advisory** (review B2). The skill names the error
+  `PLUGIN_PATH_ESCAPE`; enforcement is the manifest parser plus tool
+  permission prompts. No validator tool was added.
+* **Draft seam** (M1): `AppModel.composeInChat`, editable, never auto-sent.
+* **Hooks** (M3): the skill writes none by default.
+* **Dev marketplace** (M2): `<root>/.claude-plugin/marketplace.json` with
+  `source: ./plugins/<name>`, consumed through the Directory source in
+  Browse Marketplace > Manage sources; the skill's templates are tested
+  against `PluginManifestParser`. No update steps (dropped).
+* **Tests** are `PluginCreatorSkillTests.swift` (named for behavior), not
+  `BundledSkillsTests.swift`. The skill requires an open project to write
+  files.
+* **Localization**: two new keys in all 21 languages (the catalog count is
+  21 languages, ten parity gates).

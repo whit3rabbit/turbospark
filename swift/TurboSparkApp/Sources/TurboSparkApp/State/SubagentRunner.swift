@@ -216,16 +216,32 @@ public enum SubagentRunner {
 
     /// Captures exactly one agent-filtered tool catalog for a subagent run.
     /// Prompt assembly, validation, and turn-exhaustion checks all reuse it.
+    ///
+    /// **TWO MESSAGING TOOLS, ONE EACH WAY.** `send_message` continues a
+    /// finished child, which only the coordinator may do, so a child's capture
+    /// never carries it. `respond_to_coordinator` is the opposite: it exists
+    /// only in the capture of a BACKGROUND child (`coordinatorChannel`), and
+    /// only when the agent definition lists it in `tools` by name. A definition
+    /// with no `tools` list means "everything the default catalog offers",
+    /// and a new way to put text into the coordinator's context is not part of
+    /// that default, so it stays off until a definition asks for it.
     public static func captureAvailableTools(
         for agent: AppAgentDefinition,
         project: AppProject?,
-        browserAvailability: BrowserToolAvailability = .disabled
+        browserAvailability: BrowserToolAvailability = .disabled,
+        coordinatorChannel: Bool = false
     ) -> TurnAvailableTools {
-        let baseTools = AppToolCatalog.tools(
+        var baseTools = AppToolCatalog.tools(
             for: project?.agentType ?? .coder,
             projectURL: project?.rootDirectoryURL,
             browserAvailability: browserAvailability)
             .filter { agent.isToolAllowed($0.function.name) }
+            .filter { !isCoordinatorOnlyTool($0.function.name) }
+        if coordinatorChannel, offersCoordinatorChannel(agent),
+            AppToolRegistry.isImplemented(AgentToolDefinitions.respondToCoordinator.function.name)
+        {
+            baseTools.append(AgentToolDefinitions.respondToCoordinator)
+        }
         let servers = project.map {
             AppToolCatalogMcp.visibleServers(
                 global: GlobalMcpFileStore.load().servers, project: $0)
@@ -240,6 +256,24 @@ public enum SubagentRunner {
             definitions: baseTools + mcpDefinitions,
             promptDefinitions: baseTools,
             deferredMcpTools: deferredDescriptors)
+    }
+
+    /// Tools only the coordinator may call: a subagent never continues a
+    /// finished sibling or child.
+    static func isCoordinatorOnlyTool(_ name: String) -> Bool {
+        ["send_message", "sendmessage"].contains(name.lowercased())
+    }
+
+    static func isRespondToCoordinatorTool(_ name: String) -> Bool {
+        ["respond_to_coordinator", "respondtocoordinator"].contains(name.lowercased())
+    }
+
+    /// Whether this definition explicitly lists `respond_to_coordinator` in its
+    /// `tools` frontmatter. An absent list is NOT an opt-in (see
+    /// `captureAvailableTools`).
+    static func offersCoordinatorChannel(_ agent: AppAgentDefinition) -> Bool {
+        guard agent.tools != nil else { return false }
+        return agent.isToolAllowed(AgentToolDefinitions.respondToCoordinator.function.name)
     }
 
     static func toolCallStreamState(
@@ -405,10 +439,16 @@ public enum SubagentRunner {
         let browserAvailability = await MainActor.run {
             AppToolRegistry.browserToolAvailabilityProvider?() ?? .disabled
         }
+        // The channel is a task-local set by the background launcher. A
+        // foreground child never has one, and a grandchild inherits the local
+        // but runs one level deeper, so the depth match keeps the tool out of
+        // its capture: only the run the coordinator launched may message it.
+        let hasCoordinatorChannel = SubagentCoordinatorChannel.current?.depth == depth
         let turnAvailableTools = captureAvailableTools(
             for: agent,
             project: project,
-            browserAvailability: browserAvailability
+            browserAvailability: browserAvailability,
+            coordinatorChannel: hasCoordinatorChannel
         )
         let sysPrompt = buildSystemPrompt(
             for: agent, project: project, userPrompt: userSystemPrompt,

@@ -57,15 +57,19 @@ struct ChatSidebarLayout {
 
     var isEmpty: Bool { isSearching ? matches.isEmpty : (pinned.isEmpty && groups.isEmpty) }
 
+    /// The search rule, shared with the Inbox grouping (OC-03) so both modes
+    /// filter alike. `query` is already trimmed and non-blank.
+    static func matches(_ chat: AppChat, query: String) -> Bool {
+        chat.title.localizedCaseInsensitiveContains(query)
+            || chat.preview.localizedCaseInsensitiveContains(query)
+    }
+
     /// `sortedHistory` must already be in `AppChat.sortedForSidebar` order;
     /// that order is kept inside the pinned list and every bucket.
     static func make(sortedHistory: [AppChat], searchText: String, now: Date = Date()) -> ChatSidebarLayout {
         let trimmed = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
-            let hits = sortedHistory.filter {
-                $0.title.localizedCaseInsensitiveContains(trimmed)
-                    || $0.preview.localizedCaseInsensitiveContains(trimmed)
-            }
+            let hits = sortedHistory.filter { matches($0, query: trimmed) }
             return ChatSidebarLayout(isSearching: true, matches: hits, pinned: [], groups: [])
         }
         var pinned: [AppChat] = []
@@ -81,6 +85,31 @@ struct ChatSidebarLayout {
             byBucket[bucket].map { Group(bucket: bucket, chats: $0) }
         }
         return ChatSidebarLayout(isSearching: false, matches: [], pinned: pinned, groups: groups)
+    }
+}
+
+/// The one status slot a sidebar row shows (ZP-02), built on the ZP-23 turn
+/// state. Priority: a prompt waiting for the user, then a running turn, then
+/// an unread reply, then nothing. Running outranks unread so a streaming
+/// background chat reads as busy and only turns into the dot once its reply
+/// is in. Pure so the priority is pinned by tests; badges never reorder rows.
+enum ChatRowSlot: Equatable {
+    case pending
+    case running
+    case unread
+    case normal
+
+    /// The pill and the dot appear on unselected rows only: on the selected
+    /// row the in-transcript card is the cue and the reply is already on screen.
+    static func resolve(
+        turnState: ChatTurnState, isSelected: Bool, hasUnreadReply: Bool
+    ) -> ChatRowSlot {
+        if !isSelected, turnState == .awaitingTool || turnState == .awaitingQuestion {
+            return .pending
+        }
+        if turnState == .generating { return .running }
+        if !isSelected, hasUnreadReply { return .unread }
+        return .normal
     }
 }
 

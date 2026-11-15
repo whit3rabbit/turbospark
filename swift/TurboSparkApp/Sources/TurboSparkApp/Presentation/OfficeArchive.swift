@@ -14,6 +14,13 @@ final class OfficeArchive {
     /// Set of entry relative paths discovered within the archive.
     let entries: Set<String>
 
+    /// Declared uncompressed size of each entry, from the `unzip -l` table of
+    /// contents. The render layer (`OfficeRenderModel`) reads it to refuse an
+    /// archive whose claimed expansion is out of bounds BEFORE decompressing
+    /// anything. A zip can lie here, which is why every `data(for:)` read is
+    /// also byte-capped by the real output. Additive: extraction ignores it.
+    let entrySizes: [String: Int]
+
     /// Running counter of bytes decompressed across all entries read so far.
     private var consumedBytes = 0
 
@@ -66,15 +73,19 @@ final class OfficeArchive {
         }
 
         var parsedEntries: Set<String> = []
+        var parsedSizes: [String: Int] = [:]
         for line in listing.split(separator: "\n") {
             let fields = line.split(whereSeparator: \.isWhitespace)
-            guard fields.count >= 4, Int(fields[0]) != nil else { continue }
-            parsedEntries.insert(fields.dropFirst(3).joined(separator: " "))
+            guard fields.count >= 4, let size = Int(fields[0]) else { continue }
+            let name = fields.dropFirst(3).joined(separator: " ")
+            parsedEntries.insert(name)
+            parsedSizes[name] = size
         }
         guard !parsedEntries.isEmpty else {
             throw DocumentTextExtractionError.invalidArchive(url.lastPathComponent)
         }
         entries = parsedEntries
+        entrySizes = parsedSizes
         initialized = true
     }
 

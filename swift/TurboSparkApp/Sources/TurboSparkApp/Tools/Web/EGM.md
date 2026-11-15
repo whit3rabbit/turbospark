@@ -1,7 +1,7 @@
 # Tools/Web
 
 ## Overview
-The native web tools exposed to the model: `WebSearch`, `WebFetch`, `HttpRequest`, and `codesearch`. The directory holds each tool's schema definition, its input and output types, and its executor. All outbound requests share one SSRF defense: a destination validator (network policy, DNS resolution, private and metadata address refusal), per-hop redirect validation, a check of the address the socket actually connected to (DNS rebinding guard), and hard byte caps on response bodies.
+The native web tools exposed to the model: `WebSearch`, `WebFetch`, `HttpRequest`, `codesearch`, `image_search`, and `image_fetch`. The directory holds each tool's schema definition, its input and output types, and its executor. All outbound requests share one SSRF defense: a destination validator (network policy, DNS resolution, private and metadata address refusal), per-hop redirect validation, a check of the address the socket actually connected to (DNS rebinding guard), and hard byte caps on response bodies.
 
 ## Interface
 - Tool schemas [WebTools.swift:WebToolDefinitions] (`webSearch`, `webFetch`, and `all`, which also lists the HttpRequest tool), [HttpRequestTools.swift:HttpRequestToolDefinitions], [CodeSearchToolDefinitions.swift:CodeSearchToolDefinitions] (`codesearch`, `all`).
@@ -12,6 +12,9 @@ The native web tools exposed to the model: `WebSearch`, `WebFetch`, `HttpRequest
   - [HttpRequestExecutor.swift:HttpRequestExecutor] with `execute(url:...)`, the shared `performRequest`, `boundedData`, and `refuseConnectedPrivateAddress`.
   - [CodeSearchExecutor.swift:CodeSearchExecutor.execute] (wraps `WebSearchExecutor.search`).
 - Destination guard [HttpRequestDestinationValidator.swift:HttpRequestDestinationValidator.validate] (internal) and redirect handling [HttpRequestExecutor.swift:HttpRequestRedirectDelegate].
+  - [ImageSearchExecutor.swift:ImageSearchExecutor] with `search(query:...)` (Brave Image Search only), `parseBrave`, `sanitize`, `flatten`; rows are [ImageSearchExecutor.swift:ImageSearchRow].
+  - [ImageFetchExecutor.swift:ImageFetchExecutor] with `fetch(url:path:...)` and `resolveDestination`.
+  - Key source [ImageSearchCredentials.swift:ImageSearchCredentials] (`resolveKey`).
 - Subdirectories: none.
 
 ## Invariants
@@ -28,16 +31,20 @@ The native web tools exposed to the model: `WebSearch`, `WebFetch`, `HttpRequest
 - Search results are sanitized before reaching the model: http or https only, length limits, URLs with embedded credentials dropped, private or metadata hosts dropped, blocked and allowed domain lists matched by exact host or dot-suffix, title and snippet truncated. [WebSearchExecutor.swift:sanitize]
 - Exa reports quota and rate-limit failures as HTTP 200 with an MCP error payload; these must throw so they are not read as "no results" and so auto mode still falls back to Parallel. Auto mode tries Brave when a key is given, otherwise Exa then Parallel. [WebSearchExecutor.swift:exaErrorMessage], [WebSearchExecutor.swift:search]
 - `codesearch` bounds results to 3 through 10 from `tokens_num` and appends "documentation reference" to the query unless it already contains "doc" or "api". `developerDomains` is declared but not passed as an allow list in `execute`. [CodeSearchExecutor.swift:execute]
-- Tool schema names are part of the model contract: `WebSearch`, `WebFetch`, `HttpRequest`, `codesearch`. [WebTools.swift:WebToolDefinitions], [CodeSearchToolDefinitions.swift]
+- `image_search` returns rows (title, image_url, source_page, size) and never bytes. It reuses `WebSearchExecutor.fetchLimited` and `sanitize` (network policy, redirect and rebinding checks, 8 MiB cap, 25 s timeout), defaults to 8 rows and clamps to 20, drops a row that has no source page or image URL, flattens titles to one line without markup characters, and applies blocked domains to either host and allowed domains to either host. No key means a named configuration error, not an empty result. [ImageSearchExecutor.swift]
+- `image_fetch` is the only path from a search row to a file. It runs the destination validator, redirect revalidation and rebinding check, caps the body at 10 MiB, trusts magic bytes rather than Content-Type (PNG, JPEG, GIF, WebP only, never SVG), requires the path extension to match the sniffed kind, resolves the path through `AppToolRegistry.resolveSecurePath` (project root, symlink-aware), refuses sensitive paths, and never overwrites. The destination is checked before any request. [ImageFetchExecutor.swift]
+- Permission ladder: both tools are category `.web` (project Web permission, network policy, the composer Search toggle). `image_fetch` also answers to the project's File write permission (the stricter of the two) and a sensitive destination is high risk and hard-gated; it is in `workspaceRootedToolNames` so a projectless chat cannot call it. [AppToolPermissionEngine.swift], [ToolRiskClassifier.swift], [AppToolRegistry+Vocabulary.swift]
+- The Brave key lives in memory unless the user opts in to the Keychain (Settings > Network > Image search); with the opt-in off the Keychain is never read, and with it on it is read only inside an `image_search` call, never at launch. [ImageSearchCredentials.swift]
+- Tool schema names are part of the model contract: `WebSearch`, `WebFetch`, `HttpRequest`, `codesearch`, `image_search`, `image_fetch`. [WebTools.swift:WebToolDefinitions], [CodeSearchToolDefinitions.swift]
 
 ## Side Effects
-- Network: HTTPS requests to Exa MCP (`mcp.exa.ai`), Parallel MCP (`search.parallel.ai`), Brave API, a user-configured SearXNG instance, Tavily (`api.tavily.com`), and arbitrary user or model-chosen URLs for fetch and HttpRequest. [WebSearchExecutor.swift], [WebFetchExecutor.swift], [HttpRequestExecutor.swift]
+- Network: HTTPS requests to Brave Image Search (`api.search.brave.com/res/v1/images/search`, key in `X-Subscription-Token`), Exa MCP (`mcp.exa.ai`), Parallel MCP (`search.parallel.ai`), Brave API, a user-configured SearXNG instance, Tavily (`api.tavily.com`), and arbitrary user or model-chosen URLs for fetch and HttpRequest. [WebSearchExecutor.swift], [WebFetchExecutor.swift], [HttpRequestExecutor.swift]
 - Credentials leave the process in requests: Exa key as a URL query item, Parallel as a Bearer header, Brave as `X-Subscription-Token`, Tavily in the JSON body; HttpRequest sends caller-supplied Authorization or `X-API-Key` headers. [WebSearchExecutor.swift], [HttpRequestExecutor.swift:execute]
 - Reads the `TAVILY_API_KEY` environment variable as a fallback. [WebSearchExecutor.swift:searchTavily]
 - DNS resolution through `getaddrinfo` during validation. [HttpRequestDestinationValidator.swift]
 - Reads `AppNetworkPolicyStore.current` and `AppToolSandbox` host classification. [HttpRequestDestinationValidator.swift], [HttpRequestExecutor.swift]
 - Creates and invalidates an ephemeral `URLSession` per call (unless a test session is injected); the search providers do the same through `fetchLimited` (no more `URLSession.shared`). [HttpRequestExecutor.swift:performRequest], [WebSearchExecutor.swift]
-- No disk writes.
+- Disk writes: only `image_fetch`, one new image file inside the project root. Optional Keychain item `TurboSpark.image-search` for the Brave key.
 
 ## Verification
 - Run: `swift test --package-path swift/TurboSparkApp`

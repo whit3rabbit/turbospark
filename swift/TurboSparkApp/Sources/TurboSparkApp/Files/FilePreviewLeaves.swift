@@ -14,24 +14,8 @@ import SwiftUI
 // an attachment the user chose, "no longer at its written path" for an artifact
 // the model wrote).
 
-/// Scrollable, aspect-fitting image at full resolution.
-///
-/// Takes a loaded `NSImage` rather than a URL so the caller keeps its own
-/// missing-file message and accessibility label.
-@MainActor
-struct ImagePreviewView: View {
-    let image: NSImage
-
-    var body: some View {
-        ScrollView([.horizontal, .vertical]) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFit()
-                .padding(12)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
+// `ImagePreviewView` (the pan, zoom and annotation surface) lives in
+// `ImagePreviewView.swift`.
 
 /// PDFKit page view, shared with the artifact panel. `autoScales` is what
 /// makes the document fit the narrow preview column rather than opening at

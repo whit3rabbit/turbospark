@@ -5,6 +5,18 @@ struct ConversationPaneView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
+        paneContent
+            // OC-08: the call panel floats over the conversation. Built only
+            // while voice call mode is on, so a launch with it off creates
+            // no audio objects.
+            .overlay {
+                if model.voiceCallEnabled {
+                    VoiceCallHostView(model: model, call: model.voiceCall)
+                }
+            }
+    }
+
+    @ViewBuilder private var paneContent: some View {
         if model.hasOutputTranscript {
             VStack(spacing: 0) {
                 OutputPaneView(model: model)
@@ -19,6 +31,7 @@ struct ConversationPaneView: View {
 
     private var conversationChrome: some View {
         VStack(spacing: 8) {
+            StallRecoveryBannerView(model: model)
             ErrorBanner(model: model)
             if model.showsNoModelInstalledBanner {
                 NoModelInstalledBanner(model: model)

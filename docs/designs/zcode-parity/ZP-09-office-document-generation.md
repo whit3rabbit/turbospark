@@ -3,186 +3,287 @@
 Finding 9.1 in [ZCODE_COMPARISON.md](../../ZCODE_COMPARISON.md).
 Parity targets: ZCode's document skills (docx/xlsx/pptx/pdf) from the
 [document-skills-plugin doc](https://github.com/zai-org/ZCode/blob/main/docs/document-skills-plugin.md).
+Constraint: no Python or Node runtime in the product path, from the program
+constraints in [INDEX.md](INDEX.md) and the roadmap.
 
 * Author: whit3rabbit
-* Status: Draft
-* Date: 2026-11-11
+* Status: Implemented (v1 subset; deviations listed under "Implementation record")
+* Date: 2026-11-11 (implemented 2026-11-14)
 
 --------------------------------------------------------------------------------
 
 ## Overview
 
-Let the agent create professional office files: docx, xlsx, pptx, and
-pdf. ZCode does this with four skill plugins that drive JavaScript and
-Python libraries. TurboSpark cannot bundle Node or Python in the product
-path, so the same outcome ships as a native document-writing layer in
-Swift plus skills that instruct the agent to use it, with a
-user-installed-tooling fallback path for fidelity cases the native layer
-cannot reach.
+Let the agent create new docx, xlsx, pptx and pdf files. ZCode does this with
+four skill plugins that drive JavaScript and Python libraries (docx-js,
+python-pptx and an xlsx writer). TurboSpark cannot bundle Node or Python in the
+product path, so the same outcome ships as ONE native tool, `document_write`,
+that dispatches to per-format pure Swift writers over a shared in-process OOXML
+package writer, plus four bundled skills that teach the agent the spec and its
+limits. Features outside the subset go through a skill-level fallback to
+user-installed tooling, always through the ordinary Bash tool and its ladder.
 
 ## The Problem
 
-TurboSpark's only document writing is chat export. An agent that should
-produce a report, a deck, or a spreadsheet has nothing to write with.
-ZCode's skills solve this with docx-js, python-pptx, and xlsx writers,
-but the roadmap forbids bundling Python or Node in the product path, so
-those implementations cannot be adopted as-is.
+TurboSpark's only document writing is chat export. An agent asked for a report,
+a deck, or a spreadsheet has nothing to write with, and ZCode's implementations
+need a JS or Python runtime the roadmap forbids bundling.
 
 ## Goals
 
-* A native Swift document-writing layer produces valid docx, xlsx, pptx,
-  and pdf files (PDF via Core Graphics, PDFKit-adjacent APIs).
-* Four bundled skills (docx, xlsx, pptx, pdf) teach the agent the
-  writing layer's operations and their limits, modeled on ZCode's skill
-  structures (cover recipes, per-scene playbooks, postcheck steps)
-  without the JS/Python tool references.
-* A postcheck step per skill: after writing, the agent re-opens the file
-  with the ZP-08 render model and validates structure (openable,
-  expected part counts, non-empty text).
-* The user-installed-tooling fallback: if the user has Python (or
-  scripts) available, skills may offer shell-outs, always through the
-  ordinary `Bash` tool and its permission ladder.
-* Output lands in the chat's artifact folder and surfaces in the
-  artifact panel for immediate review (ZP-08 viewers).
+* One agent-facing tool, `document_write(path, spec)`, writing docx, xlsx, pptx
+  and pdf from a bounded JSON spec (v1 subset below).
+* Four bundled skills (docx, xlsx, pptx, pdf) teaching the spec shape, limits,
+  recipes and fallback, without any JS or Python tool references. Skill
+  structure follows ZCode's: a recipe per common document, then a postcheck
+  section.
+* A mandatory tool-side postcheck on a staged file. A failed check writes
+  nothing and is reported once.
+* Output lands in the project (under `resolveSecurePath`), is registered as a
+  chat artifact, and opens in the ZP-08 viewers for review.
 
 ## Non-Goals
 
-* No bundled Python/Node runtime (roadmap constraint).
-* No editing of existing office files in v1; the writing layer creates
-  new files. Round-trip editing is future work.
-* No template marketplace or cover-art assets beyond simple, license-safe
-  recipes in skill text.
+* No bundled Python or Node runtime.
+* No editing of existing office files; the tool creates new files only and
+  never overwrites.
+* No macro output (docm, xlsm, pptm are refused), no external links, no
+  embedded objects.
+* No template marketplace or cover-art assets.
+* No Create-entry UI. The agent reaches the tool through chat and the skills,
+  so no new UI strings beyond one tool label.
+* v1 deferrals: xlsx formulas, charts, merges, validation; pptx pictures,
+  tables and shapes; docx headers, footers, hyperlinks, fields; pdf links and
+  forms.
 
-## Open Questions
+## Decisions (resolving the earlier open questions)
 
-* **Native writer scope**: full OOXML feature surface is enormous. The
-  proposal is a deliberate subset per format (headings, runs, lists,
-  tables, images for docx; sheets, cells, styles, number formats, basic
-  charts for xlsx; text frames, basic shapes, images for pptx). Any
-  feature outside the subset goes through the shell-out fallback. Does
-  the subset match expected use? Decide at implementation.
-* **PDF path**: native CG-based writer vs LaTeX-style shell-out only.
-  Lean native for text-and-image PDFs, shell-out for LaTeX.
+* **Native versus delegation**: native Swift, no subprocess in any writer. The
+  four writers and the shared zip writer are pure functions over bytes and spawn
+  nothing. Delegation to user-installed tooling exists only as skill text that
+  runs through `Bash`.
+* **Writer scope** (v1): docx headings, runs, lists, tables, PNG/JPEG images,
+  page breaks. xlsx cells with named number formats, fills, widths, frozen rows.
+  pptx title and content slides with bullets. pdf via Core Graphics and Core
+  Text with the docx block vocabulary. The subset was chosen as the smallest
+  that covers a report, a data sheet, a plain deck and a handout, and everything
+  outside it is stated in the skills.
+* **PDF path**: native Core Graphics and Core Text. PDFKit only READS (used by
+  the postcheck); it cannot write. `NSAttributedString` document export was
+  considered and not used: it does not give page-size, table or image control
+  and routes through AppKit text views. LaTeX stays out of scope.
+* **Artifact folder**: there is no per-chat artifact folder. Files are written
+  into the project at the path the agent chooses and registered as artifacts
+  through `ArtifactRegistrar`.
 
 ## Critical User Journeys
 
 ### CUJ 1: agent writes a report
 
-* **Given**: the user asks for a formatted project report as docx.
-* **When**: the agent activates the docx skill and calls the writing
-  layer.
-* **Then**: report.docx lands in the artifact folder, opens in the ZP-08
-  viewer, and the postcheck passes (valid zip, expected parts, non-empty
-  text). The user reviews it in place.
+* **Given**: the user asks for a formatted project report as docx, in a project.
+* **When**: the agent loads the docx skill and calls `document_write` with
+  `path: "report.docx"` and a block spec.
+* **Then**: the file is built, staged, postchecked (archive, content-types,
+  relationships, render), moved into the project, and registered as an
+  artifact. The result names the checks that passed. The user reviews it in the
+  ZP-08 viewer.
 
 ### CUJ 2: fallback path
 
-* **Given**: the user needs a feature outside the native subset (for
-  example an Excel chart with VBA-created elements).
-* **When**: the skill instructs a shell-out to user-installed tooling.
-* **Then**: the Bash tool asks per the ladder, the script runs, and the
-  postcheck validates the result; if the tooling is missing the skill
-  reports the gap instead of failing silently.
+* **Given**: the user needs a feature outside the subset, for example a pivot
+  table or conditional formatting in an xlsx.
+* **When**: the skill says which feature is out of the subset and offers one
+  shell-out to tooling the user already has installed, checked first with
+  `command -v`.
+* **Then**: the Bash tool asks per the ladder and the script runs, writing a NEW
+  path. Its output is untrusted: no macro-enabled file, no overwrite, and the
+  agent reads it back or asks the user to review. If the tooling is missing the
+  skill reports the gap and stops. The native postcheck does not cover this
+  path, and the skill says so.
 
 ### CUJ 3: pdf handout
 
-* **Given**: the user asks for a PDF handout with a chart image.
-* **When**: the agent uses the pdf skill.
-* **Then**: the native CG writer produces a text-and-image PDF with
-  correct page sizes; the postcheck confirms openability via PDFKit.
+* **Given**: the user asks for a PDF handout with a chart image already in the
+  project.
+* **When**: the agent uses the pdf skill with an `image` block.
+* **Then**: Core Graphics and Core Text produce a text-and-image PDF at the
+  chosen page size, and the postcheck confirms PDFKit opens it, every page has
+  the expected size, and text is extractable.
 
 ## Technical Plan (Architecture)
 
 ```text
-Bundled skills (docx, xlsx, pptx, pdf)
-  instruct the agent; carry limits + postcheck steps
+Bundled skills (docx, xlsx, pptx, pdf): spec shape, limits, recipes, fallback
         |
         v
-Agent calls writer tools (or writes via REPL file bridge)
+document_write(path, spec)            category .fileWrite, workspace-rooted
+  path: resolveSecurePath + validateWritePath + sensitive path + extension
+        + must not exist
+  spec: DocumentSpec.decode -> DocumentSpecValidation (caps, shapes, colors)
+  images: PNG/JPEG by magic bytes, project-confined, regular file, bounded
         |
         v
-DocumentWriter layer (Swift)
-  DocxWriter: OOXML zip via OfficeArchive's writer half
-  XlsxWriter: sheets/styles/number formats/basic charts
-  PptxWriter: slides/frames/basic shapes/images
-  PdfWriter: Core Graphics text + image pages
+Per-format pure writers                DocxWriter XlsxWriter PptxWriter PdfWriter
+  OOXMLPackage -> ZipArchiveWriter     in-process zip (Compression framework)
         |
         v
-Postcheck: re-open with ZP-08 OfficeRenderModel
-  validate structure + non-empty text
-        |
+Stage in private temp dir -> DocumentPostcheck
+  archive, content-types, relationships, render  (pdf: pdf)
+        |  pass                          |  fail: nothing written, one report
         v
-Artifact panel (ZP-08 viewers) for review
+moveItem into project (fails if it exists) -> ArtifactRegistrar -> ZP-08 viewers
 ```
 
-Skills are authored under the bundled-skill root from ZP-07. Writers
-share the hardened zip access; they never shell out on their own.
+The zip writer is new code (`OOXMLPackageWriter.swift`), not a half of
+`OfficeArchive`: that type is a read-only `/usr/bin/unzip` wrapper and stays so.
+The package reader used by the postcheck is also in-process and separate from
+`OfficeArchive`, because `unzip` reads its entry argument as a wildcard and
+cannot address `[Content_Types].xml`, and because an independent reader proves
+more than the render path that shares parsers with the writer.
+
+## Dependencies and sequencing
+
+* ZP-08 (office rendering, `57324bcf`) is a prerequisite for the review step
+  and for the postcheck's `render` check.
+* ZP-07 owns the bundled-skills root: skills live in
+  `Sources/TurboSparkAppResources/BundledSkills/<name>/SKILL.md` (resources are
+  in the `TurboSparkAppResources` target, not `TurboSparkApp`), and
+  `SkillManager.discoverBundledSkills()` already discovers them, so no
+  SkillManager change is needed.
+* ZP-19 (`image_search`, `image_fetch`) supplies web images; the docx skill
+  tells the agent to cite the source page.
 
 ## Alternatives Considered
 
 ### Alternative A: port ZCode's skills verbatim
 
 * **Pros**: battle-tested content.
-* **Cons**: they reference docx-js, python-pptx, and bundled scripts;
-  adopting them means bundling a JS/Python runtime, which the roadmap
-  forbids.
-* **Reason for Rejection**: Rejected by author: runtime constraint.
+* **Cons**: they call docx-js, python-pptx and bundled scripts, so adopting
+  them means a JS and Python runtime in the product path.
+* **Reason for Rejection**: violates the runtime constraint.
 
 ### Alternative B: generate HTML and convert
 
 * **Pros**: HTML is easy for the model.
-* **Cons**: HTML-to-office conversion requires the same runtime tooling
-  (pandoc/LibreOffice) with worse fidelity control.
-* **Reason for Rejection**: Rejected by author: adds a conversion
-  dependency with unpredictable output.
+* **Cons**: conversion needs an external converter (pandoc or an office suite)
+  that the app cannot assume is installed and cannot version. Fidelity is
+  whatever that converter does, and the conversion would be a second, unaudited
+  writer.
+* **Reason for Rejection**: unpredictable output and an assumed external tool.
+
+### Alternative C: skills only, model writes raw OOXML with `write_file`
+
+* **Pros**: no new tool.
+* **Cons**: a zip is binary and `write_file` writes text; the model would need a
+  shell zip step per file, with no escaping, size or relationship guarantees and
+  no postcheck.
+* **Reason for Rejection**: no enforcement point for any safety property.
+
+### Alternative D: a third-party OOXML library
+
+* **Pros**: more features.
+* **Cons**: a new dependency, which needs a separate decision, and a large
+  surface to audit for hostile input.
+* **Reason for Rejection**: not needed for the v1 subset; revisit if the subset
+  proves too small.
+
+### Alternative E: system exporters (`NSAttributedString` docx, `NSPrintOperation` pdf)
+
+* **Pros**: no hand-built XML or layout.
+* **Cons**: AppKit text-system dependence, no xlsx or pptx equivalent, and little
+  control over tables, page size and package contents.
+* **Reason for Rejection**: covers one of four formats poorly.
 
 ## Non-Functional Requirements
 
-* **Security**: writers write only into the chat artifact folder; the
-  shell-out path goes through the ordinary Bash permission ladder; no
-  network access for any writer.
-* **Quality**: the postcheck is mandatory in every skill; a failed
-  postcheck is reported to the user, not retried silently.
-* **Localization**: skill content is English (agent-facing, matching
-  ZCode), while the Create-entry UI strings are catalog strings in 21
+* **Security**: the tool writes only inside the project root through
+  `resolveSecurePath` and `validateWritePath`, refuses sensitive paths, never
+  overwrites, and the writers open no network connection and spawn no process.
+  The shell-out fallback goes through the ordinary Bash ladder and its output is
+  untrusted.
+* **Ladder position**: category `.fileWrite`, workspace-rooted, so a projectless
+  chat cannot call it. It answers to the project File write permission
+  (deny, ask, auto), the sensitive-path hard gate and the tool profiles
+  (Read-only removes it). Registered in `AppToolCatalog.builtInCategory`,
+  `AppToolRegistry.supportedToolNames` and `workspaceRootedToolNames`.
+* **Quality**: the postcheck is part of the tool, so no skill can skip it. A
+  failed postcheck is reported to the user, not retried silently. Its limit: it
+  proves a well-formed package the ZP-08 viewer reads, not that Word, Excel or
+  PowerPoint opens it.
+* **Localization**: skill content is English (agent-facing, as in ZCode). The
+  only UI string is the tool label "Write Document", in all 21 catalog
   languages.
 
-## Detailed Implementation Plan
+## Risks and Mitigations
 
-### Target Files to Create/Modify
+* **Size and resource exhaustion**: caps on spec bytes, blocks, table cells,
+  rows, columns, slides, pages, images (count, bytes, pixels) and output bytes,
+  all below `OfficeRenderLimits`. A spec over a cap is refused whole.
+* **Formula injection**: text is always a shared string and no formula is ever
+  written, so `=`, `+`, `-`, `@` prefixes are inert. Formulas are a v1 non-goal.
+* **XML injection**: all text is escaped and XML-forbidden characters dropped;
+  colors are six hex digits; number formats are a closed set; sheet names follow
+  Excel's rules. Tests feed hostile strings and re-parse.
+* **External content**: no API emits an external relationship, macro part,
+  custom XML or hyperlink; the postcheck rejects any.
+* **Overwrite and clobbering**: never overwrites; the move into the project
+  fails if the path exists, closing the check-then-write race.
+* **Fonts and scripts**: docx names Calibri and pdf uses Helvetica with system
+  fallback. CJK and right-to-left in pdf rely on Core Text and are not verified
+  against a reference rendering; the pdf skill says to ask the user to inspect.
+* **Real Office compatibility**: not verified here. Mitigation is a
+  schema-ordered, minimal-parts writer and an honest statement in the tool
+  result and the docs; a manual open in Word, Excel and PowerPoint is a listed
+  follow-up.
+* **ZP-08 sequencing**: if the loader is unavailable the `render` check cannot
+  run, so ZP-09 must not ship without ZP-08. Both are in the tree.
 
-1. `swift/TurboSparkApp/Sources/TurboSparkApp/Presentation/DocumentWriter/DocxWriter.swift` (Create)
-2. `swift/TurboSparkApp/Sources/TurboSparkApp/Presentation/DocumentWriter/XlsxWriter.swift` (Create)
-3. `swift/TurboSparkApp/Sources/TurboSparkApp/Presentation/DocumentWriter/PptxWriter.swift` (Create)
-4. `swift/TurboSparkApp/Sources/TurboSparkApp/Presentation/DocumentWriter/PdfWriter.swift` (Create)
-5. `swift/TurboSparkApp/Sources/TurboSparkApp/Presentation/DocumentWriter/DocumentPostcheck.swift` (Create)
-6. `swift/TurboSparkApp/Sources/TurboSparkApp/Resources/bundled-skills/docx/SKILL.md` (Create)
-7. `swift/TurboSparkApp/Sources/TurboSparkApp/Resources/bundled-skills/xlsx/SKILL.md` (Create)
-8. `swift/TurboSparkApp/Sources/TurboSparkApp/Resources/bundled-skills/pptx/SKILL.md` (Create)
-9. `swift/TurboSparkApp/Sources/TurboSparkApp/Resources/bundled-skills/pdf/SKILL.md` (Create)
-10. `swift/TurboSparkApp/Sources/TurboSparkApp/State/SkillManager.swift` (Modify)
-   * **Type / Scope**: discovery of the four new bundled skills.
-11. `swift/TurboSparkApp/Tests/TurboSparkAppTests/DocumentWriterTests.swift` (Create)
-   * **Type / Scope**: unit tests.
-   * **Proposed Changes**: per-format fixture generation (write, then
-     re-open with OfficeXMLParsers and assert structure), postcheck
-     pass and fail paths, artifact-folder confinement (an attempted
-     write outside the folder fails), shell-out absence (no bundled
-     runtime).
-   * Mutation checks: corrupt a written zip's content types part and
-     assert the postcheck fails; relax folder confinement and assert
-     the confinement test fails.
-12. `swift/docs/` docs entry: a document generation section in the
-    appropriate swift doc (basename: extend `swift/docs/SWIFT_AUDIO_MEETING_NOTES.md`-style pattern with a new `swift/docs/SWIFT_DOCUMENTS.md`) (Create)
+## Implementation record
+
+Files (under `swift/TurboSparkApp/`):
+
+* `Sources/TurboSparkApp/Presentation/DocumentWriter/`: `DocumentSpec.swift`,
+  `DocumentSpecValidation.swift`, `OOXMLPackageWriter.swift`,
+  `DocxWriter.swift`, `XlsxWriter.swift`, `PptxWriter.swift`, `PdfWriter.swift`,
+  `DocumentImage.swift`, `DocumentPostcheck.swift`.
+* `Sources/TurboSparkApp/Tools/File/DocumentWriteTool.swift` (schema and
+  executor), wired in `AppToolRegistry.swift`, `AppToolRegistry+Vocabulary.swift`,
+  `AppToolCatalog.swift` and `ToolPresentation.swift`.
+* `Sources/TurboSparkAppResources/BundledSkills/{docx,xlsx,pptx,pdf}/SKILL.md`.
+* `Tests/TurboSparkAppTests/DocumentWriterTests.swift`.
+* `Localization/Localizable.xcstrings`: "Write Document" in 21 languages.
+* `swift/docs/SWIFT_DOCUMENTS.md` (new), `SWIFT_SKILLS.md`, `Tools/File/EGM.md`.
+
+Deviations from the original draft:
+
+* One tool instead of four writer entry points, and the writers are pure
+  functions the tool dispatches to (review B2, M8).
+* No SkillManager change: bundled skills are discovered already (review M9).
+* No artifact folder: files go into the project (review M2).
+* A new in-process zip writer and a separate zip reader for the postcheck; the
+  postcheck lives in the tool and checks content types, relationships and spec
+  counts, not only a re-parse (review B1, M3).
+* v1 subset cut (review M1): no xlsx formulas or charts, no pptx pictures,
+  tables or shapes, docx tables have no merges.
+* Never overwrites at all, rather than overwriting under permission, because a
+  binary file cannot satisfy the read-before-overwrite gate.
+* "Shell-out absence" is tested as "the writers spawn no process" (review M6).
+* The Create-entry UI and its 21-language strings were dropped (review M2).
+* Not verified: opening generated files in real Word, Excel or PowerPoint, and
+  CJK or right-to-left PDF text against a reference rendering.
 
 ### Verification Plan
 
-* **Compilation/Build**: `make swift-lib`, then build the app scheme.
-* **Unit Tests**: `swift test` for DocumentWriterTests.
-* **Localization**: catalog additions in 21 languages (UI strings only;
-  skills are agent-facing English).
-* **Manual**: generate one document per format from chat, review each
-  in the ZP-08 viewers, and run each postcheck.
+* **Build**: `swift build` in `swift/TurboSparkApp`.
+* **Unit tests**: `swift test --filter DocumentWriterTests`: per-format
+  round trips through `OfficeRenderModel`, `OfficeArchive` and the independent
+  zip reader; hostile text; confinement and no-overwrite; limits; ladder
+  position; postcheck pass and fail paths with mutation checks (corrupt content
+  types, CRC, relationships, counts); the no-process scan with its own mutation
+  check; skill discovery and native-only text.
+* **Localization**: the parity gates and `make design-check`.
+* **Manual follow-up**: generate one document per format from chat, review each
+  in the ZP-08 viewers, and open each in the real Office application.
 
 --------------------------------------------------------------------------------
 

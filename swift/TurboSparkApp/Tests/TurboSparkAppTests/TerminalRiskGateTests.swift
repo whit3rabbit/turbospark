@@ -136,6 +136,27 @@ final class TerminalRiskGateTests: XCTestCase {
         }
     }
 
+    /// Gradle executes the workspace's build scripts, so it is not on the
+    /// auto-approve build list in any spelling. The other build tools stay.
+    func testGradleAsksInEverySpellingWhileOtherBuildToolsStayQuiet() {
+        for command in [
+            "gradle assembleDebug", "gradle", "./gradlew assembleDebug", "gradlew test",
+            "/usr/local/bin/gradle build", "GRADLE test",
+        ] {
+            XCTAssertFalse(TerminalCommandClassifier.isAutoApprovable(command), command)
+        }
+        XCTAssertFalse(TerminalCommandClassifier.buildCommands.contains("gradle"))
+        XCTAssertFalse(TerminalCommandClassifier.buildCommands.contains("gradlew"))
+        for command in ["cargo build", "npm run build", "make check", "mvn test", "swift test"] {
+            XCTAssertTrue(TerminalCommandClassifier.isAutoApprovable(command), command)
+        }
+        let project = AppProject(name: "p", permissions: AppProjectPermissions(mode: .auto))
+        let call = AppToolCall(
+            name: "run_command", arguments: ["command": "gradle assembleDebug"], category: .terminal)
+        guard case .ask = AppToolPermissionEngine.evaluate(call: call, project: project, globalServers: [])
+        else { return XCTFail("gradle must ask under auto") }
+    }
+
     // MARK: - The pieces, separately
 
     /// The interpreter guard is the ONLY thing making `python3` and `node`

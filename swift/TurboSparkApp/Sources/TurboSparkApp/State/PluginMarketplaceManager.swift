@@ -22,8 +22,16 @@ public final class PluginMarketplaceManager: @unchecked Sendable {
     public let root: URL
     let ledger: PluginLedgerStore
     private let lock = NSLock()
+    /// Network policy for `cdnZip` installs. Always `.production` outside
+    /// tests (the internal init below is the only way to change it).
+    let cdnZipPolicy: CdnZipDownloader.Policy
 
-    public init(root: URL? = nil) {
+    public convenience init(root: URL? = nil) {
+        self.init(root: root, cdnZipPolicy: .production)
+    }
+
+    init(root: URL?, cdnZipPolicy: CdnZipDownloader.Policy) {
+        self.cdnZipPolicy = cdnZipPolicy
         // Profile-aware like `PluginLedgerStore`: the Default profile keeps
         // the shared root, other profiles keep everything under their own.
         let resolved = root
@@ -135,6 +143,21 @@ public final class PluginMarketplaceManager: @unchecked Sendable {
             return MarketplaceCheckout(
                 manifest: try readManifest(from: dir, declaredPath: path),
                 directory: dir)
+
+        case .builtin:
+            guard let bundle = BuiltinPluginSeeder.shared.bundleDirectory,
+                FileManager.default.fileExists(atPath: bundle.path)
+            else {
+                throw PluginLoadError(
+                    pluginName: nil, reason: "This app build ships no builtin plugins.")
+            }
+            return MarketplaceCheckout(
+                manifest: try readManifest(from: bundle, declaredPath: nil), directory: bundle)
+
+        case .cdnZip:
+            throw PluginLoadError(
+                pluginName: nil,
+                reason: "A cdnZip source installs one plugin; it cannot be a marketplace catalog.")
 
         case .directory(let path):
             let dir = URL(fileURLWithPath: path, isDirectory: true)
@@ -273,6 +296,21 @@ public final class PluginMarketplaceManager: @unchecked Sendable {
                 } ?? temp
                 try Self.copyContents(of: sourceDir, to: stagedRoot)
                 gitDirForSha = temp
+            case .builtin:
+                throw PluginLoadError(
+                    pluginName: entry.name,
+                    reason: "The builtin source is the app's own marketplace row, not an entry source")
+            case .cdnZip(let url, let sha256):
+                // Everything before extraction lives in `CdnZipDownloader`:
+                // https only, a strict 64-hex digest, bounded redirects and
+                // size, digest over the exact bytes. A mismatch throws here,
+                // before a single entry is read, and `staging` (deferred
+                // cleanup above) holds nothing installable.
+                let archive = staging.appendingPathComponent("download.zip")
+                try await CdnZipDownloader.download(
+                    url: url, sha256: sha256, to: archive, policy: cdnZipPolicy)
+                try ZipSafeExtractor.extract(archive: archive, to: stagedRoot)
+                gitDirForSha = nil
             case .directory(let path):
                 guard case .directory = marketplaceSource else {
                     throw PluginLoadError(

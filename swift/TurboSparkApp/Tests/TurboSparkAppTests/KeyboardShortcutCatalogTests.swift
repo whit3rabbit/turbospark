@@ -44,9 +44,10 @@ final class KeyboardShortcutCatalogTests: XCTestCase {
         XCTAssertFalse(labels.contains("Clear History"), "the menu item is Clear Chat History")
     }
 
-    func testChatSectionListsTheSearchChatsShortcut() {
+    func testChatSectionListsTheCommandCenterShortcuts() {
         let rows = KeyboardShortcutCatalog.chat.rows
-        XCTAssertEqual(rows.first(where: { $0.label == "Search Chats" })?.keys, "\u{2318} K")
+        XCTAssertEqual(rows.first(where: { $0.label == "Command Center" })?.keys, "\u{2318} K")
+        XCTAssertEqual(rows.first(where: { $0.label == "Run Command" })?.keys, "\u{21E7} \u{2318} P")
         // The sibling it must not collide with: Cmd+Shift+K clears history.
         XCTAssertEqual(
             rows.first(where: { $0.label == "Clear Chat History" })?.keys, "\u{21E7} \u{2318} K")

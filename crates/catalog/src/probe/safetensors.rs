@@ -109,6 +109,9 @@ pub fn evaluate_config(
         ModelFamily::Qwen2Dense => {
             repack::parse_qwen2_config(config_text).map_err(|e| e.to_string())
         }
+        ModelFamily::Qwen3Dense => {
+            repack::parse_qwen3_config(config_text).map_err(|e| e.to_string())
+        }
         ModelFamily::Qwen3Vl => {
             repack::parse_qwen3_vl_config(config_text).map_err(|e| e.to_string())
         }
@@ -195,6 +198,7 @@ pub fn evaluate_config(
             family,
             model_io::ModelFamily::QwenGdnDense
                 | model_io::ModelFamily::QwenGdnMoe
+                | model_io::ModelFamily::Qwen3Dense
                 | model_io::ModelFamily::Gemma4
                 | model_io::ModelFamily::MuseGlimmer
         ) {

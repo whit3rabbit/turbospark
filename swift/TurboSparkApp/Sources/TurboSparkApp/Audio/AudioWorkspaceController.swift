@@ -51,6 +51,9 @@ final class AudioWorkspaceController: ObservableObject {
     /// The page that started the current capture (SpeechToTextMode.swift).
     @Published var captureOrigin: AudioCaptureOrigin?
     var hasRecordingActivity: Bool { isRecording || recordingSetupStatus != nil }
+    /// True while another feature holds the microphone: a voice call (OC-08).
+    /// Set by the app model; recording refuses to start beside it.
+    var externalCaptureActive: () -> Bool = { false }
     @Published var isPaused = false
     @Published var recordingSeconds: Double = 0
     @Published var inputLevel: Float = 0

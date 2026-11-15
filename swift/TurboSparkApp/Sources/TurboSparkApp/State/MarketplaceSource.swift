@@ -12,9 +12,20 @@ public enum MarketplaceSource: Codable, Equatable, Sendable {
     case github(repo: String, ref: String?, path: String?, sparsePaths: [String]?)
     case git(url: String, ref: String?, path: String?, sparsePaths: [String]?)
     case directory(path: String)
+    /// The app's own bundled marketplace (ZP-05). Carries no location: it
+    /// always resolves to the read-only `BuiltinPlugins` bundle directory.
+    case builtin
+    /// A plugin delivered as one zip from an https URL the marketplace row
+    /// declares (ZP-05). `sha256` is the lowercase hex digest of the exact
+    /// downloaded bytes; it is stored as declared (even when malformed or
+    /// missing, so one bad row cannot make a whole marketplace file fail to
+    /// decode) and `CdnZipDownloader` refuses an install whose digest is not
+    /// exactly 64 lowercase hex characters. An install source only: it
+    /// cannot be a marketplace catalog.
+    case cdnZip(url: String, sha256: String)
 
     enum CodingKeys: String, CodingKey {
-        case type, url, headers, repo, ref, path, sparsePaths
+        case type, url, headers, repo, ref, path, sparsePaths, sha256
     }
 
     public init(from decoder: any Decoder) throws {
@@ -40,6 +51,12 @@ public enum MarketplaceSource: Codable, Equatable, Sendable {
         case "directory", "file", "local":
             let path = try container.decode(String.self, forKey: .path)
             self = .directory(path: path)
+        case "builtin":
+            self = .builtin
+        case "cdnzip", "cdn-zip", "cdn_zip":
+            let url = try container.decodeIfPresent(String.self, forKey: .url) ?? ""
+            let sha = try container.decodeIfPresent(String.self, forKey: .sha256) ?? ""
+            self = .cdnZip(url: url, sha256: sha)
         default:
             let url = try container.decodeIfPresent(String.self, forKey: .url) ?? ""
             self = .url(url: url, headers: nil)
@@ -68,6 +85,12 @@ public enum MarketplaceSource: Codable, Equatable, Sendable {
         case .directory(let path):
             try container.encode("directory", forKey: .type)
             try container.encode(path, forKey: .path)
+        case .builtin:
+            try container.encode("builtin", forKey: .type)
+        case .cdnZip(let url, let sha256):
+            try container.encode("cdnZip", forKey: .type)
+            try container.encode(url, forKey: .url)
+            try container.encode(sha256, forKey: .sha256)
         }
     }
 }

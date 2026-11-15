@@ -45,16 +45,31 @@ final class UIAuditFixesTests: XCTestCase {
                 .appendingPathComponent("Sources/TurboSparkApp/App/TurboSparkApp.swift"),
             encoding: .utf8)
         var menuChords: [String: String] = [:]
+        // OC-01: a rebindable menu item carries `.keyboardChord(.id, keybinds)`
+        // instead of a literal chord, so the pairing to hold is label to id.
+        var menuIDs: [String: KeyboardCommandID] = [:]
         for segment in source.components(separatedBy: "Button {").dropFirst() {
+            if let id = Self.chordID(in: segment) {
+                for label in Self.bundledLabels(in: segment) { menuIDs[label] = id }
+                continue
+            }
             guard let chord = Self.chord(in: segment) else { continue }
             for label in Self.bundledLabels(in: segment) {
                 menuChords[label] = chord
             }
         }
-        XCTAssertGreaterThan(menuChords.count, 10, "the menu scan found too few chords to mean anything")
+        XCTAssertEqual(
+            Set(menuChords.keys), ["Queue Message", "Generate Response", "Cancel Generation"],
+            "only Generate and Cancel keep a literal chord")
+        XCTAssertGreaterThan(menuIDs.count, 10, "the menu scan found too few chords to mean anything")
         var checked = 0
         for section in KeyboardShortcutCatalog.sections {
             for row in section.rows {
+                if let id = menuIDs[row.label] ?? menuIDs[row.label + "..."] {
+                    XCTAssertEqual(row.commandID, id, "\(row.label): the menu item is wired to another command")
+                    checked += 1
+                    continue
+                }
                 guard let chord = menuChords[row.label] ?? menuChords[row.label + "..."] else { continue }
                 XCTAssertEqual(row.keys, chord, "\(row.label): pane and menu disagree")
                 checked += 1
@@ -69,10 +84,20 @@ final class UIAuditFixesTests: XCTestCase {
         let text = String(segment)
         let range = NSRange(text.startIndex..., in: text)
         // Only the button's own label closure: stop at its first shortcut.
-        let cutoff = text.range(of: ".keyboardShortcut(").map { NSRange($0, in: text).location } ?? range.length
+        let cutoff = [".keyboardShortcut(", ".keyboardChord("]
+            .compactMap { text.range(of: $0).map { NSRange($0, in: text).location } }
+            .min() ?? range.length
         return pattern.matches(in: text, range: range)
             .filter { $0.range.location < cutoff }
             .compactMap { Range($0.range(at: 1), in: text).map { String(text[$0]) } }
+    }
+
+    /// The command id of the first `.keyboardChord(.name, ...)` in a segment.
+    private static func chordID(in segment: String) -> KeyboardCommandID? {
+        let text = String(segment)
+        guard let start = text.range(of: ".keyboardChord(") else { return nil }
+        let name = text[start.upperBound...].prefix { $0 != "," && $0 != ")" }
+        return KeybindMenuSpelling.id(forName: String(name))
     }
 
     /// The first `.keyboardShortcut(...)` in a segment, in the pane's

@@ -106,10 +106,16 @@ extension AppModel {
         self.guardrailsMode = AppGuardrailsMode(rawValue: settings.guardrailsMode) ?? .select
         self.modelReasoningDefaults = settings.modelReasoningDefaults
         self.interactionMode = AppInteractionMode(rawValue: settings.interactionMode) ?? .chat
+        self.chatSidebarMode = ChatSidebarMode(storedValue: settings.chatSidebarMode)
+        self.attentionPreferences = settings.attentionEvents
+        self.voiceCallEnabled = settings.voiceCallEnabled
+        self.voiceCallAutoSendEnabled = settings.voiceCallAutoSendEnabled
+        self.voiceCallDeciderModelID = settings.voiceCallDeciderModelID
         self.browserSettings = settings.browser
         self.computerUseSettings = settings.computerUse
         self.networkPolicy = settings.networkPolicy
         self.alwaysStartInGhostMode = settings.alwaysStartInGhostMode
+        self.offPeakEnabled = settings.offPeakEnabled
         self.activePermissionMode = AppPermissionMode(rawValue: settings.rootlessPermissionMode) ?? .auto
         self.autoCompactEnabled = settings.autoCompact
         self.actionFusionEnabled = settings.actionFusion
@@ -122,6 +128,8 @@ extension AppModel {
         self.syntextIndexingEnabled = settings.syntextIndexingEnabled
         AppToolRegistry.syntextIndexingEnabled = settings.syntextIndexingEnabled
         self.conversationRecallEnabled = settings.conversationRecallEnabled
+        self.trajectoryLoggingEnabled = settings.trajectoryLoggingEnabled
+        reconcileTrajectoryStoreAtLoad()
         // A store left by a crash between turning recall off (or protecting
         // the profile) and the purge that should have followed.
         ChatRecallStore.shared.purgeIfDisallowed()
@@ -287,7 +295,13 @@ extension AppModel {
             guardrailsMode: guardrailsMode.rawValue,
             modelReasoningDefaults: modelReasoningDefaults,
             interactionMode: interactionMode.rawValue,
+            chatSidebarMode: chatSidebarMode.rawValue,
+            attentionEvents: attentionPreferences,
+            voiceCallEnabled: voiceCallEnabled,
+            voiceCallAutoSendEnabled: voiceCallAutoSendEnabled,
+            voiceCallDeciderModelID: voiceCallDeciderModelID,
             alwaysStartInGhostMode: alwaysStartInGhostMode,
+            offPeakEnabled: offPeakEnabled,
             rootlessPermissionMode: activePermissionMode.rawValue,
             autoCompact: autoCompactEnabled,
             actionFusion: actionFusionEnabled,
@@ -331,6 +345,7 @@ extension AppModel {
             agentModeHints: agentModeHints,
             syntextIndexingEnabled: syntextIndexingEnabled,
             conversationRecallEnabled: conversationRecallEnabled,
+            trajectoryLoggingEnabled: trajectoryLoggingEnabled,
             browser: browserSettings,
             computerUse: computerUseSettings,
             networkPolicy: networkPolicy
@@ -459,7 +474,14 @@ extension AppModel {
     /// repair a stale id anyway, but a file that references an absent row is
     /// its own trap.
     func makeChatArchive() -> AppChatArchive {
-        let archivable = archivableChats
+        // The selected chat is on screen at save time: stamp its marker on
+        // disk so a relaunch that opens another chat does not show it unread.
+        var archivable = archivableChats
+        let savedAt = Date()
+        for index in archivable.indices
+        where archivable[index].id == selectedChatID && archivable[index].hasUnreadReply {
+            archivable[index].lastReadAt = savedAt
+        }
         assert(
             chats.allSatisfy { chat in
                 !chat.isGhost || (chat.messages.isEmpty && chat.todos.isEmpty
@@ -618,6 +640,11 @@ extension AppModel {
         // quit must never be dissented from, and a cycle in flight must not
         // reach for sessions this method is about to drop. The registration
         // moves to the next model; the process-wide monitor keeps running.
+        // Before the model is released: records the running off-peak task as
+        // interrupted and releases the no-sleep hold.
+        offPeakTimer?.invalidate()
+        offPeakTimer = nil
+        offPeakDispatcher?.shutdown()
         ejectCoordination?.stop()
         ejectCoordination = nil
         libraryOfferAnnouncer?.stop()
@@ -640,25 +667,15 @@ extension AppModel {
         stopInstalledListFollowing()
         moveStoreMigration?.stop()
 
-        // A reply that is still streaming exists only in `outputText`; the
-        // runTask tail that would normally preserve it never runs before the
-        // process exits (or before a vault lock replaces the profile). Save
-        // it as an interrupted row now so Continue/Retry has an anchor.
-        // Only when the selected chat ends in a non-assistant row, i.e. it
-        // is the chat awaiting this reply; the epoch bump keeps the late
-        // tail from preserving it a second time.
-        if generating, !audioSummaryInFlight, !outputText.isEmpty || !outputReasoningText.isEmpty,
-            turnMessages(for: selectedChatID).last.map({ $0.role != .assistant }) ?? false
-        {
-            finishCancelled(chatID: selectedChatID, reason: "cancelled")
-            generationEpoch += 1
-        }
+        flushStreamingReplyForShutdown()
+        flushDeferredProposalsForShutdown()
         // Deliberately NOT `unloadModel()`: that refuses while `generating`,
         // which is exactly the case where the flush below matters most.
         cancel()
         prepareModelDownloadsForShutdown()
         imageSession?.cancel()
         audioWorkspace.shutdown()
+        flushWhiteboardsForShutdown()
         imageSession = nil
         imageSessionPath = nil
         // Background work is NOT reachable by `cancel()`: shells are
@@ -691,6 +708,48 @@ extension AppModel {
 
         // Both force the pending debounces through rather than waiting on
         // them, so the last keystroke and the last setting reach disk.
+        persistChats()
+        persistSettings()
+        AppChatFileStore.flush()
+    }
+
+    /// Saves the reply that is still streaming as an interrupted row.
+    ///
+    /// Split out of `shutdown()` so the guarded relaunch (OC-14) can run it,
+    /// and the persists below, FIRST: `shutdown()` is one synchronous
+    /// function, and a step in it that blocks on a wedged engine would
+    /// otherwise take the partial reply with it. Idempotent: after the first
+    /// call the chat ends in an assistant row, so a second call is a no-op.
+    func flushStreamingReplyForShutdown() {
+        // A reply that is still streaming exists only in `outputText`; the
+        // runTask tail that would normally preserve it never runs before the
+        // process exits (or before a vault lock replaces the profile). Save
+        // it as an interrupted row now so Continue/Retry has an anchor.
+        // Only when the selected chat ends in a non-assistant row, i.e. it
+        // is the chat awaiting this reply; the epoch bump keeps the late
+        // tail from preserving it a second time.
+        //
+        // **THE RUNNING TURN'S CHAT, NOT THE SELECTION** (ZP-23). The buffer
+        // belongs to the chat that owns the turn, which may be a background
+        // chat; flushing it into the selected chat would put another
+        // conversation's reply in the wrong transcript. Chats parked on a
+        // tool proposal flush from their own captured content.
+        let flushChatID = shutdownFlushChatID
+        if generating, !audioSummaryInFlight, !outputText.isEmpty || !outputReasoningText.isEmpty,
+            turnMessages(for: flushChatID).last.map({ $0.role != .assistant }) ?? false
+        {
+            finishCancelled(chatID: flushChatID, reason: "cancelled")
+            generationEpoch += 1
+        }
+    }
+
+    /// The data that must reach disk before a relaunch: the streaming reply,
+    /// any draft that has no chat yet, and both debounced stores. A subset of
+    /// `shutdown()` that touches no engine, server or session object, so it
+    /// cannot block on a stuck engine.
+    func flushForRelaunch() {
+        flushStreamingReplyForShutdown()
+        materializeDraftChatIfNeeded()
         persistChats()
         persistSettings()
         AppChatFileStore.flush()

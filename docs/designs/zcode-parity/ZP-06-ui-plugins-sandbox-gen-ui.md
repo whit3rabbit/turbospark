@@ -10,7 +10,7 @@ revision `a60ba6a7` (v3.17.1), audited 2026-10-31
 ([INDEX.md](INDEX.md)).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented. Phases A (sandbox, bridge, failure card), B (opt-in, registry, side pane) and C (Gen UI as a closed native schema, not HTML) landed; deviations and deferrals are in Implementation notes
 * Date: 2026-11-11
 
 Terms: ZCode and the ZP set are defined in [INDEX.md](INDEX.md);
@@ -351,5 +351,160 @@ script-to-app methods, each validated against the manifest.
   explicit grant.
 
 --------------------------------------------------------------------------------
+
+## Implementation notes
+
+### Phase A (host, sandbox, bridge, failure card, manifest model)
+
+Landed in `Plugins/UI/` plus `PluginModels.swift` and
+`PluginManifestParser.swift`. Contract and limits are in
+[SWIFT_PLUGINS.md](../../../swift/docs/SWIFT_PLUGINS.md) (UI plugins section).
+
+Deviations from the draft, and why:
+
+* **A sibling `PluginPageWebView`, not parameters on `ArtifactWebView`.**
+  The draft (Alternative C, EGM finding M2) said to extend `ArtifactWebView`.
+  The implemented host differs in three ways that cannot be representable
+  parameters without weakening the artifact host: every byte is served by a
+  `WKURLSchemeHandler` (CSP and the file root are enforced by app code),
+  the bridge handler is installed, and the session outlives any one SwiftUI
+  view. It reuses `ArtifactContentRuleList` so there is one definition of
+  "no network". ZP-17 named `PluginPageWebView.swift` for the failure card,
+  which also matches this.
+* **Origin model.** `WKContentConfiguration` does not exist and
+  `nonPersistent()` returns a fresh store per call (EGM B3). Pages load from
+  `tsplugin://<random token>/`; the token is the per-load origin, the data
+  store is non-persistent per page. "Partition per identity" is therefore
+  "one store and one origin per live page".
+* **Declared-files-only.** The draft allowed the plugin's resource root. The
+  handler serves only the page and the resources the manifest lists, which
+  is stricter and makes CSP derivable.
+* **`invokeTool` and the approval prompt.** A page cannot show an approval
+  card, so a call goes through `executeDeferredMcpCall` (the same path
+  codemode uses) and an `ask` verdict is refused as `permission_denied`.
+  The "prompt names the page and plugin" item is therefore moot: nothing
+  prompts. Pages can only run tools the engine already allows without
+  asking. Numbers chosen for the draft's N and M: 2 pending, 12 per minute,
+  5 s user-gesture window, 16 KiB message, 16 KiB widget state per message,
+  64 KiB tool result, 2 MiB per served file.
+* **User gesture** is a real AppKit mouse-down or key-down reaching the web
+  view (`PluginGestureWebView`), not a page-supplied flag. `sendFollowUp`
+  also needs it (the draft asked only for `invokeTool`).
+* **No `_meta.ui.resourceUri` parsing.** `McpClientEngine.callTool` returns
+  a flattened string, so there is no `_meta` to read. Surfaces open from the
+  Plugins pane (phase B). A tool-result "Open" row is deferred.
+* **`displayMode`** stays deferred as the draft said.
+* **Camera, microphone, location** are denied by default in the page, the
+  same default as ZP-14. In a test run without capture hardware WebKit leaves
+  `getUserMedia` pending instead of rejecting, so the test asserts "never
+  granted"; the delegate's `.deny` cannot be unit-called because
+  `WKSecurityOrigin` has no public initializer.
+
+Mutation checks run (each mutation applied, the named tests failed, source
+restored): hidden or dot path segment allowed; declared-files allow-list
+dropped; symlink refusal, belt check and `O_NOFOLLOW` dropped; resource size
+cap dropped; CSP connect, img and frame sources opened plus navigation policy
+opened; offline rule list not installed (killed by the CSP-relaxed probe
+`testOfflineRuleListAloneKeepsTheNetworkOut`, since the first version of the
+network test survived it); bridge capability check dropped; main-frame and
+origin check dropped; message size cap dropped; user-gesture check dropped;
+declared-tool allow-list dropped; rate limit dropped.
+
+ZP-17's deferred page-load failure card is implemented as
+`PluginPageFailureCard`; its note is updated.
+
+### Phase B (plugin UI declaration wiring)
+
+`PluginUiHost` (registry, cap 8, eviction, teardown), `PluginUiOptInStore`
+(`plugin_ui_optin.json`), `PluginPagePanelView` (the side pane), the
+`.pluginPage` right-column claimant, `PluginUiPagesSection` in the plugin
+detail pane, and `AppModel+PluginUi`. Deviations:
+
+* **Side pane is a new claimant, not `ArtifactPanelView`.** The draft said to
+  route through the artifact panel. That panel renders artifact files and
+  inline previews; a plugin page has neither a file nor an artifact id, so
+  it joins the right column as its own claimant (`.pluginPage(UUID)`, a
+  preview pane for the inspector shortcut, same width as the artifact
+  panel). `SplitChatPanes` is untouched, as the draft agreed.
+* **No transcript card for plugin pages.** The draft's
+  `TranscriptPluginCardView` is not built: plugin pages open in the side
+  pane (draft Open Question 1: side pane for tool-result pages, inline for
+  Gen UI). `placement: inline` parses and is treated as `sidePane` in v1.
+* **Opt-in is per plugin and off by default** (new; the draft had no
+  consent step). It is a separate file rather than a `MacAppSettings` field
+  so no settings migration is involved. It is keyed by plugin id, not
+  version: a plugin update that adds surfaces does not re-ask, because the
+  sandbox, not the opt-in, is the control, and every tool call still goes
+  through the permission engine.
+* **First consumer** is the test fixtures in `PluginPageSandboxTests` and
+  `PluginUiHostTests`; no plugin ships a surface yet (the draft's "starts
+  only when a real plugin declares a surface" is therefore still true of
+  shipped content).
+* **Quit teardown** is the process exit: pages and widget state are in
+  memory only. Pane close, chat switch and plugin disable or opt-out tear
+  the page down explicitly.
+
+Mutation checks run on the host: cap loop disabled; interacting-page
+protection dropped; opt-in guard dropped; teardown call dropped; reconcile
+opt-out check dropped; chat-switch close disabled. Each failed its test.
+
+### Phase C (Gen UI)
+
+`GenUiSpec.swift` (closed schema, parser, value expansion),
+`GenUiCardView.swift` (native renderer), `GenUiTool.swift`
+(`gen_ui_render`), wired through `AppToolCatalog`, `AppToolRegistry`,
+`ToolRiskClassifier`, `ToolPresentation` and `ToolCallCardView`.
+
+Deviations, the first being a change of direction:
+
+* **Gen UI does not render model HTML.** The draft's Alternative B (a native
+  rendering of a declarative schema) was rejected for "HTML is the
+  interchange format of the ecosystem", and the draft chose agent-written
+  self-contained HTML. The implementation task for this work set the
+  opposite rule: model-emitted UI must render through a closed schema and
+  component set, never raw HTML or script from the model. So Alternative B is
+  adopted for Gen UI. Plugin pages (shipped by a plugin author, behind an
+  opt-in, in the sandbox) remain HTML; model output never is. The ecosystem
+  argument still applies to plugins, which is where MCP Apps HTML would
+  arrive, and is unaffected.
+* **One tool, not two.** The draft had a write-page tool (content only,
+  generated filename, artifact registrar) and a render tool. With no file
+  there is nothing to write, name, sanitize or register, so
+  `gen_ui_render` takes the spec and the chat draws it. The artifact write
+  path is not touched.
+* **Ladder.** Category `automation`, risk `safe`, works without a project.
+  The draft said render is not low until the page has no tool authority;
+  that condition is true by construction here (no tool, file, network or
+  script path exists in the schema), and `testToolSitsAtTheSafeAutomationRung`
+  pins it. Adding any component with an effect means moving this entry up
+  first.
+* **Inline in the transcript.** The card is drawn by `ToolCallCardView`
+  under the tool's summary row once the call has a non-error result, so
+  `TranscriptPluginCardView` is not needed.
+* **`sendFollowUp`** is the `follow_up` component: it substitutes `{id}`
+  with control values into plain text and fills the composer draft, labeled
+  with the card title. It needs no gesture because it is a visible button
+  the person presses, in native code.
+* **Components** (the closed set): text, slider, stepper, toggle, picker,
+  readout (bound to a control id), table, bars, follow_up. No expressions,
+  no formulas, no charts library. Limits: 16 KiB, 40 components, 120-char
+  labels, 1000-char text, 12 options, 20 table rows by 8 columns, 24 bars,
+  10,000 slider steps.
+
+Mutation checks run: unknown-field check dropped; unknown component type
+skipped instead of rejected; component cap dropped; spec size cap dropped;
+control-character stripping dropped; readout bind check dropped; follow-up
+clip dropped; tool dropped from the safe rung. Each failed its test.
+
+Deferred, not decided here (none needs a dependency, crypto or CI change):
+
+* A tool-result "Open" row from `_meta.ui.resourceUri`: needs
+  `McpClientEngine` to keep result `_meta`; today it flattens to a string.
+* An approval card for a page-originated tool call that asks. Pages can
+  only run tools the permission engine allows without asking.
+* Inline placement for plugin pages (parsed, treated as side pane).
+* A bundled charts helper for plugin pages.
+* Re-prompting the opt-in when a plugin update adds surfaces.
+
 
 *Drafted with EGM*
