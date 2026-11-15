@@ -23,6 +23,59 @@ when this file gets updated relative to the version bump and the tag.
   Audio Drama 3 and MegaTTS3. They also appear in Discover under Voice
   Cloning. Fish Audio Drama 3 downloads a large source checkpoint (about
   23.8 GB) and converts it to a smaller install.
+- Parity program with two reference desktop agents (ZP-01..ZP-23 and
+  OC-01..OC-14). Chat and workspace:
+  - Workspace tabs hold whole workspaces, and session tabs inside a workspace
+    keep draft tabs, restore the last closed tab and remember scroll position.
+    Back and forward buttons walk the navigation history, and the sidebar
+    shows a peek on hover when it is collapsed.
+  - Sidebar rows show unread and pending-question badges, and an inbox triage
+    view steps through chats that need you. Chats can run in the background
+    next to the one you are reading (concurrent chats, partial: the turn-level
+    lease shipped, but one chat still decodes at a time).
+  - A command palette jumps to commands and chats. Keyboard shortcuts can be
+    rebound in Settings.
+  - Notifications and sounds for finished turns and questions, with Settings
+    switches. The agent PushNotification tool is opt-in and off by
+    default (partial: two deferred items are listed in the OC-02 draft).
+  - First-run onboarding, a splash screen shown only when launch is slow, and
+    Help > Show Welcome Tour.
+  - A hang watchdog flags a stalled engine and offers a guarded relaunch, and a
+    crash recovery marker explains an unclean exit on the next launch. The
+    menu bar warns when the running daemon is an older engine version than the
+    app (partial: no HTTP health fields yet).
+- Agents and tools:
+  - Off-peak tasks run queued work while the Mac is idle. Subagents can
+    message their coordinator.
+  - Image search and image fetch tools. `document_write` creates docx, xlsx
+    and pptx files from structured input, and the file pane previews all
+    three (with a Quick Look fallback).
+  - Language-server diagnostics and symbol tools, and a formatter pass after
+    edits. Both are off by default and start no process until enabled in
+    Settings (partial; see the OC-10 and OC-11 drafts for what is deferred).
+  - Sources panel lists what a reply read, and reveals the file from the tool
+    card.
+  - Optional remote providers (OpenAI-compatible and Anthropic style APIs,
+    API keys only, never OAuth). Off by default.
+- Skills and plugins: bundled skills `plugin-creator`, `turbospark-guide`,
+  `visualize`, `ios-simulator`, `android-emulator`, `docx`, `xlsx`, `pptx` and
+  `pdf`. Builtin plugins are seeded on first launch, and a marketplace source
+  can be a `cdnZip` with a digest check. UI plugin pages run in a sandboxed
+  web view and Gen UI cards render a closed native schema (not HTML); both are
+  opt-in.
+- Canvas and files: a whiteboard pane, image annotation, and an activity
+  treemap. Dev builds wear an icon badge so they are not mistaken for a
+  release.
+- Browser: per-site permission prompts with a stored allow or deny list, and
+  session recording to MP4.
+- Rollout trajectory logs record each model turn for a trajectory viewer. They
+  are plaintext and off by default.
+- Local voice call: talk to a local model with the local speech stack.
+  Experimental push-to-talk auto-send (Cmd+Shift+Space or the Talk button) is
+  off by default and re-checks the addressed fact before sending.
+- `turbospark acp` and the new `turbospark-acp-agent` binary speak the Agent
+  Client Protocol over stdio so an editor can drive local checkpoints. Verified
+  with a scripted client only, not a real editor.
 
 ### Changed
 - The Music page uses one fixed model, MiniMax Music 3 Turbo, and shows its
@@ -32,6 +85,25 @@ when this file gets updated relative to the version bump and the tag.
   bottom. Scrolling up to reread stays put until you scroll back down, send a
   message, or press the new "Jump to latest" button. Split panes follow new
   messages the same way.
+- `gradle` is no longer on the Terminal Auto-mode build allow list, because
+  running it executes the workspace's build scripts. It now asks like any
+  other command.
+- The new crate `turbospark-acp` is published ahead of `turbospark-cli`.
+  `turbospark-acp-agent` now ships in the app bundle, the DMG, the CLI zip and
+  the Homebrew casks.
+
+### Security
+- The agent PushNotification tool is opt-in and never requests notification
+  authorization at call time. Only the Settings switch asks the user.
+- Plugin pages, Gen UI and remote providers are off until enabled. Plugin
+  pages run sandboxed, and seeded `cdnZip` plugins are refused on a digest
+  mismatch.
+
+### Known limits
+- Translations for the new strings are machine-written and not reviewed by
+  native speakers.
+- Hardware and manual app passes were not run for this program: real editor
+  ACP, real-provider smoke tests, live hang soak and voice call on hardware.
 
 ## [0.8.0] - 2026-11-09
 
