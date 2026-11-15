@@ -183,7 +183,18 @@ mod macos {
             assert!(r["blockElements"].as_u64().unwrap() > 0, "{r}");
             assert!(r["requiresImatrix"].is_boolean(), "{r}");
             assert!(r["executable"].is_boolean(), "{r}");
+            assert!(r["readableByStockLlamaCpp"].is_boolean(), "{r}");
         }
+        // Every producible type runs here, and only the three Unsloth fork
+        // types are unreadable by a stock llama.cpp.
+        assert_eq!(rows.len(), 31, "producible type count");
+        assert!(rows.iter().all(|r| r["executable"] == true), "{rows:?}");
+        let fork: Vec<&str> = rows
+            .iter()
+            .filter(|r| r["readableByStockLlamaCpp"] == false)
+            .map(|r| r["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(fork, ["iq1_xs", "iq1_xxs", "iq1_xxxs"]);
         let q4k = rows.iter().find(|r| r["name"] == "q4_k").expect("q4_k");
         assert_eq!(q4k["blockElements"], 256);
         assert_eq!(q4k["requiresImatrix"], false);

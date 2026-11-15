@@ -246,7 +246,7 @@ pub unsafe extern "C" fn ts_quantize_recipe_from_gguf_json(
 
 /// The types the quantizer can produce, as a JSON array of
 /// `{"name", "ggmlType", "bitsPerWeight", "blockElements", "requiresImatrix",
-/// "executable"}`. `requiresImatrix` is ggml's hard rule; llama.cpp's policy
+/// "executable","readableByStockLlamaCpp"}`. `requiresImatrix` is ggml's hard rule; llama.cpp's policy
 /// for the other very low-bit types is in docs/QUANTIZE.md. `executable` says
 /// whether turbospark's own install gate lists the type.
 #[no_mangle]
@@ -266,6 +266,9 @@ pub unsafe extern "C" fn ts_quantize_types_json(out: *mut *mut c_char) -> c_int 
                     "blockElements": elems,
                     "requiresImatrix": t.requires_imatrix(),
                     "executable": model_io::EXECUTABLE_GGUF_TYPES.contains(&t.name()),
+                    // ggml ids from 64 up are Unsloth fork types: a stock
+                    // llama.cpp refuses a file that carries one, by design.
+                    "readableByStockLlamaCpp": t.ggml_id() < 64,
                 })
             })
             .collect();

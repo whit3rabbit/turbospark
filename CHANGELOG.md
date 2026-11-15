@@ -76,7 +76,9 @@ when this file gets updated relative to the version bump and the tag.
   to ggml's own output (the Unsloth ones to a build of their fork), so
   `--recipe-from` now follows Unsloth DeepSeek and Flash-Next mixes. The new
   kernels are checked against ggml on synthetic installs only. No real file has
-  been run against llama.cpp and the kernels are not timed yet.
+  been run against llama.cpp and the kernels are not timed yet. In Swift,
+  `GGUFQuantizer.TypeInfo` gains `readableByStockLlamaCpp`, false for the three
+  Unsloth types, so a UI can warn before offering them.
 - Music and Voice Cloning ask for a model before they open. While none of the
   page's curated models is on the Mac, a card over the page lists each one with
   its download size and estimated memory, flags a model that may not fit this
@@ -156,6 +158,11 @@ when this file gets updated relative to the version bump and the tag.
   soak, voice call on hardware) were not run.
 
 ### Changed
+- The tokenizer notes record why `fancy-regex` was rejected as a bound on
+  hostile split patterns: its limits are per match, it moves tokens on long
+  whitespace runs, and the only zero-drift bound found is a reviewed list of
+  allowed patterns, which needs sign-off as a policy change. The two ignored
+  tests stay as the acceptance bar. Docs and test comments only.
 - The Music page uses one fixed model, MiniMax Music 3 Turbo, and shows its
   install state before it is downloaded. Other music checkpoints stay
   reachable from Advanced.

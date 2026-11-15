@@ -2321,7 +2321,9 @@ int ts_quantize_cancel(void);
 int ts_quantize_recipe_from_gguf_json(const char *path, char **out);
 
 /* The types the quantizer can produce, as a JSON array of {"name","ggmlType",
- * "bitsPerWeight","blockElements","requiresImatrix","executable"}.
+ * "bitsPerWeight","blockElements","requiresImatrix","executable",
+ * "readableByStockLlamaCpp"}. `readableByStockLlamaCpp` is false for the
+ * Unsloth fork types (ggml ids 64 and up), which a stock llama.cpp refuses.
  * `requiresImatrix` is ggml's hard rule; `executable` says whether this
  * engine's install gate lists the type. Free *out with ts_string_free. */
 int ts_quantize_types_json(char **out);

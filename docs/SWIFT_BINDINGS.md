@@ -1176,7 +1176,10 @@ probe calls to target the specified base mirror URL.
 What it does and does not support is in [QUANTIZE.md](QUANTIZE.md); read its
 scope section before building a UI on it. In short: the source must be an
 F32/F16/BF16 GGUF (a split `-0000N-of-0000M.gguf` set is refused, merge it
-first), and only the types `supportedTypes()` lists can be written. macOS
+first), and only the types `supportedTypes()` lists can be written. All 31
+of them run in this engine (`executable`). Three, `iq1_xs`, `iq1_xxs` and
+`iq1_xxxs`, are Unsloth fork types that a stock llama.cpp refuses, so a UI
+should check `readableByStockLlamaCpp` before offering them. macOS
 only: on other platforms every call throws `.unsupportedPlatform`.
 
 ```swift

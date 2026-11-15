@@ -14,7 +14,11 @@ final class GGUFQuantizerTests: XCTestCase {
 
     func testSupportedTypesDecodeAndAreConsistent() throws {
         let types = try GGUFQuantizer.supportedTypes()
-        XCTAssertGreaterThanOrEqual(types.count, 20)
+        XCTAssertEqual(types.count, 31)
+        XCTAssertTrue(types.allSatisfy(\.executable), "every writable type runs in this engine")
+        XCTAssertEqual(
+            types.filter { !$0.readableByStockLlamaCpp }.map(\.name).sorted(),
+            ["iq1_xs", "iq1_xxs", "iq1_xxxs"])
         XCTAssertEqual(Set(types.map(\.name)).count, types.count, "type names are unique")
         let q4k = try XCTUnwrap(types.first { $0.name == "q4_k" })
         XCTAssertEqual(q4k.blockElements, 256)

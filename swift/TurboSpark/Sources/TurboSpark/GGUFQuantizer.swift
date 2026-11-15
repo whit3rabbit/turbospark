@@ -153,6 +153,10 @@ public enum GGUFQuantizer {
         /// Whether this engine's install gate lists the type, i.e. whether a
         /// file made of it can be loaded here.
         public let executable: Bool
+        /// False for the Unsloth fork types (`iq1_xs`, `iq1_xxs`, `iq1_xxxs`,
+        /// ggml ids 64 and up): a stock llama.cpp refuses a file that carries
+        /// one, so show a warning before offering them.
+        public let readableByStockLlamaCpp: Bool
     }
 
     /// How a recorded input compares with Hugging Face now.
