@@ -38,10 +38,13 @@ crates/compute/
 |   |   +-- q3_k.rs     # Q3_K dequantize and quantize reference
 |   |   +-- q4_k.rs     # Q4_K dequantize and quantize reference
 |   |   +-- q5_k.rs     # Q5_K dequantize reference
+|   |   +-- q1_0.rs, tq1_0.rs, tq2_0.rs, nvfp4.rs  # Q1_0, ternary and NVFP4 decoders, bit-exact to ggml's to_float (tests/quant_gguf_ggml_golden.rs)
 |   |   +-- q6_k.rs     # Q6_K dequantize reference
 |   |   \-- q8_0.rs     # Q8_0 dequantize and quantize reference
 |   +-- quant_gguf_iq.rs               # GGUF IQ-codebook reference (IQ1_S, IQ1_M, IQ2_XXS, IQ2_XS, IQ2_S, IQ3_S, IQ3_XXS, IQ4_XS, IQ4_NL)
 |   +-- quant_gguf_iq_lowbit_tables.rs # GENERATED codebooks for sub-3-bit GGUF IQ formats
+|   +-- quant_gguf_iq1_narrow.rs       # Unsloth fork IQ1_XS/IQ1_XXS/IQ1_XXXS decoders (ggml ids 64 to 66), held to a build of the fork
+|   +-- quant_gguf_iq1_narrow_tables.rs # GENERATED grids for those three (scripts/gen_iq1_narrow_grids.py)
 |   +-- quant_gguf_iq_tables.rs        # GENERATED codebooks for IQ3_XXS and IQ4_NL, dumped from libggml
 |   +-- quant_gguf_mxfp4.rs            # GGUF MXFP4 reference (ROADMAP M5, gpt-oss)
 |   +-- rms_norm.rs     # CPU RMSNorm reference calculation

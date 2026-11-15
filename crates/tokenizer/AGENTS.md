@@ -40,12 +40,25 @@ contracts.
   This is an accepted risk for now: it needs a model the user chose to
   install, and the FFI guard and server poison recovery contain the panic.
   Do not swap the regex engine without a token-equality corpus across
-  families plus the quality digests. `fancy-regex` closes the stall but moved
-  token ids on qwen3vl-4b-vision and unlimited-ocr-2-4bit (long whitespace
-  runs), anchors `$` differently from HF, and silently stops splitting on a
-  limit hit. The ignored tests in `tests/regex_backend_hostile_pattern.rs`
-  are the acceptance bar for that later research
-  (https://github.com/whit3rabbit/turbospark/issues/250).
+  families plus the quality digests. `fancy-regex` (`unstable_wasm`) was
+  measured and rejected
+  (https://github.com/whit3rabbit/turbospark/issues/250):
+  - It is not a bound. Its limits are per match, like Oniguruma's, so a
+    pattern that scans the text and then matches one character stays under
+    them on every search and encode is still superlinear.
+  - It moves tokens. The GPT-2 style splitter overflows its backtrack stack
+    on a multi-megabyte whitespace run, and `tokenizers` maps any regex error
+    to "no more matches", so the run is left unsplit with no error
+    (qwen3vl-4b-vision, unlimited-ocr-2-4bit). It also anchors `$`
+    differently from HF.
+  - `tokenizers` picks the engine by cargo feature and its onig wrapper calls
+    the panicking `find_iter`, so a per-encode budget needs a fork or our own
+    Split/Replace steps.
+  The only zero-drift bound found is refusing, at load, a `tokenizer.json`
+  regex that is not on a reviewed list. It is not built: it would fail
+  legitimate new tokenizers, and it needs sign-off as a security policy
+  change. The ignored tests in `tests/regex_backend_hostile_pattern.rs` stay
+  as the acceptance bar for any bound.
 - Message text that spells a control marker (`<|im_end|>`, `<|im_start|>`,
   think or tool markers) encodes to the real marker id, so a tool result or
   pasted page can close its turn and open a new one. This is accepted
