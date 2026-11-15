@@ -7,11 +7,15 @@
 //! - a pattern that stays under it at every start: encode is then quadratic
 //!   or worse in the text, with nothing to cancel it.
 //!
-//! Both tests fail on the current backend and are ignored for that reason:
-//! closing them means changing the regex engine, which moves tokens. The risk
-//! is accepted for now and the engine swap is deferred research (see the
-//! regex rule in crates/tokenizer/AGENTS.md). Run with `-- --ignored`, and
-//! drop the `ignore` once a backend change lands.
+//! Both tests fail on the current backend and are ignored for that reason.
+//! The risk is accepted (see the regex rule in crates/tokenizer/AGENTS.md).
+//!
+//! Passing these two patterns is necessary, not sufficient. `fancy-regex`
+//! passes both only because they trip its per-match limit, while
+//! `(?=a*b)|a` on the same 40 KB stays under the limit on every search and
+//! still takes seconds. It also moves tokens, so it was rejected. A real
+//! bound has to hold for that shape too. Run with `-- --ignored`, and drop
+//! the `ignore` once a bound lands.
 
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -45,7 +49,7 @@ fn tokenizer_with_split(name: &str, pattern: &str) -> MfTokenizer {
 }
 
 #[test]
-#[ignore = "accepted risk: fails on the onig backend; acceptance bar for the deferred regex engine research"]
+#[ignore = "accepted risk: fails on the onig backend; acceptance bar for any encode bound"]
 fn a_hostile_pattern_cannot_stall_encode() {
     // Lookaheads leave the search optimizer no required literal to reject on,
     // and every start stays far under the per-start retry cap. A linear or
@@ -66,7 +70,7 @@ fn a_hostile_pattern_cannot_stall_encode() {
 }
 
 #[test]
-#[ignore = "accepted risk: fails on the onig backend; acceptance bar for the deferred regex engine research"]
+#[ignore = "accepted risk: fails on the onig backend; acceptance bar for any encode bound"]
 fn a_hostile_pattern_cannot_panic_encode() {
     let tokenizer = tokenizer_with_split("panic", r"(a+)+$");
     let text = format!("{}b", "a".repeat(40));
