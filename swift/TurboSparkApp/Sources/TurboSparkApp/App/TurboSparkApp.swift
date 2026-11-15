@@ -592,6 +592,16 @@ struct TurboSparkModelCommands: Commands {
                     !model.voiceCallActive
                         && !(model.voiceCallEnabled && model.activeSection.runsChatGenerationCommand))
 
+                // OC-08 push to talk: only meaningful in a live call with
+                // auto-send on. The panel owns the switch.
+                Button {
+                    NotificationCenter.default.post(name: .toggleVoiceTalk, object: nil)
+                } label: {
+                    Text("Toggle Talk", bundle: .module)
+                }
+                .keyboardChord(.toggleVoiceTalk, keybinds)
+                .disabled(!(model.voiceCallActive && model.voiceCallAutoSendEnabled))
+
                 Divider()
 
                 Button {

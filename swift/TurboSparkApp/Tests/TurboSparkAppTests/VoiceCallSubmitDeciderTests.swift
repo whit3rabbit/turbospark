@@ -533,12 +533,14 @@ final class VoiceCallSubmitDeciderTests: XCTestCase {
     private var base: VoiceCallAutoSubmitGate.Inputs {
         .init(settingOn: true, callEnabled: true, decision: .allow, sameChat: true,
               approvalPending: false, turnBusy: false, canRun: true,
-              text: Self.request, composerText: Self.request)
+              text: Self.request, composerText: Self.request, addressed: true)
     }
 
     func testTheGatePermitsOnlyWhenEverythingHolds() {
         XCTAssertTrue(VoiceCallAutoSubmitGate.permits(base))
-        var i = base; i.settingOn = false; XCTAssertFalse(VoiceCallAutoSubmitGate.permits(i))
+        var i = base; i.addressed = false
+        XCTAssertFalse(VoiceCallAutoSubmitGate.permits(i), "push to talk is re-checked at send time")
+        i = base; i.settingOn = false; XCTAssertFalse(VoiceCallAutoSubmitGate.permits(i))
         i = base; i.callEnabled = false; XCTAssertFalse(VoiceCallAutoSubmitGate.permits(i))
         i = base; i.decision = .confirm; XCTAssertFalse(VoiceCallAutoSubmitGate.permits(i))
         i = base; i.decision = .deny; XCTAssertFalse(VoiceCallAutoSubmitGate.permits(i))
@@ -583,7 +585,7 @@ final class VoiceCallSubmitDeciderTests: XCTestCase {
             .appendingPathComponent("Audio/VoiceCallController.swift"), encoding: .utf8)
         XCTAssertEqual(controller.components(separatedBy: "chat.submitAutoVoiceUtterance(").count - 1, 1)
         // It sits behind the explicit allow.
-        XCTAssertTrue(controller.contains("if decision == .allow, autoSendEnabled()"))
+        XCTAssertTrue(controller.contains("if decision == .allow, addressed, autoSendEnabled()"))
         // The model never calls run() for a call except through the gate.
         let model = try String(contentsOf: VoiceCallSources.directory()
             .appendingPathComponent("State/AppModel+VoiceCall.swift"), encoding: .utf8)

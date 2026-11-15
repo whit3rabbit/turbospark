@@ -118,7 +118,10 @@ protocol VoiceCallChatPort: AnyObject {
     /// OC-08 auto-send. Sends the composer's text as a turn only if every
     /// guard in `VoiceCallAutoSubmitGate` still holds. Returns whether a turn
     /// was started. The controller's one call site is after an `.allow`.
-    func submitAutoVoiceUtterance(_ text: String, chatID: UUID, decision: VoiceCallSubmitDecision) -> Bool
+    /// `addressed` says the utterance overlapped an explicit Talk (push to
+    /// talk); there is no default, so a caller cannot forget it.
+    func submitAutoVoiceUtterance(
+        _ text: String, chatID: UUID, decision: VoiceCallSubmitDecision, addressed: Bool) -> Bool
 }
 
 // MARK: Audio

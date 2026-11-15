@@ -43,6 +43,7 @@ public struct KeyboardCommandID: RawRepresentable, Hashable, Sendable, Expressib
     static let stopAll: KeyboardCommandID = "generation.stopAll"
     static let startRecording: KeyboardCommandID = "audio.startRecording"
     static let toggleVoiceCall: KeyboardCommandID = "call.toggle"
+    static let toggleVoiceTalk: KeyboardCommandID = "call.talk"
 }
 
 /// One command in the inventory: a stable id, the catalog label, its default
@@ -189,6 +190,11 @@ public enum KeyboardShortcutCatalog {
             // list; the call panel's Escape (stop speaking) is a local
             // control key and is not a catalog command.
             command(.toggleVoiceCall, "Start Voice Call", "y", shiftCmd),
+            // OC-08 push to talk. A toggle, not a hold: a menu chord is
+            // key-down only and a Command chord's key-up is not reliably
+            // delivered. Cmd+Shift+Space is not in the reserved list
+            // (Cmd+Space and Cmd+Option+Space are).
+            command(.toggleVoiceTalk, "Toggle Talk", "space", shiftCmd),
         ]
 
         // Bound on the Record page's Start button (`AudioRecordingPanel`), not

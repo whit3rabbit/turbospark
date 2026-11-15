@@ -20,7 +20,9 @@ struct VoiceCallHostView: View {
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             if showsPanel {
-                VoiceCallPanelView(call: call, onDownloadModel: { model.downloadVoiceCallSpeechModel() })
+                VoiceCallPanelView(
+                    call: call, onDownloadModel: { model.downloadVoiceCallSpeechModel() },
+                    showsTalk: model.voiceCallEnabled && model.voiceCallAutoSendEnabled)
                     // Clear of the composer by default; the user can drag it.
                     .padding(.trailing, 20)
                     .padding(.bottom, 190)
@@ -31,6 +33,7 @@ struct VoiceCallHostView: View {
         .allowsHitTesting(showsPanel)
         .recordingAccessGate($accessRequest, permissions: permissions)
         .onReceive(NotificationCenter.default.publisher(for: .toggleVoiceCall)) { _ in toggle() }
+        .onReceive(NotificationCenter.default.publisher(for: .toggleVoiceTalk)) { _ in call.talk.toggle() }
         .onChange(of: permissions.state(.microphone)) { _, state in
             call.microphoneAccessChanged(allowed: state == .granted)
         }

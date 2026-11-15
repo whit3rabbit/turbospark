@@ -320,10 +320,16 @@ enum VoiceCallAutoSubmitGate {
         var canRun: Bool
         var text: String
         var composerText: String
+        /// The utterance overlapped an explicit Talk (push to talk). False by
+        /// default, so an Inputs built without it permits nothing.
+        var addressed: Bool = false
     }
 
     static func permits(_ i: Inputs) -> Bool {
         guard i.settingOn, i.callEnabled else { return false }
+        // Push-to-talk: the first fact, checked again here at send time. The
+        // decider below is only the second check.
+        guard i.addressed else { return false }
         guard i.decision == .allow else { return false }
         guard i.sameChat else { return false }
         guard !i.approvalPending, !i.turnBusy, i.canRun else { return false }

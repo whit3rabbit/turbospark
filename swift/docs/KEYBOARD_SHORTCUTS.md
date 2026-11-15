@@ -79,6 +79,7 @@ clears every change.
 | `Cmd+Return` | Generate Response / Queue Message | Submits the chat prompt, or queues it while a turn is running. The label reads Queue Message only when the draft would actually queue. |
 | `Cmd+.` or `Escape` | Cancel Generation | Interrupts active prefill or token decoding immediately. |
 | `Cmd+Shift+.` | Stop All | Stops the turn, every running background agent and shell, and an in-flight model install. The server and the loaded model are untouched. |
+| `Cmd+Shift+Space` | Toggle Talk | Push to talk for voice call auto-send (OC-08). Press once to start talking and again to stop; enabled only in a live call with Auto-send voice utterances on. A toggle, not a hold, because a menu chord is key-down only. The Talk button in the call panel also holds to talk. |
 
 Generation menu scope: Generate/Queue acts only while Chat is the active
 section, because it sends the chat draft. Images, Audio and Humanize bind

@@ -72,8 +72,10 @@ final class AppModelVoiceCallPort: VoiceCallChatPort {
         set { model.promptText = newValue }
     }
 
-    func submitAutoVoiceUtterance(_ text: String, chatID: UUID, decision: VoiceCallSubmitDecision) -> Bool {
-        model.submitAutoVoiceUtterance(text, chatID: chatID, decision: decision)
+    func submitAutoVoiceUtterance(
+        _ text: String, chatID: UUID, decision: VoiceCallSubmitDecision, addressed: Bool
+    ) -> Bool {
+        model.submitAutoVoiceUtterance(text, chatID: chatID, decision: decision, addressed: addressed)
     }
 
     private func busyChanged(_ nowBusy: Bool) {
@@ -251,7 +253,9 @@ extension AppModel {
     /// press of Send. Every guard is re-checked here, at the moment of
     /// sending, whatever the caller believes. A refusal changes nothing and
     /// the text stays in the composer.
-    func submitAutoVoiceUtterance(_ text: String, chatID: UUID, decision: VoiceCallSubmitDecision) -> Bool {
+    func submitAutoVoiceUtterance(
+        _ text: String, chatID: UUID, decision: VoiceCallSubmitDecision, addressed: Bool
+    ) -> Bool {
         let permitted = VoiceCallAutoSubmitGate.permits(.init(
             settingOn: voiceCallAutoSendEnabled,
             callEnabled: voiceCallEnabled,
@@ -261,7 +265,8 @@ extension AppModel {
             turnBusy: generating || submitting,
             canRun: canRun && !imageModeEnabled,
             text: text,
-            composerText: promptText))
+            composerText: promptText,
+            addressed: addressed))
         guard permitted else { return false }
         run()
         return true
@@ -313,4 +318,6 @@ extension Notification.Name {
     /// A menu item or button asks the conversation pane to start (or end) a
     /// call. The pane owns the access gate, so every entry point shares it.
     static let toggleVoiceCall = Notification.Name("TurboSpark.toggleVoiceCall")
+    /// The Toggle Talk chord asks the call panel to flip Talk (push to talk).
+    static let toggleVoiceTalk = Notification.Name("TurboSpark.toggleVoiceTalk")
 }

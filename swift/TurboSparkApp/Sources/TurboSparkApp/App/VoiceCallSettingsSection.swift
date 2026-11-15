@@ -41,6 +41,14 @@ struct VoiceCallSettingsSection: View {
             .font(theme.ui(.small))
             .foregroundStyle(.appSecondary)
             .fixedSize(horizontal: false, vertical: true)
+            // Push to talk: auto-send only considers speech said while Talk is on.
+            Text(
+                "Only speech you say while Talk is on can be sent automatically: hold Talk in the call panel, or press it once to keep talking and again to stop. Anything said while Talk is off waits in the message box for you to press Send.",
+                bundle: .module
+            )
+            .font(theme.ui(.small))
+            .foregroundStyle(.appSecondary)
+            .fixedSize(horizontal: false, vertical: true)
             deciderModelPicker
             if model.voiceCallAutoSendEnabled, model.session == nil,
                model.voiceCallDeciderResolution.dedicatedCandidate == nil {

@@ -1146,6 +1146,131 @@ Decision needed from the user: build push-to-talk or a wake phrase for
 auto-send (recommended), or keep the current allowlist gate as a stated-risk
 experiment at roughly 0.7 precision. No label or default was changed.
 
+### Push to talk for auto-send: implementation record
+
+Implemented 2026-11-14, same branch, committed through a private index. Status
+of the OC-08 doc stays **Partial**: hardware verification is owed (below).
+Authority: the user said to use best judgement for voice auto-send, and the
+holdout v3 verdict above recommends push-to-talk as the structural fix. The
+change only makes auto-send send LESS: a new condition is added in front of the
+existing checks and nothing is loosened. Label stays Experimental, default off.
+The second-person rule and the allowlist are unchanged.
+
+What it does. Auto-send may be considered only for an utterance whose capture
+overlapped an explicit Talk. Everything said while Talk is off still lands in the
+composer draft-first exactly as before, and the decider is not even asked. The
+decider (allowlist, risky-word deny, exact-`REQUEST` model check, 2 s or
+per-model budget) and the single guarded send path stay as the SECOND check.
+
+Design chosen: toggle for the keyboard and for VoiceOver, pointer hold with
+tap-to-latch for the mouse. No key-up hold and no `NSEvent` monitor.
+
+* A menu chord is key-down only, and a Command chord's key-up is not reliably
+  delivered to the app (it is swallowed on the key-equivalent path), so a
+  key-down/key-up hold would stick on or never start, and key repeat and focus
+  loss make it worse. A stuck-on Talk is the failure that matters here: it
+  silently restores the 0.72 precision condition. A toggle has no such state
+  machine. It is also the non-hold form VoiceOver, Switch Control and Full
+  Keyboard Access users need, so one mechanism serves accessibility and the
+  keyboard. The source test pins that no local key monitor exists.
+* The Talk button in the call panel is a pointer hold (a drag gesture with zero
+  minimum distance): press starts Talk, release stops it if the press lasted at
+  least 0.35 s. A shorter press is a tap and latches Talk on (the toggle form);
+  the next press stops it. The element is exposed to accessibility as a Toggle,
+  so VoiceOver activation flips it. State is a glyph plus a word ("Talk" or
+  "Talking"), never color alone, and a change is announced.
+* Chord: `Cmd+Shift+Space`, id `call.talk`, label "Toggle Talk", rebindable,
+  through the OC-01 catalog and `.keyboardChord`. Not in the reserved list
+  (`Cmd+Space` and `Cmd+Option+Space` are), no collision with `Cmd+Shift+Y`
+  (call toggle), `Cmd+Option+Left/Right` (history), `Cmd+T`, `Cmd+Shift+T/W`
+  (tabs) or `Cmd+Option+[ ]` (session tabs). The menu item is enabled only in a
+  live call with auto-send on. Documented in `swift/docs/KEYBOARD_SHORTCUTS.md`.
+
+How addressing is carried (explicit, false by default).
+
+* `VoiceCallTalkSwitch` (new, `Audio/VoiceCallTalkSwitch.swift`) is the
+  talk-state seam: `isTalking`, `toggle()`, `pointerDown()/pointerUp()` on an
+  injectable clock, and `clear()`. It cannot turn on unless the controller says
+  `canTalk`: a live call (preparing, listening or speaking, not muted, paused,
+  thinking, failed or ended) with auto-send on.
+* The controller keeps `utteranceAddressed`, false by default. It becomes true
+  only when Talk is on at speech onset (or at a barge-in), or when Talk starts
+  while the utterance is still open. It is captured when the recognizer starts to
+  finish (a new utterance may open while the old one closes) and passed with the
+  text. `beginDecision` refuses an unaddressed utterance. `decisionAddressed`
+  lives and dies with the decision token.
+* Overlap semantics: Talk released before the silence that ends the utterance,
+  or after it but before the final text, still counts (the capture window
+  overlapped). An utterance already open when Talk starts counts. Talk pressed
+  after the utterance ended, or released before speech began, does not. Releasing
+  Talk by the user never revokes captured addressing.
+* A forced clear (`clear()`) does revoke: mute, End, failure, an approval pause,
+  a turn starting (it consumed the Talk), and the app resigning active (the panel
+  clears it). It drops the open utterance's addressing and the in-flight
+  decision's, so those can only send less.
+* Re-checked at send time: the controller's send condition now reads
+  `if decision == .allow, addressed, autoSendEnabled(), ...`, the port method
+  takes a mandatory `addressed:` (no default), and `VoiceCallAutoSubmitGate`
+  has a new first guard `guard i.addressed else { return false }` with
+  `addressed` defaulting to false in `Inputs`. The existing source test that pins
+  exactly the allowed call sites was updated deliberately for the new condition
+  text only; the call-site count (two) and the single `run()` are unchanged.
+
+Strings (21 languages, string catalog, `--patience` diff, additions only): the
+settings help gets a second paragraph saying auto-send applies only while Talk is
+on, and the panel adds "Talk", "Talking", "Not talking", "Toggle Talk" and a
+tooltip. The existing help paragraph and the setting title are unchanged, so
+`SettingsControlCatalog` is unchanged (`generate-settings-catalog.py --check`
+passes). Microphone permission is untouched: `RecordingPermissions` still asks,
+only after Allow.
+
+Tests (`VoiceCallPushToTalkTests`, 23 tests, fake switch clock, synthetic audio,
+closure decider, no real microphone): an utterance without Talk never reaches the
+decider or the send and stays in the draft; an addressed utterance sends and
+reports `addressed == true`; the decider remains the second check; boundaries
+(released inside the silence window, released after the end but before the final
+result, Talk starting mid-utterance, pressed after the end, released before
+speech, no leak to the next utterance); a forced clear between decision and send
+revokes it (with an unflipped control that sends); a forced clear mid-utterance;
+mute, End, an approval and a turn start each clear Talk and Talk cannot start
+muted, ended, or with auto-send off; the switch's toggle form, hold, tap-to-latch,
+the 0.35 s boundary, a late release after a clear, and an unowned switch; and
+source pins for each guard and for the absence of a key monitor. The gate test
+gained the addressed case.
+
+Mutation checks (each applied to the source, the VoiceCall tests run, then
+restored from a saved copy and rebuilt): removing the controller's
+addressed guard in `beginDecision` (12 failing assertions), defaulting addressing
+to true at speech onset (9), removing the gate's `addressed` guard (2), not
+clearing Talk on mute (2), dropping `addressed` from the controller's send-time
+condition (2), ignoring Talk that starts mid-utterance (1), and reading addressing
+late instead of capturing it when the recognizer finishes (11). All caught.
+
+Verification run: `swift test --filter 'VoiceCall|LocalizationParityTests|
+KeyboardShortcutCatalogTests|KeybindOverrideStoreTests|SettingsControl'`: 157
+tests, 0 failures (1 skipped, pre-existing). `make design-check` passes.
+`scripts/generate-settings-catalog.py --check` passes. `make compile-strings`
+ran clean. No full suite, no `make swift-lib`.
+
+Not verified (owed, so the doc stays Partial):
+
+* No real microphone and no real key events were used. The pointer hold (drag
+  gesture down and up), the chord reaching the panel through the notification,
+  the VoiceOver Toggle representation, Full Keyboard Access reaching it, and the
+  resign-active clear are untested on hardware. If the drag gesture does not
+  deliver the release reliably, the tap-to-latch form still works.
+* The effect of push-to-talk on precision is unmeasured. The expectation is that
+  the third-party class (the dominant leak in the v3 holdout, 7 of 12 false
+  allows on the 9B) should largely vanish when only speech said during an
+  explicit Talk is considered, but no eval with push-to-talk was run (out of
+  scope here). The risky and injection leaks (5 on the 9B) are not addressed by
+  addressing: a user who holds Talk and says "how do i turn off two factor on my
+  account" is still judged by the same allowlist, deny list and model.
+* A latched Talk (tap or chord) stays on until toggled, a turn starts, or the app
+  loses focus. There is no idle timeout, so a user who forgets it is back to the
+  pre-change condition for as long as it stays on. It is visible in the panel
+  and announced, but a timeout would be a product decision.
+
 ### Remaining (first auto-send pass)
 
 * The labeled eval ran on the 9B (allow precision 0.77, see the
@@ -1159,6 +1284,8 @@ experiment at roughly 0.7 precision. No label or default was changed.
 * Everything in the first Implementation Record's Deferred list (manual call
   with headphones, DESIGN.md section 9 pass, measured latency).
 * A non-English pre-filter, when non-English recognition exists.
+* Push-to-talk on hardware (real microphone, pointer hold, chord, VoiceOver) and a
+  precision eval with push-to-talk; see the push-to-talk record above.
 
 --------------------------------------------------------------------------------
 

@@ -638381,6 +638381,268 @@
         }
       }
     },
+    "Allow agents to send notifications": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "السماح للوكلاء بإرسال إشعارات"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agenten dürfen Mitteilungen senden"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow agents to send notifications"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permitir que los agentes envíen notificaciones"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Autoriser les agents à envoyer des notifications"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "לאפשר לסוכנים לשלוח התראות"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "एजेंट को सूचनाएं भेजने की अनुमति दें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Izinkan agen mengirim notifikasi"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consenti agli agenti di inviare notifiche"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "エージェントによる通知の送信を許可"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "에이전트의 알림 전송 허용"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agents toestaan meldingen te sturen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zezwól agentom na wysyłanie powiadomień"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permitir que agentes enviem notificações"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить агентам отправлять уведомления"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tillåt agenter att skicka aviseringar"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajanların bildirim göndermesine izin ver"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Дозволити агентам надсилати сповіщення"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cho phép tác nhân gửi thông báo"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许智能体发送通知"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許代理程式傳送通知"
+          }
+        }
+      }
+    },
+    "Lets the agent post a short banner of its own, such as when a long task is done. Off by default. The text is written by the model, so it can be wrong.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يتيح للوكيل نشر إشعار قصير من تلقاء نفسه، مثل عند انتهاء مهمة طويلة. متوقف افتراضيًا. النص يكتبه النموذج، لذا قد يكون خاطئًا."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erlaubt dem Agenten, von sich aus ein kurzes Banner anzuzeigen, etwa wenn eine lange Aufgabe fertig ist. Standardmäßig aus. Der Text stammt vom Modell und kann falsch sein."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Lets the agent post a short banner of its own, such as when a long task is done. Off by default. The text is written by the model, so it can be wrong."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permite que el agente muestre un breve aviso propio, por ejemplo cuando termina una tarea larga. Desactivado por defecto. El texto lo escribe el modelo, así que puede ser incorrecto."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permet à l'agent d'afficher une courte bannière de sa propre initiative, par exemple à la fin d'une longue tâche. Désactivé par défaut. Le texte est rédigé par le modèle et peut donc être inexact."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מאפשר לסוכן להציג באנר קצר משלו, למשל בסיום משימה ארוכה. כבוי כברירת מחדל. הטקסט נכתב על ידי המודל, ולכן הוא עלול להיות שגוי."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "एजेंट को अपना एक छोटा बैनर दिखाने देता है, जैसे लंबा कार्य पूरा होने पर। डिफ़ॉल्ट रूप से बंद। पाठ मॉडल लिखता है, इसलिए गलत हो सकता है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Memungkinkan agen menampilkan banner singkat sendiri, misalnya saat tugas panjang selesai. Nonaktif secara default. Teksnya ditulis oleh model, jadi bisa saja salah."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consente all'agente di mostrare un breve banner di propria iniziativa, ad esempio al termine di un'attività lunga. Disattivato per impostazione predefinita. Il testo è scritto dal modello e può quindi essere sbagliato."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "長いタスクの完了時など、エージェントが自分で短いバナーを表示できるようにします。初期設定ではオフです。文面はモデルが書くため、誤りを含むことがあります。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "긴 작업이 끝났을 때처럼 에이전트가 스스로 짧은 배너를 표시할 수 있게 합니다. 기본값은 꺼짐입니다. 문구는 모델이 작성하므로 틀릴 수 있습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Laat de agent uit zichzelf een korte banner tonen, bijvoorbeeld wanneer een lange taak klaar is. Standaard uit. De tekst wordt door het model geschreven en kan dus onjuist zijn."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pozwala agentowi samodzielnie wyświetlić krótki baner, na przykład po zakończeniu długiego zadania. Domyślnie wyłączone. Tekst pisze model, więc może być błędny."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permite que o agente exiba um aviso curto por conta própria, por exemplo quando uma tarefa longa termina. Desativado por padrão. O texto é escrito pelo modelo, então pode estar errado."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Позволяет агенту самостоятельно показать короткий баннер, например по завершении долгой задачи. По умолчанию выключено. Текст пишет модель, поэтому он может быть неверным."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Låter agenten visa en kort banner på eget initiativ, till exempel när en lång uppgift är klar. Av som standard. Texten skrivs av modellen och kan därför vara fel."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ajanın, uzun bir görev bittiğinde olduğu gibi, kendi başına kısa bir bildirim göstermesine izin verir. Varsayılan olarak kapalıdır. Metni model yazar, bu yüzden yanlış olabilir."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Дозволяє агенту самостійно показати короткий банер, наприклад після завершення довгого завдання. За замовчуванням вимкнено. Текст пише модель, тому він може бути хибним."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cho phép tác nhân tự hiển thị một biểu ngữ ngắn, chẳng hạn khi một tác vụ dài hoàn tất. Mặc định tắt. Nội dung do mô hình viết nên có thể sai."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许智能体自行显示简短横幅，例如长任务完成时。默认关闭。文字由模型撰写，因此可能有误。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許代理程式自行顯示簡短橫幅，例如長時間工作完成時。預設為關閉。文字由模型撰寫，因此可能有誤。"
+          }
+        }
+      }
+    },
     "Allow Notifications": {
       "extractionState": "manual",
       "localizations": {
@@ -644403,6 +644665,792 @@
           "stringUnit": {
             "state": "translated",
             "value": "開始語音通話"
+          }
+        }
+      }
+    },
+    "Talk": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تحدّث"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sprechen"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Talk"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hablar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parler"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "דיבור"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "बोलें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bicara"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parla"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "話す"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "말하기"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spreken"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mów"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Falar"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Говорить"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prata"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Konuş"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Говорити"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nói"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "说话"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "說話"
+          }
+        }
+      }
+    },
+    "Talking": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "جارٍ التحدث"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sprechen läuft"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Talking"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hablando"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parole active"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מדברים"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "बोल रहे हैं"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Berbicara"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "In ascolto"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "話し中"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "말하는 중"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aan het spreken"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mówisz"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Falando"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Говорите"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pratar"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Konuşuyor"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Говорите"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Đang nói"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "说话中"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "說話中"
+          }
+        }
+      }
+    },
+    "Not talking": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "لا تتحدث"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sprechen beendet"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not talking"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sin hablar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Parole inactive"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "לא מדברים"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "बोल नहीं रहे"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tidak berbicara"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Non in ascolto"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "話していません"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "말하지 않는 중"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Niet aan het spreken"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie mówisz"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sem falar"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не говорите"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pratar inte"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Konuşmuyor"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не говорите"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không nói"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未说话"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未說話"
+          }
+        }
+      }
+    },
+    "Toggle Talk": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تبديل التحدث"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sprechen umschalten"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Toggle Talk"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alternar Hablar"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Activer ou couper la parole"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "החלף מצב דיבור"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "बोलना चालू/बंद करें"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alihkan Bicara"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Attiva o disattiva Parla"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "話すを切り替え"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "말하기 전환"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Spreken omschakelen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Przełącz Mów"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alternar Falar"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Переключить «Говорить»"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Växla Prata"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Konuşmayı aç/kapat"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Перемкнути «Говорити»"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bật/tắt Nói"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "切换说话"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "切換說話"
+          }
+        }
+      }
+    },
+    "Hold to talk, or press once to keep talking and again to stop.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "اضغط مع الاستمرار للتحدث، أو اضغط مرة واحدة لمواصلة التحدث ومرة أخرى للإيقاف."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zum Sprechen gedrückt halten, oder einmal drücken, um weiterzusprechen, und erneut zum Beenden."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hold to talk, or press once to keep talking and again to stop."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mantén pulsado para hablar, o pulsa una vez para seguir hablando y otra vez para parar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Maintenez pour parler, ou appuyez une fois pour continuer à parler et une autre fois pour arrêter."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "החזיקו לחוץ כדי לדבר, או לחצו פעם אחת כדי להמשיך לדבר ופעם נוספת כדי לעצור."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "बोलने के लिए दबाकर रखें, या एक बार दबाएँ ताकि बोलना जारी रहे, और रोकने के लिए फिर दबाएँ।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tahan untuk berbicara, atau tekan sekali untuk terus berbicara dan sekali lagi untuk berhenti."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tieni premuto per parlare, oppure premi una volta per continuare a parlare e di nuovo per fermare."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "押したまま話すか、一度押して話し続け、もう一度押して止めます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "누른 채로 말하거나, 한 번 눌러 계속 말하고 다시 눌러 멈추세요."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Houd ingedrukt om te spreken, of druk één keer om te blijven spreken en nog een keer om te stoppen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Przytrzymaj, aby mówić, albo naciśnij raz, aby mówić dalej, i jeszcze raz, aby przestać."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Segure para falar, ou toque uma vez para continuar falando e outra vez para parar."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Удерживайте, чтобы говорить, или нажмите один раз, чтобы продолжать, и ещё раз, чтобы остановить."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Håll nedtryckt för att prata, eller tryck en gång för att fortsätta prata och en gång till för att sluta."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Konuşmak için basılı tutun ya da konuşmayı sürdürmek için bir kez, durdurmak için bir kez daha basın."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Утримуйте, щоб говорити, або натисніть раз, щоб говорити далі, і ще раз, щоб зупинити."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nhấn giữ để nói, hoặc nhấn một lần để tiếp tục nói và nhấn lần nữa để dừng."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按住说话，或按一次持续说话，再按一次停止。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按住說話，或按一次持續說話，再按一次停止。"
+          }
+        }
+      }
+    },
+    "Only speech you say while Talk is on can be sent automatically: hold Talk in the call panel, or press it once to keep talking and again to stop. Anything said while Talk is off waits in the message box for you to press Send.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يمكن إرسال الكلام الذي تقوله أثناء تفعيل «تحدّث» فقط تلقائيًا: اضغط مع الاستمرار على «تحدّث» في لوحة المكالمة، أو اضغط مرة واحدة لمواصلة التحدث ومرة أخرى للإيقاف. أي كلام يُقال والزر متوقف ينتظر في مربع الرسالة لتضغط أنت على إرسال."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nur Gesprochenes, während Sprechen aktiv ist, kann automatisch gesendet werden: Halten Sie Sprechen im Anrufbereich gedrückt oder drücken Sie es einmal, um weiterzusprechen, und erneut zum Beenden. Alles, was bei inaktivem Sprechen gesagt wird, wartet im Nachrichtenfeld, bis Sie auf Senden drücken."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only speech you say while Talk is on can be sent automatically: hold Talk in the call panel, or press it once to keep talking and again to stop. Anything said while Talk is off waits in the message box for you to press Send."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Solo lo que dices mientras Hablar está activado puede enviarse automáticamente: mantén pulsado Hablar en el panel de la llamada, o púlsalo una vez para seguir hablando y otra vez para parar. Todo lo que digas con Hablar desactivado espera en el cuadro de mensaje hasta que pulses Enviar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Seules les paroles prononcées pendant que Parler est actif peuvent être envoyées automatiquement : maintenez Parler dans le panneau d'appel, ou appuyez une fois pour continuer à parler et une autre fois pour arrêter. Tout ce qui est dit quand Parler est inactif reste dans la zone de message jusqu'à ce que vous appuyiez sur Envoyer."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "רק דיבור שנאמר כשהאפשרות דיבור פעילה יכול להישלח אוטומטית: החזיקו לחוץ על דיבור בלוח השיחה, או לחצו פעם אחת כדי להמשיך לדבר ופעם נוספת כדי לעצור. כל מה שנאמר כשדיבור כבוי ממתין בתיבת ההודעה עד שתלחצו על שליחה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "केवल वही बात अपने आप भेजी जा सकती है जो आपने बोलें चालू रहते हुए कही हो: कॉल पैनल में बोलें को दबाकर रखें, या एक बार दबाकर बोलना जारी रखें और रोकने के लिए फिर दबाएँ। बोलें बंद रहते हुए कही गई हर बात संदेश बॉक्स में रुकी रहती है, जब तक आप भेजें न दबाएँ।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hanya ucapan yang Anda katakan saat Bicara aktif yang dapat dikirim otomatis: tahan Bicara di panel panggilan, atau tekan sekali untuk terus berbicara dan sekali lagi untuk berhenti. Apa pun yang diucapkan saat Bicara nonaktif menunggu di kotak pesan sampai Anda menekan Kirim."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Solo ciò che dici mentre Parla è attivo può essere inviato automaticamente: tieni premuto Parla nel pannello della chiamata, oppure premilo una volta per continuare a parlare e di nuovo per fermare. Tutto ciò che dici con Parla disattivato resta nella casella del messaggio finché non premi Invia."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "自動送信の対象になるのは「話す」がオンの間に話した内容だけです。通話パネルで「話す」を押したまま話すか、一度押して話し続け、もう一度押して止めます。「話す」がオフの間に話した内容は、送信を押すまでメッセージ欄に残ります。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "자동 전송은 말하기가 켜져 있는 동안 한 말만 대상입니다. 통화 패널에서 말하기를 누른 채로 말하거나, 한 번 눌러 계속 말하고 다시 눌러 멈추세요. 말하기가 꺼져 있을 때 한 말은 보내기를 누를 때까지 메시지 입력란에 남습니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Alleen wat je zegt terwijl Spreken aan staat, kan automatisch worden verstuurd: houd Spreken in het gesprekspaneel ingedrukt, of druk één keer om te blijven spreken en nog een keer om te stoppen. Alles wat je zegt terwijl Spreken uit staat, blijft in het berichtvak staan tot je op Verstuur drukt."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatycznie można wysłać tylko to, co powiedziano przy włączonej opcji Mów: przytrzymaj Mów w panelu rozmowy albo naciśnij raz, aby mówić dalej, i jeszcze raz, aby przestać. Wszystko, co powiedziano przy wyłączonej opcji Mów, czeka w polu wiadomości, aż naciśniesz Wyślij."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Só o que você diz enquanto Falar está ativado pode ser enviado automaticamente: segure Falar no painel da chamada, ou toque uma vez para continuar falando e outra vez para parar. Tudo o que for dito com Falar desativado espera na caixa de mensagem até você tocar em Enviar."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Автоматически можно отправить только то, что сказано при включённом «Говорить»: удерживайте «Говорить» на панели вызова или нажмите один раз, чтобы продолжать, и ещё раз, чтобы остановить. Всё, что сказано при выключенном «Говорить», остаётся в поле сообщения, пока вы не нажмёте «Отправить»."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bara det du säger medan Prata är på kan skickas automatiskt: håll ned Prata i samtalspanelen, eller tryck en gång för att fortsätta prata och en gång till för att sluta. Allt som sägs medan Prata är av väntar i meddelanderutan tills du trycker på Skicka."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yalnızca Konuş açıkken söylediklerin otomatik gönderilebilir: arama panelinde Konuş'a basılı tut ya da konuşmayı sürdürmek için bir kez, durdurmak için bir kez daha bas. Konuş kapalıyken söylenen her şey, sen Gönder'e basana kadar mesaj kutusunda bekler."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Автоматично можна надіслати лише те, що сказано за ввімкненого «Говорити»: утримуйте «Говорити» на панелі виклику або натисніть раз, щоб говорити далі, і ще раз, щоб зупинити. Усе, що сказано за вимкненого «Говорити», залишається в полі повідомлення, доки ви не натиснете «Надіслати»."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Chỉ lời bạn nói khi Nói đang bật mới có thể được gửi tự động: nhấn giữ Nói trong bảng cuộc gọi, hoặc nhấn một lần để tiếp tục nói và nhấn lần nữa để dừng. Mọi lời nói khi Nói đang tắt vẫn nằm trong khung tin nhắn cho đến khi bạn nhấn Gửi."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "只有在“说话”开启期间说的内容才可能被自动发送：在通话面板中按住“说话”，或按一次持续说话，再按一次停止。“说话”关闭时说的内容会留在消息框中，等你按下发送。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "只有在「說話」開啟期間說的內容才可能被自動傳送：在通話面板中按住「說話」，或按一次持續說話，再按一次停止。「說話」關閉時說的內容會留在訊息框中，等你按下傳送。"
           }
         }
       }

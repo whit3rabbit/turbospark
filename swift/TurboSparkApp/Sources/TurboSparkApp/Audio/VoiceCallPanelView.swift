@@ -7,6 +7,8 @@ import SwiftUI
 struct VoiceCallPanelView: View {
     @ObservedObject var call: VoiceCallController
     let onDownloadModel: () -> Void
+    /// Auto-send is on, so Talk (push to talk) means something.
+    var showsTalk = false
     @Environment(\.appTheme) private var theme
     /// Where the user dragged the panel to. Not persisted: it resets with
     /// the call.
@@ -42,6 +44,13 @@ struct VoiceCallPanelView: View {
         .onChange(of: call.state) { _, new in announce(Text(LocalizedStringKey(new.titleKey), bundle: .module)) }
         .onChange(of: call.captions.last?.text) { _, text in
             if let text { announceVerbatim(text) }
+        }
+        .onChange(of: call.talk.isTalking) { _, talking in
+            announceVerbatim(AppStrings.localized(talking ? "Talking" : "Not talking"))
+        }
+        // Focus left the app: a held or latched Talk must not outlive it.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
+            call.talk.clear()
         }
     }
 
@@ -128,6 +137,7 @@ struct VoiceCallPanelView: View {
                     .appAction(.primary, size: .small)
                     .keyboardShortcut(.defaultAction)
             default:
+                if showsTalk { VoiceCallTalkButton(talk: call.talk) }
                 Button { Task { await call.toggleMute() } } label: {
                     Label {
                         call.state == .paused ? Text("Unmute", bundle: .module) : Text("Mute", bundle: .module)
