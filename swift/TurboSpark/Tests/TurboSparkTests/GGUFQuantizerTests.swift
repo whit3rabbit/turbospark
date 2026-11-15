@@ -15,7 +15,10 @@ final class GGUFQuantizerTests: XCTestCase {
     func testSupportedTypesDecodeAndAreConsistent() throws {
         let types = try GGUFQuantizer.supportedTypes()
         XCTAssertEqual(types.count, 31)
-        XCTAssertTrue(types.allSatisfy(\.executable), "every writable type runs in this engine")
+        let floats: Set<String> = ["f32", "f16", "bf16"]
+        XCTAssertTrue(
+            types.allSatisfy { $0.executable == !floats.contains($0.name) },
+            "every quantized type runs in this engine; the float types are not block types")
         XCTAssertEqual(
             types.filter { !$0.readableByStockLlamaCpp }.map(\.name).sorted(),
             ["iq1_xs", "iq1_xxs", "iq1_xxxs"])

@@ -185,10 +185,14 @@ mod macos {
             assert!(r["executable"].is_boolean(), "{r}");
             assert!(r["readableByStockLlamaCpp"].is_boolean(), "{r}");
         }
-        // Every producible type runs here, and only the three Unsloth fork
+        // Every quantized type runs here (the gate lists block types, so the
+        // three float types report false), and only the three Unsloth fork
         // types are unreadable by a stock llama.cpp.
         assert_eq!(rows.len(), 31, "producible type count");
-        assert!(rows.iter().all(|r| r["executable"] == true), "{rows:?}");
+        for r in &rows {
+            let float = matches!(r["name"].as_str(), Some("f32" | "f16" | "bf16"));
+            assert_eq!(r["executable"], !float, "{r}");
+        }
         let fork: Vec<&str> = rows
             .iter()
             .filter(|r| r["readableByStockLlamaCpp"] == false)
