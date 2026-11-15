@@ -78,6 +78,20 @@ when this file gets updated relative to the version bump and the tag.
   Face transformers tensor layouts are accepted. Plain dense Qwen3 also
   quantizes on install (see the first entry). Other families still refuse an
   unquantized checkpoint.
+- Every quantized GGUF block type now runs in TurboSpark, in every role. Q1_0,
+  Q2_0, TQ1_0, TQ2_0, MXFP4 and NVFP4 gained resident kernels (attention, FFN,
+  embedding, head), and all of them, plus Q4_0, Q4_1, Q5_0, Q5_1, Q2_K, Q3_K,
+  Q5_K, IQ1_S, IQ2_XS and IQ3_S, gained routed-expert kernels for both phases. A
+  Mixtral-style Q4_0 file and the Q5_K and IQ experts in Unsloth mixes now
+  decode instead of being refused. Q2_0 experts work at any top_k up to 8, not
+  only 10. Unsloth's IQ1_XS, IQ1_XXS and IQ1_XXXS (ggml ids 64 to 66) read and
+  run too. Stock llama.cpp refuses those three by design.
+- The GGUF quantizer writes 31 types. New targets are Q1_0, Q2_0, TQ1_0, TQ2_0,
+  MXFP4, NVFP4, Q4_1, Q5_1 and the three Unsloth IQ1 types, each byte-identical
+  to ggml's own output (the Unsloth ones to a build of their fork), so
+  `--recipe-from` now follows Unsloth DeepSeek and Flash-Next mixes. The new
+  kernels are checked against ggml on synthetic installs only. No real file has
+  been run against llama.cpp and the kernels are not timed yet.
 - Music and Voice Cloning ask for a model before they open. While none of the
   page's curated models is on the Mac, a card over the page lists each one with
   its download size and estimated memory, flags a model that may not fit this

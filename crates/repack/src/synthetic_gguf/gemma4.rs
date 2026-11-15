@@ -210,7 +210,9 @@ fn embed_tensor(
     seed: u8,
 ) -> GgufBuilder {
     match s.mix {
-        QuantMix::Q8_0 => b.q8_0_tensor(name, dims, seed),
+        QuantMix::Q8_0 | QuantMix::LegacyExperts(_) | QuantMix::LegacyExpertsAsQ8_0(_) => {
+            b.q8_0_tensor(name, dims, seed)
+        }
         // The real Q3_K_M keeps `token_embd` at Q4_K even while every
         // attention and FFN projection is Q3_K, so the Q3K mixture shares
         // the K-quant fixture's embedding.
@@ -220,6 +222,8 @@ fn embed_tensor(
         QuantMix::Iq => b.q6_k_tensor(name, dims, seed),
         // gpt-oss keeps `token_embd` at Q8_0 and unties its head.
         QuantMix::Mxfp4 => b.q8_0_tensor(name, dims, seed),
+        QuantMix::Legacy(ty) => b.legacy_tensor(name, ty, dims, seed),
+        QuantMix::LegacyAsQ8_0(ty) => b.legacy_as_q8_0_tensor(name, ty, dims, seed),
     }
 }
 
@@ -236,7 +240,14 @@ fn expert_tensor(
     gate_up: bool,
 ) -> GgufBuilder {
     match (s.mix, gate_up, s.odd_expert_layer(layer)) {
-        (QuantMix::Q8_0, _, _) => b.q8_0_tensor(name, dims, seed),
+        // `LegacyExperts` is the deliberate exception: legacy-typed experts, to
+        // prove an install of them is refused.
+        (QuantMix::LegacyExperts(ty), _, _) => b.legacy_tensor(name, ty, dims, seed),
+        (QuantMix::LegacyExpertsAsQ8_0(ty), _, _) => b.legacy_as_q8_0_tensor(name, ty, dims, seed),
+        // Legacy blocks have no routed pair, so their experts stay on Q8_0.
+        (QuantMix::Q8_0 | QuantMix::Legacy(_) | QuantMix::LegacyAsQ8_0(_), _, _) => {
+            b.q8_0_tensor(name, dims, seed)
+        }
         // The Q3K mixture keeps its experts OFF Q3_K, which has no routed
         // pair in this port: a resident-only type carrying experts would
         // fail at the routed dispatch by design (Q6_K's footing), and the
@@ -269,7 +280,13 @@ fn attn_tensor(
     match s.mix {
         QuantMix::KQuant => b.q6_k_tensor(name, dims, seed),
         QuantMix::Q3K => b.q3_k_tensor(name, dims, seed),
-        QuantMix::Q8_0 | QuantMix::Iq | QuantMix::Mxfp4 => b.q8_0_tensor(name, dims, seed),
+        QuantMix::Legacy(ty) => b.legacy_tensor(name, ty, dims, seed),
+        QuantMix::LegacyAsQ8_0(ty) => b.legacy_as_q8_0_tensor(name, ty, dims, seed),
+        QuantMix::Q8_0
+        | QuantMix::Iq
+        | QuantMix::Mxfp4
+        | QuantMix::LegacyExperts(_)
+        | QuantMix::LegacyExpertsAsQ8_0(_) => b.q8_0_tensor(name, dims, seed),
     }
 }
 
@@ -286,8 +303,13 @@ fn dense_ffn_tensor(
 ) -> GgufBuilder {
     match s.mix {
         QuantMix::Q3K => b.q3_k_tensor(name, dims, seed),
-        QuantMix::Q8_0 | QuantMix::KQuant | QuantMix::Iq | QuantMix::Mxfp4 => {
-            b.q8_0_tensor(name, dims, seed)
-        }
+        QuantMix::Legacy(ty) => b.legacy_tensor(name, ty, dims, seed),
+        QuantMix::LegacyAsQ8_0(ty) => b.legacy_as_q8_0_tensor(name, ty, dims, seed),
+        QuantMix::Q8_0
+        | QuantMix::KQuant
+        | QuantMix::Iq
+        | QuantMix::Mxfp4
+        | QuantMix::LegacyExperts(_)
+        | QuantMix::LegacyExpertsAsQ8_0(_) => b.q8_0_tensor(name, dims, seed),
     }
 }

@@ -70,19 +70,41 @@ pub(crate) fn encode_moe_phase1_any(
                 }
             },
         ),
+        RoutedBlobLayout::GgufIq4Nl => gpu::encode_moe_phase1_ext(
+            context,
+            pass,
+            gpu::MoeExtType::Iq4Nl,
+            routed,
+            offsets,
+            x,
+            acts,
+            d_dim,
+            f_dim,
+            top_k,
+            use_silu,
+        ),
+        RoutedBlobLayout::GgufQ6K => gpu::encode_moe_phase1_ext(
+            context,
+            pass,
+            gpu::MoeExtType::Q6K,
+            routed,
+            offsets,
+            x,
+            acts,
+            d_dim,
+            f_dim,
+            top_k,
+            use_silu,
+        ),
+        RoutedBlobLayout::GgufExt(kind) => gpu::encode_moe_phase1_ext(
+            context, pass, kind, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
+        ),
         RoutedBlobLayout::Affine => gpu::encode_moe_phase1(
             context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
         ),
         RoutedBlobLayout::AffineInt3 => gpu::encode_moe_phase1_int3(
             context, pass, routed, offsets, x, acts, d_dim, f_dim, top_k, use_silu,
         ),
-        // No real file puts IQ4_NL in gate/up, so there is no such kernel.
-        // Reaching here means an install this port installed but cannot run;
-        // `open()`'s dtype gate lets it through because the TYPE is
-        // executable, just not in this position. Same shape as Q6_K.
-        other => Err(gpu::GpuError::FunctionNotFound(format!(
-            "routed phase 1 (gate/up) for {other:?}"
-        ))),
     }
 }
 
@@ -120,15 +142,28 @@ pub(crate) fn encode_moe_phase2_any(
             use_silu,
         ),
         RoutedBlobLayout::GgufQ2_0 => {
-            if top_k != 10 {
-                return Err(gpu::GpuError::InvalidInput(format!(
-                    "Q2_0 routed phase 2 currently requires top_k=10, got {top_k}"
-                )));
+            if top_k == 10 {
+                gpu::encode_moe_phase2_q2_0_top10(
+                    context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim,
+                    top_k, use_silu,
+                )
+            } else {
+                gpu::encode_moe_phase2_ext(
+                    context,
+                    pass,
+                    gpu::MoeExtType::Q2_0,
+                    routed,
+                    offsets,
+                    acts,
+                    routing_w,
+                    residual,
+                    y,
+                    d_dim,
+                    f_dim,
+                    top_k,
+                    use_silu,
+                )
             }
-            gpu::encode_moe_phase2_q2_0_top10(
-                context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, top_k,
-                use_silu,
-            )
         }
         // MXFP4 masks compute at a FIXED dispatch width rather than sizing
         // the dispatch to top_k the way the Affine arm below does (`gpt-oss`
@@ -149,6 +184,27 @@ pub(crate) fn encode_moe_phase2_any(
             use_silu,
             offsets.down_b != 0,
         ),
+        RoutedBlobLayout::GgufIq3Xxs
+        | RoutedBlobLayout::GgufIq4Xs
+        | RoutedBlobLayout::GgufIq2S
+        | RoutedBlobLayout::GgufIq2Xxs
+        | RoutedBlobLayout::GgufIq1M => {
+            let kind = match layout {
+                RoutedBlobLayout::GgufIq3Xxs => gpu::MoeExtType::Iq3Xxs,
+                RoutedBlobLayout::GgufIq4Xs => gpu::MoeExtType::Iq4Xs,
+                RoutedBlobLayout::GgufIq2S => gpu::MoeExtType::Iq2S,
+                RoutedBlobLayout::GgufIq2Xxs => gpu::MoeExtType::Iq2Xxs,
+                _ => gpu::MoeExtType::Iq1M,
+            };
+            gpu::encode_moe_phase2_ext(
+                context, pass, kind, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim,
+                top_k, use_silu,
+            )
+        }
+        RoutedBlobLayout::GgufExt(kind) => gpu::encode_moe_phase2_ext(
+            context, pass, kind, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim,
+            top_k, use_silu,
+        ),
         RoutedBlobLayout::Affine => gpu::encode_moe_phase2(
             context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, top_k,
             use_silu,
@@ -157,10 +213,5 @@ pub(crate) fn encode_moe_phase2_any(
             context, pass, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim, top_k,
             use_silu,
         ),
-        // No real file puts IQ3_XXS or IQ4_XS in `down`; see the phase-1
-        // sibling's note.
-        other => Err(gpu::GpuError::FunctionNotFound(format!(
-            "routed phase 2 (down) for {other:?}"
-        ))),
     }
 }

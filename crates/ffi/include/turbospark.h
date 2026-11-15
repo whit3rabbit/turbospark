@@ -2282,6 +2282,59 @@ int ts_audio_stream_finish(const TsAudioStream *stream, char **out);
 int ts_audio_stream_cancel(const TsAudioStream *stream);
 int ts_audio_stream_close(TsAudioStream *stream);
 
+/* ---- GGUF quantizer ---- */
+
+/*
+ * Quantizes a float GGUF (F32/F16/BF16) to a new GGUF under a recipe. macOS
+ * only: elsewhere it fails with TS_ERR_UNSUPPORTED.
+ *
+ * `options_json` is {"source","destination","recipe"|"recipeFromGguf",
+ * "imatrix"?,"threads"?,"iq1TieOrder"?,"provenance"?,"hf"?}. Exactly one of
+ * `recipe` (a recipe object, or a bare type name such as "q4_k") and
+ * `recipeFromGguf` (follow another GGUF's per-tensor types) is required.
+ * `iq1TieOrder` is "stable" (default) or "apple". `provenance` (default true)
+ * writes <destination>.provenance.json. `hf` is {"source","reference",
+ * "imatrix"} of "owner/repo:file" strings recorded in that file. A split
+ * (sharded) source is refused: merge it with llama-gguf-split first. An
+ * existing destination is refused.
+ *
+ * Progress arrives through `cb` as TS_INSTALL_STAGE (the tensor being
+ * written) and TS_INSTALL_BYTES (output bytes done and total), on the calling
+ * thread. The call blocks; run it off the main thread. One run at a time:
+ * a second is refused with TS_ERR_BUSY.
+ *
+ * On success writes the report JSON to *result_json (free with
+ * ts_string_free): {"tensors","bytesIn","bytesOut","byType","keptQuantized",
+ * "imatrixUsed","imatrixMissing","notInExecutableList","provenancePath"}.
+ * ts_quantize_cancel ends a run with TS_ERR_CANCELLED and leaves no file.
+ */
+int ts_quantize_gguf(const char *options_json, TsInstallCallback cb,
+                     void *userdata, char **result_json);
+
+/* Asks the quantization in flight to stop at its next batch. Returns 1 when
+ * one was running and was signalled, 0 when none was (not an error). */
+int ts_quantize_cancel(void);
+
+/* Reads the per-tensor types of the GGUF at `path` and writes the recipe JSON
+ * that would reproduce them (the `recipe` format of ts_quantize_gguf) to *out.
+ * Free with ts_string_free. */
+int ts_quantize_recipe_from_gguf_json(const char *path, char **out);
+
+/* The types the quantizer can produce, as a JSON array of {"name","ggmlType",
+ * "bitsPerWeight","blockElements","requiresImatrix","executable"}.
+ * `requiresImatrix` is ggml's hard rule; `executable` says whether this
+ * engine's install gate lists the type. Free *out with ts_string_free. */
+int ts_quantize_types_json(char **out);
+
+/* Asks Hugging Face whether the inputs recorded in a provenance file still
+ * have the recorded hashes. BLOCKS ON THE NETWORK (up to about 30 seconds per
+ * repo): call it off the main thread. Writes a JSON array of {"role",
+ * "fileName","status","detail","commit","needsAttention"} where status is
+ * upToDate, changed, sizeOnly, missing, untracked or unreachable. An
+ * unreachable Hub is reported per input, never as up to date. Free *out with
+ * ts_string_free. */
+int ts_quantize_check_updates_json(const char *provenance_path, char **out);
+
 #ifdef __cplusplus
 }
 #endif

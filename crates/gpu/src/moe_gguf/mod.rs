@@ -31,6 +31,7 @@
 //! addressing. Q8_0 needs rows to be a whole number of 32 elements and Q4_K
 //! of 256, which is the only difference visible from the host.
 
+mod ext;
 mod iq;
 mod kquants;
 mod mxfp4;
@@ -42,6 +43,7 @@ use crate::moe_decode::{
     constants_key, moe_function_constants, MoeExpertOffsets, RoutedBlobsBuffer,
 };
 
+pub use ext::{encode_moe_phase1_ext, encode_moe_phase2_ext, MoeExtType};
 pub use iq::{
     encode_moe_phase1_iq1_m, encode_moe_phase1_iq2_s, encode_moe_phase1_iq2_xxs,
     encode_moe_phase1_iq3_xxs, encode_moe_phase1_iq4_xs, encode_moe_phase2_iq4_nl,
@@ -59,10 +61,17 @@ pub use q2_0::{encode_moe_phase1_q2_0, encode_moe_phase2_q2_0_top10};
 const SOURCE: &str = concat!(
     include_str!("../shaders/moe.metal"),
     include_str!("../shaders/dequant_q4_k.metal"),
+    include_str!("../shaders/dequant_q2_k.metal"),
+    include_str!("../shaders/dequant_q3_k.metal"),
+    include_str!("../shaders/dequant_q5_k.metal"),
     include_str!("../shaders/dequant_q6_k.metal"),
     include_str!("../shaders/dequant_iq_lowbit_tables.metal"),
     include_str!("../shaders/dequant_iq.metal"),
-    include_str!("../shaders/moe_gguf.metal")
+    include_str!("../shaders/dequant_legacy.metal"),
+    include_str!("../shaders/dequant_iq1_narrow_tables.metal"),
+    include_str!("../shaders/dequant_ext.metal"),
+    include_str!("../shaders/moe_gguf.metal"),
+    include_str!("../shaders/moe_gguf_ext.metal")
 );
 const ROWS_PER_THREADGROUP: u64 = 8;
 const THREADS_PER_GROUP: u64 = 256;

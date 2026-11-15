@@ -99,8 +99,7 @@ pub const DTYPE_FP32: u8 = 3;
 /// A TAG HERE IS NOT PERMISSION TO RUN. The walk writes an install for every
 /// block type it can parse, and whether that install opens is decided
 /// separately, per type, by `model_io::EXECUTABLE_GGUF_TYPES` and by
-/// `RealForwardRunner::open`'s copy of the same set. Q4_0 has a tag and no
-/// kernel, and is refused by name.
+/// `RealForwardRunner::open`'s copy of the same set.
 pub const DTYPE_GGUF_Q8_0: u8 = 6;
 /// GGUF Q4_K block dtype tag.
 pub const DTYPE_GGUF_Q4_K: u8 = 7;
@@ -146,10 +145,37 @@ pub const DTYPE_GGUF_Q3_K: u8 = 24;
 /// GGUF Q2_0 block dtype tag for routed phase 1 and phase 2. Qwen4Exp
 /// resident instances are converted to BF16; there is no resident reader.
 pub const DTYPE_GGUF_Q2_0: u8 = 25;
+/// GGUF Q5_0 block dtype tag. Resident GEMV and embedding lookup, no routed
+/// pair. Tags 26 to 28 are the legacy block types that joined Q4_0 (tag 9) when
+/// they gained kernels; ggml's own ids (6, 3, 7) were taken by other tags.
+pub const DTYPE_GGUF_Q5_0: u8 = 26;
+/// GGUF Q4_1 block dtype tag.
+pub const DTYPE_GGUF_Q4_1: u8 = 27;
+/// GGUF Q5_1 block dtype tag.
+pub const DTYPE_GGUF_Q5_1: u8 = 28;
+/// GGUF Q1_0 block dtype tag (ggml id 41). Resident GEMV and embedding lookup
+/// from `dequant_ext.metal`, no routed pair.
+pub const DTYPE_GGUF_Q1_0: u8 = 29;
+/// GGUF MXFP4 block dtype tag (ggml id 39), mirroring the runtime's tag 14.
+/// Routed phases ran first (gpt-oss); the resident GEMV and embedding lookup
+/// came with `dequant_ext.metal`.
+pub const DTYPE_GGUF_MXFP4: u8 = 14;
+/// Unsloth fork IQ1_XS, IQ1_XXS and IQ1_XXXS (ggml ids 64 to 66). Resident
+/// GEMV, embedding lookup and both routed phases.
+pub const DTYPE_GGUF_IQ1_XS: u8 = 33;
+pub const DTYPE_GGUF_IQ1_XXS: u8 = 34;
+pub const DTYPE_GGUF_IQ1_XXXS: u8 = 35;
+/// GGUF TQ2_0 block dtype tag (ggml id 35). Resident GEMV and embedding
+/// lookup from `dequant_ext.metal`, no routed pair.
+pub const DTYPE_GGUF_TQ2_0: u8 = 30;
+/// GGUF TQ1_0 block dtype tag (ggml id 34). Same footing as TQ2_0.
+pub const DTYPE_GGUF_TQ1_0: u8 = 31;
+/// GGUF NVFP4 block dtype tag (ggml id 40). Same footing as TQ2_0.
+pub const DTYPE_GGUF_NVFP4: u8 = 32;
 
 /// Every GGUF block dtype tag, for consumers that need to reject the whole
 /// family in one check rather than enumerate it and drift.
-pub const GGUF_BLOCK_DTYPES: [u8; 17] = [
+pub const GGUF_BLOCK_DTYPES: [u8; 28] = [
     DTYPE_GGUF_Q8_0,
     DTYPE_GGUF_Q4_K,
     DTYPE_GGUF_Q6_K,
@@ -167,6 +193,17 @@ pub const GGUF_BLOCK_DTYPES: [u8; 17] = [
     DTYPE_GGUF_IQ1_M,
     DTYPE_GGUF_Q3_K,
     DTYPE_GGUF_Q2_0,
+    DTYPE_GGUF_Q5_0,
+    DTYPE_GGUF_Q4_1,
+    DTYPE_GGUF_Q5_1,
+    DTYPE_GGUF_Q1_0,
+    DTYPE_GGUF_TQ2_0,
+    DTYPE_GGUF_TQ1_0,
+    DTYPE_GGUF_NVFP4,
+    DTYPE_GGUF_MXFP4,
+    DTYPE_GGUF_IQ1_XS,
+    DTYPE_GGUF_IQ1_XXS,
+    DTYPE_GGUF_IQ1_XXXS,
 ];
 
 /// One named raw tensor (a norm vector, a scalar like `router.scale`):

@@ -42,6 +42,7 @@ crates/gpu/
 |   +-- dequant_iq_gemv.rs          # IQ codebook GEMV (IQ1_S through IQ4_NL, Phase S)
 |   +-- dequant_int8_gemv.rs        # INT8 SIMD GEMV dispatches (resident & streamed)
 |   +-- dequant_q2_k_gemv.rs        # GGUF Q2_K SIMD GEMV dispatch
+|   +-- dequant_legacy_gemv.rs      # GGUF Q4_0/Q4_1/Q5_0/Q5_1 GEMV + embedding lookup (one file, LegacyBlockType)
 |   +-- dequant_q3_k_gemv.rs        # GGUF Q3_K SIMD GEMV dispatch
 |   +-- dequant_q4_k_gemv.rs        # GGUF Q4_K SIMD GEMV + embed lookup (port-local, Phase G)
 |   +-- dequant_q5_k_gemv.rs        # GGUF Q5_K SIMD GEMV (port-local, Phase M2)
@@ -82,6 +83,7 @@ crates/gpu/
 |       +-- dequant_iq.metal        # GGUF IQ-codebook GEMV shader source
 |       +-- dequant_iq_lowbit_tables.metal # Sub-3-bit IQ codebook lookup tables
 |       +-- dequant_q2_k.metal      # GGUF Q2_K dequantization GEMV shader source
+|       +-- dequant_legacy.metal    # GGUF Q4_0/Q4_1/Q5_0/Q5_1 GEMV and embedding lookup kernels
 |       +-- dequant_q3_k.metal      # GGUF Q3_K dequantization GEMV shader source
 |       +-- dequant_q4_k.metal      # GGUF Q4_K dequantization GEMV + embedding lookup
 |       +-- dequant_q5_k.metal      # GGUF Q5_K dequantization GEMV (after dequant_q4_k.metal)
@@ -120,6 +122,7 @@ crates/gpu/
     +-- dequant_int4_mma_parity.rs
     +-- dequant_int8_gemv_parity.rs
     +-- dequant_iq_gemv_parity.rs
+    +-- dequant_legacy_gemv_parity.rs
     +-- dequant_q3_k_gemv_parity.rs
     +-- dequant_q4_k_gemv_parity.rs
     +-- dequant_q5_k_gemv_parity.rs

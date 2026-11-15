@@ -125,3 +125,52 @@ kernel void dequant_q5_k_gemv_simd(
         y[row] = half(acc);
     }
 }
+
+// One row of a Q5_K embedding table, dequantized into `out` and scaled.
+// Sibling of `embed_lookup_q4_k` and `embed_lookup_q6_k`, one thread per
+// element. It exists because Unsloth's UD-IQ2_XXS (and other UD mixes) keep
+// `token_embd.weight` at Q5_K, which the resident GEMV above cannot serve: an
+// embedding is a row gather, not a dot product.
+//
+// The element-to-byte mapping is the GEMV's read from the other direction.
+// Within a 256-element superblock, element `e` sits in 64-element group
+// `g = e / 64`, at position `p = e % 64`. `lane = p % 32` picks the nibble
+// byte ql[g * 32 + lane] and the qh byte qh[lane]; `hi = p / 32` picks the
+// nibble half AND the sub-block (`2g + hi`) AND the qh bit (`2g + hi`). Those
+// three all advance together, which is the trap: one off and the row stays
+// finite and plausible.
+kernel void embed_lookup_q5_k(
+    device const uint8_t* table     [[buffer(0)]],   // [V, D/256 * 176] blocks
+    device half*          out       [[buffer(1)]],   // [D] FP16
+    constant uint&        token_id  [[buffer(2)]],
+    constant uint&        D         [[buffer(3)]],
+    constant float&       out_scale [[buffer(4)]],
+    uint                  gid       [[thread_position_in_grid]]
+) {
+    if (gid >= D) return;
+    const uint n_blocks = D / kQ5_KBlockElems;
+    device const uint8_t* blk = table + uint(token_id) * n_blocks * kQ5_KBlockBytes
+        + (gid / kQ5_KBlockElems) * kQ5_KBlockBytes;
+
+    const ushort d_raw = ushort(blk[0]) | (ushort(blk[1]) << 8);
+    const ushort dmin_raw = ushort(blk[2]) | (ushort(blk[3]) << 8);
+    const float d = float(as_type<half>(d_raw));
+    const float dmin = float(as_type<half>(dmin_raw));
+
+    const uint e = gid % kQ5_KBlockElems;
+    const uint g = e / (2 * kQ5_KSubElems);
+    const uint p = e % (2 * kQ5_KSubElems);
+    const uint lane = p % kQ5_KSubElems;
+    const uint hi = p / kQ5_KSubElems;
+    const uint sub = 2 * g + hi;
+
+    float sc, m;
+    q4_k_scale_min(sub, blk + kQ5_KScalesAt, sc, m);
+
+    const uint8_t byte = blk[kQ5_KQuantsAt + g * kQ5_KSubElems + lane];
+    const uint nib = hi ? uint(byte >> 4) : uint(byte & 0xF);
+    const uint fifth = (uint(blk[kQ5_KQhAt + lane]) >> sub) & 1u;
+    const float q = float(nib + (fifth << 4));
+
+    out[gid] = half((d * sc * q - dmin * m) * out_scale);
+}
