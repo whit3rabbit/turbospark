@@ -282,6 +282,16 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // equality, so the two never collapse.
     ("qwen3_vl", ModelFamily::Qwen3Vl),
     ("qwen3_vl_text", ModelFamily::Qwen3Vl),
+    // Plain dense Qwen3 (`Qwen/Qwen3-4B`, `Qwen3-4B-Instruct-2507`, and the
+    // MLX conversions of them): flat config, root `model_type` `qwen3`. The
+    // GGUF row above already carried this family; this is its safetensors
+    // door, through `parse_qwen3_config`. Lookup is by exact equality, so
+    // `qwen3_vl`, `qwen3_5`, `qwen3_moe` and `qwen3_next` (none of which this
+    // row admits; the last two have no row at all) stay separate. The row
+    // admits PRE-QUANTIZED checkpoints; quantize-on-install is not admitted
+    // for it (`quantize_on_install::family_admits_quantize_on_install`)
+    // until a byte-parity gate against a published conversion is run.
+    ("qwen3", ModelFamily::Qwen3Dense),
     // The SIXTEENTH family. Read off `RecursiveSI/flint-int4` @
     // 3b93f9053b530488405ae9fca51d4900d6ce21f0, whose root `model_type` is
     // `flint` (`architectures: ["FlintForCausalLM"]`). The checkpoint ships

@@ -165,6 +165,10 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
    4- or 8-bit `Gemma4Quant` explicitly from `InstallPlan::quantize_bits`
    rather than from the parser's default. Every other family keeps the
    refusal.
+   Plain dense `qwen3` is NOT in that list: its pre-quantized MLX repos probe
+   Runnable (`parse_qwen3_config`, streamed through
+   `write_qwen3_dense_install_streamed`), but an unquantized `Qwen/Qwen3-4B`
+   keeps the refusal until a byte-parity gate admits it.
 
 4. **A later gate must not overwrite an earlier refusal.** `ProbeReport::refuse`
    keeps the FIRST one, because the gates run cheapest-first which is also

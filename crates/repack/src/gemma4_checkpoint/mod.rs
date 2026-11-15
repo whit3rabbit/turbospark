@@ -759,6 +759,28 @@ pub fn write_unlimited_ocr2_install_streamed(
     Ok(())
 }
 
+/// Plain dense `qwen3` install write through the shared MLX checkpoint walk.
+/// The caller must have run `canonicalize_qwen2_header` on every shard header
+/// (text-only MLX Qwen3 spells the trunk `model.*`, exactly as Qwen2 does).
+/// The per-head `q_norm`/`k_norm` tensors ride the walk as ordinary resident
+/// norms, the same way `qwen3_vl`'s do.
+pub fn write_qwen3_dense_install_streamed(
+    dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    shards: &Gemma4Shards<'_>,
+    quant: &Gemma4Quant,
+    progress: impl FnMut(&str),
+) -> Result<(), Box<dyn std::error::Error>> {
+    if arch.family != ModelFamily::Qwen3Dense {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "write_qwen3_dense_install_streamed needs arch.family = qwen3, got {}",
+            arch.family.as_str()
+        ))));
+    }
+    write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
+}
+
 /// Dense `qwen3_vl` install write through the shared MLX checkpoint walk.
 /// The walk's classification already excludes every `vision_tower.*` tensor
 /// for this family (the deepstack mergers included), so the same guard-shape

@@ -66,6 +66,16 @@ Checkpoint intake and `.gturbo` writing.
   both layouts, so `canonicalize_for_family` must not run the qwen35 prefix
   map on it (it would rename a bare `lm_head.` and the later
   `canonicalize_qwen2_header` refuses the file as mixed).
+- Plain dense `qwen3` has a safetensors door (`parse_qwen3_config`,
+  `write_qwen3_dense_install_streamed`, the `qwen3` row of `SUPPORTED_HF`) for
+  PRE-QUANTIZED MLX repos only (`mlx-community/Qwen3-4B-4bit`). `head_dim` is
+  required (4B: 128, not 2560/32). Quantize-on-install is deliberately NOT
+  admitted: the norm and `lm_head` relations were not diffed against a
+  published `-bf16`/`-4bit` pair, so BF16 `Qwen/Qwen3-4B` keeps the
+  missing-quantization refusal until a `*_parity_network` test exists. The
+  parser fixture is reconstructed from published values, not downloaded. The
+  family has no measured default beyond its GGUF one; its own real-model
+  quality, memory and paired-perf gates are owed on a safetensors install.
 - Muse Glimmer GGUF (`muse-glimmer`) is installed by VALUE conventions, not a
   plain name map, and each was read off real bytes (`tests/muse_gguf_network.rs`):
   the converter adds 1 to every `*layernorm.weight` (the four per-layer norms,

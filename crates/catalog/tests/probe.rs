@@ -583,3 +583,50 @@ fn flints_three_bit_routed_experts_probe_as_runnable_and_nothing_else_does() {
         report.verdict
     );
 }
+
+fn qwen3_config(bits: u32, group: u32) -> String {
+    let mut v: serde_json::Value = serde_json::from_str(include_str!(
+        "../../repack/tests/fixtures/qwen3_4b_config.json"
+    ))
+    .unwrap();
+    v["quantization"] = serde_json::json!({"bits": bits, "group_size": group});
+    v.to_string()
+}
+
+#[test]
+fn a_prequantized_qwen3_mlx_config_is_runnable_as_the_dense_family() {
+    let report = evaluate_config(&qwen3_config(4, 64), &repo(), Some(456)).unwrap();
+    assert_eq!(report.verdict, Verdict::Runnable, "{:?}", report.verdict);
+    assert_eq!(report.family, Some(model_io::ModelFamily::Qwen3Dense));
+    assert_eq!(report.affine, Some((4, 64)));
+    assert_eq!(report.download_bytes, Some(456));
+    assert_eq!(report.arch.unwrap(), model_io::qwen3_4b());
+}
+
+/// Quantize-on-install is NOT admitted for qwen3 (no byte-parity gate yet), so
+/// a BF16 `Qwen/Qwen3-4B` keeps the refusal that names the missing block.
+#[test]
+fn an_unquantized_qwen3_checkpoint_is_refused_by_name() {
+    let config = include_str!("../../repack/tests/fixtures/qwen3_4b_config.json");
+    let report = evaluate_config(config, &repo(), None).expect("the config parses");
+    assert_eq!(report.family, Some(model_io::ModelFamily::Qwen3Dense));
+    match &report.verdict {
+        Verdict::Refused(why) => assert!(why.contains("quantization"), "{why}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn qwen3_moe_and_unknown_model_types_stay_refused() {
+    for mt in ["qwen3_moe", "qwen3_next", "qwen3_totally_new"] {
+        let mut v: serde_json::Value = serde_json::from_str(&qwen3_config(4, 64)).unwrap();
+        v["model_type"] = mt.into();
+        let report = evaluate_config(&v.to_string(), &repo(), None).unwrap();
+        match &report.verdict {
+            Verdict::Refused(why) => {
+                assert!(why.contains("not in this port's registry"), "{mt}: {why}")
+            }
+            other => panic!("{mt}: expected a refusal, got {other:?}"),
+        }
+    }
+}

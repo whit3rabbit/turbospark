@@ -243,3 +243,28 @@ fn minimal_gguf(architecture: &str) -> Vec<u8> {
     out.extend_from_slice(architecture.as_bytes());
     out
 }
+
+/// Plain dense `qwen3` resolves on the HF side, by EXACT equality, so the
+/// five `qwen3*` strings neighbouring it stay on their own families (or on
+/// none). Removing the `qwen3` row from `SUPPORTED_HF` fails this.
+#[test]
+fn qwen3_is_separated_from_its_prefix_neighbours() {
+    assert_eq!(
+        hf_family_for_model_type("qwen3"),
+        Some(ModelFamily::Qwen3Dense)
+    );
+    assert_eq!(
+        hf_family_for_model_type("qwen3_vl"),
+        Some(ModelFamily::Qwen3Vl)
+    );
+    assert_eq!(
+        hf_family_for_model_type("qwen3_5"),
+        Some(ModelFamily::QwenGdnDense)
+    );
+    // Qwen3 MoE and Qwen3-Next have no safetensors row: refused, not
+    // swallowed by the dense one.
+    assert_eq!(hf_family_for_model_type("qwen3_moe"), None);
+    assert_eq!(hf_family_for_model_type("qwen3_next"), None);
+    assert_eq!(hf_family_for_model_type("qwen3_dense"), None);
+    assert_eq!(hf_family_for_model_type("qwen"), None);
+}
