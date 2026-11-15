@@ -64,6 +64,8 @@ mod dequant_2bit_gemm_batch;
 #[cfg(target_os = "macos")]
 mod dequant_2bit_gemv;
 #[cfg(target_os = "macos")]
+mod dequant_ext_gemv;
+#[cfg(target_os = "macos")]
 mod dequant_int4_batch;
 #[cfg(target_os = "macos")]
 mod dequant_int4_fused;
@@ -79,8 +81,6 @@ mod dequant_int8_batch;
 mod dequant_int8_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_iq_gemv;
-#[cfg(target_os = "macos")]
-mod dequant_ext_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_legacy_gemv;
 #[cfg(target_os = "macos")]
@@ -228,6 +228,14 @@ pub use dequant_2bit_gemv::{
     encode_embed_lookup_int2, int2_row_bytes, Int2AffineRowGpu, Int2ResidentMatrix,
 };
 #[cfg(target_os = "macos")]
+pub use dequant_ext_gemv::{
+    dequant_ext_gemv_resident, encode_dequant_ext_gemv_resident, encode_embed_lookup_ext,
+    ExtBlockType, ExtResidentMatrix, IQ1_NARROW_BLOCK_ELEMS, IQ1_XS_BLOCK_BYTES,
+    IQ1_XXS_BLOCK_BYTES, IQ1_XXXS_BLOCK_BYTES, NVFP4_BLOCK_BYTES, NVFP4_BLOCK_ELEMS,
+    Q1_0_BLOCK_BYTES, Q1_0_BLOCK_ELEMS, Q2_0_BLOCK_BYTES, Q2_0_BLOCK_ELEMS, TQ1_0_BLOCK_BYTES,
+    TQ1_0_BLOCK_ELEMS, TQ2_0_BLOCK_BYTES, TQ2_0_BLOCK_ELEMS,
+};
+#[cfg(target_os = "macos")]
 pub use dequant_int4_batch::{
     best_row_block, dequant_int4_gemm_mma_pipeline_limits, dequant_int4_gemm_pipeline_limits,
     encode_dequant_int4_gemm_mma_resident, encode_dequant_int4_gemm_mma_resident_skip_dequant,
@@ -271,13 +279,6 @@ pub use dequant_iq_gemv::{
     IQ2_XS_BLOCK_BYTES, IQ2_XS_BLOCK_ELEMS, IQ2_XXS_BLOCK_BYTES, IQ2_XXS_BLOCK_ELEMS,
     IQ3_S_BLOCK_BYTES, IQ3_S_BLOCK_ELEMS, IQ3_XXS_BLOCK_BYTES, IQ3_XXS_BLOCK_ELEMS,
     IQ4_NL_BLOCK_BYTES, IQ4_NL_BLOCK_ELEMS, IQ4_XS_BLOCK_BYTES, IQ4_XS_BLOCK_ELEMS,
-};
-#[cfg(target_os = "macos")]
-pub use dequant_ext_gemv::{
-    dequant_ext_gemv_resident, encode_dequant_ext_gemv_resident, encode_embed_lookup_ext,
-    ExtBlockType, ExtResidentMatrix, IQ1_NARROW_BLOCK_ELEMS, IQ1_XS_BLOCK_BYTES,
-    IQ1_XXS_BLOCK_BYTES, IQ1_XXXS_BLOCK_BYTES, NVFP4_BLOCK_BYTES, NVFP4_BLOCK_ELEMS, Q1_0_BLOCK_BYTES,
-    Q1_0_BLOCK_ELEMS, Q2_0_BLOCK_BYTES, Q2_0_BLOCK_ELEMS, TQ1_0_BLOCK_BYTES, TQ1_0_BLOCK_ELEMS, TQ2_0_BLOCK_BYTES, TQ2_0_BLOCK_ELEMS,
 };
 #[cfg(target_os = "macos")]
 pub use dequant_legacy_gemv::{
@@ -373,13 +374,13 @@ pub use moe_decode::{
 };
 #[cfg(target_os = "macos")]
 pub use moe_gguf::{
-    encode_moe_phase1_ext, encode_moe_phase2_ext, MoeExtType,
-    encode_moe_phase1_iq1_m, encode_moe_phase1_iq2_s, encode_moe_phase1_iq2_xxs,
-    encode_moe_phase1_iq3_xxs, encode_moe_phase1_iq4_xs, encode_moe_phase1_mxfp4,
-    encode_moe_phase1_q2_0, encode_moe_phase1_q4_k, encode_moe_phase1_q8_0,
-    encode_moe_phase2_iq4_nl, encode_moe_phase2_mxfp4, encode_moe_phase2_q2_0_top10,
-    encode_moe_phase2_q4_k, encode_moe_phase2_q6_k, encode_moe_phase2_q8_0, moe_gguf_source,
-    mxfp4_row_bytes, Mxfp4Activation, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS, PHASE2_FIXED_SLOTS,
+    encode_moe_phase1_ext, encode_moe_phase1_iq1_m, encode_moe_phase1_iq2_s,
+    encode_moe_phase1_iq2_xxs, encode_moe_phase1_iq3_xxs, encode_moe_phase1_iq4_xs,
+    encode_moe_phase1_mxfp4, encode_moe_phase1_q2_0, encode_moe_phase1_q4_k,
+    encode_moe_phase1_q8_0, encode_moe_phase2_ext, encode_moe_phase2_iq4_nl,
+    encode_moe_phase2_mxfp4, encode_moe_phase2_q2_0_top10, encode_moe_phase2_q4_k,
+    encode_moe_phase2_q6_k, encode_moe_phase2_q8_0, moe_gguf_source, mxfp4_row_bytes, MoeExtType,
+    Mxfp4Activation, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS, PHASE2_FIXED_SLOTS,
 };
 #[cfg(target_os = "macos")]
 pub use moe_prefill_batch::{

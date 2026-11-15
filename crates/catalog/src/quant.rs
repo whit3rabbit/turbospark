@@ -106,12 +106,12 @@ pub fn group_variants(files: &[RepoFile]) -> Vec<VariantFiles> {
 }
 
 const QUANT_TOKENS: &[&str] = &[
-    "IQ1_XXXS", "IQ1_XXS", "IQ1_XS", "Q8_0_8_8", "Q8_0_4_8", "Q8_0_4_4", "Q4_0_8_8", "Q4_0_4_8", "Q4_0_4_4", "Q8_K_XL", "Q6_K_XL",
-    "Q5_K_XL", "Q4_K_XL", "Q3_K_XL", "Q2_K_XL", "IQ3_XXS", "IQ2_XXS", "IQ2_XS", "IQ4_XS", "IQ4_NL",
-    "IQ3_XS", "IQ3_M", "IQ3_S", "IQ2_M", "IQ2_S", "IQ1_M", "IQ1_S", "Q5_K_M", "Q5_K_S", "Q4_K_M",
-    "Q4_K_S", "Q3_K_L", "Q3_K_M", "Q3_K_S", "Q2_K_M", "Q2_K_S", "TQ2_0", "TQ1_0", "MXFP4", "BF16",
-    "Q8_K", "Q8_1", "Q8_0", "Q6_K", "Q5_K", "Q5_1", "Q5_0", "Q4_K", "Q4_1", "Q4_0", "Q3_K", "Q2_K",
-    "Q2_0", "Q1_0", "NVFP4", "F32", "F16",
+    "IQ1_XXXS", "IQ1_XXS", "IQ1_XS", "Q8_0_8_8", "Q8_0_4_8", "Q8_0_4_4", "Q4_0_8_8", "Q4_0_4_8",
+    "Q4_0_4_4", "Q8_K_XL", "Q6_K_XL", "Q5_K_XL", "Q4_K_XL", "Q3_K_XL", "Q2_K_XL", "IQ3_XXS",
+    "IQ2_XXS", "IQ2_XS", "IQ4_XS", "IQ4_NL", "IQ3_XS", "IQ3_M", "IQ3_S", "IQ2_M", "IQ2_S", "IQ1_M",
+    "IQ1_S", "Q5_K_M", "Q5_K_S", "Q4_K_M", "Q4_K_S", "Q3_K_L", "Q3_K_M", "Q3_K_S", "Q2_K_M",
+    "Q2_K_S", "TQ2_0", "TQ1_0", "MXFP4", "BF16", "Q8_K", "Q8_1", "Q8_0", "Q6_K", "Q5_K", "Q5_1",
+    "Q5_0", "Q4_K", "Q4_1", "Q4_0", "Q3_K", "Q2_K", "Q2_0", "Q1_0", "NVFP4", "F32", "F16",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]

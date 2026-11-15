@@ -40,16 +40,12 @@
 //! scales packed into twelve bytes through a four-word shuffle, and the f16
 //! super-scale as the LAST field (only Q2_K among the K-quants agrees).
 
+/// NVFP4 block decoding (64-element blocks, four E4M3 sub-scales over E2M1 codes).
+pub mod nvfp4;
 /// Pearson correlation helper for validating dequantized weight similarities.
 pub mod pearson;
 /// Q1_0 block quantization (128-element blocks with an f16 scale and one sign bit per element).
 pub mod q1_0;
-/// NVFP4 block decoding (64-element blocks, four E4M3 sub-scales over E2M1 codes).
-pub mod nvfp4;
-/// TQ1_0 ternary decoding (256-element blocks, base-3 packed).
-pub mod tq1_0;
-/// TQ2_0 ternary decoding (256-element blocks, 2 bits per element).
-pub mod tq2_0;
 /// Q2_0 block quantization (64-element blocks with signed 2-bit levels).
 pub mod q2_0;
 /// Q2_K block quantization (256-element superblocks, 16 sub-blocks, asymmetric 2-bit weights).
@@ -73,14 +69,16 @@ pub mod q5_k;
 pub mod q6_k;
 /// Q8_0 block quantization (32-element symmetric blocks with f16 delta scale).
 pub mod q8_0;
+/// TQ1_0 ternary decoding (256-element blocks, base-3 packed).
+pub mod tq1_0;
+/// TQ2_0 ternary decoding (256-element blocks, 2 bits per element).
+pub mod tq2_0;
 
-pub use pearson::pearson;
-pub use q1_0::{dequant_q1_0_gemv, dequantize_q1_0, Q1_0_BLOCK_BYTES, Q1_0_BLOCK_ELEMS};
 pub use nvfp4::{
     dequant_nvfp4_gemv, dequantize_nvfp4, nvfp4_scale, NVFP4_BLOCK_BYTES, NVFP4_BLOCK_ELEMS,
 };
-pub use tq1_0::{dequant_tq1_0_gemv, dequantize_tq1_0, TQ1_0_BLOCK_BYTES, TQ1_0_BLOCK_ELEMS};
-pub use tq2_0::{dequant_tq2_0_gemv, dequantize_tq2_0, TQ2_0_BLOCK_BYTES, TQ2_0_BLOCK_ELEMS};
+pub use pearson::pearson;
+pub use q1_0::{dequant_q1_0_gemv, dequantize_q1_0, Q1_0_BLOCK_BYTES, Q1_0_BLOCK_ELEMS};
 pub use q2_0::{dequant_q2_0_gemv, dequantize_q2_0, Q2_0_BLOCK_BYTES, Q2_0_BLOCK_ELEMS};
 pub use q2_k::{
     dequant_q2_k_gemv, dequantize_q2_k, quantize_q2_k, Q2_K_BLOCK_BYTES, Q2_K_BLOCK_ELEMS,
@@ -108,3 +106,5 @@ pub use q6_k::{
 pub use q8_0::{
     dequant_q8_0_gemv, dequantize_q8_0, quantize_q8_0, Q8_0_BLOCK_BYTES, Q8_0_BLOCK_ELEMS,
 };
+pub use tq1_0::{dequant_tq1_0_gemv, dequantize_tq1_0, TQ1_0_BLOCK_BYTES, TQ1_0_BLOCK_ELEMS};
+pub use tq2_0::{dequant_tq2_0_gemv, dequantize_tq2_0, TQ2_0_BLOCK_BYTES, TQ2_0_BLOCK_ELEMS};

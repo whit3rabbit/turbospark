@@ -1006,7 +1006,10 @@ mod tests {
 
         // The hand-written phase 2 reduces ten slots, the generated one eight.
         for ok in [1, 2, 4, 6, 8] {
-            assert!(validate_routed_layouts_for_top_k(&q2_0_layout, ok).is_ok(), "{ok}");
+            assert!(
+                validate_routed_layouts_for_top_k(&q2_0_layout, ok).is_ok(),
+                "{ok}"
+            );
         }
         for non_10 in [9, 11, 12, 16] {
             let err = validate_routed_layouts_for_top_k(&q2_0_layout, non_10)

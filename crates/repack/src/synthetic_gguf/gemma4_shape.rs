@@ -189,7 +189,10 @@ impl SyntheticGgufShape {
     /// NVFP4, Q1_0) at the 256-wide ones.
     pub fn legacy(ggml_type: u32) -> Self {
         assert!(
-            matches!(ggml_type, 2 | 3 | 6 | 7 | 34 | 35 | 39 | 40 | 41 | 42 | 64 | 65 | 66),
+            matches!(
+                ggml_type,
+                2 | 3 | 6 | 7 | 34 | 35 | 39 | 40 | 41 | 42 | 64 | 65 | 66
+            ),
             "not a legacy ggml type: {ggml_type}"
         );
         // Q1_0 (41), TQ1_0 (34), TQ2_0 (35) and NVFP4 (40) are resident-only
