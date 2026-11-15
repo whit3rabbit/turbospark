@@ -225,12 +225,6 @@ fn build_from_arch(
     with_dflash: bool,
     with_vision: bool,
 ) -> Result<ArchConfig, Box<dyn std::error::Error>> {
-    let (vocab_size, num_layers) = (arch.vocab_size, arch.num_layers);
-    let (num_heads, head_dim, num_kv_heads) = (
-        arch.num_heads as usize,
-        arch.full_head_dim as usize,
-        arch.num_full_kv_heads as usize,
-    );
     // The tower is on the ARCH as well as in the tensor list, because
     // `vision::should_ingest` requires both: the arch is the caller's request
     // and the tensors are the artifact's answer. A fixture that set only one
@@ -238,6 +232,49 @@ fn build_from_arch(
     if with_vision {
         arch.vision = super::vision::tiny_vision_config();
     }
+    let ts = dense_checkpoint_tensors(&arch, bits, with_mtp, with_dflash, with_vision);
+
+    let blob = assemble_safetensors(&ts);
+    let source = MemoryRangeSource::new(&blob);
+    let header = parse_header(&blob, crate::safetensors_header::DEFAULT_MAX_HEADER_BYTES)?;
+    let quant = Gemma4Quant {
+        default_bits: bits,
+        group_size: group_for(bits) as u32,
+        bits_overrides: std::collections::HashMap::new(),
+        ..Default::default()
+    };
+    if streamed {
+        let shards = crate::gemma4_checkpoint::Gemma4Shards::single(&header, &source);
+        crate::gemma4_checkpoint::write_qwen_gdn_dense_install_streamed(
+            dir,
+            &arch,
+            model_id,
+            &shards,
+            &quant,
+            |_| {},
+        )?;
+    } else {
+        write_qwen_gdn_dense_install(dir, &arch, model_id, &header, &source, &quant)?;
+    }
+    Ok(arch)
+}
+
+/// The checkpoint tensors [`build_from_arch`] installs, MLX-packed at `bits`.
+/// Split out so the quantize-on-install test can derive an unquantized
+/// checkpoint from the same weights.
+pub(crate) fn dense_checkpoint_tensors(
+    arch: &ArchConfig,
+    bits: u32,
+    with_mtp: bool,
+    with_dflash: bool,
+    with_vision: bool,
+) -> Vec<Tensor> {
+    let (vocab_size, num_layers) = (arch.vocab_size, arch.num_layers);
+    let (num_heads, head_dim, num_kv_heads) = (
+        arch.num_heads as usize,
+        arch.full_head_dim as usize,
+        arch.num_full_kv_heads as usize,
+    );
     let vocab = vocab_size as usize;
     let la = &arch.linear_attention;
     let qkv_dim = la.qkv_dim() as usize;
@@ -382,30 +419,7 @@ fn build_from_arch(
     if with_vision {
         ts.extend(super::vision::vision_tower_tensors());
     }
-
-    let blob = assemble_safetensors(&ts);
-    let source = MemoryRangeSource::new(&blob);
-    let header = parse_header(&blob, crate::safetensors_header::DEFAULT_MAX_HEADER_BYTES)?;
-    let quant = Gemma4Quant {
-        default_bits: bits,
-        group_size: group_for(bits) as u32,
-        bits_overrides: std::collections::HashMap::new(),
-        ..Default::default()
-    };
-    if streamed {
-        let shards = crate::gemma4_checkpoint::Gemma4Shards::single(&header, &source);
-        crate::gemma4_checkpoint::write_qwen_gdn_dense_install_streamed(
-            dir,
-            &arch,
-            model_id,
-            &shards,
-            &quant,
-            |_| {},
-        )?;
-    } else {
-        write_qwen_gdn_dense_install(dir, &arch, model_id, &header, &source, &quant)?;
-    }
-    Ok(arch)
+    ts
 }
 
 fn conv1d_weight(name: &str, channels: usize, taps: usize, seed: u64) -> Tensor {

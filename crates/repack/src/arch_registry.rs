@@ -156,6 +156,33 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // rotary and is verified by value at repack. Agrees with the HF
     // `model_type` below.
     ("lfm3", ModelFamily::Lfm3),
+    // Read off `ggml-org/Muse-Glimmer-30B-GGUF`'s Q4_K_M header, 2026-11-14:
+    // 731 tensors (14 per layer over 52 layers plus the three globals),
+    // untied head, a 52-entry bool `sliding_window_pattern`, `logit_scale`
+    // and `final_logit_softcapping`, and `tokenizer.ggml.pre` `llama4`. The
+    // architecture string is llama.cpp's, HYPHENATED, where the HF
+    // `model_type` below is `muse_glimmer`: the third naming drift. The
+    // converter bakes `+1` into the four per-layer norms, synthesizes the q/k
+    // norms and permutes q/k rows for ggml's interleaved RoPE; the name
+    // table and `gguf_checkpoint` undo or verify each (`gguf_names/muse.rs`).
+    ("muse-glimmer", ModelFamily::MuseGlimmer),
+    // Read off `ibm-granite/granite-4.2-3b-GGUF`'s Q4_K_M header, 2026-11-14:
+    // 363 tensors, the nine plain Llama tensors per layer plus an untied
+    // `output.weight`, and four IBM scalars (`attention.scale`,
+    // `embedding_scale`, `residual_scale`, `logit_scale`). Granite 4.x sets
+    // the last three to 1.0 and `attention.scale` to 1/head_dim (NOT Llama's
+    // 1/sqrt(head_dim)), so it is the Llama flow with an explicit attention
+    // scale, and `arch_from_gguf` REFUSES any file whose other scalars differ
+    // (Granite 3.x carries 12.0 / 0.22 / 16.0, which the flow cannot express).
+    ("granite", ModelFamily::Llama),
+    // Read off `Qwen/Qwen3-VL-4B-Instruct-GGUF`'s Q4_K_M header, 2026-11-14:
+    // the TEXT trunk only (398 tensors: 11 per layer over 36 layers plus
+    // `token_embd` and `output_norm`, tied head), with the vision tower in a
+    // SEPARATE `mmproj-*.gguf` this row does not read. The names are the dense
+    // `qwen3` table's, and the file adds `rope.dimension_sections` and
+    // `n_deepstack_layers` metadata (the deepstack mergers live in the
+    // mmproj). One word from `qwen3vlmoe`, which is the MoE family's row.
+    ("qwen3vl", ModelFamily::Qwen3Vl),
 ];
 
 /// HF `config.json -> model_type` -> family, for the architectures that run.

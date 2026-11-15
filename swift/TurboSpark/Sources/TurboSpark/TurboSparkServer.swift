@@ -72,8 +72,9 @@ public struct ServerOptions: Encodable, Sendable {
     /// Music models to attach at startup.
     public var musicModels: [String]
     /// Detach a model after it has served no request for this many seconds,
-    /// releasing its weights. Nil or 0 keeps every attached model resident
-    /// until `detach` or `stop`, which is the default. A model with a request
+    /// releasing its weights. Nil or 0 keeps every host-attached model resident
+    /// until `detach` or `stop`, which is the default; a model an HTTP request
+    /// opened is still released after 30 idle minutes. A model with a request
     /// in flight is never detached. See `TurboSparkServer.setIdleUnload`.
     public var idleUnloadSeconds: UInt64?
     /// Let an HTTP request that names an unattached model open and attach it
@@ -609,7 +610,8 @@ public final class TurboSparkServer: @unchecked Sendable {
     }
 
     /// Changes the idle-unload window on a running server. `nil` or 0 turns
-    /// it off. The next sweep (every 30 s) applies it to every attached model,
+    /// it off for host-attached models (request-loaded ones are still released
+    /// after 30 idle minutes). The next sweep (every 30 s) applies it to every attached model,
     /// including ones attached later, and a detach it performs arrives as a
     /// `.modelDetached` event like an explicit one.
     public func setIdleUnload(after seconds: TimeInterval?) throws {

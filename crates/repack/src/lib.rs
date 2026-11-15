@@ -34,6 +34,7 @@ mod install_verifier;
 mod lfm3_config;
 mod manifest_peek;
 mod museglimmer_config;
+pub mod quantize_on_install;
 mod qwen2_config;
 mod qwen36_config;
 mod qwen3vl_config;
@@ -49,6 +50,8 @@ mod synthetic_lfm3;
 mod synthetic_llama;
 mod synthetic_model;
 mod synthetic_muse;
+#[cfg(test)]
+mod synthetic_muse_qoi_tests;
 mod synthetic_qwen;
 mod synthetic_real;
 mod synthetic_spark;
@@ -115,9 +118,9 @@ pub use gemma4_checkpoint::{
 };
 pub use gguf_checkpoint::{
     dtype_tag_for_ggml_type, gguf_manifest_quant, lfm3_rope_freqs_are_zero_tail,
-    orchestrate_gguf_checkpoint, qwen4exp_tensor_is_transcoded, write_gguf_install_streamed,
-    write_gguf_install_streamed_resumable, GgufRepackError, GgufRepackOutput, ResumeProvenance,
-    FUSED_GATE_FIRST,
+    muse_qk_norm_is_constant, orchestrate_gguf_checkpoint, qwen4exp_tensor_is_transcoded,
+    write_gguf_install_streamed, write_gguf_install_streamed_resumable, GgufRepackError,
+    GgufRepackOutput, ResumeProvenance, FUSED_GATE_FIRST,
 };
 pub use gguf_config::{arch_from_gguf, GgufConfigError};
 pub use gguf_header::{

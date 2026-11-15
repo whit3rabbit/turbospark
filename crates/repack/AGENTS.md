@@ -50,6 +50,81 @@ Checkpoint intake and `.gturbo` writing.
   time; `rebalance_install_in_place`, driven by the `flint_rebalance`
   example, migrates an older install in place, and the example refuses a
   second application or an undo of an unshifted install.
+- Quantize-on-install (`quantize_on_install.rs`) rewrites the SOURCE, not a
+  writer: a BF16 checkpoint is served to the walk as the checkpoint
+  `mlx_lm.convert` would publish, so both writers, MTP and vision need no
+  change. Quantize with `compute::quant_mlx`, never `quantize_int4_affine`:
+  MLX snaps the scale to the larger-magnitude edge and the two differ in
+  bytes. Byte parity against the published mlx-community `-bf16`/`-4bit`
+  pair is the gate (`tests/mlx_quantize_parity_network.rs`), not
+  correlation, which the wrong quantizer also passes.
+- Quantize-on-install admits `qwen2` and `qwen3_vl` on inference only: their
+  norms are assumed plain `x * w` in both HF and MLX (no shift, from the
+  runtime's `encode_rms_norm_bf16w`), and nobody has diffed HF bytes against a
+  published conversion. Treat it as unproven until a `*_parity_network` test
+  exists for each. A Qwen2 text-only checkpoint spells the trunk `model.*` in
+  both layouts, so `canonicalize_for_family` must not run the qwen35 prefix
+  map on it (it would rename a bare `lm_head.` and the later
+  `canonicalize_qwen2_header` refuses the file as mixed).
+- Muse Glimmer GGUF (`muse-glimmer`) is installed by VALUE conventions, not a
+  plain name map, and each was read off real bytes (`tests/muse_gguf_network.rs`):
+  the converter adds 1 to every `*layernorm.weight` (the four per-layer norms,
+  not the final one), so the walk subtracts it again; q/k rows are permuted for
+  ggml's interleaved RoPE, undone by the `llama` un-permute; and `attn_q_norm`
+  (the constant `qk_scale_factor`, 3.87) and `attn_k_norm` (ones) are
+  synthesized, so they are verified by value and dropped, never carried. The
+  file's `rope.freq_base` is the SLIDING base: the full layers have NO RoPE
+  (`full_rope_theta` 0), and `sliding_window_pattern` is a bool array (true =
+  slides). A missed `-1` or a missed un-permute gives fluent wrong output.
+- Quantize-on-install for the Qwen MoE (`qwen3_5_moe`) reads the FUSED HF
+  experts (`experts.gate_up_proj [E, 2I, H]`, gate = first half, and
+  `experts.down_proj`, no `.weight` suffix) and serves them as rank-3
+  `switch_mlp.*` planes cut from one quantized fused matrix per layer
+  (`Item::Expert`). `mlp.gate` and `shared_expert_gate` are written at 8-bit
+  (declared through `QuantizedShard::bits_overrides`, which `stream.rs` merges
+  into `Gemma4Quant`); the shared-expert projections stay at the default 4-bit
+  (read off the published config, unlike the older INT8-shared-expert
+  fixture). MoE is 4-bit only (`family_supports_bits`: routed kernels read 3-
+  or 4-bit). The per-expert HF spelling is refused, not guessed. The real gate
+  is `tests/mlx_quantize_parity_moe_network.rs` (ignored, ranged reads);
+  holding one layer's fused gate_up in memory costs about 1.5 GiB.
+- Quantize-on-install for Gemma 4 covers the DENSE text trunk of
+  `gemma-4-31B-it` only (`quantize_refusal`). HF to MLX is the prefix rename
+  `model.language_model.` to `language_model.model.` (towers lose their
+  `model.`; the walk excludes them, so the install is text-only); layer
+  names, norms and `layer_scalar` are byte-identical, so there is NO norm
+  shift, and there are no per-tensor width overrides. Read off
+  `tests/mlx_quantize_parity_gemma4_network.rs` (0 mismatches). The config
+  parser ignores `hidden_size_per_layer_input` and `num_kv_shared_layers`, so
+  E2B/E4B would install and decode wrongly: refuse them by config, never by
+  hope. 26B-A4B (MoE) and the `gemma4_unified` 12B are refused too (12B's HF
+  layout was not read).
+- Quantize-on-install for Muse Glimmer reads `meta-models/Muse-Glimmer-30B`:
+  the qwen35 prefix map (`model.language_model.` and a bare, untied `lm_head.`),
+  and NO norm shift -- the four per-layer norms and the final norm are
+  byte-identical to the MLX conversion (centered values stored as they are;
+  `tests/mlx_quantize_parity_muse_network.rs`, 0 mismatches). The view DROPS
+  the vision tensors in either spelling, so the install is text-only: the MLX
+  conversion quantizes the three vision-adapter matrices and the combined
+  reader expects that, and the HF tower layout was not read. Only
+  `model_type muse_glimmer` is admitted (`quantize_refusal`).
+- `mx.quantize` rounds exact ties differently per backend: Metal half away
+  from zero, the CPU kernel half to even. `DeepSeek-V4-Pro-Qwen3.5-9B-4bit`
+  is exact under `Rounding::HalfAway` and `Qwen3.6-35B-A3B-4bit` under
+  `Rounding::HalfEven`; scales, biases and every non-tie code agree either
+  way. Installs use `HalfAway`. Do not "fix" a one-code, ours-higher diff by
+  changing the default: check which backend made the reference first.
+- 2-bit quantize-on-install writes group 128 with F16 scales and biases (the
+  walk requires F16 for 1- and 2-bit). `mx.quantize` stores companions in the
+  input dtype, so byte parity with `mlx_lm.convert` holds only against a
+  float16 conversion. A trunk matrix whose columns are not whole groups is
+  refused, not served raw.
+- An HF transformers export of `qwen3_5` stores trunk RMSNorms zero-centred.
+  mlx-vlm adds 1 to `input_layernorm`, `post_attention_layernorm`, `q_norm`,
+  `k_norm` and `model.norm`, and the runtime expects that. `linear_attn.norm`
+  and `mtp.*` are NOT shifted. Missing the shift, or applying it twice, gives
+  fluent wrong output, so the layout is decided by name prefix and refused
+  when the layernorm mean disagrees with it.
 - Flint expert blob files are numbered by position (layer minus the dense
   lead), not by checkpoint layer, because the lead's dense layers write no
   expert file. `manifest.json` and `packed_experts/layout.json` index them
@@ -60,6 +135,7 @@ Checkpoint intake and `.gturbo` writing.
 ```sh
 cargo test -p turbospark-repack
 cargo test -p turbospark-repack --test gguf_checkpoint_network --release -- --ignored --nocapture
+cargo test -p turbospark-repack --test mlx_quantize_parity_network --release -- --ignored --nocapture
 ```
 
 Run only the network target relevant to the changed intake path. Build the

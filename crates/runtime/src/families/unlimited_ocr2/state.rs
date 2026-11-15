@@ -333,6 +333,25 @@ impl RealUnlimitedOcr2State {
 /// and the real checkpoint has a lead of 1 (`unlimited_ocr2_12l`). A lead of 0
 /// would otherwise pass the old `lead >= num_layers` test and only fail later
 /// as a `MissingTensor` on layer 0, or worse, mis-slice the expert blobs.
+/// Routed experts per token. Zero and over-cap get separate messages: "0
+/// exceeds the cap" read as a kernel limit when the config is the problem.
+fn validate_top_k(arch: &ArchConfig) -> Result<usize, RealForwardError> {
+    let unsupported = |detail: String| Err(RealForwardError::Unsupported(detail));
+    let top_k = arch.top_k_experts.max(0) as usize;
+    if top_k == 0 {
+        return unsupported(
+            "unlimited_ocr2 needs at least one routed expert per token (top_k 0)".into(),
+        );
+    }
+    if top_k > gpu::MAX_STREAMED_EXPERTS {
+        return unsupported(format!(
+            "top_k {top_k} exceeds the {}-slot MoE kernels",
+            gpu::MAX_STREAMED_EXPERTS
+        ));
+    }
+    Ok(top_k)
+}
+
 fn validate_dense_lead(arch: &ArchConfig) -> Result<usize, RealForwardError> {
     let unsupported = |detail: String| Err(RealForwardError::Unsupported(detail));
     let lead = arch.num_dense_leading_layers.max(0) as usize;
@@ -347,26 +366,6 @@ fn validate_dense_lead(arch: &ArchConfig) -> Result<usize, RealForwardError> {
         return unsupported("unlimited_ocr2 needs a dense lead and MoE layers".into());
     }
     Ok(lead)
-}
-
-/// Routed experts per token, within the streamed MoE kernels' slot count.
-///
-/// Zero gets its own message: "top_k 0 exceeds the N-slot MoE kernels" sent
-/// a reader looking for a value that is too large.
-fn validate_top_k(arch: &ArchConfig) -> Result<usize, RealForwardError> {
-    let top_k = arch.top_k_experts.max(0) as usize;
-    if top_k == 0 {
-        return Err(RealForwardError::Unsupported(
-            "unlimited_ocr2 needs routed experts: top_k_experts is 0".into(),
-        ));
-    }
-    if top_k > gpu::MAX_STREAMED_EXPERTS {
-        return Err(RealForwardError::Unsupported(format!(
-            "top_k {top_k} exceeds the {}-slot MoE kernels",
-            gpu::MAX_STREAMED_EXPERTS
-        )));
-    }
-    Ok(top_k)
 }
 
 #[cfg(test)]
@@ -424,21 +423,16 @@ mod tests {
     }
 
     #[test]
-    fn real_baseline_top_k_is_accepted() {
-        let a = model_io::unlimited_ocr2_12l();
-        assert_eq!(validate_top_k(&a).unwrap(), a.top_k_experts as usize);
-    }
-
-    #[test]
-    fn zero_top_k_is_refused_without_saying_it_exceeds() {
+    fn zero_top_k_is_not_reported_as_over_the_cap() {
         let m = top_k_err(0);
-        assert!(m.contains("top_k_experts is 0"), "{m}");
+        assert!(m.contains("at least one"), "{m}");
         assert!(!m.contains("exceeds"), "{m}");
     }
 
     #[test]
-    fn top_k_above_the_kernel_slots_is_refused() {
+    fn over_cap_top_k_names_the_kernel_limit() {
         let m = top_k_err(gpu::MAX_STREAMED_EXPERTS as i64 + 1);
         assert!(m.contains("exceeds"), "{m}");
+        assert!(validate_top_k(&model_io::unlimited_ocr2_12l()).is_ok());
     }
 }

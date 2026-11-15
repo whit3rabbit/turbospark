@@ -175,6 +175,49 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         });
     }
 
+    if family == ModelFamily::MuseGlimmer {
+        // The two scalars this family's flow keeps as constants
+        // (`families/museglimmer/state.rs`, `RMS_EPS` and `OUTPUT_MULTIPLIER`)
+        // and the file states, so a conversion that disagrees refuses here
+        // instead of decoding fluently with the wrong number.
+        if m.opt_f64("attention.layer_norm_rms_epsilon")
+            .map(|v| v as f32)
+            != Some(1e-5f32)
+        {
+            return Err(GgufConfigError::BadValue {
+                key: m.key("attention.layer_norm_rms_epsilon"),
+                detail: "Muse Glimmer requires RMS epsilon 1e-5".into(),
+            });
+        }
+        let multiplier = m.opt_f64("logit_scale").map(|v| v as f32);
+        if !multiplier.is_some_and(|v| (v - 0.196_116_13f32).abs() < 1e-6) {
+            return Err(GgufConfigError::BadValue {
+                key: m.key("logit_scale"),
+                detail: "Muse Glimmer requires the output multiplier 26^-0.5".into(),
+            });
+        }
+    }
+
+    if family == ModelFamily::Qwen3Vl {
+        // The multimodal rope sections the flow's mRoPE dispatch is built for
+        // (`docs/QWEN3VL_PHASE0.md`). Text positions collapse to plain RoPE,
+        // but a conversion with other sections is another model.
+        let key = m.key("rope.dimension_sections");
+        let sections: Option<Vec<u64>> = m
+            .opt("rope.dimension_sections")
+            .and_then(GgufValue::as_array)
+            .map(|a| a.iter().filter_map(GgufValue::as_u64).collect());
+        match sections.as_deref() {
+            Some([24, 20, 20]) | Some([24, 20, 20, 0]) => {}
+            other => {
+                return Err(GgufConfigError::BadValue {
+                    key,
+                    detail: format!("Qwen3-VL requires sections [24, 20, 20], got {other:?}"),
+                })
+            }
+        }
+    }
+
     // `block_count` COUNTS THE MULTI-TOKEN-PREDICTION BLOCK, and this port's
     // `num_layers` is the trunk alone. llama.cpp writes the head as one more
     // `blk.<n>.` block and declares how many of the trailing ones are hers in
@@ -246,6 +289,11 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         // convention (true = this layer slides), so the Gemma builder IS
         // this family's builder; only the rope divergence below is its own.
         ModelFamily::Spark25 => gemma4_layer_mask(&m, num_layers_usize)?,
+        // Muse Glimmer writes the same bool array, `true` = slides
+        // (`add_sliding_window_pattern([t == "sliding_attention" ...])`),
+        // which is the `layer_types` array an earlier note here said no GGUF
+        // key could express.
+        ModelFamily::MuseGlimmer => gemma4_layer_mask(&m, num_layers_usize)?,
         // `lfm3` publishes the same bool array for the attention kinds and
         // marks its short-conv layers by a ZERO in the per-layer
         // `head_count_kv` array (llama.cpp's own `is_recurrent` test).
@@ -268,6 +316,7 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         ModelFamily::Llama
         | ModelFamily::Qwen3Moe
         | ModelFamily::Qwen3Dense
+        | ModelFamily::Qwen3Vl
         | ModelFamily::Qwen2Dense
         | ModelFamily::MiniMaxM2 => {
             vec![1u8; num_layers_usize]
@@ -293,11 +342,7 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         // intake this port built.
         // `flint` has no GGUF intake here (Q4_1 is not an executable block
         // type and the llama.cpp port is unmerged): refuse, never invent.
-        ModelFamily::DeepseekV4Flash
-        | ModelFamily::MuseGlimmer
-        | ModelFamily::Qwen3Vl
-        | ModelFamily::Flint
-        | ModelFamily::UnlimitedOcr2 => {
+        ModelFamily::DeepseekV4Flash | ModelFamily::Flint | ModelFamily::UnlimitedOcr2 => {
             return Err(GgufConfigError::UnsupportedArchitecture {
                 architecture: architecture.to_string(),
             })
@@ -335,6 +380,14 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     }
     if let Some(theta) = m.opt_f64("rope.freq_base_swa") {
         arch.rope_theta = theta;
+    }
+    // Muse Glimmer's full-attention layers apply NO rotary embedding (the
+    // reference gates RoPE on a per-layer theta that reads 0 there, and
+    // llama.cpp sets `rope_pattern = is_swa_impl`). The file's single
+    // `rope.freq_base` is the sliding layers' base, so the generic
+    // assignment above must not reach `full_rope_theta`.
+    if family == ModelFamily::MuseGlimmer {
+        arch.full_rope_theta = 0.0;
     }
 
     // YaRN (ROADMAP M5). Read only when the file says the scaling TYPE is
@@ -451,6 +504,56 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         }
         if let Some(k) = m.opt_i64("attention.key_length_swa")? {
             arch.head_dim = k;
+        }
+    }
+
+    // Granite (`ibm-granite/granite-4.x`) rides the Llama flow, which reads
+    // `attention_scale` and nothing else of IBM's four scalars: the other
+    // three must be the identity, and a file that says otherwise is refused
+    // rather than decoded fluently with the wrong residual or logit scale.
+    if architecture == "granite" {
+        let rms = m
+            .opt_f64("attention.layer_norm_rms_epsilon")
+            .map(|v| v as f32);
+        if rms != Some(1e-5f32) {
+            return Err(GgufConfigError::BadValue {
+                key: m.key("attention.layer_norm_rms_epsilon"),
+                detail: "Granite requires RMS epsilon 1e-5".into(),
+            });
+        }
+        for key in ["embedding_scale", "residual_scale", "logit_scale"] {
+            if m.opt_f64(key).is_some_and(|v| v != 1.0) {
+                return Err(GgufConfigError::BadValue {
+                    key: m.key(key),
+                    detail: "this port's Llama flow expresses only an identity Granite \
+                             multiplier here (Granite 3.x carries non-identity ones)"
+                        .into(),
+                });
+            }
+        }
+        let scale = m
+            .opt_f64("attention.scale")
+            .ok_or_else(|| GgufConfigError::MissingKey {
+                key: m.key("attention.scale"),
+            })?;
+        if !(scale.is_finite() && scale > 0.0) {
+            return Err(GgufConfigError::BadValue {
+                key: m.key("attention.scale"),
+                detail: format!("{scale} is not a usable attention scale"),
+            });
+        }
+        arch.attention_scale = scale;
+        // Full rotary over the head, as the Llama flow assumes.
+        if let Some(dims) = m.opt_i64("rope.dimension_count")? {
+            if dims != arch.full_head_dim {
+                return Err(GgufConfigError::BadValue {
+                    key: m.key("rope.dimension_count"),
+                    detail: format!(
+                        "{dims} of a {}-wide head is partial rotary",
+                        arch.full_head_dim
+                    ),
+                });
+            }
         }
     }
 

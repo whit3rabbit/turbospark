@@ -2,6 +2,7 @@
 
 mod conventions;
 mod manifest;
+mod muse_qk_norms;
 mod ngram;
 mod plan;
 mod resume;
@@ -12,6 +13,7 @@ pub use sizing::{minimax_gguf_sizing, MiniMaxSizing};
 mod types;
 
 pub use manifest::gguf_manifest_quant;
+pub use muse_qk_norms::constant_vector as muse_qk_norm_is_constant;
 pub use resume::ResumeProvenance;
 pub use rope_freqs::zero_tail_pattern as lfm3_rope_freqs_are_zero_tail;
 pub use transcode::qwen4exp_tensor_is_transcoded;
@@ -39,6 +41,7 @@ pub fn orchestrate_gguf_checkpoint(
     }
     let plan = plan::classify(header, arch.family, arch.num_layers as usize)?;
     rope_freqs::verify_plan(header, source, &arch, &plan)?;
+    muse_qk_norms::verify_plan(header, source, &arch, &plan)?;
     let stride = plan::expert_stride(header, &arch, &plan)?;
     let (resident, lossy_narrowing) =
         transcode::resident_entries(header, source, &arch, &plan.resident)?;
@@ -95,6 +98,7 @@ pub fn write_gguf_install_streamed_resumable(
     // Before the first byte reaches disk: a vector that is not the exact
     // zero-tail pattern refuses the whole install.
     rope_freqs::verify_plan(header, source, &arch, &plan)?;
+    muse_qk_norms::verify_plan(header, source, &arch, &plan)?;
     let stride = plan::expert_stride(header, &arch, &plan)?;
     progress(&format!(
         "classified {} resident tensors, {} routed layers, expert stride {stride}",

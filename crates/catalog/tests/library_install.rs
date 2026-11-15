@@ -372,6 +372,7 @@ fn text_repo() -> (FixtureRepo, InstallPlan) {
         reuse_trunk_from: None,
         vision_only: false,
         vision_file: None,
+        quantize_bits: None,
     };
     let files = BTreeMap::from([
         ("model-Q8_0.gguf".to_string(), gguf),

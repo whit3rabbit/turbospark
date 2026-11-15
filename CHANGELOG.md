@@ -14,6 +14,41 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Granite 4.x GGUF files (`ibm-granite/granite-4.x-*-GGUF`) install on the Llama
+  flow with their 1/head_dim attention scale; Granite 3.x, whose residual,
+  embedding and logit multipliers are not identity, refuses. The ChatML
+  tokenizer dialect accepts a table with no `<|endoftext|>` when its config
+  declares an EOS. Checked against the real GGUF and official BF16 bytes, and a
+  real 3B install decodes correctly.
+- Qwen3-VL GGUF files (`Qwen/Qwen3-VL-*-GGUF`) install their text trunk: the
+  `qwen3vl` architecture, the dense Qwen3 tensor names, and a guard on the
+  multimodal rope sections. The vision projector (`mmproj`) is not read. Checked
+  against the real GGUF, MLX and official BF16 bytes; a real 4B install matched
+  the MLX reference on greedy prompts at Q8_0.
+- Muse Glimmer GGUF files (`ggml-org`, `unsloth`, `meta-models`) are recognized
+  and walked: the `muse-glimmer` architecture, its tensor names, the
+  converter's baked-in norm `+1`, its interleaved RoPE row order and its
+  synthesized q/k norms are all handled, and a conversion whose q scale,
+  epsilon or output multiplier disagrees with the runtime's refuses instead of
+  installing. Checked against the real GGUF, MLX and official BF16 bytes, and a
+  real Q4_K_M install decodes coherently; no parity or frozen quality row yet.
+- `turbospark-model pull --repo` installs unquantized (BF16, FP16 or F32)
+  Qwen 3.5 dense, Qwen 3.6 MoE, dense Gemma 4, Muse Glimmer, Qwen2 and Qwen3-VL checkpoints, such as fine-tunes
+  published only in full precision. The weights are quantized to MLX affine
+  4-bit at group 64 as they stream, 8-bit with `--quantize 8`, or 2-bit at
+  group 128 with `--quantize 2`. For Qwen 3.5 the 4-bit install is
+  byte-identical to what `mlx_lm.convert` produces on Metal; the Qwen MoE is
+  4-bit only and matches a published conversion made with the CPU tie rule
+  (see `compute::quant_mlx::Rounding`); dense Gemma 4 (`gemma-4-31B-it`)
+  matches its published 4-bit conversion byte for byte on the text trunk,
+  installs text-only, and refuses the per-layer-embedding (E2B, E4B), MoE
+  (26B-A4B) and `gemma4_unified` (12B) variants; Muse Glimmer
+  (`meta-models/Muse-Glimmer-30B`) likewise matches its 4-bit conversion byte
+  for byte on the text trunk and installs text-only; Qwen2 and Qwen3-VL are
+  not yet byte-checked against a published conversion, and 2-bit matches
+  `mlx_lm.convert` only for a float16 source. Both the MLX and the Hugging
+  Face transformers tensor layouts are accepted. Other families still refuse
+  an unquantized checkpoint.
 - Music and Voice Cloning ask for a model before they open. While none of the
   page's curated models is on the Mac, a card over the page lists each one with
   its download size and estimated memory, flags a model that may not fit this

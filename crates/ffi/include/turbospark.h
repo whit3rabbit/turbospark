@@ -955,7 +955,9 @@ int32_t ts_humanize(const TsSession *s, const char *draft,
  *   idleUnloadSeconds
  *           number | null. Detach a model after it has served no request for
  *             this many seconds, releasing its weights. null or 0 keeps every
- *             model resident (the default). See ts_server_set_idle_unload.
+ *             host-attached model resident (the default); a model an HTTP
+ *             request opened (allowRequestModelLoad) is still released after
+ *             30 idle minutes. See ts_server_set_idle_unload.
  *
  * UNAUTHENTICATED DOES NOT MEAN PRIVATE TO THIS PROCESS. This comment used to
  * say the socket was "reachable only by the process embedding it", which is
@@ -1031,8 +1033,10 @@ int32_t ts_server_detach_model(const TsServer *server, const char *model_id);
 
 /*
  * Sets how long an attached model may sit unused before the server detaches
- * it and releases its weights. `seconds` of 0 turns the sweep off, which is
- * the default. Takes effect on the next 30 s sweep and applies to models
+ * it and releases its weights. `seconds` of 0 turns the sweep off for
+ * host-attached models, which is the default; a model an HTTP request opened
+ * (allowRequestModelLoad) is still released after 30 idle minutes. Takes
+ * effect on the next 30 s sweep and applies to models
  * attached later too; a model with a request in flight is never detached.
  * The same value can be given up front as ts_server_start's
  * "idleUnloadSeconds" option. A detach by this sweep surfaces as a
