@@ -7,8 +7,9 @@
 //! resident GEMV and an embedding lookup; IQ3_XXS, IQ4_XS and IQ4_NL have a
 //! resident GEMV each plus the half of the routed pair their real file asks
 //! for. Q3_K (Dense Qwen2 roadmap item) has a resident GEMV and an embedding
-//! lookup, on the Q6_K footing. Those seven OPEN. Q4_0 has nothing and still
-//! refuses.
+//! lookup, on the Q6_K footing. Q4_0, Q4_1, Q5_0 and Q5_1 stand on the same
+//! footing (one shared kernel file). Those eleven OPEN. A block type with no
+//! kernel at all (Q8_1 here) still refuses.
 //!
 //! Both directions are asserted here, and the refusal is checked twice over,
 //! because a single gate is a single point of failure for a whole class of
@@ -123,10 +124,10 @@ fn a_mixed_k_quant_gguf_install_opens() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// The manifest gate, on a block type with no kernel. Q4_0 is the one the
-/// parser knows and nothing decodes: it has no CPU reference, no GEMV and no
-/// expert pair, so an install of one must not open and the refusal must say
-/// which type.
+/// The manifest gate, on a block type with no kernel. Q8_1 is a type ggml
+/// defines and nothing here decodes: no GEMV, no embedding lookup, no expert
+/// pair, so an install of one must not open and the refusal must say which
+/// type. (This was Q4_0 until the legacy block types gained kernels.)
 #[test]
 fn a_block_type_without_kernels_is_refused_by_the_manifest() {
     let (dir, arch) = gguf_install(executable_shape());
@@ -135,77 +136,66 @@ fn a_block_type_without_kernels_is_refused_by_the_manifest() {
     let mut manifest: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     for slot in ["embedding", "attention", "sharedExpert", "routedExpert"] {
-        manifest["quant"][slot]["ggmlType"] = serde_json::json!("Q4_0");
+        manifest["quant"][slot]["ggmlType"] = serde_json::json!("Q8_1");
     }
     std::fs::write(&path, serde_json::to_vec_pretty(&manifest).unwrap()).unwrap();
 
     let text = match RealForwardRunner::open(&dir, arch) {
-        Ok(_) => panic!("a Q4_0 install must not open"),
+        Ok(_) => panic!("a Q8_1 install must not open"),
         Err(e) => e.to_string(),
     };
     assert!(
-        text.contains("Q4_0") || text.contains("q4_0"),
+        text.contains("Q8_1") || text.contains("q8_1"),
         "the refusal must name the block type, got: {text}"
     );
 
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// The dtype backstop on its own: the manifest still says Q8_0, but the
-/// bytes on disk are tagged Q4_0. `open` has to believe the index.
+/// The resident-index dtype is believed over the manifest. The manifest still
+/// says Q8_0 but the bytes are tagged MXFP4 (14), which now has a resident
+/// kernel, so `open` lets it through and the per-tensor size guard is what
+/// refuses it (Q8_0 bytes are twice MXFP4's width). This replaces the old
+/// "backstop fires" test: every GGUF block tag now has a resident kernel, so
+/// the open-time `GGUF_BLOCK_DTYPES && !EXECUTABLE_GGUF_DTYPES` guard has no
+/// live exemplar until a new block type is tagged ahead of its kernel. It is
+/// kept as the gate for that day, and is therefore UNTESTED here.
 #[test]
-fn the_dtype_backstop_fires_even_if_the_manifest_is_forged() {
+fn a_forged_resident_tag_is_refused_by_the_size_guard() {
+    use half::f16;
+    use turbospark_runtime::LogitProducer;
     let (dir, arch) = gguf_install(executable_shape());
 
-    let changed = retag_dtypes(&dir, 6, 9);
+    let changed = retag_dtypes(&dir, 6, 14);
     assert!(changed > 0, "the fixture carries no Q8_0 resident tensors");
 
-    let text = match RealForwardRunner::open(&dir, arch) {
-        Ok(_) => panic!("forging the manifest must not make a Q4_0 install openable"),
-        Err(e) => e.to_string(),
-    };
+    let outcome = (|| -> Result<(), String> {
+        let mut runner = RealForwardRunner::open(&dir, arch).map_err(|e| e.to_string())?;
+        runner.reset();
+        let mut logits = vec![f16::from_f32(0.0); 128];
+        runner.produce(5, 0, &mut logits).map_err(|e| e.to_string())
+    })();
+    let text = outcome.expect_err("Q8_0 bytes tagged MXFP4 must not decode");
     assert!(
-        text.contains("GGUF block dtype"),
-        "expected the resident-index backstop, got: {text}"
-    );
-    assert!(
-        text.contains("Phase G"),
-        "the refusal should point at the work that lifts it, got: {text}"
+        text.contains("packed size") || text.contains("does not"),
+        "expected the size guard, got: {text}"
     );
 
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// Q2_0 has a routed phase-2 kernel but no resident GEMV or embedding path.
-/// A forged resident tag must therefore remain refused at open.
+/// Q2_0 down projections now open at the fixture's top_k of 2 (the generated
+/// k8 phase 2 serves any top_k up to 8; the hand-written one still serves
+/// exactly 10, and 9 or above 10 are refused, which the layout unit test
+/// `q2_0_phase2_layout_accepts_top_10_or_at_most_8` covers).
 #[test]
-fn a_resident_q2_0_tag_is_refused() {
-    let (dir, arch) = gguf_install(executable_shape());
-
-    let changed = retag_dtypes(&dir, 6, turbospark_repack::DTYPE_GGUF_Q2_0);
-    assert!(changed > 0, "the fixture carries no Q8_0 resident tensors");
-
-    let text = match RealForwardRunner::open(&dir, arch) {
-        Ok(_) => panic!("Q2_0 must not dispatch as a resident tensor"),
-        Err(e) => e.to_string(),
-    };
-    assert!(text.contains("GGUF block dtype"), "got: {text}");
-
-    std::fs::remove_dir_all(&dir).ok();
-}
-
-/// Q2_0 routed phase 2 currently specializes to top_k=10. An install with Q2_0 down
-/// projections and a non-10 top_k model (such as Gemma 4 with top_k=8 or Mixtral with top_k=2)
-/// must be refused cleanly at open time rather than panicking in the GPU dispatch.
-#[test]
-fn an_install_with_q2_0_down_and_non_top10_is_refused_at_open() {
+fn an_install_with_q2_0_down_opens_at_a_small_top_k() {
     let (dir, arch) = gguf_install(SyntheticGgufShape::iq_mixed());
     assert_ne!(arch.top_k_experts, 10);
 
     let layout_path = dir.join("packed_experts").join("layout.json");
     let mut layout_json: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&layout_path).unwrap()).unwrap();
-
     for layer in layout_json["layers"].as_array_mut().unwrap() {
         for expert in layer["experts"].as_array_mut().unwrap() {
             expert["tensors"]["down"]["dtype"] = serde_json::json!("q2_0");
@@ -217,15 +207,9 @@ fn an_install_with_q2_0_down_and_non_top10_is_refused_at_open() {
     )
     .unwrap();
 
-    let text = match RealForwardRunner::open(&dir, arch) {
-        Ok(_) => panic!("an install with Q2_0 down projection and top_k != 10 must not open"),
-        Err(e) => e.to_string(),
-    };
-    assert!(
-        text.contains("Q2_0 routed layout, which requires top_k=10"),
-        "expected Q2_0 top_k=10 refusal, got: {text}"
-    );
-
+    if let Err(e) = RealForwardRunner::open(&dir, arch) {
+        panic!("Q2_0 down at top_k {} must open: {e}", 2);
+    }
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -316,33 +300,6 @@ fn a_q3_k_mixture_gguf_install_opens() {
 #[test]
 fn a_q3_k_mixture_gguf_install_decodes() {
     decodes(SyntheticGgufShape::q3_k());
-}
-
-/// The other half of that asymmetry, which no other block type can express:
-/// MXFP4 is executable in a routed slot and NOT as a resident tensor, so an
-/// install that moves it into the resident index must be refused even though
-/// the very same type decodes fine two lines above.
-///
-/// Retags the Q8_0 resident tensors rather than the routed blobs, because the
-/// routed experts are not IN the resident index -- which is precisely why one
-/// type can be executable in one place and not the other.
-#[test]
-fn mxfp4_is_refused_as_a_resident_tensor_though_its_experts_run() {
-    let (dir, arch) = gguf_install(SyntheticGgufShape::mxfp4());
-
-    let changed = retag_dtypes(&dir, 6, 14);
-    assert!(changed > 0, "the fixture carries no Q8_0 resident tensors");
-
-    let text = match RealForwardRunner::open(&dir, arch) {
-        Ok(_) => panic!("MXFP4 has no resident GEMV; a resident MXFP4 tensor must not open"),
-        Err(e) => e.to_string(),
-    };
-    assert!(
-        text.contains("RESIDENT kernel"),
-        "the refusal must say which kind of kernel is missing, got: {text}"
-    );
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// The offsets really are per layer, checked on the fixture rather than
@@ -439,6 +396,129 @@ fn decodes(shape: SyntheticGgufShape) {
     }
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The ggml ids of the four legacy block types, with their names for messages.
+const LEGACY_TYPES: [(u32, &str); 13] = [
+    (2, "Q4_0"),
+    (3, "Q4_1"),
+    (6, "Q5_0"),
+    (7, "Q5_1"),
+    (41, "Q1_0"),
+    (35, "TQ2_0"),
+    (34, "TQ1_0"),
+    (40, "NVFP4"),
+    (42, "Q2_0"),
+    (39, "MXFP4"),
+    (64, "IQ1_XS"),
+    (65, "IQ1_XXS"),
+    (66, "IQ1_XXXS"),
+];
+
+/// Q4_0, Q4_1, Q5_0 and Q5_1 each open and run a whole forward pass: the
+/// embedding table, every attention projection and the dense FFN on the legacy
+/// type, the routed experts on Q8_0 (the legacy blocks have no routed pair).
+#[test]
+fn legacy_block_mixtures_open_and_decode() {
+    for (ty, name) in LEGACY_TYPES {
+        let (dir, arch) = gguf_install(SyntheticGgufShape::legacy(ty));
+        match RealForwardRunner::open(&dir, arch) {
+            Ok(_) => {}
+            Err(e) => panic!("a {name} install must open now that its kernels exist: {e}"),
+        }
+        std::fs::remove_dir_all(&dir).ok();
+        decodes(SyntheticGgufShape::legacy(ty));
+    }
+}
+
+const ORACLE_TOKENS: [i32; 5] = [5, 17, 3, 90, 41];
+
+/// Logits for each of `ORACLE_TOKENS` through a whole synthetic install.
+fn oracle_logits(shape: SyntheticGgufShape) -> Vec<Vec<f32>> {
+    use half::f16;
+    use turbospark_runtime::LogitProducer;
+    let vocab = shape.vocab as usize;
+    let (dir, arch) = gguf_install(shape);
+    let mut runner = RealForwardRunner::open(&dir, arch).expect("opens");
+    runner.reset();
+    let out = ORACLE_TOKENS
+        .iter()
+        .enumerate()
+        .map(|(position, &token)| {
+            let mut logits = vec![f16::from_f32(0.0); vocab];
+            runner
+                .produce(token, position, &mut logits)
+                .expect("produce succeeds");
+            logits.iter().map(|v| v.to_f32()).collect()
+        })
+        .collect();
+    std::fs::remove_dir_all(&dir).ok();
+    out
+}
+
+/// The comparison both oracle tests share. Finiteness is asserted first
+/// because `f32::max` drops NaN, so a kernel returning NaN would otherwise
+/// compare equal to anything.
+fn assert_matches_oracle(name: &str, got: &[Vec<f32>], oracle: &[Vec<f32>]) {
+    for (position, (a, b)) in got.iter().zip(oracle).enumerate() {
+        assert!(
+            a.iter().all(|v| v.is_finite()) && b.iter().all(|v| v.is_finite()),
+            "{name} position {position}: non-finite logits (kernel or oracle)"
+        );
+        let spread = b.iter().fold(0f32, |m, v| m.max(v.abs())).max(1e-3);
+        let err = a.iter().zip(b).fold(0f32, |m, (x, y)| m.max((x - y).abs()));
+        // Q8_0 re-storage and FP16 accumulation order, a few percent of the
+        // logit range at the very most; a kernel bug moves logits by the
+        // range itself.
+        assert!(
+            err <= 0.05 * spread,
+            "{name} position {position}: logits differ from the Q8_0 oracle by {err} \
+             (range {spread})"
+        );
+        let argmax = |v: &[f32]| {
+            v.iter()
+                .enumerate()
+                .max_by(|x, y| x.1.total_cmp(y.1))
+                .map(|(i, _)| i)
+                .unwrap()
+        };
+        // Argmax can legitimately flip between two near-tied logits; only
+        // require agreement when the oracle's winner is clear.
+        let mut sorted = b.clone();
+        sorted.sort_by(|x, y| y.total_cmp(x));
+        if sorted[0] - sorted[1] > 0.1 * spread {
+            assert_eq!(argmax(a), argmax(b), "{name} position {position}: argmax");
+        }
+    }
+}
+
+/// THE END-TO-END ORACLE for the resident kernels. The same seeded weights
+/// are installed twice: once as the block type, once decoded by `compute`'s
+/// ggml-verified decoder and re-stored as Q8_0. The second install runs the
+/// already-trusted Q8_0 kernels on (to within Q8_0's own rounding) the values
+/// the first must reproduce, so the two installs' logits can be compared
+/// without a CPU forward pass.
+#[test]
+fn legacy_kernels_agree_with_their_q8_0_oracle_through_a_whole_model() {
+    for (ty, name) in LEGACY_TYPES {
+        let got = oracle_logits(SyntheticGgufShape::legacy(ty));
+        let oracle = oracle_logits(SyntheticGgufShape::legacy_as_q8_0(ty));
+        assert_matches_oracle(name, &got, &oracle);
+    }
+}
+
+/// The same oracle for ROUTED experts: every type in the list carries the
+/// experts of a whole model through its phase-1 and phase-2 kernels, against
+/// the Q8_0 re-store of the same expert weights. This replaces a test that
+/// asserted these installs were refused, which stopped being true when the
+/// routed kernels landed.
+#[test]
+fn legacy_typed_routed_experts_agree_with_their_q8_0_oracle() {
+    for (ty, name) in LEGACY_TYPES {
+        let got = oracle_logits(SyntheticGgufShape::legacy_experts(ty));
+        let oracle = oracle_logits(SyntheticGgufShape::legacy_experts_as_q8_0(ty));
+        assert_matches_oracle(&format!("{name} experts"), &got, &oracle);
+    }
 }
 
 /// **THE FP16 EXCEPTION IS SCOPED BY NAME, AND BOTH DIRECTIONS MATTER**

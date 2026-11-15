@@ -65,9 +65,11 @@ crates/ffi/
 |       +-- generate.rs     # generation, prompt rendering, tokenization, window fit
 |       +-- models.rs       # catalog, recommendations, probe, install
 |       +-- image.rs        # native image session and owned PNG output
+|       +-- quantize.rs     # GGUF quantizer: ts_quantize_* (macOS; quantize_unsupported.rs elsewhere)
 |       \-- server.rs       # start / attach / detach / stop / info / poll_events
 \-- tests/
-    \-- c_surface.rs        # the C entry points, through the `rlib` face
+    +-- c_surface.rs        # the C entry points, through the `rlib` face
+    \-- quantize_surface.rs # the ts_quantize_* refusals, shapes and run-slot release (model-free)
 ```
 
 ## Development & Test Commands

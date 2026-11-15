@@ -6,10 +6,10 @@
 //! mirrors. Its only contract is `turbospark_compute::dequant_q5_k_gemv`,
 //! which is what `crates/gpu/tests/dequant_q5_k_gemv_parity.rs` holds it to.
 //!
-//! Q5_K exists here for one tensor shape: Mixtral 8x7B's Q4_K_M carries
-//! `attn_output` in Q5_K while its experts are Q4_K. So this dispatch has no
-//! embedding-lookup and no MoE sibling, the same judgement `dequant_q6_k_gemv`
-//! records, and gains one only when a real file asks.
+//! Q5_K first existed here for one tensor shape: Mixtral 8x7B's Q4_K_M carries
+//! `attn_output` in Q5_K while its experts are Q4_K. It gained an embedding
+//! lookup when a second real file asked: Unsloth's UD-IQ2_XXS keeps
+//! `token_embd.weight` at Q5_K. There is still no MoE sibling.
 //!
 //! **The shader source is a CONCATENATION** (crate Gotcha 4): the Q5_K kernel
 //! reuses `q4_k_scale_min` out of `dequant_q4_k.metal`, because the 6-bit
@@ -183,4 +183,31 @@ pub fn dequant_q5_k_gemv_resident(
     );
 
     Ok(read_half_buffer(&y_buffer, w.rows))
+}
+
+/// Encoder-level `embed_lookup_q5_k`: dequantizes one row of a Q5_K embedding
+/// table straight into `out`, scaled.
+pub fn encode_embed_lookup_q5_k(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    table: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    token_id: u32,
+    d: u32,
+    out_scale: f32,
+) -> Result<(), GpuError> {
+    assert_eq!(d as usize % Q5_K_BLOCK_ELEMS, 0);
+    let pipeline = context.pipeline(SOURCE, "embed_lookup_q5_k", &no_function_constants(), b"")?;
+    pass.encode_threads_3d(
+        &pipeline,
+        &[(table.0, 0, table.1), (out.0, 1, out.1)],
+        &[
+            (u32_bytes(&token_id), 2),
+            (u32_bytes(&d), 3),
+            (crate::bytes::f32_bytes(&out_scale), 4),
+        ],
+        (d as u64, 1, 1),
+        (64, 1, 1),
+    );
+    Ok(())
 }

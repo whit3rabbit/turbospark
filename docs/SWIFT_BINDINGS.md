@@ -1170,6 +1170,54 @@ probe calls to target the specified base mirror URL.
 
 ---
 
+## Quantizing a GGUF
+
+`GGUFQuantizer` writes a new GGUF from a float one under a per-tensor recipe.
+What it does and does not support is in [QUANTIZE.md](QUANTIZE.md); read its
+scope section before building a UI on it. In short: the source must be an
+F32/F16/BF16 GGUF (a split `-0000N-of-0000M.gguf` set is refused, merge it
+first), and only the types `supportedTypes()` lists can be written. macOS
+only: on other platforms every call throws `.unsupportedPlatform`.
+
+```swift
+let types = try GGUFQuantizer.supportedTypes()   // name, bitsPerWeight, executable, ...
+
+// Follow an Unsloth mix, or pass .type("q4_k") / .object(recipeJSON).
+let options = GGUFQuantizer.Options(
+    source: "model-f16.gguf", destination: "model-UD.gguf",
+    recipe: .followGGUF(path: "Model-UD-Q2_K_XL.gguf"),
+    imatrix: "imatrix.gguf",
+    huggingFace: .init(source: "owner/repo:model-f16.gguf"))
+
+for try await event in GGUFQuantizer.quantize(options) {
+    switch event {
+    case .tensor(let name): break                      // the tensor being written
+    case .bytes(let done, let total): break            // output bytes
+    case .finished(let report):
+        // report.notInExecutableList: types this engine would not run
+        break
+    }
+}
+```
+
+- The call blocks a dedicated thread for minutes. Progress arrives on that
+  thread through the stream.
+- Cancel by cancelling the consuming `Task` or calling `GGUFQuantizer.cancel()`.
+  The stream throws code `.cancelled` (not a failure to show) and no
+  destination file is left.
+- One run at a time per process: a second throws `.busy`.
+- An existing destination is refused, never overwritten. Refusals are
+  `.invalidArgument` with the reason, and the tensor where there is one.
+- By default `<destination>.provenance.json` records the inputs' hashes (and
+  the `huggingFace` locations when given). `checkUpdates(provenancePath:)`
+  asks the Hub whether they changed. It blocks on the network, so it suspends
+  the caller; an unreachable Hub is reported per input, never as up to date.
+- `report.notInExecutableList` and `TypeInfo.executable` say whether this
+  engine would load the result. The file is a valid GGUF for llama.cpp either
+  way.
+
+---
+
 ## Model libraries
 
 A **library** is a folder on a directly connected drive that holds model files.
@@ -1560,6 +1608,11 @@ request metadata powers deterministic regeneration and the Gallery carousel.
 | `ts_install_with_options(alias, options_json, cb, ud, out)` | `ts_install` into `{"library": "<id>"}`. Swift: `install(_:library:)` (the no-destination call now goes through this entry point with NULL options) |
 | `ts_install_repo(repo, alias, file, sidecars, cb, ud, out)` | install arbitrary HF repository |
 | `ts_install_repo_with_options(repo, alias, file, sidecars, options_json, cb, ud, out)` | the same into a library. Swift: `install(repo:alias:file:sidecarRepo:library:)` |
+| `ts_quantize_gguf(options_json, cb, ud, out)` | quantize a float GGUF under a recipe; blocks for minutes; one run at a time (`TS_ERR_BUSY`). Swift: `GGUFQuantizer.quantize(_:)` |
+| `ts_quantize_cancel()` | stop the run in flight; 1 if one was signalled, 0 if none (not an error). Swift: `GGUFQuantizer.cancel()` |
+| `ts_quantize_recipe_from_gguf_json(path, out)` | the recipe JSON that reproduces a GGUF's per-tensor types. Swift: `GGUFQuantizer.recipe(fromGGUF:)` |
+| `ts_quantize_types_json(out)` | the producible types with bits per weight, block size, `requiresImatrix` and `executable`. Swift: `GGUFQuantizer.supportedTypes()` |
+| `ts_quantize_check_updates_json(provenance_path, out)` | ask Hugging Face whether a run's recorded inputs changed; BLOCKS ON THE NETWORK. Swift: `GGUFQuantizer.checkUpdates(provenancePath:)` |
 | `ts_image_install(alias, cb, ud, out)` | ranged download and pack; later calls reuse verified ranges |
 | `ts_image_install_with_options(alias, options_json, cb, ud, out)` | the same into a library. Swift: `installImage(_:library:)` |
 | `ts_embedding_encode_json(model_path, texts_json, out)` | standalone batch text embedding generation |

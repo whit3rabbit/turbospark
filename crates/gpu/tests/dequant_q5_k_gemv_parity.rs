@@ -21,8 +21,8 @@
 
 use half::f16;
 use turbospark_gpu::{
-    dequant_q5_k_gemv, dequant_q5_k_gemv_resident, q5_k_row_bytes, MetalContext, Q5KResidentMatrix,
-    Q5_K_BLOCK_BYTES, Q5_K_BLOCK_ELEMS,
+    dequant_q5_k_gemv, dequant_q5_k_gemv_resident, encode_embed_lookup_q5_k, q5_k_row_bytes,
+    MetalContext, Q5KResidentMatrix, Q5_K_BLOCK_BYTES, Q5_K_BLOCK_ELEMS,
 };
 
 fn lcg(state: &mut u32) -> u32 {
@@ -177,4 +177,58 @@ fn row_bytes_counts_whole_superblocks() {
 #[should_panic(expected = "whole number")]
 fn a_partial_superblock_is_refused() {
     let _ = q5_k_row_bytes(Q5_K_BLOCK_ELEMS + 1);
+}
+
+/// The embedding lookup against `dequantize_q5_k` on identical bytes. The row
+/// is not row 0 (a wrong stride returns a neighbour's row) and the scale is not
+/// 1 (an ignored scale returns a plausible row), and every element is compared
+/// because the three Q5_K traps (dropped `qh`, wrong `qh` bit, dropped min) all
+/// leave a finite row.
+#[test]
+fn embed_lookup_q5_k_reads_the_right_row_and_scales_it() {
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+
+    let (vocab, d) = (7usize, 2 * Q5_K_BLOCK_ELEMS);
+    let mut table = Vec::new();
+    for t in 0..vocab {
+        table.extend_from_slice(&blocks(d, 500 + t as u32));
+    }
+    let table_buffer = context.new_buffer_with_data(&table);
+    let out = context.new_output_buffer((d * std::mem::size_of::<u16>()) as u64);
+
+    let token = 5u32;
+    let out_scale = 4.0f32;
+    let pass = context.begin_pass();
+    encode_embed_lookup_q5_k(
+        &mut context,
+        &pass,
+        (&table_buffer, 0),
+        (&out, 0),
+        token,
+        d as u32,
+        out_scale,
+    )
+    .expect("GPU dispatch succeeds");
+    pass.commit_and_wait();
+
+    let row_bytes = q5_k_row_bytes(d);
+    let want: Vec<f32> = turbospark_compute::dequantize_q5_k(
+        &table[token as usize * row_bytes..(token as usize + 1) * row_bytes],
+        d,
+    )
+    .iter()
+    .map(|v| v * out_scale)
+    .collect();
+
+    let got: Vec<f16> = {
+        let ptr = out.contents() as *const u16;
+        let bits = unsafe { std::slice::from_raw_parts(ptr, d) };
+        bits.iter().map(|&b| f16::from_bits(b)).collect()
+    };
+    assert_matches("q5_k embed row 5, scale 4", &got, &want, d);
+    let peak = want.iter().fold(0f32, |m, &v| m.max(v.abs()));
+    assert!(
+        peak > 0.5,
+        "the test row is too small to prove the scale: {peak}"
+    );
 }

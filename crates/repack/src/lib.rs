@@ -28,6 +28,7 @@ mod gguf_checkpoint;
 mod gguf_config;
 mod gguf_header;
 mod gguf_names;
+pub mod gguf_quantize;
 mod gturbo_writer;
 mod hf_checkpoint;
 mod install_verifier;
@@ -162,7 +163,8 @@ pub use resident_reader::read_resident_entries;
 pub use resident_writer::{
     build_resident_weights_bin, build_resident_weights_bin_mixed, RawTensorSpec, ResidentEntrySpec,
     ResidentTensorSpec, DTYPE_BF16, DTYPE_FP16, DTYPE_FP32, DTYPE_GGUF_Q2_0, DTYPE_GGUF_Q4_0,
-    DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q6_K, DTYPE_GGUF_Q8_0, DTYPE_INT8_AFFINE, GGUF_BLOCK_DTYPES,
+    DTYPE_GGUF_Q4_1, DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q5_0, DTYPE_GGUF_Q5_1, DTYPE_GGUF_Q6_K,
+    DTYPE_GGUF_Q8_0, DTYPE_INT8_AFFINE, GGUF_BLOCK_DTYPES,
 };
 pub use safetensors_header::{
     parse_header, required_prefix_len, SafetensorsHeader, SafetensorsHeaderError, TensorInfo,

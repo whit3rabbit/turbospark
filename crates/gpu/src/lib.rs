@@ -80,6 +80,10 @@ mod dequant_int8_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_iq_gemv;
 #[cfg(target_os = "macos")]
+mod dequant_ext_gemv;
+#[cfg(target_os = "macos")]
+mod dequant_legacy_gemv;
+#[cfg(target_os = "macos")]
 mod dequant_q2_k_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_q3_k_gemv;
@@ -269,6 +273,19 @@ pub use dequant_iq_gemv::{
     IQ4_NL_BLOCK_BYTES, IQ4_NL_BLOCK_ELEMS, IQ4_XS_BLOCK_BYTES, IQ4_XS_BLOCK_ELEMS,
 };
 #[cfg(target_os = "macos")]
+pub use dequant_ext_gemv::{
+    dequant_ext_gemv_resident, encode_dequant_ext_gemv_resident, encode_embed_lookup_ext,
+    ExtBlockType, ExtResidentMatrix, IQ1_NARROW_BLOCK_ELEMS, IQ1_XS_BLOCK_BYTES,
+    IQ1_XXS_BLOCK_BYTES, IQ1_XXXS_BLOCK_BYTES, NVFP4_BLOCK_BYTES, NVFP4_BLOCK_ELEMS, Q1_0_BLOCK_BYTES,
+    Q1_0_BLOCK_ELEMS, Q2_0_BLOCK_BYTES, Q2_0_BLOCK_ELEMS, TQ1_0_BLOCK_BYTES, TQ1_0_BLOCK_ELEMS, TQ2_0_BLOCK_BYTES, TQ2_0_BLOCK_ELEMS,
+};
+#[cfg(target_os = "macos")]
+pub use dequant_legacy_gemv::{
+    dequant_legacy_gemv_resident, encode_dequant_legacy_gemv_resident, encode_embed_lookup_legacy,
+    LegacyBlockType, LegacyResidentMatrix, LEGACY_BLOCK_ELEMS, Q4_0_BLOCK_BYTES, Q4_1_BLOCK_BYTES,
+    Q5_0_BLOCK_BYTES, Q5_1_BLOCK_BYTES,
+};
+#[cfg(target_os = "macos")]
 pub use dequant_q2_k_gemv::{
     dequant_q2_k_gemv, encode_dequant_q2_k_gemv_resident, q2_k_row_bytes, Q2KResidentMatrix,
     Q2_K_BLOCK_BYTES, Q2_K_BLOCK_ELEMS,
@@ -288,7 +305,8 @@ pub use dequant_q4_k_gemv::{
 #[cfg(target_os = "macos")]
 pub use dequant_q5_k_gemv::{
     dequant_q5_k_gemv, dequant_q5_k_gemv_resident, encode_dequant_q5_k_gemv_resident,
-    q5_k_row_bytes, Q5KResidentMatrix, Q5_K_BLOCK_BYTES, Q5_K_BLOCK_ELEMS,
+    encode_embed_lookup_q5_k, q5_k_row_bytes, Q5KResidentMatrix, Q5_K_BLOCK_BYTES,
+    Q5_K_BLOCK_ELEMS,
 };
 #[cfg(target_os = "macos")]
 pub use dequant_q6_k_gemv::{
@@ -355,6 +373,7 @@ pub use moe_decode::{
 };
 #[cfg(target_os = "macos")]
 pub use moe_gguf::{
+    encode_moe_phase1_ext, encode_moe_phase2_ext, MoeExtType,
     encode_moe_phase1_iq1_m, encode_moe_phase1_iq2_s, encode_moe_phase1_iq2_xxs,
     encode_moe_phase1_iq3_xxs, encode_moe_phase1_iq4_xs, encode_moe_phase1_mxfp4,
     encode_moe_phase1_q2_0, encode_moe_phase1_q4_k, encode_moe_phase1_q8_0,

@@ -67,6 +67,25 @@ pub enum QuantMix {
     /// Needs [`SyntheticGgufShape::k_quant`]'s dimensions, since a Q3_K row
     /// also tiles 256 elements.
     Q3K,
+    /// A llama.cpp legacy-quant file (`Q4_0`, `Q4_1`, `Q5_0`, `Q5_1`): the
+    /// embedding table, every attention projection and the dense FFN on that
+    /// one type, the routed experts on Q8_0. The legacy blocks have a resident
+    /// GEMV and an embedding lookup and NO routed pair, so their experts
+    /// deliberately stay on a type with one. Tiles 32 elements, so the
+    /// default dimensions fit. The payload is the ggml type id (2, 3, 6, 7).
+    Legacy(u32),
+    /// The oracle twin of [`QuantMix::Legacy`]: the same weights, decoded and
+    /// stored as Q8_0, so the Q8_0 kernels compute what the legacy kernels
+    /// must. Compare the two installs' logits.
+    LegacyAsQ8_0(u32),
+    /// A file whose ROUTED EXPERTS are a block type from the resident-only
+    /// list above (ggml ids 2, 3, 6, 7, 34, 35, 39, 40, 41, 42) and everything
+    /// else is Q8_0: what a Mixtral Q4_0 conversion looks like. These types
+    /// have routed kernels now, so this installs and runs.
+    LegacyExperts(u32),
+    /// The oracle twin of [`QuantMix::LegacyExperts`]: the same expert weights
+    /// decoded and stored as Q8_0.
+    LegacyExpertsAsQ8_0(u32),
 }
 
 impl Default for SyntheticGgufShape {
@@ -162,6 +181,58 @@ impl SyntheticGgufShape {
         Self {
             mix: QuantMix::Q3K,
             ..Self::k_quant()
+        }
+    }
+
+    /// A legacy-quant mixture: ggml type 2 (Q4_0), 3 (Q4_1), 6 (Q5_0) or
+    /// 7 (Q5_1) at the default dimensions, or 34, 35, 40, 41 (TQ1_0, TQ2_0,
+    /// NVFP4, Q1_0) at the 256-wide ones.
+    pub fn legacy(ggml_type: u32) -> Self {
+        assert!(
+            matches!(ggml_type, 2 | 3 | 6 | 7 | 34 | 35 | 39 | 40 | 41 | 42 | 64 | 65 | 66),
+            "not a legacy ggml type: {ggml_type}"
+        );
+        // Q1_0 (41), TQ1_0 (34), TQ2_0 (35) and NVFP4 (40) are resident-only
+        // blocks like the legacy four, but their blocks are 64 to 256
+        // elements, so they take the 256-wide dimensions.
+        // MXFP4 (39) and Q2_0 (42) tile 32 and 64 elements, so they take the
+        // 256-wide dimensions too (every row stays a whole number of blocks).
+        if matches!(ggml_type, 34 | 35 | 39 | 40 | 41 | 42 | 64 | 65 | 66) {
+            return Self {
+                mix: QuantMix::Legacy(ggml_type),
+                ..Self::k_quant()
+            };
+        }
+        // `moe_intermediate` 32: the Q8_0 routed experts need rows that tile
+        // 32 elements, as `mxfp4()` does.
+        Self {
+            moe_intermediate: 32,
+            mix: QuantMix::Legacy(ggml_type),
+            ..Self::default()
+        }
+    }
+
+    /// Legacy-typed routed experts over Q8_0 everything-else; must be refused.
+    pub fn legacy_experts(ggml_type: u32) -> Self {
+        Self {
+            mix: QuantMix::LegacyExperts(ggml_type),
+            ..Self::legacy(ggml_type)
+        }
+    }
+
+    /// The Q8_0 oracle for [`Self::legacy_experts`].
+    pub fn legacy_experts_as_q8_0(ggml_type: u32) -> Self {
+        Self {
+            mix: QuantMix::LegacyExpertsAsQ8_0(ggml_type),
+            ..Self::legacy(ggml_type)
+        }
+    }
+
+    /// The Q8_0 oracle for [`Self::legacy`].
+    pub fn legacy_as_q8_0(ggml_type: u32) -> Self {
+        Self {
+            mix: QuantMix::LegacyAsQ8_0(ggml_type),
+            ..Self::legacy(ggml_type)
         }
     }
 
