@@ -128,12 +128,12 @@ final class BundledDeviceControlSkillsTests: XCTestCase {
         }
     }
 
-    /// Honest limit, recorded as a test so a future allowlist edit is a
-    /// deliberate choice: `gradle` itself runs quietly under Auto, which is why
-    /// the Android skill confines it to `assembleDebug`.
-    func testGradleIsTheOneQuietHeadAndTheSkillConfinesIt() throws {
-        XCTAssertTrue(TerminalCommandClassifier.isAutoApprovable("gradle assembleDebug"))
+    /// `gradle` runs the workspace's build scripts, so it asks like the other
+    /// device-loop heads, and the skill still confines it to `assembleDebug`.
+    func testGradleAsksAndTheSkillConfinesIt() throws {
+        XCTAssertFalse(TerminalCommandClassifier.isAutoApprovable("gradle assembleDebug"))
         let body = Self.flat(try text("android-emulator"))
+        XCTAssertTrue(body.contains("each call asks"))
         XCTAssertTrue(body.contains("only for `assembleDebug`, never for `installDebug`"))
         for raw in Self.fencedCommands(in: try text("android-emulator")) {
             XCTAssertFalse(raw.contains("installDebug"), raw)

@@ -30,9 +30,10 @@ Scope, fixed:
   `adb emu kill` on an emulator you did not start, or `avdmanager delete`.
   If the user asks for one, name the exact device and command first and let
   the prompt decide.
-- `gradle` itself is on the build list that Auto mode runs unprompted, so use
-  it only for `assembleDebug`, never for `installDebug` or anything that
-  deploys: install through `adb` so the install is a prompted step.
+- `gradle` and `./gradlew` are not on the build list that Auto mode runs
+  unprompted (they execute the project's build scripts), so each call asks.
+  Use them only for `assembleDebug`, never for `installDebug` or anything
+  that deploys: install through `adb` so the install is its own prompted step.
 
 ## 1. Preflight, before anything else
 
