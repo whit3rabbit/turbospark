@@ -25,57 +25,68 @@ when this file gets updated relative to the version bump and the tag.
   23.8 GB) and converts it to a smaller install.
 - Parity program with two reference desktop agents (ZP-01..ZP-23 and
   OC-01..OC-14). Chat and workspace:
-  - Workspace tabs hold whole workspaces, and session tabs inside a workspace
-    keep draft tabs, restore the last closed tab and remember scroll position.
-    Back and forward buttons walk the navigation history, and the sidebar
-    shows a peek on hover when it is collapsed.
-  - Sidebar rows show unread and pending-question badges, and an inbox triage
-    view steps through chats that need you. Chats can run in the background
-    next to the one you are reading (concurrent chats, partial: the turn-level
-    lease shipped, but one chat still decodes at a time).
+  - Workspace tabs and session tabs. Session tabs keep draft tabs, a Recently
+    Closed list and the scroll position of each chat. Back and forward walk the
+    section and chat history, and a collapsed sidebar shows a peek on hover.
+  - Sidebar rows carry unread, running and waiting-for-you badges, and an Inbox
+    sidebar mode groups chats by what needs attention. Chats can run in the
+    background next to the one you are reading (partial: the turn-level lease
+    shipped, but one chat still decodes at a time).
   - A command palette jumps to commands and chats. Keyboard shortcuts can be
     rebound in Settings.
-  - Notifications and sounds for finished turns and questions, with Settings
-    switches. The agent PushNotification tool is opt-in and off by
-    default (partial: two deferred items are listed in the OC-02 draft).
+  - Notifications and sounds for four events (turn finished, needs approval,
+    has a question, error), all off by default. The agent PushNotification tool
+    is opt-in and shares that path (partial: two deferred items are listed in
+    the OC-02 draft).
   - First-run onboarding, a splash screen shown only when launch is slow, and
     Help > Show Welcome Tour.
-  - A hang watchdog flags a stalled engine and offers a guarded relaunch, and a
-    crash recovery marker explains an unclean exit on the next launch. The
-    menu bar warns when the running daemon is an older engine version than the
-    app (partial: no HTTP health fields yet).
+  - A hang watchdog notices 90 seconds without stream activity and offers
+    Restart, Keep Waiting or Stop. Restart is limited to two relaunches in 10
+    minutes. If the last run did not exit cleanly, the app says so once. The
+    menu bar shows a warning when the running daemon is an older engine than
+    the app (partial: no HTTP health fields yet).
 - Agents and tools:
-  - Off-peak tasks run queued work while the Mac is idle. Subagents can
-    message their coordinator.
-  - Image search and image fetch tools. `document_write` creates docx, xlsx
-    and pptx files from structured input, and the file pane previews all
-    three (with a Quick Look fallback).
+  - Off-peak tasks (opt-in, off by default) queue prompts that run one at a
+    time in the chat that queued them, while it is open and idle. A running
+    task keeps the Mac from sleeping on idle.
+  - Subagents can message the coordinator that launched them
+    (`respond_to_coordinator`), and the coordinator can continue a finished
+    subagent with `send_message`.
+  - Image search and image fetch tools. `document_write` creates .docx, .xlsx,
+    .pptx and .pdf files from a JSON spec, and the file pane previews docx,
+    xlsx and pptx, with Quick Look as the fallback.
+  - Sources panel lists the web sources a reply used (from web search and
+    fetch calls). Reveal scrolls to and expands the tool card that produced
+    the source.
   - Language-server diagnostics and symbol tools, and a formatter pass after
-    edits. Both are off by default and start no process until enabled in
-    Settings (partial; see the OC-10 and OC-11 drafts for what is deferred).
-  - Sources panel lists what a reply read, and reveals the file from the tool
-    card.
-  - Optional remote providers (OpenAI-compatible and Anthropic style APIs,
-    API keys only, never OAuth). Off by default.
+    edits, both off by default. Partial: the formatter has no per-process
+    network isolation yet.
+  - Remote providers (OpenAI-compatible and Anthropic APIs) use API keys only,
+    never OAuth. Nothing is contacted until you add a provider.
 - Skills and plugins: bundled skills `plugin-creator`, `turbospark-guide`,
   `visualize`, `ios-simulator`, `android-emulator`, `docx`, `xlsx`, `pptx` and
-  `pdf`. Builtin plugins are seeded on first launch, and a marketplace source
-  can be a `cdnZip` with a digest check. UI plugin pages run in a sandboxed
-  web view and Gen UI cards render a closed native schema (not HTML); both are
-  opt-in.
-- Canvas and files: a whiteboard pane, image annotation, and an activity
-  treemap. Dev builds wear an icon badge so they are not mistaken for a
-  release.
-- Browser: per-site permission prompts with a stored allow or deny list, and
-  session recording to MP4.
-- Rollout trajectory logs record each model turn for a trajectory viewer. They
+  `pdf`. Builtin plugins are seeded on first launch, and a marketplace entry
+  can point at a `cdnZip` plugin installed on your Install click. UI plugin
+  pages run in a sandboxed web view and need a per-plugin opt-in. Gen UI cards
+  render a closed native schema, not HTML.
+- Canvas and files: a whiteboard pane, image annotation in the image preview,
+  and an activity treemap tab in the Git inspector. Dev builds wear an icon
+  badge so they are not mistaken for a release.
+- Browser: per-site permission decisions and recording of a tab to a local MP4
+  file (stitched page snapshots).
+- Rollout trajectory logs record each model call for a trajectory viewer. They
   are plaintext and off by default.
-- Local voice call: talk to a local model with the local speech stack.
-  Experimental push-to-talk auto-send (Cmd+Shift+Space or the Talk button) is
-  off by default and re-checks the addressed fact before sending.
+- Local voice call (off by default). Start Voice Call is Shift+Cmd+Y and Toggle
+  Talk is Shift+Cmd+Space, a toggle rather than a hold. Experimental
+  push-to-talk auto-send, also off by default, asks a local model whether an
+  utterance is addressed to the assistant before sending it.
 - `turbospark acp` and the new `turbospark-acp-agent` binary speak the Agent
   Client Protocol over stdio so an editor can drive local checkpoints. Verified
   with a scripted client only, not a real editor.
+- Known limits of this program: per-tab pane layout is deferred, translations
+  for the new strings are machine-written and not native-reviewed, and the
+  hardware and manual app passes (real editor, real remote provider, live hang
+  soak, voice call on hardware) were not run.
 
 ### Changed
 - The Music page uses one fixed model, MiniMax Music 3 Turbo, and shows its
@@ -95,15 +106,9 @@ when this file gets updated relative to the version bump and the tag.
 ### Security
 - The agent PushNotification tool is opt-in and never requests notification
   authorization at call time. Only the Settings switch asks the user.
-- Plugin pages, Gen UI and remote providers are off until enabled. Plugin
-  pages run sandboxed, and seeded `cdnZip` plugins are refused on a digest
-  mismatch.
-
-### Known limits
-- Translations for the new strings are machine-written and not reviewed by
-  native speakers.
-- Hardware and manual app passes were not run for this program: real editor
-  ACP, real-provider smoke tests, live hang soak and voice call on hardware.
+- UI plugin pages are sandboxed and need a per-plugin opt-in. A `cdnZip`
+  install requires a SHA-256 digest in the marketplace entry and is refused,
+  with nothing extracted, on a mismatch.
 
 ## [0.8.0] - 2026-11-09
 
