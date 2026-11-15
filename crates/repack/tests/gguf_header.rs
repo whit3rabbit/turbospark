@@ -318,23 +318,25 @@ fn rejects_a_duplicate_tensor_name() {
 }
 
 /// A type whose block size this port has not verified must be named, not
-/// guessed at. TQ1_0 is a real ggml type with a real id; what is missing
-/// is only its byte size.
+/// guessed at. Q8_K is a real ggml type with a real id; what is missing
+/// is only its byte size, and deliberately so: it is ggml's activation
+/// accumulator format and never appears in a model file.
 ///
 /// THE EXEMPLAR HAS TO BE RE-PICKED whenever a type gains a
 /// `ggml_type_block` row, and the failure is this test rather than anything
 /// subtle: it read Q5_K until Phase S's header probes added that row. Pick a
-/// replacement that is real, unhandled, and unlikely to land soon. TQ1_0
-/// qualifies: it is a distinct ternary layout and no current candidate uses it.
+/// replacement that is real, unhandled, and unlikely to land soon. Q8_K
+/// qualifies (it read TQ1_0 until that type gained a row with the ext
+/// kernels). Q8_1 is the other intentional gap.
 #[test]
 fn names_an_unsupported_but_real_ggml_type() {
     let (bytes, _) = GgufBuilder::new()
-        .tensor("blk.0.attn_q.weight", 34, &[256], vec![0u8; 1])
+        .tensor("blk.0.attn_q.weight", 15, &[256], vec![0u8; 1])
         .build();
     let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).expect("header parses");
     match h.absolute_range("blk.0.attn_q.weight").unwrap() {
         Err(GgufHeaderError::UnsupportedType { name, id }) => {
-            assert_eq!((name.as_str(), id), ("TQ1_0", 34));
+            assert_eq!((name.as_str(), id), ("Q8_K", 15));
         }
         other => panic!("expected UnsupportedType, got {other:?}"),
     }

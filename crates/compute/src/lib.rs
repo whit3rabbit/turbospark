@@ -52,6 +52,10 @@ pub mod quant_2bit;
 pub mod quant_gguf;
 /// Quantization and dequantization primitives for GGUF IQ3_XXS, IQ4_XS, and IQ4_NL formats.
 pub mod quant_gguf_iq;
+/// Unsloth fork IQ1_XS, IQ1_XXS and IQ1_XXXS (ggml ids 64 to 66).
+pub mod quant_gguf_iq1_narrow;
+/// Generated grid tables for [`quant_gguf_iq1_narrow`].
+pub mod quant_gguf_iq1_narrow_tables;
 /// Generated codebooks for the sub-3-bit GGUF IQ formats.
 pub mod quant_gguf_iq_lowbit_tables;
 /// Look up tables for IQ3_XXS and IQ4_NL quantization formats.
@@ -129,14 +133,17 @@ pub use quant_2bit::{
     INT2_ELEMENTS_PER_BYTE, TERNARY_GROUP_SIZE,
 };
 pub use quant_gguf::{
-    dequant_q2_0_gemv, dequant_q2_k_gemv, dequant_q3_k_gemv, dequant_q4_k_gemv, dequant_q5_k_gemv,
-    dequant_q6_k_gemv, dequant_q8_0_gemv, dequantize_q2_0, dequantize_q2_k, dequantize_q3_k,
-    dequantize_q4_0, dequantize_q4_k, dequantize_q5_0, dequantize_q5_k, dequantize_q6_k,
-    dequantize_q8_0, pearson, q3_k_decode_scales, quantize_q2_k, quantize_q3_k, quantize_q4_k,
-    quantize_q6_k, quantize_q8_0, Q2_0_BLOCK_BYTES, Q2_0_BLOCK_ELEMS, Q2_K_BLOCK_BYTES,
-    Q2_K_BLOCK_ELEMS, Q2_K_SUB_ELEMS, Q3_K_BLOCK_BYTES, Q3_K_BLOCK_ELEMS, Q3_K_SUB_ELEMS,
-    Q4_0_BLOCK_BYTES, Q4_0_BLOCK_ELEMS, Q4_K_BLOCK_BYTES, Q4_K_BLOCK_ELEMS, Q4_K_SUB_ELEMS,
-    Q5_0_BLOCK_BYTES, Q5_0_BLOCK_ELEMS, Q5_K_BLOCK_BYTES, Q5_K_BLOCK_ELEMS, Q5_K_SUB_ELEMS,
+    dequant_nvfp4_gemv, dequant_q1_0_gemv, dequant_tq1_0_gemv, dequant_tq2_0_gemv, dequantize_nvfp4,
+    dequantize_tq1_0, dequantize_tq2_0, nvfp4_scale, NVFP4_BLOCK_BYTES, NVFP4_BLOCK_ELEMS,
+    TQ1_0_BLOCK_BYTES, TQ1_0_BLOCK_ELEMS, TQ2_0_BLOCK_BYTES, TQ2_0_BLOCK_ELEMS, dequant_q2_0_gemv, dequant_q2_k_gemv, dequant_q3_k_gemv, dequant_q4_k_gemv, dequant_q5_k_gemv,
+    dequant_q6_k_gemv, dequant_q8_0_gemv, dequantize_q1_0, dequantize_q2_0, dequantize_q2_k, dequantize_q3_k,
+    dequantize_q4_0, dequantize_q4_1, dequantize_q4_k, dequantize_q5_0, dequantize_q5_1,
+    dequantize_q5_k, dequantize_q6_k, dequantize_q8_0, pearson, q3_k_decode_scales, quantize_q2_k,
+    quantize_q3_k, quantize_q4_k, quantize_q6_k, quantize_q8_0, Q1_0_BLOCK_BYTES, Q1_0_BLOCK_ELEMS, Q2_0_BLOCK_BYTES, Q2_0_BLOCK_ELEMS,
+    Q2_K_BLOCK_BYTES, Q2_K_BLOCK_ELEMS, Q2_K_SUB_ELEMS, Q3_K_BLOCK_BYTES, Q3_K_BLOCK_ELEMS,
+    Q3_K_SUB_ELEMS, Q4_0_BLOCK_BYTES, Q4_0_BLOCK_ELEMS, Q4_1_BLOCK_BYTES, Q4_1_BLOCK_ELEMS,
+    Q4_K_BLOCK_BYTES, Q4_K_BLOCK_ELEMS, Q4_K_SUB_ELEMS, Q5_0_BLOCK_BYTES, Q5_0_BLOCK_ELEMS,
+    Q5_1_BLOCK_BYTES, Q5_1_BLOCK_ELEMS, Q5_K_BLOCK_BYTES, Q5_K_BLOCK_ELEMS, Q5_K_SUB_ELEMS,
     Q6_K_BLOCK_BYTES, Q6_K_BLOCK_ELEMS, Q6_K_SUB_ELEMS, Q8_0_BLOCK_BYTES, Q8_0_BLOCK_ELEMS,
 };
 pub use quant_gguf_iq::{
@@ -148,6 +155,11 @@ pub use quant_gguf_iq::{
     IQ2_XXS_BLOCK_BYTES, IQ3_S_BLOCK_BYTES, IQ3_XXS_BLOCK_BYTES, IQ3_XXS_BLOCK_ELEMS,
     IQ3_XXS_SUB_ELEMS, IQ4_NL_BLOCK_BYTES, IQ4_NL_BLOCK_ELEMS, IQ4_XS_BLOCK_BYTES,
     IQ4_XS_BLOCK_ELEMS, IQ4_XS_SUB_ELEMS, IQ_LOWBIT_BLOCK_ELEMS,
+};
+pub use quant_gguf_iq1_narrow::{
+    dequant_iq1_xs_gemv, dequant_iq1_xxs_gemv, dequant_iq1_xxxs_gemv, dequantize_iq1_xs,
+    dequantize_iq1_xxs, dequantize_iq1_xxxs, IQ1_NARROW_BLOCK_ELEMS, IQ1_XS_BLOCK_BYTES,
+    IQ1_XXS_BLOCK_BYTES, IQ1_XXXS_BLOCK_BYTES,
 };
 pub use quant_gguf_iq_lowbit_tables::{IQ1S_GRID, IQ2S_GRID, IQ2XS_GRID, IQ2XXS_GRID, IQ3S_GRID};
 pub use quant_gguf_iq_tables::{IQ3XXS_GRID, IQ4NL_VALUES};

@@ -8,6 +8,11 @@ mod image;
 mod libraries;
 mod models;
 mod ocr;
+#[cfg(target_os = "macos")]
+mod quantize;
+#[cfg(not(target_os = "macos"))]
+#[path = "quantize_unsupported.rs"]
+mod quantize;
 mod server;
 mod session;
 #[cfg(target_os = "macos")]
@@ -25,6 +30,7 @@ pub use image::*;
 pub use libraries::*;
 pub use models::*;
 pub use ocr::*;
+pub use quantize::*;
 pub use server::*;
 pub use session::*;
 pub use stt::*;

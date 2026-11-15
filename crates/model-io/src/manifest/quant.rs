@@ -68,10 +68,29 @@ const QUANT_2BIT_GROUP_SIZE: i64 = 128;
 /// is nothing any real file asks for; an install that carried Q3_K experts
 /// passes this gate and fails at the routed dispatch, by name -- the same
 /// weaker footing Q6_K and Q5_K stand on.
-pub const EXECUTABLE_GGUF_TYPES: [&str; 17] = [
+///
+/// The four legacy block types (`q4_0`, `q4_1`, `q5_0`, `q5_1`) join on the
+/// Q3_K footing and are listed in [`RESIDENT_ONLY_GGUF_TYPES`]: a resident
+/// GEMV and an embedding lookup, NO routed pair. They are in this list so a
+/// dense install, whose router/shared/routed slots mirror the attention slot,
+/// passes the manifest gate. An install whose ROUTED EXPERTS are one of them
+/// is a different thing and is refused by the catalog probe's per-role check
+/// and, failing that, by the routed dispatch by name.
+pub const EXECUTABLE_GGUF_TYPES: [&str; 28] = [
     "q8_0", "q4_k", "q5_k", "q6_k", "iq3_xxs", "iq4_nl", "iq4_xs", "mxfp4", "q2_k", "iq2_xxs",
-    "iq2_xs", "iq1_s", "iq3_s", "iq2_s", "iq1_m", "q3_k", "q2_0",
+    "iq2_xs", "iq1_s", "iq3_s", "iq2_s", "iq1_m", "q3_k", "q2_0", "q4_0", "q4_1", "q5_0", "q5_1",
+    "q1_0", "tq2_0", "tq1_0", "nvfp4", "iq1_xs", "iq1_xxs", "iq1_xxxs",
 ];
+
+/// The subset of [`EXECUTABLE_GGUF_TYPES`] that runs only as a RESIDENT tensor
+/// (an attention or FFN projection, an embedding, the head) and has no
+/// routed-expert kernel. A tool that judges a file from its header has to ask
+/// per role, which is why this list exists, and it is EMPTY now: every type in
+/// [`EXECUTABLE_GGUF_TYPES`] has both routed phases (`moe_gguf.metal` and
+/// `moe_gguf_ext.metal`; Q2_0's phase 2 serves a top_k of 10 or at most 8).
+/// A new block type that lands resident-first goes here until its routed pair
+/// does, and the catalog probe's per-role check starts working again.
+pub const RESIDENT_ONLY_GGUF_TYPES: [&str; 0] = [];
 
 /// Accepts a quant block iff every slot's shape has kernels behind it.
 ///

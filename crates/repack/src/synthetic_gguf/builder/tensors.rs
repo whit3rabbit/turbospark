@@ -83,6 +83,161 @@ impl GgufBuilder {
         self.tensor(name, 12, dims, data)
     }
 
+    /// Valid blocks for the types ggml added after the K and IQ families:
+    /// Q1_0 (41), TQ2_0 (35), TQ1_0 (34) and NVFP4 (40). Layouts are exact
+    /// (the decoders in `compute` are held to ggml's own `to_float`),
+    /// encoder quality is not the point: Q1_0 gets a mean-magnitude scale and
+    /// sign bits from `weights`, and the others get code bytes derived from
+    /// `weights` (every bit pattern is a legal code) under a small scale, so
+    /// decoded values stay inside what the Q8_0 oracle twin can hold.
+    #[allow(clippy::needless_range_loop)]
+    fn ext_bytes(name: &str, ggml_type: u32, dims: &[u64], weights: &[f32]) -> Vec<u8> {
+        use foundation::LogitValue as F16;
+        let (elems, bytes) = match ggml_type {
+            41 => (128usize, 18usize),
+            35 => (256, 66),
+            34 => (256, 54),
+            40 => (64, 36),
+            39 => (32, 17),
+            42 => (64, 18),
+            64 => (256, 46),
+            65 => (256, 42),
+            66 => (256, 38),
+            other => panic!("{name}: ggml type {other} is not an ext block type"),
+        };
+        assert!(
+            dims[0] as usize % elems == 0,
+            "{name}: rows of {} elements do not tile {elems}-element blocks of ggml type {ggml_type}",
+            dims[0]
+        );
+        let code_byte = |w: f32, salt: usize| -> u8 {
+            // A deterministic byte from the weight's bits, mixed with its slot.
+            let bits = w.to_bits();
+            (bits ^ (bits >> 11) ^ (salt as u32).wrapping_mul(0x9E37_79B1)) as u8
+        };
+        let mut out = Vec::with_capacity(weights.len() / elems * bytes);
+        for block in weights.chunks_exact(elems) {
+            let mean = block.iter().map(|w| w.abs()).sum::<f32>() / elems as f32;
+            let d = F16::from_f32(mean.max(0.01)).to_bits().to_le_bytes();
+            match ggml_type {
+                41 => {
+                    out.extend_from_slice(&d);
+                    for byte in block.chunks_exact(8) {
+                        out.push(
+                            byte.iter()
+                                .enumerate()
+                                .fold(0u8, |acc, (i, w)| acc | (u8::from(*w >= 0.0) << i)),
+                        );
+                    }
+                }
+                42 => {
+                    out.extend_from_slice(&d);
+                    for i in 0..16 {
+                        out.push(code_byte(block[i], i));
+                    }
+                }
+                64..=66 => {
+                    // Unsloth fork IQ1 types: every byte is a legal index or
+                    // scale code, and a small fixed `d` keeps the largest weight
+                    // (15 * 1.125 * d) well inside what a whole model holds.
+                    out.extend_from_slice(&F16::from_f32(0.02).to_bits().to_le_bytes());
+                    for i in 0..bytes - 2 {
+                        out.push(code_byte(block[i % elems], i));
+                    }
+                }
+                39 => {
+                    // Exponent 118..=121 is scale 2^-10 .. 2^-7: codebook values reach
+                    // 12, and a larger scale overflows FP16 through a whole model.
+                    out.push(118 + code_byte(block[0], 0) % 4);
+                    for i in 0..16 {
+                        out.push(code_byte(block[i], i + 3));
+                    }
+                }
+                35 | 34 => {
+                    for (i, w) in block.iter().take(bytes - 2).enumerate() {
+                        out.push(code_byte(*w, i));
+                    }
+                    out.extend_from_slice(&d);
+                }
+                _ => {
+                    // Scales 0x20..0x2F decode to 0.125 .. 0.47; bit 7 clear.
+                    for i in 0..4 {
+                        out.push(0x20 + code_byte(block[i], i) % 0x10);
+                    }
+                    for (i, w) in block.iter().take(32).enumerate() {
+                        out.push(code_byte(*w, i + 7));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Push a legacy 32-element-block tensor: ggml type 2 (Q4_0), 3 (Q4_1),
+    /// 6 (Q5_0) or 7 (Q5_1), encoded by the production quantizer
+    /// (`gguf_quantize`, whose output is held to ggml byte for byte). Rows
+    /// tile 32 elements, so the default fixture dimensions already fit.
+    pub fn legacy_tensor(self, name: &str, ggml_type: u32, dims: &[u64], seed: u8) -> Self {
+        use crate::gguf_quantize::Target;
+        if matches!(ggml_type, 34 | 35 | 39 | 40 | 41 | 42 | 64 | 65 | 66) {
+            let elements: u64 = dims.iter().product();
+            let data = Self::ext_bytes(name, ggml_type, dims, &Self::small_weights(elements, seed));
+            return self.tensor(name, ggml_type, dims, data);
+        }
+        let target = Target::from_ggml_id(ggml_type)
+            .filter(|t| matches!(t, Target::Q4_0 | Target::Q4_1 | Target::Q5_0 | Target::Q5_1))
+            .unwrap_or_else(|| panic!("{name}: ggml type {ggml_type} is not a legacy block type"));
+        let elements: u64 = dims.iter().product();
+        assert!(
+            dims[0] % 32 == 0,
+            "{name}: rows of {} elements do not tile 32-element legacy blocks",
+            dims[0]
+        );
+        let data = target.encode(&Self::small_weights(elements, seed));
+        self.tensor(name, ggml_type, dims, data)
+    }
+
+    /// The ORACLE twin of [`Self::legacy_tensor`]: the same weights through the
+    /// same legacy encoder, then decoded with `compute`'s ggml-verified
+    /// decoder and re-stored as Q8_0. A model built from these runs the
+    /// already-trusted Q8_0 kernels on (to within Q8_0's own rounding) exactly
+    /// the values the legacy kernels must reproduce, so the two installs'
+    /// logits can be compared without a CPU forward pass.
+    pub fn legacy_as_q8_0_tensor(self, name: &str, ggml_type: u32, dims: &[u64], seed: u8) -> Self {
+        use crate::gguf_quantize::Target;
+        if matches!(ggml_type, 34 | 35 | 39 | 40 | 41 | 42 | 64 | 65 | 66) {
+            let elements: u64 = dims.iter().product();
+            let n = elements as usize;
+            let bytes =
+                Self::ext_bytes(name, ggml_type, dims, &Self::small_weights(elements, seed));
+            let decoded = match ggml_type {
+                41 => compute::dequantize_q1_0(&bytes, n),
+                35 => compute::dequantize_tq2_0(&bytes, n),
+                39 => compute::dequantize_mxfp4(&bytes, n),
+                42 => compute::dequantize_q2_0(&bytes, n),
+                64 => compute::dequantize_iq1_xs(&bytes, n),
+                65 => compute::dequantize_iq1_xxs(&bytes, n),
+                66 => compute::dequantize_iq1_xxxs(&bytes, n),
+                34 => compute::dequantize_tq1_0(&bytes, n),
+                _ => compute::dequantize_nvfp4(&bytes, n),
+            };
+            return self.tensor(name, 8, dims, compute::quantize_q8_0(&decoded));
+        }
+        let target = Target::from_ggml_id(ggml_type)
+            .filter(|t| matches!(t, Target::Q4_0 | Target::Q4_1 | Target::Q5_0 | Target::Q5_1))
+            .unwrap_or_else(|| panic!("{name}: ggml type {ggml_type} is not a legacy block type"));
+        let elements: u64 = dims.iter().product();
+        let bytes = target.encode(&Self::small_weights(elements, seed));
+        let n = elements as usize;
+        let decoded = match target {
+            Target::Q4_0 => compute::dequantize_q4_0(&bytes, n),
+            Target::Q4_1 => compute::dequantize_q4_1(&bytes, n),
+            Target::Q5_0 => compute::dequantize_q5_0(&bytes, n),
+            _ => compute::dequantize_q5_1(&bytes, n),
+        };
+        self.tensor(name, 8, dims, compute::quantize_q8_0(&decoded))
+    }
+
     /// Push a Q6_K tensor (256-element superblocks, 210 bytes each). The real
     /// Qwen file uses this for exactly one tensor, `output.weight`; a Gemma
     /// fixture has no such tensor because it ties its embeddings, so a
