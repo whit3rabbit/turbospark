@@ -3,12 +3,12 @@ use tokenizers::Tokenizer;
 use super::config::TokenizerConfig;
 use super::resolve::{
     required_id, special_token_id, Resolved, DEEPSEEK_ASSISTANT_MARK, DEEPSEEK_BOS_MARK,
-    DEEPSEEK_EOS_MARK, DEEPSEEK_USER_MARK, GLM_ASSISTANT_MARK, GLM_ENDOFTEXT_MARK,
-    GLM_OBSERVATION_MARK, GLM_SOP_MARK, GLM_USER_MARK, HARMONY_BOS_MARK, HARMONY_CALL_MARK,
-    HARMONY_CHANNEL_MARK, HARMONY_END_MARK, HARMONY_MESSAGE_MARK, HARMONY_PAD_MARK,
-    HARMONY_RETURN_MARK, IM_END_MARK, IM_START_MARK, KIMI_BOS_MARK, KIMI_EOS_MARK,
-    KIMI_IM_ASSISTANT_MARK, KIMI_IM_END_MARK, KIMI_IM_MIDDLE_MARK, KIMI_IM_USER_MARK,
-    LLAMA3_BOS_MARK, LLAMA3_END_HEADER_MARK, LLAMA3_EOS_MARK, LLAMA3_EOT_MARK,
+    DEEPSEEK_EOS_MARK, DEEPSEEK_USER_MARK, GEMMA3_END_MARK, GEMMA3_START_MARK, GLM_ASSISTANT_MARK,
+    GLM_ENDOFTEXT_MARK, GLM_OBSERVATION_MARK, GLM_SOP_MARK, GLM_USER_MARK, HARMONY_BOS_MARK,
+    HARMONY_CALL_MARK, HARMONY_CHANNEL_MARK, HARMONY_END_MARK, HARMONY_MESSAGE_MARK,
+    HARMONY_PAD_MARK, HARMONY_RETURN_MARK, IM_END_MARK, IM_START_MARK, KIMI_BOS_MARK,
+    KIMI_EOS_MARK, KIMI_IM_ASSISTANT_MARK, KIMI_IM_END_MARK, KIMI_IM_MIDDLE_MARK,
+    KIMI_IM_USER_MARK, LLAMA3_BOS_MARK, LLAMA3_END_HEADER_MARK, LLAMA3_EOS_MARK, LLAMA3_EOT_MARK,
     LLAMA3_START_HEADER_MARK, MISTRAL_BOS_MARK, MISTRAL_EOS_MARK, MISTRAL_TOOL_CALLS_MARK,
     MUSE_BOS_MARK, MUSE_EOM_MARK, MUSE_EOS_MARK, MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_PAD_MARK,
     MUSE_START_MARK, SPARK_BOS_MARK, SPARK_BOT_MARK, SPARK_EOS_MARK, SPARK_USER_MARK,
@@ -60,6 +60,52 @@ pub(crate) fn resolve_gemma(
         think_start_id: None,
         think_end_id: None,
         stop_token_ids: [eos, eot, tool_response].into_iter().collect(),
+        vocab_size: 262_144,
+    })
+}
+
+/// Gemma 3 (`<start_of_turn>` / `<end_of_turn>`). Every id is looked up by
+/// name; the table has no tool or channel markup at all.
+///
+/// The stop set is `<eos>` and `<end_of_turn>`: the instruction-tuned model
+/// closes a reply with `<end_of_turn>` (the GGUF's `eot` id, 106), and
+/// `<eos>` is the base end. The checkpoint's template opens with
+/// `{{ bos_token }}`, so the encoder must not prepend a second BOS.
+pub(crate) fn resolve_gemma3(
+    tokenizer: &Tokenizer,
+    config: &TokenizerConfig,
+) -> Result<Resolved, TokenizerError> {
+    let bos_token = config
+        .bos_token
+        .content()
+        .ok_or_else(|| TokenizerError::MissingSpecialToken("<bos>".to_string()))?;
+    let bos = required_id(tokenizer, bos_token)?;
+    let eos_token = config
+        .eos_token
+        .content()
+        .ok_or_else(|| TokenizerError::MissingSpecialToken("<eos>".to_string()))?;
+    let eos = required_id(tokenizer, eos_token)?;
+    let pad = required_id(tokenizer, "<pad>")?;
+    let eot = required_id(tokenizer, GEMMA3_END_MARK)?;
+    let _start = required_id(tokenizer, GEMMA3_START_MARK)?;
+    Ok(Resolved {
+        bos_id: bos,
+        bos_prefix_id: None,
+        eos_id: eos,
+        pad_id: pad,
+        end_of_turn_id: eot,
+        tool_call_start_id: NO_SUCH_TOKEN_ID,
+        tool_call_end_id: NO_SUCH_TOKEN_ID,
+        tool_response_id: NO_SUCH_TOKEN_ID,
+        tool_response_end_id: NO_SUCH_TOKEN_ID,
+        tool_call_stop_id: NO_SUCH_TOKEN_ID,
+        channel_start_id: NO_SUCH_TOKEN_ID,
+        channel_end_id: NO_SUCH_TOKEN_ID,
+        message_start_id: NO_SUCH_TOKEN_ID,
+        message_end_id: NO_SUCH_TOKEN_ID,
+        think_start_id: None,
+        think_end_id: None,
+        stop_token_ids: [eos, eot].into_iter().collect(),
         vocab_size: 262_144,
     })
 }

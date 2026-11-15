@@ -1,6 +1,7 @@
 # Gemma 3 Phase 0 findings (`gemma3` / `gemma3_text`, GGUF `gemma3`)
 
-Fact-finding only; nothing here is implemented. Read 2026-11-14 off the real
+Phase 0 below was fact-finding only. The 1B GGUF slice is implemented; see
+[Implementation (1B GGUF)](#implementation-1b-gguf) at the end. Read 2026-11-14 off the real
 published files, headers and configs, no weights downloaded.
 
 ## Witnesses
@@ -67,3 +68,73 @@ embedding) and differs in ways that would decode fluently and wrongly:
 Open questions: whether the global-layer rope in the GGUF carries the scaling in
 `rope_freqs.weight` (the Llama 3.1 refusal precedent) for 4B+; the exact
 `query_pre_attn_scalar` for 12B and 27B.
+
+## Implementation (1B GGUF)
+
+Done 2026-11-14 for `ggml-org/gemma-3-1b-it-GGUF` rev `f9c28bcd`.
+
+### Decisions, each read off bytes or the HF source
+
+- **A new `ModelFamily::Gemma3`, on the Gemma 4 flow's dense arm.** Flow
+  selection keys on the family, and four Gemma 4 behaviours are wrong for
+  Gemma 3, so switches keyed on `Gemma4` would have meant labelling a Gemma 3
+  file `Gemma4`. The shared code is the dense arm of `families/gemma4/`; the
+  family-keyed switches are in `norm.rs` (centered norms, V norm) and
+  `state.rs` (layer scalar, the flow check). The tokenizer needed its own
+  dialect (`ChatDialect::Gemma3`): a Gemma 3 table has `<start_of_turn>` and
+  `<end_of_turn>`, no `<turn|>`, so the Gemma fallback failed to load it.
+- **Norms: `x * (1 + w)` on every norm, unbaked at install.** llama.cpp adds 1
+  to every `*norm.weight` (per-layer, q/k and the FINAL norm, unlike Muse
+  Glimmer). Measured: GGUF minus 1, rounded to BF16, equals the HF bf16 tensor
+  byte for byte on layers 0, 5, 25 and the final norm; the raw GGUF value
+  does not. The install stores the centered value and the flow uses the
+  centered kernels. The alternative (keep the baked value, plain kernel) was
+  rejected: BF16 near 1.0 has a quantum of 2^-8, which the centered kernel's
+  own comment names as destructive.
+- **No q/k row permutation.** Q8_0 `attn_q`/`attn_k` rows match the HF rows in
+  stored order (relative error 0.0067 and 0.0059) and not un-permuted (1.46).
+- **No V norm.** `modeling_gemma3.py` (transformers v4.50.0) defines `q_norm`
+  and `k_norm` only. The GGUF cannot show this (Gemma 4's V norm is also
+  weightless), and a decode cannot either: applying it by mutation still
+  decodes fluent text. This rests on the HF source.
+- **Constants the GGUF omits**, fixed in `gemma3_1b()` and guarded by
+  `gguf_config`: the 5:1 mask (`is_sliding = (i + 1) % 6 != 0`, HF source),
+  local rope base 10000 (`rope_local_base_freq`; the generic `freq_base`
+  handling would give the sliding layers 1e6), attention scale
+  `query_pre_attn_scalar^-0.5` = 0.0625, epsilon 1e-6.
+- **Refused by name:** any `rope.scaling.*` (4B and up, factor 8 linear on the
+  global layers), `key_length != 256` (the 27B's scale is `hidden / heads`),
+  a different `sliding_window_pattern`, MoE keys, an untied head, partial
+  rotary width, a different epsilon. The flow itself refuses a Gemma 3 arch
+  carrying any Gemma 4 feature.
+- **Q5_0.** The 1B Q4_K_M carries 117 Q5_0 tensors, which have no kernel; they
+  dequantize to BF16 at repack (the Qwen4Exp precedent). The install is
+  1.3 GiB against the 0.77 GiB file. The manifest slot probing one is written
+  as raw BF16.
+- **Chunked prefill.** The dense driver's FFN GEMMs exist only for affine
+  dtypes, so a Gemma 3 GGUF install reports `supports_chunked_prefill` false
+  and prefills token by token (`gemma3_chunked_refusal`); the driver refuses
+  by name if called anyway. A 1,026-token prompt prefills in about 22 s.
+
+### Real gate (isolated home, deleted afterwards)
+
+Q4_K_M and Q8_0 pulled with `--sidecar-repo mlx-community/gemma-3-1b-it-bf16`;
+`turbospark run ... --temperature 0` through the chat template. Both answer
+the capital of France, `17 * 23 = 391`, the first five primes and a French
+translation coherently and stop on `<end_of_turn>`; the two differ in wording
+on open-ended prompts, as quantizations do. Both recover a code word planted
+1,000 tokens earlier (past the 512 window). Decode 40-65 tok/s. Mutation
+checks: dropping the centered kernel gives `<unused62>` forever; applying the
+V norm gives different but fluent text. Outputs are in the shared notes
+folder, not the repo.
+
+### Not verified
+
+No logit, KL or perplexity comparison against llama.cpp or transformers; the
+reference copy (`mlx-community`, a conversion) is not proven equal to the gated
+original; no MLX/HF install path (it would need the `+1` bake or a centered
+read of the source, and a refusal is in place); no 270M, 4B, 12B or 27B (4B+
+needs linear rope scaling); the Q5_0 to BF16 transcode is lossy at BF16
+rounding and its effect was not measured; no vision, tool calls, steering,
+speculation or lab measurement; the long-prompt check is one needle, not a
+quality gate.

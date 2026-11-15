@@ -370,6 +370,15 @@ impl MfTokenizer {
                     .to_string(),
             )),
             ChatDialect::Llama3 => llama3::llama3_chat_template(messages),
+            // NO FALLBACK RENDERER, on the Harmony/Muse doctrine: Gemma 3's
+            // template folds a system message into the first user turn and
+            // renames the assistant role `model`, which a hand-rolled copy
+            // could get subtly wrong. A real install ships it.
+            ChatDialect::Gemma3 => Err(TokenizerError::UnsupportedForDialect(
+                "gemma3 has no fallback renderer; the install must carry its own \
+                 chat_template (tokenizer_config.json, chat_template.json or chat_template.jinja)"
+                    .to_string(),
+            )),
             // NO FALLBACK RENDERER FOR SPARK, on the Harmony/Muse doctrine:
             // its template forces the think frame OPEN at the generation
             // point (`<think>` or `</think>` per `enable_thinking`), frames a
@@ -448,6 +457,11 @@ impl MfTokenizer {
                  {MUSE_START_MARK}assistant{MUSE_MESSAGE_MARK}"
             ),
             ChatDialect::Llama3 => llama3::llama3_continuation_suffix(content),
+            // One user turn and the model-turn opener, read off the real
+            // template: `<start_of_turn>user\n{c}<end_of_turn>\n<start_of_turn>model\n`.
+            ChatDialect::Gemma3 => format!(
+                "<start_of_turn>user\n{content}<end_of_turn>\n<start_of_turn>model\n"
+            ),
             // Writable for Harmony's reason: a continuation is one user turn
             // plus the opening of an assistant one, no system preamble and no
             // tools involved. The think frame is opened here to match the

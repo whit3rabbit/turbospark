@@ -14,6 +14,21 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Gemma 3 text GGUFs (`gemma3`, the 1B witnessed) install and decode:
+  `turbospark-model pull --repo ggml-org/gemma-3-1b-it-GGUF --file
+  gemma-3-1b-it-Q4_K_M.gguf --sidecar-repo mlx-community/gemma-3-1b-it-bf16`
+  (the official `google/gemma-3-*` repos are gated, so the tokenizer sidecars
+  come from a public bf16 copy). A new `ModelFamily::Gemma3` runs the Gemma 4
+  flow's dense arm behind family-keyed switches: no V norm, no layer scalar,
+  centered norms, attention scale from `query_pre_attn_scalar`. The walk
+  removes llama.cpp's baked norm `+1` from every norm (final one included),
+  q/k rows are NOT permuted (read off bytes), and the Q4_K_M's 117 Q5_0
+  matrices are dequantized to BF16 at repack (no Q5_0 kernel). A new Gemma 3
+  tokenizer dialect resolves `<start_of_turn>`/`<end_of_turn>`. 4B and up
+  (linear rope scaling), the 27B and any other `key_length` are refused by
+  name; the MLX `gemma3_text` path is not implemented and is refused. Checked
+  against the public bf16 copy on bytes (norms exact after `-1`, q/k order,
+  embedding) and by a real Q4_K_M and Q8_0 decode; no logit parity yet.
 - Plain dense Qwen3 installs from safetensors: pre-quantized MLX conversions
   (`mlx-community/Qwen3-4B-4bit` and siblings) and, through quantize-on-install,
   the unquantized `Qwen/Qwen3-4B` (4-bit group 64 by default). The quantizer was

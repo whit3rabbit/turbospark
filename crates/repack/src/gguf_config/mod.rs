@@ -285,6 +285,8 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
 
     arch.full_attention_layer_mask = match family {
         ModelFamily::Gemma4 => gemma4_layer_mask(&m, num_layers_usize)?,
+        // Not in the file: the converter's constant 5 local : 1 global.
+        ModelFamily::Gemma3 => model_io::gemma3_layer_mask(num_layers_usize),
         // Spark-X2.5 publishes the SAME bool-array key with the SAME
         // convention (true = this layer slides), so the Gemma builder IS
         // this family's builder; only the rope divergence below is its own.
@@ -688,8 +690,110 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     if family == ModelFamily::Lfm3 {
         derive_lfm3_extensions(&m, &mut arch)?;
     }
+    if family == ModelFamily::Gemma3 {
+        derive_gemma3_extensions(&m, &mut arch)?;
+    }
 
     Ok(arch)
+}
+
+/// Gemma 3's constants, which the file does not carry, and the refusals that
+/// keep them honest (`docs/GEMMA3_PHASE0.md`).
+///
+/// What the GGUF omits and this port fixes: the 5-local : 1-global schedule
+/// (`gemma3_layer_mask`), the LOCAL rope base 10000 (the generic `freq_base`
+/// handling above would hand the sliding layers the GLOBAL 1e6), the RMS
+/// epsilon the flow hard-codes, and the attention scale
+/// (`query_pre_attn_scalar^-0.5`, not a GGUF key).
+///
+/// What it refuses, because each would decode fluently and wrong:
+/// - any `rope.scaling.*` type: 4B and up scale the global layers' rope
+///   linearly by 8, which no flow here implements;
+/// - a `key_length` other than 256: the scale is `head_dim^-0.5` only where
+///   `query_pre_attn_scalar == head_dim` (1B, 4B, 12B), and the 27B's is
+///   `hidden / heads` (168) at head_dim 128;
+/// - MoE keys, a bias against the one shape that was read off real bytes.
+fn derive_gemma3_extensions(m: &Meta<'_>, arch: &mut ArchConfig) -> Result<(), GgufConfigError> {
+    let bad = |suffix: &str, detail: String| GgufConfigError::BadValue {
+        key: m.key(suffix),
+        detail,
+    };
+    if m.opt_f64("attention.layer_norm_rms_epsilon")
+        .map(|v| v as f32)
+        != Some(1e-6f32)
+    {
+        return Err(bad(
+            "attention.layer_norm_rms_epsilon",
+            "Gemma 3 requires RMS epsilon 1e-6".into(),
+        ));
+    }
+    if let Some(kind) = m.opt("rope.scaling.type").and_then(GgufValue::as_str) {
+        if kind != "none" {
+            return Err(bad(
+                "rope.scaling.type",
+                format!(
+                    "{kind} rope scaling is Gemma 3 4B and up (factor 8 on the global layers), \
+                     which no decode flow here implements; only the unscaled 1B and 270M run"
+                ),
+            ));
+        }
+    }
+    if m.opt("rope.scaling.factor").is_some() {
+        return Err(bad(
+            "rope.scaling.factor",
+            "a rope scaling factor is not supported for Gemma 3".into(),
+        ));
+    }
+    if arch.full_head_dim != 256 || arch.head_dim != 256 {
+        return Err(bad(
+            "attention.key_length",
+            format!(
+                "Gemma 3 is admitted at head_dim 256 only (attention scale is \
+                 query_pre_attn_scalar^-0.5 = head_dim^-0.5 there), got {}",
+                arch.full_head_dim
+            ),
+        ));
+    }
+    if arch.num_experts != 0 {
+        return Err(bad("expert_count", "Gemma 3 is dense".into()));
+    }
+    if !arch.tie_word_embeddings {
+        return Err(bad(
+            "output.weight",
+            "Gemma 3 ties its head; an untied output.weight is not this architecture".into(),
+        ));
+    }
+    if let Some(dims) = m.opt_i64("rope.dimension_count")? {
+        if dims != arch.full_head_dim {
+            return Err(bad(
+                "rope.dimension_count",
+                format!(
+                    "{dims} rotary dims; Gemma 3 rotates the whole {}-wide head",
+                    arch.full_head_dim
+                ),
+            ));
+        }
+    }
+    if let Some(period) = m.opt_i64("attention.sliding_window_pattern")? {
+        if period != 6 {
+            return Err(bad(
+                "attention.sliding_window_pattern",
+                format!("period {period}; this port fixes Gemma 3's 5 local : 1 global (6)"),
+            ));
+        }
+    }
+    if m.opt_i64("attention.sliding_window")?.is_none() {
+        return Err(GgufConfigError::MissingKey {
+            key: m.key("attention.sliding_window"),
+        });
+    }
+    // The file's `freq_base` is the GLOBAL base (1e6). The sliding layers
+    // use `rope_local_base_freq`, which no GGUF key carries.
+    if m.opt_f64("rope.freq_base_swa").is_none() {
+        arch.rope_theta = 10_000.0;
+    }
+    arch.attention_scale = (arch.full_head_dim as f64).powf(-0.5);
+    Ok(())
 }
 
 /// `lfm3`'s fields beyond the generic derivation.

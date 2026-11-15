@@ -922,6 +922,8 @@ mod tests {
         ModelFamily::Lfm3,
         // Admitted by the flow's mapped arm, but no gate has run it yet.
         ModelFamily::UnlimitedOcr2,
+        // Refused deliberately: DENSE, no routed experts to map.
+        ModelFamily::Gemma3,
     ];
 
     /// A manifest dimension past its ceiling is refused at open,

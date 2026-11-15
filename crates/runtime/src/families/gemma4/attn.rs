@@ -87,7 +87,8 @@ impl RealForwardRunner {
             &layer_tensor(layer, "input_layernorm.weight"),
             hidden,
         )?;
-        gpu::encode_rms_norm_bf16w(
+        super::norm::encode_norm(
+            &arch,
             &mut self.context,
             pass,
             (&self.scratch.x, x_off),
@@ -158,7 +159,8 @@ impl RealForwardRunner {
             &layer_tensor(layer, "self_attn.k_norm.weight"),
             head_dim_l as usize,
         )?;
-        gpu::encode_rms_norm_bf16w_perhead(
+        super::norm::encode_norm_perhead(
+            &arch,
             &mut self.context,
             pass,
             q,
@@ -169,7 +171,8 @@ impl RealForwardRunner {
             RMS_EPS,
         )
         .map_err(gpu_err)?;
-        gpu::encode_rms_norm_bf16w_perhead(
+        super::norm::encode_norm_perhead(
+            &arch,
             &mut self.context,
             pass,
             (k_buf, k_off),
@@ -180,16 +183,20 @@ impl RealForwardRunner {
             RMS_EPS,
         )
         .map_err(gpu_err)?;
-        gpu::encode_rms_norm_no_scale_perhead(
-            &mut self.context,
-            pass,
-            (v_buf, v_off),
-            (v_buf, v_off),
-            num_kv_l,
-            head_dim_l,
-            RMS_EPS,
-        )
-        .map_err(gpu_err)?;
+        // Gemma 4 normalizes V with a weightless per-head RMS norm; Gemma 3
+        // has no V norm at all, so applying it would decode fluently and wrong.
+        if super::norm::applies_v_norm(&arch) {
+            gpu::encode_rms_norm_no_scale_perhead(
+                &mut self.context,
+                pass,
+                (v_buf, v_off),
+                (v_buf, v_off),
+                num_kv_l,
+                head_dim_l,
+                RMS_EPS,
+            )
+            .map_err(gpu_err)?;
+        }
 
         let (rotated_pairs, theta) = if is_full {
             (
@@ -336,6 +343,7 @@ impl RealForwardRunner {
             // router GEMV nor the pilot probe (which borrows a router)
             // has anything to read.
             encode_gemma4_layer_tail_dense(
+                &self.arch,
                 &mut self.context,
                 pass,
                 &self.scratch,
@@ -486,6 +494,7 @@ impl RealForwardRunner {
 /// the real dense carrier's four-norm inventory rather than derived.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_gemma4_layer_tail_dense(
+    arch: &model_io::ArchConfig,
     context: &mut gpu::MetalContext,
     pass: &gpu::PassEncoder,
     scratch: &crate::real_forward_types::DecodeScratch,
@@ -497,7 +506,8 @@ pub(crate) fn encode_gemma4_layer_tail_dense(
     pre_ffn: (&gpu::MetalBuffer, u64),
 ) -> Result<(), RealForwardError> {
     let gpu_err = RealForwardError::Gpu;
-    gpu::encode_rms_norm_bf16w(
+    super::norm::encode_norm(
+        arch,
         context,
         pass,
         o,
@@ -516,7 +526,8 @@ pub(crate) fn encode_gemma4_layer_tail_dense(
     )
     .map_err(gpu_err)?;
     let (dense_x_buf, dense_x_off) = dense_x;
-    gpu::encode_rms_norm_bf16w(
+    super::norm::encode_norm(
+        arch,
         context,
         pass,
         (&scratch.x, x_off),

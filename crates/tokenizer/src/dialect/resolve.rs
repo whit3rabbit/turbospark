@@ -15,6 +15,10 @@ pub(crate) const IM_END_MARK: &str = "<|im_end|>";
 /// Gemma's end-of-turn marker, used as the POSITIVE test for that dialect
 /// now that it is no longer the fallback for everything unrecognized.
 pub(crate) const GEMMA_TURN_MARK: &str = "<turn|>";
+/// Gemma 3's turn frame. Both are SPECIAL tokens in its table; neither
+/// exists in Gemma 4's, which uses `<|turn>` / `<turn|>`.
+pub(crate) const GEMMA3_START_MARK: &str = "<start_of_turn>";
+pub(crate) const GEMMA3_END_MARK: &str = "<end_of_turn>";
 /// Mistral / Mixtral frame turns as PLAIN TEXT (`[INST] ... [/INST]`), so
 /// there is no instruction marker in the special-token table to key on and
 /// the only reliable witness is the sentence pair.
@@ -287,6 +291,15 @@ pub(crate) fn detect_dialect(tokenizer: &Tokenizer) -> ChatDialect {
         // still has to come before Gemma's fallback and before Mistral, whose
         // `<s>`/`</s>` probe this table does not carry at all.
         ChatDialect::Llama3
+    } else if special_token_id(tokenizer, GEMMA3_START_MARK).is_some()
+        && special_token_id(tokenizer, GEMMA3_END_MARK).is_some()
+        && special_token_id(tokenizer, GEMMA_TURN_MARK).is_none()
+    {
+        // Gemma 3, probed on its own frame pair and BEFORE the Gemma
+        // fallback it would otherwise land in (and fail to load through,
+        // since `resolve_gemma` wants Gemma 4's `<turn|>`). The `<turn|>`
+        // exclusion keeps a table that carries both on Gemma 4's contract.
+        ChatDialect::Gemma3
     } else if special_token_id(tokenizer, IM_END_MARK).is_some() {
         ChatDialect::ChatMl
     } else if special_token_id(tokenizer, GEMMA_TURN_MARK).is_none()
@@ -301,7 +314,7 @@ pub(crate) fn detect_dialect(tokenizer: &Tokenizer) -> ChatDialect {
 
 use super::resolvers::{
     resolve_chatml, resolve_deepseek, resolve_deepseek_v2, resolve_flint, resolve_gemma,
-    resolve_glm, resolve_harmony, resolve_kimi, resolve_llama3, resolve_mistral,
+    resolve_gemma3, resolve_glm, resolve_harmony, resolve_kimi, resolve_llama3, resolve_mistral,
     resolve_muse_glimmer, resolve_spark,
 };
 
@@ -312,6 +325,7 @@ pub(crate) fn resolve_dialect(
 ) -> Result<Resolved, TokenizerError> {
     match dialect {
         ChatDialect::Gemma => resolve_gemma(tokenizer, config),
+        ChatDialect::Gemma3 => resolve_gemma3(tokenizer, config),
         ChatDialect::ChatMl => resolve_chatml(tokenizer, config),
         ChatDialect::Deepseek => resolve_deepseek(tokenizer),
         ChatDialect::DeepseekV2 => resolve_deepseek_v2(tokenizer),

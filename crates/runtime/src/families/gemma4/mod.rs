@@ -4,6 +4,7 @@ mod attn;
 mod attn_batch;
 mod moe;
 mod moe_batch;
+mod norm;
 mod prefill;
 mod shared_expert;
 mod state;
@@ -267,7 +268,8 @@ impl RealForwardRunner {
                 "language_model.model.norm.weight",
                 hidden,
             )?;
-            gpu::encode_rms_norm_bf16w(
+            norm::encode_norm(
+                &arch,
                 &mut self.context,
                 &pass,
                 (&self.scratch.x, 0),

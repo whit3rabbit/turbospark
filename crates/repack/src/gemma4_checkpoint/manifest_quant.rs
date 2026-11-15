@@ -163,7 +163,12 @@ pub fn manifest_quant_for(
         // attention probe measures `self_attn.q_proj`, the shared-expert
         // probe measures the dense FFN, and the router/routed probes take
         // the default.
-        ModelFamily::MuseGlimmer | ModelFamily::Spark25 | ModelFamily::Qwen3Vl => (
+        // `gemma3` (GGUF only this pass) has a plain attention layer 0 and a
+        // dense FFN, the same probe shape.
+        ModelFamily::MuseGlimmer
+        | ModelFamily::Spark25
+        | ModelFamily::Qwen3Vl
+        | ModelFamily::Gemma3 => (
             format!("{l0}.self_attn.q_proj"),
             format!("{l0}.mlp.gate"),
             format!("{l0}.mlp.gate_proj"),

@@ -44,7 +44,20 @@ pub fn gguf_manifest_quant(header: &GgufHeader, plan: &Plan<'_>) -> serde_json::
     }
     let mut routed_types: Vec<&str> = routed_counts.keys().copied().collect();
     routed_types.sort_by_key(|t| std::cmp::Reverse(routed_counts[t]));
+    // Gemma 3's Q5_0 matrices are dequantized to BF16 at repack
+    // (`transcode::gemma3_tensor_is_transcoded`), so a slot probing one
+    // describes a raw BF16 matrix, which the resident BF16 GEMV serves.
+    let gemma3 = header.architecture() == Some("gemma3");
     let slot = |ggml: &str| {
+        if gemma3 && ggml == "Q5_0" {
+            return serde_json::json!({
+                "weightBits": 16,
+                "scheme": "raw",
+                "scaleType": "none",
+                "biasType": "none",
+                "groupSize": 0,
+            });
+        }
         serde_json::json!({
             "weightBits": 0,
             "scheme": "gguf",

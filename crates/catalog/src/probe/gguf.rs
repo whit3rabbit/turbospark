@@ -142,6 +142,8 @@ fn type_shares(header: &repack::GgufHeader, family: model_io::ModelFamily) -> Ve
         std::collections::BTreeMap::new();
     for (name, info) in &header.tensors {
         let source_transcoded = TRANSCODED_GGML_TYPES.contains(&info.ggml_type)
+            || (family == model_io::ModelFamily::Gemma3
+                && repack::gemma3_tensor_is_transcoded(info.ggml_type))
             || (family == model_io::ModelFamily::Qwen4Exp
                 && matches!(
                     repack::map_gguf_name(name, family),

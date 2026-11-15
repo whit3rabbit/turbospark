@@ -62,6 +62,11 @@ pub enum ArchSupport {
 /// GGUF `general.architecture` -> family, for the architectures that run.
 const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     ("gemma4", ModelFamily::Gemma4),
+    // The text-only Gemma 3 line, 1B first. 4B and up carry linear rope
+    // scaling and are refused at `gguf_config`, by name. No HF row: the
+    // `gemma3_text` safetensors path (which needs the `+1` norm bake) is not
+    // implemented, so the HF registry keeps refusing it.
+    ("gemma3", ModelFamily::Gemma3),
     // Promoted out of the planned table by ROADMAP Phase M2, and PARTIALLY:
     // this string covers dense Llama 2/3.x and Mistral as well as the Mixtral
     // MoEs, and only the MoE half has a decode flow. The dense half is

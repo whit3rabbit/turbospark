@@ -97,6 +97,14 @@ fn read_generation_config(path: &Path) -> Option<GenerationConfig> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatDialect {
     Gemma,
+    /// Gemma 3's frame: `<start_of_turn>user\ncontent<end_of_turn>\n`, with
+    /// the assistant turn named `model`. **NOT [`ChatDialect::Gemma`]**: that
+    /// is Gemma 4's `<|turn>`/`<turn|>` table, and a Gemma 3 table has none of
+    /// those tokens, so the old fallback failed to load it. Tested by
+    /// `<start_of_turn>` and `<end_of_turn>` together. No tool or channel
+    /// markup exists in the table (every such id is [`NO_SUCH_TOKEN_ID`]) and
+    /// there is no fallback renderer: the checkpoint ships its template.
+    Gemma3,
     ChatMl,
     Deepseek,
     /// Mistral / Mixtral: `[INST] user [/INST] assistant</s>`, framed in
@@ -342,6 +350,8 @@ impl ChatDialect {
             // `NO_SUCH_TOKEN_ID` and the decoder's arm is a content-only
             // passthrough.
             ChatDialect::Llama3 => ToolCallSupport::Prompted,
+            // Gemma 3 has no tool markup in its table; same answer as Llama-3.
+            ChatDialect::Gemma3 => ToolCallSupport::Prompted,
             // **NOT AN OVERSIGHT, AND NOT THE SAME AS THE TWO ABOVE.** This dialect DOES frame tool calls -- `<atem:function_calls>` on a
             // `to=<tool>` message -- and this engine has NO PARSER for that
             // block (`structured_decoder/muse.rs`'s `parse_header`). The

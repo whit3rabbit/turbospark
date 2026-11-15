@@ -1,0 +1,22 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "gemma3",
+  "kind": "text",
+  "title": "Gemma 3 text (1B): dense, 5 local : 1 global attention, sandwich norms, centered RMSNorm, no softcap; runs the Gemma 4 flow's dense arm",
+  "flow": "gemma4",
+  "installs": [],
+  "recommended": [],
+  "sweeps": [],
+  "findings": [],
+  "open_questions": [
+    "no lab measurement yet: the first install was a correctness gate (Q4_K_M against Q8_0 decode), not a benchmark",
+    "chunked prefill and the GQA-shared decode kernel were never measured on this family; it keeps the Gemma 4 flow's defaults"
+  ],
+  "traps": [
+    "the norms are CENTERED (1 + w) here and plain on Gemma 4: the install stores the unbaked value and the flow picks the centered kernels by family",
+    "no V norm and no layer scalar, unlike Gemma 4: both are family-keyed switches in families/gemma4/"
+  ],
+  "docs": [
+    "docs/GEMMA3_PHASE0.md"
+  ]
+}

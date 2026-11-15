@@ -124,7 +124,8 @@ impl RealForwardRunner {
         )?;
         for t in 0..m {
             let row = (t * hidden * 2) as u64;
-            gpu::encode_rms_norm_bf16w(
+            super::norm::encode_norm(
+                &arch,
                 &mut self.context,
                 pass,
                 (&self.scratch.x, row),
@@ -217,7 +218,8 @@ impl RealForwardRunner {
             let (v_buf, v_off) = self.kv.v_slot(layer, position);
             let v_row = (v_buf, v_off as u64);
 
-            gpu::encode_rms_norm_bf16w_perhead(
+            super::norm::encode_norm_perhead(
+                &arch,
                 &mut self.context,
                 pass,
                 (&b_q, q_row),
@@ -228,7 +230,8 @@ impl RealForwardRunner {
                 RMS_EPS,
             )
             .map_err(gpu_err)?;
-            gpu::encode_rms_norm_bf16w_perhead(
+            super::norm::encode_norm_perhead(
+                &arch,
                 &mut self.context,
                 pass,
                 k_row,
@@ -239,16 +242,20 @@ impl RealForwardRunner {
                 RMS_EPS,
             )
             .map_err(gpu_err)?;
-            gpu::encode_rms_norm_no_scale_perhead(
-                &mut self.context,
-                pass,
-                v_row,
-                v_row,
-                num_kv_l,
-                head_dim_l,
-                RMS_EPS,
-            )
-            .map_err(gpu_err)?;
+            // Gemma 4 normalizes V with a weightless per-head RMS norm; Gemma 3
+            // has no V norm at all, so applying it would decode fluently and wrong.
+            if super::norm::applies_v_norm(&arch) {
+                gpu::encode_rms_norm_no_scale_perhead(
+                    &mut self.context,
+                    pass,
+                    v_row,
+                    v_row,
+                    num_kv_l,
+                    head_dim_l,
+                    RMS_EPS,
+                )
+                .map_err(gpu_err)?;
+            }
             gpu::encode_rope_proportional_neox(
                 &mut self.context,
                 pass,
@@ -336,7 +343,8 @@ impl RealForwardRunner {
             // the per-token form's structure with `x_off` varying.
             for t in 0..m {
                 let x_off = (t * hidden * 2) as u64;
-                gpu::encode_rms_norm_bf16w(
+                super::norm::encode_norm(
+                    &arch,
                     &mut self.context,
                     pass,
                     (&b_o, x_off),
@@ -354,7 +362,8 @@ impl RealForwardRunner {
                     hidden as u32,
                 )
                 .map_err(gpu_err)?;
-                gpu::encode_rms_norm_bf16w(
+                super::norm::encode_norm(
+                    &arch,
                     &mut self.context,
                     pass,
                     (&self.scratch.x, x_off),

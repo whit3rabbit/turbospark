@@ -320,11 +320,34 @@ pub enum ModelFamily {
     /// (`runtime::coreml::unlimited_ocr`), so the config parser refuses it.
     /// Facts: `docs/UNLIMITED_OCR2_PHASE0.md`.
     UnlimitedOcr2,
+    /// Google Gemma 3 text (`gemma3` GGUF architecture, HF `gemma3_text`,
+    /// and the text tower of `gemma3`). Witnessed on the 1B instruct model.
+    ///
+    /// **A SEPARATE VARIANT THAT RUNS THE GEMMA 4 FLOW** (the
+    /// [`ModelFamily::Qwen3Dense`]-on-`Llama` precedent): flow selection keys
+    /// on the family, and labelling a Gemma 3 file `Gemma4` would make every
+    /// Gemma 4 behaviour apply silently. The Gemma 4 flow's dense arm is
+    /// exact for Gemma 3 only with these family-keyed switches, each read off
+    /// real bytes or the config (`docs/GEMMA3_PHASE0.md`):
+    ///
+    /// 1. NO V NORM. Gemma 4 applies a weightless per-head RMS norm to V.
+    /// 2. NO `layer_scalar` (it is 1.0). Gemma 4 scales each layer's output.
+    /// 3. NO `router_scaled` (dense only, no router at all).
+    /// 4. `attention_scale` is `query_pre_attn_scalar^-0.5`, not 1.0.
+    /// 5. The norm convention needs no install-time change for a GGUF: Gemma
+    ///    3's RMSNorm applies `1 + w` and llama.cpp bakes the `+1` into the
+    ///    file, so the plain `x * w` kernel is already right. (An MLX or HF
+    ///    install carries the unbaked `w` and would need the `+1`; that
+    ///    path is not implemented.)
+    ///
+    /// 4B and up (linear rope scaling factor 8 on the global layers) are
+    /// refused, not decoded wrongly.
+    Gemma3,
 }
 
 impl ModelFamily {
-    /// Exhaustive list of all 18 model families.
-    pub const ALL: [ModelFamily; 18] = [
+    /// Exhaustive list of all 19 model families.
+    pub const ALL: [ModelFamily; 19] = [
         ModelFamily::Gemma4,
         ModelFamily::QwenGdnMoe,
         ModelFamily::DeepseekV4Flash,
@@ -343,6 +366,7 @@ impl ModelFamily {
         ModelFamily::Flint,
         ModelFamily::Lfm3,
         ModelFamily::UnlimitedOcr2,
+        ModelFamily::Gemma3,
     ];
 
     /// Returns static string identifier for the model family.
@@ -399,6 +423,9 @@ impl ModelFamily {
             // `general.architecture` string, which agree ("lfm3").
             ModelFamily::Lfm3 => "lfm3",
             ModelFamily::UnlimitedOcr2 => "unlimited_ocr2",
+            // New, and it matches the GGUF `general.architecture` string
+            // ("gemma3"); the HF `model_type` is `gemma3_text` / `gemma3`.
+            ModelFamily::Gemma3 => "gemma3",
         }
     }
 
@@ -423,6 +450,7 @@ impl ModelFamily {
             "flint" => Some(ModelFamily::Flint),
             "lfm3" => Some(ModelFamily::Lfm3),
             "unlimited_ocr2" => Some(ModelFamily::UnlimitedOcr2),
+            "gemma3" => Some(ModelFamily::Gemma3),
             _ => None,
         }
     }
@@ -454,9 +482,10 @@ mod tests {
                 ModelFamily::Flint => 15,
                 ModelFamily::Lfm3 => 16,
                 ModelFamily::UnlimitedOcr2 => 17,
+                ModelFamily::Gemma3 => 18,
             };
             assert_eq!(idx, expected_idx);
         }
-        assert_eq!(ModelFamily::ALL.len(), 18);
+        assert_eq!(ModelFamily::ALL.len(), 19);
     }
 }

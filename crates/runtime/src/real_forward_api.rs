@@ -71,7 +71,7 @@ impl RealForwardRunner {
     /// in would make one env var change what an install is reported to
     /// support.
     pub fn supports_chunked_prefill(&self) -> bool {
-        self.real.is_some()
+        (self.real.is_some() && self.gemma3_chunked_refusal().is_none())
             // The llama MoE driver has no image injection, so a turn carrying
             // an image map takes the sequential path instead; the dense
             // driver mirrors the embed blit and the deepstack adds.

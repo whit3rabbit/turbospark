@@ -66,6 +66,15 @@ Checkpoint intake and `.gturbo` writing.
   both layouts, so `canonicalize_for_family` must not run the qwen35 prefix
   map on it (it would rename a bare `lm_head.` and the later
   `canonicalize_qwen2_header` refuses the file as mixed).
+- Gemma 3 GGUF (`gemma3`, 1B only) is installed by VALUE conventions, read off
+  real bytes (`tests/gemma3_gguf_network.rs`): llama.cpp adds 1 to EVERY
+  `*norm.weight` (per-layer, q/k and the final norm), so the walk subtracts it
+  (exact against a bf16 copy) and the flow uses the centered kernels; q/k rows
+  are NOT permuted. The 5:1 mask, the local rope base 10000 and the attention
+  scale are not in the file and are fixed in `gemma3_1b()` and guarded in
+  `gguf_config` (rope scaling, `key_length != 256`, epsilon and MoE keys are
+  refused). Q5_0 matrices dequantize to BF16 (`gemma3_tensor_is_transcoded`,
+  manifest slot written raw BF16). MLX `gemma3_text` is refused, not mapped.
 - Plain dense `qwen3` has a safetensors door (`parse_qwen3_config`,
   `write_qwen3_dense_install_streamed`, the `qwen3` row of `SUPPORTED_HF`) for
   pre-quantized MLX repos (`mlx-community/Qwen3-4B-4bit`) and, through
