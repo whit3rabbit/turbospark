@@ -7,26 +7,49 @@ struct GenerationStallNotice: Equatable {
     var silenceSeconds: Int
 }
 
+/// Which local generate call a monitor watches (OC-14). Each source owns its
+/// own monitor instance, so one source's arm, end or stall never touches
+/// another's state.
+enum StallSource: Hashable, CaseIterable {
+    /// The main chat turn (`session.generate` in `executeGenerationTurn`).
+    case chat
+    /// The summarizer call of `/compact`, auto-compaction and the todo
+    /// boundary compaction, on the local session.
+    case compaction
+}
+
 extension AppModel {
-    func stallWatchdogBegin() {
-        let watchdog = stallWatchdog ?? makeStallWatchdog()
-        stallWatchdog = watchdog
-        watchdog.begin()
+    func stallWatchdogBegin(_ source: StallSource = .chat) {
+        let watchdog = stallWatchdogs[source] ?? makeStallWatchdog(source)
+        stallWatchdogs[source] = watchdog
+        watchdog.begin(pollInterval: stallPollInterval)
     }
 
-    func stallWatchdogNoteActivity() {
-        stallWatchdog?.noteActivity()
+    func stallWatchdogNoteActivity(_ source: StallSource = .chat) {
+        stallWatchdogs[source]?.noteActivity()
     }
 
-    func stallWatchdogEnd() {
-        stallWatchdog?.end()
-        generationStallNotice = nil
+    func stallWatchdogEnd(_ source: StallSource = .chat) {
+        // `end()` fires `onRecovered` itself when this source's notice is up.
+        // The notice is NOT cleared unconditionally: it may belong to
+        // another source.
+        stallWatchdogs[source]?.end()
     }
 
-    private func makeStallWatchdog() -> GenerationStallWatchdog {
+    /// Whether the call a source watches is still the live one, so a notice
+    /// is never raised for a call that has already ended.
+    private func stallSourceIsActive(_ source: StallSource) -> Bool {
+        switch source {
+        case .chat: return generating
+        case .compaction: return isCompacting
+        }
+    }
+
+    private func makeStallWatchdog(_ source: StallSource) -> GenerationStallWatchdog {
         GenerationStallWatchdog(
+            clock: stallClock,
             onStall: { [weak self] seconds in
-                guard let self, self.generating else { return }
+                guard let self, self.stallSourceIsActive(source) else { return }
                 let whole = Int(seconds.rounded())
                 self.generationStallNotice = GenerationStallNotice(silenceSeconds: whole)
                 // The panel is a persistent state, but it appears unprompted,
@@ -40,7 +63,9 @@ extension AppModel {
     /// Keep Waiting: hide the panel and watch for another window.
     func keepWaitingAfterStall() {
         generationStallNotice = nil
-        stallWatchdog?.keepWaiting()
+        for watchdog in stallWatchdogs.values where watchdog.isShowingStall {
+            watchdog.keepWaiting()
+        }
     }
 
     /// Stop Turn: the ordinary cooperative cancel. It ends the turn here and

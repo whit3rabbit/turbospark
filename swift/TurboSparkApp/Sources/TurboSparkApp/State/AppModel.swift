@@ -1040,8 +1040,13 @@ public final class AppModel: ObservableObject {
     /// window and the user has not answered (OC-14). Cleared by the next
     /// stream event, Keep Waiting, Stop, or the end of the call.
     @Published var generationStallNotice: GenerationStallNotice?
-    /// Lazily built by `AppModel+StallWatchdog`; armed per generate call.
-    var stallWatchdog: GenerationStallWatchdog?
+    /// Lazily built by `AppModel+StallWatchdog`, one per `StallSource`; each
+    /// is armed per generate call.
+    var stallWatchdogs: [StallSource: GenerationStallWatchdog] = [:]
+    /// Test seams: the monotonic clock the monitors read, and their poll
+    /// interval (nil: the test calls `tick()` itself, nothing polls).
+    var stallClock: () -> TimeInterval = GenerationStallWatchdog.defaultClock
+    var stallPollInterval: TimeInterval? = 1
     /// Test seam: replaces the live relaunch so a test never quits or
     /// spawns anything. Nil means the real one.
     var guardedRelaunchOverride: GuardedRelaunch?

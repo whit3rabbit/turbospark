@@ -98,6 +98,8 @@ final class GenerationStallWatchdog {
     private var pollTask: Task<Void, Never>?
     /// True between a report and the next event, Keep Waiting or end.
     private(set) var isShowingStall = false
+    /// True between `begin` and `end`. Read by the arming-balance tests.
+    var isArmed: Bool { monitor.isArmed }
 
     /// Seconds since boot, not counting sleep.
     nonisolated static let defaultClock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }

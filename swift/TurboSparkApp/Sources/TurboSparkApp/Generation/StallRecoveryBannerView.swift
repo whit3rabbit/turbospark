@@ -12,10 +12,36 @@ import SwiftUI
 /// appears (`AppModel.makeStallWatchdog`).
 @MainActor
 struct StallRecoveryBannerView: View {
-    @ObservedObject var model: AppModel
+    let notice: GenerationStallNotice?
+    let onKeepWaiting: () -> Void
+    let onStop: () -> Void
+    let onRestart: () -> Void
+
+    /// The chat strip: reads the notice and routes the three actions through
+    /// the app model.
+    init(model: AppModel) {
+        notice = model.generationStallNotice
+        onKeepWaiting = { model.keepWaitingAfterStall() }
+        onStop = { model.stopStalledTurn() }
+        onRestart = { model.restartAfterStall() }
+    }
+
+    /// Any other local engine call (Humanize owns its session and its own
+    /// monitor), same strip, same copy.
+    init(
+        notice: GenerationStallNotice?,
+        onKeepWaiting: @escaping () -> Void,
+        onStop: @escaping () -> Void,
+        onRestart: @escaping () -> Void
+    ) {
+        self.notice = notice
+        self.onKeepWaiting = onKeepWaiting
+        self.onStop = onStop
+        self.onRestart = onRestart
+    }
 
     var body: some View {
-        if let notice = model.generationStallNotice {
+        if let notice {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .top, spacing: 10) {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -66,7 +92,7 @@ struct StallRecoveryBannerView: View {
     @ViewBuilder
     private var actions: some View {
         Button {
-            model.keepWaitingAfterStall()
+            onKeepWaiting()
         } label: {
             Text("Keep Waiting", bundle: .module).themedFont(.small, weight: .semibold)
         }
@@ -74,7 +100,7 @@ struct StallRecoveryBannerView: View {
         .help(Text("Hide this notice. It returns if there is still no progress.", bundle: .module))
 
         Button {
-            model.stopStalledTurn()
+            onStop()
         } label: {
             Text("Stop Turn", bundle: .module).themedFont(.small)
         }
@@ -82,7 +108,7 @@ struct StallRecoveryBannerView: View {
         .help(Text("End this turn and keep the partial reply", bundle: .module))
 
         Button {
-            model.restartAfterStall()
+            onRestart()
         } label: {
             Text("Restart TurboSpark", bundle: .module).themedFont(.small)
         }

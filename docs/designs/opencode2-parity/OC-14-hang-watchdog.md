@@ -9,7 +9,7 @@ and
 [guarded relaunch](https://github.com/anomalyco/opencode/blob/dev/packages/desktop/src/main/lifecycle/index.ts).
 
 * Author: whit3rabbit
-* Status: Partial (stall monitor, panel and guarded relaunch implemented; main-thread heartbeat and a live hang soak deferred)
+* Status: Partial (stall monitor armed on chat, compaction and Humanize, panel and guarded relaunch implemented; main-thread heartbeat and a live hang soak deferred)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -203,8 +203,8 @@ reduction, not the draft text above where they differ.
   to that case; a long-prefill soak on a real model is still owed (below).
 * **Armed scope** (review M2): armed only inside one local engine generate
   call, from just before `session.generate` is iterated until the call
-  ends. Tool execution, approvals, remote turns, compaction, Humanize and
-  audio are not watched.
+  ends. Tool execution, approvals, remote turns and audio are not watched.
+  (Compaction and Humanize were added later, see the Follow-up below.)
 * **Clock**: `ProcessInfo.systemUptime`, which does not advance while the Mac
   sleeps, so a lid close mid-turn is not a stall.
 * **Watchdog thread**: replaced by a main-actor `Task` ticking once a
@@ -276,6 +276,48 @@ reduction, not the draft text above where they differ.
   exits or hangs. Mutation-checked: activity not resetting the window
   (prefill as silence), no attempt cap, terminate before flush.
 
+### Follow-up: compaction, Humanize and remote (2026-11-14)
+
+* **Armed now**: the local summarizer stream of compaction (`/compact`,
+  auto-compaction and todo-boundary compaction all go through
+  `performCompaction`, so one site covers them) and each Humanize part
+  stream. Same fixed 90 s window, every event (prefill included) stamps the
+  monitor, same recovery banner, same guarded relaunch and its attempt cap.
+* **Compaction**: the local branch calls `consumeCompactionStream`, which
+  begins the `.compaction` monitor before iterating and ends it in a `defer`
+  (finish, cancel, error). The remote branch is not armed. A compaction that
+  is refused before its stream exists (no model, vanished chat, nothing to
+  compact) never arms.
+* **Humanize**: `HumanizeController` owns its own `GenerationStallWatchdog`
+  and `stallNotice` (it owns its own session, and a rewrite can run beside a
+  chat turn). Armed around each part's `engine.humanize` loop only, so model
+  opening, token counting and planning are not watched. `finishOperation()`
+  also ends it as a backstop. `HumanizeView` shows the same
+  `StallRecoveryBannerView` (now takes a notice and three actions; the chat
+  strip's `init(model:)` is unchanged). Stop is the controller's `cancel()`,
+  Restart is `AppModel.restartAfterStall()`.
+* **Independence**: `AppModel.stallWatchdogs` is keyed by `StallSource`
+  (`.chat`, `.compaction`), one monitor each. `end` on one source no longer
+  clears the shared notice unconditionally (only that monitor's own
+  recovery does), and Keep Waiting re-arms only monitors that are showing.
+  The Humanize monitor is a separate instance on the controller.
+* **Remote turns: left alone, on purpose.** `RemoteStreamRunner` already
+  enforces `RemoteLimits.firstByteTimeout` (60 s, cancels, shows
+  "no response from the provider") and `stallTimeout` (90 s idle between
+  stream events, cancels, shows the existing error). A second timer would
+  duplicate it, and the engine-restart banner is wrong for a network stall.
+* **Long prefill**: nothing new. Prefill events stamp the monitor on both
+  new paths, as on the chat path. The UNVERIFIED single-silent-chunk caveat
+  above applies to them equally.
+* **Known gap**: Stop on the banner during a todo-boundary compaction that
+  runs while neither `generating` nor `submitting` is set reaches no task
+  (`cancel()` is gated by `canCancel`). Keep Waiting and Restart still work.
+  Not verified whether that state is reachable.
+* Tests: `StallWatchdogEntryPointTests` (arm and disarm on finish, cancel
+  and error; stall surfaces the notice; prefill is activity; never-started
+  paths leave nothing armed; independent sources and an independent Humanize
+  monitor). Injected clock, no polling.
+
 ### Deferred or not done
 
 * **Main-thread heartbeat** (review M3): not built. No consumer, threshold,
@@ -284,12 +326,10 @@ reduction, not the draft text above where they differ.
   support artifact. Reopen with a concrete consumer.
 * **Diagnostics export**: still owned by whichever change builds a log sink;
   nothing here writes a log or a report.
-* **Real hang evidence**: verified with injected stalls and clocks only. No
+* **Real hang evidence** (also for compaction and Humanize): verified with injected stalls and clocks only. No
   Metal hang, long-prefill soak, or live relaunch was exercised: those need a
   real model on real hardware and an actual app bundle. Owed before
   claiming the 90 s window clears long prefills.
-* **Compaction and Humanize generate loops** consume the same event type but
-  are not armed.
 * A debug hang-injection flag (Verification Plan) was not added: it would
   not reproduce a blocked serial queue, which is the real failure.
 * Excluded by OC-90, unchanged: no crash reporter, no telemetry, nothing
