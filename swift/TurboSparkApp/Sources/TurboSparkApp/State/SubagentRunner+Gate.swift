@@ -60,6 +60,20 @@ extension SubagentRunner {
             return errorObservation(
                 "Tool '\(deferredName)' is disallowed for agent profile '\(agent.name)'.")
         }
+        // **THE MESSAGING TOOLS ARE ONE-WAY, AND THE PROFILE MUST OPT IN.**
+        // A child never continues another run, and `respond_to_coordinator`
+        // is refused unless the definition lists it by name: the catalog
+        // already withholds it, and this is the check a hallucinated call
+        // meets (`isToolAllowed` alone says yes when `tools` is absent).
+        if isCoordinatorOnlyTool(call.name) {
+            return errorObservation(
+                "Tool '\(call.name)' is only available to the coordinator, not to a subagent.")
+        }
+        if isRespondToCoordinatorTool(call.name), !offersCoordinatorChannel(agent) {
+            return errorObservation(
+                "Tool '\(call.name)' is not enabled for agent profile '\(agent.name)': list it "
+                    + "in the profile's tools to allow it.")
+        }
         // **THE NESTING BOUND IS ENFORCED WHERE THE CALL IS SEEN, NOT WHERE
         // THE RUN STARTS** (state#47). `run`'s own guard catches a run that
         // was started too deep; this catches the call that would start it,
@@ -159,6 +173,13 @@ extension SubagentRunner {
         }
         if let ctx = postVerdict.additionalContext, !ctx.isEmpty {
             output += "\n\n<hook_context>\n\(ctx)\n</hook_context>"
+        }
+        // OC-10: a subagent's edit gets the same post-edit seam as the main
+        // loop's (`applyPostToolUse`).
+        if let note = await PostEditSeam.note(
+            call: call, isError: toolResult.isError, project: project, chatID: chatID)
+        {
+            output += "\n\n" + note
         }
 
         let media = AppToolMediaHistoryAdapter.project(

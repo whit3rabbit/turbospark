@@ -251,9 +251,11 @@ public enum ToolRiskClassifier {
              "ctxinspect", "ctx_inspect", "listmcpresources", "list_mcp_resources", "list_resources",
              "readmcpresource", "read_mcp_resource", "read_resource", "tasklist", "task_list", "taskget",
              "task_get", "taskoutput", "task_output", "sleep", "delay", "askuserquestion", "ask_user_question",
-             "ask_question", "question", "enterplanmode", "enter_plan_mode", "plan_mode", "plan",
+             "ask_question", "question", "gen_ui_render", "enterplanmode", "enter_plan_mode", "plan_mode", "plan",
              "exitplanmode", "exit_plan_mode", "reportfindings", "report_findings", "findings",
-             "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "senduserfile", "send_user_file":
+             "proposegoal", "propose_goal", "sendfeedback", "send_feedback", "senduserfile", "send_user_file",
+             "respond_to_coordinator", "respondtocoordinator",
+             "project_diagnostics", "document_symbols", "workspace_symbols":
             // Check if read_file or snip is accessing a sensitive credential path
             // Every spelling the executor accepts is checked, not just
             // `path`: `AbsolutePath`/`TargetFile` reads reached the executor
@@ -316,6 +318,19 @@ public enum ToolRiskClassifier {
 
         // 4. Web & Network Risk
         if category == .web {
+            // image_fetch writes a downloaded file, so its destination gets
+            // the same sensitive-path test a file write does. The executor
+            // enforces it again; this only makes the card honest and keeps
+            // an auto-approve from covering it.
+            if name.lowercased() == "image_fetch",
+               let path = arguments["path"] ?? arguments["file_path"],
+               isSensitivePath(path)
+            {
+                return ToolRiskAssessment(
+                    level: .high, category: category,
+                    reasons: ["Saving a downloaded image to sensitive or system file: '\(path)'"],
+                    hardGated: true)
+            }
             let urlString = ToolApprovalPreviewSummary.httpURL(arguments) ?? ""
             if !urlString.isEmpty {
                 guard let url = URL(string: urlString), let host = url.host, !host.isEmpty else {

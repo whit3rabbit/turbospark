@@ -37,6 +37,11 @@ final class LoadPathSourceScanTests: XCTestCase {
             2,
             "Names the rows a favorite saves (the ones the server serves now) and merges the scanned rows "
                 + "into favorite resolution, which attaches only rows that resolve as available"),
+        "App/FirstRun/FirstRunHost.swift": (
+            3,
+            "Whether any model is installed decides the first-run first-model step and the existing-user skip. "
+                + "loadableModels would drop a model on a drive that is away, and that user is not new: it must "
+                + "not be nagged to download one. It loads nothing and offers nothing to load"),
         "Installation/CatalogSheet.swift": (
             2, "The Installed Models list of the catalog sheet: Delete only, it has no Load"),
         "Installation/ModelDetailPaneView.swift": (

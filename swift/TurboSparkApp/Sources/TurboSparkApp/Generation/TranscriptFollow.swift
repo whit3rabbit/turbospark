@@ -53,12 +53,53 @@ enum TranscriptFollowRules {
 @MainActor
 final class TranscriptFollower: ObservableObject {
     @Published private(set) var isPinned = true
+    /// Last viewport top reported by the probe. Not published: it only feeds
+    /// the OC-04 scroll memory.
+    private(set) var lastOffset: CGFloat?
+    /// Set by the probe: scrolls the viewport to an offset without animation
+    /// and returns the offset it actually reached (nil: no scroll view).
+    var applyOffset: ((CGFloat) -> CGFloat?)?
+    /// True once the initial position (restored or latest) is settled. A
+    /// transcript torn down before that has nothing worth remembering.
+    private(set) var isSettled = false
+    private var restoreCancelled = false
 
     func pin() {
         if !isPinned { isPinned = true }
     }
 
-    func viewportMoved(distanceFromBottom: CGFloat, userDriven: Bool) {
+    func unpin() {
+        if isPinned { isPinned = false }
+    }
+
+    /// Ends restoring: a reader's own scroll or a reveal request wins.
+    func cancelRestore() { restoreCancelled = true }
+
+    func markSettled() { isSettled = true }
+
+    /// The position to remember for this transcript, nil if it never settled.
+    var memorySnapshot: (pinned: Bool, offset: CGFloat?)? {
+        isSettled ? (isPinned, lastOffset) : nil
+    }
+
+    /// Restores a remembered offset with no animation (Reduce Motion safe).
+    /// Lazy content may not be tall enough on the first pass, so it retries a
+    /// few times, and gives up the moment the reader scrolls or a reveal wins.
+    func restore(offset target: CGFloat, attempts: Int = 40) async {
+        unpin()
+        for _ in 0..<attempts {
+            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(25))
+            if restoreCancelled { break }
+            guard let reached = applyOffset?(target) else { continue }
+            if abs(reached - target) < 1 { break }
+        }
+        markSettled()
+    }
+
+    func viewportMoved(distanceFromBottom: CGFloat, userDriven: Bool, offset: CGFloat? = nil) {
+        if let offset { lastOffset = offset }
+        if userDriven { restoreCancelled = true }
         let next = TranscriptFollowRules.isPinned(
             current: isPinned, distanceFromBottom: distanceFromBottom, userDriven: userDriven)
         if next != isPinned { isPinned = next }
@@ -104,6 +145,7 @@ final class TranscriptScrollProbeView: NSView {
         detach()
         guard window != nil, let scrollView = enclosingScrollView else { return }
         observedScrollView = scrollView
+        follower.applyOffset = { [weak self] target in self?.scroll(toOffset: target) }
         let clip = scrollView.contentView
         clip.postsBoundsChangedNotifications = true
         boundsToken = NotificationCenter.default.addObserver(
@@ -111,6 +153,18 @@ final class TranscriptScrollProbeView: NSView {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.report() }
         }
+    }
+
+    /// Jumps the viewport to `target`, clamped to what the content allows.
+    /// Returns the offset reached.
+    private func scroll(toOffset target: CGFloat) -> CGFloat? {
+        guard let scrollView = observedScrollView, let document = scrollView.documentView else { return nil }
+        let clip = scrollView.contentView
+        let y = TranscriptFollowRules.reachableOffset(
+            target: target, contentHeight: document.bounds.height, viewportHeight: clip.bounds.height)
+        clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
+        scrollView.reflectScrolledClipView(clip)
+        return y
     }
 
     private func detach() {
@@ -125,7 +179,8 @@ final class TranscriptScrollProbeView: NSView {
             distanceFromBottom: TranscriptFollowRules.distanceFromBottom(
                 contentHeight: document.bounds.height,
                 visibleMaxY: scrollView.documentVisibleRect.maxY),
-            userDriven: TranscriptFollowRules.isUserScroll(event: NSApp.currentEvent))
+            userDriven: TranscriptFollowRules.isUserScroll(event: NSApp.currentEvent),
+            offset: scrollView.documentVisibleRect.minY)
     }
 }
 

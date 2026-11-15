@@ -1,14 +1,49 @@
-# Swift chat search (the Cmd+K "Search Chats" dialog)
+# Swift chat search and the Cmd+K command center
 
 What keyword search over previous chats is, what it searches, and the two
 rules it must not break. The engine is `Generation/ChatSearch.swift` (pure,
-no SwiftUI); the UI is `Generation/ChatSearchOverlayView.swift` plus
-`ChatSearchResultRowView.swift`.
+no SwiftUI); the UI is `Generation/CommandPaletteView.swift` (the command center,
+which replaced the chat-only overlay) plus `ChatSearchResultRowView.swift`.
+The palette's own engine is `Generation/PaletteProviders.swift`.
 
-## The surface
+## The command center (ZP-16)
+
+Cmd+K opens one palette over commands, chats and project files, with four
+scope tabs (All, Commands, Chats, Files). The FIRST character of the field
+is a prefix that overrides the tab: `>` commands, `#` chats, `@` files; a
+`#` or `@` anywhere else is literal, and deleting the prefix returns to the
+tab. Tab and Shift+Tab switch scope. Cmd+Shift+P ("Run Command...") posts
+`.showChatSearch` with a `>` seed in `userInfo`; a post with no payload
+(Cmd+K, `/resume`) keeps the old toggle behavior.
+
+- All stacks capped sections (6 rows each) in a fixed order: Chats,
+  Commands, Files. Chats come first so the first row is still the top chat
+  and Enter opens it as before. With an empty field this is the home view:
+  recent chats, commands, then the last 5 recent searches; no files.
+- Commands lists the built-in slash commands, plugin commands
+  (`<plugin>:<command>`, enabled and invocable only, from the composer's
+  own resolved skill list), the navigation sections (with their chords),
+  every Settings pane and Check for Updates (only while the menu item is
+  enabled). Enter RUNS a command only from a fixed list of argument-free,
+  non-destructive local commands (`PaletteActionRouter.runImmediately`) and
+  `/stats`, `/help`, `/export`; every other command is inserted into the
+  composer draft (`/clear`, `/reset`, `/delete` included) so the normal
+  submit-time gates apply.
+- Files lists `ProjectFileIndex` (2000 entries, depth 8, so deeper files
+  are invisible here, as they are to `@`). It reads the CACHED listing on
+  open and refreshes in the background; with no project the scope is empty.
+  Enter appends the `@path` mention token to the draft (switching to Chat
+  first) and focuses the composer; it never opens the file.
+- History is per workspace (project id, or `global`), 20 entries, most
+  recent first, stored in `command_palette_history.json` through
+  `AppJSONStore`. It records the raw query when a result is chosen, is read
+  once on first open, stays on this machine, and can be cleared from the
+  home view.
+
+## The surface (chat search)
 
 `Cmd+K` toggles a centered modal over any section (RootView mounts it; the
-Chat menu's "Search Chats..." item posts `.showChatSearch`, the same key
+Chat menu's "Command Center..." item posts `.showChatSearch`, the same key
 opens and closes it). The dialog lists results in plain recency order: chat
 title, a snippet of the first matching text with the matched tokens in the
 accent color, a match count, and a relative date bucket (Today / Past week /

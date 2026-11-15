@@ -9,6 +9,9 @@ private final class ForegroundAppDelegate: NSObject, NSApplicationDelegate {
         // to what `NSFontManager` reports, so a bundled family that is not yet
         // registered would be filtered out of its own menu.
         AppFontRegistrar.registerBundledFonts()
+        // OC-01. Loaded before the chat archive so a quarantined override file
+        // latches its read error ahead of the first storage-issue toast.
+        _ = KeybindOverrideStore.shared
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
         Self.adoptMaximizedDefaultFrameOnce()
@@ -79,6 +82,9 @@ private final class ForegroundAppDelegate: NSObject, NSApplicationDelegate {
             // purged at the next launch's vault open). No-op when the vault
             // has no live session.
             ManagedAssetStore.shared.purgeDecryptedCache()
+            // Last: everything above can still hang or crash, and a marker
+            // that survives such a quit is the signal this exists to give.
+            CrashRecoveryStore.shared.endSession()
         }
     }
 }
@@ -106,6 +112,7 @@ struct TurboSparkApp: App {
     // The MenuBarExtra's icon and insertion depend on model state this struct
     // does not otherwise observe; the bridge republishes only those two bits.
     @StateObject private var menuBarState = MenuBarStateBridge()
+    @State private var splashPresented = true
 
     init() {
         AppFontRegistrar.registerBundledFonts()
@@ -153,6 +160,14 @@ struct TurboSparkApp: App {
                     ProfileUnlockView(coordinator: vaultCoordinator)
                 }
             }
+                // OC-07: the launch splash, inside the theme so it draws in
+                // the user's palette. Once per process: a later vault relock
+                // does not bring it back.
+                .overlay {
+                    SplashOverlayView(
+                        isPresented: $splashPresented,
+                        stateReady: vaultCoordinator.state != .unlocking)
+                }
                 .appThemed()
                 .preferredColorScheme(appearanceManager.appearance.preferredColorScheme)
                 .environment(\.locale, currentLanguage.locale)
@@ -196,6 +211,15 @@ struct TurboSparkApp: App {
                     } label: {
                         Text("Keyboard Shortcuts...", bundle: .module)
                     }
+                    // OC-07: replays the first-run flow for any user. No
+                    // chord: it is a rare action, and the catalog needs a
+                    // default chord per command (see the OC-07 record).
+                    Button {
+                        model.showMainWindow()
+                        NotificationCenter.default.post(name: .showWelcomeTour, object: nil)
+                    } label: {
+                        Text("Show Welcome Tour", bundle: .module)
+                    }
                 }
                 Divider()
                 Button {
@@ -211,6 +235,7 @@ struct TurboSparkApp: App {
                 TurboSparkModelCommands(
                     model: model,
                     appearanceManager: appearanceManager,
+                    keybinds: KeybindOverrideStore.shared,
                     languageRawValue: $languageRawValue)
             }
         }
@@ -305,6 +330,8 @@ final class MenuBarStateBridge: ObservableObject {
 struct TurboSparkModelCommands: Commands {
     @ObservedObject var model: AppModel
     @ObservedObject var appearanceManager: AppearanceManager
+    // OC-01. Observed here so a rebinding reaches the menu items live.
+    @ObservedObject var keybinds: KeybindOverrideStore
     @Binding var languageRawValue: String
 
     var body: some Commands {
@@ -328,13 +355,35 @@ struct TurboSparkModelCommands: Commands {
                     } label: {
                         Text(LocalizedStringKey(section.title), bundle: .module)
                     }
-                    .keyboardShortcut(KeyEquivalent(section.shortcutKey), modifiers: .command)
+                    .keyboardChord(.navigation(section), keybinds)
                 }
                 Menu {
                     AudioDestinationMenu(model: model)
                 } label: {
                     Text("Audio tasks", bundle: .module)
                 }
+
+                Divider()
+
+                // OC-05. Cmd+[ and Cmd+] are the Previous/Next Chat chords, so
+                // history takes Cmd+Option+Left/Right (Safari's tab chords,
+                // unused here). Disabled at either end of the stack and
+                // while a turn runs, as the chat cycle is.
+                Button {
+                    model.goBackInHistory()
+                } label: {
+                    Text("Go Back", bundle: .module)
+                }
+                .keyboardChord(.goBack, keybinds)
+                .disabled(!model.canGoBackInHistory)
+
+                Button {
+                    model.goForwardInHistory()
+                } label: {
+                    Text("Go Forward", bundle: .module)
+                }
+                .keyboardChord(.goForward, keybinds)
+                .disabled(!model.canGoForwardInHistory)
 
                 Divider()
 
@@ -363,7 +412,7 @@ struct TurboSparkModelCommands: Commands {
                 } label: {
                     Text("Toggle Sidebar", bundle: .module)
                 }
-                .keyboardShortcut("s", modifiers: [.command, .control])
+                .keyboardChord(.toggleSidebar, keybinds)
                 .disabled(!model.activeSection.hasSidebarPanel)
 
                 Button {
@@ -371,7 +420,7 @@ struct TurboSparkModelCommands: Commands {
                 } label: {
                     Text("Toggle Inspector", bundle: .module)
                 }
-                .keyboardShortcut("i", modifiers: [.command, .shift])
+                .keyboardChord(.toggleInspector, keybinds)
 
                 // The Keyboard Shortcuts pane's own entry point, matching
                 // unsloth studio's Cmd+/ for its shortcuts tab.
@@ -380,7 +429,7 @@ struct TurboSparkModelCommands: Commands {
                 } label: {
                     Text("Keyboard Shortcuts...", bundle: .module)
                 }
-                .keyboardShortcut("/", modifiers: .command)
+                .keyboardChord(.keyboardShortcuts, keybinds)
 
                 Divider()
 
@@ -402,21 +451,21 @@ struct TurboSparkModelCommands: Commands {
                 } label: {
                     Text("Make Text Bigger", bundle: .module)
                 }
-                .keyboardShortcut("+", modifiers: .command)
+                .keyboardChord(.textBigger, keybinds)
 
                 Button {
                     appearanceManager.makeTextSmaller()
                 } label: {
                     Text("Make Text Smaller", bundle: .module)
                 }
-                .keyboardShortcut("-", modifiers: .command)
+                .keyboardChord(.textSmaller, keybinds)
 
                 Button {
                     appearanceManager.resetTextSize()
                 } label: {
                     Text("Default Text Size", bundle: .module)
                 }
-                .keyboardShortcut("0", modifiers: .command)
+                .keyboardChord(.textDefault, keybinds)
             }
 
 
@@ -426,7 +475,7 @@ struct TurboSparkModelCommands: Commands {
                 } label: {
                     Text("New Chat", bundle: .module)
                 }
-                .keyboardShortcut("n", modifiers: .command)
+                .keyboardChord(.newChat, keybinds)
                 .disabled(model.isRunning)
 
                 Button {
@@ -434,7 +483,7 @@ struct TurboSparkModelCommands: Commands {
                 } label: {
                     Text("New Temporary Chat", bundle: .module)
                 }
-                .keyboardShortcut("n", modifiers: [.command, .shift])
+                .keyboardChord(.newTemporaryChat, keybinds)
                 .disabled(model.isRunning)
 
                 Button {
@@ -442,7 +491,7 @@ struct TurboSparkModelCommands: Commands {
                 } label: {
                     Text("Previous Chat", bundle: .module)
                 }
-                .keyboardShortcut("[", modifiers: .command)
+                .keyboardChord(.previousChat, keybinds)
                 .disabled(model.isRunning || model.orderedChats.isEmpty)
 
                 Button {
@@ -450,25 +499,137 @@ struct TurboSparkModelCommands: Commands {
                 } label: {
                     Text("Next Chat", bundle: .module)
                 }
-                .keyboardShortcut("]", modifiers: .command)
+                .keyboardChord(.nextChat, keybinds)
                 .disabled(model.isRunning || model.orderedChats.isEmpty)
+
+                // ZP-21. Ctrl+Tab, as in a browser: Cmd+W stays the window's
+                // close, and Cmd+[ / Cmd+] stay the chat cycle above.
+                Button {
+                    model.cycleWorkspaceTab(delta: 1)
+                } label: {
+                    Text("Next Workspace Tab", bundle: .module)
+                }
+                .keyboardChord(.nextWorkspaceTab, keybinds)
+                .disabled(!model.workspaceTabsActive || model.interactionMode != .projects)
+
+                Button {
+                    model.cycleWorkspaceTab(delta: -1)
+                } label: {
+                    Text("Previous Workspace Tab", bundle: .module)
+                }
+                .keyboardChord(.previousWorkspaceTab, keybinds)
+                .disabled(!model.workspaceTabsActive || model.interactionMode != .projects)
+
+                Divider()
+
+                // OC-04: session tabs. Close Tab is Cmd+Shift+W because Cmd+W
+                // stays the window's close.
+                Button {
+                    model.openNewSessionTab()
+                } label: {
+                    Text("New Tab", bundle: .module)
+                }
+                .keyboardChord(.newSessionTab, keybinds)
+
+                Button {
+                    if let id = model.sessionTabs.selectedChatID {
+                        model.closeSessionTab(chatID: id)
+                    }
+                } label: {
+                    Text("Close Tab", bundle: .module)
+                }
+                .keyboardChord(.closeSessionTab, keybinds)
+                .disabled(!model.sessionTabsActive || model.sessionTabs.selectedChatID == nil)
+
+                Button {
+                    model.reopenClosedSessionTab()
+                } label: {
+                    Text("Reopen Closed Tab", bundle: .module)
+                }
+                .keyboardChord(.reopenSessionTab, keybinds)
+                .disabled(model.sessionTabs.closed.isEmpty)
+
+                Menu {
+                    ForEach(model.sessionTabs.closed.reversed(), id: \.chatID) { entry in
+                        Button {
+                            model.reopenClosedSessionTab(chatID: entry.chatID)
+                        } label: {
+                            Text(verbatim: model.sessionTabTitle(for: entry.chatID))
+                        }
+                    }
+                } label: {
+                    Text("Recently Closed", bundle: .module)
+                }
+                .disabled(model.sessionTabs.closed.isEmpty)
+
+                Button {
+                    model.cycleSessionTab(delta: 1)
+                } label: {
+                    Text("Next Session Tab", bundle: .module)
+                }
+                .keyboardChord(.nextSessionTab, keybinds)
+                .disabled(!model.sessionTabsActive)
+
+                Button {
+                    model.cycleSessionTab(delta: -1)
+                } label: {
+                    Text("Previous Session Tab", bundle: .module)
+                }
+                .keyboardChord(.previousSessionTab, keybinds)
+                .disabled(!model.sessionTabsActive)
+
+                // OC-08. Posts the request the Call button posts, so the
+                // conversation pane's access gate is the one start path.
+                Button {
+                    NotificationCenter.default.post(name: .toggleVoiceCall, object: nil)
+                } label: {
+                    model.voiceCallActive
+                        ? Text("End Voice Call", bundle: .module)
+                        : Text("Start Voice Call", bundle: .module)
+                }
+                .keyboardChord(.toggleVoiceCall, keybinds)
+                .disabled(
+                    !model.voiceCallActive
+                        && !(model.voiceCallEnabled && model.activeSection.runsChatGenerationCommand))
+
+                // OC-08 push to talk: only meaningful in a live call with
+                // auto-send on. The panel owns the switch.
+                Button {
+                    NotificationCenter.default.post(name: .toggleVoiceTalk, object: nil)
+                } label: {
+                    Text("Toggle Talk", bundle: .module)
+                }
+                .keyboardChord(.toggleVoiceTalk, keybinds)
+                .disabled(!(model.voiceCallActive && model.voiceCallAutoSendEnabled))
 
                 Divider()
 
                 Button {
                     NotificationCenter.default.post(name: .showChatSearch, object: nil)
                 } label: {
-                    Text("Search Chats...", bundle: .module)
+                    Text("Command Center...", bundle: .module)
                 }
-                .keyboardShortcut("k", modifiers: .command)
-                .accessibilityHint(Text("Searches previous chats by keyword", bundle: .module))
+                .keyboardChord(.commandCenter, keybinds)
+                .accessibilityHint(Text("Searches commands, chats, and files", bundle: .module))
+
+                // Cmd+Shift+P: the same palette, opened on the commands
+                // scope (the seed is the visible `>` prefix).
+                Button {
+                    NotificationCenter.default.post(
+                        name: .showChatSearch, object: nil,
+                        userInfo: [PaletteQuery.seedUserInfoKey: ">"])
+                } label: {
+                    Text("Run Command...", bundle: .module)
+                }
+                .keyboardChord(.runCommand, keybinds)
+                .accessibilityHint(Text("Searches commands, chats, and files", bundle: .module))
 
                 Button {
                     NotificationCenter.default.post(name: .focusPrompt, object: nil)
                 } label: {
                     Text("Focus Prompt", bundle: .module)
                 }
-                .keyboardShortcut("l", modifiers: .command)
+                .keyboardChord(.focusPrompt, keybinds)
                 .accessibilityHint(Text("Moves keyboard focus to the prompt editor", bundle: .module))
 
                 Button {
@@ -476,7 +637,7 @@ struct TurboSparkModelCommands: Commands {
                 } label: {
                     Text("Clear Chat History", bundle: .module)
                 }
-                .keyboardShortcut("k", modifiers: [.command, .shift])
+                .keyboardChord(.clearHistory, keybinds)
                 .disabled(model.isRunning || !model.hasOutputTranscript)
 
                 Divider()
@@ -486,7 +647,7 @@ struct TurboSparkModelCommands: Commands {
                 } label: {
                     Text("Previous Turn", bundle: .module)
                 }
-                .keyboardShortcut(.upArrow, modifiers: [.control, .command])
+                .keyboardChord(.previousTurn, keybinds)
                 .disabled(model.isRunning)
 
                 Button {
@@ -494,7 +655,7 @@ struct TurboSparkModelCommands: Commands {
                 } label: {
                     Text("Next Turn", bundle: .module)
                 }
-                .keyboardShortcut(.downArrow, modifiers: [.control, .command])
+                .keyboardChord(.nextTurn, keybinds)
                 .disabled(model.isRunning)
             }
 
@@ -510,6 +671,9 @@ struct TurboSparkModelCommands: Commands {
                         ? Text("Queue Message", bundle: .module)
                         : Text("Generate Response", bundle: .module)
                 }
+                // Fixed, not `keyboardChord` (OC-01): Images, Audio and Humanize
+                // bind this chord on their own run buttons, so a rebound menu
+                // item would leave those buttons on the old chord.
                 .keyboardShortcut(.return, modifiers: .command)
                 // Chat-scoped: Images, Audio and Humanize own this chord with
                 // their own run buttons, and an enabled menu item takes it
@@ -521,6 +685,7 @@ struct TurboSparkModelCommands: Commands {
                 } label: {
                     Text("Cancel Generation", bundle: .module)
                 }
+                // Fixed for the same reason as Generate Response above.
                 .keyboardShortcut(".", modifiers: .command)
                 // Audio and Humanize bind Cmd+. to their own stop buttons;
                 // Stop All below remains the global stop.
@@ -531,7 +696,7 @@ struct TurboSparkModelCommands: Commands {
                 } label: {
                     Text("Stop All", bundle: .module)
                 }
-                .keyboardShortcut(".", modifiers: [.command, .shift])
+                .keyboardChord(.stopAll, keybinds)
                 .disabled(!model.canCancel && !model.hasActiveModelDownload
                     && model.backgroundAgentRuns.values.allSatisfy { $0.status != "running" }
                     && model.backgroundShellSummaries.isEmpty)

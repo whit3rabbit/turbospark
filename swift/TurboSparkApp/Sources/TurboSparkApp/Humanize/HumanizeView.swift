@@ -38,6 +38,11 @@ struct HumanizeView: View {
             HStack(alignment: .top, spacing: 16) {
                 VStack(spacing: 12) {
                     workspace
+                    StallRecoveryBannerView(
+                        notice: controller.stallNotice,
+                        onKeepWaiting: { controller.keepWaitingAfterStall() },
+                        onStop: { controller.stopStalledRewrite() },
+                        onRestart: { model.restartAfterStall() })
                     HumanizeFeedback(controller: controller)
                 }
                 if showAdvanced {

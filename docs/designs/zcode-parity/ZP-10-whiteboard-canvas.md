@@ -7,7 +7,7 @@ and its
 [whiteboard doc](https://github.com/zai-org/ZCode/blob/main/docs/whiteboard.md).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -157,6 +157,71 @@ coordinator; clear is a new empty drawing.
 * **Localization**: catalog additions in 21 languages.
 * **Manual**: draw with mouse, restart, confirm persistence; export to
   chat and confirm the attachment reaches the model as an image.
+
+## Implementation notes (2026-11-13)
+
+Implemented in `Whiteboard/WhiteboardStore.swift` (boards and persistence),
+`Whiteboard/WhiteboardCanvasNSView.swift` (pointer capture, strokes, eraser),
+`Whiteboard/WhiteboardCanvasController.swift` (tools, history, swatches),
+`Whiteboard/WhiteboardExporter.swift` (PNG), `Whiteboard/WhiteboardPaneView.swift`
+(pane UI), `State/AppModel+Whiteboard.swift` (open/close, composer handoff) and
+`Theme/WhiteboardPalette.swift` (pen colors and paper). Tests:
+`WhiteboardStoreTests`, `WhiteboardCanvasTests`. Deviations from the draft,
+following the EGM review (`docs/egm-reviews/zcode-parity/ZP-10/`):
+
+* **PencilKit has no canvas view on macOS (M4, spike result).** `PKCanvasView`
+  and `PKToolPicker` are iOS and Mac Catalyst only: the macOS SDK ships the
+  PencilKit data model and renderer (`PKDrawing`, `PKStroke`, `PKInk`,
+  `PKDrawing.image(from:scale:)`) and nothing else. The wrapper in the draft
+  cannot be built. `PKDrawing` stays the persisted format and its renderer
+  draws the committed strokes; `WhiteboardCanvasNSView` supplies mouse and
+  trackpad capture, a live polyline preview, and a stroke eraser (a touched
+  stroke is removed whole, not partially erased; one gesture is one undo
+  step). Pressure is not used. This is the draft's rejected Alternative A in
+  its minimal form (own input, PencilKit's storage and rendering).
+* **Host is the right column, not `SplitChatPanes` (B1).** The whiteboard is a
+  new `AppRightColumnClaimant.whiteboard` opened from a top-bar button.
+  Precedence: artifact, html preview, file preview, browser, whiteboard,
+  inspector. The browser and whiteboard are exclusive in their setters. The
+  inspector shortcut and the settings toggle close it like the browser.
+  Width is `AppChromeLayout.whiteboardPanelWidth` (520).
+* **Composer seam is `addPromptAttachment` (B2).** `PromptComposerView` is
+  untouched. Export renders a PNG, stores it through `ManagedAssetStore` and
+  appends it to the focused chat's draft via the same path as ZP-11, by
+  extracting `AnnotationExporter.pngData(from:)` and
+  `AppModel.attachPNGToPrompt` from ZP-11 rather than duplicating them. The
+  `@` attachment panel goal is dropped.
+* **Scoping is recorded as a decision (M1):** per workspace. The key is the
+  selected project's id in Projects mode, else one shared "chat" bucket.
+  Export goes to the focused chat (`selectedChatID`).
+* **Persistence (M2):** `whiteboards/boards.json` (AppJSONStore, titles and
+  timestamps) plus `whiteboards/<workspace>/<id>.drawing` (PKDrawing data).
+  The blob is the source of truth: a blob with no row is adopted on load as
+  a new auto-titled board, a row with no blob is an empty board, an
+  unparseable blob is renamed `corrupt-<stamp>-<name>` and the board opens
+  empty with a warning, and unreadable metadata is quarantined by AppJSONStore.
+  Writes debounce 600 ms and also flush on pane close, board switch and
+  `shutdown()`. Delete is permanent and confirmed.
+* **Toolbar is custom (M3).** `PKToolPicker` does not exist here either. The
+  strip uses `AppPillPicker` (pen, eraser), six fixed-sRGB swatches, a width
+  slider (1 to 24) and `AppIconButton` undo, redo and clear. Undo and redo
+  are whole-drawing snapshots (100 deep), not the window's `NSUndoManager`.
+* **Export (M5):** bounds plus a 24 pt margin at 2x on opaque white (the
+  canvas paper is fixed white too), pixel count capped at 16 million by
+  lowering the scale, empty board refused with a message, rendered on the
+  main actor (the off-main claim is dropped). With no vision model active
+  the PNG still attaches and the toast gives the vision refusal reason
+  instead of claiming success; the turn itself refuses to send an image
+  then, as for any image.
+* **Naming and board management (M8):** the lowest free "Board N" per
+  workspace; rename dedupes ("Plan 2"); new, rename, delete in the pane
+  header; the first open in a workspace creates "Board 1". Vector editing is
+  a non-goal.
+* Limitations: no zoom or pan (strokes past the pane edge are kept but not
+  shown), no keyboard drawing path (the controls are keyboard reachable, the
+  canvas is pointer only), partial erasing is not supported, and the pane was
+  not driven by hand in the running app. The canvas is pointer-tested with
+  synthetic events only.
 
 --------------------------------------------------------------------------------
 

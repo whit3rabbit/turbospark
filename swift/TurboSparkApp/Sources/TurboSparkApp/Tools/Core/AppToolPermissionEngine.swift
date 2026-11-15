@@ -103,6 +103,17 @@ public enum ToolPermissionContext {
     @TaskLocal public static var fallbackMode: AppPermissionMode? = nil
 }
 
+private extension AppToolPermission {
+    /// allow < ask < deny, for choosing the stricter of two categories.
+    var strictness: Int {
+        switch self {
+        case .allow: return 0
+        case .ask: return 1
+        case .deny: return 2
+        }
+    }
+}
+
 /// Central permissions evaluation engine enforcing Unsloth-style security policies.
 public enum AppToolPermissionEngine {
     /// Evaluates whether a tool call should be allowed, gated with user confirmation, or denied.
@@ -243,7 +254,16 @@ public enum AppToolPermissionEngine {
         case .fileRead: categoryPermission = permissions.fileRead
         case .fileWrite: categoryPermission = permissions.fileWrite
         case .terminal: categoryPermission = permissions.terminal
-        case .web: categoryPermission = permissions.web
+        case .web:
+            // image_fetch is a network call that WRITES a project file, so
+            // it answers to both categories: a project that denies or asks
+            // for file writes must not have them bypassed by a web allow.
+            if call.name.lowercased() == "image_fetch" {
+                categoryPermission = [permissions.web, permissions.fileWrite]
+                    .max { $0.strictness < $1.strictness } ?? permissions.web
+            } else {
+                categoryPermission = permissions.web
+            }
         case .browser: categoryPermission = permissions.browser
         case .computerUse:
             // Observing an app the user already granted needs no second

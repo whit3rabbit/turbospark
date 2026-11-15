@@ -440,6 +440,62 @@ public enum AppToolRegistry {
                 )
                 output = searchOutput.formatMarkdown()
 
+            case "image_search":
+                guard let query = call.arguments["query"] ?? call.arguments["q"] ?? call.arguments["search_query"] else {
+                    throw NSError(domain: "TurboSparkTool", code: 24, userInfo: [NSLocalizedDescriptionKey: "Missing 'query' argument for image_search tool call."])
+                }
+                let count = Int(call.arguments["count"] ?? call.arguments["num_results"] ?? call.arguments["limit"] ?? "")
+                func domainList(_ raw: String?) -> [String]? {
+                    raw?.components(separatedBy: ",")
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+                }
+                // The key is read here, per call: nothing touches the
+                // Keychain at launch (ImageSearchCredentials).
+                let imageOutput = try await ImageSearchExecutor.search(
+                    query: query,
+                    count: count,
+                    allowedDomains: domainList(call.arguments["allowed_domains"] ?? call.arguments["allowedDomains"]),
+                    blockedDomains: domainList(call.arguments["blocked_domains"] ?? call.arguments["blockedDomains"]),
+                    apiKey: ImageSearchCredentials.resolveKey())
+                output = imageOutput.formatForModel()
+
+            case "image_fetch":
+                guard let urlString = call.arguments["url"] ?? call.arguments["image_url"] else {
+                    throw NSError(domain: "TurboSparkTool", code: 23, userInfo: [NSLocalizedDescriptionKey: "Missing 'url' argument for image_fetch tool call."])
+                }
+                guard let relPath = call.arguments["path"] ?? call.arguments["file_path"] else {
+                    throw NSError(domain: "TurboSparkTool", code: 23, userInfo: [NSLocalizedDescriptionKey: "Missing 'path' argument for image_fetch tool call."])
+                }
+                output = try await ImageFetchExecutor.fetch(
+                    url: urlString, path: relPath,
+                    sourcePage: call.arguments["source_page"],
+                    rootURL: rootURL,
+                    timeout: Int(call.arguments["timeout"] ?? call.arguments["timeout_seconds"] ?? ""))
+                if let targetURL = try? resolveSecurePath(relPath: relPath, rootURL: rootURL) {
+                    producedFiles.append(ArtifactRegistrar.ProducedFile(
+                        url: targetURL, toolCallID: call.id, toolName: call.name, origin: .fileWrite))
+                }
+
+            case "document_write":
+                let written = try DocumentWriteExecutor.execute(arguments: call.arguments, rootURL: rootURL)
+                output = written.report
+                // A document the agent was asked to make is presented
+                // deliberately, so it goes to the chat's artifact list.
+                producedFiles.append(ArtifactRegistrar.ProducedFile(
+                    url: written.url, toolCallID: call.id, toolName: call.name, origin: .sentToUser))
+
+            case "project_diagnostics", "document_symbols", "workspace_symbols":
+                // OC-10: read-only language server queries. Disabled by the
+                // master switch, rooted, bounded; see `LSPToolDefinitions`.
+                // Re-read the project (as the Syntext case does) so a project
+                // switched to off during a turn is honored by the next call.
+                let liveLSPMode = project.flatMap { captured in
+                    AppProjectFileStore.load().projects.first { $0.id == captured.id }
+                }?.lspMode ?? project?.lspMode ?? .inherit
+                output = try await LSPToolExecutor.execute(
+                    name: lowerName, arguments: call.arguments, rootURL: rootURL,
+                    projectMode: liveLSPMode)
+
             case "webfetch", "web_fetch", "fetch_url", "read_url_content":
                 guard let urlString = call.arguments["url"]
                     ?? call.arguments["uri"]
@@ -773,6 +829,85 @@ public enum AppToolRegistry {
                 }
                 output = try await stopper(agentID, chatID)
 
+            case "send_message", "sendmessage":
+                // Coordinator-only: only the main conversation (depth 0)
+                // launched the background children this reaches, and a
+                // subagent continuing a sibling would be a second, unaudited
+                // way to spend the run cap.
+                guard subagentDepth == 0 else {
+                    throw NSError(domain: "TurboSparkTool", code: 28, userInfo: [
+                        NSLocalizedDescriptionKey: "send_message is only available to the main "
+                            + "conversation, not to a subagent."
+                    ])
+                }
+                let targetID = (call.arguments["id"]
+                    ?? call.arguments["to"]
+                    ?? call.arguments["agent_id"]
+                    ?? call.arguments["agentId"]
+                    ?? call.arguments["task_id"]
+                    ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let followUp = call.arguments["message"]
+                    ?? call.arguments["prompt"]
+                    ?? call.arguments["text"]
+                    ?? ""
+                guard !targetID.isEmpty else {
+                    throw NSError(domain: "TurboSparkTool", code: 27, userInfo: [
+                        NSLocalizedDescriptionKey: "Missing 'id' argument: give the finished "
+                            + "background subagent's id (the `id:` line from its launch result)."
+                    ])
+                }
+                guard !followUp.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw NSError(domain: "TurboSparkTool", code: 27, userInfo: [
+                        NSLocalizedDescriptionKey: "Missing 'message' argument: say what the "
+                            + "subagent should do next."
+                    ])
+                }
+                guard let continuer = backgroundAgentContinuer else {
+                    throw NSError(domain: "TurboSparkTool", code: 26, userInfo: [
+                        NSLocalizedDescriptionKey: "Background subagents are unavailable: no "
+                            + "continue handler is installed (the app wires one at startup)."
+                    ])
+                }
+                output = try await continuer(targetID, followUp, chatID)
+
+            case "respond_to_coordinator", "respondtocoordinator":
+                // The sender is the task-local channel the launcher set, never
+                // an argument: the model cannot name another child or chat.
+                // The depth match refuses a grandchild that inherited it.
+                guard let channel = SubagentCoordinatorChannel.current,
+                    channel.depth == subagentDepth
+                else {
+                    throw NSError(domain: "TurboSparkTool", code: 28, userInfo: [
+                        NSLocalizedDescriptionKey: "respond_to_coordinator is only available inside "
+                            + "a background subagent."
+                    ])
+                }
+                // The call's own chat must be the child's owner. They are the
+                // same value by construction; checking it keeps a future
+                // caller that passes the wrong chat from crossing the wall.
+                guard channel.chatID == chatID else {
+                    throw NSError(domain: "TurboSparkTool", code: 27, userInfo: [
+                        NSLocalizedDescriptionKey: "respond_to_coordinator: this run does not belong "
+                            + "to the calling conversation."
+                    ])
+                }
+                let text = call.arguments["message"]
+                    ?? call.arguments["text"]
+                    ?? call.arguments["content"]
+                    ?? ""
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    throw NSError(domain: "TurboSparkTool", code: 27, userInfo: [
+                        NSLocalizedDescriptionKey: "Missing 'message' argument."
+                    ])
+                }
+                guard let poster = subagentCoordinatorPoster else {
+                    throw NSError(domain: "TurboSparkTool", code: 26, userInfo: [
+                        NSLocalizedDescriptionKey: "Coordinator messaging is unavailable: no handler "
+                            + "is installed (the app wires one at startup)."
+                    ])
+                }
+                output = try await poster(channel.childID, channel.chatID, text)
+
             case "askuserquestion", "ask_user_question", "ask_question", "question":
                 if AskUserQuestionExecutor.answerWaiter != nil {
                     // Interactive: the result does not exist until the user
@@ -794,6 +929,11 @@ public enum AppToolRegistry {
 
             case "proposeskills", "propose_skills":
                 output = try ProposeSkillsExecutor.execute(arguments: call.arguments, projectRootURL: resolvedRoot)
+
+            case "gen_ui_render":
+                // Validates the closed card schema only; the chat draws the
+                // card from the same spec. No file, network or tool effect.
+                output = try GenUiRenderExecutor.execute(arguments: call.arguments)
 
             case "proposegoal", "propose_goal":
                 output = try ProposeGoalExecutor.execute(arguments: call.arguments)
@@ -851,6 +991,20 @@ public enum AppToolRegistry {
             case "cronlist", "cron_list":
                 output = CronScheduler.executeList(arguments: call.arguments)
 
+            case "offpeakenqueue", "offpeak_enqueue":
+                var chatEligible = true
+                if let chatID, let provider = offPeakChatEligibleProvider {
+                    chatEligible = await provider(chatID)
+                }
+                output = try OffPeakTaskExecutors.executeEnqueue(
+                    arguments: call.arguments, chatID: chatID, chatEligible: chatEligible)
+
+            case "offpeaklist", "offpeak_list":
+                output = OffPeakTaskExecutors.executeList(arguments: call.arguments)
+
+            case "offpeakcancel", "offpeak_cancel":
+                output = try OffPeakTaskExecutors.executeCancel(arguments: call.arguments)
+
             case "schedulewakeup", "schedule_wakeup":
                 output = try CronScheduler.executeScheduleWakeup(arguments: call.arguments, chatID: chatID)
 
@@ -858,7 +1012,7 @@ public enum AppToolRegistry {
                 output = try await SleepExecutor.execute(arguments: call.arguments)
 
             case "pushnotification", "push_notification", "notify":
-                output = try await PushNotificationExecutor.execute(arguments: call.arguments)
+                output = try await PushNotificationExecutor.execute(arguments: call.arguments, chatID: chatID)
 
             case "config", "config_tool":
                 output = try ConfigToolExecutor.execute(arguments: call.arguments, project: project)

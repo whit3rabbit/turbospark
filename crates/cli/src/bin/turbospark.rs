@@ -164,6 +164,10 @@ enum Cmd {
     /// activations and check it (turbospark steer --help)
     #[command(disable_help_flag = true)]
     Steer(Passthrough),
+    /// Serve the Agent Client Protocol on stdio for an editor, with a local
+    /// model (turbospark acp --model M)
+    #[command(disable_help_flag = true)]
+    Acp(Passthrough),
     /// Throughput and memory benchmarks
     #[command(disable_help_flag = true)]
     Bench(Passthrough),
@@ -342,6 +346,10 @@ fn root_help() -> String {
                 (
                     "steer ...",
                     "extract behavior directions from a model, check them",
+                ),
+                (
+                    "acp --model M",
+                    "Agent Client Protocol on stdio for an editor",
                 ),
                 ("completions SHELL", "zsh, bash, fish, elvish or powershell"),
             ],
@@ -657,6 +665,10 @@ fn main() -> ExitCode {
         Cmd::Ocr(p) => peer("turbospark-ocr", &models::rewrite_model_flags(&p.args)),
         Cmd::Humanize(p) => handle_humanize(&p.args),
         Cmd::Steer(p) => peer("turbospark-steer", &models::rewrite_model_flags(&p.args)),
+        Cmd::Acp(p) => peer(
+            "turbospark-acp-agent",
+            &models::rewrite_model_flags(&p.args),
+        ),
         Cmd::Bench(p) => peer("turbospark-bench", &p.args),
         Cmd::Model(p) => peer("turbospark-model", &p.args),
         Cmd::Completions { shell } => {

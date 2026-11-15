@@ -5,7 +5,7 @@ Parity target: ZCode's
 [image-preview-editor contract](https://github.com/zai-org/ZCode/blob/main/packages/ui/src/image-preview-editor/ImagePreviewSurface.tsx).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -158,6 +158,37 @@ resolution, flattening re-renders at natural resolution.
 * **Manual**: annotate a screenshot, send to chat, verify the model
   receives the flattened image; confirm the original file hash is
   unchanged.
+
+## Implementation notes (2026-11-13)
+
+Implemented in `Files/ImageAnnotation.swift` (model, history, viewport),
+`Files/AnnotationExporter.swift` (shared renderer, flatten, composer
+handoff), `Files/AnnotationLayerView.swift` (overlay and gestures) and
+`Files/ImagePreviewView.swift` (moved out of `FilePreviewLeaves.swift`).
+Tests: `ImageAnnotationTests`. Deviations from the draft, following the EGM
+review (`docs/egm-reviews/zcode-parity/ZP-11/`):
+
+* Tools are select, box, arrow and text. The pen is dropped (review M1).
+* Export is flattened PNG only; the overlay-metadata option is dropped (M2).
+* Annotations are session-only and history covers annotations only, one
+  entry per completed gesture, capped at 200 (M4). Redo is implemented and
+  tested.
+* Coordinates are image pixels (top-left origin) with stroke and font sizes
+  derived from the image; zoom is a pure view transform (M3, M5).
+* Pan and zoom use the SwiftUI `ScrollView` plus a zoom multiplier over the
+  fit scale (buttons and pinch), not an `NSScrollView`. The view keeps the
+  `ImagePreviewView(image:)` call shape and gains an optional
+  `onSendToChat` callback (M6). Zoom percentages are relative to fit.
+* The overlay and the exporter share one draw path,
+  `AnnotationRenderer.draw` (M10). No raster size buckets or fps claim (M7);
+  the exporter refuses images above 64 megapixels.
+* The flattened PNG is stored through `ManagedAssetStore` and attached with
+  `AppModel.addPromptAttachment`; there is no separate attachment folder
+  (B1). Both callers (`FilePreviewView`, `ArtifactPanelView`) pass the
+  callback.
+* Limitations: no keyboard path to place or move marks beyond the tool
+  picker, Delete key and VoiceOver selection; Send to chat flattens on the
+  main actor. Not visually checked in the running app.
 
 --------------------------------------------------------------------------------
 

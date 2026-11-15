@@ -95,6 +95,8 @@ extension AppModel {
         ProcessExecutor.killAllLiveChildrenNow()
         // Persistent MCP stdio servers outlive any single tool call.
         McpClientEngine.killAllSessionProcessesNow()
+        // Language servers (OC-10) are children too.
+        LanguageServerRegistry.killAllProcessesNow()
     }
 
     /// First line of the command, whitespace-trimmed and capped, for the

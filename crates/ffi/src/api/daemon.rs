@@ -191,9 +191,26 @@ fn model_from_meta(meta: &serde_json::Value) -> Option<String> {
     None
 }
 
+/// The engine version the daemon's spawner stamped into `server.meta`
+/// (OC-13). `None` for a daemon started by a build that predates the stamp,
+/// which a host must treat as "unknown", not as compatible.
+///
+/// **THE STAMP IS THE SPAWNER'S VERSION, NOT AN HTTP READBACK.** `/health` is
+/// exempt from authentication and deliberately omits build metadata, so the
+/// version rides the local meta file the same way the model does. The app
+/// bundle ships this library and `turbospark-server` together, so the
+/// spawner's version is the server binary's version.
+fn engine_version_from_meta(meta: &serde_json::Value) -> Option<String> {
+    meta.get("engineVersion")?
+        .as_str()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+}
+
 /// Inspects whether a background turbospark server daemon is running.
 /// Writes a JSON object to `*out` (free with `ts_string_free`):
-///   `{"running": true, "pid": 1234, "port": 8080, "endpoint": "http://127.0.0.1:8080/v1", "logPath": "...", "model": "gemma4" | null}`
+///   `{"running": true, "pid": 1234, "port": 8080, "endpoint": "http://127.0.0.1:8080/v1", "logPath": "...", "model": "gemma4" | null, "engineVersion": "0.8.0" | null}`
 /// or `{"running": false}`.
 #[no_mangle]
 pub unsafe extern "C" fn ts_daemon_status_json(out: *mut *mut c_char) -> c_int {
@@ -217,10 +234,11 @@ pub unsafe extern "C" fn ts_daemon_status_json(out: *mut *mut c_char) -> c_int {
             };
             let endpoint = format!("http://127.0.0.1:{port}/v1");
             let log_path = log_file().to_string_lossy().into_owned();
-            let model = fs::read_to_string(meta_file())
+            let meta = fs::read_to_string(meta_file())
                 .ok()
-                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
-                .and_then(|meta| model_from_meta(&meta));
+                .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+            let model = meta.as_ref().and_then(model_from_meta);
+            let engine_version = meta.as_ref().and_then(engine_version_from_meta);
             serde_json::json!({
                 "running": true,
                 "pid": pid,
@@ -228,6 +246,7 @@ pub unsafe extern "C" fn ts_daemon_status_json(out: *mut *mut c_char) -> c_int {
                 "endpoint": endpoint,
                 "logPath": log_path,
                 "model": model,
+                "engineVersion": engine_version,
             })
         } else {
             serde_json::json!({
@@ -389,6 +408,7 @@ fn start_daemon_internal(args: &[String]) -> Result<(), String> {
         "pid": pid,
         "port": port,
         "args": args,
+        "engineVersion": env!("CARGO_PKG_VERSION"),
     });
     let _ = fs::write(meta_file(), meta.to_string());
 
@@ -617,8 +637,24 @@ mod child_env_tests {
 
 #[cfg(test)]
 mod model_meta_tests {
-    use super::model_from_meta;
+    use super::{engine_version_from_meta, model_from_meta};
     use serde_json::json;
+
+    #[test]
+    fn engine_version_reads_the_stamp_and_treats_absence_as_unknown() {
+        assert_eq!(
+            engine_version_from_meta(&json!({"engineVersion": " 0.8.0 "})).as_deref(),
+            Some("0.8.0")
+        );
+        // A meta file from a pre-stamp build, an empty stamp and a wrong-typed
+        // stamp must all read as unknown rather than a version.
+        assert_eq!(engine_version_from_meta(&json!({"args": []})), None);
+        assert_eq!(
+            engine_version_from_meta(&json!({"engineVersion": ""})),
+            None
+        );
+        assert_eq!(engine_version_from_meta(&json!({"engineVersion": 8})), None);
+    }
 
     #[test]
     fn reads_the_value_after_the_first_model_flag() {

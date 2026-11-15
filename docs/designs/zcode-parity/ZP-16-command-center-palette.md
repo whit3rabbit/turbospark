@@ -7,7 +7,7 @@ and
 [quickpick commands](https://github.com/zai-org/ZCode/blob/main/packages/ui/src/quickpick/quickPickCommands.ts).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -175,6 +175,48 @@ behavior (no new scoring claims).
 * **Manual**: exercise all three scopes, prefixes, history, and both
   entry bindings; confirm chat search behavior is unchanged for
   plain-text queries.
+
+--------------------------------------------------------------------------------
+
+## Implementation notes (deviations from the draft)
+
+Applied from the EGM review (Major/Blocker items that change the design):
+
+* Four tabs (All, Commands, Chats, Files), not three (M1).
+* The cited kiro spec does not exist; the deferral is superseded by author
+  decision 2026-11-11 (M2).
+* Cmd+Shift+P posts `.showChatSearch` with a `>` seed in `userInfo`; the
+  no-payload post (Cmd+K, `/resume`) is unchanged. A seeded post while the
+  palette is open re-seeds instead of toggling it closed. The `>` stays
+  visible in the field (M3, M4). `RootView.swift` and `TurboSparkApp.swift`
+  were touched.
+* Commands: built-ins, plugin commands (enabled and invocable only), the
+  navigation sections, every Settings pane and Check for Updates (omitted
+  while the menu item is disabled). Enter runs only a fixed argument-free,
+  non-destructive set plus `/stats`, `/help`, `/export`; every other command
+  is inserted into the composer (M5, M13).
+* All scope: fixed sections Chats, Commands, Files, 6 rows each; chats
+  first so Enter on open still opens the top chat. Home view is option (c):
+  recent chats, commands, then the last 5 recent searches, no files (M6, M10).
+* Files read the cached listing on open and refresh in the background;
+  paths containing a quote are not offered; directories are included. The
+  100 ms open time is a target, not measured (M7).
+* File handoff appends the existing `@path` mention token to the draft and
+  switches to Chat first, so it works with the composer unmounted (M8).
+* History: `command_palette_history.json` via `AppJSONStore`, keyed by
+  project id or `global`, 20 cap, read once on first open (the only I/O,
+  cached afterwards), clearable from the home view (M9).
+* The parser lives in `PaletteProviders.swift` and is SwiftUI-free; the
+  prefix is the first character only (M11, M14).
+* `ChatSearchOverlayView.swift` was deleted and replaced by
+  `CommandPaletteView.swift` rather than modified in place (M12).
+* The menu item is renamed "Command Center..." and the Shortcuts pane rows
+  are "Command Center" and "Run Command"; the old "Search Chats..." menu
+  key remains in the catalog, unused by the menu.
+* Not verified: Cmd+Shift+P may collide with a system Page Setup chord in
+  some menu configurations (not run in the GUI), and the palette was not
+  driven by hand or measured for open time. Unit tests cover the engine,
+  not the SwiftUI view.
 
 --------------------------------------------------------------------------------
 

@@ -7,7 +7,7 @@ and
 [android-emulator plugin](https://github.com/zai-org/ZCode/blob/main/apps/zcode-cli/packages/android-emulator-plugin/README.md).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented (see Implementation Notes)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -178,6 +178,73 @@ orchestration knowledge; the tools are the ones that already exist.
 * **Manual (hardware)**: run the iOS loop end to end on a machine with
   Xcode; run the Android loop if an SDK is present; verify screenshots
   reach a vision-capable model and are described correctly.
+
+## Implementation Notes
+
+Shipped as two bundled skills, `ios-simulator` and `android-emulator`, under
+`swift/TurboSparkApp/Sources/TurboSparkAppResources/BundledSkills/`, the root
+built in ZP-07 and used by ZP-20. This is the delivery the INDEX review chose:
+ZP-05 is a later re-delivery path, not a prerequisite. No `SkillManager`
+change was needed, and no `plugin.json`, no `agents/ios-dev.md` and no
+`bundled-plugins/` folder exist (review M1, N2). Tests:
+`BundledDeviceControlSkillsTests`. No UI strings were added, so no
+localization change (N11).
+
+Deviations from the draft, each a review finding:
+
+* **Screenshot handoff (B1).** The draft's claim was false: Bash returns text,
+  `read_file` reads text, and only the in-app browser and Computer Use produce
+  image-bearing tool results. Rather than add an image path to `read_file`
+  (a new execution surface, out of scope for a skill), the skills say the PNG
+  is not visible to the model, show it to the user with `send_user_file`, and
+  let a vision model look at the Simulator or Emulator window through
+  `computer_request_access` and `computer_screenshot` only when the user has
+  turned Computer Use on and approves. Without vision or Computer Use the
+  skill verifies from text evidence and says it did not see the screen
+  (M3). A `read_file` image path is deferred follow-up work. Android
+  screenshots use `screencap` then `adb pull`, because
+  `exec-out screencap -p` needs a shell redirect (a prompted shell program).
+* **Ladder position (M4), stated and enforced.** `xcrun`, `xcodebuild`,
+  `adb`, `emulator`, `avdmanager`, `sdkmanager`, `open` and `./gradlew` are
+  not on `TerminalCommandClassifier`'s allowlist, so
+  `ToolRiskClassifier.assessRisk` scores them `.high` and they ask under Ask
+  and Auto; Agent mode's judge decides, per
+  [PERMISSION_GATE.md](../../PERMISSION_GATE.md). The skills never ask for a
+  mode change and carry the don't-route-around guidance that
+  `AppModel.blockMessage` already gives the model. `gradle` and `gradlew` were
+  later removed from the build allowlist (Gradle runs the workspace's build
+  scripts), so they ask like the other device commands. The skill still
+  confines them to `assembleDebug` and installs through `adb`.
+  `testEveryDeviceCommandIsHighRiskAndNeverAutoApprovable` extracts every
+  fenced command from both skills and checks it against the real classifier.
+* **Risks and Limits (B2).** The skills fix their scope in text, and a test
+  scans fenced commands for forbidden verbs: simulators and emulators only
+  (no `devicectl`, a non-`emulator-` serial needs the user to name it), debug
+  builds only, `CODE_SIGNING_ALLOWED=NO` and no `-allowProvisioningUpdates`
+  (no Apple account use), no credential typing, no `adb tcpip`, `connect`,
+  `pair`, `forward`, `reverse` or `root` (no network exposure), no erase,
+  uninstall, `pm clear` or delete. The skill boots and stops only what it
+  started. Screenshots, UI dumps and logs are declared untrusted content.
+* **Bounded output (M7).** The Bash tool keeps 30,000 characters (head and
+  tail) and a 120 s default timeout, 600 s maximum. The skills use
+  `logcat -d -t 200`, `log show --last 2m` with a predicate, background runs
+  for builds, and name the cap.
+* **iOS interaction limit (M2).** v1 on iOS is launch, open URL, screenshot.
+  `simctl` cannot tap, swipe or type, so CUJ 1 reaches the login screen by
+  launch arguments, a deep link, or a user-prepared Simulator. Android adds
+  `adb shell input` and `uiautomator dump`. idb, XCUITest and the
+  SwiftUI scaffolding ZCode ships stay non-goals.
+* **Preflight (CUJ 3).** Both skills run a host check first and stop with
+  install pointers (Xcode, `xcode-select`, runtime, no AVD, arm64-v8a image
+  on Apple Silicon) instead of attempting a build; a test pins the order.
+* **Evidence not gathered.** The hardware loop (Xcode build, boot, launch,
+  screenshot; Android emulator) was not run end to end in this change. The
+  tests prove discovery, ladder scoring and clause presence, not that a
+  model follows the loop. Pass criteria for a manual run: preflight output is
+  reported, the app launches (exit status 0 from `simctl launch` or
+  `monkey`), a PNG exists at the stated path and is offered with
+  `send_user_file`, the log excerpt is under 200 lines, and the agent states
+  whether it saw the screen.
 
 --------------------------------------------------------------------------------
 

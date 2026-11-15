@@ -99,7 +99,7 @@ extension AppModel {
         // Everything else (no session, an open in flight, an empty draft)
         // refuses exactly as before.
         if !canRun {
-            guard canQueue, session != nil else { return }
+            guard canQueue, hasTurnModel else { return }
             // A repeated Return while THIS draft's own submission is still
             // awaiting its hook is the same keypress, not a second message.
             if Self.isDuplicateOfInFlightSubmission(
@@ -112,7 +112,7 @@ extension AppModel {
             enqueueCurrentDraft(chatID: selectedChatID)
             return
         }
-        guard session != nil else { return }
+        guard hasTurnModel else { return }
 
         // A meta-command is not a prompt, and it is handled before everything
         // else here for the same reason the agent slash commands are handled
@@ -283,7 +283,7 @@ extension AppModel {
             // The model can be unloaded while the hook runs only if something
             // widened `canUnloadModel`; this is the backstop, and it refuses
             // BEFORE the draft is cleared rather than after.
-            guard self.session != nil else {
+            guard self.session != nil || self.remoteSelections[submissionChatID] != nil else {
                 self.error = AppStrings.localized("The model was unloaded before this prompt could be sent.")
                 return
             }

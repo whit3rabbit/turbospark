@@ -104,6 +104,15 @@ struct ToolCallCardView: View {
         call.name.lowercased().contains("question")
     }
 
+    /// The validated card for a finished `gen_ui_render` call. Parsed only once
+    /// a non-error result exists, so streamed partial arguments never parse.
+    private var genUiSpec: GenUiSpec? {
+        guard call.name.lowercased() == "gen_ui_render", let result, !result.isError,
+            let raw = call.arguments["spec"], case .success(let spec) = GenUiParser.parse(raw)
+        else { return nil }
+        return spec
+    }
+
     private var isBrowserCall: Bool {
         browserCardPresentation != nil
     }
@@ -174,6 +183,16 @@ struct ToolCallCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             summaryHeaderButton
+
+            if let genUiSpec {
+                // Gen UI (ZP-06): a native card drawn from a validated closed
+                // schema. Its follow-up fills the composer draft, never sends.
+                GenUiCardView(spec: genUiSpec) { text in
+                    model.composeInChat(
+                        AppStrings.localized("From the interactive card \(genUiSpec.title):") + "\n\n" + text)
+                }
+                .id(call.id)
+            }
 
             if isExpanded || isPendingApproval || isActiveQuestionSet {
                 VStack(alignment: .leading, spacing: 8) {
@@ -268,6 +287,14 @@ struct ToolCallCardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .onChange(of: submittedPlan, initial: true) { _, plan in
             if plan != nil { isExpanded = true }
+        }
+        // OC-09: "Reveal" in the sources popover. `initial` so a card created
+        // after the request (lazy row, group that was closed) still sees it.
+        .onChange(of: model.toolCardReveal, initial: true) { _, reveal in
+            guard reveal?.callID == call.id,
+                  model.consumeToolCardReveal(forCallID: call.id)
+            else { return }
+            TSMotion.animate(TSMotion.select) { isExpanded = true }
         }
     }
 

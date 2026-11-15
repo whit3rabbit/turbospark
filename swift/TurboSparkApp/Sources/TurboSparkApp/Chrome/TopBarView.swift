@@ -100,6 +100,9 @@ struct TopBarView: View {
                     browserToggle
                 }
                 if !model.activeSection.hidesChatPanes {
+                    whiteboardToggle
+                }
+                if !model.activeSection.hidesChatPanes {
                     inspectorToggle
                 }
             }
@@ -205,6 +208,27 @@ struct TopBarView: View {
         .help(Text("Browser", bundle: .module))
         .accessibilityLabel(Text("Browser", bundle: .module))
         .accessibilityAddTraits(model.browserPaneIsOpen ? .isSelected : [])
+    }
+
+    private var whiteboardToggle: some View {
+        Button {
+            model.setWhiteboardPaneOpen(!model.whiteboardPaneIsOpen)
+        } label: {
+            Image(systemName: "scribble")
+                .font(theme.ui(.callout, weight: .medium))
+                .frame(width: buttonSize, height: buttonSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(TSPressScaleStyle(scale: 0.9))
+        .foregroundStyle(model.whiteboardPaneIsOpen ? theme.accent : theme.secondaryText)
+        .background {
+            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                .fill(model.whiteboardPaneIsOpen ? theme.accent.opacity(0.14) : .clear)
+        }
+        .tsAnimation(TSMotion.hover, value: model.whiteboardPaneIsOpen)
+        .help(Text("Whiteboard", bundle: .module))
+        .accessibilityLabel(Text("Whiteboard", bundle: .module))
+        .accessibilityAddTraits(model.whiteboardPaneIsOpen ? .isSelected : [])
     }
 
     private func gitPill(worktree: WorktreeModel) -> some View {

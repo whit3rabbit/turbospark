@@ -149,6 +149,12 @@ the app taking access, and macOS shows each prompt only once.
   sidebar (where am I), top bar (what is the machine doing), working panes,
   status strip. Do not add a fifth band or move a question between bands
   (`.claude/docs/modules/swift.md` Gotcha 17).
+- The workspace tab strip (`Chrome/WorkspaceTabStripView.swift`) is a row of
+  the top-bar band, not a fifth band: it answers "which project am I in", and
+  it is drawn only while two or more tabs are open. Its badge is the
+  strongest ZP-02 state among the project's chats, as a glyph plus VoiceOver
+  text. Next and previous tab are Ctrl+Tab and Ctrl+Shift+Tab, because Cmd+W
+  closes the window.
 - No window has a fixed frame. The main window enforces its minimum through
   `MainWindowMinimumSize`. The Settings window is resizable above
   `AppSettingsView.minimumSize` and opens at its default size through
@@ -439,6 +445,11 @@ every change:
   `AlternateShortcutBridge` that mirror the menu item's disabled state, and
   every chord is listed in `KeyboardShortcutCatalog`, which
   `KeyboardShortcutCatalogTests` holds against the app.
+- A menu command's chord is carried through `.keyboardChord(id, keybinds)`,
+  never a literal `.keyboardShortcut`, so the user's override reaches it. A
+  chord shared with an in-window button stays a literal and is marked fixed in
+  the catalog (`rebindable: false`). A new command adds an id and a default to
+  the catalog first.
 
 ## 8. Platform constraints
 

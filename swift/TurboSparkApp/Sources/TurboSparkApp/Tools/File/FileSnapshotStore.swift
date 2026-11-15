@@ -117,6 +117,22 @@ public actor FileSnapshotStore {
         }
     }
 
+    /// OC-11: refreshes the snapshot of a file the formatter pass just
+    /// rewrote, so the model's next edit is not rejected as stale.
+    ///
+    /// Only a path that is ALREADY tracked is touched: marking an untracked
+    /// file as tracked would loosen `isTracked`, which the destructive-write
+    /// guard reads. The undo backup keeps the edit's pre-edit content, and its
+    /// expected hash follows the formatted bytes so `undo_edit` still applies
+    /// (a formatter rewrite is not an outside edit).
+    public func refreshAfterFormat(url: URL, data: Data) {
+        let path = url.standardizedFileURL.path
+        guard snapshots[path] != nil else { return }
+        let hashString = Self.hash(data)
+        snapshots[path] = hashString
+        if backupExpectedHash[path] != nil { backupExpectedHash[path] = hashString }
+    }
+
     /// Verifies if a file's current disk content matches the previously recorded snapshot.
     public func isStale(url: URL) -> Bool {
         let path = url.standardizedFileURL.path

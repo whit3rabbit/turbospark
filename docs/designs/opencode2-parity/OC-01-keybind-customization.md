@@ -8,7 +8,7 @@ and
 [override migration](https://github.com/anomalyco/opencode/blob/dev/packages/app/src/settings/keybinds/migration.ts).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented (see Implementation record)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -62,14 +62,13 @@ binding.
 
 ## Open Questions
 
-* **Override scope**: (a) menu commands only in v1; (b) also the
-  alternate bridge chords as first-class rebindable entries. OpenCode
-  binds commands, not view keys; TurboSpark's alternate bridge buttons
-  mirror menu items, so (a) covers both if the bridge keeps mirroring.
-  Lean (a); the bridge stays a mirror, never an override source.
-* **Conflict policy**: refuse duplicates outright (lean), or allow with
-  an "unassigns the other" confirmation. OpenCode dedupes in the
-  registry.
+Both were resolved with the draft's own recommendation (see the
+implementation record).
+
+* **Override scope** (decided): menu commands only; the alternate bridge
+  stays a mirror, never an override source.
+* **Conflict policy** (decided): refuse duplicates outright, naming the
+  holder.
 
 ## Critical User Journeys
 
@@ -176,6 +175,80 @@ order (override ignored) and the override test must fail.
   chord, and the pane agree; restart and confirm persistence; reset all
   and confirm defaults. Keyboard-only pass and VoiceOver pass per
   DESIGN.md section 9.
+
+--------------------------------------------------------------------------------
+
+## Implementation record
+
+Implemented 2026-11-14 on branch `fix/b6-tool-edge-cases`. Not pushed.
+
+### Decisions
+
+Resolved with the draft's recommendation, plus the review's blockers and
+majors where they changed behavior (EGM review under
+`docs/egm-reviews/opencode2-parity/OC-01/`):
+
+* **Override scope**: menu commands only. A command is rebindable only if
+  exactly one menu item carries its chord. Generate Response, Cancel
+  Generation (their chords are also bound on the Images, Audio and Humanize
+  run and stop buttons), Add Files or Photos (composer button) and Start
+  Recording (record bar button) are listed as Fixed and reserved for conflict
+  checks. The bridge alternates stay fixed mirrors and are reserved too
+  (review B2).
+* **Conflict policy**: refuse, naming the holder (a command, or the command a
+  hidden alternate belongs to). No "unassign the other" confirmation.
+* **Unbind** (review M1): there is no unbound state. The row's clear control
+  restores the default, so `id -> KeyChord?` became `id -> KeyChord`. Restoring
+  is itself refused if another command has since taken the default chord.
+* **Migration table** (review M6): dropped. Ids are introduced here, so there
+  is nothing to rekey yet. The file carries a schema `version`, a malformed
+  entry is dropped alone (lossy decode), ids this build does not know are kept
+  in the file untouched, and ids are never renamed.
+* **Key model** (review M3): a chord is the character SwiftUI's
+  `.keyboardShortcut` takes (lowercased, Shift in the modifier set) or a named
+  key (space, return, tab, delete, arrows), not a key code, so it follows the
+  keyboard layout it was recorded on. Escape cancels recording and is never
+  bindable. A chord needs Command or Control.
+* **Reserved chords** (review M9): one static list in `KeyChord.isReserved`
+  (text editing, quit, close, hide, minimize, settings, switcher, Spotlight,
+  screenshots, Mission Control arrows, full screen, lock). A system shortcut
+  the user rebound in System Settings cannot be detected; a chord the system
+  takes never reaches the menu.
+* **Ownership** (review M10): the catalog holds ids and defaults with no store
+  dependency; `KeybindMap` (pure value) layers overrides; `KeybindOverrideStore`
+  (one `@MainActor ObservableObject`, the `AppearanceManager` pattern) persists
+  and publishes. The menu `Commands`, the pane and the Help sheet observe it,
+  so changes apply live.
+* **Persistence** (review M5): `keybind_overrides.json` under `AppStorageRoot`
+  through `AppJSONStore` (quarantine on corruption, latched read error to the
+  existing toast). The toast reads "Keyboard Shortcuts failed to decode,
+  starting empty", naming the store, not "settings". A hand-edited duplicate,
+  reserved or fixed-command entry is dropped on load.
+* **Capture**: a local `NSEvent` key-down monitor that returns nil (so the
+  chord is captured instead of firing its menu item), removed on capture,
+  Escape, row disappearance and app deactivation. Return or Space on the
+  focused button starts recording (review N8).
+
+### Files
+
+Created: `App/KeyChord.swift` (chord value, capture mapping, reserved list;
+split from the store draft's file list), `App/KeybindOverrideStore.swift`,
+`App/KeybindCaptureField.swift`, `Tests/.../KeybindOverrideStoreTests.swift`.
+Modified: `KeyboardShortcutCatalog.swift` (ids, typed defaults, `sections(using:)`),
+`KeyboardShortcutsSettingsPaneView.swift`, `TurboSparkApp.swift`,
+`AlternateShortcutBridge.swift`, `ChatDialogSheets.swift` (Help sheet shows
+resolved chords), `Localizable.xcstrings` (20 keys, 21 languages; the obsolete
+"Shortcuts are fixed" key removed), `DESIGN.md` section 7,
+`swift/docs/KEYBOARD_SHORTCUTS.md`, `App/EGM.md`.
+
+### Deferred
+
+* Function keys as chords: `KeyEquivalent` has no named function keys.
+* Making Generate, Cancel, Add Files and Start Recording rebindable: needs the
+  in-window buttons to read the same resolution.
+* Rebinding the alternate bridge chords (decided against in v1).
+* VoiceOver pass and keyboard-only pass on a running app (not run here).
+
 
 --------------------------------------------------------------------------------
 

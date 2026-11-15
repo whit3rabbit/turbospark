@@ -8,7 +8,7 @@ and
 [builtins table](https://github.com/anomalyco/opencode/blob/dev/packages/core/src/formatter/builtins.ts).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Partial (per-project toggle shipped 2026-11-14; remaining items listed under Deferred)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -223,6 +223,187 @@ Edit tool success
 * **Manual**: enable the pass in a project with swift-format
   available. Have the agent write a badly styled file and confirm the
   pass, the note, and the silent-skip path.
+
+## Implementation Record
+
+Implemented 2026-11-14 on top of OC-10's `PostEditSeam`.
+
+### What shipped
+
+* `Tools/Format/FormatterRegistry.swift`: `FormatterRow` (name,
+  extensions, command, argument vector with a `{file}` placeholder),
+  `FormatterSettings` (app-level `UserDefaults` keys `formatter.enabled`,
+  default off, and `formatter.rows`, at most 8), extension matching, and
+  `FormatterLaunchPolicy`. The policy mirrors `LSPLaunchPolicy`: a
+  workspace-relative command and any binary (or PATH hit, symlinks
+  resolved) inside the project is refused; the child environment is
+  `McpClientEngine.childEnvironment` (PATH, HOME, LANG, TMPDIR only);
+  nothing is read from a project. The one built-in row, swift-format
+  (`swift-format format --in-place {file}`), resolves from fixed Xcode,
+  Command Line Tools and Homebrew locations by file existence only, and a
+  hand-edited stored row can never give it another command.
+* `Tools/Format/FormatterRunner.swift`: one file per call. Skips (silently)
+  a path outside the project after symlink resolution, a sensitive path
+  (`ToolRiskClassifier.isSensitivePath`, raw and resolved), anything under
+  `.git`, a non-regular file, a file over 1 MB or not UTF-8. The formatter
+  runs on a temporary sibling copy (`.tsfmt-<id>.<ext>`, created
+  `O_EXCL|O_NOFOLLOW`, same mode) through `ProcessExecutor` with cwd at the
+  project root, a 10 s timeout (kill on expiry, cancelled with the turn),
+  merged output capped at 16 KB. The real file is replaced only on exit 0,
+  when the output is non-empty text, and when the file still holds the exact
+  bytes that were copied. Otherwise the file keeps the agent's content.
+* `Tools/Format/FormatterPostEditStep.swift`: registered FIRST in
+  `PostEditSeam.steps`, so diagnostics read the formatted file. Success with
+  no change adds nothing. A rewrite adds a `<formatter_note>` with the
+  changed line count and the current text of up to 30 changed lines
+  (line numbers, 200 chars each). A failure adds the tail (2 KB, ANSI
+  stripped, `<` and `>` escaped).
+* `FileSnapshotStore.refreshAfterFormat`: refreshes the recorded hash (only
+  for an already-tracked path, so `isTracked` is not loosened) and the undo
+  backup's expected hash. The undo backup keeps the pre-edit content.
+* `Components/FormatterSettingsSectionView.swift` in the General pane,
+  `SettingsControlCatalog` regenerated, 5 new strings in 21 languages.
+* Tests: `FormatterRunnerTests`, `FormatterRegistryTests`,
+  `FormatterTestSupport` (bash fixture, no real formatter binary).
+
+### Open Questions, as decided
+
+The draft said none were open; its "(author to confirm)" items resolved as:
+
+* **swift-format command line**: `swift-format format --in-place <temp
+  copy>`, as drafted.
+* **Timeout, error tail**: 10 s and 2 KB, as drafted.
+* **Post-format content in the tool result**: the note carries the changed
+  lines of the new text with line numbers (capped at 30 lines), not the whole
+  file, because a whole file can be 1 MB. A file with more than 4000 lines
+  gets "read it again before your next edit". The snapshot is refreshed in
+  both cases, so the staleness check does not reject the next edit.
+* **Where the toggle lives**: see Deviations.
+* **Built-in row default**: the swift-format row starts OFF, like OC-10's
+  discovered row (changed 2026-11-14, see "Implementation record: built-in
+  row starts off"). The original choice was ON under the master switch; it
+  was reversed so enabling the master switch alone never starts a formatter
+  nobody picked.
+* **Argument syntax for user rows**: whitespace-split, no quoting (there is
+  no shell), `{file}` placeholder, appended when absent.
+
+### Deviations
+
+* **App-level switch, not a per-project toggle.** The task for this change
+  fixed command rows in app-level defaults, and OC-10 shipped the same
+  shape. A per-project toggle (Goals, files 4 and 5 of the plan:
+  `ProjectPermissionsSectionView`, `AppModel+Persistence`) is NOT built.
+  Project-level control today is the project's File write permission, which
+  gates the edit that triggers the pass. Deferred below.
+* **`LoginShellPath` was not moved** to a shared folder. The move rewrites
+  links in `OPENCODE2_COMPARISON.md` and the OC-10 review reports and
+  nothing depends on it; OC-10 already imports it from `Tools/MCP/`.
+* **Notes are English, not localized.** They are model-facing text (like
+  `<lsp_diagnostics>`), not UI. Every UI string is localized.
+* The temp copy is a sibling in the target's directory, not in the system
+  temp folder, so the formatter finds the project's own config (`.swift-format`,
+  `.prettierrc`). The cost is a short-lived dot-file in the workspace; a crash
+  mid-run can leave one (`.tsfmt-*`).
+* The diagram's "exit 0 and file unchanged: replace original" is read as
+  "exit 0 and output differs: replace, if the original is unchanged since the
+  copy".
+
+### Deferred (needs a dependency, a download or a security-policy call)
+
+* ~~Per-project toggle and its persistence in the project archive.~~ Done in
+  the follow-up record below.
+* **No network for the formatter process.** Not enforceable without a
+  sandbox profile. Mitigations shipped: scrubbed environment (no proxy or
+  credential variables), user-installed binaries only, no in-project
+  executables. Same open call as OC-10: wrap launch in a seatbelt profile or
+  leave it. Formatter config files in the repo (a prettier plugin, for
+  example) remain trusted input once the switch is on; the settings text
+  says so.
+* A Settings "Test" button for a row (the row shows whether its command
+  resolves, using the PATH captured so far, and never runs the login shell).
+* Per-formatter circuit breaker for a formatter that fails on every write
+  (review N9; rejected for v1).
+* Moving `LoginShellPath` to a shared folder.
+* Manual check with a real swift-format, not run here.
+
+### Verification run
+
+`FormatterRunnerTests` and `FormatterRegistryTests` (bash fixture only),
+plus `LSPToolsTests` and `LocalizationParityTests`. Mutation checks are listed
+in the implementing session's final report.
+
+## Implementation record: per-project toggle (2026-11-14)
+
+The draft's Goals said "per-project toggle, default off". The user did not
+answer whether the app-wide switch is enough, so this follows the draft as
+far as it can without breaking the shipped launch policy (untouched): the
+pass needs BOTH the app-wide switch and the project's say, and the project
+can only NARROW.
+
+* `Tools/Format/ProjectFormatterMode.swift`: `ProjectFormatterMode`
+  (`inherit`, `off`) and `allowsPass(appWideEnabled:project:)`. There is no
+  "on" case on purpose: with the app-wide switch off (the shipped default)
+  a project can never turn a formatter on, so a cloned or imported project
+  record cannot widen what runs a command on disk.
+* `AppProject.formatterMode` in the project archive (`AppProjectFileStore`,
+  via `AppProject`'s own Codable). Decoded with `decodeTolerant`: a missing
+  key (an archive from before the field), an unknown value and a wrong
+  type all load as `inherit`, so an old archive does not throw.
+* `PostEditContext.formatterMode`, filled by `PostEditSeam.note` from the
+  project; `FormatterPostEditStep` returns nothing unless the app-wide switch
+  allows it AND the mode is not `off`.
+* `ProjectPermissionsSectionView`: one toggle row, "Allow formatters in this
+  project" (on = inherit, off = never), below the guardrails row, with a note
+  while the app-wide switch is off (read live through `@AppStorage`).
+  `ProjectSettingsSheet` and `AppModel.createProject` carry the field.
+* 3 new strings in 21 languages. No Settings row was added, so
+  `SettingsControlCatalog` is unchanged (`generate-settings-catalog.py
+  --check` clean).
+* Tests (`FormatterProjectToggleTests`): old archive decodes to inherit,
+  unknown and mistyped values decode to inherit, `off` round-trips, project
+  off beats app on, app off beats project inherit, the control case formats,
+  and the seam carries the mode. Mutation checks, each caught by named
+  tests: `&&` to `||` in `allowsPass`; the step ignoring the mode; the seam
+  dropping the mode; the decode fallback set to `off`.
+
+Remaining: the toggle default is "inherit", not the draft's literal
+"default off per project"; with the app-wide switch off the effective
+default is still off everywhere, so behavior matches. A project-level "on"
+that could enable the pass where the app-wide switch is off is NOT built
+(decision below). Manual check of the sheet row (text sizes, themes,
+VoiceOver, RTL, DESIGN.md section 9) was not run from this session. The
+other Deferred items above (network isolation, Settings "Test" button,
+circuit breaker, `LoginShellPath` move, real swift-format check) are
+unchanged.
+
+Decision needed: keep the project toggle narrow-only (current), or allow a
+project to opt IN when the app-wide switch is off. The second is a
+security-policy change (a project record could then widen what runs) and
+should be the user's call.
+
+## Implementation record: built-in row starts off (2026-11-14)
+
+Decision (user-approved, applied by the main session): the built-in
+swift-format row now starts OFF, matching OC-10's sourcekit-lsp row, so the
+master switch plus an explicit row toggle are both needed.
+
+* `FormatterRow.swiftFormat` is `enabled: false`. The row stays visible in
+  Settings (the section lists rows once the master switch is on), so the
+  user turns it on there. The launch policy is untouched.
+* Only the DEFAULT of a never-set row changes. `FormatterSettings.rows`
+  still carries a stored row's `enabled` value, so a user who saved an
+  enabled or disabled row keeps that choice. A user with no stored row, or
+  whose stored rows lack swift-format, gets the row inserted off.
+* Caveat: a user whose Settings saved the whole row list (any edit calls
+  `save`) stored `enabled: true` for swift-format under the old default and
+  keeps it. Their master switch was already the gate, and the stored value
+  cannot be told apart from a deliberate choice.
+* The Settings help text does not claim the row starts on, so no string
+  changed and no localization work was needed.
+* Tests (`FormatterRegistryTests.testBuiltInRowStartsOffAndStoredChoicesSurvive`,
+  and `testMatchingByExtensionOnlyForEnabledRows` now enables the row
+  explicitly). Mutation checks, both caught: default flipped back to `true`
+  (4 failures); `rows()` ignoring the stored `enabled` (1 failure).
 
 --------------------------------------------------------------------------------
 

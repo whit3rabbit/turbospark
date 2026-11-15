@@ -387,10 +387,13 @@ final class CorrectnessBatchThreeTests: XCTestCase {
 
     // MARK: - Push notification
 
-    func testPushNotificationDoesNotClaimSystemDeliveryOutsideTheAppBundle() async throws {
+    func testPushNotificationDoesNotClaimDeliveryWithoutTheOptInPath() async throws {
+        let saved = PushNotificationExecutor.deliver
+        PushNotificationExecutor.deliver = nil
+        defer { PushNotificationExecutor.deliver = saved }
         let output = try await PushNotificationExecutor.execute(arguments: ["message": "done"])
-        XCTAssertTrue(output.contains("shown in-app only"), output)
-        XCTAssertFalse(output.contains("posted successfully"), output)
+        XCTAssertTrue(output.contains("not enabled"), output)
+        XCTAssertFalse(output.contains("posted"), output)
     }
 
     // MARK: - Custom tools

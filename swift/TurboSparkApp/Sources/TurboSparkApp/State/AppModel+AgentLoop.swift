@@ -96,6 +96,10 @@ extension AppModel {
         }
         let maxSteps = project?.maxAutonomousSteps ?? 5
         if currentStep + 1 < maxSteps {
+            // A background child's mid-task message lands as a user turn the
+            // next model step reads. Only when a next step exists: past the
+            // last one there is no boundary left, and the turn tail delivers.
+            deliverSubagentMessagesAtBoundary(chatID: chatID)
             continueAgentLoop(step: currentStep + 1, chatID: chatID)
         } else {
             _ = await dispatchStopAndContinueIfBlocked(
@@ -601,6 +605,19 @@ extension AppModel {
     /// ordinary tool is a dependency the model should spell out across turns.
     func handleExtractedToolCalls(_ calls: [AppToolCall], fullContent: String, reasoning: String, result: GenerationResult, currentStep: Int, chatID: UUID, project: AppProject?) async {
         guard let first = calls.first else { return }
+        // **BACKGROUND CHATS DO NOT RUN TOOLS** (ZP-23). A turn the user has
+        // left behind can finish its prose but not act: the proposal parks
+        // whole and replays through this same function when the chat is
+        // foreground, so hooks, the permission engine and the approval card
+        // all run then, in front of the user, exactly as for any call.
+        if shouldDeferToolProposal(chatID: chatID) {
+            deferToolProposal(
+                DeferredToolProposal(
+                    calls: calls, fullContent: fullContent, reasoning: reasoning,
+                    result: result, step: currentStep, project: project),
+                chatID: chatID)
+            return
+        }
         if calls.count > 1, calls.allSatisfy({ Self.isAgentFamilyToolName($0.name) }) {
             await runConcurrentAgentBatch(
                 calls, fullContent: fullContent, reasoning: reasoning, result: result,
@@ -985,7 +1002,7 @@ extension AppModel {
     ///   resolving it here builds the next step from that chat's history and
     ///   replies into it.
     public func continueAgentLoop(step: Int, chatID: UUID) {
-        guard session != nil else { return }
+        guard session != nil || remoteSelections[chatID] != nil else { return }
         // Cancellation is cooperative: a tool already in flight runs to
         // completion, and what Stop guarantees is that no further turn starts.
         // Without this the loop resumed straight through a cancel.

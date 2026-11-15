@@ -6,7 +6,7 @@ Parity target: ZCode's
 (DocxView, XlsxView, PptxView, PdfView with a read-only invariant).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented (docx, xlsx and pptx viewers with a QuickLook fallback; deviations under Implementation notes)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -204,3 +204,145 @@ is derived from cached formatting in the files only; no recalculation.
 --------------------------------------------------------------------------------
 
 *Drafted with EGM*
+## Implementation notes
+
+Applies the EGM review (`docs/egm-reviews/zcode-parity/ZP-08`) Blockers and
+Majors. Swift only, no Rust change, no new dependency, no Package.swift or
+resource change.
+
+### What the review changed
+
+* **Problem restated (B1, M1)**: `.opaque` already rendered QuickLook plus an
+  "Open with default app" button, so the problem was never "no preview". The
+  gap is fidelity and navigation, measured against the QuickLook behavior the
+  panel already ships: no sheet or slide model the app can reason about, no
+  per-turn control over what is shown, no guarantee the same pane renders the
+  same way across macOS versions. All three formats shipped together because
+  they share one hardened loader, but the contract is unchanged: **QuickLook
+  stays the default fallback** (B2). Any parse failure, cap hit, encrypted or
+  mid-write file shows a bounded error card above the QuickLook preview, with
+  the external-opener button on the card (M10, ZP-17 CUJ 2).
+* **Routed extensions (B4, M5)**: `docx docm xlsx xlsm pptx pptm`
+  (`OfficeFormat.extensions`). A macro-enabled file shows the footer notice
+  "Macros in this file are never run." when `vbaProject.bin` exists; the part
+  is never read. Legacy binary `.doc .xls .ppt` and everything else stay
+  `.opaque` (QuickLook).
+* **Read-only invariant (B4)**: no write to the source path and no process
+  spawn other than the sanctioned `unzip` that `OfficeArchive` already uses.
+  There is no handle API: the loader opens the file read-only, and
+  `OfficeArchive` parses a private 0700 temp copy it deletes on deinit. The
+  test asserts content (not only mtime and size) and that nothing appears
+  beside the source.
+* **Render limits (B3, M6)**, all in `OfficeRenderLimits`:
+
+| Bound | Value |
+| :--- | :--- |
+| File on disk | 50 MB (above it: error card, QuickLook, opener) |
+| Archive entries | 5,000 |
+| Declared uncompressed total | 256 MB |
+| Declared over file size | 200x, checked once the claim passes 8 MB |
+| One part / all parts read | 16 MB / 96 MB (the entry read is byte-capped regardless of the declared size) |
+| Parse deadline | 20 s |
+| XML nodes / depth per part | 400,000 / 64 |
+| docx blocks / table cells / images | 4,000 / 10,000 / 16 (8 MB each) |
+| xlsx sheets / rows / columns / cells per sheet | 32 / 1,000 / 64 / 30,000 |
+| pptx slides / shapes per slide / table cells | 200 / 300 / 2,000 |
+
+  A cap cut sets `OfficeRenderNotes.truncated`, shown as a footer line; it is
+  never silent.
+* **Hostile-input rules (B3)**: table-of-contents names containing `..`, a
+  leading `/`, a backslash or NUL refuse the whole archive; a symlink at the
+  source path is refused; nothing is extracted to disk (zip-slip and symlink
+  entries are inert); entry names with `* ? [ ]` are never requested because
+  `unzip` reads them as patterns; relationships resolve only to entries inside
+  the archive and `TargetMode="External"` is counted and never followed (no
+  network access exists in this layer); XML with a DOCTYPE or ENTITY
+  declaration, a UTF-16 BOM or a NUL near the start is refused, and the
+  parser runs with external entities off (no XXE, no entity expansion);
+  embedded images are raster-only, size-capped, and decoded through a
+  thumbnail path that refuses a claimed canvas over 40 megapixels.
+* **Theme fallback and known gaps (M7)**: `theme1.xml` is not parsed. A docx
+  run uses the literal rgb Word writes beside a theme color; xlsx and pptx
+  theme colors use Office's default palette (with tint for xlsx), so a custom
+  theme shows default colors. The fidelity matrix versus the QuickLook the
+  panel already ships:
+
+| Element | Native viewer | QuickLook |
+| :--- | :--- | :--- |
+| Headings, runs, lists, tables | rendered | rendered |
+| Run font sizes (docx) | not honored (user font setting wins) | honored |
+| Headers, footers, footnotes, comments | not rendered | partly |
+| Page layout, columns, text boxes | not rendered | rendered |
+| Charts, SmartArt, media | placeholder or absent | rendered |
+| Merged cells, hidden rows and columns, borders, conditional formats (xlsx) | not rendered | rendered |
+| Frozen rows | pinned | n/a |
+| Frozen columns | scroll | n/a |
+| Cell comments, sheet tabs, formatted cached values | rendered | partly |
+| Slide layouts, masters, backgrounds, rotation, animation | not rendered (placeholders without geometry use fixed boxes; white slide) | rendered |
+| Sheet and slide navigation, outline | yes | slide list only |
+| Right-to-left and complex scripts | shaped by SwiftUI text, no bidi block layout | rendered |
+
+  The QuickLook column is the author's expectation of the system previewer,
+  not a measurement on a specific macOS version; the review's request to
+  measure it on representative agent-written files is still open.
+
+  CJK: the viewers use the system font stack, which falls back to the system
+  CJK fonts. ZCode's "CJK font runtime" is dropped from the goals (it ships
+  fonts for a non-macOS renderer; there is nothing to bundle here). No CJK
+  fixture test was added.
+* **Phasing (M1)**: not phased. The three parsers are small trees over one
+  bounded XML builder, and each falls back to QuickLook, so a weak format
+  costs no more than the old behavior.
+* **PDF (M4)**: no code change. The existing `PDFDocumentView` is the PDF
+  viewer; the "fourth viewer" goal is satisfied by routing as it stands.
+* **Where it lives (M3, open question closed)**: both entry points route to
+  one `OfficeDocumentView`. The attachment pane (`FilePreviewView`) renders it
+  for office sources, and its "Model text" toggle still reaches the
+  extraction (`hasRenderedAlternative` includes office sources). The artifact
+  panel renders it for the new kinds; its Source arm shows the same extraction
+  (the text the model receives), not raw bytes.
+* **Enum (M2)**: `AppArtifactRenderKind` is at
+  `State/AppArtifact.swift`, not `ArtifactPanelView+Kinds.swift`. It gains
+  `docx xlsx pptx` and an unknown-raw-value fallback to `.opaque`.
+  `formatLabel` keeps the extension text for the new kinds.
+* **Freshness (M12)**: the artifact panel passes the artifact revision as a
+  reload key, so a rewrite re-parses. A half-written zip is the M10 fallback.
+  No snapshot store and no XPC helper were built (scope growth the review's
+  Stage 8 rejected).
+* **Localization (M11)**: 14 new keys in 21 languages; the parity gates pass.
+
+### Deviations from the draft
+
+* Parsers are split across `OfficeRenderModel.swift` (loader, limits, XML
+  tree, colors), `OfficeDocxModel.swift`, `OfficeSpreadsheetModel.swift`
+  (with the number formatter) and `OfficeSlidesModel.swift`, and the views
+  are `OfficeDocumentView.swift` plus `OfficeViews/{Docx,Xlsx,Pptx}View.swift`.
+  `OfficeXMLParsers` (the SAX text extractor) is unchanged; the render layer
+  uses its own bounded tree because the extractor streams text only.
+* `OfficeArchive` gained only `entrySizes` (declared sizes from the listing).
+  No handle API; see the read-only invariant above.
+* Parsing is eager per document (all sheets, all slides, within the caps), on
+  a detached task; rendering is lazy (rows via `LazyVStack`, one slide at a
+  time). Per-sheet lazy parsing was dropped because `OfficeArchive` charges a
+  cumulative byte budget across reads.
+* Document content draws on fixed white paper (`Theme/OfficePaper.swift`),
+  not the themed surface: file colors are chosen for a white page. Only the
+  chrome follows the theme.
+* Number formats: General, fixed decimals, thousands, percent, literals and
+  currency, negative sections, and common date and time tokens, with fixed
+  US separators. Scientific, fractions, elapsed time and conditions fall
+  back to the cached value as General.
+* Not verified by running the app: no visual check of the three views in a
+  launched build. The parse layer and routing are unit tested
+  (`OfficeRenderModelTests`); the SwiftUI views compile and pass the
+  localization and design gates.
+
+### Tests and mutation checks
+
+`OfficeRenderModelTests` builds every fixture in code with a stored-zip
+writer (so an entry can be named `../x` or `/etc/passwd`). Mutations applied
+and caught: ratio check disabled (bomb test fails; the fixture sits under the
+part cap so only the ratio check can refuse it), entry-name containment
+disabled (zip-slip and absolute-name tests fail), DOCTYPE and ENTITY refusal
+disabled (XXE test fails), wildcard-name guard disabled (wildcard test
+fails), symlink refusal disabled (symlink test fails).

@@ -4,6 +4,14 @@ import SwiftUI
 @MainActor
 struct ChatTranscriptView: View {
     @ObservedObject var model: AppModel
+    /// The chat this view was built for. The parent keys the view by chat, so
+    /// on teardown this is still the chat being left, not the new selection.
+    let chatID: UUID
+
+    init(model: AppModel, chatID: UUID? = nil) {
+        self.model = model
+        self.chatID = chatID ?? model.selectedChatID
+    }
     /// Whether the reader is at the bottom. Streaming output scrolls the
     /// transcript only while pinned, so scrolling up to reread is not undone
     /// by the next token. The parent keys this view by chat, so a chat switch
@@ -91,12 +99,17 @@ struct ChatTranscriptView: View {
                             questions: pendingQuestions.items)
                     }
 
-                    if model.isRunning || !model.outputText.isEmpty || !model.outputReasoningText.isEmpty {
+                    // The live buffer belongs to the running turn's chat
+                    // (ZP-23): another chat's reply must not stream here.
+                    if model.isRunningInSelectedChat
+                        || (model.liveOutputBelongsToSelectedChat
+                            && (!model.outputText.isEmpty || !model.outputReasoningText.isEmpty))
+                    {
                         ActiveStreamingRowView(
                             model: model,
                             output: model.outputText,
                             reasoning: model.outputReasoningText,
-                            isRunning: model.isRunning
+                            isRunning: model.isRunningInSelectedChat
                         )
                     }
 
@@ -125,12 +138,12 @@ struct ChatTranscriptView: View {
             }
             .tsAnimation(TSMotion.hover, value: follower.isPinned)
             .onChange(of: model.outputText) {
-                if model.isRunning {
+                if model.isRunningInSelectedChat {
                     followBottom(proxy)
                 }
             }
             .onChange(of: model.outputReasoningText) {
-                if model.isRunning {
+                if model.isRunningInSelectedChat {
                     followBottom(proxy)
                 }
             }
@@ -167,7 +180,21 @@ struct ChatTranscriptView: View {
                 }
             }
             .onAppear {
-                followBottom(proxy, force: true)
+                // OC-04: a tab returning to a remembered spot lands there. No
+                // memory, or a pending reveal, keeps the old behavior.
+                switch model.transcriptScrollRestore(for: chatID) {
+                case .offset(let offset):
+                    Task { @MainActor in await follower.restore(offset: offset) }
+                case .followLatest, nil:
+                    followBottom(proxy, force: true)
+                    follower.markSettled()
+                }
+            }
+            .onDisappear {
+                if let snapshot = follower.memorySnapshot {
+                    model.recordTranscriptScroll(
+                        chatID: chatID, pinned: snapshot.pinned, offset: snapshot.offset)
+                }
             }
             // Turn navigation (qwen-code parity): the menu commands and
             // chords bump a token; this is where the jump actually lands.
@@ -175,6 +202,19 @@ struct ChatTranscriptView: View {
                 guard let target = model.turnNavigationTargetID else { return }
                 TSMotion.animate(TSMotion.pane) {
                     proxy.scrollTo(target, anchor: .top)
+                }
+            }
+            // OC-09: the sources popover's Reveal. The turn may have just
+            // been opened, so its rows do not exist until the next pass;
+            // yield once before asking the proxy to scroll.
+            .onChange(of: model.toolCardReveal) { _, reveal in
+                guard let reveal else { return }
+                follower.cancelRestore()
+                Task { @MainActor in
+                    await Task.yield()
+                    TSMotion.animate(TSMotion.pane) {
+                        proxy.scrollTo(reveal.messageID, anchor: .top)
+                    }
                 }
             }
             .accessibilityRotor(Text("Messages", bundle: .module)) {
@@ -201,10 +241,18 @@ struct ChatTranscriptView: View {
         let visibleIDs = isCollapsed
             ? TurnCollapseModel.visibleIDs(collapsedFor: turn, messagesByID: byID)
             : turn.messageIDs
+        // OC-09: derived per render from the turn's own tool results, and
+        // only for a turn that made a web call, so other turns never parse.
+        let turnMessages = turn.messageIDs.compactMap { byID[$0] }
+        let turnSources = TurnSources.hasWebCall(in: turnMessages)
+            ? TurnSources.collect(in: turnMessages) : TurnSources()
+        let sourcesRowID = turnSources.isEmpty ? nil : TurnSources.replyRowID(in: turnMessages)
         VStack(alignment: .leading, spacing: 18) {
             ForEach(visibleIDs, id: \.self) { messageID in
                 if let message = byID[messageID] {
-                    MessageRowView(model: model, message: message)
+                    MessageRowView(
+                        model: model, message: message,
+                        sources: messageID == sourcesRowID ? turnSources : nil)
                         .id(message.id)
                     if messageID == turn.anchorID && hidden > 0 && !model.isRunning {
                         TurnActivityDisclosure(count: hidden, isExpanded: !isCollapsed) {

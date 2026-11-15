@@ -109,6 +109,8 @@ extension AppModel {
         }
         guard canStartLoad(for: purpose) else {
             if case .chat(true) = purpose { activeSection = .chat }
+            // Say which chat is in the way instead of refusing silently.
+            if case .chat = purpose, generating { announceModelBusy() }
             return .busy
         }
 

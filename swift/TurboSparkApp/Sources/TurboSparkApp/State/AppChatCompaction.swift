@@ -382,7 +382,8 @@ extension AppModel {
         let tokenCountOverride = compactionTokenCountOverride
         let pinningReasoning = AppChatCompaction.pinningReasoning(
             requestSnapshot: requestReasoning, currentReasoning: reasoning)
-        guard session != nil || (summaryOverride != nil && tokenCountOverride != nil) else {
+        let remoteChat = remoteSelections[chatID] != nil
+        guard remoteChat || session != nil || (summaryOverride != nil && tokenCountOverride != nil) else {
             return .failed("no model is loaded")
         }
         guard let chatIndex = chats.firstIndex(where: { $0.id == chatID }) else {
@@ -434,20 +435,12 @@ extension AppModel {
         }
         var summaryText = ""
         do {
-            if let session {
-                for try await event in session.generate(messages, options: options) {
-                    try Task.checkCancellation()
-                    switch event {
-                    case .content(let chunk):
-                        summaryText += chunk
-                    case .prefill(let done, let total):
-                        phase = .prefill
-                        livePrefillDone = done
-                        livePrefillTotal = total
-                    case .reasoning, .toolCall, .stopped, .finished:
-                        break
-                    }
-                }
+            if remoteChat {
+                // A remote chat summarizes on the model it selected.
+                summaryText = try await remoteSummary(chatID: chatID, messages: messages, options: options)
+            } else if let session {
+                summaryText = try await consumeCompactionStream(
+                    session.generate(messages, options: options))
             } else if let summaryOverride {
                 summaryText = await summaryOverride(messages, options) ?? ""
                 try Task.checkCancellation()
@@ -466,7 +459,9 @@ extension AppModel {
         await commitCompactionBoundary(
             chatIndex: chatIndex, summary: summary, boundary: newBoundary
         ) {
-            if let session {
+            if remoteChat {
+                // Local tokenizer counts mean nothing for a remote model.
+            } else if let session {
                 await self.refreshInstructionPinningCache(
                     chatID: chatID, boundary: newBoundary, messages: allMessages,
                     session: session, reasoning: pinningReasoning)
@@ -489,6 +484,37 @@ extension AppModel {
                 : AppStrings.localized("Compacted \(rows.count) earlier messages into a summary."),
             style: .success)
         return .compacted(rowsSummarized: rows.count)
+    }
+
+    /// Reads one local summarizer stream to its end and returns the text.
+    ///
+    /// OC-14: the stall monitor is armed only for the life of this loop and
+    /// every event, prefill progress included, stamps it. `defer` ends the arm
+    /// on finish, cancel and error alike. The remote branch of
+    /// `performCompaction` never comes here: its transport has its own idle
+    /// timeout and a slow network is not an engine hang. Split out so a test
+    /// can feed a scripted stream and an injected clock.
+    func consumeCompactionStream(
+        _ stream: AsyncThrowingStream<GenerationEvent, Error>
+    ) async throws -> String {
+        stallWatchdogBegin(.compaction)
+        defer { stallWatchdogEnd(.compaction) }
+        var summaryText = ""
+        for try await event in stream {
+            try Task.checkCancellation()
+            stallWatchdogNoteActivity(.compaction)
+            switch event {
+            case .content(let chunk):
+                summaryText += chunk
+            case .prefill(let done, let total):
+                phase = .prefill
+                livePrefillDone = done
+                livePrefillTotal = total
+            case .reasoning, .toolCall, .stopped, .finished:
+                break
+            }
+        }
+        return summaryText
     }
 
     /// The automatic entry point, called inside `executeGenerationTurn`'s

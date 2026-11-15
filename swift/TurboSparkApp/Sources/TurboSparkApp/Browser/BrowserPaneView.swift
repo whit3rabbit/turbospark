@@ -14,15 +14,18 @@ final class BrowserPaneModel: ObservableObject {
     @Published private(set) var addressText = ""
 
     let engine: WebKitBrowserEngine
+    let recording: BrowserRecordingController
 
     private let externalBrowserOpener: (URL) -> Void
     private var isEditingAddress = false
 
     init(
         engine: WebKitBrowserEngine,
+        recording: BrowserRecordingController = .shared,
         externalBrowserOpener: @escaping (URL) -> Void = { _ = NSWorkspace.shared.open($0) }
     ) {
         self.engine = engine
+        self.recording = recording
         self.externalBrowserOpener = externalBrowserOpener
         self.tabs = engine.tabStore.tabs
         self.selectedTabID = engine.tabStore.activeTabID
@@ -95,6 +98,10 @@ final class BrowserPaneModel: ObservableObject {
 
     func closeTab(_ tabID: BrowserTabID) {
         guard tabs.contains(where: { $0.id == tabID }) else { return }
+        // Finalize first so the file closes on the last frame the tab drew.
+        if recording.recordingTabID == tabID {
+            Task { await recording.tabClosed(tabID) }
+        }
         let closesSelection = selectedTabID == tabID
         do {
             try engine.closeTab(tabID)
@@ -153,6 +160,43 @@ final class BrowserPaneModel: ObservableObject {
         engine.prepareForDirectUserInput(in: selectedTabID)
         engine.stopLoading(in: selectedTabID)
         refresh()
+    }
+
+    /// Whether the record button may start a recording of the selected tab.
+    /// Only a tab showing page content: a crashed or failed tab has nothing to
+    /// record, and a start while another recording runs is refused by the
+    /// controller anyway.
+    var canStartRecording: Bool {
+        guard selectedTabID != nil, recording.phase == .idle else { return false }
+        if case .content = BrowserTabView.presentation(for: selectedTabState) { return true }
+        return false
+    }
+
+    /// Starts recording the selected tab. The user's click is the only way
+    /// in: there is no agent start path and no setting that records by default.
+    @discardableResult
+    func startRecording() -> Bool {
+        guard canStartRecording, let tabID = selectedTabID else { return false }
+        let engine = engine
+        do {
+            try recording.start(tabID: tabID) { id in
+                // `captureScreenshot` is the policy-respecting capture: it
+                // refuses a page whose iframes were not authorized.
+                let image = try await engine.captureScreenshot(for: id)
+                var rect = CGRect(origin: .zero, size: image.size)
+                guard let cgImage = image.cgImage(forProposedRect: &rect, context: nil, hints: nil) else {
+                    throw WebKitBrowserEngineError.screenshotUnavailable
+                }
+                return cgImage
+            }
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func stopRecording() {
+        Task { await recording.stop() }
     }
 
     func prepareForViewportInput() {
@@ -375,6 +419,7 @@ public struct BrowserPaneView: View {
     @StateObject private var model: BrowserPaneModel
     @StateObject private var viewportController: BrowserViewportController
     @StateObject private var elementPicker: ElementPickerController
+    @ObservedObject private var recording = BrowserRecordingController.shared
     @State private var isViewportPopoverPresented = false
     @Environment(\.appTheme) private var theme
 
@@ -412,6 +457,11 @@ public struct BrowserPaneView: View {
             browserToolbar
             if elementPicker.isPicking {
                 elementPickerBar
+            }
+            if recording.isRecording {
+                recordingBar
+            } else if let notice = recording.notice {
+                recordingNoticeBar(notice)
             }
             if model.isAddressInvalid {
                 Text("Enter a valid HTTP or HTTPS address.", bundle: .module)
@@ -471,7 +521,18 @@ public struct BrowserPaneView: View {
                 // prompt carries over to the next queued dialog's origin.
                 .id(request.id)
                 .zIndex(4)
+            } else if let prompt = engine.pendingSitePermissions.first {
+                SitePermissionBubbleView(prompt: prompt) { answer in
+                    engine.sitePermissions.answer(promptID: prompt.id, answer)
+                }
+                // Fresh state per question, same as dialogs above.
+                .id(prompt.id)
+                .zIndex(4)
             }
+        }
+        // A bubble belongs to the tab being viewed. Switching away denies it.
+        .onChange(of: model.selectedTabID) { _, tabID in
+            engine.sitePermissions.cancelPromptsOutside(activeTabID: tabID)
         }
     }
 
@@ -507,6 +568,12 @@ public struct BrowserPaneView: View {
                 model.selectTab(tab.id)
             } label: {
                 HStack(spacing: 6) {
+                    if recording.recordingTabID == tab.id {
+                        Image(systemName: "record.circle.fill")
+                            .foregroundStyle(.appDanger)
+                            .help(Text("Recording", bundle: .module))
+                            .accessibilityLabel(Text("Recording", bundle: .module))
+                    }
                     if model.isAgentControlled(tabID: tab.id) {
                         Image(systemName: "hand.raised.fill")
                             .help(Text("Agent controlled", bundle: .module))
@@ -601,6 +668,26 @@ public struct BrowserPaneView: View {
                 .disabled(model.selectedTabID.map { !elementPicker.canStartPicking(in: $0) } ?? true)
             }
 
+            if recording.isRecording {
+                Button {
+                    model.stopRecording()
+                } label: {
+                    Image(systemName: "stop.circle.fill").foregroundStyle(.appDanger)
+                }
+                .help(Text("Stop Recording", bundle: .module))
+                .accessibilityLabel(Text("Stop Recording", bundle: .module))
+            } else {
+                Button {
+                    elementPicker.cancel()
+                    _ = model.startRecording()
+                } label: {
+                    Image(systemName: "record.circle")
+                }
+                .help(Text("Record Page", bundle: .module))
+                .accessibilityLabel(Text("Record Page", bundle: .module))
+                .disabled(!model.canStartRecording)
+            }
+
             Button {
                 isViewportPopoverPresented.toggle()
             } label: {
@@ -647,6 +734,99 @@ public struct BrowserPaneView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(.bar)
+    }
+
+    /// Shown for the whole recording: what is captured, where it goes, how long.
+    private var recordingBar: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "record.circle.fill")
+                .foregroundStyle(.appDanger)
+                .tsPulse(active: true)
+                .accessibilityHidden(true)
+            Text("Recording this tab. The file stays on this Mac and is not sent to the model.", bundle: .module)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            if case .recording(_, let startedAt) = recording.phase {
+                TimelineView(.periodic(from: startedAt, by: 1)) { context in
+                    Text(verbatim: Self.elapsedText(since: startedAt, now: context.date))
+                        .monospacedDigit()
+                }
+            }
+            Button {
+                model.stopRecording()
+            } label: {
+                Text("Stop Recording", bundle: .module)
+            }
+            .appAction(.secondary, size: .small)
+        }
+        .themedFont(.small)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.bar)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func recordingNoticeBar(_ notice: BrowserRecordingNotice) -> some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                recordingNoticeText(notice)
+                if case .saved(let result) = notice {
+                    Text(verbatim: "\(Self.elapsedText(seconds: result.duration)) \u{2022} \(MetricFormat.fileSize(Int(clamping: result.byteCount)) ?? "")")
+                        .foregroundStyle(.appSecondary)
+                }
+            }
+            Spacer(minLength: 8)
+            if case .saved(let result) = notice {
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([result.url])
+                } label: {
+                    Text("Show in Finder", bundle: .module)
+                }
+                .appAction(.secondary, size: .small)
+            }
+            Button {
+                recording.dismissNotice()
+            } label: {
+                Text("Dismiss", bundle: .module)
+            }
+            .appAction(.quiet, size: .small)
+        }
+        .themedFont(.small)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.bar)
+    }
+
+    @ViewBuilder
+    private func recordingNoticeText(_ notice: BrowserRecordingNotice) -> some View {
+        switch notice {
+        case .saved(let result):
+            switch result.reason {
+            case .user:
+                Text("Recording saved.", bundle: .module)
+            case .sizeLimit:
+                Text("Recording stopped at the size limit. The file was saved.", bundle: .module)
+            case .timeLimit:
+                Text("Recording stopped at the time limit. The file was saved.", bundle: .module)
+            case .captureFailed, .tabClosed, .writerFailed:
+                Text("Recording stopped because the page could not be captured. The file was saved.", bundle: .module)
+            }
+        case .couldNotStart(.insufficientDiskSpace):
+            Text("Not enough free disk space to start recording.", bundle: .module)
+        case .couldNotStart:
+            Text("Recording could not be started.", bundle: .module)
+        case .couldNotSave:
+            Text("Recording could not be saved.", bundle: .module)
+        }
+    }
+
+    static func elapsedText(since start: Date, now: Date) -> String {
+        elapsedText(seconds: now.timeIntervalSince(start))
+    }
+
+    static func elapsedText(seconds: TimeInterval) -> String {
+        let total = Int(max(0, seconds.isFinite ? seconds : 0))
+        return String(format: "%d:%02d", total / 60, total % 60)
     }
 
     private var viewportControls: some View {

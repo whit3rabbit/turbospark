@@ -54,6 +54,8 @@ struct PromptComposerFooter: View {
 
             ToolsStatusChip(model: model)
 
+            RemoteModelPill(model: model, store: model.remoteProviders)
+
             SearchToggleButton(model: model)
 
             if model.selectedProject != nil {
@@ -72,6 +74,8 @@ struct PromptComposerFooter: View {
 
             clearAction
 
+            if model.voiceCallEnabled { VoiceCallButton(model: model) }
+
             PromptAudioInputButton(promptFocused: promptFocused)
 
             GenerateControl(model: model)
@@ -80,7 +84,7 @@ struct PromptComposerFooter: View {
 
     @ViewBuilder
     private var clearAction: some View {
-        if !model.isRunning && !model.promptText.isEmpty {
+        if !model.isRunningInSelectedChat && !model.promptText.isEmpty {
             AppIconButton("xmark.circle.fill", label: Text("Clear prompt", bundle: .module)) {
                 model.promptText = ""
                 promptFocused.wrappedValue = true

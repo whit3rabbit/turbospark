@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import TurboSpark
 
@@ -68,6 +69,16 @@ final class HumanizeController: ObservableObject {
     @Published private(set) var partProgress: PartProgress?
     @Published private(set) var errorMessage: String?
     @Published private(set) var engineLoaded = false
+    /// Set while the humanizer engine has gone silent mid-part for the
+    /// watchdog window and the user has not answered (OC-14). Cleared by the
+    /// next stream event, Keep Waiting, Stop, or the end of the part.
+    @Published private(set) var stallNotice: GenerationStallNotice?
+    /// Test seams for the stall monitor. This controller owns its own
+    /// session, so it owns its own monitor: nothing here is shared with the
+    /// chat turn's or compaction's.
+    var stallClock: () -> TimeInterval = GenerationStallWatchdog.defaultClock
+    var stallPollInterval: TimeInterval? = 1
+    private(set) var stallWatchdog: GenerationStallWatchdog?
 
     struct PartProgress: Equatable {
         let current: Int
@@ -173,6 +184,9 @@ final class HumanizeController: ObservableObject {
     }
 
     private func finishOperation() {
+        // Balanced backstop: every part already ends its own arm, so this is
+        // a no-op unless a path ever skipped one.
+        stallWatchdog?.end()
         phase = .idle
         prefillProgress = nil
         partProgress = nil
@@ -200,6 +214,35 @@ final class HumanizeController: ObservableObject {
     func cancel() {
         task?.cancel()
         engine?.cancel()
+    }
+
+    /// Keep Waiting: hide the notice and watch for another window.
+    func keepWaitingAfterStall() {
+        stallNotice = nil
+        stallWatchdog?.keepWaiting()
+    }
+
+    /// Stop on the panel is the ordinary cooperative stop. It ends the
+    /// rewrite and keeps the partial text; it cannot free a wedged engine.
+    func stopStalledRewrite() {
+        stallNotice = nil
+        cancel()
+    }
+
+    private func armStallWatchdog() {
+        let watchdog = stallWatchdog ?? GenerationStallWatchdog(
+            clock: stallClock,
+            onStall: { [weak self] seconds in
+                // Only while a rewrite is actually running, so a notice never
+                // outlives the operation.
+                guard let self, self.phase == .running else { return }
+                self.stallNotice = GenerationStallNotice(silenceSeconds: Int(seconds.rounded()))
+                _ = AccessibilityNotification.Announcement.post(
+                    .init(AppStrings.localized("The model has stopped responding")))
+            },
+            onRecovered: { [weak self] in self?.stallNotice = nil })
+        stallWatchdog = watchdog
+        watchdog.begin(pollInterval: stallPollInterval)
     }
 
     /// Empties the rewrite and everything derived from it (highlight source,
@@ -301,19 +344,28 @@ final class HumanizeController: ObservableObject {
             var result: GenerationResult?
             // Parts are sized so the engine's automatic budget (2.5x, capped
             // at 2,048) always covers them; no per-call limit is sent.
-            for try await event in engine.humanize(source.substring(with: part.range), options: options) {
-                try Task.checkCancellation()
-                switch event {
-                case .prefill(let done, let total):
-                    prefillProgress = total > 0 ? Double(done) / Double(total) : nil
-                case .content(let delta):
-                    prefillProgress = nil
-                    streamed += delta
-                    rewrite = prefix + streamed
-                case .finished(let finished):
-                    result = finished
-                default:
-                    break
+            // OC-14: armed only inside this one engine call (model opening and
+            // planning are outside it). The `defer` ends it on finish, cancel
+            // and error alike, so no exit leaves a monitor armed.
+            do {
+                armStallWatchdog()
+                defer { stallWatchdog?.end() }
+                for try await event in engine.humanize(source.substring(with: part.range), options: options) {
+                    try Task.checkCancellation()
+                    // Every event, prefill progress included, is activity.
+                    stallWatchdog?.noteActivity()
+                    switch event {
+                    case .prefill(let done, let total):
+                        prefillProgress = total > 0 ? Double(done) / Double(total) : nil
+                    case .content(let delta):
+                        prefillProgress = nil
+                        streamed += delta
+                        rewrite = prefix + streamed
+                    case .finished(let finished):
+                        result = finished
+                    default:
+                        break
+                    }
                 }
             }
             // Cancelling the consuming task ends the stream quietly rather

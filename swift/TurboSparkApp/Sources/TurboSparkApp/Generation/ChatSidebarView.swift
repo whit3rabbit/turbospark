@@ -33,6 +33,12 @@ struct ChatSidebarView: View {
             .padding(.top, 10)
             .padding(.bottom, 6)
 
+            if model.interactionMode == .chat {
+                modePicker
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 6)
+            }
+
             filterBar
                 .padding(.horizontal, 10)
                 .padding(.bottom, 8)
@@ -59,6 +65,15 @@ struct ChatSidebarView: View {
                     projectForMcpSettings = nil
                 }
             )
+        }
+        .sheet(isPresented: Binding(
+            get: { model.trajectoryPaneChatID != nil },
+            set: { if !$0 { model.trajectoryPaneChatID = nil } })) {
+            if let chatID = model.trajectoryPaneChatID {
+                TrajectoryPaneView(
+                    model: model, chatID: chatID,
+                    onDismiss: { model.trajectoryPaneChatID = nil })
+            }
         }
         .sheet(item: $chatForSystemPrompt) { chat in
             ChatSystemPromptSheet(
@@ -134,6 +149,32 @@ struct ChatSidebarView: View {
             RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
                 .stroke(.appBorder, lineWidth: 0.5)
         )
+    }
+
+    // MARK: - Mode Picker (OC-03)
+
+    /// Chats (time buckets) or Inbox (what needs the user). Chat tab only:
+    /// the Projects tab has its own grouping.
+    private var modePicker: some View {
+        AppAdaptiveHeader(
+            leading: {
+                AppPillPicker(
+                    selection: Binding(
+                        get: { model.chatSidebarMode },
+                        set: { model.setChatSidebarMode($0) }),
+                    items: [
+                        AppPillItem(
+                            value: ChatSidebarMode.chats,
+                            label: Text("Chats", bundle: .module),
+                            systemImage: "bubble.left.and.bubble.right"),
+                        AppPillItem(
+                            value: ChatSidebarMode.inbox,
+                            label: Text("Inbox", bundle: .module),
+                            systemImage: "tray"),
+                    ],
+                    label: Text("Sidebar view", bundle: .module))
+            },
+            actions: { EmptyView() })
     }
 
     // MARK: - Filter Bar
@@ -281,8 +322,8 @@ struct ChatSidebarView: View {
             }
         }
         .buttonStyle(SidebarActionButtonStyle())
-        .disabled(model.isRunning)
-        .help(model.isRunning
+        .disabled(!model.canCreateChat)
+        .help(!model.canCreateChat
             ? Text("Cannot start a new chat while generation is running", bundle: .module)
             : (Text("New chat", bundle: .module) + Text(verbatim: " (Cmd+N)")))
     }
@@ -301,73 +342,10 @@ struct ChatSidebarView: View {
     private var chatList: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 3) {
-                // Sorted, filtered and bucketed ONCE per body. This used to
-                // re-run (with a sort and a vault-aware transcript check
-                // each) for every mention below, and the body re-runs per
-                // streamed token.
-                let layout = ChatSidebarLayout.make(
-                    sortedHistory: historyChats, searchText: searchText)
-                if layout.isEmpty {
-                    AppEmptyState(
-                        systemImage: "bubble.left.and.bubble.right",
-                        title: searchText.isEmpty ? Text("No chats yet", bundle: .module) : Text("No matching chats", bundle: .module),
-                        message: searchText.isEmpty ? Text("Start a conversation to see history here", bundle: .module) : Text("Try a different search term", bundle: .module)
-                    ) {
-                        if searchText.isEmpty {
-                            Button {
-                                model.createChat()
-                            } label: {
-                                Text("New chat", bundle: .module)
-                            }
-                            .appAction(.secondary, size: .small)
-                            .disabled(model.isRunning)
-                        }
-                    }
-                    .padding(.vertical, 16)
-                } else if !layout.isSearching {
-                    // The qwen-code session grouping: time-bucket headers
-                    // over the recency-sorted list. Suppressed while a
-                    // search filter is active -- the matches are what
-                    // matters then, not when they happened.
-                    ForEach(layout.pinned) { chat in
-                        ChatSidebarChatRowView(
-                            model: model,
-                            chat: chat,
-                            chatBeingRenamed: $chatBeingRenamed,
-                            renameText: $renameText,
-                            chatPendingDeletion: $chatPendingDeletion,
-                            chatForSystemPrompt: $chatForSystemPrompt
-                        )
-                    }
-                    ForEach(layout.groups, id: \.bucket) { group in
-                        Text(LocalizedStringKey(group.bucket.label), bundle: .module)
-                            .font(theme.ui(.tiny, weight: .semibold))
-                            .foregroundStyle(.appSecondary)
-                            .padding(.leading, 10)
-                            .padding(.top, 8)
-                            .textCase(nil)
-                        ForEach(group.chats) { chat in
-                            ChatSidebarChatRowView(
-                                model: model,
-                                chat: chat,
-                                chatBeingRenamed: $chatBeingRenamed,
-                                renameText: $renameText,
-                                chatPendingDeletion: $chatPendingDeletion,
-                                chatForSystemPrompt: $chatForSystemPrompt
-                            )
-                        }
-                    }
+                if model.chatSidebarMode == .inbox {
+                    inboxRows
                 } else {
-                    ForEach(layout.matches) { chat in
-                        ChatSidebarChatRowView(
-                            model: model,
-                            chat: chat,
-                            chatBeingRenamed: $chatBeingRenamed,
-                            renameText: $renameText,
-                            chatPendingDeletion: $chatPendingDeletion,
-                            chatForSystemPrompt: $chatForSystemPrompt
-                        )
-                    }
+                    chatsRows
                 }
                 archivedSection
             }
@@ -375,6 +353,97 @@ struct ChatSidebarView: View {
             .padding(.bottom, 8)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// OC-03: the Inbox grouping. Derived once per body, like the Chats
+    /// layout, from the same scoped and sorted history.
+    @ViewBuilder
+    private var inboxRows: some View {
+        let layout = ChatInboxLayout.make(
+            chats: historyChats,
+            searchText: searchText,
+            selectedID: model.selectedChatID,
+            retainedID: model.inboxRetainedChatID,
+            turnState: { model.chatTurnState(for: $0) })
+        ChatSidebarInboxRows(
+            model: model,
+            layout: layout,
+            chatBeingRenamed: $chatBeingRenamed,
+            renameText: $renameText,
+            chatPendingDeletion: $chatPendingDeletion,
+            chatForSystemPrompt: $chatForSystemPrompt)
+    }
+
+    @ViewBuilder
+    private var chatsRows: some View {
+        // Sorted, filtered and bucketed ONCE per body. This used to
+        // re-run (with a sort and a vault-aware transcript check
+        // each) for every mention below, and the body re-runs per
+        // streamed token.
+        let layout = ChatSidebarLayout.make(
+            sortedHistory: historyChats, searchText: searchText)
+        if layout.isEmpty {
+            AppEmptyState(
+                systemImage: "bubble.left.and.bubble.right",
+                title: searchText.isEmpty ? Text("No chats yet", bundle: .module) : Text("No matching chats", bundle: .module),
+                message: searchText.isEmpty ? Text("Start a conversation to see history here", bundle: .module) : Text("Try a different search term", bundle: .module)
+            ) {
+                if searchText.isEmpty {
+                    Button {
+                        model.createChat()
+                    } label: {
+                        Text("New chat", bundle: .module)
+                    }
+                    .appAction(.secondary, size: .small)
+                    .disabled(model.isRunning)
+                }
+            }
+            .padding(.vertical, 16)
+        } else if !layout.isSearching {
+            // The qwen-code session grouping: time-bucket headers
+            // over the recency-sorted list. Suppressed while a
+            // search filter is active -- the matches are what
+            // matters then, not when they happened.
+            ForEach(layout.pinned) { chat in
+                ChatSidebarChatRowView(
+                    model: model,
+                    chat: chat,
+                    chatBeingRenamed: $chatBeingRenamed,
+                    renameText: $renameText,
+                    chatPendingDeletion: $chatPendingDeletion,
+                    chatForSystemPrompt: $chatForSystemPrompt
+                )
+            }
+            ForEach(layout.groups, id: \.bucket) { group in
+                Text(LocalizedStringKey(group.bucket.label), bundle: .module)
+                    .font(theme.ui(.tiny, weight: .semibold))
+                    .foregroundStyle(.appSecondary)
+                    .padding(.leading, 10)
+                    .padding(.top, 8)
+                    .textCase(nil)
+                ForEach(group.chats) { chat in
+                    ChatSidebarChatRowView(
+                        model: model,
+                        chat: chat,
+                        chatBeingRenamed: $chatBeingRenamed,
+                        renameText: $renameText,
+                        chatPendingDeletion: $chatPendingDeletion,
+                        chatForSystemPrompt: $chatForSystemPrompt
+                    )
+                }
+            }
+        } else {
+            ForEach(layout.matches) { chat in
+                ChatSidebarChatRowView(
+                    model: model,
+                    chat: chat,
+                    chatBeingRenamed: $chatBeingRenamed,
+                    renameText: $renameText,
+                    chatPendingDeletion: $chatPendingDeletion,
+                    chatForSystemPrompt: $chatForSystemPrompt
+                )
+            }
+        }
     }
 
     /// The qwen-code session-archive surface: archived chats leave the

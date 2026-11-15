@@ -183,10 +183,11 @@ jobs:
           # stanzas, or brew links the wrong names.
           # Every [[bin]] of turbospark-cli comes from the one
           # `-p turbospark-cli` build, and turbospark-server from its own
-          # package. The front end hands image, music, clone, speak, steer
-          # and ocr to the siblings, so all of them ship (the same list as
+          # package. The front end hands image, music, clone, speak, steer,
+          # ocr and acp (`turbospark acp`) to the siblings, so all of them
+          # ship (the same list as
           # make-app-bundle.sh).
-          bins=(turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-music turbospark-clone turbospark-speak turbospark-steer turbospark-ocr)
+          bins=(turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-music turbospark-clone turbospark-speak turbospark-steer turbospark-ocr turbospark-acp-agent)
           for bin in "${bins[@]}"; do
             cp "target/aarch64-apple-darwin/release/$bin" dist/stage/
           done
@@ -386,6 +387,7 @@ jobs:
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-speak"
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-steer"
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-ocr"
+            binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-acp-agent"
 
             # Only runs under \`brew uninstall --zap\`. Deliberately does NOT
             # list ~/.turbospark: that is where multi-gigabyte model installs
@@ -423,6 +425,7 @@ jobs:
             binary "turbospark-speak"
             binary "turbospark-steer"
             binary "turbospark-ocr"
+            binary "turbospark-acp-agent"
           end
           EOF
 

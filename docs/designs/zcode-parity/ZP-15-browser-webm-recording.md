@@ -1,4 +1,4 @@
-# ZP-15: Browser session video recording (WebM)
+# ZP-15: Browser session video recording (MP4)
 
 Finding 6.12 in [ZCODE_COMPARISON.md](../../ZCODE_COMPARISON.md).
 Parity target: ZCode's
@@ -6,7 +6,7 @@ Parity target: ZCode's
 and its recording spec.
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented (2026-11-14), deviations below
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -180,6 +180,71 @@ recording at a time across tabs.
 * **Note**: ScreenCaptureKit capture of a live window requires a real
   screen and screen-recording permission; this manual gate runs on
   hardware, not in CI, consistent with the repo's hardware-gate rules.
+
+--------------------------------------------------------------------------------
+
+## Implementation notes and deviations
+
+Decisions the review (B1, B2) required, and where the build departs from
+the draft above. The draft text is kept as written; this section wins.
+
+* **Container: MP4 (H.264) via AVAssetWriter.** No WebM, no transcode,
+  no format setting (review B1). The parity goal is the capability. The
+  file is fragmented every 10 seconds so a crash or force quit leaves a
+  file that plays to the last fragment.
+* **Capture: snapshot stitching, not ScreenCaptureKit (review B2).** The
+  draft's fallback is the shipped mechanism, at 4 fps with wall-clock
+  timestamps. `WebKitBrowserEngine.captureScreenshot` is the frame
+  source, so a frame is refused when an iframe origin was not authorized
+  (the same gate as the screenshot tool). Reasons: the captured surface
+  is the web view alone (a window crop can pick up overlays and cannot
+  show an occluded view), and no Screen Recording grant is involved, so
+  there is no TCC prompt and `RecordingPermissions` is not touched. The
+  cost is a low frame rate and CPU per frame; a hardware spike for
+  SCStream is a follow-up only if 4 fps proves too coarse.
+* **Output location, no transcript attach (review M3).** The app has no
+  per-chat artifact store, and a prompt attachment is extracted text sent
+  to the model, which is the wrong channel for a video of a page. The
+  file lands in `<profile>/BrowserRecordings/` (directory mode 0700,
+  unencrypted, local only). Stopping shows a notice in the pane with
+  duration, size and Show in Finder. Files are never attached to a chat
+  or sent to a model, and nothing deletes them automatically.
+* **User button only; agent tools deferred (review M1).**
+  `browser_start_recording` and `browser_stop_recording` are not
+  shipped. The only start path is the user's click on the pane toolbar,
+  so there is no agent-initiated recording, no approval ladder position
+  to define and no "debuggable flow" ambiguity. A later task adds the
+  tools, ask-gated per call in every mode.
+* **Caps are constants, no settings fields (review M6, M11).** Size cap
+  500 MB, duration cap 30 minutes, 4 fps, free space required at start is
+  the size cap plus 512 MB. No "format" or "opt-in per session" setting:
+  the explicit start click is the opt-in.
+* **Stop-and-finalize table (review M4).** User Stop, size cap and time
+  cap finalize and keep the file with a named notice. A recorded tab that
+  closes, a vanished tab, or 8 consecutive capture failures (crashed
+  page, unauthorized frame origin) finalize what was written. A stop
+  with zero frames deletes the output and says it could not be saved.
+  A resized tab is aspect-fitted into the first frame's canvas. Quit or
+  crash relies on the 10 second fragments; there is no
+  `applicationWillTerminate` finalizer.
+* **Audit log (review NFR).** There is no persistent browser audit store
+  for recording (the diagnostic event type is closed over command kinds).
+  Start and stop write `os.Logger` lines with frame and byte counts, never
+  an origin or title.
+* **One recording at a time** across every tab (a process-wide
+  controller); a second start throws and the first keeps running.
+* **Privacy notice (review M9).** A bar shows for the whole recording:
+  what is captured, that the file stays on this Mac and is not sent to the
+  model. Tabs that are recorded show a record dot.
+* **Localization.** 10 new keys in the catalog, 21 languages (the
+  ten parity gates). Text-only hiding of the tool does not apply (no tool).
+* **Files.** `Browser/BrowserRecordingController.swift` (new),
+  `Browser/BrowserPaneView.swift`, `Localizable.xcstrings`,
+  `Tests/BrowserRecordingTests.swift`. `BrowserToolDefinitions.swift` and
+  `MacAppSettings.swift` are not touched.
+* **Not verified.** Hardware-encode and CPU cost are expected, not
+  measured. A manual 30 second record, stop and playback on a real page is
+  a hardware gate not run in CI.
 
 --------------------------------------------------------------------------------
 

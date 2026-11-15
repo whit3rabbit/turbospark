@@ -48,14 +48,17 @@ extension AppModel {
     /// persists, and the ghost invariant asserts ghost rows carry no
     /// conversation content -- a token total describing the sealed
     /// conversation is content.
-    public func recordUsage(promptTokens: Int, outputTokens: Int, chatID: UUID) {
+    public func recordUsage(
+        promptTokens: Int, outputTokens: Int, chatID: UUID, provider: String? = nil
+    ) {
         guard let index = chats.firstIndex(where: { $0.id == chatID }),
             !chats[index].isGhost
         else { return }
         if chats[index].usage == nil {
             chats[index].usage = AppChatUsageLedger()
         }
-        chats[index].usage?.record(promptTokens: promptTokens, outputTokens: outputTokens)
+        chats[index].usage?.record(
+            promptTokens: promptTokens, outputTokens: outputTokens, provider: provider)
         persistChats()
     }
 
@@ -113,6 +116,9 @@ extension AppModel {
         if pendingUserMessages[job.chatID]?.first?.isScheduled == true {
             drainPendingUserMessagesIfIdle(chatID: job.chatID)
         }
+        // Still parked: keep its place in the admission order so the turn
+        // tail finds it when the lane frees up, selected or not.
+        if !(pendingUserMessages[job.chatID] ?? []).isEmpty { noteParkedWork(chatID: job.chatID) }
         return true
     }
 

@@ -21,6 +21,9 @@ Short seams. Verify each one before release.
 - [Swift tool implementation](docs/SWIFT_TOOLS.md)
 - [Swift skills](docs/SWIFT_SKILLS.md)
 - [Swift storage](docs/storage.md)
+- [Crash recovery and containment limits](docs/SWIFT_CRASH_RECOVERY.md)
+- [Trajectory log (local, off by default, plaintext)](docs/SWIFT_TRAJECTORY.md)
+- [Remote providers (API keys only, opt-in, foundation layers)](docs/SWIFT_REMOTE_PROVIDERS.md)
 - [Swift memory architecture](docs/SWIFT_MEMORY.md)
 - [Syntext code search](docs/SYNTEXT.md) and
   [conversation recall (Syntext context engine)](docs/SYNTEXT_CONTEXT.md)
@@ -65,6 +68,17 @@ staging files changed.
   UI strings without `Text`. `Localization/Info.plist` declares
   `CFBundleLocalizations` for all 21 languages so menu bar and system dialogs
   follow the in-app picker after relaunch.
+- Office documents (docx, xlsx, pptx and the macro-enabled variants) are
+  hostile input. `OfficeRenderModel` renders them read-only inside the bounds
+  in `OfficeRenderLimits`; keep every read behind `OfficePackage`, never
+  follow an external relationship, never enable entity resolution, and fall
+  back to QuickLook on any failure (`docs/designs/zcode-parity/ZP-08-office-document-rendering.md`).
+- Containment: SwiftUI cannot catch a trap in a view body, so do not add a
+  wrapper that claims to. Parse and decode untrusted or truncated input with
+  typed errors and render a failure state, and avoid force unwraps, `try!` and
+  unchecked subscripts on disk, document, network or model data in code a view
+  reaches. `CrashRecoveryStore` marks a session at launch and clears it only in
+  `applicationWillTerminate` (`docs/SWIFT_CRASH_RECOVERY.md`).
 - Store durability: `AppJSONStore` quarantines unreadable or corrupt JSON
   files (`corrupt-...`) instead of overwriting them on save, preventing silent
   data loss.
@@ -72,6 +86,16 @@ staging files changed.
   `runsChatGenerationCommand` enables chat generation only in Chat. Full-bleed
   workspaces (`.images`, `.audio`, `.humanize`) declare `ownsGenerationShortcuts`
   to bind those chords to their own run/stop controls.
+- Concurrent chats (ZP-23): one turn at a time app-wide. A chat that owns the
+  running turn is `generatingChatID`; any other chat can be selected, created
+  or deleted while it runs (`ChatGenerationCoordinator.verdict`), and the live
+  buffer (`outputText`) is drawn only for that chat. Chat-level guards must
+  ask `laneVerdict`, not `generating`, unless they touch workspace-global
+  state. Every site that raises `generating` for a chat turn must call
+  `claimLane(for:)`; unattributed work keeps the blanket refusal. A tool
+  proposal from a chat that is not selected parks and replays when the chat is
+  foreground, so nothing runs unattended in the background. Deferred items and
+  the reasoning: `docs/designs/zcode-parity/ZP-23-concurrent-chats.md`.
 - Tool options in Chat vs Projects: In Chat (`interactionMode == .chat`), tools
   can be toggled on/off via `chatToolsEnabled` (persisted in `MacAppSettings`,
   default true, switched from the Tools chip popover below the prompt composer

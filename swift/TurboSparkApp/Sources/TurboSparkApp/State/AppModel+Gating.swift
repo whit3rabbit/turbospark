@@ -83,7 +83,7 @@ extension AppModel {
             submitting: submitting,
             opening: opening,
             hasPendingCall: pendingToolCall != nil,
-            hasSession: session != nil,
+            hasSession: hasTurnModel,
             hasInput: !promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || !promptAttachments.isEmpty)
     }

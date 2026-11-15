@@ -5,7 +5,7 @@ Parity target: ZCode's
 [dev-icon-badge doc](https://github.com/zai-org/ZCode/blob/main/docs/dev-icon-badge.md).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented. Deviations from the draft, per the EGM review: detection is one Info.plist key (`TSReleasePackage`, written by `scripts/make-app-bundle.sh` before codesign, asserted by `verify-app-bundle.sh`); no `#if DEBUG` or install-location legs; the badge is a post-step inside `AppDockIconRenderer.setIcon` (works with Dock icon presets and `swift run`); compositing is synchronous on the main actor, no timing budget; `DevIconBadger.swift` lives in `Theme/` beside the renderer; a locally packaged `dist/` bundle is unbadged by design; the badge is a visual aid only and does not isolate bundle id or data. The Makefile is unchanged.
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------

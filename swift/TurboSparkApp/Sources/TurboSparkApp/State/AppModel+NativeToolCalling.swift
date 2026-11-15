@@ -47,14 +47,24 @@ extension AppModel {
     /// let the prompt builder re-derive its own); one capture means the meter
     /// prices the tools the turn will actually send.
     func captureTurnTools(project: AppProject?, session: TurboSparkSession) -> TurnAvailableTools {
-        let mediaCapability = AppToolMediaCapability(
-            supportsImageBearingToolResults: session.info.vision.active,
-            maximumPixelCount: session.info.vision.maxPixels)
-        return AppToolCatalog.captureTurnAvailableTools(
+        captureTurnTools(
+            project: project,
+            mediaCapability: AppToolMediaCapability(
+                supportsImageBearingToolResults: session.info.vision.active,
+                maximumPixelCount: session.info.vision.maxPixels),
+            contextTokens: maxContextTokens > 0 ? maxContextTokens : nil)
+    }
+
+    /// The session-free form, used by a remote turn (no local session, no
+    /// vision tower): the caller supplies the media capability and the window.
+    func captureTurnTools(
+        project: AppProject?, mediaCapability: AppToolMediaCapability, contextTokens: Int?
+    ) -> TurnAvailableTools {
+        AppToolCatalog.captureTurnAvailableTools(
             for: project,
             chatToolsEnabled: chatToolsEnabled,
             globalMcpServers: globalMcpServers,
-            contextTokens: maxContextTokens > 0 ? maxContextTokens : nil,
+            contextTokens: contextTokens,
             webToolsEnabled: webSearchEnabled,
             browserAvailability: browserToolAvailability(mediaCapability: mediaCapability),
             computerUseAvailability: computerUseToolAvailability(mediaCapability: mediaCapability),

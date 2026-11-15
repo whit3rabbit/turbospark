@@ -11,7 +11,7 @@ and
 [sound](https://github.com/anomalyco/opencode/blob/dev/packages/app/src/shell/notifications/sound.ts).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Partial (implemented 2026-11-14; deferred items below)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -196,6 +196,169 @@ wrapper in the same change so there is one authorization owner.
   arrives. Decline authorization and confirm the degraded-state row.
   Run the full DESIGN.md section 9 checklist on the new settings
   section.
+
+## Implementation record (2026-11-14)
+
+Status is Partial: the notification channel, settings and tests are built;
+two items are deferred (below) and the manual passes were not run.
+
+Built:
+
+* `AttentionEventPolicy.swift`: the pure matrix (toggles, focus rule,
+  per-chat slots with priority) plus the persisted types
+  (`AttentionEvent`, `AttentionSound`, `AttentionPreferences`).
+* `AppNotificationCenter.swift`: the wrapper (authorization state, post,
+  sound, click routing) over an `AttentionNotificationBackend` protocol; the
+  real backend wraps `UNUserNotificationCenter` and answers `.unavailable`
+  outside a signed .app bundle.
+* `AppModel+AttentionEvents.swift`: the four emit points and the Settings
+  mutators. One type plus a small backend protocol replaced the draft's
+  `AppAttentionEvents.notify` facade (review M8).
+* `NotificationsSettingsSection.swift`, added to the General pane: four
+  toggles, a sound picker per event, one authorization row (Allow, or Open
+  System Settings after a refusal). Four `SettingsControlCatalog` entries
+  plus the section and the two actions; `generate-settings-catalog.py
+  --check` passes.
+* `MacAppSettings.attentionEvents` (tolerant decode; absent or junk means
+  every event off). Persisted in the settings file, not with the chat
+  archive (review M10; the draft's file 6 `AppModel+Persistence.swift` is
+  the load/save of that field).
+* 16 catalog keys in 21 languages.
+* Tests: `AttentionEventPolicyTests` (14), `AppNotificationCenterTests` (13),
+  `AttentionEventHooksTests` (14); the new enums are in
+  `LocalizationParityTests.testEnumBackedDisplayStringsAreCatalogKeys`.
+
+Event wiring (the draft's Open Question on source wiring):
+
+* `needsPermission`: `pendingToolCall.didSet` (a card opening, read one hop
+  later because the chat id is assigned after it) and `deferToolProposal`
+  (a background chat parking a proposal).
+* `needsAnswer`: `waitForUserAnswers`, when the question card publishes.
+* `error`: `finishCancelled` with reason `error` or `context_overflow`.
+* `turnFinished`: `finishTurnTail`, last, only when the chat is idle and not
+  generating afterwards. A user Stop, an error, a parked approval and a
+  turn that handed over to a queued one do not fire it (review M7).
+
+Open Questions, resolved:
+
+* Settings placement: a Notifications section in General (the draft's lean).
+  Not promoted to a pane.
+* Auto-resolve countdown arming the question cue: moot. No such countdown
+  exists in the code today, so there is nothing to arm; one cue per
+  question, raised when the card publishes.
+
+Review findings, how each was settled:
+
+* B1, B2 (Alternatives, Risks), short form. Rejected: a single master
+  toggle (loses the "only errors" case the matrix exists for); posting the
+  banner through content.sound alone (see M3); always posting regardless of
+  focus (duplicates the in-window cards). Risks: flood across chats (one
+  slot per chat, replaced in place, no rate cap); stale slot (released on
+  app activation, on click, and when a post fails); revoked authorization
+  (status re-read on activation and when Settings appears, events dropped
+  while not authorized); click on a deleted chat (the app comes forward and
+  selection is unchanged); double sound (played once per delivered post);
+  chat title on a lock screen (kept, as the draft states; a Ghost chat
+  never raises a banner).
+* M1: `AutomationExecutors.PushNotification` is NOT migrated. It requests
+  authorization at tool-call time, which contradicts the Allow-only rule,
+  and routing an agent push through the focus rule would change a shipped
+  behavior. Deferred (below). The wrapper never prompts from an event.
+* M2: the toggle stays on while authorization is denied and the row says so
+  (CUJ 3); "declining leaves all events off" in Goals is superseded.
+* M3: kept NSSound named system sounds as the Goals say, with two stated
+  limits: macOS Focus and Do Not Disturb do not silence it, and it plays
+  only after a successful post. The banner itself carries no sound.
+  Default sound is none, so enabling an event is a silent banner until the
+  user picks one. Sounds offered: Glass, Ping, Pop, Hero, Basso. The
+  alert-volume claim was dropped (unverified).
+* M4: priority added. needsPermission and needsAnswer are never replaced by
+  turnFinished or error; error is not replaced by turnFinished. One release
+  rule with three triggers: app activation, click, post failure.
+* M5: declined. The rule stays "app not active" as the Goals say. A
+  background chat in an active app gets the sidebar pill and the parked
+  card, not a banner. Reopen if that proves quiet in practice.
+* M6: no ZP-02 state source is observed; the hooks fire from the lifecycle
+  points directly (the draft's fallback). ZP-02 phase 1 and the dock badge
+  spec do not expose a transition stream to compose with. Dock badge stays
+  out of scope.
+* M9: the delegate is set when the backend is created at `AppModel` init
+  (setting a delegate does not prompt). A click selects the chat if it
+  still exists.
+* M11 and N-items: banner bodies are the chat title plus a fixed line; the
+  permission line names the tool, never its arguments (tested).
+* Latency: nothing blocks the main actor; the post is an async task and the
+  sound follows it. The "under 200 ms" figure was not measured.
+
+Deviations:
+
+* No keyboard shortcut was added, so the OC-01 catalog is untouched.
+* Tests do not cover `SystemAttentionBackend` itself (it needs a signed
+  bundle); the delegate hop and the real `UNUserNotificationCenter` calls
+  are unexercised.
+
+Deferred:
+
+* ~~Migrating `AutomationExecutors.PushNotification` to the shared
+  wrapper~~ Done 2026-11-14, see "Implementation record: agent push".
+* Dock badge and attention request (desktop-shell-hardening owns it).
+
+Not run: manual unfocused/focused/declined passes, the DESIGN.md section 9
+checklist (text sizes, themes, German and Arabic, VoiceOver), a real
+notification in the installed app bundle, `make swift-app`.
+
+Verification: focused app tests (AttentionEventPolicyTests 14,
+AppNotificationCenterTests 13, AttentionEventHooksTests 14,
+LocalizationParityTests, KeyboardShortcutCatalogTests,
+SettingsWindowLayoutTests, DesignTokenRatchetTests: 66 pass),
+`make compile-strings`, `make design-check`,
+`generate-settings-catalog.py --check`. Mutation checks: inverting the
+focus rule and disabling the rank check each fail the policy tests. The
+finish-cue cancel guard was not mutation-checked. `make swift-lib` and
+`make swift-app` were not run.
+
+## Implementation record: agent push (2026-11-14)
+
+Open decision 2 (do agent pushes bypass the focus rule, may the tool prompt)
+settled by the user's delegate: an explicit agent push is a deliberate
+request from a running task, so it bypasses the "app not active" rule, but
+it never prompts, and it does nothing until the user opts in.
+
+* `PushNotification` no longer touches `UNUserNotificationCenter` or
+  `requestAuthorization`. `PushNotificationExecutor.execute` sanitizes the
+  title (80 characters) and message (240), strips control and invisible
+  format characters (ESC, NUL, bidi overrides, zero-width), collapses
+  whitespace to one line, and calls a hook that `AppModel` wires to
+  `AppNotificationCenter.pushFromAgent`.
+* `pushFromAgent` order: (1) the new `AttentionPreferences.allowAgentPush`
+  ("Allow agents to send notifications", default OFF, tolerant decode so an
+  old settings file loads as off); off means nothing is read or posted.
+  (2) macOS status is read without prompting; anything but authorized
+  returns "not sent". (3) `AttentionEventPolicy.decideAgentPush`: no focus
+  rule, no sound, but the per-chat slot applies. An agent push ranks like an
+  error: it never replaces a pending approval or question, replaces a
+  finish, and a later finish does not replace it.
+* Results are non-errors that tell the agent what happened (opted out, not
+  authorized, outranked, post failed, Ghost chat). The in-app toast now
+  fires only after a successful post. A Ghost chat never posts.
+* Settings: one toggle plus a help line in the Notifications section; the
+  Allow button shows when any event or the agent switch is on. 2 strings in
+  21 languages, one `SettingsControlCatalog` entry.
+* Permission ladder unchanged: category automation, risk low
+  (`PushNotificationToolTests.testLadderPositionIsUnchanged`).
+* The OC-02 source scan now pins the system `requestAuthorization(options:)`
+  caller to `AppNotificationCenter.swift` alone, and a second test asserts
+  `AutomationExecutors.swift` never mentions the system center.
+* Tests: `PushNotificationToolTests` (10), 7 new in
+  `AppNotificationCenterTests`, preference decode in
+  `AttentionEventPolicyTests`. Mutation checks, each caught: a prompt at tool
+  time; both opt-in guards removed (either guard alone is covered by the
+  other, so it survives by design); sanitize as identity; the Ghost check
+  removed; the focus rule applied to agent pushes.
+* Limits: the delegate still presents nothing while the app is active
+  (`willPresent` returns none), so an agent push while the app is in front
+  lands without a banner and the in-app toast is the cue. Real banner in the
+  installed bundle not run.
 
 --------------------------------------------------------------------------------
 

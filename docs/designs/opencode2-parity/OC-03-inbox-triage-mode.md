@@ -9,7 +9,7 @@ and
 [inbox view](https://github.com/anomalyco/opencode/blob/dev/packages/app/src/shell/titlebar/inbox.tsx).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented (see "Implementation Record")
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -153,6 +153,84 @@ this is the existing sidebar with a different grouping function.
 * **Manual**: park a chat on a question, run another, finish a third;
   verify sections in light/dark, German, Extra Large text, keyboard-only
   navigation, and VoiceOver per DESIGN.md section 9.
+
+## Implementation Record
+
+Built on ZP-02 (`ChatRowSlot`, `AppChat.hasUnreadReply`) and ZP-23
+(`chatTurnState`), both present in the tree. Review blockers were resolved
+as follows (the review report is in
+`docs/egm-reviews/opencode2-parity/OC-03/`).
+
+What shipped:
+
+* `Generation/ChatInboxModel.swift`: `ChatSidebarMode` (chats, inbox),
+  `ChatInboxSection.resolve` (pure, one section per chat) and
+  `ChatInboxLayout.make` (pure, over the already scoped and sorted list).
+  No protocol and no pre-ZP-02 shim: the inbox reads `ChatTurnState` and
+  `hasUnreadReply` directly (review M1, M2, M5, M13).
+* `Generation/ChatSidebarInboxRows.swift`: section headers (`.isHeader`,
+  title as label, count as the accessibility value), rows reuse
+  `ChatSidebarChatRowView`, so archive and delete keep their existing
+  guards and confirmation. Empty state with a "Show all chats" action.
+* `ChatSidebarView`: a Chats / Inbox `AppPillPicker` inside an
+  `AppAdaptiveHeader`, shown on the Chat tab only (M11). Filter text
+  applies in both modes through `ChatSidebarLayout.matches`.
+* `MacAppSettings.chatSidebarMode` (tolerant decode, default "chats") and
+  `AppModel.chatSidebarMode`: the persistence the Non-Goals line wrongly
+  excluded (M4). No Settings row, so `SettingsControlCatalog` is untouched.
+* `AppModel.inboxRetainedChatID`, set in `selectionChangedForReadState`
+  before the read markers move (M9).
+* 8 catalog keys in 21 languages; `ChatInboxModelTests` (14), mutation-checked (swapped Working and Finished order, and retention ignoring selection, both fail tests).
+
+Open Questions, resolved:
+
+* Default mode: Chats stays the default; Inbox is opt-in (the draft's lean).
+* Finished before ZP-02: moot. ZP-02 shipped, so Finished is "has an unread
+  reply" and no "ended since launch" approximation exists (M5).
+
+Review findings, how each was settled:
+
+* B1 and M12 (priority): the section order is the slot order, pending then
+  running then unread. Two stated differences: a parked prompt on the
+  selected chat still counts as Needs you (the slot hides the pill there,
+  but the chat is still waiting and the row must not vanish under the
+  card), and a queued chat counts as Working. A queued row for an
+  unselected chat does not drain until it is selected (ZP-23 admission), so
+  it can sit in Working; the row's own clock glyph says why.
+* M3 (idle chats): Inbox shows only chats that need attention. Everything
+  else stays in Chats; the empty state offers "Show all chats".
+* M6 (Archived): the archived flag wins. `filteredChats` already excludes
+  archived chats, and the existing Archived disclosure renders under both
+  modes, with its Restore and Delete.
+* M7: the filter and the project scope apply; ghost chats are excluded by
+  `filteredChats` and by the existing transcript check.
+* M8: derived per body from state the rows already observe; no extra
+  invalidation signal was added, and the "identical cost" claim is dropped.
+  It is O(n) with one `chatTurnState` lookup per chat.
+* M9: opening a Finished row keeps it there while selected. An approval that
+  resolves moves the row (CUJ 2).
+* M10: CUJ 2 reads: Then the row leaves Needs you, and shows under Working if
+  the turn resumes, or under Finished if it ends with an unread reply.
+* Order inside a section is `AppChat.sortedForSidebar` (pinned, then
+  recency). No mark-all-read.
+* B2, B3 (Alternatives, Risks): covered here in short form. Rejected:
+  pinned attention bands above the time buckets with no toggle (changes the
+  default list for everyone; the toggle keeps it opt-in). Risks: row
+  jumping (mitigated by retention), a queued row that does not drain
+  (above), delete from a new surface (reuses the row's guards and
+  confirmation), state drift against ZP-02 (none, same inputs).
+
+Deviations:
+
+* Mode label is "Chats", not "Sessions": the sidebar calls them chats
+  everywhere else (review SY-15).
+* No new keyboard shortcut. The picker is a focusable control with arrow-key
+  movement, so the OC-01 catalog and the OC-05 chords are untouched.
+  A shortcut can be added through `KeyboardShortcutCatalog` later.
+* VoiceOver does not announce a row moving between sections.
+
+Verification: focused app tests (ChatInboxModelTests, ChatBadgeStateTests, LocalizationParityTests, SidebarAndProjectGroupingTests: 43 pass), make compile-strings, make design-check, generate-settings-catalog.py --check. Manual
+light/dark, German, Extra Large text and VoiceOver passes were not run, nor was a full app build via make swift-app.
 
 --------------------------------------------------------------------------------
 

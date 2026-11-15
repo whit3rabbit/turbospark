@@ -18,6 +18,8 @@ extension AppModel {
     public func setBrowserPaneOpen(_ isOpen: Bool) {
         if isOpen {
             guard browserSettings.enabled else { return }
+            // One slot: the whiteboard yields (`setWhiteboardPaneOpen`).
+            setWhiteboardPaneOpen(false)
             browserPaneIsOpen = true
             browserAutomationCoordinator.openPane()
             return

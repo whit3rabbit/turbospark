@@ -59,7 +59,12 @@ final class AutomationAndEnvironmentToolsTests: XCTestCase {
             box.title = title
             box.message = msg
         }
-        defer { PushNotificationExecutor.onNotificationPushed = nil }
+        let saved = PushNotificationExecutor.deliver
+        PushNotificationExecutor.deliver = { _, _, _ in .posted }
+        defer {
+            PushNotificationExecutor.onNotificationPushed = nil
+            PushNotificationExecutor.deliver = saved
+        }
 
         for alias in ["push_notification", "pushnotification", "notify"] {
             let call = AppToolCall(

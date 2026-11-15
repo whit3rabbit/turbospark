@@ -1,0 +1,25 @@
+[package]
+name = "turbospark-acp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+# `turbospark-cli` depends on this crate, so it must be on crates.io first:
+# `publish-crates.yml` lists it ahead of `turbospark-cli`.
+publish.workspace = true
+description = "Agent Client Protocol adapter: JSON-RPC over stdio so an editor can drive a local TurboSpark session. No sockets, no network."
+
+[lib]
+name = "turbospark_acp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "turbospark-acp"
+path = "src/main.rs"
+
+# serde and serde_json only, both already in the workspace. No ACP SDK and no
+# JSON-RPC crate (a new third-party dependency is an ask-first item).
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -16,6 +16,18 @@ public struct TurboSparkDaemonStatus: Decodable, Sendable, Equatable {
     /// The `--model` the daemon was started with, as passed (an alias or a
     /// path, not resolved). Nil when none was given, or from an older engine.
     public let model: String?
+    /// The engine version of the build that started the daemon, stamped in
+    /// its run-directory meta file. Nil for a daemon started by a build that
+    /// predates the stamp (OC-13): unknown, never "compatible".
+    public let engineVersion: String?
+
+    /// Whether this app can use the daemon, judged from `engineVersion`.
+    /// Meaningful only when `running`.
+    public func compatibility(
+        minimum: String = DaemonEngineCompatibility.minimumEngineVersion
+    ) -> DaemonEngineCompatibility.Verdict {
+        DaemonEngineCompatibility.verdict(daemon: engineVersion, minimum: minimum)
+    }
 
     public init(
         running: Bool,
@@ -23,7 +35,8 @@ public struct TurboSparkDaemonStatus: Decodable, Sendable, Equatable {
         port: UInt16? = nil,
         endpoint: String? = nil,
         logPath: String? = nil,
-        model: String? = nil
+        model: String? = nil,
+        engineVersion: String? = nil
     ) {
         self.running = running
         self.pid = pid
@@ -31,6 +44,65 @@ public struct TurboSparkDaemonStatus: Decodable, Sendable, Equatable {
         self.endpoint = endpoint
         self.logPath = logPath
         self.model = model
+        self.engineVersion = engineVersion
+    }
+}
+
+/// The app-versus-daemon compatibility rule (OC-13): same major version, and
+/// a daemon minor at or above the app's minimum. A newer daemon is tolerated
+/// (exact-match would turn every daemon update into a hard failure); a
+/// different major or an older minor is refused.
+///
+/// **THE DAEMON IS A SEPARATE PROCESS THAT OUTLIVES THE APP.** A Sparkle
+/// update replaces the app and its bundled `turbospark-server` while a daemon
+/// started by the previous build keeps running, so the app can meet a daemon
+/// that predates what it expects. The in-process FFI has no such skew (same
+/// build, guarded by `TurboSparkRuntime.verifyABIOnce`), so only the daemon
+/// needs this check.
+public enum DaemonEngineCompatibility {
+    /// The oldest daemon engine this app works with, as `major.minor`. Raise
+    /// it in the same change that makes the app depend on newer daemon
+    /// behavior; until then a daemon at or above it is accepted.
+    public static let minimumEngineVersion = "0.8"
+
+    public enum Verdict: Equatable, Sendable {
+        case compatible
+        /// The daemon predates the version stamp, so nothing is known.
+        case unknownVersion
+        /// The daemon's version, as reported, is not a usable `major.minor`.
+        case unparseable(String)
+        /// Different major version.
+        case majorMismatch(daemon: String, minimum: String)
+        /// Same major, daemon minor below the app's minimum.
+        case tooOld(daemon: String, minimum: String)
+
+        public var isCompatible: Bool { self == .compatible }
+    }
+
+    /// Parses the leading `major.minor` of a version such as `0.8.0` or
+    /// `0.8.1-rc1`. A missing or non-numeric component is nil.
+    static func majorMinor(_ version: String) -> (major: Int, minor: Int)? {
+        let parts = version.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count >= 2, let major = Int(parts[0]) else { return nil }
+        // Keep the leading digits of the minor so `8-rc1` still reads as 8.
+        let digits = parts[1].prefix(while: \.isNumber)
+        guard let minor = Int(digits), major >= 0, minor >= 0 else { return nil }
+        return (major, minor)
+    }
+
+    public static func verdict(daemon: String?, minimum: String) -> Verdict {
+        guard let daemon, !daemon.isEmpty else { return .unknownVersion }
+        guard let have = majorMinor(daemon) else { return .unparseable(daemon) }
+        // The minimum is this app's own constant; a malformed one is a
+        // programming error, surfaced as a refusal rather than a silent pass.
+        guard let need = majorMinor(minimum) else { return .unparseable(minimum) }
+        if have.major != need.major {
+            return .majorMismatch(daemon: daemon, minimum: minimum)
+        }
+        if have.minor < need.minor {
+            return .tooOld(daemon: daemon, minimum: minimum)
+        }
+        return .compatible
     }
 }
 

@@ -97,6 +97,9 @@ extension AppModel {
             if let row = subject.row {
                 state.attachedToServer = Self.isAttachedToServer(model: row, servedIDs: probe.servedIDs(self))
             }
+            // The voice decider's session is idle between utterances and
+            // reloads lazily, so it lets go instead of blocking the move.
+            voiceCallDeciderHost.release(path: subject.path)
             state.usedByHumanize = probe.humanizeUses(self, subject.path)
         case .image:
             state.loadedInImages = Self.samePath(probe.loadedImagePath(self), subject.path)

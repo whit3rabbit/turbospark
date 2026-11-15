@@ -29,9 +29,14 @@ public enum TerminalCommandClassifier {
     /// project at a repository has already decided to trust that
     /// repository's build, which is a different claim from trusting an
     /// arbitrary string the model wrote.
+    ///
+    /// `gradle` and `gradlew` are deliberately absent: Gradle executes the
+    /// workspace's build scripts (Groovy or Kotlin) with the user's full
+    /// rights, and the Android skill's loop leans on that head word, so it
+    /// asks like any other unlisted program.
     public static let buildCommands: Set<String> = [
         "cargo", "npm", "pnpm", "yarn", "bun", "make", "just", "swift", "go",
-        "gradle", "mvn", "dotnet", "rustc", "tsc", "pytest", "tox", "ruff",
+        "mvn", "dotnet", "rustc", "tsc", "pytest", "tox", "ruff",
         "black", "mypy", "eslint", "prettier", "clippy", "rustfmt",
         "python", "python3", "node", "mkdir",
     ]

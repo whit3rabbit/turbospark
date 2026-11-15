@@ -7,7 +7,7 @@ and the SendMessage continuation contract from
 [subagent listing](https://github.com/zai-org/ZCode/blob/main/docs/subagent-listing-attachment.md).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented (see Implementation Record for deviations)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -46,8 +46,6 @@ cannot do at all.
   messages queue until the coordinator's next model step.
 * The child's catalog exposure is via the agent-definition frontmatter,
   matching how agent files already declare tools.
-
-## Non-Go: no changes to SubagentRunner depth caps, isolation, or the deny-on-ask gate.
 
 ## Non-Goals
 
@@ -187,6 +185,120 @@ context per the Open Question, under the existing depth and gate rules.
 * **Manual**: launch a background child, have it message mid-run, verify
   the carrier lands at the next step boundary; finish a child, continue
   it with SendMessage, verify retained context and a second report.
+
+--------------------------------------------------------------------------------
+
+## Implementation Record
+
+Implemented in the Swift app. No new dependency, no auth or crypto change, no
+CI or release workflow change, so nothing here is deferred on those grounds.
+The EGM review (docs/egm-reviews/zcode-parity/ZP-04/) Blocker and Major items
+were resolved as follows.
+
+### Decisions (review B1 to B3, M1 to M9)
+
+* **Resume persistence (B1): in-memory retention.** The runner returns its
+  transcript when `priorHistory` is non-nil, and `AppModel` keeps it with the
+  background run's record in `retainedBackgroundChildren`. It is pruned with
+  the record (20 most recent finished runs, or dismissal) and is lost on app
+  restart. Durable persistence (option b) is deferred; a continue against a
+  lost context answers "not retained" and tells the model to launch a new
+  subagent.
+* **Scope (B2, M7): background children only.** `respond_to_coordinator` exists
+  only for a background child (task-local `SubagentCoordinatorChannel`, bound
+  at launch). A foreground child blocks its coordinator inside one tool call,
+  so a message could only wait for the same call to return; it has no channel.
+  `send_message` continues a FINISHED background child (id `bga_N`, the same id
+  `stop_agent` takes); a running child is refused with "wait for its
+  notification". The resumed run is a background run again and returns at once.
+* **Delivery (B2, M1, M2): the existing `<task-notification>` queue.** No second
+  queue. `SubagentMessageHub` is a value type holding bounded mailboxes; its
+  batch is drained by `drainPendingTaskNotificationsIfIdle` (turn tail, chat
+  selection, and immediately when the chat is idle, which wakes the
+  coordinator like a completion does) and by
+  `deliverSubagentMessagesAtBoundary` in `continueOrStop` (next step of a
+  running loop). Messages are delivered before a parked completion
+  notification. Nothing interrupts a model call in flight (Alternative A stays
+  rejected). The hub is not a separate file-level service; the draft's
+  "outbound queue" was dropped as unexplained.
+* **Carrier (M3, M8): one schema.**
+  `<subagent-message agent="NAME" id="bga_N" seq="N" [truncated="true"] [dropped_older="N"]>`,
+  preceded by a line stating the text is untrusted data written by the
+  subagent and never permission approval. The body goes through
+  `escapingWrapperTags` (subagent-message, task-notification, result); attribute
+  values are restricted to `[A-Za-z0-9_.-]`, 64 characters.
+* **Bounds (M4):** 4 KiB per message (cut on a character boundary with a
+  visible ` [truncated]` marker), 8 unread per child (oldest dropped, reported
+  to the child in the tool result and to the coordinator via `dropped_older`),
+  32 messages per run (then the tool refuses; resuming resets it), 16 KiB per
+  `send_message` follow-up (refused, not cut: the coordinator is trusted).
+* **Child exposure (M9):** the tool is offered to a background child only when
+  the agent definition lists `respond_to_coordinator` in its `tools`
+  frontmatter. An absent `tools` list is not an opt-in, because the
+  default catalog must not gain a new way to write into the coordinator's
+  context. Spelling-insensitive (`RespondToCoordinator` works).
+* **Names (M10):** snake_case like `stop_agent`: `send_message` and
+  `respond_to_coordinator`, with the CamelCase spellings accepted as aliases.
+* **Code citations (M10):** closure-bound port analogue is
+  `AppToolRegistry.backgroundAgentLauncher` / `backgroundAgentStopper`;
+  injection seam is `AppModel+Subagents.swift` (`completeBackgroundAgent`,
+  `drainPendingTaskNotificationsIfIdle`) plus `AppModel+AgentLoop.swift`
+  (`continueOrStop`); the steering precedent is `deliverSteersAtBoundary`.
+  `SystemReminders.swift` is not involved.
+
+### Permission ladder position (M5)
+
+Categories come from `AppToolCatalog.builtInCategory`; the verdicts are the
+existing `AppToolPermissionEngine` ladder, unchanged.
+
+| Tool | Caller | Category | read-only | ask | auto | agentAuto, permissive, fullAccess |
+|---|---|---|---|---|---|---|
+| `respond_to_coordinator` | background child | `fileRead`, risk `safe` | allow | allow | allow | allow |
+| `send_message` | coordinator (depth 0) | `automation`, same rung as `agent` | deny | ask | per automation setting | per mode, same as `agent` |
+
+`respond_to_coordinator` is `fileRead` so a read-only explorer child can report
+(precedent: `send_user_file`, `recall_tool_output`); a project that sets
+`fileRead` to Deny also silences it. The child's call still passes the
+subagent gate unchanged: profile `tools`/`disallowedTools`, PreToolUse and
+PostToolUse hooks, `permissionRefusal` (a subagent denies `.ask`). A resumed
+child inherits the same agent definition, project, depth, tool filter and
+gate it launched with, and counts against the 4-run cap, so `send_message`
+grants nothing a fresh launch would not. `send_message` is refused below depth
+0 and for ids owned by another chat (reads exactly like an unknown id, as
+`stop_agent` does).
+
+### No cross-chat leakage
+
+Every queued message carries the launching chat id; `drain(chatID:)` returns
+only that chat's messages; the sender id and chat come from the task-local
+channel, never from model-written arguments; the executor refuses a call whose
+chat differs from the child's owner and a grandchild that inherited the
+task-local (depth must match).
+
+### Deviations from the draft
+
+* No new `MidTurnInputPresentation` case: the carrier rides the existing
+  `.taskNotification` presentation, which avoids a new localized label. The
+  untrusted-data preface inside the carrier replaces a presentation-level
+  refusal guidance.
+* The hub is a pure value type owned by `AppModel`, not an actor or a
+  delivery service (M1).
+* Two tool labels are new UI strings ("Send Message", "Message Coordinator"),
+  localized in all 21 locales of `Localizable.xcstrings`.
+* A model-side session seam: `launchBackgroundAgent` and `resumeBackgroundAgent`
+  accept the runner's `SubagentGenerationPortContext` as a model, so the flow
+  is testable without a loaded checkpoint.
+* The "logged event" for a dropped message is the `dropped_older` attribute
+  plus the child's tool result, not a log line.
+* Not verified: a manual run against a real loaded model (Verification Plan,
+  Manual). Behavior is covered by tests that drive the real runner loop,
+  registry and `AppModel` queue with a scripted generation port.
+
+Tests: `SubagentMessageHubTests.swift` (hub, catalog, ladder, executor) and
+`SubagentMessagingFlowTests` in the same file (runner loop, queue, resume).
+Mutation-checked: dropping the carrier attribution, inverting the oldest-drop
+order, bypassing the carrier escape and removing the frontmatter opt-in each
+fail named tests.
 
 --------------------------------------------------------------------------------
 

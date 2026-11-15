@@ -47,6 +47,10 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
         var microphoneID: UInt32? = nil
         var capturesMicrophone = true
         var systemSource: SystemSource = .none
+        /// False for a voice call (OC-08): packets go only to the live feed,
+        /// nothing is chunked, encoded or handed to `onChunk`, so a call
+        /// writes no audio anywhere.
+        var persistsChunks = true
     }
     enum Event: Sendable {
         case level(source: String, value: Float)
@@ -96,6 +100,8 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
     /// Live transcription's copy of each packet. Read under `lock` in
     /// `enqueue`, so nothing reaches it after `stopAcceptingAndDrain`.
     private var liveFeed: AudioLiveFeed?
+    /// Whether packets are chunked and persisted. Read under `lock`.
+    private var persistsChunks = true
 
     init(onChunk: @escaping @Sendable (AudioCaptureChunk) throws -> Void, onEvent: @escaping @Sendable (Event) -> Void) {
         self.onChunk = onChunk
@@ -151,6 +157,7 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
 
     func start(configuration: Configuration) async throws {
         guard let generation = try reserveStart() else { throw CaptureError.alreadyRecording }
+        lock.lock(); persistsChunks = configuration.persistsChunks; lock.unlock()
         var newStream: SCStream?
         var newSysTap: (engine: AVAudioEngine, tapID: AudioObjectID, aggID: AudioObjectID)? = nil
         do {
@@ -487,7 +494,7 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
         lock.lock()
         guard accepting, let offset = timeline?.offset(at: hostTime) else { lock.unlock(); return }
         let bytes = Int(buffer.frameLength) * Int(buffer.format.channelCount) * MemoryLayout<Float>.size
-        guard budget.reserve(bytes) else {
+        guard !persistsChunks || budget.reserve(bytes) else {
             lock.unlock()
             fail(AppStrings.localized("Recording stopped because storage could not keep up. Saved chunks are safe. Free disk space or choose a faster storage volume."))
             return
@@ -500,6 +507,11 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
             let channels = Int(buffer.format.channelCount)
             // Never blocks: the feed drops a packet when live text falls behind.
             liveFeed?.offer(samples, sampleRate: rate, channels: channels, offset: offset, source: source)
+            if !persistsChunks {
+                // A call keeps no audio: the feed has the only copy.
+                lock.unlock()
+                return
+            }
             persistence.async { [self] in
                 defer { budget.release(bytes) }
                 guard !writeFailed else { return }
@@ -512,7 +524,7 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
                 } catch { writeFailed = true; fail(error.localizedDescription, reportWhenStopped: true) }
             }
             lock.unlock()
-        } catch { budget.release(bytes); lock.unlock(); fail(error.localizedDescription) }
+        } catch { if persistsChunks { budget.release(bytes) }; lock.unlock(); fail(error.localizedDescription) }
     }
 
     private func emit(_ event: Event) {

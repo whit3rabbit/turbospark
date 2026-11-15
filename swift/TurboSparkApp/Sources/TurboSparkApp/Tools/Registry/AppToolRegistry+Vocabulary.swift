@@ -81,6 +81,9 @@ extension AppToolRegistry {
     /// The composer web-tools switch. Execution consults this independently
     /// from prompt construction so stale or forged calls cannot bypass it.
     public static var webToolsEnabledProvider: (@Sendable @MainActor () -> Bool)?
+    /// Whether a chat may hold off-peak tasks (false for a ghost chat).
+    /// Nil (no app model, as in a unit test) allows it.
+    public static var offPeakChatEligibleProvider: (@Sendable @MainActor (UUID) -> Bool)?
 
     /// Current browser automation runtime. The provider resolves the active
     /// tab, backend manifest, and call-scoped permission context on MainActor.
@@ -129,6 +132,17 @@ extension AppToolRegistry {
     /// neither stoppable nor listed in the error.
     public static var backgroundAgentStopper: (@Sendable (String, UUID?) async throws -> String)?
 
+    /// Continues a FINISHED background subagent with a follow-up message
+    /// (`send_message`). Arguments: the subagent id, the message, and the
+    /// calling chat. Throws for an unknown id, an id owned by another chat,
+    /// a still-running subagent, or a run whose context is no longer retained.
+    public static var backgroundAgentContinuer: (@Sendable (String, String, UUID?) async throws -> String)?
+
+    /// Queues a mid-task message from a RUNNING background subagent to the
+    /// chat that launched it (`respond_to_coordinator`). Arguments: the
+    /// child's run id, its owning chat, and the message text.
+    public static var subagentCoordinatorPoster: (@Sendable (String, UUID?, String) async throws -> String)?
+
     /// Installed by `AppModel` so registry execution can recall a normal
     /// on-disk observation or an encrypted Ghost observation without knowing
     /// which transcript implementation owns the chat.
@@ -174,6 +188,9 @@ extension AppToolRegistry {
         "websearch", "web_search", "search_web",
         "webfetch", "web_fetch", "fetch_url", "read_url_content",
         "http_request", "httprequest",
+        "image_search", "image_fetch",
+        "document_write",
+        "project_diagnostics", "document_symbols", "workspace_symbols",
         "skill",
         "todowrite", "todo_write",
         "agent", "subagent", "task",
@@ -181,7 +198,10 @@ extension AppToolRegistry {
         "codesearch", "code_search",
         "multiedit", "multi_edit",
         "stop_agent", "agentstop", "kill_agent", "stopagent",
+        "send_message", "sendmessage",
+        "respond_to_coordinator", "respondtocoordinator",
         "askuserquestion", "ask_user_question", "ask_question", "question",
+        "gen_ui_render",
         "enterplanmode", "enter_plan_mode", "plan_mode", "plan",
         "exitplanmode", "exit_plan_mode",
         "reportfindings", "report_findings", "findings",
@@ -200,6 +220,8 @@ extension AppToolRegistry {
         "croncreate", "cron_create",
         "crondelete", "cron_delete",
         "cronlist", "cron_list",
+        "offpeakenqueue", "offpeak_enqueue", "offpeaklist", "offpeak_list",
+        "offpeakcancel", "offpeak_cancel",
         "schedulewakeup", "schedule_wakeup",
         "sleep", "delay",
         "pushnotification", "push_notification", "notify",
@@ -241,6 +263,9 @@ extension AppToolRegistry {
         "notebookedit", "notebook_edit",
         "snip", "extract_snippet",
         "senduserfile", "send_user_file",
+        "image_fetch",
+        "document_write",
+        "project_diagnostics", "document_symbols", "workspace_symbols",
         "proposeskills", "propose_skills",
         "enterworktree", "enter_worktree",
         "exitworktree", "exit_worktree",

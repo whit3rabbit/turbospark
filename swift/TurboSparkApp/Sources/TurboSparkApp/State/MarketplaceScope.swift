@@ -60,7 +60,16 @@ extension AppModel {
     public func marketplaceSources(kind: MarketplaceKind, projectID: UUID?) -> [String: MarketplaceSource] {
         let user: [String: MarketplaceSource]
         switch kind {
-        case .plugins: user = PluginMarketplaceManager.shared.loadKnownMarketplaces()
+        case .plugins:
+            // The builtin row is app-owned and never persisted (a saved
+            // `directory` row would point at one build's bundle path). It
+            // wins a name clash, so a hand-edited file cannot repoint it.
+            var plugins = PluginMarketplaceManager.shared.loadKnownMarketplaces()
+            if let builtin = BuiltinPluginSeeder.shared.bundleDirectory,
+                BuiltinPluginSeeder.shared.hasBuiltins {
+                plugins[BuiltinPluginSeeder.marketplaceName] = .directory(path: builtin.path)
+            }
+            user = plugins
         case .skills: user = SkillMarketplaceManager.shared.loadKnownMarketplaces()
         case .mcp: user = McpMarketplaceManager.shared.registeredSources()
         }

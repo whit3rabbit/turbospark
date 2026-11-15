@@ -8,7 +8,7 @@ wired as commands in
 [titlebar.tsx](https://github.com/anomalyco/opencode/blob/dev/packages/app/src/shell/titlebar/titlebar.tsx).
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented (2026-11-14)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -128,5 +128,71 @@ history stack.
   keyboard. Confirm the menu items enable and disable at the stack ends.
 
 --------------------------------------------------------------------------------
+
+## Open Questions and decisions
+
+Resolved during implementation, following the EGM review in
+`docs/egm-reviews/opencode2-parity/OC-05/`.
+
+1. **Chords.** The draft's Cmd+[ / Cmd+] are already Previous/Next Chat
+   (`TurboSparkApp.swift`, `KeyboardShortcutCatalog.swift`,
+   `AlternateShortcutBridge.swift`), and "no extra chords needed" was wrong.
+   Chat cycling is untouched. History takes Cmd+Option+Left / Cmd+Option+Right
+   (Safari's tab chords; no collision with any bound chord in the app).
+2. **Ownership.** The stack lives on `AppModel`, not `RootView`: the menu,
+   its enabled state and about two dozen `activeSection` writers are all
+   outside any one view. Alternatives rejected: per-view `@State` (Commands
+   cannot read it) and a `NavigationStack` (the app is not path-driven).
+3. **Entry shape.** `(section, chatID)`. The draft's `settingsTabID` is
+   dropped: Settings is its own window scene, not a section, and settings
+   tab state is in-pane. This also makes the draft's settings-collapse rule
+   moot, so no collapse rule was built; consecutive identical entries are
+   deduplicated instead.
+4. **Recording.** `willSet` on `activeSection` and `selectedChatID` reports
+   the pre-change entry (seeding the stack on first change); one deferred
+   flush records the settled state, so `selectChat` (writes both) is one stop.
+   Programmatic switches record too, since they are section changes the user
+   sees.
+5. **Replay.** Back/forward move the cursor only after the app actually
+   arrived at the target (`selectChat` can refuse), and a record equal to the
+   current entry is ignored, so a replay cannot truncate the forward stack.
+6. **Semantics.** A new stop after going back discards the forward entries.
+   Deleted chats are skipped on walk (unsaved draft chat counts as valid).
+   Both items are disabled while a turn runs, as the chat cycle is.
+7. **Tooltips.** Dropped: menu items show none. Disabled state follows the
+   system menu behavior.
+8. **Capacity.** 100, copied from OpenCode, not measured.
+9. **Scope.** One global history for the single main window. OC-04 and ZP-21
+   (tabs) extend the entry later.
+
+## Risks and Mitigations
+
+* A section writer that bypasses the observed properties cannot exist:
+  both are `@Published` stored properties with the observers attached.
+* Stale entries (deleted chats) are skipped at walk time, not pruned.
+* Tab composition (OC-04, ZP-21) will need a tab id in the entry; the entry
+  is a small value type so that is additive.
+
+## Implementation record (2026-11-14)
+
+* New: `App/NavigationHistory.swift` (pure bounded stack with cursor),
+  `State/AppModel+NavigationHistory.swift` (recording, replay, enablement),
+  `Tests/.../NavigationHistoryTests.swift`.
+* Modified: `State/AppModel.swift` (observers, stored history),
+  `App/TurboSparkApp.swift` (Go Back / Go Forward in the View menu group),
+  `App/KeyboardShortcutCatalog.swift` (two rows, option glyph),
+  `Localization/Localizable.xcstrings` ("Go Back", "Go Forward" in 21
+  languages), `swift/docs/KEYBOARD_SHORTCUTS.md`.
+* `RootView.swift` and `AlternateShortcutBridge.swift` are unchanged by
+  design (items 2 and 1).
+* Verified: `NavigationHistory` tests (13), `KeyboardShortcutCatalogTests`,
+  `LocalizationParityTests`, `make compile-strings`, `make design-check`.
+  Mutation checks, each failing at least one test: dropping the dedupe, the
+  forward truncation, the oldest-first trim, the arrival guard (needed a
+  dedicated refused-switch test, added after the first run survived it) and
+  the chat validity test.
+* Not run: manual keyboard walk in a running app, `make swift-lib` (shared
+  staged archive).
+* Deferred: nothing required a dependency, CI change or auth decision.
 
 *Drafted with EGM*

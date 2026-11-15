@@ -869,6 +869,20 @@ drains it. Caps: 4 running, 20 finished kept, in-memory only, process
 lifetime (nothing persists across relaunch, and no sidechain transcript is
 written -- both deliberate deviations from Claude Code).
 
+**Messaging (ZP-04).** Two tools, one each way, both background-only.
+`respond_to_coordinator` lets a RUNNING background child report mid-task and
+keep working; it is offered only when the agent definition lists it in
+`tools`, its sender and chat come from a task-local bound at launch
+(`SubagentCoordinatorChannel`), and it is `fileRead`/`safe` on the permission
+ladder so read-only explorers can use it. `send_message` (coordinator,
+depth 0, `automation` like `agent`) resumes a FINISHED child from its
+in-memory transcript under the same agent, project, depth and gate; it counts
+against the 4-run cap. Messages are bounded (4 KiB each, 8 unread per child,
+32 per run), carried as `<subagent-message agent id seq>` blocks with the body
+escaped and labeled untrusted, and delivered through the `<task-notification>`
+queue (idle wake, step boundary, turn tail). Design and decisions:
+`docs/designs/zcode-parity/ZP-04-subagent-coordinator-messaging.md`.
+
 **`model` is refused, not ignored.** A non-inherit `model` argument fails
 the call by name: honoring it needs a second open model session (the FFI
 is structurally capable; it is untested and each open model pins

@@ -72,6 +72,8 @@ struct PluginDetailView: View {
 
                 optionsEditor
 
+                PluginUiPagesSection(model: model, optIn: model.pluginUiHost.optIn, plugin: plugin)
+
                 if let project = scopedProject {
                     projectOverrideSection(project)
                 }

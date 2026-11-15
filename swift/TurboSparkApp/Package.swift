@@ -45,7 +45,10 @@ let package = Package(
         .target(
             name: "TurboSparkAppResources",
             resources: [
-                .process("Resources")
+                .process("Resources"),
+                // Kept apart from `Resources` because `.process` flattens
+                // directories, and a skill is a folder (<name>/SKILL.md).
+                .copy("BundledSkills")
             ]
         ),
         // Wire types shared by the app and the computer-use helper.

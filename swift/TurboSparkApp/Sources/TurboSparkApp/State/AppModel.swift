@@ -29,6 +29,7 @@ public final class AppModel: ObservableObject {
     lazy var audioWorkspace: AudioWorkspaceController = {
         let workspace = AudioWorkspaceController(installService: libraryState.service)
         audioWorkspaceCreated = true
+        workspace.externalCaptureActive = { [weak self] in self?.voiceCallActive == true }
         workspace.onResidentModelChanged = { [weak self] in
             self?.ejectCoordination?.coordinator.scheduleRefresh()
         }
@@ -92,7 +93,16 @@ public final class AppModel: ObservableObject {
         }
         return controller
     }()
-    @Published public var activeSection: AppNavigationSection = .chat
+    @Published public var activeSection: AppNavigationSection = .chat {
+        willSet {
+            // OC-05: one observer for every writer. See AppModel+NavigationHistory.
+            navigationStateWillChange(
+                from: NavigationEntry(section: activeSection, chatID: selectedChatID))
+        }
+    }
+    /// Back/forward stack over section and chat switches (OC-05).
+    @Published var navigationHistory = NavigationHistory()
+    var navigationFlushScheduled = false
     /// Sub-modes listed in a section's panel beside the rail (Gotcha 17).
     /// Held here rather than in the pane's `@State` because the panel and the
     /// rail's fallback menu set them while the pane reads them; the pane no
@@ -258,6 +268,8 @@ public final class AppModel: ObservableObject {
         // model (maybe without vision) must ask again.
         didSet {
             if oldValue !== session, !computerUseSessions.isEmpty { revokeAllComputerUseGrants() }
+            // A chat model that becomes the chosen decider needs no second copy.
+            if oldValue !== session, voiceCallDeciderModelID != nil { syncVoiceCallDecider() }
         }
     }
     /// Whether a model is currently being loaded into memory.
@@ -435,6 +447,48 @@ public final class AppModel: ObservableObject {
 
     /// Current UI interaction mode (Chat vs Projects / Coding).
     @Published public var interactionMode: AppInteractionMode = .chat
+    /// OC-02: per-event notification toggles and sounds. Persisted in
+    /// `MacAppSettings`; everything is off until the user turns it on.
+    @Published var attentionPreferences = AttentionPreferences()
+    /// OC-02: the one owner of attention notifications. Holds no system
+    /// state until the user opts in from Settings.
+    var attentionCenter = AppNotificationCenter()
+    var attentionActivationObserver: NSObjectProtocol?
+    /// Chats whose turn ended in an error this tail, so the finish cue is
+    /// not also sent for them.
+    var attentionErroredChats: Set<UUID> = []
+    /// OC-08: whether voice call mode is offered (Call button, menu item).
+    /// Off by default and persisted in `MacAppSettings`. Turning it off ends
+    /// a live call. Nothing about a call exists until the user presses Call.
+    @Published var voiceCallEnabled = false {
+        didSet {
+            if !voiceCallEnabled, voiceCallBuilt { voiceCall.end() }
+        }
+    }
+    /// OC-08: auto-send of a voice utterance after a local decider allows it.
+    /// Off by default. Needs `voiceCallEnabled` and a loaded local model.
+    @Published var voiceCallAutoSendEnabled = false
+    /// The installed model (`installId`) that answers the auto-send check, or
+    /// nil for Automatic (the loaded chat model).
+    @Published var voiceCallDeciderModelID: String?
+    /// The second resident session for a dedicated decider model. Built on
+    /// first use and empty until a call with auto-send on asks for it.
+    lazy var voiceCallDeciderHost: VoiceCallDeciderHost = makeVoiceCallDeciderHost()
+    /// OC-08: the one call controller, built on first use so a launch with
+    /// the setting off creates no audio objects.
+    var voiceCallBuilt = false
+    /// Mirror of the call's `state.isActive`, so the menu item and the Call
+    /// button redraw without observing the controller itself.
+    @Published var voiceCallActive = false
+    var voiceCallStateObserver: AnyCancellable?
+    lazy var voiceCall: VoiceCallController = makeVoiceCallController()
+    var voiceCallPort: AppModelVoiceCallPort?
+    /// OC-03: how the chat sidebar groups rows. Persisted in `MacAppSettings`.
+    @Published var chatSidebarMode: ChatSidebarMode = .chats
+    /// OC-03: the chat the user just opened from a Finished inbox row. Opening
+    /// marks it read, so without this it would leave the list under the
+    /// pointer; it stays in Finished until the selection moves on.
+    @Published var inboxRetainedChatID: UUID?
     /// Profile-scoped browser automation preferences.
     @Published public var browserSettings = BrowserSettings()
     @Published public var computerUseSettings = ComputerUseSettings()
@@ -456,6 +510,18 @@ public final class AppModel: ObservableObject {
     }
     /// Whether the browser side pane currently owns the shared right column.
     @Published public var browserPaneIsOpen = false
+    /// Whether the whiteboard side pane currently owns the shared right
+    /// column (ZP-10). Mutually exclusive with `browserPaneIsOpen`.
+    @Published public var whiteboardPaneIsOpen = false
+    /// Built on first use so a model that never opens a board never reads or
+    /// creates the whiteboard folder.
+    private(set) var whiteboardStoreIfCreated: WhiteboardStore?
+    var whiteboardStore: WhiteboardStore {
+        if let whiteboardStoreIfCreated { return whiteboardStoreIfCreated }
+        let store = WhiteboardStore()
+        whiteboardStoreIfCreated = store
+        return store
+    }
     public lazy var browserAutomationCoordinator = AppBrowserAutomationCoordinator(
         authorizeNavigation: { [weak self] request in
             guard let self else { return .deny }
@@ -545,6 +611,27 @@ public final class AppModel: ObservableObject {
     @Published public var conversationRecallEnabled: Bool = true {
         didSet { ChatRecallStore.shared.setEnabled(conversationRecallEnabled) }
     }
+    /// Whether chats keep a local trajectory log (`RolloutStore`). Off by
+    /// default; turning it off deletes every stored log
+    /// (`AppModel+Trajectory.swift`).
+    /// The chat whose trajectory pane is open, if any (ZP-03).
+    @Published var trajectoryPaneChatID: UUID?
+    // Remote providers (ZP-22). Off by default: with no provider configured
+    // none of this runs. Selection is per chat and in memory only, so a
+    // relaunch returns every chat to the local model, and the Keychain is not
+    // touched until a remote model is used.
+    var remoteProviders = RemoteProviderStore()
+    /// The transport remote turns use. A seam so tests never open a socket.
+    var remoteTransport: any RemoteHTTPTransport = URLSessionRemoteTransport()
+    @Published var remoteSelections: [UUID: RemoteModelSelection] = [:]
+    @Published var remoteConfirmation: RemoteConfirmationRequest?
+    /// The last API-reported token count per remote chat (prompt plus output),
+    /// the ring's reading and a compaction input. Absent until a reply reports
+    /// usage, when the labeled estimate is shown instead.
+    @Published var remoteUsage: [UUID: Int] = [:]
+    @Published public var trajectoryLoggingEnabled: Bool = false {
+        didSet { trajectoryLoggingDidChange(from: oldValue) }
+    }
     /// Trailing message rows that stay verbatim after a compaction.
     @Published public var compactionKeepRecentTurns: Int = 2
     /// Whether a compaction summarizer is running right now, auto or manual.
@@ -556,7 +643,23 @@ public final class AppModel: ObservableObject {
     /// All configured codebase projects.
     @Published public var projects: [AppProject] = []
     /// Currently active project filter (nil = all chats).
-    @Published public var selectedProjectID: UUID? = nil
+    @Published public var selectedProjectID: UUID? = nil {
+        didSet {
+            if oldValue != selectedProjectID { workspaceTabsFollowProjectSelection() }
+        }
+    }
+    /// ZP-21: open workspace tabs. Empty (dormant) until the user opens a
+    /// second tab; see `AppModel+TabContext.swift`.
+    @Published var workspaceTabs = WorkspaceTabStore()
+    /// OC-04: open session tabs (chat ids) and the in-memory Recently Closed
+    /// stack. Dormant until a second tab opens; see `AppModel+SessionTabs.swift`.
+    @Published var sessionTabs = SessionTabStore()
+    /// True while a tab command creates or moves a chat itself, so the
+    /// selection follower does not retarget the current tab (OC-04).
+    var sessionTabFollowSuppressed = false
+    /// OC-04: per-tab transcript scroll positions. Memory only; it gates
+    /// nothing a view observes, so it is not published.
+    var transcriptScroll = TranscriptScrollMemory()
     /// Working tree model for git status and diffs when a project is selected.
     @Published public var worktree: WorktreeModel? = nil {
         didSet {
@@ -625,7 +728,18 @@ public final class AppModel: ObservableObject {
     }
 
     /// Currently pending tool call requiring user approval.
-    @Published public var pendingToolCall: AppToolCall? = nil
+    @Published public var pendingToolCall: AppToolCall? = nil {
+        didSet {
+            // OC-02: a card that just opened is a chat waiting on the user.
+            // The chat id is assigned right after this, so the cue is read
+            // one hop later.
+            // A card restored from the parked store (ZP-23) is not news: the
+            // cue already fired when it first opened.
+            if oldValue == nil, pendingToolCall != nil, !restoringParkedApproval {
+                scheduleNeedsPermissionCue()
+            }
+        }
+    }
     let browserPermissionApprovalCoordinator = BrowserPermissionApprovalCoordinator()
     /// The chat the pending tool call was proposed in, captured at proposal
     /// time. Approving/denying appends to THIS chat, never to whatever
@@ -709,6 +823,14 @@ public final class AppModel: ObservableObject {
     /// -- a direct write there would be clobbered by this model's own
     /// debounced settings save.
     @Published public var pluginEnableState: [String: Bool] = [:]
+    /// The plugin page the right column shows, if any (ZP-06). Written only by
+    /// `PluginUiHost` through `onSidePaneChange`, so the claimant and the
+    /// live-page registry cannot disagree.
+    @Published public var openPluginPageID: UUID? = nil
+    /// The plugin page host: live pages, the cap, teardown, the per-plugin
+    /// opt-in. Lazy so an app that never opens a page builds nothing.
+    lazy var pluginUiHost: PluginUiHost = makePluginUiHost()
+    var pluginUiHostIsLive = false
     /// Whether user-global skills, agents, plugins, and hooks are discovered
     /// live from other agent tools' home folders. Mirrors
     /// `MacAppSettings.autoLoadExternalAgentContent`; off by default, and the
@@ -756,6 +878,12 @@ public final class AppModel: ObservableObject {
     /// is the whole point -- chat Stop must not kill an agent the model was
     /// told runs independently.
     var backgroundAgentTasks: [String: Task<SubagentRunResult, Never>] = [:]
+    /// Launch parameters and last transcript per background agent id, for
+    /// `send_message` continuation. In memory, pruned with `backgroundAgentRuns`.
+    var retainedBackgroundChildren: [String: RetainedBackgroundChild] = [:]
+    /// Mid-task messages from running background children, parked per chat
+    /// until a step boundary or turn tail delivers them (`respond_to_coordinator`).
+    var subagentMessageHub = SubagentMessageHub()
     /// Ids the user or the model asked to stop, so their completion reads
     /// `killed` rather than `cancelled`.
     var killedBackgroundAgentIDs: Set<String> = []
@@ -825,6 +953,10 @@ public final class AppModel: ObservableObject {
     /// lazily inside that getter, mutating `@Published` state while a
     /// SwiftUI view was reading it (state#7).
     @Published public var selectedChatID: UUID = UUID() {
+        willSet {
+            navigationStateWillChange(
+                from: NavigationEntry(section: activeSection, chatID: selectedChatID))
+        }
         didSet {
             if activeDraftChat.id != selectedChatID {
                 // **STAMPED WITH THE PROJECT** (state#79). `run()`'s lazy
@@ -835,6 +967,9 @@ public final class AppModel: ObservableObject {
                 // every one of those is resolved from the chat's project.
                 activeDraftChat = AppChat(id: selectedChatID, projectID: selectedProjectID)
             }
+            selectionChangedForReadState(from: oldValue)
+            workspaceTabsNoteSelectedChat()
+            sessionTabsFollowChatSelection()
         }
     }
     /// Transient active chat draft when the chats list is empty.
@@ -864,10 +999,34 @@ public final class AppModel: ObservableObject {
     @Published public var generating: Bool = false {
         didSet {
             if !generating && oldValue {
+                // The flag is the source of truth for the lane (ZP-23): when
+                // it drops, nobody owns the turn, whatever a stale tail says.
+                generatingChatID = nil
+                turnCoordinator.releaseHolder()
                 onGenerationFinished()
             }
         }
     }
+    /// The chat that owns the running turn, or nil when nothing runs or the
+    /// work is not a chat turn (audio summary, bang command, image job).
+    /// Set by `claimLane(for:)`, cleared when `generating` drops. Selecting
+    /// another chat while this is set is legal (ZP-23); while `generating`
+    /// is true and this is nil the old blanket refusal still applies.
+    @Published public var generatingChatID: UUID? = nil
+    /// Single-lane scheduler state for concurrent chats (ZP-23).
+    @Published var turnCoordinator = ChatGenerationCoordinator()
+    /// Tool calls proposed by a chat that was not selected. Nothing runs in
+    /// the background, so the proposal parks here whole, and is replayed
+    /// through the ordinary permission path once the chat is foreground.
+    @Published var deferredToolProposals: [UUID: DeferredToolProposal] = [:]
+    /// Approval cards whose chat the user switched away from (ZP-23). The
+    /// approval slot (`pendingToolCall` and its siblings) describes the
+    /// SELECTED chat only: leaving the chat moves the card here, selecting it
+    /// again moves it back after re-validation. Keyed by chat, so two chats
+    /// each hold their own approval and neither can answer the other's.
+    @Published var parkedApprovals: [UUID: ParkedApproval] = [:]
+    /// True only while `restoreParkedApproval` refills the slot.
+    var restoringParkedApproval = false
     /// Whether `run()` has accepted a submission and not yet reached
     /// `executeGenerationTurn`.
     ///
@@ -877,6 +1036,22 @@ public final class AppModel: ObservableObject {
     /// and overwrites `runTask`. This flag is set SYNCHRONOUSLY, before the
     /// `Task`, which is the only place a second `run()` can be refused.
     @Published public var submitting: Bool = false
+    /// Set while the engine has gone silent mid-generate for the watchdog
+    /// window and the user has not answered (OC-14). Cleared by the next
+    /// stream event, Keep Waiting, Stop, or the end of the call.
+    @Published var generationStallNotice: GenerationStallNotice?
+    /// Lazily built by `AppModel+StallWatchdog`, one per `StallSource`; each
+    /// is armed per generate call.
+    var stallWatchdogs: [StallSource: GenerationStallWatchdog] = [:]
+    /// Test seams: the monotonic clock the monitors read, and their poll
+    /// interval (nil: the test calls `tick()` itself, nothing polls).
+    var stallClock: () -> TimeInterval = GenerationStallWatchdog.defaultClock
+    var stallPollInterval: TimeInterval? = 1
+    /// Test seam: replaces the live relaunch so a test never quits or
+    /// spawns anything. Nil means the real one.
+    var guardedRelaunchOverride: GuardedRelaunch?
+    /// The live relaunch, kept so a double click hits its in-progress latch.
+    var stallRelaunch: GuardedRelaunch?
     /// Current phase of the generation runner.
     @Published public var phase: GenerationPhase = .idle
     /// Number of prompt tokens processed so far during prefill.
@@ -959,9 +1134,22 @@ public final class AppModel: ObservableObject {
     /// Bumped on every jump so repeating a jump to the SAME row still
     /// scrolls (an onChange keyed on the id alone would not).
     @Published public var turnNavigationToken: Int = 0
+    /// The tool card the sources popover asked to reveal (OC-09). Cards and
+    /// groups read it; the transcript scrolls to it. Never persisted.
+    @Published var toolCardReveal: ToolCardReveal? = nil
+    /// Highest reveal token a card has acted on, so a lazily recreated card
+    /// does not re-expand after the reader collapsed it. Not published: it
+    /// only gates, and a change needs no redraw.
+    var toolCardRevealConsumedToken = 0
     /// The cron poll timer, installed by `startCronScheduler`; held so
     /// shutdown can invalidate it.
     var cronPollTimer: Timer?
+    /// Whether queued off-peak tasks may be admitted (default off). Persisted
+    /// in `MacAppSettings.offPeakEnabled`.
+    @Published public var offPeakEnabled: Bool = false
+    /// Own timer, store and dispatcher: independent of the cron poller.
+    var offPeakTimer: Timer?
+    var offPeakDispatcher: OffPeakTaskDispatcher?
 
 
     // Runtime Settings
@@ -1203,6 +1391,7 @@ public final class AppModel: ObservableObject {
     /// Creates and initializes the application model, restoring saved settings and chats.
     public init() {
         loadSettings()
+        installAttentionEvents()
         loadProfiles()
         restoreModelDownloads()
         modelInstallOwnershipObserver = Self.modelInstallOwnershipChanged.sink { [weak self] in
@@ -1211,6 +1400,8 @@ public final class AppModel: ObservableObject {
         }
         loadProjects()
         loadChats()
+        loadWorkspaceTabs()
+        loadSessionTabs()
         try? MemoryLedgerStore.shared.importLegacyIfNeeded()
         installBackgroundShellObserver()
         // Ghost Mode opt-in, AFTER `loadChats`: the restored archive is
@@ -1222,8 +1413,10 @@ public final class AppModel: ObservableObject {
         reloadSkills()
         reloadAgents()
         reloadPlugins()
+        seedBuiltinPlugins()
         refreshModels()
         startCronScheduler()
+        startOffPeakDispatcher()
         startMemoryScheduler()
         AppToolRegistry.activeSessionProvider = { [weak self] in
             self?.session
@@ -1282,6 +1475,22 @@ public final class AppModel: ObservableObject {
             }
             return try await self.stopBackgroundAgent(id, callerChatID: callerChatID)
         }
+        AppToolRegistry.backgroundAgentContinuer = { [weak self] id, message, callerChatID in
+            guard let self else {
+                throw NSError(domain: "TurboSparkTool", code: 26, userInfo: [
+                    NSLocalizedDescriptionKey: "Background subagents are unavailable: the app model is gone."
+                ])
+            }
+            return try await self.resumeBackgroundAgent(id, message: message, callerChatID: callerChatID)
+        }
+        AppToolRegistry.subagentCoordinatorPoster = { [weak self] childID, chatID, text in
+            guard let self else {
+                throw NSError(domain: "TurboSparkTool", code: 26, userInfo: [
+                    NSLocalizedDescriptionKey: "Coordinator messaging is unavailable: the app model is gone."
+                ])
+            }
+            return try await self.postSubagentMessage(childID: childID, chatID: chatID, text: text)
+        }
         AppToolRegistry.observationRecaller = { [weak self] chatID, id, offset, maximum in
             guard let self else {
                 throw ToolObservationStore.ObservationError.invalidRange
@@ -1316,6 +1525,10 @@ public final class AppModel: ObservableObject {
                 self?.registerProducedArtifacts(chatID: targetChatID, files: files)
             }
         }
+        PushNotificationExecutor.deliver = { [weak self] title, body, chatID in
+            guard let self else { return .optedOut }
+            return await self.deliverAgentPush(title: title, body: body, chatID: chatID)
+        }
         PushNotificationExecutor.onNotificationPushed = { [weak self] title, message in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }
@@ -1347,6 +1560,7 @@ public final class AppModel: ObservableObject {
     deinit {
         // Releasing our reference alone leaves the run loop polling shared state.
         cronPollTimer?.invalidate()
+        offPeakTimer?.invalidate()
         memorySchedulerTimer?.invalidate()
     }
 
@@ -1370,6 +1584,12 @@ public final class AppModel: ObservableObject {
     public var info: SessionInfo? { session?.info }
 
     /// Switches the primary interaction mode and saves it as the default for future launches.
+    func setChatSidebarMode(_ mode: ChatSidebarMode) {
+        guard chatSidebarMode != mode else { return }
+        chatSidebarMode = mode
+        persistSettings()
+    }
+
     public func setInteractionMode(_ mode: AppInteractionMode) {
         self.interactionMode = mode
         persistSettings()
