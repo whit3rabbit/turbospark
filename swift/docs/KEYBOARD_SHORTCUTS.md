@@ -67,6 +67,11 @@ clears every change.
 | `Cmd+]` | Next Chat | Switches focus to the next conversation in chronological history. |
 | `Ctrl+Tab` | Next Workspace Tab | Moves to the next open project tab, wrapping. Enabled only with two or more tabs in Projects mode; refused with a toast while a turn runs (ZP-21). |
 | `Ctrl+Shift+Tab` | Previous Workspace Tab | Moves to the previous open project tab, wrapping. Same conditions. |
+| `Cmd+T` | New Tab | Opens a new session tab (OC-04). |
+| `Cmd+Shift+W` | Close Tab | Closes the current session tab. `Cmd+W` stays the window's. |
+| `Cmd+Shift+T` | Reopen Closed Tab | Reopens the most recently closed session tab. |
+| `Cmd+Option+]` | Next Session Tab | Moves to the next session tab. |
+| `Cmd+Option+[` | Previous Session Tab | Moves to the previous session tab. |
 | `Cmd+L` | Focus Prompt | Moves first-responder focus directly into the prompt editor. |
 | `Cmd+K` | Command Center | Opens the palette over commands, chats and project files (`>` commands, `#` chats, `@` files, Tab switches scope). |
 | `Cmd+Shift+P` | Run Command | Opens the same palette on the commands scope. |
@@ -79,6 +84,7 @@ clears every change.
 | `Cmd+Return` | Generate Response / Queue Message | Submits the chat prompt, or queues it while a turn is running. The label reads Queue Message only when the draft would actually queue. |
 | `Cmd+.` or `Escape` | Cancel Generation | Interrupts active prefill or token decoding immediately. |
 | `Cmd+Shift+.` | Stop All | Stops the turn, every running background agent and shell, and an in-flight model install. The server and the loaded model are untouched. |
+| `Cmd+Shift+Y` | Start Voice Call | Starts or ends a local voice call (OC-08, off by default). Id `call.toggle`. |
 | `Cmd+Shift+Space` | Toggle Talk | Push to talk for voice call auto-send (OC-08). Press once to start talking and again to stop; enabled only in a live call with Auto-send voice utterances on. A toggle, not a hold, because a menu chord is key-down only. The Talk button in the call panel also holds to talk. |
 
 Generation menu scope: Generate/Queue acts only while Chat is the active

@@ -166,8 +166,11 @@ cargo run --release -p turbospark-cli --bin turbospark-model -- pull tinyllama
    rather than from the parser's default. Every other family keeps the
    refusal.
    Plain dense `qwen3` IS in that list (admitted 2026-11-14 against
-   `Qwen/Qwen3-4B` vs `mlx-community/Qwen3-4B-4bit`, `tests/qwen3_quantize_parity_local.rs`
-   in repack): both its pre-quantized MLX repos and an unquantized
+   `Qwen/Qwen3-4B` @ 1cfa9a7208912126459214e8b04321603b3df60c vs
+   `mlx-community/Qwen3-4B-4bit` @ 4dcb3d101c2a062e5c1d4bb173588c54ea6c4d25,
+   `tests/qwen3_quantize_parity_local.rs` in repack. The local copies were
+   deleted, so re-running it means downloading both repos again into
+   `TS_QWEN3_BF16_DIR` and `TS_QWEN3_Q4_DIR`): both its pre-quantized MLX repos and an unquantized
    `Qwen/Qwen3-4B` probe Runnable (`parse_qwen3_config`, streamed through
    `write_qwen3_dense_install_streamed`), with no "not byte-checked" warning.
    The published reference is CPU-made (half-to-even ties); installs use the

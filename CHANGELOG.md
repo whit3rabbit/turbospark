@@ -21,7 +21,12 @@ when this file gets updated relative to the version bump and the tag.
   layout matches, and weights and scales match its half-to-even rounding
   exactly. The install uses the Metal tie rule, so it differs from that file on
   exact ties only (0.35 percent of weight and scale bytes). No qwen3
-  safetensors memory, quality or paired-performance gate has been run.
+  safetensors memory, quality or paired-performance gate has been run. The
+  byte check is the local test `crates/repack/tests/qwen3_quantize_parity_local.rs`.
+  It needs the two public repos downloaded again to run (`Qwen/Qwen3-4B` at
+  `1cfa9a7208912126459214e8b04321603b3df60c` into `TS_QWEN3_BF16_DIR` and
+  `mlx-community/Qwen3-4B-4bit` at `4dcb3d101c2a062e5c1d4bb173588c54ea6c4d25`
+  into `TS_QWEN3_Q4_DIR`). The earlier local copies were deleted.
 - Granite 4.x GGUF files (`ibm-granite/granite-4.x-*-GGUF`) install on the Llama
   flow with their 1/head_dim attention scale; Granite 3.x, whose residual,
   embedding and logit multipliers are not identity, refuses. The ChatML
@@ -55,8 +60,9 @@ when this file gets updated relative to the version bump and the tag.
   for byte on the text trunk and installs text-only; Qwen2 and Qwen3-VL are
   not yet byte-checked against a published conversion, and 2-bit matches
   `mlx_lm.convert` only for a float16 source. Both the MLX and the Hugging
-  Face transformers tensor layouts are accepted. Other families still refuse
-  an unquantized checkpoint.
+  Face transformers tensor layouts are accepted. Plain dense Qwen3 also
+  quantizes on install (see the first entry). Other families still refuse an
+  unquantized checkpoint.
 - Music and Voice Cloning ask for a model before they open. While none of the
   page's curated models is on the Mac, a card over the page lists each one with
   its download size and estimated memory, flags a model that may not fit this
@@ -79,8 +85,8 @@ when this file gets updated relative to the version bump and the tag.
     rebound in Settings.
   - Notifications and sounds for four events (turn finished, needs approval,
     has a question, error), all off by default. The agent PushNotification tool
-    is opt-in and shares that path (partial: two deferred items are listed in
-    the OC-02 draft).
+    is opt-in and shares that path (partial: the dock badge is deferred to the
+    desktop-shell-hardening spec).
   - First-run onboarding, a splash screen shown only when launch is slow, and
     Help > Show Welcome Tour.
   - A hang watchdog notices 90 seconds without stream activity and offers
@@ -102,14 +108,16 @@ when this file gets updated relative to the version bump and the tag.
     fetch calls). Reveal scrolls to and expands the tool card that produced
     the source.
   - Language-server diagnostics and symbol tools, and a formatter pass after
-    edits, both off by default. Partial: the formatter has no per-process
-    network isolation yet.
+    edits, both off by default. A per-project setting can only narrow them, and
+    the built-in swift-format row starts off. Partial: the formatter has no
+    per-process network isolation yet.
   - Remote providers (OpenAI-compatible and Anthropic APIs) use API keys only,
     never OAuth. Nothing is contacted until you add a provider.
 - Skills and plugins: bundled skills `plugin-creator`, `turbospark-guide`,
   `visualize`, `ios-simulator`, `android-emulator`, `docx`, `xlsx`, `pptx` and
-  `pdf`. Builtin plugins are seeded on first launch, and a marketplace entry
-  can point at a `cdnZip` plugin installed on your Install click. UI plugin
+  `pdf`. Builtin plugin seeding is in place but the app bundles no builtin plugin
+  yet, and a marketplace entry can point at a `cdnZip` plugin installed on
+  your Install click. UI plugin
   pages run in a sandboxed web view and need a per-plugin opt-in. Gen UI cards
   render a closed native schema, not HTML.
 - Canvas and files: a whiteboard pane, image annotation in the image preview,

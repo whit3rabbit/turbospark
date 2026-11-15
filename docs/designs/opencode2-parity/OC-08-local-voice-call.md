@@ -9,7 +9,7 @@ and
 [call transport](https://github.com/anomalyco/opencode/blob/dev/packages/app/src/voice/transport.ts).
 
 * Author: whit3rabbit
-* Status: Partial (core loop, default-off auto-send and the dedicated-decider setting implemented; manual hardware verification, a Qwen 4B class eval run and a safety-list decision after the 9B eval remain; see Implementation Record)
+* Status: Partial (core loop, default-off Experimental auto-send, the allowlist gate, the decider model picker and push-to-talk with a 45 s latch timeout implemented; hardware verification and a push-to-talk precision eval remain, see Remaining)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -614,11 +614,12 @@ in the catalog. This pass makes a dedicated model possible without touching
 
 ### Findings (checked, not assumed)
 
-* **Installed text models on this Mac** (`~/.turbospark/models/text`):
+* **Installed text models on the author's Mac when this was written** (local
+  paths under `~/.turbospark/models/text`, not part of the repository):
   `dsv4pro-q35-9b-heretic-mlx4.gturbo` (4.7 GB, family `qwen35`) is the only
   complete install. `flint-int4.gturbo` holds a tokenizer and a
   `.download-cache` only: no manifest and no weights, so it cannot load.
-* **`~/models/qwen4-shadow-v1.gturbo` is not a chat model and not loadable.**
+* **A local `~/models/qwen4-shadow-v1.gturbo` was not a chat model and not loadable.**
   It is a directory of symlinks to `~/.turbospark/models/text/qwen4-reap288.gturbo`,
   which is not installed (every link dangles), plus an `ngram_table` for
   speculative drafting. The target is a REAP-pruned MoE (`packed_experts`), not
@@ -768,7 +769,8 @@ downgrades.
   stops, so its input was changed to a line without those words.
 
 Run it on a quiet host with an install directory (never an alias, which could
-start a download):
+start a download). The path below is the author's local 9B install, which
+you must replace with your own:
 
     python3 scripts/oc08_decider_eval.py ~/.turbospark/models/text/dsv4pro-q35-9b-heretic-mlx4.gturbo --out /path/results.json
 
@@ -777,7 +779,8 @@ start a download):
 Model: `qwen3vl-4b` (catalog entry, `mlx-community/Qwen3-VL-4B-Instruct-4bit`
 @ 2fd8dacb, MLX INT4 group 64, 36 layers, 2560 hidden, 2.1 GiB installed,
 2.9 GiB downloaded), installed with `turbospark model pull qwen3vl-4b` to
-`~/.turbospark/models/text/qwen3vl-4b.gturbo`. Why this one: plain Qwen3-4B
+a local `~/.turbospark/models/text/qwen3vl-4b.gturbo` (a stand-in kept on the
+author's machine for this eval, not shipped). Why this one: plain Qwen3-4B
 and Qwen3-4B-Instruct-2507 are refused by the probe (`model_type "qwen3"` is
 not in the repack registry), while the catalog's Qwen3-VL 4B Instruct is a
 verified Qwen3 dense trunk run text-only (vision tower excluded at repack).
@@ -1282,21 +1285,34 @@ Not verified (owed, so the doc stays Partial):
   account" is still judged by the same allowlist, deny list and model.
 * The 45 s idle timeout (below) is a fake-clock behavior; the real one-second watcher task was not observed running on hardware.
 
-### Remaining (first auto-send pass)
+### Remaining
 
-* The labeled eval ran on the 9B (allow precision 0.77, see the
-  dedicated-decider record); rerun it on a 4B class model (done, 0.83 on Qwen3-VL-4B-Instruct, see the follow-up above). Until precision is
-  acceptable treat the setting as experimental. A false allow is bounded by the pre-filter
-  and the permission ladder, but its rate is unmeasured.
-* A dedicated small decider (Qwen3 4B class). Needs a catalog entry (a crates
-  change, not mine) and an explicit user click to download; the adapter already
-  takes any completion.
+State at the branch tip, replacing the first-pass list. Auto-send is
+Experimental (the help text opens with "Experimental: it can still make
+mistakes.") and default off. Shipped since the first pass: the decider model
+picker (General, Voice call, "Decider model"), the allowlist gate in front of
+the model, push-to-talk (`Cmd+Shift+Space`, `call.talk`, a toggle plus a pointer
+hold with tap-to-latch) as a mandatory first condition for auto-send, and the
+45 s idle timeout of a latched Talk (`VoiceCallTalkSwitch.idleTimeout`).
+
+* Hardware: a real microphone, the pointer hold, the chord reaching the panel,
+  VoiceOver and Full Keyboard Access on the Talk toggle, the resign-active
+  clear, and the real one-second idle watcher are all untested. A manual call
+  with headphones, the DESIGN.md section 9 pass and measured latency are also
+  owed (first Implementation Record, Deferred).
+* The effect of push-to-talk on precision is unmeasured. The eval numbers above
+  (9B, and the Qwen3-VL-4B-Instruct stand-in, which is not the exact Qwen3 4B)
+  were taken without push-to-talk. No eval with push-to-talk has run.
+* The model files used for those evals were local installs on the author's
+  machine and are not in the repository. Do not assume any of them exist, and
+  rerunning the eval needs your own installs. The eval sets and result
+  JSON files stay in this folder as the record.
+* A catalog entry for a plain Qwen3 4B class decider (a crates change). Today
+  the picker lists installed text models only, and the user installs one.
 * Label logprob margin, if the engine ever exposes it.
-* Everything in the first Implementation Record's Deferred list (manual call
-  with headphones, DESIGN.md section 9 pass, measured latency).
 * A non-English pre-filter, when non-English recognition exists.
-* Push-to-talk on hardware (real microphone, pointer hold, chord, VoiceOver) and a
-  precision eval with push-to-talk; see the push-to-talk record above.
+* The safety list (allowlist and risky words) stays a user decision. Changing
+  it needs a new holdout run.
 
 --------------------------------------------------------------------------------
 

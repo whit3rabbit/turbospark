@@ -15,6 +15,7 @@ The binaries are:
 - `turbospark-speak` -- speak text with Fish Audio Drama 3 (Metal on macOS, 44.1 kHz), optionally in a cloned voice, from a Drama 3 install directory. See [`docs/FISH_DRAMA3.md`](FISH_DRAMA3.md).
 - `turbospark-steer` -- trait steering: list the built-in trait packs, extract a behavior direction from an install's own activations into a control-vector `.gguf`, and check it before and after. See [`docs/STEERING_TRAITS.md`](STEERING_TRAITS.md).
 - `turbospark-server` -- an OpenAI- and Anthropic-compatible HTTP server. See [`crates/server/AGENTS.md`](../crates/server/AGENTS.md).
+- `turbospark-acp-agent` -- the local engine behind `turbospark acp`, which lets an editor that speaks the Agent Client Protocol drive a local model over stdio. Verified with a scripted client only, not a real editor. See [`docs/ACP.md`](ACP.md).
 - `turbospark-bench` -- throughput and memory benchmark harness. See [`docs/BENCHMARKING.md`](BENCHMARKING.md).
 
 `--help` and `--version` are available globally across all binaries. This

@@ -7,7 +7,7 @@ program: account for all 31 Missing findings and implement the ones
 that fit a local-first, macOS-only, native-Swift inference app.
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented at the branch tip, with OC-02, OC-04, OC-08, OC-10, OC-11, OC-13 and OC-14 partial (see Final status)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -67,6 +67,32 @@ OAuth (permanent), SSH, WSL, QR pairing, cloud usage dialog, motion
 tuning (YAGNI, reopenable), translation governance (docs task with a
 concrete recommendation), the PTY persistence daemon (deferred), and
 HTTP recording.
+
+## Final status
+
+Read at the branch tip from each draft's own `Status:` line and Implementation
+Record. "Implemented" means built and tested. Manual app, hardware and real
+editor passes are mostly not run.
+
+| Draft | Status | Remaining work |
+|---|---|---|
+| OC-01 keybind customization | Implemented | Function keys as chords, rebindable in-window buttons, a VoiceOver pass. |
+| OC-02 notifications and sounds | Partial | Dock badge and attention request (owned by desktop-shell-hardening), manual app passes. Agent PushNotification is opt-in and shipped. |
+| OC-03 inbox triage mode | Implemented | Manual app pass. |
+| OC-04 session tabs | Partial | Per-tab pane layout, simultaneous approvals and real parallel decode (ZP-23), manual passes. |
+| OC-05 back and forward history | Implemented | Not kept across relaunch by design. |
+| OC-06 sidebar hover peek | Implemented | Manual app pass. |
+| OC-07 onboarding and splash | Implemented | Import step stays absent until the desktop-shell-hardening wizard lands. |
+| OC-08 local voice call | Partial | Hardware verification (push-to-talk, VoiceOver, latch timeout watcher) and a push-to-talk precision eval. Auto-send stays Experimental and off. |
+| OC-09 sources panel | Implemented | Manual app checklist not run. |
+| OC-10 LSP diagnostics and symbols | Partial | Real-server verification and the no-network sandbox call. Off by default. |
+| OC-11 formatter pass | Partial | No network isolation for the formatter process, a Settings Test button, manual run with a real swift-format. Off by default. |
+| OC-12 ACP adapter | Implemented, no editor run | Zed or any real editor, timing run, `session/load`. Scripted client only. |
+| OC-13 engine version handshake | Partial | Version fields on `GET /health` (an auth-posture decision), attach flow, manual check with an older daemon. |
+| OC-14 hang watchdog | Partial | Main-thread heartbeat and a live hang soak. |
+| OC-90 excluded and decided findings | Decided (decision document) | None. Motion tuning is reopenable. |
+
+Not built: nothing in OC-01 to OC-14 is entirely unbuilt.
 
 ## Cross-draft dependencies
 

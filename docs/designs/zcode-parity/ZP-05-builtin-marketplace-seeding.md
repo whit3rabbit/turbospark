@@ -194,7 +194,7 @@ modes in the SWIFT_PLUGINS.md section and tests).
 
 Deviations from the draft:
 
-* **`cdnZip` and `MarketplaceSource.builtin`/`cdnZip` cases are NOT built**
+* **(Superseded: built later the same day, see the `cdnZip` record below.) `cdnZip` and `MarketplaceSource.builtin`/`cdnZip` cases were NOT built in the first pass**
   (review B2, M1, M2, M5; INDEX says ZP-05 is a later re-delivery path). The
   app has no zip extractor, so it needs either a new dependency or an `unzip`
   subprocess, both of which need an explicit decision. A digest in the same

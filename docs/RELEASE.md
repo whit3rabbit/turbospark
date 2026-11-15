@@ -41,8 +41,8 @@ Every tagged release produces exactly these, all Apple Silicon:
 
 | Asset | Contains | Installed by |
 |---|---|---|
-| `turbospark-<ver>-macos-arm64.zip` | `turbospark-check`, `turbospark-model`, `turbospark-server` | `brew install --cask whit3rabbit/tap/turbospark-cli`, or by hand |
-| `TurboSpark-<ver>-arm64.dmg` | `TurboSpark.app`, with those same three binaries inside it | `brew install --cask whit3rabbit/tap/turbospark` |
+| `turbospark-<ver>-macos-arm64.zip` | `turbospark`, `turbospark-check`, `turbospark-model`, `turbospark-server`, `turbospark-image`, `turbospark-music`, `turbospark-clone`, `turbospark-speak`, `turbospark-steer`, `turbospark-ocr`, `turbospark-acp-agent` | `brew install --cask whit3rabbit/tap/turbospark-cli`, or by hand |
+| `TurboSpark-<ver>-arm64.dmg` | `TurboSpark.app`, with those same binaries inside it | `brew install --cask whit3rabbit/tap/turbospark` |
 | `SHA256SUMS` | one line per asset above | nothing; it is for humans |
 
 **Both artifacts come out of ONE `build-macos` job**, and that is load
@@ -276,6 +276,8 @@ TurboSpark.app/Contents/
 |   +-- turbospark-check       # the CLI, where the cask links it from
 |   +-- turbospark-model
 |   +-- turbospark-server
+|   +-- turbospark-image, -music, -clone, -speak, -steer, -ocr
+|   +-- turbospark-acp-agent   # peer of `turbospark acp`, so it must ship
 |   +-- openkindd              # TypeSafe loopback daemon
 |   \-- mlx.metallib           # link to the daemon's library under Resources
 \-- Resources/
@@ -394,7 +396,7 @@ an `upgrade` that would fight the updater over the same `/Applications`
 path. `turbospark-cli` keeps no updater -- `brew upgrade turbospark-cli`
 remains its only update path (the CLIs inside the app bundle update together
 with the app, so a cask `upgrade` after an in-app update would at worst
-relink three binaries from the newer bundle).
+relink the binaries from the newer bundle).
 
 Local two-version smoke (the real gate; proves an ad-hoc app survives a
 Sparkle install + relaunch on current macOS). The app binary is identical

@@ -5,7 +5,7 @@ Parity target: ZCode's
 [AppErrorBoundary](https://github.com/zai-org/ZCode/blob/main/packages/ui/src/ErrorBoundary.tsx).
 
 * Author: whit3rabbit
-* Status: Implemented (partial: recovery marker and notice only; typed-error contract deferred)
+* Status: Partial (recovery marker and notice only; the generic typed-error contract is dropped and each surface owns its failure card)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------

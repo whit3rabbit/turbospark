@@ -416,7 +416,8 @@ across parallel tests and flaked; each test now gets its own directory.
    dispatches to it, and `verify-app-bundle.sh` failed a clean bundle for the
    missing peer. It now ships in all of those lists. Not verified: a real
    bundle rebuild and verify run.
-7. **CHANGELOG entry** (draft item 8): not written per the task's instruction.
+7. **CHANGELOG entry** (draft item 8): written, under [Unreleased] (Added and
+   Changed).
 8. **`session/load`** and a record loader with quarantine, if resumption is
    wanted. Also `--max-context`, `--max-new` and sampling flags on `acp`.
 

@@ -7,7 +7,7 @@ Missing findings and implement the ones that fit a local-first, macOS-only,
 native-Swift inference app.
 
 * Author: whit3rabbit
-* Status: Draft
+* Status: Implemented at the branch tip, with ZP-02 phase 1, ZP-17 and ZP-23 partial (see Final status)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -72,6 +72,41 @@ portable half (log bundle export) is inside the `desktop-shell-hardening`
 spec; 7.1 is adopted as ZP-22 (upstream APIs, API keys only); 7.2 is
 excluded permanently by author decision 2026-11-11: the app never adds
 cloud OAuth.
+
+## Final status
+
+Read at the branch tip from each draft's own `Status:` line and Implementation
+Record. A manual app, hardware or real-provider pass is not run for most
+Implemented rows, so "Implemented" means built and tested, not hand-verified.
+
+| Draft | Status | Remaining work |
+|---|---|---|
+| ZP-01 off-peak idle tasks | Implemented | Dedicated or scratch chats and running in a non-selected chat (needs ZP-23). |
+| ZP-02 unread and pending badges | Implemented (phase 1) | Phase 2 (countdown, snooze, auto-resolve) not built. Dock badge and system notification live in OC-02. |
+| ZP-03 trajectory viewer | Implemented | On-disk encryption and a database table deferred, logs are plaintext and off by default. |
+| ZP-04 subagent to coordinator messaging | Implemented | Durable persistence of subagent state across restart, and no manual run against a real model. |
+| ZP-05 builtin seeding and `cdnZip` | Implemented | The app bundles no builtin plugin yet. Signed catalog for `cdnZip` is a separate decision. |
+| ZP-06 UI plugins, sandbox, Gen UI | Implemented | `displayMode`, a tool-result Open row and a transcript plugin card stay deferred. |
+| ZP-07 plugin creator | Implemented | Manual run in the app. |
+| ZP-08 office rendering | Implemented | Manual open of fixture documents. |
+| ZP-09 office generation | Implemented (v1 subset) | Manual open in Word, Excel and PowerPoint. |
+| ZP-10 whiteboard canvas | Implemented | None recorded. |
+| ZP-11 image annotation | Implemented | None recorded. |
+| ZP-12 treemap activity | Implemented | None recorded. |
+| ZP-13 dev-build icon badge | Implemented | None recorded. |
+| ZP-14 browser page permissions | Implemented | Manual run against local test pages. |
+| ZP-15 browser recording (MP4) | Implemented | User button only, agent-started recording deferred. A 30 second hardware run is not done. |
+| ZP-16 command center palette | Implemented | GUI pass over menu configurations. |
+| ZP-17 error boundaries | Partial | Recovery marker and notice only. Each surface owns its own failure card. |
+| ZP-18 mobile device control | Implemented | End-to-end iOS and Android run on hardware not done. |
+| ZP-19 web image search | Implemented | Brave only. No ZP-09 pptx embed, no MCP backend. |
+| ZP-20 bundled content plugins | Implemented | Delivered as bundled skills. No enable toggle for them yet. |
+| ZP-21 workspace tabs | Implemented | Background generation in another project's tab, tab reordering, manual app run. Depends on the ZP-23 remainder. |
+| ZP-22 remote providers | Implemented | Real-provider smoke test by the user. Vision flag stored but images not sent. |
+| ZP-23 concurrent chats | Partial | Real parallel decode, per-chat KV release, releasing the lane during a question, hardware verification. |
+| ZP-90 excluded and decided findings | Decided (decision document) | None. Reopen only by author decision. |
+
+Not built: nothing in ZP-01 to ZP-23 is entirely unbuilt.
 
 ## Cross-draft dependencies
 

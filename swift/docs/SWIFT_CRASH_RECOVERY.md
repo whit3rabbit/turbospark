@@ -64,10 +64,12 @@ review rule, not a lint gate: there is no tool that decides "reachable from a
 view body" mechanically, and a repository-wide `!` scan would be noise. Do not
 add a baseline file for it.
 
-## Deferred (depends on drafts not yet built)
+## Per-surface failure states
 
-The typed-error contract for the trajectory log reader (ZP-03
-`RolloutStore`: skip a truncated final line with a count), office rendering
-(ZP-08 `OfficeRenderModel`: bounded error card on malformed XML) and plugin
-page loads (ZP-06 `PluginPageWebView`: load-failure card) belongs in those
-drafts. This design does not edit files that do not exist yet.
+Each surface owns its typed error and failure state, as the rule above says.
+All three are built: the trajectory log reader (ZP-03 `RolloutStore`) skips a
+truncated final line and shows a count, office rendering (ZP-08
+`OfficeRenderModel`, `OfficeRenderFailureView`) shows a bounded error card on
+malformed XML with an external-opener fallback, and plugin page loads (ZP-06
+`PluginPageFailureCard`) show a typed failure with Try again. What stays
+unbuilt is the generic typed-error contract the ZP-17 draft first proposed.

@@ -68,11 +68,14 @@ Checkpoint intake and `.gturbo` writing.
   `canonicalize_qwen2_header` refuses the file as mixed).
 - Plain dense `qwen3` has a safetensors door (`parse_qwen3_config`,
   `write_qwen3_dense_install_streamed`, the `qwen3` row of `SUPPORTED_HF`) for
-  PRE-QUANTIZED MLX repos only (`mlx-community/Qwen3-4B-4bit`). `head_dim` is
+  pre-quantized MLX repos (`mlx-community/Qwen3-4B-4bit`) and, through
+  quantize-on-install, the unquantized `Qwen/Qwen3-4B`. `head_dim` is
   required (4B: 128, not 2560/32). Quantize-on-install IS admitted
   (`family_admits_quantize_on_install`), gated by
-  `tests/qwen3_quantize_parity_local.rs` (ignored; local dirs via
-  `TS_QWEN3_BF16_DIR` / `TS_QWEN3_Q4_DIR`, never downloads) on
+  `tests/qwen3_quantize_parity_local.rs` (ignored, reads local dirs from
+  `TS_QWEN3_BF16_DIR` / `TS_QWEN3_Q4_DIR` and never downloads. The
+  original local copies were deleted, so running it needs both public repos
+  downloaded again at the revisions below) on
   `Qwen/Qwen3-4B` @ 1cfa9a7208912126459214e8b04321603b3df60c against
   `mlx-community/Qwen3-4B-4bit` @ 4dcb3d101c2a062e5c1d4bb173588c54ea6c4d25
   (LFS sha256 checked). Read off the bytes: `embed_tokens` IS quantized (tied

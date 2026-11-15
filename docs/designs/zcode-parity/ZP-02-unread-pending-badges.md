@@ -7,7 +7,7 @@ and
 [TaskListItem](https://github.com/zai-org/ZCode/blob/main/packages/ui/src/TaskListItem.tsx).
 
 * Author: whit3rabbit
-* Status: Implemented (phase 1). See "Implementation Record".
+* Status: Implemented (phase 1 only, phase 2 countdown, snooze and auto-resolve is not built). See "Implementation Record".
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------

@@ -211,9 +211,10 @@ Deviations from the draft, each a review finding:
   and Auto; Agent mode's judge decides, per
   [PERMISSION_GATE.md](../../PERMISSION_GATE.md). The skills never ask for a
   mode change and carry the don't-route-around guidance that
-  `AppModel.blockMessage` already gives the model. One residual: the bare
-  `gradle` head is on the build allowlist and runs quietly in Auto, so the
-  skill confines it to `assembleDebug` and installs through `adb`.
+  `AppModel.blockMessage` already gives the model. `gradle` and `gradlew` were
+  later removed from the build allowlist (Gradle runs the workspace's build
+  scripts), so they ask like the other device commands. The skill still
+  confines them to `assembleDebug` and installs through `adb`.
   `testEveryDeviceCommandIsHighRiskAndNeverAutoApprovable` extracts every
   fenced command from both skills and checks it against the real classifier.
 * **Risks and Limits (B2).** The skills fix their scope in text, and a test
