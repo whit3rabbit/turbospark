@@ -90,13 +90,18 @@ enum LSPToolExecutor {
     static func execute(
         name: String, arguments: [String: String], rootURL: URL,
         isEnabled: Bool = LSPSettings.isEnabled(),
+        projectMode: ProjectLSPMode = .inherit,
         manager: LanguageServerManager? = nil
     ) async throws -> String {
         guard isEnabled else {
             throw error(1, "Language servers are turned off. The user can enable them in Settings > General > Language servers.")
         }
+        // The project can only narrow the app-wide switch, never widen it, so
+        // this comes after the check above.
+        guard projectMode != .off else { throw error(9, LSPManagerError.offForProjectMessage) }
         let lsp: LanguageServerManager
         if let manager { lsp = manager } else { lsp = await LanguageServerRegistry.shared.manager(for: rootURL) }
+        await lsp.setProjectMode(projectMode)
         do {
             switch name {
             case "project_diagnostics": return try await diagnostics(arguments, manager: lsp)

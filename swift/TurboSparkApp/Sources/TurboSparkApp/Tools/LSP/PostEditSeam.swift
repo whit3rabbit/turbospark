@@ -10,6 +10,9 @@ struct PostEditContext: Sendable {
     /// The project's say over the formatter pass (OC-11); `.inherit` unless
     /// the project narrowed it.
     var formatterMode: ProjectFormatterMode = .inherit
+    /// The project's say over language servers (OC-10); `.inherit` unless the
+    /// project narrowed it.
+    var lspMode: ProjectLSPMode = .inherit
 }
 
 /// One step run after a successful edit tool call. A step returns text to
@@ -54,7 +57,8 @@ enum PostEditSeam {
         guard !paths.isEmpty else { return nil }
         let context = PostEditContext(
             toolName: call.name, relativePaths: paths, rootURL: root, chatID: chatID,
-            formatterMode: project?.formatterMode ?? .inherit)
+            formatterMode: project?.formatterMode ?? .inherit,
+            lspMode: project?.lspMode ?? .inherit)
         var notes: [String] = []
         for step in override ?? steps {
             if let text = await step.run(context), !text.isEmpty { notes.append(text) }
@@ -64,7 +68,8 @@ enum PostEditSeam {
 }
 
 /// The OC-10 step: language server diagnostics for the files an edit wrote.
-/// Off unless the user turned language servers on AND a server they enabled
+/// Off unless the user turned language servers on, the project has not
+/// narrowed them off (`ProjectLSPMode`), AND a server they enabled
 /// covers a written file; otherwise it adds nothing and waits for nothing.
 struct LSPDiagnosticsStep: PostEditStep {
     /// The bounded wait. A cold first edit usually misses it (the server is
@@ -80,8 +85,10 @@ struct LSPDiagnosticsStep: PostEditStep {
     }
 
     func run(_ context: PostEditContext) async -> String? {
-        guard isEnabled() else { return nil }
+        guard ProjectLSPMode.allowsServers(appWideEnabled: isEnabled(), project: context.lspMode)
+        else { return nil }
         let manager = await managerProvider(context.rootURL)
+        await manager.setProjectMode(context.lspMode)
         guard let reports = await manager.postEdit(paths: context.relativePaths, budget: budgetSeconds) else { return nil }
         let body = LSPOutputFormatting.diagnosticsSummary(
             reports, itemLimit: LSPOutputFormatting.postEditItemLimit, budgetSeconds: budgetSeconds)

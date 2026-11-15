@@ -10,7 +10,7 @@ and
 One system, two findings.
 
 * Author: whit3rabbit
-* Status: Partial (client, process manager, post-edit seam, three tools and the settings rows ship behind a default-off setting; see Implementation Record)
+* Status: Partial (client, process manager, post-edit seam, three tools and the settings rows ship behind a default-off setting, plus a narrow-only per-project toggle and per-row args and vetted env passthrough; open: real-server verification, the no-network sandbox call; see Implementation Record)
 * Date: 2026-11-11
 
 --------------------------------------------------------------------------------
@@ -205,7 +205,9 @@ existing Decodable conventions.
 
 ## Implementation Record
 
-Status is **Partial**. Everything below shipped behind the default-off
+Status is **Partial** (only the items under Remaining are open; they need
+a real toolchain, a security-policy call or are a stated non-goal).
+Everything below shipped behind the default-off
 master switch "Use language servers" (Settings > General > Language
 servers). Nothing starts, is advertised or runs a process until the user
 turns it on AND enables a server row.
@@ -224,7 +226,8 @@ turns it on AND enables a server row.
   server reports a version, is not older than ours.
 * `LSPProcessTransport.swift`: spawn by resolved absolute path, scrubbed
   environment (`McpClientEngine.childEnvironment` allowlist: PATH, HOME,
-  LANG, TMPDIR; no passthrough), cwd is the project root, stderr drained
+  LANG, TMPDIR, plus the row's vetted passthrough names, see the follow-up
+  below), cwd is the project root, stderr drained
   to a 4 KiB tail, pids in `LSPProcessRegistry` (killed on app quit via
   `stopAllBackgroundWorkForShutdown`). Launch policy refuses a
   workspace-relative command and any binary (or PATH hit) that resolves
@@ -241,7 +244,8 @@ turns it on AND enables a server row.
   `LSPDiagnosticsStep`.
 * `LSPTools.swift`: `project_diagnostics`, `document_symbols`,
   `workspace_symbols`. Settings: `Components/LspSettingsSectionView.swift`
-  (master switch, per-server toggle, Test, add and remove rows).
+  (master switch, per-server toggle, Test, add and remove rows, and per-row
+  arguments and environment passthrough).
 
 ### Open Questions, as decided
 
@@ -275,7 +279,47 @@ turns it on AND enables a server row.
   (`project.rootDirectoryURL`), file to server mapping is the first
   enabled row covering the extension; restart policy as above.
 
-### Deferred (needs a dependency, a download or a security-policy call)
+### Deferred follow-up, built (per-project toggle, args and passthrough)
+
+* **Per-project toggle** (`Tools/LSP/ProjectLSPMode.swift`,
+  `AppProject.lspMode`, the row in `ProjectPermissionsSectionView`,
+  mirroring OC-11's formatter toggle). Modes are `inherit` and `off` only,
+  so a project can NARROW the app-wide `lsp.enabled` switch and never
+  widen it. Tolerant archive decode: a missing key, an unknown value or a
+  wrong type all load as `inherit`. Honored in four places: the
+  `LSPDiagnosticsStep` (reads `PostEditContext.lspMode`, adds nothing and
+  starts nothing), the three tools (`LSPToolExecutor.execute(projectMode:)`
+  refuses with "Language servers are off for this project", the same
+  thrown-refusal style as the app-wide "turned off" state, re-reading the
+  saved project so a flip mid-turn is seen), the manager
+  (`LanguageServerManager.client(for:)` is the single launch door and
+  refuses while `projectMode == .off`; `setProjectMode(.off)` stops the
+  running servers), and `AppModel.updateProject`, which stops the
+  project's registry manager the moment a save narrows it.
+* **Per-server arguments and environment passthrough** (built, because it
+  can be done without touching the launch policy):
+  * The spawn environment is still the `McpClientEngine.childEnvironment`
+    allowlist (PATH, HOME, LANG, TMPDIR). A row without passthrough gets
+    exactly that (test). A row may add NAMED variables, copied from the
+    app's own environment only when present there; no value is typed, no
+    value comes from a project, and the discovered sourcekit-lsp row
+    never carries any.
+  * Names are checked by `LSPEnvironmentPolicy` in the settings field, on
+    load of the stored rows, and again at spawn
+    (`LSPLaunchPolicy.environment`), so a hand-edited defaults file cannot
+    skip it. Refused: names containing TOKEN, KEY, SECRET, PASSWORD,
+    PASSWD, CREDENTIAL, AUTH, PRIVATE, PROXY or COOKIE; prefixes AWS_,
+    ANTHROPIC_, OPENAI_, GITHUB_, SSH_, GIT_, DYLD_, LD_; code-running
+    interpreter and shell variables (NODE_OPTIONS, PYTHONPATH, BASH_ENV
+    and similar); the baseline four; anything that is not a plain
+    identifier. At most 8 names. The field shows refused names in a
+    warning and stores only the accepted ones.
+  * `args` is an array edited one argument per line (32 at most, 512
+    characters each, no NUL), passed to the process as is, never a shell
+    string. The workspace-relative executable refusal is unchanged.
+  * Rows stored before the field existed decode with no passthrough.
+
+### Remaining (deferred)
 
 * **No network for the server process.** There is no no-network switch
   for a child process without a sandbox profile, and sourcekit-lsp runs
@@ -284,10 +328,6 @@ turns it on AND enables a server row.
   credential variables), user-installed binaries only, and the warning in
   the settings text. Decide whether to wrap launch in a seatbelt profile
   and accept breaking sourcekit-lsp, or to leave it.
-* Per-server environment passthrough and extra arguments in the UI
-  (`LSPServerConfig.args` exists, the form does not edit it).
-* Per-project server enablement (v1 is app-wide rows with a per-project
-  File read deny).
 * Measuring the 2 s budget and settle window against a real sourcekit-lsp
   (manual verification step below, not run here).
 * goto-definition, rename and refactor tools (non-goal, unchanged).
@@ -299,3 +339,12 @@ Focused suites `LSPClientTests`, `LSPToolsTests` and
 real language server). Mutation checks are listed in the final report of
 the implementing session. Manual check with a real Xcode toolchain is
 still to do.
+
+Follow-up verification: `LSPProjectToggleTests` (24 tests; fake servers only)
+plus LSP*, Formatter*, LocalizationParityTests and StoreDurabilityTests, 153
+tests, 0 failures. Mutation checks, each killed: `&&` to `||` in
+`allowsServers`; the `client(for:)` guard removed; `setProjectMode(.off)` not
+stopping; the spawn-time deny re-check removed; the executor guard removed;
+the step ignoring `lspMode`. The eager stop in `AppModel.updateProject` is
+covered only through `ProjectLSPMode.isNarrowing` and the registry stop (an
+AppModel test would write the real project store).

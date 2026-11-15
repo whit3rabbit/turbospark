@@ -72,7 +72,8 @@ extension AppModel {
         skillStateEnabled: Bool = false,
         forgeGuardrailsEnabled: Bool? = nil,
         syntextIndexEnabled: Bool = false,
-        formatterMode: ProjectFormatterMode = .inherit
+        formatterMode: ProjectFormatterMode = .inherit,
+        lspMode: ProjectLSPMode = .inherit
     ) -> AppProject {
         // **THE SAME GUARD `selectProject` CARRIES** (state#55). Creating a
         // project SELECTS it, rebinds `worktree` and rebinds `AppHookStore`,
@@ -92,7 +93,8 @@ extension AppModel {
             forgeGuardrailsEnabled: forgeGuardrailsEnabled,
             skillStateEnabled: skillStateEnabled,
             syntextIndexEnabled: syntextIndexEnabled,
-            formatterMode: formatterMode
+            formatterMode: formatterMode,
+            lspMode: lspMode
         )
 
         projects.insert(project, at: 0)
@@ -228,8 +230,14 @@ extension AppModel {
         updated.updatedAt = Date()
         let previousRoot = projects[index].rootDirectoryPath ?? ""
         let policyChanged = !projects[index].permissions.hasSameApprovalPolicy(as: updated.permissions)
+        let lspNarrowed = ProjectLSPMode.isNarrowing(from: projects[index].lspMode, to: updated.lspMode)
         projects[index] = updated
         persistProjects()
+        if lspNarrowed, let rootURL = updated.rootDirectoryURL {
+            // OC-10: a project that just turned its language servers off
+            // loses the ones already running, now and not at the next use.
+            Task { await LanguageServerRegistry.shared.stop(root: rootURL) }
+        }
         if policyChanged {
             clearSessionApprovals { $0.projectID == project.id }
         }

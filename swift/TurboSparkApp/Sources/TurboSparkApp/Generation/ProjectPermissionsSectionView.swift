@@ -37,9 +37,12 @@ struct ProjectPermissionsSectionView: View {
     @Binding var computerUsePermission: AppToolPermission
     @Binding var guardrailsOption: AppProjectGuardrailsOption
     @Binding var formatterMode: ProjectFormatterMode
+    @Binding var lspMode: ProjectLSPMode
     /// The app-wide formatter switch, read live so the note below follows a
     /// change made in Settings while this sheet is open.
     @AppStorage(FormatterSettings.enabledKey) private var formatterAppWideEnabled = false
+    /// The app-wide language server switch, read live like the one above.
+    @AppStorage(LSPSettings.enabledKey) private var lspAppWideEnabled = false
     @StateObject private var browserPermissionModel: BrowserProjectPermissionsSettingsViewModel
 
     init(
@@ -54,7 +57,8 @@ struct ProjectPermissionsSectionView: View {
         browserOriginAllowlist: Binding<[String]>,
         computerUsePermission: Binding<AppToolPermission>,
         guardrailsOption: Binding<AppProjectGuardrailsOption>,
-        formatterMode: Binding<ProjectFormatterMode>
+        formatterMode: Binding<ProjectFormatterMode>,
+        lspMode: Binding<ProjectLSPMode>
     ) {
         _permissionMode = permissionMode
         _fileReadPermission = fileReadPermission
@@ -68,6 +72,7 @@ struct ProjectPermissionsSectionView: View {
         _computerUsePermission = computerUsePermission
         _guardrailsOption = guardrailsOption
         _formatterMode = formatterMode
+        _lspMode = lspMode
         _browserPermissionModel = StateObject(wrappedValue: BrowserProjectPermissionsSettingsViewModel(
             permission: browserPermission.wrappedValue,
             originAllowlist: browserOriginAllowlist.wrappedValue
@@ -180,7 +185,37 @@ struct ProjectPermissionsSectionView: View {
             .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
 
             formatterRow
+            lspRow
         }
+    }
+
+    /// The per-project language server toggle (OC-10). On follows the app-wide
+    /// Language servers switch; off starts none for this project and stops the
+    /// ones already running. It can only narrow the app-wide switch.
+    private var lspRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(isOn: Binding(
+                get: { lspMode == .inherit },
+                set: { lspMode = $0 ? .inherit : .off }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Allow language servers in this project", bundle: .module)
+                        .themedFont(.base, weight: .medium)
+                    Text("Needs the Language servers switch in Settings. Turn this off to never start a language server for this project.", bundle: .module)
+                        .themedFont(.tiny)
+                        .foregroundStyle(.appSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if !lspAppWideEnabled {
+                Text("Language servers are off in Settings, so none run in any project.", bundle: .module)
+                    .themedFont(.tiny)
+                    .foregroundStyle(.appSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
     }
 
     /// The per-project formatter toggle (OC-11). On follows the app-wide

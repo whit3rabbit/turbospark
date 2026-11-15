@@ -487,8 +487,14 @@ public enum AppToolRegistry {
             case "project_diagnostics", "document_symbols", "workspace_symbols":
                 // OC-10: read-only language server queries. Disabled by the
                 // master switch, rooted, bounded; see `LSPToolDefinitions`.
+                // Re-read the project (as the Syntext case does) so a project
+                // switched to off during a turn is honored by the next call.
+                let liveLSPMode = project.flatMap { captured in
+                    AppProjectFileStore.load().projects.first { $0.id == captured.id }
+                }?.lspMode ?? project?.lspMode ?? .inherit
                 output = try await LSPToolExecutor.execute(
-                    name: lowerName, arguments: call.arguments, rootURL: rootURL)
+                    name: lowerName, arguments: call.arguments, rootURL: rootURL,
+                    projectMode: liveLSPMode)
 
             case "webfetch", "web_fetch", "fetch_url", "read_url_content":
                 guard let urlString = call.arguments["url"]

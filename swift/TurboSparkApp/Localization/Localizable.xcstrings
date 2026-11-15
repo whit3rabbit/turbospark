@@ -653445,6 +653445,1185 @@
           }
         }
       }
+    },
+    "Allow language servers in this project": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Allow language servers in this project"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permitir servidores de lenguaje en este proyecto"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Autoriser les serveurs de langage dans ce projet"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sprachserver in diesem Projekt erlauben"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Consenti i language server in questo progetto"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Permitir servidores de linguagem neste projeto"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Разрешить языковые серверы в этом проекте"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "このプロジェクトで言語サーバを許可"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 프로젝트에서 언어 서버 허용"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允许在此项目中使用语言服务器"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "允許在此專案中使用語言伺服器"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "السماح بخوادم اللغة في هذا المشروع"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "אפשר שרתי שפה בפרויקט זה"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस प्रोजेक्ट में लैंग्वेज सर्वर की अनुमति दें"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Taalservers toestaan in dit project"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zezwalaj na serwery języka w tym projekcie"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bu projede dil sunucularına izin ver"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Дозволити мовні сервери в цьому проєкті"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tillåt språkservrar i det här projektet"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cho phép máy chủ ngôn ngữ trong dự án này"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Izinkan server bahasa di proyek ini"
+          }
+        }
+      }
+    },
+    "Needs the Language servers switch in Settings. Turn this off to never start a language server for this project.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Needs the Language servers switch in Settings. Turn this off to never start a language server for this project."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Requiere el interruptor Servidores de lenguaje en Ajustes. Desactívalo para no iniciar nunca un servidor de lenguaje en este proyecto."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nécessite le commutateur Serveurs de langage dans les Réglages. Désactivez-le pour ne jamais démarrer de serveur de langage pour ce projet."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Erfordert den Schalter Sprachserver in den Einstellungen. Schalte dies aus, um für dieses Projekt nie einen Sprachserver zu starten."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Richiede l'interruttore Language server nelle Impostazioni. Disattivalo per non avviare mai un language server per questo progetto."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Requer a chave Servidores de linguagem nos Ajustes. Desative para nunca iniciar um servidor de linguagem neste projeto."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Требуется переключатель «Языковые серверы» в настройках. Отключите, чтобы никогда не запускать языковой сервер для этого проекта."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定の「言語サーバ」スイッチが必要です。オフにすると、このプロジェクトでは言語サーバを一切起動しません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설정의 '언어 서버' 스위치가 필요합니다. 끄면 이 프로젝트에서는 언어 서버를 절대 시작하지 않습니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要在设置中开启“语言服务器”开关。关闭此项后，将不会为此项目启动任何语言服务器。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要在設定中開啟「語言伺服器」開關。關閉此項後，將不會為此專案啟動任何語言伺服器。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يتطلب مفتاح خوادم اللغة في الإعدادات. أوقف هذا الخيار حتى لا يتم تشغيل أي خادم لغة لهذا المشروع أبدًا."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "נדרש המתג שרתי שפה בהגדרות. כבו אפשרות זו כדי לא להפעיל לעולם שרת שפה עבור פרויקט זה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "सेटिंग्स में लैंग्वेज सर्वर स्विच आवश्यक है। इसे बंद करने पर इस प्रोजेक्ट के लिए कभी कोई लैंग्वेज सर्वर शुरू नहीं होगा।"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Vereist de schakelaar Taalservers in Instellingen. Zet dit uit om nooit een taalserver voor dit project te starten."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wymaga przełącznika Serwery języka w Ustawieniach. Wyłącz, aby nigdy nie uruchamiać serwera języka dla tego projektu."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ayarlar'daki Dil sunucuları anahtarı gerekir. Bu proje için hiçbir dil sunucusunu başlatmamak için bunu kapatın."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Потрібен перемикач «Мовні сервери» в налаштуваннях. Вимкніть, щоб ніколи не запускати мовний сервер для цього проєкту."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kräver reglaget Språkservrar i Inställningar. Stäng av detta för att aldrig starta en språkserver för det här projektet."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cần bật công tắc Máy chủ ngôn ngữ trong Cài đặt. Tắt mục này để không bao giờ khởi động máy chủ ngôn ngữ cho dự án này."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Memerlukan sakelar Server bahasa di Pengaturan. Matikan ini agar server bahasa tidak pernah dijalankan untuk proyek ini."
+          }
+        }
+      }
+    },
+    "Language servers are off in Settings, so none run in any project.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Language servers are off in Settings, so none run in any project."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Los servidores de lenguaje están desactivados en Ajustes, así que no se ejecuta ninguno en ningún proyecto."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Les serveurs de langage sont désactivés dans les Réglages, donc aucun ne s'exécute dans aucun projet."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sprachserver sind in den Einstellungen ausgeschaltet, daher läuft in keinem Projekt einer."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "I language server sono disattivati nelle Impostazioni, quindi nessuno viene eseguito in nessun progetto."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Os servidores de linguagem estão desativados nos Ajustes, então nenhum é executado em nenhum projeto."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Языковые серверы отключены в настройках, поэтому ни в одном проекте они не запускаются."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定で言語サーバがオフのため、どのプロジェクトでも実行されません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "설정에서 언어 서버가 꺼져 있어 어떤 프로젝트에서도 실행되지 않습니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "设置中已关闭语言服务器，因此任何项目中都不会运行。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "設定中已關閉語言伺服器，因此任何專案中都不會執行。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "خوادم اللغة متوقفة في الإعدادات، لذا لا يعمل أي منها في أي مشروع."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "שרתי שפה כבויים בהגדרות, ולכן אף אחד מהם אינו פועל באף פרויקט."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "सेटिंग्स में लैंग्वेज सर्वर बंद हैं, इसलिए किसी भी प्रोजेक्ट में कोई नहीं चलता।"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Taalservers staan uit in Instellingen, dus er draait er geen in enig project."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Serwery języka są wyłączone w Ustawieniach, więc żaden nie działa w żadnym projekcie."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Dil sunucuları Ayarlar'da kapalı, bu yüzden hiçbir projede çalışmazlar."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Мовні сервери вимкнено в налаштуваннях, тому в жодному проєкті вони не запускаються."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Språkservrar är avstängda i Inställningar, så ingen körs i något projekt."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Máy chủ ngôn ngữ đang tắt trong Cài đặt, nên không có máy chủ nào chạy trong bất kỳ dự án nào."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Server bahasa dimatikan di Pengaturan, sehingga tidak ada yang berjalan di proyek mana pun."
+          }
+        }
+      }
+    },
+    "Arguments and environment": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arguments and environment"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumentos y entorno"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arguments et environnement"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumente und Umgebung"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argomenti e ambiente"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumentos e ambiente"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Аргументы и окружение"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "引数と環境"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "인수 및 환경"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "参数和环境"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "參數與環境"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الوسائط والبيئة"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ארגומנטים וסביבה"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "आर्गुमेंट और एनवायरनमेंट"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumenten en omgeving"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumenty i środowisko"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bağımsız değişkenler ve ortam"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Аргументи та середовище"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argument och miljö"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Đối số và môi trường"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumen dan lingkungan"
+          }
+        }
+      }
+    },
+    "Arguments, one per line. They are passed to the server as typed, never through a shell.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arguments, one per line. They are passed to the server as typed, never through a shell."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumentos, uno por línea. Se pasan al servidor tal como se escriben, nunca a través de un shell."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arguments, un par ligne. Ils sont transmis au serveur tels que saisis, jamais via un shell."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumente, eines pro Zeile. Sie werden unverändert an den Server übergeben, nie über eine Shell."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argomenti, uno per riga. Vengono passati al server così come scritti, mai tramite una shell."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumentos, um por linha. Eles são passados ao servidor como digitados, nunca por um shell."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Аргументы, по одному в строке. Они передаются серверу как есть, без участия оболочки."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "引数は1行に1つ。入力したとおりにサーバへ渡され、シェルは経由しません。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "인수는 한 줄에 하나씩 입력합니다. 입력한 그대로 서버에 전달되며 셸을 거치지 않습니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每行一个参数。参数按输入原样传给服务器，不会经过 shell。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每行一個參數。參數會依輸入原樣傳給伺服器，不會經過 shell。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "وسيطة واحدة في كل سطر. تُمرَّر إلى الخادم كما كُتبت، ولا تمر عبر الصدفة أبدًا."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ארגומנט אחד בכל שורה. הם מועברים לשרת כפי שהוקלדו, לעולם לא דרך מעטפת."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "हर पंक्ति में एक आर्गुमेंट। इन्हें जैसा लिखा गया वैसा ही सर्वर को दिया जाता है, शेल के ज़रिए कभी नहीं।"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumenten, één per regel. Ze worden doorgegeven aan de server zoals getypt, nooit via een shell."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumenty, jeden w wierszu. Są przekazywane serwerowi tak, jak wpisano, nigdy przez powłokę."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Her satıra bir bağımsız değişken. Sunucuya yazıldığı gibi iletilir, asla bir kabuk üzerinden geçmez."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Аргументи, по одному в рядку. Вони передаються серверу як є, без участі оболонки."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argument, ett per rad. De skickas till servern som de skrivs, aldrig via ett skal."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mỗi dòng một đối số. Chúng được truyền cho máy chủ đúng như đã nhập, không bao giờ qua shell."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Argumen, satu per baris. Argumen diteruskan ke server apa adanya, tidak pernah melalui shell."
+          }
+        }
+      }
+    },
+    "Environment variable names to pass through, separated by commas or spaces. Only these named variables are copied from this app's own environment. Names that look like secrets or that can inject code are refused.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Environment variable names to pass through, separated by commas or spaces. Only these named variables are copied from this app's own environment. Names that look like secrets or that can inject code are refused."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nombres de variables de entorno que se pasan, separados por comas o espacios. Solo estas variables se copian del entorno de esta app. Se rechazan los nombres que parecen secretos o que pueden inyectar código."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Noms des variables d'environnement à transmettre, séparés par des virgules ou des espaces. Seules ces variables sont copiées depuis l'environnement de cette app. Les noms qui ressemblent à des secrets ou qui peuvent injecter du code sont refusés."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Namen der durchzureichenden Umgebungsvariablen, durch Kommas oder Leerzeichen getrennt. Nur diese Variablen werden aus der Umgebung dieser App kopiert. Namen, die nach Geheimnissen aussehen oder Code einschleusen können, werden abgelehnt."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nomi delle variabili d'ambiente da passare, separati da virgole o spazi. Solo queste variabili vengono copiate dall'ambiente di questa app. I nomi che sembrano segreti o che possono iniettare codice vengono rifiutati."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nomes das variáveis de ambiente a repassar, separados por vírgulas ou espaços. Somente essas variáveis são copiadas do ambiente deste app. Nomes que parecem segredos ou que podem injetar código são recusados."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Имена переменных окружения для передачи, через запятую или пробел. Из окружения этого приложения копируются только указанные переменные. Имена, похожие на секреты или позволяющие внедрить код, отклоняются."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "引き継ぐ環境変数の名前をカンマまたはスペースで区切って入力します。このアプリの環境から、指定した名前の変数だけがコピーされます。秘密情報に見える名前やコードを注入できる名前は拒否されます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "전달할 환경 변수 이름을 쉼표 또는 공백으로 구분해 입력합니다. 이 앱의 환경에서 지정한 변수만 복사됩니다. 비밀 정보처럼 보이거나 코드를 주입할 수 있는 이름은 거부됩니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "要传递的环境变量名称，用逗号或空格分隔。只会从此应用自身的环境中复制这些指定的变量。看起来像机密信息或可注入代码的名称会被拒绝。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "要傳遞的環境變數名稱，以逗號或空格分隔。只會從此 App 自身的環境中複製這些指定的變數。看起來像機密資訊或可注入程式碼的名稱會被拒絕。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "أسماء متغيرات البيئة المراد تمريرها، مفصولة بفواصل أو مسافات. تُنسخ هذه المتغيرات المسماة فقط من بيئة هذا التطبيق. تُرفض الأسماء التي تبدو أسرارًا أو التي قد تحقن شيفرة."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "שמות משתני סביבה להעברה, מופרדים בפסיקים או ברווחים. רק משתנים אלה מועתקים מסביבת האפליקציה. שמות שנראים כסודות או שעלולים להזריק קוד נדחים."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पास किए जाने वाले एनवायरनमेंट वेरिएबल के नाम, कॉमा या स्पेस से अलग करके लिखें। इस ऐप के अपने एनवायरनमेंट से केवल यही नामित वेरिएबल कॉपी किए जाते हैं। गोपनीय जानकारी जैसे दिखने वाले या कोड इंजेक्ट कर सकने वाले नाम अस्वीकार किए जाते हैं।"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Namen van door te geven omgevingsvariabelen, gescheiden door komma's of spaties. Alleen deze variabelen worden gekopieerd uit de omgeving van deze app. Namen die op geheimen lijken of code kunnen injecteren, worden geweigerd."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nazwy zmiennych środowiskowych do przekazania, oddzielone przecinkami lub spacjami. Z środowiska tej aplikacji kopiowane są tylko te zmienne. Nazwy przypominające sekrety lub mogące wstrzyknąć kod są odrzucane."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktarılacak ortam değişkeni adları, virgül veya boşlukla ayrılmış. Bu uygulamanın ortamından yalnızca bu adlı değişkenler kopyalanır. Gizli bilgi gibi görünen veya kod enjekte edebilen adlar reddedilir."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Імена змінних середовища для передачі, через кому або пробіл. З середовища цього застосунку копіюються лише вказані змінні. Імена, схожі на секрети або здатні впровадити код, відхиляються."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Namn på miljövariabler att vidarebefordra, avgränsade med kommatecken eller blanksteg. Bara dessa variabler kopieras från den här appens miljö. Namn som liknar hemligheter eller kan injicera kod avvisas."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tên biến môi trường cần chuyển tiếp, cách nhau bằng dấu phẩy hoặc khoảng trắng. Chỉ các biến được nêu tên mới được sao chép từ môi trường của ứng dụng này. Tên trông như bí mật hoặc có thể chèn mã sẽ bị từ chối."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nama variabel lingkungan yang diteruskan, dipisahkan koma atau spasi. Hanya variabel bernama ini yang disalin dari lingkungan aplikasi ini. Nama yang terlihat seperti rahasia atau dapat menyuntikkan kode ditolak."
+          }
+        }
+      }
+    },
+    "Not passed:": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Not passed:"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No se pasan:"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Non transmis :"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nicht weitergegeben:"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Non passati:"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Não repassados:"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не переданы:"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "渡されません:"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "전달되지 않음:"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未传递："
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "未傳遞："
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "غير ممرَّرة:"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "לא הועברו:"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पास नहीं किए गए:"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Niet doorgegeven:"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nie przekazano:"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Aktarılmayanlar:"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Не передано:"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Inte vidarebefordrade:"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không được chuyển:"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tidak diteruskan:"
+          }
+        }
+      }
+    },
+    "Environment variable names": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Environment variable names"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nombres de variables de entorno"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Noms des variables d'environnement"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Namen der Umgebungsvariablen"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nomi delle variabili d'ambiente"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nomes das variáveis de ambiente"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Имена переменных окружения"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "環境変数名"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "환경 변수 이름"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "环境变量名称"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "環境變數名稱"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "أسماء متغيرات البيئة"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "שמות משתני סביבה"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "एनवायरनमेंट वेरिएबल के नाम"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Namen van omgevingsvariabelen"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nazwy zmiennych środowiskowych"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ortam değişkeni adları"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Імена змінних середовища"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Namn på miljövariabler"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tên biến môi trường"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nama variabel lingkungan"
+          }
+        }
+      }
+    },
+    "Names, for example LANG_SERVER_HOME": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Names, for example LANG_SERVER_HOME"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nombres, por ejemplo LANG_SERVER_HOME"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Noms, par exemple LANG_SERVER_HOME"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Namen, zum Beispiel LANG_SERVER_HOME"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nomi, ad esempio LANG_SERVER_HOME"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nomes, por exemplo LANG_SERVER_HOME"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Имена, например LANG_SERVER_HOME"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "名前（例: LANG_SERVER_HOME）"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이름(예: LANG_SERVER_HOME)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "名称，例如 LANG_SERVER_HOME"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "名稱，例如 LANG_SERVER_HOME"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "الأسماء، مثل LANG_SERVER_HOME"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "שמות, לדוגמה LANG_SERVER_HOME"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "नाम, जैसे LANG_SERVER_HOME"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Namen, bijvoorbeeld LANG_SERVER_HOME"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nazwy, na przykład LANG_SERVER_HOME"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Adlar, örneğin LANG_SERVER_HOME"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Імена, наприклад LANG_SERVER_HOME"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Namn, till exempel LANG_SERVER_HOME"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tên, ví dụ LANG_SERVER_HOME"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Nama, misalnya LANG_SERVER_HOME"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

@@ -15,6 +15,11 @@ struct LspSettingsSectionView: View {
     @State private var newName = ""
     @State private var newExtensions = ""
     @State private var newCommand = ""
+    /// What the user is typing in the per-row fields. The stored row keeps
+    /// only what parsed (`LSPSettings.parseArguments`, `LSPEnvironmentPolicy`),
+    /// so the draft is what lets a refused name stay visible next to its note.
+    @State private var argumentDrafts: [String: String] = [:]
+    @State private var environmentDrafts: [String: String] = [:]
 
     var body: some View {
         Section(header: Text("Language servers", bundle: .module)) {
@@ -76,6 +81,7 @@ struct LspSettingsSectionView: View {
                     .themedCode(.small)
                     .foregroundStyle(.appSecondary)
             }
+            if !server.isDiscovered { launchOptions(server) }
             HStack {
                 Button { runTest(server) } label: { Text("Test", bundle: .module) }
                     .appAction(.secondary, size: .small)
@@ -87,6 +93,62 @@ struct LspSettingsSectionView: View {
                 testResultView(server.id)
             }
         }
+    }
+
+    /// Arguments and environment passthrough for a user-added row. Both live in
+    /// this app's own defaults; nothing here is read from a project. The
+    /// launch environment stays the minimal allowlist plus the NAMES typed here.
+    private func launchOptions(_ server: LSPServerConfig) -> some View {
+        DisclosureGroup {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Arguments, one per line. They are passed to the server as typed, never through a shell.", bundle: .module)
+                    .font(theme.ui(.small))
+                    .foregroundStyle(.appSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                TextEditor(text: Binding(
+                    get: { argumentDrafts[server.id] ?? server.args.joined(separator: "\n") },
+                    set: { text in
+                        argumentDrafts[server.id] = text
+                        update(server.id) { $0.args = LSPSettings.parseArguments(text) }
+                    }))
+                    .themedCode(.small)
+                    .frame(minHeight: 44, maxHeight: 96)
+                    .accessibilityLabel(Text("Arguments", bundle: .module))
+                Text("Environment variable names to pass through, separated by commas or spaces. Only these named variables are copied from this app's own environment. Names that look like secrets or that can inject code are refused.", bundle: .module)
+                    .font(theme.ui(.small))
+                    .foregroundStyle(.appSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                TextField(text: Binding(
+                    get: { environmentDrafts[server.id] ?? server.envPassthrough.joined(separator: ", ") },
+                    set: { text in
+                        environmentDrafts[server.id] = text
+                        update(server.id) { $0.envPassthrough = LSPEnvironmentPolicy.parse(text).accepted }
+                    }),
+                    prompt: Text("Names, for example LANG_SERVER_HOME", bundle: .module)
+                ) { Text("Environment variable names", bundle: .module) }
+                let refused = LSPEnvironmentPolicy.parse(
+                    environmentDrafts[server.id] ?? server.envPassthrough.joined(separator: ", ")).refused
+                if !refused.isEmpty {
+                    Label {
+                        HStack(spacing: 4) {
+                            Text("Not passed:", bundle: .module)
+                            Text(verbatim: refused.joined(separator: ", ")).lineLimit(2)
+                        }
+                    } icon: { Image(systemName: "exclamationmark.triangle") }
+                        .font(theme.ui(.small))
+                        .foregroundStyle(.appWarning)
+                }
+            }
+            .padding(.top, 4)
+        } label: {
+            Text("Arguments and environment", bundle: .module)
+        }
+    }
+
+    private func update(_ id: String, _ change: (inout LSPServerConfig) -> Void) {
+        guard let index = servers.firstIndex(where: { $0.id == id }) else { return }
+        change(&servers[index])
+        save()
     }
 
     @ViewBuilder

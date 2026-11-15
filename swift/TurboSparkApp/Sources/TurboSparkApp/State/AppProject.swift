@@ -472,6 +472,9 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
     /// The project's say over the formatter pass (OC-11). It can only narrow
     /// the app-wide switch; see `ProjectFormatterMode`.
     public var formatterMode: ProjectFormatterMode = .inherit
+    /// The project's say over the OC-10 language servers. It can only narrow
+    /// the app-wide switch; see `ProjectLSPMode`.
+    public var lspMode: ProjectLSPMode = .inherit
 
     public init(
         id: UUID = UUID(),
@@ -492,7 +495,8 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         syntextIndexEnabled: Bool = false,
-        formatterMode: ProjectFormatterMode = .inherit
+        formatterMode: ProjectFormatterMode = .inherit,
+        lspMode: ProjectLSPMode = .inherit
     ) {
         self.id = id
         self.name = name
@@ -513,6 +517,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         self.updatedAt = updatedAt
         self.syntextIndexEnabled = syntextIndexEnabled
         self.formatterMode = formatterMode
+        self.lspMode = lspMode
     }
 
     enum CodingKeys: String, CodingKey {
@@ -520,7 +525,7 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         case permissions, maxAutonomousSteps, mcpServers, forgeGuardrailsEnabled
         case skillStateEnabled, enabledPlugins, enabledSkills, enabledMcpServers, marketplaces, localPluginPaths, createdAt, updatedAt
         case approvedMcpJsonServers, rejectedMcpJsonServers, approveAllProjectMcpServers
-        case syntextIndexEnabled, formatterMode
+        case syntextIndexEnabled, formatterMode, lspMode
     }
 
     public init(from decoder: Decoder) throws {
@@ -558,6 +563,8 @@ public struct AppProject: Identifiable, Codable, Equatable, Sendable {
         // unknown both mean "follow the app-wide switch".
         self.formatterMode = container.decodeTolerant(
             ProjectFormatterMode.self, forKey: .formatterMode, fallback: .inherit)
+        self.lspMode = container.decodeTolerant(
+            ProjectLSPMode.self, forKey: .lspMode, fallback: .inherit)
     }
 
     /// Resolved URL to the root directory if configured.

@@ -45,7 +45,9 @@ enum LSPLaunchPolicy {
         guard !command.isEmpty else { throw LSPLaunchError.emptyCommand }
         guard !command.contains("\0"), !command.contains("\n") else { throw LSPLaunchError.badArgument }
         let args = config.isDiscovered ? [] : config.args
-        guard args.allSatisfy({ !$0.contains("\0") }) else { throw LSPLaunchError.badArgument }
+        guard args.count <= LSPSettings.maximumArguments,
+              args.allSatisfy({ !$0.contains("\0") && $0.count <= LSPSettings.maximumArgumentLength })
+        else { throw LSPLaunchError.badArgument }
 
         // "./tools/server" and "node_modules/.bin/server" are workspace
         // binaries by construction. Bare names go to the PATH, absolute and
@@ -65,14 +67,17 @@ enum LSPLaunchPolicy {
     }
 
     /// The server's whole environment: PATH, HOME, LANG and TMPDIR from the
-    /// allowlist in `McpClientEngine.childEnvironment`, nothing else. No
-    /// credentials, no proxy settings, no passthrough.
+    /// allowlist in `McpClientEngine.childEnvironment`, plus the row's
+    /// `passthrough` names that survive `LSPEnvironmentPolicy` (re-checked here,
+    /// so a stored row cannot skip the deny list) and exist in `parent`. A row
+    /// without passthrough gets exactly the allowlist. No value is ever typed
+    /// or read from a project.
     static func environment(
         parent: [String: String] = ProcessInfo.processInfo.environment,
-        executable: String, searchPath: String?
+        executable: String, searchPath: String?, passthrough: [String] = []
     ) -> [String: String] {
         McpClientEngine.childEnvironment(
-            parent: parent, passthrough: [], declared: [:],
+            parent: parent, passthrough: LSPEnvironmentPolicy.accepted(passthrough), declared: [:],
             executableDirectory: (executable as NSString).deletingLastPathComponent,
             searchPath: searchPath)
     }

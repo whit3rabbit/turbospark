@@ -33,14 +33,21 @@ enum LSPManagerError: Error, LocalizedError, Equatable {
     case noServer(String)
     case unavailable(server: String, reason: String)
     case unreadable(String)
+    case offForProject
 
     var errorDescription: String? {
         switch self {
         case .noServer(let path): return "No enabled language server covers '\(path)'."
         case .unavailable(let server, let reason): return "The \(server) language server is unavailable: \(reason)"
         case .unreadable(let reason): return reason
+        case .offForProject: return LSPManagerError.offForProjectMessage
         }
     }
+
+    /// The one sentence every surface uses when the project has turned
+    /// language servers off.
+    static let offForProjectMessage =
+        "Language servers are off for this project. The user can turn them back on in the project's settings."
 }
 
 /// OC-10: the language servers of one project root. One server per row, started
@@ -71,6 +78,10 @@ actor LanguageServerManager {
     /// uri to project-relative path, for every document this manager opened.
     private var touched: [String: String] = [:]
     private var generation = 0
+    /// The project's narrowing (`ProjectLSPMode`). The callers that hold the
+    /// project (the tool executor, the post-edit step) set it on every call, so
+    /// a flip is seen at the next use even if the eager stop was missed.
+    private(set) var projectMode: ProjectLSPMode = .inherit
     private var idleTask: Task<Void, Never>?
 
     init(
@@ -165,6 +176,9 @@ actor LanguageServerManager {
     /// The live client for `config`, starting it if needed. Concurrent callers
     /// share one start.
     func client(for config: LSPServerConfig) async throws -> LSPClient {
+        // The one door every launch goes through, so a project set to off
+        // starts nothing whichever tool or step asked.
+        guard projectMode != .off else { throw LSPManagerError.offForProject }
         var current = await entry(for: config)
         if current.unavailable {
             throw LSPManagerError.unavailable(server: config.name, reason: current.lastFailure ?? "it failed twice")
@@ -211,6 +225,13 @@ actor LanguageServerManager {
             }
             throw error
         }
+    }
+
+    /// Applies the project's mode. Off stops every running server for this
+    /// root and keeps `client(for:)` from starting another.
+    func setProjectMode(_ mode: ProjectLSPMode) async {
+        projectMode = mode
+        if mode == .off { await stopAll() }
     }
 
     func stopAll() async {
@@ -337,6 +358,7 @@ actor LanguageServerManager {
         case .unreadable(let reason): return .skipped(reason)
         case .unavailable(_, let reason): return .unavailable(reason)
         case .noServer(let path): return .skipped("no server for \(path)")
+        case .offForProject: return .skipped("language servers are off for this project")
         }
     }
 
@@ -423,7 +445,9 @@ enum LSPProductionTransport {
 
     static func make(config: LSPServerConfig, root: URL, searchPath: String?) throws -> any LSPTransport {
         let launch = try LSPLaunchPolicy.resolve(config: config, rootURL: root, searchPath: searchPath)
-        let environment = LSPLaunchPolicy.environment(executable: launch.executable, searchPath: searchPath)
+        let environment = LSPLaunchPolicy.environment(
+            executable: launch.executable, searchPath: searchPath,
+            passthrough: config.isDiscovered ? [] : config.envPassthrough)
         return LSPProcessTransport(launch: launch, rootURL: root, environment: environment)
     }
 }
