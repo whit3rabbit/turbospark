@@ -73,7 +73,7 @@ Checkpoint intake and `.gturbo` writing.
   required (4B: 128, not 2560/32). Quantize-on-install IS admitted
   (`family_admits_quantize_on_install`), gated by
   `tests/qwen3_quantize_parity_local.rs` (ignored, reads local dirs from
-  `TS_QWEN3_BF16_DIR` / `TS_QWEN3_Q4_DIR` and never downloads. The
+  `TS_QWEN3_BF16_DIR` / `TS_QWEN3_Q4_DIR` and never downloads, and the
   original local copies were deleted, so running it needs both public repos
   downloaded again at the revisions below) on
   `Qwen/Qwen3-4B` @ 1cfa9a7208912126459214e8b04321603b3df60c against
