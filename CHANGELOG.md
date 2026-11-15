@@ -78,8 +78,10 @@ when this file gets updated relative to the version bump and the tag.
   are plaintext and off by default.
 - Local voice call (off by default). Start Voice Call is Shift+Cmd+Y and Toggle
   Talk is Shift+Cmd+Space, a toggle rather than a hold. Experimental
-  push-to-talk auto-send, also off by default, asks a local model whether an
-  utterance is addressed to the assistant before sending it.
+  push-to-talk auto-send is also off by default. It considers only speech
+  heard while Talk is on. A pre-filter and a local model then decide whether
+  it is a plain informational question, and anything else stays in the
+  composer for you to press Send.
 - `turbospark acp` and the new `turbospark-acp-agent` binary speak the Agent
   Client Protocol over stdio so an editor can drive local checkpoints. Verified
   with a scripted client only, not a real editor.
