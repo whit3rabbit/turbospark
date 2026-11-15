@@ -69,13 +69,30 @@ Checkpoint intake and `.gturbo` writing.
 - Plain dense `qwen3` has a safetensors door (`parse_qwen3_config`,
   `write_qwen3_dense_install_streamed`, the `qwen3` row of `SUPPORTED_HF`) for
   PRE-QUANTIZED MLX repos only (`mlx-community/Qwen3-4B-4bit`). `head_dim` is
-  required (4B: 128, not 2560/32). Quantize-on-install is deliberately NOT
-  admitted: the norm and `lm_head` relations were not diffed against a
-  published `-bf16`/`-4bit` pair, so BF16 `Qwen/Qwen3-4B` keeps the
-  missing-quantization refusal until a `*_parity_network` test exists. The
-  parser fixture is reconstructed from published values, not downloaded. The
-  family has no measured default beyond its GGUF one; its own real-model
-  quality, memory and paired-perf gates are owed on a safetensors install.
+  required (4B: 128, not 2560/32). Quantize-on-install IS admitted
+  (`family_admits_quantize_on_install`), gated by
+  `tests/qwen3_quantize_parity_local.rs` (ignored; local dirs via
+  `TS_QWEN3_BF16_DIR` / `TS_QWEN3_Q4_DIR`, never downloads) on
+  `Qwen/Qwen3-4B` @ 1cfa9a7208912126459214e8b04321603b3df60c against
+  `mlx-community/Qwen3-4B-4bit` @ 4dcb3d101c2a062e5c1d4bb173588c54ea6c4d25
+  (LFS sha256 checked). Read off the bytes: `embed_tokens` IS quantized (tied
+  head, no `lm_head`); all 253 linear matrices are quantized; the 145 other
+  tensors (the layer and final RMSNorms, `q_norm`, `k_norm`) are BF16 and
+  byte-identical to HF, so NO norm shift (`shifts_norms` false); every bias
+  plane and every raw tensor matches through the real view. The published
+  file was made by the CPU `mx.quantize` kernel: its weight and scale planes
+  equal `Rounding::HalfEven` with 0 differing rows over all 253 matrices. The
+  install (Metal tie rule, `HalfAway`) therefore differs from that file in
+  exactly 7,522,753 bytes of `model_weights.bin` (0.35 percent of the weight
+  and scale bytes, exact ties only) and nowhere else (same size and layout,
+  manifest differs in the weights sha256 and `modelID`). A pre-quantized pull
+  of the same published repo and a quantize-on-install pull of the bf16 repo
+  agreed token for token on 5 of 6 greedy chat prompts, diverging late in
+  the sixth (a near-tie). The family has no measured default beyond its GGUF
+  one: Steel, GQA decode and the other measured defaults are NOT granted, and
+  no memory oracle, quality gate or paired performance run exists for a
+  qwen3 safetensors install. The parser fixture is reconstructed from
+  published values, not downloaded.
 - Muse Glimmer GGUF (`muse-glimmer`) is installed by VALUE conventions, not a
   plain name map, and each was read off real bytes (`tests/muse_gguf_network.rs`):
   the converter adds 1 to every `*layernorm.weight` (the four per-layer norms,

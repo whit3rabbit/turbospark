@@ -198,6 +198,7 @@ pub fn evaluate_config(
             family,
             model_io::ModelFamily::QwenGdnDense
                 | model_io::ModelFamily::QwenGdnMoe
+                | model_io::ModelFamily::Qwen3Dense
                 | model_io::ModelFamily::Gemma4
                 | model_io::ModelFamily::MuseGlimmer
         ) {

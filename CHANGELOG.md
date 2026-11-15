@@ -14,8 +14,14 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
-- Pre-quantized MLX conversions of plain dense Qwen3 (`mlx-community/Qwen3-4B-4bit`
-  and siblings) install from safetensors. Unquantized Qwen3 still refuses.
+- Plain dense Qwen3 installs from safetensors: pre-quantized MLX conversions
+  (`mlx-community/Qwen3-4B-4bit` and siblings) and, through quantize-on-install,
+  the unquantized `Qwen/Qwen3-4B` (4-bit group 64 by default). The quantizer was
+  checked against the published 4-bit file: every norm, bias plane and tensor
+  layout matches, and weights and scales match its half-to-even rounding
+  exactly. The install uses the Metal tie rule, so it differs from that file on
+  exact ties only (0.35 percent of weight and scale bytes). No qwen3
+  safetensors memory, quality or paired-performance gate has been run.
 - Granite 4.x GGUF files (`ibm-granite/granite-4.x-*-GGUF`) install on the Llama
   flow with their 1/head_dim attention scale; Granite 3.x, whose residual,
   embedding and logit multipliers are not identity, refuses. The ChatML

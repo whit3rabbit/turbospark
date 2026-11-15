@@ -603,17 +603,34 @@ fn a_prequantized_qwen3_mlx_config_is_runnable_as_the_dense_family() {
     assert_eq!(report.arch.unwrap(), model_io::qwen3_4b());
 }
 
-/// Quantize-on-install is NOT admitted for qwen3 (no byte-parity gate yet), so
-/// a BF16 `Qwen/Qwen3-4B` keeps the refusal that names the missing block.
+/// Quantize-on-install IS admitted for qwen3: its BF16 install was gated
+/// against `mlx-community/Qwen3-4B-4bit` (`tests/qwen3_quantize_parity_local.rs`
+/// in repack). Removing the admission in `family_admits_quantize_on_install`
+/// turns this back into the missing-quantization refusal and fails here.
 #[test]
-fn an_unquantized_qwen3_checkpoint_is_refused_by_name() {
+fn an_unquantized_qwen3_checkpoint_is_runnable_through_quantize_on_install() {
     let config = include_str!("../../repack/tests/fixtures/qwen3_4b_config.json");
+    assert!(
+        !config.contains("\"quantization\""),
+        "fixture carries a block"
+    );
     let report = evaluate_config(config, &repo(), None).expect("the config parses");
     assert_eq!(report.family, Some(model_io::ModelFamily::Qwen3Dense));
-    match &report.verdict {
-        Verdict::Refused(why) => assert!(why.contains("quantization"), "{why}"),
-        other => panic!("expected a refusal, got {other:?}"),
-    }
+    assert_eq!(report.verdict, Verdict::Runnable, "{:?}", report.verdict);
+    assert_eq!(report.affine, Some((4, 64)));
+    assert!(
+        report.warnings.iter().any(|w| w.contains("quantizes")),
+        "{:?}",
+        report.warnings
+    );
+    assert!(
+        !report
+            .warnings
+            .iter()
+            .any(|w| w.contains("not been byte-checked")),
+        "qwen3 was byte-checked: {:?}",
+        report.warnings
+    );
 }
 
 #[test]

@@ -26,8 +26,10 @@
 //!   vision tower, the MTP head) is served verbatim and takes the walk's own
 //!   narrowing path.
 //!
-//! Only `QwenGdnDense` is admitted ([`family_admits_quantize_on_install`]).
-//! Widening it needs that family's own real gate, not this module's say-so.
+//! Admission is per family ([`family_admits_quantize_on_install`]) and needs
+//! that family's own real gate, not this module's say-so. Plain dense
+//! `qwen3` was gated by `tests/qwen3_quantize_parity_local.rs` against
+//! `Qwen/Qwen3-4B` and `mlx-community/Qwen3-4B-4bit`.
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -73,6 +75,7 @@ pub fn family_admits_quantize_on_install(family: ModelFamily) -> bool {
         ModelFamily::QwenGdnDense
             | ModelFamily::QwenGdnMoe
             | ModelFamily::Qwen2Dense
+            | ModelFamily::Qwen3Dense
             | ModelFamily::Qwen3Vl
             | ModelFamily::Gemma4
             | ModelFamily::MuseGlimmer
@@ -199,6 +202,10 @@ pub fn canonicalize_for_family(
             canonicalize_qwen35_hf_headers(headers)?;
             Ok(SourceLayout::Mlx)
         }
+        // Text-only Qwen3 spells the trunk `model.*` in HF and MLX alike, and
+        // its norms are plain `x * w`, so nothing happens here; the later
+        // `canonicalize_qwen2_header` does the rename.
+        ModelFamily::Qwen3Dense => Ok(SourceLayout::Mlx),
         ModelFamily::Qwen2Dense => {
             let nested = headers.iter().any(|h| {
                 h.tensors
@@ -1226,6 +1233,41 @@ mod tests {
         assert!(!shifts_norms(ModelFamily::Qwen3Vl));
         assert!(!shifts_norms(ModelFamily::Qwen2Dense));
         assert!(shifts_norms(ModelFamily::QwenGdnDense));
+    }
+
+    #[test]
+    fn qwen3_dense_is_admitted_and_keeps_its_plain_norms() {
+        // Mutation check: dropping the admission arm must fail this test.
+        assert!(family_admits_quantize_on_install(ModelFamily::Qwen3Dense));
+        assert!(!shifts_norms(ModelFamily::Qwen3Dense));
+        assert!(family_supports_bits(ModelFamily::Qwen3Dense, 4));
+        assert!(quantize_refusal(ModelFamily::Qwen3Dense, &serde_json::json!({})).is_none());
+        // Text-only Qwen3 is `model.*` in HF and MLX: untouched here, renamed
+        // later by `canonicalize_qwen2_header`.
+        let (h, _) = blob(&[(
+            "model.layers.0.self_attn.q_norm.weight",
+            "BF16",
+            vec![64],
+            bf16_bytes(&[0.25f32; 64]),
+        )]);
+        let mut hs = vec![h];
+        let layout = canonicalize_for_family(ModelFamily::Qwen3Dense, &mut hs).unwrap();
+        assert_eq!(layout, SourceLayout::Mlx);
+        assert!(hs[0]
+            .tensors
+            .contains_key("model.layers.0.self_attn.q_norm.weight"));
+    }
+
+    #[test]
+    fn families_without_a_gate_stay_unadmitted() {
+        for f in [
+            ModelFamily::Qwen3Moe,
+            ModelFamily::Llama,
+            ModelFamily::Flint,
+            ModelFamily::Lfm3,
+        ] {
+            assert!(!family_admits_quantize_on_install(f), "{f:?}");
+        }
     }
 
     #[test]
