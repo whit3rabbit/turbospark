@@ -1,5 +1,4 @@
 import Foundation
-import UserNotifications
 import AppKit
 
 // MARK: - Sleep Executor
@@ -25,49 +24,94 @@ public enum SleepExecutor {
 
 // MARK: - PushNotification Executor
 
+/// The agent's `PushNotification` tool. It never talks to
+/// `UNUserNotificationCenter` and never asks macOS for authorization: it hands
+/// a sanitized title and body to `deliver` (the shared `AppNotificationCenter`
+/// Allow-only path, wired by `AppModel`). Without that hook, or without the
+/// user's opt-in, nothing is shown and the result says so.
 public enum PushNotificationExecutor {
+    /// The in-app toast, fired only after a successful system post.
     public static var onNotificationPushed: (@Sendable (String, String) -> Void)?
 
-    public static func execute(arguments: [String: String]) async throws -> String {
-        guard let message = arguments["message"] ?? arguments["body"] ?? arguments["text"] else {
+    /// Set by `AppModel`: (title, body, chat) to the center's decision.
+    static var deliver: (@Sendable (String, String, UUID?) async -> AgentPushResult)?
+
+    static let defaultTitle = "TurboSpark Notice"
+    static let maximumTitleLength = 80
+    static let maximumBodyLength = 240
+
+    /// Single line, no control or invisible formatting characters (newline
+    /// and tab become a space, so a bidi override or an escape sequence
+    /// cannot reach the banner), collapsed spaces, capped with an ellipsis.
+    static func sanitize(_ text: String, limit: Int) -> String {
+        var out = String.UnicodeScalarView()
+        var lastWasSpace = true
+        for scalar in text.unicodeScalars {
+            let category = scalar.properties.generalCategory
+            if category == .control || category == .format
+                || category == .lineSeparator || category == .paragraphSeparator
+                || category == .surrogate || category == .privateUse || category == .unassigned
+            {
+                // Whitespace controls separate words; every other one is dropped.
+                if scalar == "\n" || scalar == "\t" || scalar == "\r" || category == .lineSeparator
+                    || category == .paragraphSeparator
+                {
+                    if !lastWasSpace { out.append(" "); lastWasSpace = true }
+                }
+                continue
+            }
+            if scalar.properties.isWhitespace {
+                if !lastWasSpace { out.append(" "); lastWasSpace = true }
+                continue
+            }
+            out.append(scalar)
+            lastWasSpace = false
+        }
+        var result = String(out).trimmingCharacters(in: .whitespaces)
+        if result.count > limit {
+            result = String(result.prefix(limit - 1)).trimmingCharacters(in: .whitespaces) + "\u{2026}"
+        }
+        return result
+    }
+
+    public static func execute(arguments: [String: String], chatID: UUID? = nil) async throws -> String {
+        guard let rawMessage = arguments["message"] ?? arguments["body"] ?? arguments["text"] else {
             throw NSError(
                 domain: "TurboSparkTool",
                 code: 65,
                 userInfo: [NSLocalizedDescriptionKey: "Missing 'message' argument for PushNotification."]
             )
         }
-        let title = arguments["title"] ?? "TurboSpark Notice"
-        let status = arguments["status"] ?? "proactive"
-
-        onNotificationPushed?(title, message)
-
-        // Report what actually happened. Without a granted authorization
-        // macOS silently drops the request, and the model used to be told the
-        // notification was posted when only the in-app toast had shown.
-        var delivery = "shown in-app only (system notifications are unavailable outside the app bundle)"
-        if Bundle.main.bundleURL.pathExtension == "app",
-           Bundle.main.bundleIdentifier != nil {
-            let center = UNUserNotificationCenter.current()
-            let granted = (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
-            if granted {
-                let content = UNMutableNotificationContent()
-                content.title = title
-                content.body = message
-                content.sound = .default
-                let request = UNNotificationRequest(
-                    identifier: UUID().uuidString, content: content, trigger: nil)
-                do {
-                    try await center.add(request)
-                    delivery = "posted as a system notification"
-                } catch {
-                    delivery = "shown in-app only (system notification failed: \(error.localizedDescription))"
-                }
-            } else {
-                delivery = "shown in-app only (system notification permission was not granted)"
-            }
+        let message = sanitize(rawMessage, limit: maximumBodyLength)
+        guard !message.isEmpty else {
+            throw NSError(
+                domain: "TurboSparkTool",
+                code: 65,
+                userInfo: [NSLocalizedDescriptionKey: "The 'message' argument for PushNotification is empty."]
+            )
         }
+        var title = sanitize(arguments["title"] ?? "", limit: maximumTitleLength)
+        if title.isEmpty { title = defaultTitle }
+        let status = sanitize(arguments["status"] ?? "proactive", limit: 32)
 
-        return "Notification \(delivery): [\(title)] \(message) (Status: \(status))."
+        // Only the sanitized title and message ever leave this function: no
+        // other argument, tool output or file content is part of a banner.
+        let result = await deliver?(title, message, chatID) ?? .optedOut
+        switch result {
+        case .posted:
+            onNotificationPushed?(title, message)
+            return "Notification posted as a system notification: [\(title)] \(message) (Status: \(status))."
+        case .optedOut:
+            return "Notification not sent: notifications from agents are not enabled in the app (Settings, Notifications, Allow agents to send notifications). The user was not prompted. Put the news in your reply instead."
+        case .notAuthorized:
+            return "Notification not sent: system notifications are not enabled for TurboSpark (the user allows them in Settings, Notifications, or in System Settings). The user was not prompted. Put the news in your reply instead."
+        case .outranked:
+            return "Notification not sent: this chat already has a pending approval or question notification. Put the news in your reply instead."
+        case .failed:
+            return "Notification not sent: the system refused to post it. Put the news in your reply instead."
+        case .ghostChat:
+            return "Notification not sent: Ghost chats never post system notifications. Put the news in your reply instead."
+        }
     }
 }
 

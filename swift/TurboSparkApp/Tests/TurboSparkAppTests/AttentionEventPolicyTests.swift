@@ -131,6 +131,17 @@ final class AttentionEventPolicyTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(AttentionPreferences.self, from: data), p)
         XCTAssertTrue(p.anyEnabled)
         XCTAssertFalse(AttentionPreferences().anyEnabled)
+        XCTAssertFalse(AttentionPreferences().wantsBanners)
+        XCTAssertTrue(AttentionPreferences(allowAgentPush: true).wantsBanners)
+        // A settings file from before the agent switch decodes as off, and the
+        // switch round-trips.
+        let old = try JSONDecoder().decode(AttentionPreferences.self, from: Data(#"{"events": {}}"#.utf8))
+        XCTAssertFalse(old.allowAgentPush)
+        let junk = try JSONDecoder().decode(
+            AttentionPreferences.self, from: Data(#"{"allowAgentPush": "yes"}"#.utf8))
+        XCTAssertFalse(junk.allowAgentPush)
+        let on = AttentionPreferences(allowAgentPush: true)
+        XCTAssertEqual(try JSONDecoder().decode(AttentionPreferences.self, from: JSONEncoder().encode(on)), on)
 
         // The whole field decoding as junk must not lose the other settings.
         let settings = try JSONDecoder().decode(

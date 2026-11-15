@@ -203,7 +203,100 @@ final class AppNotificationCenterTests: XCTestCase {
                 if code.contains("center.requestAuthorization()") { allowCallers.insert(file.lastPathComponent) }
             }
         }
-        XCTAssertEqual(systemCallers, ["AppNotificationCenter.swift", "AutomationExecutors.swift"])
+        // The agent's PushNotification tool no longer prompts: only the
+        // wrapper's backend may call the system API.
+        XCTAssertEqual(systemCallers, ["AppNotificationCenter.swift"])
         XCTAssertEqual(allowCallers, ["NotificationsSettingsSection.swift"])
+    }
+
+    /// The tool's file must not touch the system center at all: it hands text
+    /// to the wrapper's Allow-only path.
+    func testThePushNotificationToolNeverImportsOrCallsTheSystemCenter() throws {
+        let file = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/TurboSparkApp/Tools/Automation/AutomationExecutors.swift")
+        let code = try String(contentsOf: file, encoding: .utf8).components(separatedBy: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }.joined(separator: "\n")
+        for forbidden in ["UserNotifications", "UNUserNotificationCenter", "requestAuthorization"] {
+            XCTAssertFalse(code.contains(forbidden), forbidden)
+        }
+    }
+
+    // MARK: agent push (the Allow-only path)
+
+    private var optedIn: AttentionPreferences { AttentionPreferences(allowAgentPush: true) }
+
+    func testAgentPushIsOffByDefaultAndTouchesNothing() async {
+        backend.status = .authorized
+        let result = await center.pushFromAgent(note("hi"), preferences: AttentionPreferences())
+        XCTAssertEqual(result, .optedOut)
+        XCTAssertTrue(backend.posted.isEmpty)
+        XCTAssertEqual(backend.requests, 0)
+        XCTAssertTrue(center.policy.outstandingChats.isEmpty)
+        XCTAssertEqual(AttentionPreferences().allowAgentPush, false)
+        // The four events being on does not opt the agent in.
+        let result2 = await center.pushFromAgent(note("hi"), preferences: allOn)
+        XCTAssertEqual(result2, .optedOut)
+        XCTAssertTrue(backend.posted.isEmpty)
+    }
+
+    func testAgentPushNeverStartsTheSystemPrompt() async {
+        for status in [AttentionAuthorization.notDetermined, .denied, .unavailable] {
+            backend.status = status
+            let result = await center.pushFromAgent(note("hi"), preferences: optedIn)
+            XCTAssertEqual(result, .notAuthorized(status))
+        }
+        XCTAssertEqual(backend.requests, 0, "a tool call must never request authorization")
+        XCTAssertTrue(backend.posted.isEmpty)
+        XCTAssertTrue(center.policy.outstandingChats.isEmpty)
+    }
+
+    func testAgentPushPostsWhenAllowedEvenWhileTheAppIsActive() async {
+        backend.status = .authorized
+        active = true
+        let result = await center.pushFromAgent(note("done"), preferences: optedIn)
+        XCTAssertEqual(result, .posted)
+        XCTAssertEqual(backend.posted, [note("done")])
+        XCTAssertTrue(sounds.isEmpty, "an agent push is silent")
+        XCTAssertEqual(backend.requests, 0)
+    }
+
+    func testAgentPushNeverReplacesABlockingCueButReplacesAFinish() async {
+        backend.status = .authorized
+        await center.refreshAuthorization()
+        await center.notify(.needsPermission, notification: note("approve"), preferences: allOn)
+        XCTAssertEqual(backend.posted.count, 1)
+        var both = allOn
+        both.allowAgentPush = true
+        let blocked = await center.pushFromAgent(note("x"), preferences: both)
+        XCTAssertEqual(blocked, .outranked)
+        XCTAssertEqual(backend.posted.count, 1)
+
+        center.handleClick(chatID: chat)  // releases the slot
+        await center.notify(.turnFinished, notification: note("fin"), preferences: allOn)
+        let replaced = await center.pushFromAgent(note("agent"), preferences: both)
+        XCTAssertEqual(replaced, .posted)
+        // A later finish does not clobber the agent's banner.
+        await center.notify(.turnFinished, notification: note("fin2"), preferences: allOn)
+        XCTAssertEqual(backend.posted.map(\.body), ["approve", "fin", "agent"])
+    }
+
+    func testAgentPushPostFailureGivesTheSlotBack() async {
+        backend.status = .authorized
+        backend.postError = NSError(domain: "x", code: 1)
+        let failed = await center.pushFromAgent(note("a"), preferences: optedIn)
+        XCTAssertEqual(failed, .failed)
+        XCTAssertTrue(center.policy.outstandingChats.isEmpty)
+        backend.postError = nil
+        let ok = await center.pushFromAgent(note("b"), preferences: optedIn)
+        XCTAssertEqual(ok, .posted)
+    }
+
+    func testActivationClearsAnAgentPushCue() async {
+        backend.status = .authorized
+        _ = await center.pushFromAgent(note("a"), preferences: optedIn)
+        center.appDidBecomeActive()
+        XCTAssertTrue(center.policy.outstandingChats.isEmpty)
+        XCTAssertEqual(backend.removed.last, [chat])
     }
 }

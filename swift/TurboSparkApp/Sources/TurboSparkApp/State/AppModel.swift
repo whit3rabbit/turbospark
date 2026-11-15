@@ -1520,6 +1520,10 @@ public final class AppModel: ObservableObject {
                 self?.registerProducedArtifacts(chatID: targetChatID, files: files)
             }
         }
+        PushNotificationExecutor.deliver = { [weak self] title, body, chatID in
+            guard let self else { return .optedOut }
+            return await self.deliverAgentPush(title: title, body: body, chatID: chatID)
+        }
         PushNotificationExecutor.onNotificationPushed = { [weak self] title, message in
             Task { @MainActor [weak self] in
                 guard let self = self else { return }

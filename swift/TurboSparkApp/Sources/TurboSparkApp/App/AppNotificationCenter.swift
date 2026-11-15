@@ -34,6 +34,22 @@ protocol AttentionNotificationBackend: AnyObject {
     func removeDelivered(chatIDs: [UUID])
 }
 
+/// What an agent push came to. Every case but `.posted` means nothing was
+/// shown, and none of them is an error for the tool call.
+enum AgentPushResult: Equatable, Sendable {
+    case posted
+    /// The "Allow agents to send notifications" switch is off.
+    case optedOut
+    /// macOS has not been asked or said no, or this is not the app bundle.
+    case notAuthorized(AttentionAuthorization)
+    /// A pending approval or question on the chat outranks it.
+    case outranked
+    /// The post itself failed.
+    case failed
+    /// A Ghost chat never reaches the system notification store.
+    case ghostChat
+}
+
 /// OC-02: the one owner of the attention notifications: authorization state,
 /// posting, sounds, and click routing. The decision of whether an event
 /// deserves a banner is `AttentionEventPolicy`'s.
@@ -43,9 +59,10 @@ protocol AttentionNotificationBackend: AnyObject {
 /// While it is not granted, events are dropped silently and everything else
 /// in the app works unchanged.
 ///
-/// `AutomationExecutors.PushNotification` keeps its own direct center use
-/// for agent-pushed notices (it asks at tool-call time, which is a different
-/// contract); migrating it is deferred, see the OC-02 draft.
+/// The agent's `PushNotification` tool goes through `pushFromAgent`, the
+/// Allow-only path: it reads the status without prompting, never calls
+/// `requestAuthorization()`, and does nothing unless the user switched
+/// "Allow agents to send notifications" on.
 @MainActor
 final class AppNotificationCenter: ObservableObject {
     @Published private(set) var authorization: AttentionAuthorization = .notDetermined
@@ -104,9 +121,32 @@ final class AppNotificationCenter: ObservableObject {
         if let name = decision.sound?.systemName { playSound(name) }
     }
 
+    /// The agent's `PushNotification` tool. Opt-in first (off means nothing
+    /// is read or posted), then macOS authorization read WITHOUT prompting,
+    /// then the per-chat priority. The focus rule does not apply: the agent
+    /// asked on purpose. Never starts the system prompt.
+    func pushFromAgent(
+        _ notification: AttentionNotification, preferences: AttentionPreferences
+    ) async -> AgentPushResult {
+        guard preferences.allowAgentPush else { return .optedOut }
+        await refreshAuthorization()
+        guard authorization == .authorized else { return .notAuthorized(authorization) }
+        let decision = policy.decideAgentPush(chat: notification.chatID, preferences: preferences)
+        guard decision.shouldPost else {
+            return decision.outcome == .outranked ? .outranked : .optedOut
+        }
+        do {
+            try await backend.post(notification)
+        } catch {
+            policy.release(chat: notification.chatID)
+            return .failed
+        }
+        return .posted
+    }
+
     /// The app is in front again: every outstanding cue is stale.
     func appDidBecomeActive() {
-        let chats = Array(policy.slots.keys)
+        let chats = policy.outstandingChats
         policy.releaseAll()
         backend.removeDelivered(chatIDs: chats)
         Task { await refreshAuthorization() }

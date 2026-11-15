@@ -1006,7 +1006,7 @@ public enum AppToolRegistry {
                 output = try await SleepExecutor.execute(arguments: call.arguments)
 
             case "pushnotification", "push_notification", "notify":
-                output = try await PushNotificationExecutor.execute(arguments: call.arguments)
+                output = try await PushNotificationExecutor.execute(arguments: call.arguments, chatID: chatID)
 
             case "config", "config_tool":
                 output = try ConfigToolExecutor.execute(arguments: call.arguments, project: project)

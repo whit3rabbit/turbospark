@@ -299,9 +299,8 @@ Deviations:
 
 Deferred:
 
-* Migrating `AutomationExecutors.PushNotification` to the shared wrapper
-  (needs a decision on whether agent pushes bypass the focus rule and
-  whether the tool may keep prompting at call time).
+* ~~Migrating `AutomationExecutors.PushNotification` to the shared
+  wrapper~~ Done 2026-11-14, see "Implementation record: agent push".
 * Dock badge and attention request (desktop-shell-hardening owns it).
 
 Not run: manual unfocused/focused/declined passes, the DESIGN.md section 9
@@ -317,6 +316,49 @@ SettingsWindowLayoutTests, DesignTokenRatchetTests: 66 pass),
 focus rule and disabling the rank check each fail the policy tests. The
 finish-cue cancel guard was not mutation-checked. `make swift-lib` and
 `make swift-app` were not run.
+
+## Implementation record: agent push (2026-11-14)
+
+Open decision 2 (do agent pushes bypass the focus rule, may the tool prompt)
+settled by the user's delegate: an explicit agent push is a deliberate
+request from a running task, so it bypasses the "app not active" rule, but
+it never prompts, and it does nothing until the user opts in.
+
+* `PushNotification` no longer touches `UNUserNotificationCenter` or
+  `requestAuthorization`. `PushNotificationExecutor.execute` sanitizes the
+  title (80 characters) and message (240), strips control and invisible
+  format characters (ESC, NUL, bidi overrides, zero-width), collapses
+  whitespace to one line, and calls a hook that `AppModel` wires to
+  `AppNotificationCenter.pushFromAgent`.
+* `pushFromAgent` order: (1) the new `AttentionPreferences.allowAgentPush`
+  ("Allow agents to send notifications", default OFF, tolerant decode so an
+  old settings file loads as off); off means nothing is read or posted.
+  (2) macOS status is read without prompting; anything but authorized
+  returns "not sent". (3) `AttentionEventPolicy.decideAgentPush`: no focus
+  rule, no sound, but the per-chat slot applies. An agent push ranks like an
+  error: it never replaces a pending approval or question, replaces a
+  finish, and a later finish does not replace it.
+* Results are non-errors that tell the agent what happened (opted out, not
+  authorized, outranked, post failed, Ghost chat). The in-app toast now
+  fires only after a successful post. A Ghost chat never posts.
+* Settings: one toggle plus a help line in the Notifications section; the
+  Allow button shows when any event or the agent switch is on. 2 strings in
+  21 languages, one `SettingsControlCatalog` entry.
+* Permission ladder unchanged: category automation, risk low
+  (`PushNotificationToolTests.testLadderPositionIsUnchanged`).
+* The OC-02 source scan now pins the system `requestAuthorization(options:)`
+  caller to `AppNotificationCenter.swift` alone, and a second test asserts
+  `AutomationExecutors.swift` never mentions the system center.
+* Tests: `PushNotificationToolTests` (10), 7 new in
+  `AppNotificationCenterTests`, preference decode in
+  `AttentionEventPolicyTests`. Mutation checks, each caught: a prompt at tool
+  time; both opt-in guards removed (either guard alone is covered by the
+  other, so it survives by design); sanitize as identity; the Ghost check
+  removed; the focus rule applied to agent pushes.
+* Limits: the delegate still presents nothing while the app is active
+  (`willPresent` returns none), so an agent push while the app is in front
+  lands without a banner and the in-app toast is the cue. Real banner in the
+  installed bundle not run.
 
 --------------------------------------------------------------------------------
 

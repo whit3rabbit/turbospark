@@ -67,6 +67,7 @@ enum SettingsControlCatalog {
         .init(title: "Add server", pane: .general, timing: .action),
         .init(title: "Agent Efficiency", pane: .general, timing: .nextTurn),
         .init(title: "Allow Notifications", pane: .general, timing: .action),
+        .init(title: "Allow agents to send notifications", pane: .general, timing: .immediate),
         .init(title: "Always start in Ghost Mode", pane: .general, timing: .relaunch),
         .init(title: "Auto-load skills, agents, plugins, and hooks from other agent tools", pane: .general, timing: .immediate),
         .init(title: "Auto-send voice utterances", pane: .general, timing: .immediate),

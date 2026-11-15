@@ -76,9 +76,26 @@ public struct AttentionEventPreference: Codable, Equatable, Sendable {
 /// The persisted matrix. Absent entries read as off with no sound.
 public struct AttentionPreferences: Codable, Equatable, Sendable {
     public var events: [String: AttentionEventPreference] = [:]
+    /// Whether the agent's `PushNotification` tool may post a banner at all.
+    /// Default OFF: the tool does nothing until the user opts in here. It is
+    /// separate from the four events because those are the app's own cues
+    /// while this one is text the model wrote.
+    public var allowAgentPush: Bool = false
 
-    public init(events: [String: AttentionEventPreference] = [:]) {
+    public init(events: [String: AttentionEventPreference] = [:], allowAgentPush: Bool = false) {
         self.events = events
+        self.allowAgentPush = allowAgentPush
+    }
+
+    private enum CodingKeys: String, CodingKey { case events, allowAgentPush }
+
+    /// Tolerant: a settings file from before the agent-push switch has no
+    /// such key and loads as off.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        events = (try? container.decodeIfPresent(
+            [String: AttentionEventPreference].self, forKey: .events)) ?? [:]
+        allowAgentPush = (try? container.decodeIfPresent(Bool.self, forKey: .allowAgentPush)) ?? false
     }
 
     subscript(event: AttentionEvent) -> AttentionEventPreference {
@@ -87,6 +104,10 @@ public struct AttentionPreferences: Codable, Equatable, Sendable {
     }
 
     var anyEnabled: Bool { AttentionEvent.allCases.contains { self[$0].enabled } }
+
+    /// Whether anything the user switched on needs macOS to allow banners,
+    /// so the Settings row offers Allow.
+    var wantsBanners: Bool { anyEnabled || allowAgentPush }
 }
 
 /// What the policy decided for one event.
@@ -123,6 +144,10 @@ struct AttentionDecision: Equatable, Sendable {
 /// deleted, which is one rule with three triggers.
 struct AttentionEventPolicy {
     private(set) var slots: [UUID: AttentionEvent] = [:]
+    /// Chats whose outstanding cue is an agent push. It ranks like an error
+    /// (above a finish, below a blocking cue) and has no `AttentionEvent` of
+    /// its own, because the persisted events are the four Settings rows.
+    private(set) var agentPushChats: Set<UUID> = []
     private let isActive: () -> Bool
 
     init(isActive: @escaping () -> Bool) {
@@ -140,19 +165,46 @@ struct AttentionEventPolicy {
         guard !isActive() else {
             return AttentionDecision(outcome: .appActive, sound: nil)
         }
-        if let pending = slots[chat], pending.rank > event.rank {
+        if pendingRank(chat) > event.rank {
             return AttentionDecision(outcome: .outranked, sound: nil)
         }
         slots[chat] = event
+        agentPushChats.remove(chat)
         return AttentionDecision(outcome: .deliver, sound: preference.soundChoice)
     }
+
+    /// Rank of the cue outstanding on `chat`, or -1 for none.
+    private func pendingRank(_ chat: UUID) -> Int {
+        max(slots[chat]?.rank ?? -1, agentPushChats.contains(chat) ? AttentionEvent.error.rank : -1)
+    }
+
+    /// An agent push is a deliberate request from a running task, so it does
+    /// NOT apply the "app not active" rule. It still needs the user's opt-in
+    /// and still obeys the per-chat priority: a blocking cue (approval,
+    /// question) is never replaced by it. It is silent (no sound).
+    mutating func decideAgentPush(chat: UUID, preferences: AttentionPreferences) -> AttentionDecision {
+        guard preferences.allowAgentPush else {
+            return AttentionDecision(outcome: .disabled, sound: nil)
+        }
+        if pendingRank(chat) > AttentionEvent.error.rank {
+            return AttentionDecision(outcome: .outranked, sound: nil)
+        }
+        slots[chat] = nil
+        agentPushChats.insert(chat)
+        return AttentionDecision(outcome: .deliver, sound: nil)
+    }
+
+    /// Every chat with an outstanding cue of either kind.
+    var outstandingChats: [UUID] { Array(Set(slots.keys).union(agentPushChats)) }
 
     /// Gives a slot back when the post that claimed it did not happen.
     mutating func release(chat: UUID) {
         slots[chat] = nil
+        agentPushChats.remove(chat)
     }
 
     mutating func releaseAll() {
         slots.removeAll()
+        agentPushChats.removeAll()
     }
 }

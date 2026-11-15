@@ -28,11 +28,35 @@ struct NotificationsSettingsSection: View {
             eventRow(.error)
                 .settingsControl("Error", pane: .general, timing: .immediate)
 
-            if model.attentionPreferences.anyEnabled { authorizationRow }
+            agentPushRow
+                .settingsControl("Allow agents to send notifications", pane: .general, timing: .immediate)
+
+            if model.attentionPreferences.wantsBanners { authorizationRow }
         }
         .settingsControl("Notifications", pane: .general, timing: .immediate)
         // Reading the status never prompts.
         .task { await center.refreshAuthorization() }
+    }
+
+    /// Off by default: the agent's PushNotification tool does nothing until
+    /// this is on. It never asks macOS for permission; Allow below does.
+    private var agentPushRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Toggle(
+                isOn: Binding(
+                    get: { model.attentionPreferences.allowAgentPush },
+                    set: { model.setAgentPushAllowed($0) })
+            ) {
+                Text("Allow agents to send notifications", bundle: .module)
+            }
+            Text(
+                "Lets the agent post a short banner of its own, such as when a long task is done. Off by default. The text is written by the model, so it can be wrong.",
+                bundle: .module
+            )
+            .font(theme.ui(.small))
+            .foregroundStyle(.appSecondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private func title(_ event: AttentionEvent) -> Text {

@@ -53,7 +53,25 @@ extension AppModel {
         persistSettings()
     }
 
+    func setAgentPushAllowed(_ allowed: Bool) {
+        guard attentionPreferences.allowAgentPush != allowed else { return }
+        attentionPreferences.allowAgentPush = allowed
+        persistSettings()
+    }
+
     // MARK: Emit
+
+    /// The `PushNotification` tool's delivery. The title and body are what
+    /// the agent supplied (already sanitized by the executor), never tool
+    /// arguments or file contents. A Ghost chat never posts, for the same
+    /// reason `raiseAttention` skips it.
+    func deliverAgentPush(title: String, body: String, chatID: UUID?) async -> AgentPushResult {
+        if let chatID, chats.first(where: { $0.id == chatID })?.isGhost == true {
+            return .ghostChat
+        }
+        let notification = AttentionNotification(chatID: chatID ?? UUID(), title: title, body: body)
+        return await attentionCenter.pushFromAgent(notification, preferences: attentionPreferences)
+    }
 
     /// Raises one cue. Notification bodies carry the chat title and a generic
     /// line, never transcript content; a permission cue names the tool and
