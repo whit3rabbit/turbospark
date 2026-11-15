@@ -19,7 +19,7 @@ use crate::real_forward_types::RealForwardError;
 /// cannot see. Add to both lists when the writer gains a tag. It is spelled
 /// out of the NAMED constants below rather than as bare literals for the same
 /// reason: a literal list is what let one go missing.
-pub(crate) const GGUF_BLOCK_DTYPES: [u8; 18] = [
+pub(crate) const GGUF_BLOCK_DTYPES: [u8; 28] = [
     DTYPE_GGUF_Q8_0,
     DTYPE_GGUF_Q4_K,
     DTYPE_GGUF_Q6_K,
@@ -38,6 +38,16 @@ pub(crate) const GGUF_BLOCK_DTYPES: [u8; 18] = [
     DTYPE_GGUF_IQ1_M,
     DTYPE_GGUF_Q3_K,
     DTYPE_GGUF_Q2_0,
+    DTYPE_GGUF_Q5_0,
+    DTYPE_GGUF_Q4_1,
+    DTYPE_GGUF_Q5_1,
+    DTYPE_GGUF_Q1_0,
+    DTYPE_GGUF_TQ2_0,
+    DTYPE_GGUF_TQ1_0,
+    DTYPE_GGUF_NVFP4,
+    DTYPE_GGUF_IQ1_XS,
+    DTYPE_GGUF_IQ1_XXS,
+    DTYPE_GGUF_IQ1_XXXS,
 ];
 /// GGUF Q8_0: a resident GEMV, an embedding lookup, and a routed-expert
 /// decode pair.
@@ -49,19 +59,38 @@ pub(crate) const DTYPE_GGUF_Q4_K: u8 = 7;
 /// `output.weight`. An install that put Q6_K in an expert or the embedding
 /// table would pass this gate and then fail at the dispatch site, by name.
 pub(crate) const DTYPE_GGUF_Q6_K: u8 = 8;
-/// GGUF Q4_0: parsed and installable, and the ONLY tag here with no kernel of
-/// any kind. It is what `gguf_install_refused.rs` forges an install to, so it
-/// belongs in [`GGUF_BLOCK_DTYPES`] and never in [`EXECUTABLE_GGUF_DTYPES`].
+/// GGUF Q4_0: a resident GEMV and an embedding lookup, no routed pair, on the
+/// Q3_K footing. Tags 26 to 28 below are its legacy siblings; all four share
+/// one kernel file (`dequant_legacy.metal`). Q4_0 held tag 9 as a parse-only
+/// type before it had kernels, which is why it is not 26.
 pub(crate) const DTYPE_GGUF_Q4_0: u8 = 9;
+/// GGUF Q5_0, Q4_1 and Q5_1, mirroring `turbospark_repack`'s tags.
+pub(crate) const DTYPE_GGUF_Q5_0: u8 = 26;
+pub(crate) const DTYPE_GGUF_Q4_1: u8 = 27;
+pub(crate) const DTYPE_GGUF_Q5_1: u8 = 28;
+/// GGUF Q1_0: a resident GEMV and an embedding lookup (`dequant_ext.metal`),
+/// no routed pair. Tag 29 mirrors the writer.
+pub(crate) const DTYPE_GGUF_Q1_0: u8 = 29;
+/// GGUF TQ2_0, TQ1_0 and NVFP4 (tags 30 to 32 mirror the writer): resident
+/// GEMV and embedding lookup from `dequant_ext.metal`, no routed pair.
+pub(crate) const DTYPE_GGUF_TQ2_0: u8 = 30;
+pub(crate) const DTYPE_GGUF_TQ1_0: u8 = 31;
+pub(crate) const DTYPE_GGUF_NVFP4: u8 = 32;
+/// Unsloth fork IQ1_XS, IQ1_XXS, IQ1_XXXS (ggml ids 64 to 66; tags 33 to 35
+/// mirror the writer): resident GEMV, embedding lookup and both routed phases.
+pub(crate) const DTYPE_GGUF_IQ1_XS: u8 = 33;
+pub(crate) const DTYPE_GGUF_IQ1_XXS: u8 = 34;
+pub(crate) const DTYPE_GGUF_IQ1_XXXS: u8 = 35;
 /// GGUF IQ3_XXS, IQ4_NL and IQ4_XS (ROADMAP Phase S). Each has a resident
 /// GEMV; on the routed path IQ3_XXS and IQ4_XS have a phase 1 and IQ4_NL a
 /// phase 2. IQ4_XS also has an embedding lookup for the Swift Qwen3.8 tier.
 pub(crate) const DTYPE_GGUF_IQ3_XXS: u8 = 10;
 pub(crate) const DTYPE_GGUF_IQ4_NL: u8 = 11;
 pub(crate) const DTYPE_GGUF_IQ4_XS: u8 = 12;
-/// GGUF Q5_K: a resident GEMV and nothing else, which is all Mixtral 8x7B's
-/// Q4_K_M asks for -- it carries Q5_K on `attn_output` and its experts are
-/// Q4_K over Q6_K (ROADMAP Phase M2).
+/// GGUF Q5_K: a resident GEMV, plus an embedding lookup for Unsloth's UD mixes
+/// (UD-IQ2_XXS keeps `token_embd` at Q5_K). Mixtral 8x7B's Q4_K_M carries Q5_K
+/// on `attn_output` and its experts are Q4_K over Q6_K (ROADMAP Phase M2). No
+/// routed-expert kernel.
 pub(crate) const DTYPE_GGUF_Q5_K: u8 = 13;
 /// GGUF MXFP4 (ROADMAP M5, `gpt-oss`). The NARROWEST footing of any type
 /// here and the first with a routed pair but no resident GEMV: the only real
@@ -190,7 +219,7 @@ pub(crate) const DTYPE_INT2_AFFINE: u8 = 16;
 /// join this list, and a hypothetical install with MXFP4 attention passes the
 /// manifest gate and is stopped here -- which is the layering working, not a
 /// leak.
-pub(crate) const EXECUTABLE_GGUF_DTYPES: [u8; 15] = [
+pub(crate) const EXECUTABLE_GGUF_DTYPES: [u8; 28] = [
     DTYPE_GGUF_Q8_0,
     DTYPE_GGUF_Q4_K,
     DTYPE_GGUF_Q6_K,
@@ -206,6 +235,19 @@ pub(crate) const EXECUTABLE_GGUF_DTYPES: [u8; 15] = [
     DTYPE_GGUF_IQ2_S,
     DTYPE_GGUF_IQ1_M,
     DTYPE_GGUF_Q3_K,
+    DTYPE_GGUF_Q4_0,
+    DTYPE_GGUF_Q5_0,
+    DTYPE_GGUF_Q4_1,
+    DTYPE_GGUF_Q5_1,
+    DTYPE_GGUF_Q1_0,
+    DTYPE_GGUF_TQ2_0,
+    DTYPE_GGUF_TQ1_0,
+    DTYPE_GGUF_NVFP4,
+    DTYPE_GGUF_Q2_0,
+    DTYPE_GGUF_MXFP4,
+    DTYPE_GGUF_IQ1_XS,
+    DTYPE_GGUF_IQ1_XXS,
+    DTYPE_GGUF_IQ1_XXXS,
 ];
 
 /// Which layout one routed sub-tensor uses.
@@ -252,6 +294,9 @@ pub(crate) enum RoutedBlobLayout {
     GgufIq2Xxs,
     /// GGUF IQ1_M routed gate/up rows.
     GgufIq1M,
+    /// The element-addressed block types (legacy Q4_0/Q4_1/Q5_0/Q5_1 and
+    /// Q1_0, TQ2_0, TQ1_0, NVFP4): both phases from `moe_gguf_ext.metal`.
+    GgufExt(gpu::MoeExtType),
 }
 
 impl RoutedBlobLayout {
@@ -272,10 +317,27 @@ impl RoutedBlobLayout {
             "iq4_nl" => RoutedBlobLayout::GgufIq4Nl,
             "q6_k" => RoutedBlobLayout::GgufQ6K,
             "q2_0" => RoutedBlobLayout::GgufQ2_0,
+            "q5_k" => RoutedBlobLayout::GgufExt(gpu::MoeExtType::Q5K),
+            "q3_k" => RoutedBlobLayout::GgufExt(gpu::MoeExtType::Q3K),
+            "q2_k" => RoutedBlobLayout::GgufExt(gpu::MoeExtType::Q2K),
+            "iq2_xs" => RoutedBlobLayout::GgufExt(gpu::MoeExtType::Iq2Xs),
+            "iq1_s" => RoutedBlobLayout::GgufExt(gpu::MoeExtType::Iq1S),
+            "iq3_s" => RoutedBlobLayout::GgufExt(gpu::MoeExtType::Iq3S),
+            "iq1_xs" => RoutedBlobLayout::GgufExt(gpu::MoeExtType::Iq1Xs),
+            "iq1_xxs" => RoutedBlobLayout::GgufExt(gpu::MoeExtType::Iq1Xxs),
+            "iq1_xxxs" => RoutedBlobLayout::GgufExt(gpu::MoeExtType::Iq1Xxxs),
             "iq2_s" => RoutedBlobLayout::GgufIq2S,
             "iq2_xxs" => RoutedBlobLayout::GgufIq2Xxs,
             "iq1_m" => RoutedBlobLayout::GgufIq1M,
             "mxfp4" => RoutedBlobLayout::GgufMxfp4,
+            "q4_0" => RoutedBlobLayout::GgufExt(gpu::MoeExtType::Q4_0),
+            "q4_1" => RoutedBlobLayout::GgufExt(gpu::MoeExtType::Q4_1),
+            "q5_0" => RoutedBlobLayout::GgufExt(gpu::MoeExtType::Q5_0),
+            "q5_1" => RoutedBlobLayout::GgufExt(gpu::MoeExtType::Q5_1),
+            "q1_0" => RoutedBlobLayout::GgufExt(gpu::MoeExtType::Q1_0),
+            "tq2_0" => RoutedBlobLayout::GgufExt(gpu::MoeExtType::Tq2_0),
+            "tq1_0" => RoutedBlobLayout::GgufExt(gpu::MoeExtType::Tq1_0),
+            "nvfp4" => RoutedBlobLayout::GgufExt(gpu::MoeExtType::Nvfp4),
             other => {
                 return Err(RealForwardError::Unsupported(format!(
                     "routed expert sub-tensor dtype {other} has no decode kernel in this port"
@@ -310,6 +372,7 @@ impl RoutedBlobLayout {
             RoutedBlobLayout::GgufIq2S
             | RoutedBlobLayout::GgufIq2Xxs
             | RoutedBlobLayout::GgufIq1M => (gpu::moe_gguf_source(), "moe_phase1_gate_up_act_q8_0"),
+            RoutedBlobLayout::GgufExt(_) => (gpu::moe_gguf_source(), "moe_phase1_gate_up_act_q8_0"),
             RoutedBlobLayout::GgufQ2_0 => (gpu::moe_gguf_source(), "moe_phase1_gate_up_act_q2_0"),
         }
     }
@@ -480,10 +543,13 @@ pub(crate) fn validate_routed_layouts_for_top_k(
     top_k: i64,
 ) -> Result<(), RealForwardError> {
     for (layer, l) in layouts.iter().enumerate() {
-        if l.phase2 == RoutedBlobLayout::GgufQ2_0 && top_k != 10 {
+        // The hand-written Q2_0 phase 2 reduces exactly ten slots and the
+        // generated one reduces eight, so a top_k of 9 or above 10 has no
+        // Q2_0 kernel.
+        if l.phase2 == RoutedBlobLayout::GgufQ2_0 && top_k != 10 && !(1..=8).contains(&top_k) {
             return Err(RealForwardError::Unsupported(format!(
-                "layer {layer} down-projection carries Q2_0 routed layout, which requires \
-                 top_k=10 in this port (got top_k={top_k})"
+                "layer {layer} down-projection carries Q2_0 routed layout, which needs \
+                 top_k of 10 or at most 8 in this port (got top_k={top_k})"
             )));
         }
     }
@@ -930,7 +996,7 @@ mod tests {
     }
 
     #[test]
-    fn q2_0_phase2_layout_requires_top_10() {
+    fn q2_0_phase2_layout_accepts_top_10_or_at_most_8() {
         let q2_0_layout = vec![RoutedLayerLayout {
             phase1: RoutedBlobLayout::GgufQ2_0,
             phase2: RoutedBlobLayout::GgufQ2_0,
@@ -938,12 +1004,19 @@ mod tests {
         }];
         assert!(validate_routed_layouts_for_top_k(&q2_0_layout, 10).is_ok());
 
-        for non_10 in [1, 2, 4, 6, 8, 12] {
+        // The hand-written phase 2 reduces ten slots, the generated one eight.
+        for ok in [1, 2, 4, 6, 8] {
+            assert!(
+                validate_routed_layouts_for_top_k(&q2_0_layout, ok).is_ok(),
+                "{ok}"
+            );
+        }
+        for non_10 in [9, 11, 12, 16] {
             let err = validate_routed_layouts_for_top_k(&q2_0_layout, non_10)
                 .expect_err("non-10 top_k must fail");
             match err {
                 RealForwardError::Unsupported(msg) => {
-                    assert!(msg.contains("requires top_k=10"), "msg: {msg}");
+                    assert!(msg.contains("top_k of 10 or at most 8"), "msg: {msg}");
                     assert!(msg.contains(&format!("got top_k={non_10}")), "msg: {msg}");
                 }
                 other => panic!("expected Unsupported error, got {other:?}"),

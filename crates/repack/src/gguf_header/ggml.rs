@@ -40,6 +40,11 @@ pub fn ggml_type_name(id: u32) -> Option<&'static str> {
         40 => "NVFP4",
         41 => "Q1_0",
         42 => "Q2_0",
+        // Unsloth llama.cpp fork only (branch iq1-narrow-grids-b10775): ids 64 to
+        // 66, clear of upstream's reserved 42..63 so a stock build rejects them.
+        64 => "IQ1_XS",
+        65 => "IQ1_XXS",
+        66 => "IQ1_XXXS",
         _ => return None,
     })
 }
@@ -76,6 +81,7 @@ pub fn ggml_type_block(id: u32) -> Option<(u64, u64)> {
         0 => (1, 4),      // F32
         1 => (1, 2),      // F16
         2 => (32, 18),    // Q4_0
+        3 => (32, 20),    // Q4_1
         6 => (32, 22),    // Q5_0
         7 => (32, 24),    // Q5_1
         8 => (32, 34),    // Q8_0
@@ -111,6 +117,19 @@ pub fn ggml_type_block(id: u32) -> Option<(u64, u64)> {
         // (18 bytes), from ggml/src/ggml-common.h at
         // 84e76d8a23162eca70490da131945ebec1f09bf4.
         42 => (64, 18), // Q2_0
+        // Q1_0: f16 scale + 128 sign bits. Size read from ggml itself
+        // (ggml_blck_size 128, ggml_type_size 18), not a spec page.
+        41 => (128, 18), // Q1_0
+        // Unsloth fork types, from `sizeof(block_iq1_*)` in its ggml-common.h:
+        // f16 d + QK_K/8 qs + (QK_K/32 qh and/or QK_K/64 sc).
+        64 => (256, 46), // IQ1_XS
+        65 => (256, 42), // IQ1_XXS
+        66 => (256, 38), // IQ1_XXXS
+        // TQ1_0, TQ2_0 and NVFP4: sizes read from ggml itself (Homebrew
+        // b10310 probe of ggml_blck_size and ggml_type_size).
+        34 => (256, 54), // TQ1_0
+        35 => (256, 66), // TQ2_0
+        40 => (64, 36),  // NVFP4
         _ => return None,
     })
 }

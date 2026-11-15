@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 pub(crate) use quant::validate_quant;
-pub use quant::EXECUTABLE_GGUF_TYPES;
+pub use quant::{EXECUTABLE_GGUF_TYPES, RESIDENT_ONLY_GGUF_TYPES};
 pub use types::{
     Manifest, ManifestArch, ManifestFileEntry, ManifestHadamard, ManifestHadamardSigns,
     ManifestProducer, ManifestQuant, ManifestQuantSlot,

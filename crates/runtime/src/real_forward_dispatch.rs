@@ -4,10 +4,13 @@
 use model_io::ResidentIndex;
 
 use crate::real_forward_layout::{
-    DTYPE_GGUF_IQ1_M, DTYPE_GGUF_IQ1_S, DTYPE_GGUF_IQ2_S, DTYPE_GGUF_IQ2_XS, DTYPE_GGUF_IQ2_XXS,
-    DTYPE_GGUF_IQ3_S, DTYPE_GGUF_IQ3_XXS, DTYPE_GGUF_IQ4_NL, DTYPE_GGUF_IQ4_XS, DTYPE_GGUF_Q2_K,
-    DTYPE_GGUF_Q3_K, DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q5_K, DTYPE_GGUF_Q6_K, DTYPE_GGUF_Q8_0,
-    DTYPE_INT1_AFFINE, DTYPE_INT2_AFFINE, DTYPE_RAW_BF16,
+    DTYPE_GGUF_IQ1_M, DTYPE_GGUF_IQ1_S, DTYPE_GGUF_IQ1_XS, DTYPE_GGUF_IQ1_XXS, DTYPE_GGUF_IQ1_XXXS,
+    DTYPE_GGUF_IQ2_S, DTYPE_GGUF_IQ2_XS, DTYPE_GGUF_IQ2_XXS, DTYPE_GGUF_IQ3_S, DTYPE_GGUF_IQ3_XXS,
+    DTYPE_GGUF_IQ4_NL, DTYPE_GGUF_IQ4_XS, DTYPE_GGUF_MXFP4, DTYPE_GGUF_NVFP4, DTYPE_GGUF_Q1_0,
+    DTYPE_GGUF_Q2_0, DTYPE_GGUF_Q2_K, DTYPE_GGUF_Q3_K, DTYPE_GGUF_Q4_0, DTYPE_GGUF_Q4_1,
+    DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q5_0, DTYPE_GGUF_Q5_1, DTYPE_GGUF_Q5_K, DTYPE_GGUF_Q6_K,
+    DTYPE_GGUF_Q8_0, DTYPE_GGUF_TQ1_0, DTYPE_GGUF_TQ2_0, DTYPE_INT1_AFFINE, DTYPE_INT2_AFFINE,
+    DTYPE_RAW_BF16,
 };
 use crate::real_forward_types::RealForwardError;
 use crate::real_forward_utils::{affine_group_size, entry, resident_matrix};
@@ -74,6 +77,35 @@ fn validate_block_quant_embedding(
         )));
     }
     Ok(())
+}
+
+/// The kernel family a legacy dtype tag selects. Only called from arms that
+/// matched one of the four tags.
+fn legacy_kind(dtype: u8) -> gpu::LegacyBlockType {
+    match dtype {
+        DTYPE_GGUF_Q4_0 => gpu::LegacyBlockType::Q4_0,
+        DTYPE_GGUF_Q4_1 => gpu::LegacyBlockType::Q4_1,
+        DTYPE_GGUF_Q5_0 => gpu::LegacyBlockType::Q5_0,
+        DTYPE_GGUF_Q5_1 => gpu::LegacyBlockType::Q5_1,
+        other => unreachable!("not a legacy dtype tag: {other}"),
+    }
+}
+
+/// The kernel family an ext dtype tag selects. Only called from arms that
+/// matched one of those tags.
+fn ext_kind(dtype: u8) -> gpu::ExtBlockType {
+    match dtype {
+        DTYPE_GGUF_Q1_0 => gpu::ExtBlockType::Q1_0,
+        DTYPE_GGUF_TQ2_0 => gpu::ExtBlockType::Tq2_0,
+        DTYPE_GGUF_TQ1_0 => gpu::ExtBlockType::Tq1_0,
+        DTYPE_GGUF_NVFP4 => gpu::ExtBlockType::Nvfp4,
+        DTYPE_GGUF_Q2_0 => gpu::ExtBlockType::Q2_0,
+        DTYPE_GGUF_MXFP4 => gpu::ExtBlockType::Mxfp4,
+        DTYPE_GGUF_IQ1_XS => gpu::ExtBlockType::Iq1Xs,
+        DTYPE_GGUF_IQ1_XXS => gpu::ExtBlockType::Iq1Xxs,
+        DTYPE_GGUF_IQ1_XXXS => gpu::ExtBlockType::Iq1Xxxs,
+        other => unreachable!("not an ext dtype tag: {other}"),
+    }
 }
 
 fn validate_q4_k_embedding(
@@ -153,6 +185,19 @@ pub(crate) fn encode_embed_any(
         DTYPE_GGUF_Q8_0 => Some(gpu::Q8_0_BLOCK_ELEMS),
         DTYPE_GGUF_Q4_K => Some(gpu::Q4_K_BLOCK_ELEMS),
         DTYPE_GGUF_Q6_K => Some(gpu::Q6_K_BLOCK_ELEMS),
+        DTYPE_GGUF_Q5_K => Some(gpu::Q5_K_BLOCK_ELEMS),
+        DTYPE_GGUF_Q4_0 | DTYPE_GGUF_Q4_1 | DTYPE_GGUF_Q5_0 | DTYPE_GGUF_Q5_1 => {
+            Some(gpu::LEGACY_BLOCK_ELEMS)
+        }
+        DTYPE_GGUF_Q1_0 => Some(gpu::Q1_0_BLOCK_ELEMS),
+        DTYPE_GGUF_TQ2_0 => Some(gpu::TQ2_0_BLOCK_ELEMS),
+        DTYPE_GGUF_TQ1_0 => Some(gpu::TQ1_0_BLOCK_ELEMS),
+        DTYPE_GGUF_NVFP4 => Some(gpu::NVFP4_BLOCK_ELEMS),
+        DTYPE_GGUF_Q2_0 => Some(gpu::Q2_0_BLOCK_ELEMS),
+        DTYPE_GGUF_MXFP4 => Some(gpu::MXFP4_BLOCK_ELEMS),
+        DTYPE_GGUF_IQ1_XS | DTYPE_GGUF_IQ1_XXS | DTYPE_GGUF_IQ1_XXXS => {
+            Some(gpu::IQ1_NARROW_BLOCK_ELEMS)
+        }
         DTYPE_GGUF_Q3_K => Some(gpu::Q3_K_BLOCK_ELEMS),
         DTYPE_GGUF_IQ4_XS => Some(gpu::IQ4_XS_BLOCK_ELEMS),
         DTYPE_GGUF_IQ1_M => Some(gpu::IQ1_M_BLOCK_ELEMS),
@@ -179,6 +224,73 @@ pub(crate) fn encode_embed_any(
         DTYPE_GGUF_Q4_K => {
             validate_q4_k_embedding(e, name, token, hidden)?;
             gpu::encode_embed_lookup_q4_k(context, pass, table, out, token, hidden, embed_scale)
+                .map_err(RealForwardError::Gpu)
+        }
+        // The legacy block types: llama.cpp's Q4_0/Q5_0/Q4_1/Q5_1 conversions
+        // keep `token_embd` at the file's own type (or Q8_0 at the small
+        // sizes), so a real Q4_0 file asks for this lookup.
+        dtype @ (DTYPE_GGUF_Q4_0 | DTYPE_GGUF_Q4_1 | DTYPE_GGUF_Q5_0 | DTYPE_GGUF_Q5_1) => {
+            let kind = legacy_kind(dtype);
+            validate_block_quant_embedding(
+                e,
+                name,
+                token,
+                hidden,
+                gpu::LEGACY_BLOCK_ELEMS,
+                kind.block_bytes(),
+                &format!("{kind:?}"),
+            )?;
+            gpu::encode_embed_lookup_legacy(
+                context,
+                pass,
+                kind,
+                table,
+                out,
+                token,
+                hidden,
+                embed_scale,
+            )
+            .map_err(RealForwardError::Gpu)
+        }
+        // Q1_0 (`dequant_ext.metal`): a 128-element block, so the generic
+        // block-quant embedding check takes the type's own geometry.
+        dtype @ (DTYPE_GGUF_Q1_0 | DTYPE_GGUF_TQ2_0 | DTYPE_GGUF_TQ1_0 | DTYPE_GGUF_NVFP4
+        | DTYPE_GGUF_Q2_0 | DTYPE_GGUF_MXFP4 | DTYPE_GGUF_IQ1_XS | DTYPE_GGUF_IQ1_XXS
+        | DTYPE_GGUF_IQ1_XXXS) => {
+            let kind = ext_kind(dtype);
+            validate_block_quant_embedding(
+                e,
+                name,
+                token,
+                hidden,
+                kind.block_elems(),
+                kind.block_bytes(),
+                &format!("{kind:?}"),
+            )?;
+            gpu::encode_embed_lookup_ext(
+                context,
+                pass,
+                kind,
+                table,
+                out,
+                token,
+                hidden,
+                embed_scale,
+            )
+            .map_err(RealForwardError::Gpu)
+        }
+        // Unsloth's UD mixes (UD-IQ2_XXS) keep `token_embd` at Q5_K.
+        DTYPE_GGUF_Q5_K => {
+            validate_block_quant_embedding(
+                e,
+                name,
+                token,
+                hidden,
+                gpu::Q5_K_BLOCK_ELEMS,
+                gpu::Q5_K_BLOCK_BYTES,
+                "Q5_K",
+            )?;
+            gpu::encode_embed_lookup_q5_k(context, pass, table, out, token, hidden, embed_scale)
                 .map_err(RealForwardError::Gpu)
         }
         DTYPE_GGUF_IQ4_XS => {
@@ -625,6 +737,50 @@ pub(crate) fn encode_gemv_any(
                 cols,
             };
             gpu::encode_dequant_q6_k_gemv_resident(context, pass, &w, x, y)
+                .map_err(RealForwardError::Gpu)
+        }
+        // The legacy block types. One arm for four types because they share a
+        // kernel file and a 32-element block; the size check is the same
+        // dtype-versus-byte-count guard the arms above make.
+        dtype @ (DTYPE_GGUF_Q4_0 | DTYPE_GGUF_Q4_1 | DTYPE_GGUF_Q5_0 | DTYPE_GGUF_Q5_1) => {
+            let kind = legacy_kind(dtype);
+            let expected = kind.row_bytes(cols) * rows;
+            if e.size_bytes as usize != expected {
+                return Err(RealForwardError::Unsupported(format!(
+                    "tensor {name}: {kind:?} packed size {} does not match {rows}x{cols} ({expected})",
+                    e.size_bytes
+                )));
+            }
+            let w = gpu::LegacyResidentMatrix {
+                buffer: weights.buffer(),
+                weights_offset: weights.gpu_offset(e.file_offset - base),
+                rows,
+                cols,
+                kind,
+            };
+            gpu::encode_dequant_legacy_gemv_resident(context, pass, &w, x, y)
+                .map_err(RealForwardError::Gpu)
+        }
+        // Q1_0: same dtype-versus-byte-count guard as the legacy arm.
+        dtype @ (DTYPE_GGUF_Q1_0 | DTYPE_GGUF_TQ2_0 | DTYPE_GGUF_TQ1_0 | DTYPE_GGUF_NVFP4
+        | DTYPE_GGUF_Q2_0 | DTYPE_GGUF_MXFP4 | DTYPE_GGUF_IQ1_XS | DTYPE_GGUF_IQ1_XXS
+        | DTYPE_GGUF_IQ1_XXXS) => {
+            let kind = ext_kind(dtype);
+            let expected = kind.row_bytes(cols) * rows;
+            if e.size_bytes as usize != expected {
+                return Err(RealForwardError::Unsupported(format!(
+                    "tensor {name}: {kind:?} packed size {} does not match {rows}x{cols} ({expected})",
+                    e.size_bytes
+                )));
+            }
+            let w = gpu::ExtResidentMatrix {
+                buffer: weights.buffer(),
+                weights_offset: weights.gpu_offset(e.file_offset - base),
+                rows,
+                cols,
+                kind,
+            };
+            gpu::encode_dequant_ext_gemv_resident(context, pass, &w, x, y)
                 .map_err(RealForwardError::Gpu)
         }
         // The Dense Qwen2 roadmap item's block type: the pinned Qwen2.5

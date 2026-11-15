@@ -137,7 +137,8 @@ pub fn evaluate_gguf(
 /// Per-block-type tensor counts and byte shares, descending by bytes with
 /// unsized types last.
 fn type_shares(header: &repack::GgufHeader, family: model_io::ModelFamily) -> Vec<TypeShare> {
-    let mut by_id: std::collections::BTreeMap<u32, (usize, Option<u64>, bool)> =
+    // (tensors, bytes, all-transcoded, used-in-routed-experts)
+    let mut by_id: std::collections::BTreeMap<u32, (usize, Option<u64>, bool, bool)> =
         std::collections::BTreeMap::new();
     for (name, info) in &header.tensors {
         let source_transcoded = TRANSCODED_GGML_TYPES.contains(&info.ggml_type)
@@ -147,9 +148,13 @@ fn type_shares(header: &repack::GgufHeader, family: model_io::ModelFamily) -> Ve
                     Ok(repack::GgufMapping::Resident(ref canonical))
                         if repack::qwen4exp_tensor_is_transcoded(canonical, info.ggml_type)
                 ));
-        let slot = by_id.entry(info.ggml_type).or_insert((0, Some(0), true));
+        let slot = by_id
+            .entry(info.ggml_type)
+            .or_insert((0, Some(0), true, false));
         slot.0 += 1;
         slot.2 &= source_transcoded;
+        // A routed expert tensor is the one place a legacy type has no kernel.
+        slot.3 |= !source_transcoded && name.contains("_exps");
         // Checked: sizes come off an untrusted header, and a wrapped sum
         // would misreport the share instead of marking it unsized.
         slot.1 = match (slot.1, info.byte_size(name)) {
@@ -159,12 +164,19 @@ fn type_shares(header: &repack::GgufHeader, family: model_io::ModelFamily) -> Ve
     }
     let mut shares: Vec<TypeShare> = by_id
         .into_iter()
-        .map(|(id, (tensors, bytes, transcoded))| {
+        .map(|(id, (tensors, bytes, transcoded, in_routed))| {
             let name = repack::ggml_type_name(id)
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("type {id}"));
+            let lower = name.to_lowercase();
+            // Resident-only types (the legacy blocks) run as attention, FFN,
+            // embedding and head tensors, and have no routed-expert kernel, so
+            // one that appears in `*_exps` is blocked even though the name is
+            // on the executable list.
+            let routed_blocked =
+                in_routed && model_io::RESIDENT_ONLY_GGUF_TYPES.contains(&lower.as_str());
             let executable = transcoded
-                || model_io::EXECUTABLE_GGUF_TYPES.contains(&name.to_lowercase().as_str());
+                || (model_io::EXECUTABLE_GGUF_TYPES.contains(&lower.as_str()) && !routed_blocked);
             TypeShare {
                 name,
                 tensors,
@@ -208,8 +220,10 @@ mod tests {
             .enumerate()
             .map(|(index, (name, ggml_type))| {
                 let elements = match ggml_type {
-                    2 | 6 => 32,
-                    42 => 64,
+                    2 | 3 | 6 | 7 => 32,
+                    42 | 40 => 64,
+                    41 => 128,
+                    34 | 35 => 256,
                     _ => panic!("unexpected fixture type {ggml_type}"),
                 };
                 (
@@ -262,11 +276,36 @@ mod tests {
         let shares = type_shares(&header, ModelFamily::Qwen4Exp);
         let share = share(&shares, "Q4_0");
 
-        assert!(!share.executable, "the routed Q4_0 source has no kernel");
+        assert!(
+            share.executable,
+            "routed Q4_0 runs on its own routed kernels"
+        );
         assert!(
             !share.transcoded,
             "only resident tensors take the transcode path"
         );
+    }
+
+    /// Q1_0 (41), TQ2_0 (35), TQ1_0 (34) and NVFP4 (40) have a resident GEMV
+    /// and a routed pair, so the probe calls them executable on an attention
+    /// tensor AND on a routed expert.
+    #[test]
+    fn ext_block_types_are_executable_resident_and_routed() {
+        for (id, name) in [(41, "Q1_0"), (35, "TQ2_0"), (34, "TQ1_0"), (40, "NVFP4")] {
+            let resident = header(&[("blk.0.attn_q.weight", id)]);
+            let shares = type_shares(&resident, ModelFamily::Qwen4Exp);
+            assert!(
+                share(&shares, name).executable,
+                "{name} resident has a kernel"
+            );
+
+            let routed = header(&[("blk.0.ffn_gate_exps.weight", id)]);
+            let shares = type_shares(&routed, ModelFamily::Qwen4Exp);
+            assert!(
+                share(&shares, name).executable,
+                "{name} routed has a kernel"
+            );
+        }
     }
 
     #[test]
@@ -330,12 +369,39 @@ mod tests {
     }
 
     #[test]
-    fn q4_is_not_implicitly_transcoded_for_other_families() {
-        let header = header(&[("blk.0.attn_q.weight", 2)]);
+    fn resident_legacy_types_run_on_their_own_kernels_not_by_transcoding() {
+        // A resident Q4_0/Q4_1/Q5_0/Q5_1 projection has a GEMV and an embedding
+        // lookup. It is executable, and it is NOT transcoded: only Qwen4Exp's
+        // source tensors take that path.
+        let header = header(&[
+            ("blk.0.attn_q.weight", 2),
+            ("blk.0.attn_k.weight", 3),
+            ("blk.0.attn_v.weight", 6),
+            ("blk.0.attn_output.weight", 7),
+        ]);
         let shares = type_shares(&header, ModelFamily::QwenGdnMoe);
-        let share = share(&shares, "Q4_0");
+        for name in ["Q4_0", "Q4_1", "Q5_0", "Q5_1"] {
+            let share = share(&shares, name);
+            assert!(share.executable, "{name} has resident kernels");
+            assert!(!share.transcoded, "{name} is not converted at repack");
+        }
+    }
 
-        assert!(!share.executable);
-        assert!(!share.transcoded);
+    #[test]
+    fn legacy_types_in_routed_experts_are_executable_for_every_family() {
+        // The legacy blocks have routed pairs now, so a Mixtral-style Q4_0
+        // file is executable end to end, experts included.
+        for ty in [2u32, 3, 6, 7] {
+            let header = header(&[
+                ("blk.0.attn_q.weight", ty),
+                ("blk.0.ffn_gate_exps.weight", ty),
+            ]);
+            let shares = type_shares(&header, ModelFamily::QwenGdnMoe);
+            let name = repack::ggml_type_name(ty).unwrap();
+            assert!(
+                share(&shares, name).executable,
+                "{name} experts have a routed kernel"
+            );
+        }
     }
 }
