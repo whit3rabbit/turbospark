@@ -48,8 +48,43 @@ final class FormatterRegistryTests: XCTestCase {
         XCTAssertLessThanOrEqual(FormatterSettings.rows(defaults: d).count, FormatterSettings.maximumRows + 1)
     }
 
+    /// The built-in row is visible but starts OFF (like OC-10's sourcekit-lsp
+    /// row): the user enables it in Settings. A row the user already stored
+    /// keeps its stored choice either way.
+    func testBuiltInRowStartsOffAndStoredChoicesSurvive() {
+        XCTAssertFalse(FormatterRow.swiftFormat.enabled)
+        XCTAssertTrue(FormatterRow.swiftFormat.isBuiltin)
+
+        let fresh = defaults()
+        let never = FormatterSettings.rows(defaults: fresh)
+        XCTAssertEqual(never.map(\.id), ["swift-format"])
+        XCTAssertFalse(never[0].enabled, "a never-set row starts off")
+        XCTAssertNil(FormatterRegistry.row(forPath: "a.swift", in: never))
+
+        // A stored custom row without a swift-format row still gets the
+        // built-in row inserted off.
+        let custom = FormatterRow(id: "go", name: "gofmt", extensions: ["go"], command: "/bin/echo", args: [], enabled: true, isBuiltin: false)
+        let other = defaults()
+        FormatterSettings.save([custom], defaults: other)
+        let inserted = FormatterSettings.rows(defaults: other)
+        XCTAssertEqual(inserted.first?.id, "swift-format")
+        XCTAssertFalse(inserted[0].enabled)
+        XCTAssertTrue(inserted[1].enabled)
+
+        // An existing user who enabled it keeps it enabled; one who disabled
+        // it keeps it disabled.
+        for stored in [true, false] {
+            let d = defaults()
+            var row = FormatterRow.swiftFormat
+            row.enabled = stored
+            FormatterSettings.save([row], defaults: d)
+            XCTAssertEqual(FormatterSettings.rows(defaults: d)[0].enabled, stored)
+        }
+    }
+
     func testMatchingByExtensionOnlyForEnabledRows() {
         var swift = FormatterRow.swiftFormat
+        swift.enabled = true
         let go = FormatterRow(id: "go", name: "gofmt", extensions: ["go"], command: "/bin/echo", args: [], enabled: true, isBuiltin: false)
         XCTAssertEqual(FormatterRegistry.row(forPath: "a/B.SWIFT", in: [swift, go])?.id, "swift-format")
         XCTAssertEqual(FormatterRegistry.row(forPath: "main.go", in: [swift, go])?.id, "go")

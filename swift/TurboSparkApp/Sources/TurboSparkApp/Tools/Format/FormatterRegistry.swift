@@ -25,7 +25,7 @@ struct FormatterRow: Codable, Equatable, Identifiable, Sendable {
     static var swiftFormat: FormatterRow {
         FormatterRow(
             id: swiftFormatID, name: "swift-format", extensions: ["swift"], command: "",
-            args: ["format", "--in-place", filePlaceholder], enabled: true, isBuiltin: true)
+            args: ["format", "--in-place", filePlaceholder], enabled: false, isBuiltin: true)
     }
 
     func covers(extension ext: String) -> Bool {

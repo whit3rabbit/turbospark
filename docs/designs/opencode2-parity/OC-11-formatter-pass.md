@@ -279,9 +279,11 @@ The draft said none were open; its "(author to confirm)" items resolved as:
   gets "read it again before your next edit". The snapshot is refreshed in
   both cases, so the staleness check does not reject the next edit.
 * **Where the toggle lives**: see Deviations.
-* **Built-in row default**: the swift-format row starts enabled, because the
-  master switch (off) is the user's grant. OC-10's discovered row starts
-  off; a second opt-in here would add a step and no safety.
+* **Built-in row default**: the swift-format row starts OFF, like OC-10's
+  discovered row (changed 2026-11-14, see "Implementation record: built-in
+  row starts off"). The original choice was ON under the master switch; it
+  was reversed so enabling the master switch alone never starts a formatter
+  nobody picked.
 * **Argument syntax for user rows**: whitespace-split, no quoting (there is
   no shell), `{file}` placeholder, appended when absent.
 
@@ -378,6 +380,30 @@ Decision needed: keep the project toggle narrow-only (current), or allow a
 project to opt IN when the app-wide switch is off. The second is a
 security-policy change (a project record could then widen what runs) and
 should be the user's call.
+
+## Implementation record: built-in row starts off (2026-11-14)
+
+Decision (user-approved, applied by the main session): the built-in
+swift-format row now starts OFF, matching OC-10's sourcekit-lsp row, so the
+master switch plus an explicit row toggle are both needed.
+
+* `FormatterRow.swiftFormat` is `enabled: false`. The row stays visible in
+  Settings (the section lists rows once the master switch is on), so the
+  user turns it on there. The launch policy is untouched.
+* Only the DEFAULT of a never-set row changes. `FormatterSettings.rows`
+  still carries a stored row's `enabled` value, so a user who saved an
+  enabled or disabled row keeps that choice. A user with no stored row, or
+  whose stored rows lack swift-format, gets the row inserted off.
+* Caveat: a user whose Settings saved the whole row list (any edit calls
+  `save`) stored `enabled: true` for swift-format under the old default and
+  keeps it. Their master switch was already the gate, and the stored value
+  cannot be told apart from a deliberate choice.
+* The Settings help text does not claim the row starts on, so no string
+  changed and no localization work was needed.
+* Tests (`FormatterRegistryTests.testBuiltInRowStartsOffAndStoredChoicesSurvive`,
+  and `testMatchingByExtensionOnlyForEnabledRows` now enables the row
+  explicitly). Mutation checks, both caught: default flipped back to `true`
+  (4 failures); `rows()` ignoring the stored `enabled` (1 failure).
 
 --------------------------------------------------------------------------------
 
