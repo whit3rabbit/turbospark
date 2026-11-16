@@ -245,14 +245,14 @@ close that gap, and CI calls exactly these, so a local `make dmg` and a
 release build the same thing:
 
 ```sh
-OPENKIND_RELEASE_REVISION=d601b670a9ef9be2f16cc40ae55a9ccaadb73df1 OPENKIND_SERVER_VERSION=0.5.1 make app-bundle
-OPENKIND_RELEASE_REVISION=d601b670a9ef9be2f16cc40ae55a9ccaadb73df1 OPENKIND_SERVER_VERSION=0.5.1 make dmg
+OPENKIND_RELEASE_REVISION=7dfc44e89d57be5385da8e1e78c6aa8dd120f285 OPENKIND_SERVER_VERSION=0.6.0 make app-bundle
+OPENKIND_RELEASE_REVISION=7dfc44e89d57be5385da8e1e78c6aa8dd120f285 OPENKIND_SERVER_VERSION=0.6.0 make dmg
 ```
 
 `OPENKIND_RELEASE_REVISION` pins the OpenKind Swift package. The bundled
 `openkindd` is installed from the `openkind-server` crates.io package at the
-exact `OPENKIND_SERVER_VERSION`; version `0.5.1` was published from the commit
-shown above (the `v0.5.1` tag; the crate's `.cargo_vcs_info.json` names the
+exact `OPENKIND_SERVER_VERSION`; version `0.6.0` was published from the commit
+shown above (the `v0.6.0` tag; the crate's `.cargo_vcs_info.json` names the
 same commit, which is the check to repeat when bumping). The app bundle records both pins, and the DMG check compares them
 to the build environment. Set both GitHub Actions variables together when
 upgrading OpenKind.
