@@ -69,7 +69,10 @@ Follow these steps in order when releasing a new version of the app and CLI:
    `check-version` asserts this too (`grep -n 'path = "\.\./' crates/*/Cargo.toml`).
    Also set `info.version` to `X.Y.Z` in `docs/openapi/turbospark.openapi.yaml`
    and `docs/openapi/openapi.yaml` (the two files must stay identical).
-   `check-version` asserts both. Run `cargo update --workspace` to sync
+   `check-version` asserts both. Set it in `text`, `images` and `embeddings`
+   `.openapi.yaml` too, and mirror all five into `api-reference/openapi/`:
+   `cargo test -p turbospark-server --test server_api_contract` fails if a
+   copy differs, and only CI's `verify` job would otherwise catch it. Run `cargo update --workspace` to sync
    `Cargo.lock` without upgrading any dependency, then
    `cargo build --workspace` to ensure all workspace references agree.
 3. **Commit and merge to `main`**, e.g. `chore(release): vX.Y.Z`.
