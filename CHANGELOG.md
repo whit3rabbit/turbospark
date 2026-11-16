@@ -13,6 +13,8 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-15
+
 ### Added
 - Gemma 3 text GGUFs (`gemma3`, the 1B witnessed) install and decode:
   `turbospark-model pull --repo ggml-org/gemma-3-1b-it-GGUF --file
@@ -173,6 +175,8 @@ when this file gets updated relative to the version bump and the tag.
   soak, voice call on hardware) were not run.
 
 ### Changed
+- The app and CI bundle `openkindd` 0.6.0 and build against the OpenKind Swift
+  package at its v0.6.0 commit, up from 0.5.1.
 - The tokenizer notes record why `fancy-regex` was rejected as a bound on
   hostile split patterns: its limits are per match, it moves tokens on long
   whitespace runs, and the only zero-drift bound found is a reviewed list of
@@ -191,6 +195,12 @@ when this file gets updated relative to the version bump and the tag.
 - The new crate `turbospark-acp` is published ahead of `turbospark-cli`.
   `turbospark-acp-agent` now ships in the app bundle, the DMG, the CLI zip and
   the Homebrew casks.
+
+### Fixed
+- The chat sidebar row compiles on Xcode 16.4. Its `body` modifier chain was too
+  complex for that compiler's type checker and failed the oldest-toolchain
+  package leg of CI. The background and the selection bar are now separate
+  typed helpers; the view is unchanged.
 
 ### Security
 - The agent PushNotification tool is opt-in and never requests notification

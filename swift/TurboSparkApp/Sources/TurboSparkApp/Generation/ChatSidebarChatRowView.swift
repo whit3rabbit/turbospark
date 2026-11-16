@@ -31,6 +31,32 @@ struct ChatSidebarChatRowView: View {
     /// that is not a chat turn. Another chat's turn does not.
     private var isChatBusy: Bool { model.isChatBusyForRowActions(chat.id) }
 
+    // Split out of `body` because Xcode 16.4 cannot type-check the whole
+    // modifier chain in reasonable time. Explicit types keep each piece cheap.
+    @ViewBuilder
+    private func rowBackground(isSelected: Bool) -> some View {
+        let hoverOpacity: Double = isHovered ? 0.05 : 0
+        let fillColor: Color = isSelected ? theme.selection : theme.foreground.opacity(hoverOpacity)
+        let shape = RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+        shape
+            .fill(fillColor)
+            .overlay {
+                if isSelected {
+                    shape.stroke(theme.accent.opacity(0.25), lineWidth: 1)
+                }
+            }
+    }
+
+    @ViewBuilder
+    private func selectionBar(isSelected: Bool) -> some View {
+        if isSelected {
+            Capsule()
+                .fill(theme.accent)
+                .frame(width: 2.5)
+                .padding(.vertical, 9)
+        }
+    }
+
     var body: some View {
         let isSelected = chat.id == model.selectedChatID
         let showsActions = isHovered || isSelected
@@ -39,29 +65,10 @@ struct ChatSidebarChatRowView: View {
             selectButton(isSelected: isSelected)
             actionsMenu(showsActions: showsActions)
         }
-        .background {
-            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
-                .fill(
-                    isSelected
-                        ? theme.selection
-                        : theme.foreground.opacity(isHovered ? 0.05 : 0))
-                .overlay {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
-                            .stroke(theme.accent.opacity(0.25), lineWidth: 1)
-                    }
-                }
-        }
+        .background { rowBackground(isSelected: isSelected) }
         // The "you are here" mark. Full-opacity accent on a 2.5pt bar
         // survives any accent/background pairing the theme allows.
-        .overlay(alignment: .leading) {
-            if isSelected {
-                Capsule()
-                    .fill(theme.accent)
-                    .frame(width: 2.5)
-                    .padding(.vertical, 9)
-            }
-        }
+        .overlay(alignment: .leading) { selectionBar(isSelected: isSelected) }
         .contentShape(.rect(cornerRadius: AppMetrics.cardRadius))
         .tsAnimation(TSMotion.hover, value: isHovered)
         .tsAnimation(TSMotion.select, value: isSelected)
