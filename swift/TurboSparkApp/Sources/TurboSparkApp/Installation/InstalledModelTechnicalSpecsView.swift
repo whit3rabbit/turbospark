@@ -57,7 +57,7 @@ struct InstalledModelTechnicalSpecsView: View {
                         Text(verbatim: installedModel.path)
                             .themedCode(.small)
                             .lineLimit(2)
-                            .foregroundStyle(Color.accentColor)
+                            .foregroundStyle(.appAccentText)
                     }
                     .buttonStyle(.plain)
                     .help(Text("Reveal in Finder", bundle: .module) + Text(verbatim: ": \(installedModel.path)"))

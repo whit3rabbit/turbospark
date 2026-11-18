@@ -18,9 +18,11 @@ final class ModelHubFilterTests: XCTestCase {
         downloadBytes: UInt64 = 1_000,
         installBytes: UInt64? = nil,
         notes: String? = nil,
-        installed: Bool = false
+        installed: Bool = false,
+        featuredRank: Int? = nil
     ) throws -> CatalogEntry {
         let notesField = notes.map { "\"notes\": \"\($0)\"," } ?? "\"notes\": null,"
+        let featuredField = featuredRank.map { "\"featured_rank\": \($0)," } ?? ""
         let json = """
         {
           "alias": "\(alias)",
@@ -30,6 +32,7 @@ final class ModelHubFilterTests: XCTestCase {
           "install_bytes": \(installBytes ?? downloadBytes),
           "status": "\(status)",
           \(notesField)
+          \(featuredField)
           "installed": \(installed)
         }
         """
@@ -65,9 +68,9 @@ final class ModelHubFilterTests: XCTestCase {
     /// Returns fixture catalog entries covering multiple families and formats.
     private func catalog() throws -> [CatalogEntry] {
         [
-            try entry(alias: "gemma4", name: "Gemma 4 26B-A4B (MLX INT4, group 64)", family: "gemma4", downloadBytes: 13_000),
-            try entry(alias: "gemma4-gguf", name: "Gemma 4 26B-A4B (GGUF Q4_K_M)", family: "gemma4", downloadBytes: 25_000),
-            try entry(alias: "mistral7b", name: "Mistral 7B (GGUF Q4_K_M)", family: "llama", status: "runs", downloadBytes: 4_000),
+            try entry(alias: "gemma4", name: "Gemma 4 26B-A4B (MLX INT4, group 64)", family: "gemma4", downloadBytes: 13_000, featuredRank: 1),
+            try entry(alias: "gemma4-gguf", name: "Gemma 4 26B-A4B (GGUF Q4_K_M)", family: "gemma4", downloadBytes: 25_000, featuredRank: 2),
+            try entry(alias: "mistral7b", name: "Mistral 7B (GGUF Q4_K_M)", family: "llama", status: "runs", downloadBytes: 4_000, featuredRank: 3),
         ]
     }
 
@@ -352,11 +355,54 @@ final class ModelHubFilterTests: XCTestCase {
         XCTAssertEqual(filter.sort, .size)
     }
 
-    // MARK: - Recommended tab
+    // MARK: - Featured tab
 
-    func testRecommendedIsTheFirstAndDefaultTab() {
-        XCTAssertEqual(ModelHubFilter().tab, .recommended)
-        XCTAssertEqual(ModelHubFilter.Tab.allCases.first, .recommended)
+    func testFeaturedIsTheFirstAndDefaultTab() {
+        XCTAssertEqual(ModelHubFilter().tab, .featured)
+        XCTAssertEqual(ModelHubFilter.Tab.allCases.first, .featured)
+    }
+
+    /// A row that fits but nobody featured belongs under All models, not here.
+    func testFeaturedTabDropsRowsThatAreNotFeatured() throws {
+        var filter = ModelHubFilter()
+        filter.tab = .featured
+        let rows = try catalog() + [
+            try entry(alias: "plain", name: "Plain (MLX INT4)", family: "qwen"),
+        ]
+        var recommendations: [String: ModelRecommendation] = [:]
+        for row in rows {
+            recommendations[row.alias] = try recommendation(alias: row.alias, verdict: "resident")
+        }
+        let result = filter.apply(to: rows, installedAliases: [], recommendations: recommendations)
+        XCTAssertFalse(result.map(\.alias).contains("plain"))
+        XCTAssertEqual(result.count, 3)
+
+        filter.tab = .discover
+        let all = filter.apply(to: rows, installedAliases: [], recommendations: recommendations)
+        XCTAssertTrue(all.map(\.alias).contains("plain"), "All models still lists it")
+    }
+
+    /// Inside a fit group the curator's rank decides, ahead of evidence,
+    /// format and name.
+    func testFeaturedRankOrdersRowsInsideAFitGroup() throws {
+        var filter = ModelHubFilter()
+        filter.tab = .featured
+        filter.sort = .recommended
+        let rows = [
+            try entry(alias: "a-verified-mlx", name: "A (MLX INT4)", family: "qwen", featuredRank: 3),
+            try entry(alias: "b-runs-gguf", name: "B (GGUF Q4_K_M)", family: "qwen", status: "runs", featuredRank: 1),
+            try entry(alias: "c-verified-mlx", name: "C (MLX INT4)", family: "qwen", featuredRank: 2),
+            try entry(alias: "d-streams", name: "D (MLX INT4)", family: "qwen", featuredRank: 0),
+        ]
+        var recommendations: [String: ModelRecommendation] = [:]
+        for row in rows {
+            recommendations[row.alias] = try recommendation(
+                alias: row.alias, verdict: row.alias == "d-streams" ? "streams" : "resident")
+        }
+        let result = filter.apply(to: rows, installedAliases: [], recommendations: recommendations)
+        XCTAssertEqual(
+            result.map(\.alias), ["b-runs-gguf", "c-verified-mlx", "a-verified-mlx", "d-streams"],
+            "rank inside the resident group, and fit still comes before rank")
     }
 
     func testRecommendationProbeProgressIsBoundedAndHandlesAnUnknownTotal() {
@@ -374,7 +420,7 @@ final class ModelHubFilterTests: XCTestCase {
     /// Tests that the Recommended tab filters out models that are refused or cannot run.
     func testRecommendedTabKeepsOnlyRunnableModels() throws {
         var filter = ModelHubFilter()
-        filter.tab = .recommended
+        filter.tab = .featured
         let rows = try catalog()
         let recommendations = [
             "gemma4": try recommendation(alias: "gemma4", verdict: "streams"),
@@ -391,18 +437,23 @@ final class ModelHubFilterTests: XCTestCase {
         XCTAssertFalse(aliases.contains("gemma4-gguf"), "refused model must be filtered out")
     }
 
-    /// Tests that an absent fit assessment is not presented as a recommendation.
-    func testRecommendedTabRejectsModelsWithoutFitAssessment() throws {
+    /// A featured row the engine cannot size stays on the tab (it is drawn
+    /// under "Not checked on this Mac yet"); only "does not fit" hides it.
+    func testFeaturedTabKeepsRowsWhoseFitIsUnknown() throws {
         var filter = ModelHubFilter()
-        filter.tab = .recommended
+        filter.tab = .featured
+        filter.sort = .recommended
+        let recommendations = [
+            "gemma4": try recommendation(alias: "gemma4", verdict: "streams"),
+            "gemma4-gguf": try recommendation(alias: "gemma4-gguf", verdict: "unknown"),
+        ]
         let result = filter.apply(
-            to: try catalog(),
-            installedAliases: [],
-            recommendations: [
-                "gemma4": try recommendation(alias: "gemma4", verdict: "streams"),
-            ])
-
-        XCTAssertEqual(result.map(\.alias), ["gemma4"])
+            to: try catalog(), installedAliases: [], recommendations: recommendations)
+        XCTAssertEqual(
+            result.map(\.alias), ["gemma4", "gemma4-gguf", "mistral7b"],
+            "unknown and not-yet-assessed rows follow the rows that fit")
+        let sections = ModelHubFilter.recommendedSections(result, recommendations: recommendations)
+        XCTAssertEqual(sections.map(\.verdict), [.streams, .unknown])
     }
 
     /// The Recommended tab is ordered by fit first, because the fit is what
@@ -410,7 +461,7 @@ final class ModelHubFilterTests: XCTestCase {
     /// model that fits entirely in memory.
     func testRecommendedTabOrdersByFitBeforeFormat() throws {
         var filter = ModelHubFilter()
-        filter.tab = .recommended
+        filter.tab = .featured
         filter.sort = .recommended
         let recommendations = [
             "gemma4": try recommendation(alias: "gemma4", verdict: "streams"),
@@ -427,7 +478,7 @@ final class ModelHubFilterTests: XCTestCase {
     /// (verified, runs, caveat), then MLX before GGUF, then name.
     func testWithinAFitGroupEvidenceThenFormatThenName() throws {
         var filter = ModelHubFilter()
-        filter.tab = .recommended
+        filter.tab = .featured
         filter.sort = .recommended
         let rows = [
             try entry(alias: "z-caveat-mlx", name: "Z (MLX INT4)", family: "qwen", status: "caveat"),
@@ -440,7 +491,14 @@ final class ModelHubFilterTests: XCTestCase {
         for row in rows {
             recommendations[row.alias] = try recommendation(alias: row.alias, verdict: "resident")
         }
-        let result = filter.apply(to: rows, installedAliases: [], recommendations: recommendations)
+        // Unranked rows are not on the Featured tab, so exercise the
+        // comparator the tab sorts with: without a rank these keys decide.
+        _ = filter
+        let result = rows.sorted {
+            ModelHubFilter.recommendedPrecedes(
+                $0, $1, lhsVerdict: recommendations[$0.alias]?.verdict,
+                rhsVerdict: recommendations[$1.alias]?.verdict)
+        }
         XCTAssertEqual(
             result.map(\.alias),
             ["c-verified-mlx", "d-verified-mlx", "a-verified-gguf", "b-runs-gguf", "z-caveat-mlx"],
@@ -451,7 +509,7 @@ final class ModelHubFilterTests: XCTestCase {
     /// rows is not drawn.
     func testRecommendedSectionsFollowTheFitVerdictAndSkipEmptyGroups() throws {
         var filter = ModelHubFilter()
-        filter.tab = .recommended
+        filter.tab = .featured
         filter.sort = .recommended
         let rows = try catalog()
         let recommendations = [
@@ -486,7 +544,7 @@ final class ModelHubFilterTests: XCTestCase {
             "d": try recommendation(alias: "d", verdict: "unknown"),
         ]
         var filter = ModelHubFilter()
-        filter.tab = .recommended
+        filter.tab = .featured
         filter.sort = .recommended
         let sorted = rows.sorted {
             ModelHubFilter.recommendedPrecedes(

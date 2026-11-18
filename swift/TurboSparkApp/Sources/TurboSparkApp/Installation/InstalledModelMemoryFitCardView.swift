@@ -73,7 +73,7 @@ struct InstalledModelMemoryFitCardView: View {
                     .foregroundStyle(.appSecondary)
                 Text(MetricFormat.storage(fit.countedBytes))
                     .themedFont(.small, weight: .medium).monospacedDigit()
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(.appAccentText)
                 // A measured figure and an estimate are different claims and
                 // must not read the same.
                 if fit.countedSource == .measured {

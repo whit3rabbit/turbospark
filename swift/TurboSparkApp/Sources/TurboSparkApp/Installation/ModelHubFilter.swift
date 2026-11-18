@@ -16,7 +16,10 @@ import TurboSpark
 struct ModelHubFilter: Equatable {
     /// Which half of the catalog to show.
     enum Tab: String, CaseIterable, Identifiable {
-        case recommended = "Recommended"
+        /// The catalog's hand-picked rows (`featured_rank`) that run here,
+        /// grouped by fit. Replaced the Recommended tab, which listed every
+        /// runnable row and so did not tell a new user where to start.
+        case featured = "Featured"
         case discover = "Discover"
         case audio = "Audio"
         case onDevice = "On Device"
@@ -38,7 +41,7 @@ struct ModelHubFilter: Equatable {
     /// stale before.
     typealias Selection = String?
 
-    var tab: Tab = .recommended
+    var tab: Tab = .featured
     var searchText: String = ""
     var format: Selection = nil
     var capability: Selection = nil
@@ -122,10 +125,13 @@ struct ModelHubFilter: Equatable {
 
         if tab == .onDevice {
             list = list.filter { installedAliases.contains($0.alias) || $0.installed }
-        } else if tab == .recommended {
+        } else if tab == .featured {
+            // Hidden only when the engine says it does not fit. A row it
+            // cannot size yet (lfm3-1.7b had no memory figures) stays, under
+            // the "Not checked on this Mac yet" heading: the curator vouched
+            // for it, and `runs` is false for unknown as well as refused.
             list = list.filter { entry in
-                guard let rec = recommendations[entry.alias] else { return false }
-                return rec.runs && rec.verdict != .refused
+                entry.isFeatured && recommendations[entry.alias]?.verdict != .refused
             }
         }
 
@@ -160,7 +166,7 @@ struct ModelHubFilter: Equatable {
                 let lhsRec = recommendations[lhs.alias]
                 let rhsRec = recommendations[rhs.alias]
 
-                if tab == .recommended {
+                if tab == .featured {
                     return Self.recommendedPrecedes(
                         lhs, rhs, lhsVerdict: lhsRec?.verdict, rhsVerdict: rhsRec?.verdict)
                 }
@@ -201,6 +207,14 @@ struct ModelHubFilter: Equatable {
         let lhsFit = verdictRank(lhsVerdict)
         let rhsFit = verdictRank(rhsVerdict)
         if lhsFit != rhsFit { return lhsFit < rhsFit }
+        // Inside a fit group the curator's order wins: that is what the
+        // rank exists for. Rows without one keep the keys below.
+        switch (lhs.featuredRank, rhs.featuredRank) {
+        case let (l?, r?) where l != r: return l < r
+        case (_?, nil): return true
+        case (nil, _?): return false
+        default: break
+        }
         let lhsStatus = statusRank(lhs.status)
         let rhsStatus = statusRank(rhs.status)
         if lhsStatus != rhsStatus { return lhsStatus < rhsStatus }

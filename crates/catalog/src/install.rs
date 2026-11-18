@@ -1115,6 +1115,7 @@ mod vision_gate_tests {
             measured: Vec::new(),
             notes: None,
             mtp: None,
+            featured_rank: None,
         }
     }
 

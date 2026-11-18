@@ -47,7 +47,6 @@ struct AudioDiscoverCatalogView: View {
         AppAdaptiveHeader {
             ModelWorkspaceTitle(
                 systemImage: "waveform",
-                tint: .teal,
                 title: Text("Audio Models", bundle: .module),
                 badge: Text("Recommended", bundle: .module),
                 summary: Text("Show the pinned audio models this Mac can download", bundle: .module))

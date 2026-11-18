@@ -198,10 +198,10 @@ struct ActiveInstallCard: View {
             }
         }
         .padding(16)
-        .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
+        .background(.appAccent.opacity(0.1), in: RoundedRectangle(cornerRadius: 14))
         .overlay(
             RoundedRectangle(cornerRadius: 14)
-                .stroke(Color.accentColor.opacity(0.35), lineWidth: 1)
+                .stroke(.appAccent.opacity(0.35), lineWidth: 1)
         )
     }
 }

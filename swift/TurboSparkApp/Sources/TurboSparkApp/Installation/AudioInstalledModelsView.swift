@@ -206,7 +206,7 @@ struct AudioInstalledHeaderView: View {
     var body: some View {
         AppAdaptiveHeader {
             ModelWorkspaceTitle(
-                systemImage: "waveform", tint: .teal,
+                systemImage: "waveform",
                 title: Text("Installed Models", bundle: .module),
                 badge: Text("LOCAL STORAGE", bundle: .module),
                 summary: summary)

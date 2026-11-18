@@ -45,7 +45,7 @@ struct ModelTechnicalSpecsCardView: View {
                                 .themedCode(.small)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
-                                .foregroundStyle(Color.accentColor)
+                                .foregroundStyle(.appAccentText)
                         }
                         .buttonStyle(.plain)
                         .help(Text("Reveal in Finder", bundle: .module) + Text(verbatim: ": \(inst.path)"))

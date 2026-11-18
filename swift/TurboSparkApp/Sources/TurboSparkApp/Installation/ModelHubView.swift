@@ -76,9 +76,10 @@ struct ModelHubView: View {
         AppAdaptiveHeader {
             ModelWorkspaceTitle(
                 systemImage: "shippingbox.fill",
-                tint: .appAccent,
                 title: Text("Discover Models", bundle: .module),
-                badge: Text("ONLINE CATALOG", bundle: .module),
+                // Not "online": the catalog ships inside the app and changes
+                // with an update. What sets it apart is that every row was run here.
+                badge: Text("TESTED ON MAC", bundle: .module),
                 summary: summaryText)
         } actions: {
             Button {
@@ -129,15 +130,15 @@ struct ModelHubView: View {
     private var masterList: some View {
         ScrollView {
             LazyVStack(spacing: 3) {
-                if filter.tab == .recommended,
+                if filter.tab == .featured,
                    !isLoadingRecommendations,
                    recommendationError == nil,
                    !filteredEntries.isEmpty {
                     recommendedHeaderCard
                 }
-                if filter.tab == .recommended && isLoadingRecommendations {
+                if filter.tab == .featured && isLoadingRecommendations {
                     recommendationLoadingState
-                } else if filter.tab == .recommended, let recommendationError {
+                } else if filter.tab == .featured, let recommendationError {
                     recommendationFailureState(recommendationError)
                 } else if filteredEntries.isEmpty {
                     emptyListState
@@ -236,7 +237,7 @@ struct ModelHubView: View {
     /// Live search is offered next to the two catalog tabs, not under
     /// "Installed only" (which is about this Mac) or Audio (its own catalog).
     private var offersHubSearch: Bool {
-        filter.tab == .discover || filter.tab == .recommended
+        filter.tab == .discover || filter.tab == .featured
     }
 
     private var showsHubSection: Bool {
@@ -250,12 +251,39 @@ struct ModelHubView: View {
         Task { await hub.search(query: query) }
     }
 
-    private var emptyListState: some View {
+    @ViewBuilder private var emptyListState: some View {
+        if showsHubSection && !isNarrowedBeyondSearch {
+            // Only the search text emptied the catalog list, and the Hugging
+            // Face section right below can still answer it. A full empty state
+            // with Clear filters read as a dead end and pushed that answer down.
+            Label {
+                Text("No matching models", bundle: .module)
+            } icon: {
+                Image(systemName: "tray")
+            }
+            .themedFont(.small)
+            .foregroundStyle(.appSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 4)
+            .padding(.top, 4)
+        } else {
+            fullEmptyListState
+        }
+    }
+
+    /// A filter other than the search text is set (format, architecture, fit).
+    private var isNarrowedBeyondSearch: Bool {
+        var withoutSearch = filter
+        withoutSearch.searchText = ""
+        return withoutSearch.isNarrowed
+    }
+
+    private var fullEmptyListState: some View {
         AppEmptyState(systemImage: emptyIconName, title: emptyTitle) {
             if filter.isNarrowed {
                 Button { filter.clearNarrowing() } label: { Text("Clear filters", bundle: .module) }
                     .appAction(.secondary, size: .small)
-            } else if filter.tab == .recommended {
+            } else if filter.tab == .featured {
                 Button { filter.tab = .discover } label: { Text("All models", bundle: .module) }
                     .appAction(.secondary, size: .small)
             } else if filter.tab == .onDevice {
@@ -269,7 +297,7 @@ struct ModelHubView: View {
     private var emptyIconName: String {
         switch filter.tab {
         case .onDevice: return "internaldrive"
-        case .recommended: return "sparkles"
+        case .featured: return "star"
         case .discover: return "tray"
         case .audio: return "waveform"
         }
@@ -278,8 +306,8 @@ struct ModelHubView: View {
     private var emptyTitle: Text {
         if filter.tab == .onDevice && !filter.isNarrowed {
             return Text("No models installed", bundle: .module)
-        } else if filter.tab == .recommended && !filter.isNarrowed {
-            return Text("No recommended models", bundle: .module)
+        } else if filter.tab == .featured && !filter.isNarrowed {
+            return Text("No featured models fit this Mac", bundle: .module)
         }
         return Text("No matching models", bundle: .module)
     }
@@ -355,7 +383,7 @@ struct ModelHubView: View {
     /// grouped: another tab, or another sort. A list sorted by name or size
     /// has no meaningful group boundaries, so it stays flat.
     private var recommendedSections: [ModelHubFilter.RecommendedSection]? {
-        guard filter.tab == .recommended, filter.sort == .recommended else { return nil }
+        guard filter.tab == .featured, filter.sort == .recommended else { return nil }
         return ModelHubFilter.recommendedSections(filteredEntries, recommendations: recommendations)
     }
 

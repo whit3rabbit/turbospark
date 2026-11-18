@@ -76,8 +76,7 @@ struct ContextLadderView: View {
         .padding(.vertical, 1)
         .padding(.horizontal, 4)
         .background(
-            isCurrent
-                ? Color.accentColor.opacity(0.10) : Color.clear,
+            isCurrent ? AnyShapeStyle(.appAccent.opacity(0.10)) : AnyShapeStyle(Color.clear),
             in: RoundedRectangle(cornerRadius: 4)
         )
         .accessibilityElement(children: .combine)

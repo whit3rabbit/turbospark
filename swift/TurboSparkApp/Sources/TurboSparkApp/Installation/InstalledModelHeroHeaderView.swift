@@ -28,8 +28,8 @@ struct InstalledModelHeroHeaderView: View {
                         .themedFont(.micro, weight: .bold)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(Color.teal.opacity(0.16), in: RoundedRectangle(cornerRadius: 4))
-                        .foregroundStyle(Color.teal)
+                        .background(.appAccent.opacity(0.16), in: RoundedRectangle(cornerRadius: 4))
+                        .foregroundStyle(.appAccentText)
 
                     Button(action: onToggleFavorite) {
                         Image(systemName: isFavorite ? "star.fill" : "star")
@@ -57,7 +57,7 @@ struct InstalledModelHeroHeaderView: View {
                     .foregroundStyle(.appSecondary)
 
                     Text(verbatim: "\u{2022}")
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
                         .accessibilityHidden(true)
 
                     Text(MetricFormat.storage(installedModel.installBytes))
@@ -65,7 +65,7 @@ struct InstalledModelHeroHeaderView: View {
                         .foregroundStyle(.appSecondary)
 
                     Text(verbatim: "\u{2022}")
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
                         .accessibilityHidden(true)
 
                     locationLabel
@@ -103,7 +103,7 @@ struct InstalledModelHeroHeaderView: View {
                     } else {
                         Text(installedModel.repo)
                             .themedCode(.small)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.appSecondary)
                             .lineLimit(1)
                     }
                 }
@@ -165,14 +165,14 @@ struct InstalledModelHeroHeaderView: View {
             .foregroundStyle(.appSuccess)
         } else if isCurrentlySelected {
             HStack(spacing: 4) {
-                Circle().fill(Color.accentColor).frame(width: 6, height: 6)
+                Circle().fill(.appAccent).frame(width: 6, height: 6)
                 Text("Selected", bundle: .module)
                     .themedFont(.tiny, weight: .semibold)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 3.5)
-            .background(Color.accentColor.opacity(0.14), in: Capsule())
-            .foregroundStyle(Color.accentColor)
+            .background(.appAccent.opacity(0.14), in: Capsule())
+            .foregroundStyle(.appAccentText)
         } else {
             HStack(spacing: 4) {
                 Circle().fill(Color.secondary).frame(width: 5, height: 5)

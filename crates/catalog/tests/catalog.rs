@@ -43,6 +43,30 @@ fn the_embedded_catalog_parses_and_every_row_validates() {
     }
 }
 
+/// The app's Featured tab is the default Discover view, so the embedded table
+/// must feature something, and two rows sharing a rank would leave their order
+/// to alias spelling rather than to whoever picked them.
+#[test]
+fn the_featured_rows_exist_and_have_distinct_ranks() {
+    let catalog = Catalog::embedded().expect("the embedded models.json parses");
+    let mut ranks: Vec<(u16, &str)> = catalog
+        .entries()
+        .filter_map(|e| e.featured_rank.map(|r| (r, e.alias.as_str())))
+        .collect();
+    assert!(
+        !ranks.is_empty(),
+        "no row is featured; the app's default tab would be empty"
+    );
+    ranks.sort();
+    for pair in ranks.windows(2) {
+        assert_ne!(
+            pair[0].0, pair[1].0,
+            "{} and {} share featured rank {}",
+            pair[0].1, pair[1].1, pair[0].0
+        );
+    }
+}
+
 /// The family string is what `list` and `info` print and what a reader will
 /// match against `docs/MODEL_FAMILY.md`. A typo there is invisible until
 /// somebody greps for it, so it is pinned against the real enum.

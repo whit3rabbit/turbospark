@@ -75,15 +75,21 @@ struct ModelDetailPaneView: View {
                 heroHeader
                 capabilityTags
                 actionCard
-                ModelSteeringCardView(
-                    model: model,
-                    catalogEntry: entry,
-                    installedModel: installedModel
-                )
+                // Fit answers "can I run this", the first question in a
+                // catalog, so it comes before steering. Steering acts only on
+                // an install, and before one its card was a paragraph of
+                // "install first" between the user and the fit.
                 ModelHardwareFitCardView(
                     recommendation: recommendation,
                     entry: entry
                 )
+                if isInstalled {
+                    ModelSteeringCardView(
+                        model: model,
+                        catalogEntry: entry,
+                        installedModel: installedModel
+                    )
+                }
                 ModelTechnicalSpecsCardView(
                     entry: entry,
                     installedModel: installedModel,

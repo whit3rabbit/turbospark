@@ -13,6 +13,22 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Added
+- Catalog rows can carry `featured_rank`. Only a `verified` model row may be
+  featured, and the embedded table must feature at least one row with
+  distinct ranks. Eight rows are featured, from LFM3 1.7B to Qwen 3.6 35B.
+- The app's Discover section opens on a Featured tab: the featured rows that
+  are not too large for this Mac, grouped by fit and ordered by rank. It
+  replaces the Recommended tab; every other row is under All models.
+
+### Changed
+- Discover and Installed draw their accents, selection and badges from the
+  theme instead of system colors, so custom themes and light mode apply.
+  Badge labels use the theme text color for contrast.
+- Discover's search box says Search, a search with no catalog match leads
+  with the Hugging Face search, and the header badge reads Tested on Mac
+  instead of Online catalog (the catalog ships with the app).
+
 ## [0.9.0] - 2026-11-15
 
 ### Added

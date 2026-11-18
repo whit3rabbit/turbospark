@@ -269,6 +269,13 @@ pub struct CatalogEntry {
     /// [`MtpSource`].
     #[serde(default)]
     pub mtp: Option<MtpSource>,
+    /// Position in the app's Featured list, lowest first. `None` (the
+    /// default, and every row written before this field) is not featured.
+    /// A hand-picked starting point, not a ranking: fit for this Mac is
+    /// still the engine's verdict, shown beside it. Only a `verified` row
+    /// may be featured, so the list never leads with an unmeasured claim.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub featured_rank: Option<u16>,
 }
 
 impl CatalogEntry {
@@ -434,6 +441,20 @@ impl CatalogEntry {
         for m in &self.measured {
             m.validate(&self.alias)?;
         }
+        if self.featured_rank.is_some() {
+            if self.status != Status::Verified {
+                return Err(format!(
+                    "{}: only a verified row may be featured, this one is {:?}",
+                    self.alias, self.status
+                ));
+            }
+            if self.kind != EntryKind::Model {
+                return Err(format!(
+                    "{}: a vision-tower row cannot be featured; it is not opened on its own",
+                    self.alias
+                ));
+            }
+        }
         Ok(())
     }
 }
@@ -521,7 +542,45 @@ mod entry_kind_tests {
             measured: Vec::new(),
             notes: None,
             mtp: None,
+            featured_rank: None,
         }
+    }
+
+    #[test]
+    fn only_a_verified_model_row_may_be_featured() {
+        let mut row = model_entry(EntryKind::Model, &["tokenizer.json"]);
+        row.featured_rank = Some(1);
+        let err = row.validate().unwrap_err();
+        assert!(err.contains("only a verified row"), "{err}");
+
+        row.status = Status::Verified;
+        row.validate()
+            .expect("a verified model row may be featured");
+
+        let mut tower = model_entry(EntryKind::VisionTower, &["preprocessor_config.json"]);
+        tower.status = Status::Verified;
+        tower.validate().expect("the tower itself is valid");
+        tower.featured_rank = Some(1);
+        let err = tower.validate().unwrap_err();
+        assert!(err.contains("vision-tower row cannot be featured"), "{err}");
+    }
+
+    /// Rows written before the field load as not featured, and a row that is
+    /// not featured writes no key, so existing files round-trip unchanged.
+    #[test]
+    fn featured_rank_defaults_to_none_and_is_omitted_when_absent() {
+        let row = model_entry(EntryKind::Model, &["tokenizer.json"]);
+        let json = serde_json::to_value(&row).unwrap();
+        assert!(json.get("featured_rank").is_none(), "{json}");
+        let back: CatalogEntry = serde_json::from_value(json).unwrap();
+        assert_eq!(back.featured_rank, None);
+
+        let mut featured = row.clone();
+        featured.featured_rank = Some(3);
+        let json = serde_json::to_value(&featured).unwrap();
+        assert_eq!(json["featured_rank"], 3);
+        let back: CatalogEntry = serde_json::from_value(json).unwrap();
+        assert_eq!(back.featured_rank, Some(3));
     }
 
     /// An entry with no `kind` key deserializes as `Model`, and the field

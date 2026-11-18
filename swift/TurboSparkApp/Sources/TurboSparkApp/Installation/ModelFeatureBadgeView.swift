@@ -53,10 +53,15 @@ public struct ModelFeatureBadgeView: View {
             if let iconSystemName {
                 Image(systemName: iconSystemName)
                     .themedFont(fontStep, weight: .semibold)
+                    .foregroundStyle(tintColor)
             }
+            // The category hue stays on the glyph, wash and edge. The words
+            // take the theme text color: cyan, mint and teal text on a light
+            // page measured far below 4.5:1.
             titleText
                 .themedFont(fontStep, weight: fontWeight)
                 .lineLimit(1)
+                .foregroundStyle(.appText)
         }
         .padding(.horizontal, horizontalPadding)
         .padding(.vertical, verticalPadding)
@@ -68,7 +73,6 @@ public struct ModelFeatureBadgeView: View {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .stroke(tintColor.opacity(borderOpacity), lineWidth: 0.5)
         }
-        .foregroundStyle(tintColor)
         .help(tooltipText)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(tooltipText)

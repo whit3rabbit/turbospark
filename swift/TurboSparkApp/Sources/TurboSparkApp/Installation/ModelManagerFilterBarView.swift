@@ -111,7 +111,7 @@ struct ModelManagerFilterBarView: View {
                     HStack(spacing: 4) {
                         Text("Tags:", bundle: .module)
                             .themedFont(.tiny)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.appSecondary)
 
                         AppChip(Text("All", bundle: .module), systemImage: "tag", isOn: selectedTag == nil) {
                             selectedTag = nil
