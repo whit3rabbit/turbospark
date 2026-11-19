@@ -119,10 +119,15 @@ impl Fixture {
 
     /// [`Self::command_with_home_device`] for another binary of this crate.
     fn binary_with_home_device(&self, binary: &str, home_device: u64) -> Command {
-        let mut path = std::env::current_exe().expect("test binary path");
-        path.pop(); // deps/
-        path.pop();
-        path.push(binary);
+        // Cargo's own path for this crate's binary. Popping two directories off
+        // the test binary assumed target/<profile>/deps/<test>, which newer
+        // cargo's build-dir layout (build/<pkg>/<hash>/out/<test>) breaks.
+        let path = match binary {
+            "turbospark-model" => env!("CARGO_BIN_EXE_turbospark-model"),
+            "turbospark-check" => env!("CARGO_BIN_EXE_turbospark-check"),
+            "turbospark-music" => env!("CARGO_BIN_EXE_turbospark-music"),
+            other => panic!("no CARGO_BIN_EXE mapping for {other}; add it here"),
+        };
         let mut command = Command::new(path);
         command
             .env("TURBOSPARK_HOME", &self.home)
