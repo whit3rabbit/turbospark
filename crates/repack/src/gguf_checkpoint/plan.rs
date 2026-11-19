@@ -6,7 +6,9 @@ use model_io::{ArchConfig, ModelFamily};
 
 use super::types::{ggml_scheme_name, read_tensor, GgufRepackError, FUSED_GATE_FIRST};
 use crate::gguf_header::GgufHeader;
-use crate::gguf_names::{map_gguf_name, GgufMapping};
+use crate::gguf_names::{
+    map_gguf_name, map_qwen_gdn_dense_mtp_head, GgufMapping, QWEN_GDN_DENSE_MTP_HEAD_TENSORS,
+};
 use crate::gturbo_writer::{ExpertBlob, LayerBlobs, SubTensor};
 use crate::ranged_download::RangeSource;
 
@@ -68,6 +70,12 @@ pub fn classify<'a>(
         rope_freqs: None,
         muse_qk_norms: Vec::new(),
     };
+    // The dense `qwen35` head's one block, collected and decided as a WHOLE
+    // after the loop: ingested only if every tensor maps and none is missing,
+    // otherwise ignored exactly as before this was read. A partial head
+    // would open and fail at `MtpState::build`; ignoring it keeps a file
+    // that installed before installing the same way.
+    let mut head: Vec<&'a str> = Vec::new();
     for name in header.tensors.keys() {
         if family == ModelFamily::Qwen4Exp && name == "per_layer_token_embd.weight" {
             if plan.ngram.replace(name.as_str()).is_some() {
@@ -79,10 +87,13 @@ pub fn classify<'a>(
             continue;
         }
         if let Some(layer) = head_block_index(name, num_layers) {
+            if family == ModelFamily::QwenGdnDense && layer == num_layers {
+                head.push(name.as_str());
+                continue;
+            }
             plan.ignored.push(format!(
                 "{name} (block {layer} is above the {num_layers}-block trunk: a \
-                 multi-token-prediction head, which this port ingests from the safetensors \
-                 checkpoint rather than from a GGUF)"
+                 multi-token-prediction head this port does not ingest from a GGUF)"
             ));
             continue;
         }
@@ -159,6 +170,29 @@ pub fn classify<'a>(
         "down",
         "down_biases",
     ];
+    if !head.is_empty() {
+        // `blk.<n>.<suffix>`: the suffix is everything after the second dot.
+        let suffix = |n: &str| n.splitn(3, '.').nth(2).map(str::to_string);
+        // A set, so a file repeating a mapped name cannot count twice.
+        let mapped: std::collections::BTreeSet<String> = head
+            .iter()
+            .filter_map(|n| suffix(n).and_then(|s| map_qwen_gdn_dense_mtp_head(&s)))
+            .collect();
+        let total = head.len();
+        if mapped.len() == total && total == QWEN_GDN_DENSE_MTP_HEAD_TENSORS {
+            plan.resident.extend(head);
+        } else {
+            for name in head {
+                plan.ignored.push(format!(
+                    "{name} (block {num_layers} is a multi-token-prediction head of {total} \
+                     tensors, {} of them recognized, where this port maps exactly \
+                     {QWEN_GDN_DENSE_MTP_HEAD_TENSORS}; the head is skipped and the trunk \
+                     installs alone)",
+                    mapped.len()
+                ));
+            }
+        }
+    }
     let rank = |r: &str| ORDER.iter().position(|o| *o == r).unwrap_or(ORDER.len());
     for sources in plan.routed.values_mut() {
         sources.sort_by_key(|s| rank(s.roles[0]));
@@ -515,5 +549,121 @@ mod tests {
         assert!(is_overflow(layer_file_bytes(
             &header, &arch, &plan, 0, stride
         )));
+    }
+
+    /// The fifteen `blk.<n>.` suffixes llama.cpp writes for a dense `qwen35`
+    /// head (`conversion/qwen.py`, `_QwenMtpMixin`).
+    const HEAD_SUFFIXES: [&str; 15] = [
+        "nextn.eh_proj.weight",
+        "nextn.enorm.weight",
+        "nextn.hnorm.weight",
+        "nextn.shared_head_norm.weight",
+        "attn_norm.weight",
+        "post_attention_norm.weight",
+        "attn_q.weight",
+        "attn_k.weight",
+        "attn_v.weight",
+        "attn_output.weight",
+        "attn_q_norm.weight",
+        "attn_k_norm.weight",
+        "ffn_gate.weight",
+        "ffn_up.weight",
+        "ffn_down.weight",
+    ];
+
+    /// A header with one trunk tensor on block 0 and the given suffixes on
+    /// each head block in `head_blocks`. Shapes and types are irrelevant to
+    /// `classify`.
+    fn header_with_head(head_blocks: &[usize], suffixes: &[&str]) -> GgufHeader {
+        let info = || GgufTensorInfo {
+            ggml_type: 0,
+            dims: vec![4],
+            offset: 0,
+        };
+        let mut tensors = BTreeMap::new();
+        tensors.insert("blk.0.attn_norm.weight".to_string(), info());
+        for &b in head_blocks {
+            for s in suffixes {
+                tensors.insert(format!("blk.{b}.{s}"), info());
+            }
+        }
+        GgufHeader {
+            version: 3,
+            metadata: BTreeMap::new(),
+            tensors,
+            alignment: 32,
+            data_region_start: 0,
+        }
+    }
+
+    #[test]
+    fn a_complete_qwen35_dense_head_is_ingested_under_mtp_names() {
+        let header = header_with_head(&[1], &HEAD_SUFFIXES);
+        let plan = classify(&header, ModelFamily::QwenGdnDense, 1).unwrap();
+        let head: Vec<_> = plan
+            .resident
+            .iter()
+            .filter(|n| n.starts_with("blk.1."))
+            .collect();
+        assert_eq!(head.len(), 15, "{:?}", plan.ignored);
+        assert!(plan.ignored.is_empty(), "{:?}", plan.ignored);
+        let canonical: std::collections::BTreeSet<String> = head
+            .iter()
+            .map(|n| {
+                match crate::gguf_names::map_gguf_name_with_head(n, ModelFamily::QwenGdnDense, 1)
+                    .unwrap()
+                {
+                    GgufMapping::Resident(c) => c,
+                    other => panic!("{n}: {other:?}"),
+                }
+            })
+            .collect();
+        assert!(
+            canonical.iter().all(|c| c.starts_with("mtp.")),
+            "{canonical:?}"
+        );
+        assert!(canonical.contains("mtp.fc.weight"));
+        assert!(canonical.contains("mtp.layers.0.self_attn.q_proj.weight"));
+        assert_eq!(canonical.len(), 15);
+    }
+
+    /// A head missing one tensor, or carrying one this port does not map, is
+    /// skipped whole and the trunk installs as before.
+    #[test]
+    fn an_incomplete_or_unknown_head_is_ignored_whole() {
+        let missing = header_with_head(&[1], &HEAD_SUFFIXES[..14]);
+        let mut extra: Vec<&str> = HEAD_SUFFIXES.to_vec();
+        extra.push("nextn.embed_tokens.weight");
+        let extra = header_with_head(&[1], &extra);
+        for header in [&missing, &extra] {
+            let plan = classify(header, ModelFamily::QwenGdnDense, 1).unwrap();
+            assert!(
+                plan.resident.iter().all(|n| !n.starts_with("blk.1.")),
+                "{:?}",
+                plan.resident
+            );
+            assert_eq!(plan.ignored.len(), header.tensors.len() - 1);
+        }
+    }
+
+    /// Only the first head block of the dense family is a candidate. A
+    /// second block, and every other family's head, keep the old ignore.
+    #[test]
+    fn deeper_blocks_and_other_families_still_ignore_the_head() {
+        let header = header_with_head(&[1, 2], &HEAD_SUFFIXES);
+        let plan = classify(&header, ModelFamily::QwenGdnDense, 1).unwrap();
+        assert_eq!(
+            plan.resident
+                .iter()
+                .filter(|n| n.starts_with("blk.1."))
+                .count(),
+            15
+        );
+        assert!(plan.resident.iter().all(|n| !n.starts_with("blk.2.")));
+        assert_eq!(plan.ignored.len(), 15);
+
+        let header = header_with_head(&[1], &HEAD_SUFFIXES);
+        let plan = classify(&header, ModelFamily::QwenGdnMoe, 1).unwrap();
+        assert!(plan.resident.iter().all(|n| !n.starts_with("blk.1.")));
     }
 }

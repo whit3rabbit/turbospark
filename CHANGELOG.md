@@ -30,6 +30,22 @@ when this file gets updated relative to the version bump and the tag.
 - The app's Discover section opens on a Featured tab: the featured rows that
   are not too large for this Mac, grouped by fit and ordered by rank. It
   replaces the Recommended tab; every other row is under All models.
+- Speculative decoding on K-quant GGUF trunks. New batched Q4_K, Q5_K, Q6_K,
+  Q8_0 and raw BF16 GEMM kernels serve the MTP verify, held bit-identical to
+  the GEMVs at every batch width 1..16. BF16 covers the F32 `ssm_alpha`/
+  `ssm_beta` that Q4_K_M and Q6_K `qwen35` files ship. The MTP gate admits
+  dtypes 1, 6, 7, 8 and 13 and, on a GGUF trunk, refuses at open when any
+  verify projection has another block type (Q3_K, for example).
+- Dense `qwen35` GGUFs ingest llama.cpp's `blk.<n>.nextn.*` MTP head under
+  `mtp.*` when all 15 tensors are present, removing the converter's `+1` from
+  the head's seven norms. A partial or unrecognized head is skipped whole, as
+  before. On `unsloth/Qwen3.5-2B-MTP-GGUF`, the Q8_0, Q6_K, Q4_K_M and Q4_K_S
+  files speculate with greedy output identical to non-speculative decode, and
+  the accept-length probe is lossless at blocks 2 to 15 on Q4_K_S. Single
+  unwarmed runs, not benchmark rows (`docs/MTP.md`).
+- `mtp_accept_length_probe` now ends each batched round the way the product
+  loop does (round checkpoint, retaining rollback, `commit_pending`). Under
+  the default lazy GDN tape it previously never committed and diverged.
 
 ### Changed
 - Rust API, source-breaking for code that builds these with struct literals
@@ -55,8 +71,9 @@ when this file gets updated relative to the version bump and the tag.
   dequantizes that one tensor, restores the V-head order and stores it as Q8_0
   (counted as lossy), and the probe warns about it. Checked on a real
   `netprojects/Qwen3.8-27B-pi-adapted-GGUF` Q4_K_M install (coherent chat
-  decode, speculation off). Q3_K, Q5_K, Q6_K and IQ `ssm_out` take the same
-  path and have no real-file run yet.
+  decode, and with speculation on, greedy output identical to plain decode)
+  and on the 2B MTP Q4_K_M and Q4_K_S (Q5_K `ssm_out`). Q3_K, Q6_K and IQ
+  `ssm_out` take the same path and have no real-file run yet.
 
 ## [0.9.0] - 2026-11-15
 

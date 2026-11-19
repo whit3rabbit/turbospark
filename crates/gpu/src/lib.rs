@@ -82,6 +82,8 @@ mod dequant_int8_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_iq_gemv;
 #[cfg(target_os = "macos")]
+mod dequant_kquant_gemm_batch;
+#[cfg(target_os = "macos")]
 mod dequant_legacy_gemv;
 #[cfg(target_os = "macos")]
 mod dequant_q2_k_gemv;
@@ -279,6 +281,11 @@ pub use dequant_iq_gemv::{
     IQ2_XS_BLOCK_BYTES, IQ2_XS_BLOCK_ELEMS, IQ2_XXS_BLOCK_BYTES, IQ2_XXS_BLOCK_ELEMS,
     IQ3_S_BLOCK_BYTES, IQ3_S_BLOCK_ELEMS, IQ3_XXS_BLOCK_BYTES, IQ3_XXS_BLOCK_ELEMS,
     IQ4_NL_BLOCK_BYTES, IQ4_NL_BLOCK_ELEMS, IQ4_XS_BLOCK_BYTES, IQ4_XS_BLOCK_ELEMS,
+};
+#[cfg(target_os = "macos")]
+pub use dequant_kquant_gemm_batch::{
+    bf16_gemm_resident, dequant_kquant_gemm_resident, encode_bf16_gemm_resident,
+    encode_dequant_kquant_gemm_resident, KQuantBatchType, KQuantResidentMatrix,
 };
 #[cfg(target_os = "macos")]
 pub use dequant_legacy_gemv::{

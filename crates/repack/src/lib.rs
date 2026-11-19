@@ -182,7 +182,9 @@ pub use synthetic_flint::{
 };
 pub use synthetic_gguf::{
     build_synthetic_gemma4_gguf, build_synthetic_gpt_oss_gguf, build_synthetic_qwen2_gguf,
-    GgufBuilder, GgufFileAndRanges, QuantMix, SyntheticGgufShape, SyntheticGptOssShape,
+    build_synthetic_qwen35_dense_gguf, GgufBuilder, GgufFileAndRanges, QuantMix,
+    SyntheticGgufShape, SyntheticGptOssShape, QWEN35_GGUF_HIDDEN, QWEN35_GGUF_LAYERS,
+    QWEN35_GGUF_VOCAB,
 };
 pub use synthetic_lfm3::{
     build_synthetic_lfm3_install, build_synthetic_lfm3_install_with_rope_freqs,
