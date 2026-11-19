@@ -365,3 +365,155 @@ pub fn yarn_frequencies(
         mscale,
     }
 }
+
+/// Llama 3.x rope scaling (`rope_scaling.rope_type == "llama3"`) as one
+/// DIVISOR per rotated pair, the shape GGUF ships as `rope_freqs.weight`.
+///
+/// The angle for pair `p` at position `t` is then
+/// `t * base^(-2p/rotary_dim) / factors[p]`, which is llama.cpp's reading of
+/// `rope_freqs.weight` (`theta / freq_factors[i]` in `ggml_rope_ext`) and
+/// the vector `convert_hf_to_gguf.py` writes from these same five numbers.
+/// One representation for both intakes is the point: a GGUF Llama 3.1 file
+/// carries ONLY the vector (no `rope.scaling.*` keys), so the HF path builds
+/// the vector too rather than carrying the formula.
+///
+/// Bands, by wavelength `2*pi / freq`:
+/// - shorter than `original_context / high_freq_factor`: divisor 1 (kept);
+/// - longer than `original_context / low_freq_factor`: divisor `factor`;
+/// - between: the smooth blend `1 / ((1 - s) / factor + s)`.
+///
+/// Computed in f64 and narrowed once, so the f32 result does not depend on
+/// summation order. Returns `None` for parameters HF itself would reject
+/// (non-positive factor or context, `high_freq_factor <= low_freq_factor`),
+/// so a malformed config is refused rather than turned into a table.
+#[must_use]
+pub fn llama3_rope_factors(
+    rotary_dim: usize,
+    base: f64,
+    factor: f64,
+    low_freq_factor: f64,
+    high_freq_factor: f64,
+    original_context: f64,
+) -> Option<Vec<f32>> {
+    let valid = rotary_dim > 0
+        && rotary_dim % 2 == 0
+        && base > 1.0
+        && factor > 0.0
+        && low_freq_factor > 0.0
+        && high_freq_factor > low_freq_factor
+        && original_context > 0.0
+        && [
+            base,
+            factor,
+            low_freq_factor,
+            high_freq_factor,
+            original_context,
+        ]
+        .iter()
+        .all(|v| v.is_finite());
+    if !valid {
+        return None;
+    }
+    let low_freq_wavelen = original_context / low_freq_factor;
+    let high_freq_wavelen = original_context / high_freq_factor;
+    let factors = (0..rotary_dim / 2)
+        .map(|p| {
+            let freq = base.powf(-((2 * p) as f64) / rotary_dim as f64);
+            let wavelen = 2.0 * std::f64::consts::PI / freq;
+            let divisor = if wavelen < high_freq_wavelen {
+                1.0
+            } else if wavelen > low_freq_wavelen {
+                factor
+            } else {
+                let smooth = (original_context / wavelen - low_freq_factor)
+                    / (high_freq_factor - low_freq_factor);
+                1.0 / ((1.0 - smooth) / factor + smooth)
+            };
+            divisor as f32
+        })
+        .collect();
+    Some(factors)
+}
+
+/// The per-pair angle table `rope_neox_freqs` binds, from a base and one
+/// divisor per pair (see [`llama3_rope_factors`]). With every divisor 1 this
+/// is exactly [`yarn_frequencies`]' unscaled table, which is what a test
+/// pins so the two cannot drift apart.
+///
+/// # Panics
+/// If `factors.len() != rotary_dim / 2`: a table one pair short rotates the
+/// last pair with whatever the buffer holds past the end.
+#[must_use]
+pub fn rope_frequencies_with_factors(rotary_dim: usize, base: f32, factors: &[f32]) -> Vec<f32> {
+    assert!(rotary_dim % 2 == 0, "rotary_dim must be even");
+    assert_eq!(
+        factors.len(),
+        rotary_dim / 2,
+        "one rope divisor per rotated pair"
+    );
+    factors
+        .iter()
+        .enumerate()
+        .map(|(p, &divisor)| base.powf(-((2 * p) as f32) / rotary_dim as f32) / divisor)
+        .collect()
+}
+
+#[cfg(test)]
+mod llama3_tests {
+    use super::*;
+
+    /// Llama 3.1/3.2's published scaling: head_dim 128, theta 500000,
+    /// factor 8, low 1, high 4, original 8192. Expected values were computed
+    /// from HF's `_compute_llama3_parameters` formula in f64 and agree with
+    /// the `rope_freqs.weight` llama.cpp's converter writes for Llama 3.1
+    /// (29 ones, a six-step ramp, then 8s).
+    #[test]
+    fn llama31_factors_match_the_published_profile() {
+        let f = llama3_rope_factors(128, 500000.0, 8.0, 1.0, 4.0, 8192.0).unwrap();
+        assert_eq!(f.len(), 64);
+        assert!(f[..29].iter().all(|&x| x == 1.0), "{:?}", &f[..29]);
+        let ramp = [1.207484, 1.553415, 2.026313, 2.69453, 3.684253, 5.257327];
+        for (got, want) in f[29..35].iter().zip(ramp) {
+            assert!((got - want).abs() < 1e-5, "{got} vs {want}");
+        }
+        assert!(f[35..].iter().all(|&x| x == 8.0), "{:?}", &f[35..]);
+    }
+
+    /// The audio crate's tiny llama3 fixture
+    /// (`crates/audio/testdata/lm/llama_llama3_rope`): head_dim 8, theta
+    /// 10000, factor 4, original context 8. Pair 0 sits in the smooth band.
+    #[test]
+    fn tiny_fixture_factors() {
+        let f = llama3_rope_factors(8, 10000.0, 4.0, 1.0, 4.0, 8.0).unwrap();
+        let want = [std::f32::consts::PI, 4.0, 4.0, 4.0];
+        for (got, want) in f.iter().zip(want) {
+            assert!((got - want).abs() < 1e-6, "{got} vs {want}");
+        }
+    }
+
+    #[test]
+    fn unit_divisors_reproduce_the_unscaled_table() {
+        let ones = vec![1.0f32; 64];
+        let got = rope_frequencies_with_factors(128, 500000.0, &ones);
+        let want = yarn_frequencies(128, 500000.0, 0.0, 0, 0.0, 0.0).frequencies;
+        assert_eq!(got, want);
+    }
+
+    #[test]
+    fn divisors_divide_the_frequency() {
+        let f = llama3_rope_factors(128, 500000.0, 8.0, 1.0, 4.0, 8192.0).unwrap();
+        let scaled = rope_frequencies_with_factors(128, 500000.0, &f);
+        let plain = rope_frequencies_with_factors(128, 500000.0, &[1.0; 64]);
+        assert_eq!(scaled[0], plain[0]);
+        assert!((scaled[63] * 8.0 - plain[63]).abs() <= plain[63] * 1e-6);
+    }
+
+    #[test]
+    fn malformed_parameters_are_refused() {
+        assert!(llama3_rope_factors(128, 500000.0, 0.0, 1.0, 4.0, 8192.0).is_none());
+        assert!(llama3_rope_factors(128, 500000.0, 8.0, 4.0, 4.0, 8192.0).is_none());
+        assert!(llama3_rope_factors(128, 500000.0, 8.0, 1.0, 4.0, 0.0).is_none());
+        assert!(llama3_rope_factors(127, 500000.0, 8.0, 1.0, 4.0, 8192.0).is_none());
+        assert!(llama3_rope_factors(128, f64::NAN, 8.0, 1.0, 4.0, 8192.0).is_none());
+    }
+}

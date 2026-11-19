@@ -104,6 +104,7 @@ pub fn tiny_lfm3_arch(vocab_size: i64, num_layers: i64) -> ArchConfig {
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
         short_conv_kernel_size: TAPS as i64,
+        rope_freq_factors: Vec::new(),
         ple: PleConfig::NONE,
     }
 }

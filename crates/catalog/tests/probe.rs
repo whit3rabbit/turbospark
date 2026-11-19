@@ -279,19 +279,19 @@ fn an_unregistered_model_type_is_refused_and_the_string_is_still_reported() {
     // first still resolves through the second, which is the multimodal
     // checkpoints' convention working as designed.
     let config = qwen35_config(4, 64)
-        .replace("\"qwen3_5\"", "\"mistral\"")
-        .replace("\"qwen3_5_text\"", "\"mistral_text\"");
+        .replace("\"qwen3_5\"", "\"olmo2\"")
+        .replace("\"qwen3_5_text\"", "\"olmo2_text\"");
     let report = evaluate_config(&config, &repo(), None).expect("the config parses");
     match &report.verdict {
         Verdict::Refused(why) => {
-            assert!(why.contains("mistral"), "{why}");
+            assert!(why.contains("olmo2"), "{why}");
             assert!(why.contains("arch_registry.rs"), "{why}");
         }
         other => panic!("expected a refusal, got {other:?}"),
     }
     assert_eq!(
         report.architecture.as_deref(),
-        Some("mistral"),
+        Some("olmo2"),
         "an unrecognized model_type is more useful printed than elided"
     );
 }
@@ -646,4 +646,80 @@ fn qwen3_moe_and_unknown_model_types_stay_refused() {
             other => panic!("{mt}: expected a refusal, got {other:?}"),
         }
     }
+}
+
+/// `mlx-community/Llama-3.2-1B-Instruct-4bit` @
+/// 08231374eeacb049a0eade7922910865b8fce912, trimmed to the keys the parser
+/// reads (the witness for the `llama` HF row).
+const LLAMA32_1B_MLX4: &str = r#"{
+    "architectures": ["LlamaForCausalLM"], "model_type": "llama",
+    "hidden_size": 2048, "intermediate_size": 8192, "num_attention_heads": 32,
+    "num_hidden_layers": 16, "num_key_value_heads": 8, "head_dim": 64,
+    "vocab_size": 128256, "max_position_embeddings": 131072,
+    "rms_norm_eps": 1e-05, "hidden_act": "silu", "rope_theta": 500000.0,
+    "rope_scaling": {"factor": 32.0, "high_freq_factor": 4.0, "low_freq_factor": 1.0,
+                     "original_max_position_embeddings": 8192, "rope_type": "llama3"},
+    "tie_word_embeddings": true, "attention_bias": false, "mlp_bias": false,
+    "quantization": {"group_size": 64, "bits": 4}
+}"#;
+
+#[test]
+fn an_mlx_llama3_config_is_runnable_with_its_rope_divisors() {
+    let report = evaluate_config(LLAMA32_1B_MLX4, &repo(), None).unwrap();
+    assert_eq!(report.verdict, Verdict::Runnable, "{:?}", report.verdict);
+    assert_eq!(report.family, Some(model_io::ModelFamily::Llama));
+    assert_eq!(report.affine, Some((4, 64)));
+    let arch = report.arch.expect("arch");
+    assert_eq!(arch.num_experts, 0);
+    assert_eq!(arch.rope_freq_factors.len(), 32);
+    assert!(arch.tie_word_embeddings);
+}
+
+/// No quantize-on-install parity gate exists for `llama` yet
+/// (`quantize_on_install::families_without_a_gate_stay_unadmitted`), so a
+/// BF16 HF Llama keeps the unquantized refusal and names the way out.
+#[test]
+fn an_unquantized_llama_checkpoint_is_refused_until_its_parity_gate_lands() {
+    let config = LLAMA32_1B_MLX4.replace(
+        "\"mlp_bias\": false,\n    \"quantization\": {\"group_size\": 64, \"bits\": 4}",
+        "\"mlp_bias\": false",
+    );
+    assert!(
+        !config.contains("quantization"),
+        "fixture edit missed: {config}"
+    );
+    let report = evaluate_config(&config, &repo(), None).expect("the config parses");
+    match &report.verdict {
+        Verdict::Refused(why) => assert!(why.contains("unquantized"), "{why}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+/// `openbmb/MiniCPM5-2B` @ 42433e90dad95123ab87729fd7011e7110629556 says
+/// `model_type: llama` with `rms_norm_eps: 1e-06`, which the llama flow
+/// does not apply. Refused, not installed with the wrong epsilon.
+#[test]
+fn a_llama_config_with_another_epsilon_is_refused() {
+    let config = LLAMA32_1B_MLX4.replace("\"rms_norm_eps\": 1e-05", "\"rms_norm_eps\": 1e-06");
+    let report = evaluate_config(&config, &repo(), None).expect("the config parses");
+    match &report.verdict {
+        Verdict::Refused(why) => assert!(why.contains("rms_norm_eps"), "{why}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_mlx_mistral_config_resolves_to_the_llama_family() {
+    let config = r#"{
+        "architectures": ["MistralForCausalLM"], "model_type": "mistral",
+        "hidden_size": 4096, "intermediate_size": 14336, "num_attention_heads": 32,
+        "num_hidden_layers": 32, "num_key_value_heads": 8, "vocab_size": 32000,
+        "max_position_embeddings": 32768, "rms_norm_eps": 1e-05, "hidden_act": "silu",
+        "rope_theta": 1000000.0, "sliding_window": null, "tie_word_embeddings": false,
+        "quantization": {"group_size": 64, "bits": 4}
+    }"#;
+    let report = evaluate_config(config, &repo(), None).unwrap();
+    assert_eq!(report.verdict, Verdict::Runnable, "{:?}", report.verdict);
+    assert_eq!(report.family, Some(model_io::ModelFamily::Llama));
+    assert!(report.arch.unwrap().rope_freq_factors.is_empty());
 }

@@ -202,6 +202,7 @@ pub(crate) fn stream_mlx(
         ModelFamily::Qwen3Dense => {
             repack::parse_qwen3_config(&config_text).map_err(|e| e.to_string())
         }
+        ModelFamily::Llama => repack::parse_llama_config(&config_text).map_err(|e| e.to_string()),
         ModelFamily::Qwen3Vl => {
             repack::parse_qwen3_vl_config(&config_text).map_err(|e| e.to_string())
         }
@@ -367,8 +368,12 @@ pub(crate) fn stream_mlx(
     } else {
         None
     };
-    // Text-only MLX Qwen3 spells the trunk `model.*` just as Qwen2 does.
-    if matches!(family, ModelFamily::Qwen2Dense | ModelFamily::Qwen3Dense) {
+    // Text-only MLX Qwen3 spells the trunk `model.*` just as Qwen2 does, and
+    // so do Llama and Mistral (HF and MLX alike).
+    if matches!(
+        family,
+        ModelFamily::Qwen2Dense | ModelFamily::Qwen3Dense | ModelFamily::Llama
+    ) {
         for header in &mut headers {
             repack::canonicalize_qwen2_header(header).map_err(|e| e.to_string())?;
         }
@@ -544,6 +549,11 @@ pub(crate) fn stream_mlx(
             dir, &arch, &model_id, &shards, &quant, report,
         ),
         ModelFamily::Qwen3Dense => repack::write_qwen3_dense_install_streamed(
+            dir, &arch, &model_id, &shards, &quant, report,
+        ),
+        // MISSING THIS ARM IS THE WORST OF THE THREE (`docs/NEW_MODEL.md`
+        // Phase 7), same as Muse Glimmer's above.
+        ModelFamily::Llama => repack::write_llama_dense_install_streamed(
             dir, &arch, &model_id, &shards, &quant, report,
         ),
         ModelFamily::Qwen3Vl => {

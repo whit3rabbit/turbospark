@@ -199,6 +199,7 @@ pub fn parse_muse_glimmer_config(json: &str) -> Result<ArchConfig, Gemma4Error> 
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
         short_conv_kernel_size: 0,
+        rope_freq_factors: Vec::new(),
         ple: PleConfig::NONE,
     })
 }

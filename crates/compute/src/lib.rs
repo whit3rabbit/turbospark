@@ -171,8 +171,8 @@ pub use quant_gguf_mxfp4::{
 };
 pub use rms_norm::{rms_norm, rms_norm_centered, rms_norm_grouped, rms_norm_grouped_centered};
 pub use rope::{
-    mrope_component_selector, rope_mrope_interleaved, rope_neox, rope_neox_subdim, rope_paired,
-    yarn_frequencies, YarnSpec,
+    llama3_rope_factors, mrope_component_selector, rope_frequencies_with_factors,
+    rope_mrope_interleaved, rope_neox, rope_neox_subdim, rope_paired, yarn_frequencies, YarnSpec,
 };
 pub use sampling::logit_softcap_softmax;
 pub use short_conv::short_conv_reference;

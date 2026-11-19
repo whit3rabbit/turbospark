@@ -5,7 +5,7 @@ Maps GGUF tensor names onto the canonical HF-style names the repack pipeline use
 
 ## Interface
 - `map_gguf_name` [mod.rs:map_gguf_name]: `(name, ModelFamily) -> Result<GgufMapping, GgufNameError>`
-- `GgufMapping` [mod.rs:GgufMapping]: Resident(name), Routed{layer, role}, RoutedFusedGateUp{layer}, Ignored{reason}, ZeroTailRopeFreqs
+- `GgufMapping` [mod.rs:GgufMapping]: Resident(name), Routed{layer, role}, RoutedFusedGateUp{layer}, Ignored{reason}, ZeroTailRopeFreqs, LlamaRopeFreqFactors
 - `GgufNameError` [mod.rs:GgufNameError]: Unmapped, BadLayerIndex, PreMergeExperts, UnsupportedRopeScaling and related
 - `gguf_architecture` [mod.rs:gguf_architecture]: family to GGUF `general.architecture` string (e.g. Qwen 3.6 is `qwen35moe`)
 - `family_for_architecture` [mod.rs:family_for_architecture]: inverse lookup

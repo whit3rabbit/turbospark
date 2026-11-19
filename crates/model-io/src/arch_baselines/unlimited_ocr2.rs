@@ -69,6 +69,7 @@ pub fn unlimited_ocr2_12l() -> ArchConfig {
         },
         vision: VisionConfig::NONE,
         short_conv_kernel_size: 0,
+        rope_freq_factors: Vec::new(),
         ple: PleConfig::NONE,
         dense_lead_intermediate_size: 6848,
         num_dense_leading_layers: 1,

@@ -67,12 +67,11 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // `gemma3_text` safetensors path (which needs the `+1` norm bake) is not
     // implemented, so the HF registry keeps refusing it.
     ("gemma3", ModelFamily::Gemma3),
-    // Promoted out of the planned table by ROADMAP Phase M2, and PARTIALLY:
-    // this string covers dense Llama 2/3.x and Mistral as well as the Mixtral
-    // MoEs, and only the MoE half has a decode flow. The dense half is
-    // refused at `RealForwardRunner::open`, by name, rather than here --
-    // nothing in a GGUF's architecture string says which half a file is, only
-    // its `expert_count` does.
+    // Promoted out of the planned table by ROADMAP Phase M2. This string
+    // covers dense Llama 2/3.x and Mistral as well as the Mixtral MoEs, and
+    // only `expert_count` tells the halves apart; both run (M4 made the dense
+    // half runnable). Llama 3.x's `rope_freqs.weight` is read by value into
+    // `ArchConfig::rope_freq_factors`.
     ("llama", ModelFamily::Llama),
     // llama.cpp named Qwen 3.6's converter after the 3.5 series it shares a
     // graph with; a real Qwen 3.6 GGUF says this, not "qwen36".
@@ -297,6 +296,18 @@ const SUPPORTED_HF: &[(&str, ModelFamily)] = &[
     // (`quantize_on_install::family_admits_quantize_on_install`, gated by
     // repack's `qwen3_quantize_parity_local` test), unquantized ones.
     ("qwen3", ModelFamily::Qwen3Dense),
+    // Dense Llama 2/3.x through the llama flow (`llama_config.rs`). Read off
+    // `unsloth/Llama-3.2-1B-Instruct` @ 5a8abab4a5d6f164389b1079fb721cfab8d7126c
+    // and `mlx-community/Llama-3.2-1B-Instruct-4bit` @
+    // 08231374eeacb049a0eade7922910865b8fce912. The parser admits only a ROOT
+    // `llama`, so a wrapper whose `text_config.model_type` is `llama` (LLaVA)
+    // resolves here and is then refused by the parser, not installed.
+    ("llama", ModelFamily::Llama),
+    // Mistral 7B v0.2+ is the llama graph under its own string. Read off
+    // `mistralai/Mistral-7B-Instruct-v0.2` @
+    // 63a8b081895390a26e140280378bc85ec8bce07a (`sliding_window: null`; v0.1's
+    // live window is refused by the parser).
+    ("mistral", ModelFamily::Llama),
     // The SIXTEENTH family. Read off `RecursiveSI/flint-int4` @
     // 3b93f9053b530488405ae9fca51d4900d6ce21f0, whose root `model_type` is
     // `flint` (`architectures: ["FlintForCausalLM"]`). The checkpoint ships
