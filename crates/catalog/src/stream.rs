@@ -354,6 +354,31 @@ pub(crate) fn stream_mlx(
         .map(|s| repack::fetch_safetensors_header(s).map_err(|e| format!("shard header: {e}")))
         .collect::<Result<Vec<_>, _>>()?;
 
+    // A LoRA adapter merges into the base's BF16 bytes, so it is located
+    // against the HF spelling and BEFORE the headers are renamed below (byte
+    // ranges survive the rename; names do not). The base ships unquantized,
+    // so the quantize-on-install path above is already the one taken.
+    let lora = match &plan.adapter {
+        Some(adapter) => {
+            if quantize_on_install.is_none() {
+                return Err(format!(
+                    "{}: an adapter merges into an unquantized base, but this checkpoint \
+                     already declares a quantization block",
+                    plan.weights
+                ));
+            }
+            Some(load_lora_adapter(
+                adapter,
+                &headers,
+                client,
+                byte_progress,
+                cancel,
+                progress,
+            )?)
+        }
+        None => None,
+    };
+
     // Quantize-on-install takes the HF transformers spelling as well as the
     // MLX one; the layout also decides the norm shift further down.
     let source_layout = if quantize_on_install.is_some() {
@@ -463,8 +488,27 @@ pub(crate) fn stream_mlx(
     }
     // The quantized VIEW of the shards: the walk below then sees exactly the
     // checkpoint `mlx_lm.convert` would have written, so no writer changes.
-    let source_refs: Vec<&dyn RangeSource> =
-        sources.iter().map(|s| s as &dyn RangeSource).collect();
+    // Base shards read through the LoRA merge when an adapter is set. The MTP
+    // shards pushed after them are never merged: the adapter does not touch
+    // `mtp.*`.
+    let merged: Vec<repack::lora_merge::LoraMergedSource> = match &lora {
+        Some((adapter, targets)) => targets
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                repack::lora_merge::LoraMergedSource::new(&sources[i], adapter, t.clone())
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    let source_refs: Vec<&dyn RangeSource> = sources
+        .iter()
+        .enumerate()
+        .map(|(i, s)| match merged.get(i) {
+            Some(m) => m as &dyn RangeSource,
+            None => s as &dyn RangeSource,
+        })
+        .collect();
     let quantized = match (quantize_on_install, source_layout) {
         (Some(bits), Some(layout)) => {
             // The mean cross-checks a norm SHIFT, so only a family that shifts
@@ -926,6 +970,79 @@ fn write_vision_preprocessor(
 /// and test keeps this exact return shape (no shard filename, which nothing
 /// here has ever needed) while the general form gains a second caller in
 /// [`stream_vision_sidecar`].
+/// Download a PEFT adapter, check it against the base shard headers, and
+/// locate its targets per shard (`headers` order).
+///
+/// The adapter file is read whole in one request (~640 MB for a 27B r=32
+/// adapter) rather than per factor, and its factors are decoded to f32
+/// (~1.3 GB held for the walk) so the merge never touches the network again.
+fn load_lora_adapter(
+    adapter: &RepoRef,
+    headers: &[SafetensorsHeader],
+    client: &Client,
+    byte_progress: Option<&ByteProgressCallback>,
+    cancel: Option<&CancelFlag>,
+    progress: &mut impl FnMut(&str),
+) -> Result<
+    (
+        repack::lora_merge::LoraAdapter,
+        Vec<repack::lora_merge::MergeTargets>,
+    ),
+    String,
+> {
+    progress(&format!("fetching the LoRA adapter {adapter}"));
+    let cfg_text = String::from_utf8(client.get(&adapter.file_url("adapter_config.json"))?)
+        .map_err(|e| format!("{adapter}: adapter_config.json is not UTF-8: {e}"))?;
+    let cfg = repack::lora_merge::parse_adapter_config(&cfg_text)
+        .map_err(|e| format!("{adapter}: {e}"))?;
+    let source = range_source(
+        adapter.file_url("adapter_model.safetensors"),
+        byte_progress,
+        client,
+        cancel,
+        None,
+    );
+    let header = repack::fetch_safetensors_header(&source)
+        .map_err(|e| format!("{adapter}: adapter header: {e}"))?;
+    let end = header
+        .tensors
+        .keys()
+        .filter_map(|n| header.absolute_range(n))
+        .map(|(_, e)| e)
+        .max()
+        .ok_or_else(|| format!("{adapter}: the adapter file carries no tensors"))?;
+    let bytes = source
+        .read_range(0, end)
+        .map_err(|e| format!("{adapter}: reading the adapter: {e}"))?;
+    let loaded = repack::lora_merge::LoraAdapter::load(
+        &cfg,
+        &header,
+        &repack::MemoryRangeSource::new(&bytes),
+    )
+    .map_err(|e| format!("{adapter}: {e}"))?;
+    loaded
+        .check_against(headers)
+        .map_err(|e| format!("{adapter}: {e}"))?;
+    let targets = headers
+        .iter()
+        .map(|h| loaded.locate(h))
+        .collect::<Result<Vec<_>, _>>()?;
+    let located: usize = targets.iter().map(|t| t.len()).sum();
+    if located != loaded.len() {
+        return Err(format!(
+            "{adapter}: {} adapter modules but only {located} located in the base shards",
+            loaded.len()
+        ));
+    }
+    progress(&format!(
+        "merging {} LoRA modules (rank {}, alpha {}) into the base as it streams",
+        loaded.len(),
+        cfg.rank,
+        cfg.alpha
+    ));
+    Ok((loaded, targets))
+}
+
 fn fetch_mtp_shards(
     mtp: &RepoRef,
     client: &Client,

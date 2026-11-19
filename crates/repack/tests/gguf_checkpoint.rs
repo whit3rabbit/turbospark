@@ -537,6 +537,91 @@ fn qwens_gated_deltanet_parameters_are_rewritten_into_the_mlx_convention() {
     assert_eq!(out.lossy_narrowing, vec![("blk.0.ssm_a".to_string(), 3)]);
 }
 
+/// A standard llama.cpp Q4_K_M stores `ssm_out` as Q4_K, whose 256-element
+/// block is wider than one V head, so the column de-interleave cannot move
+/// bytes. The walk must dequantize, permute, and store Q8_0 rather than
+/// refuse after the download (the real Qwen3.8-27B pi-adapted Q4_K_M did).
+/// Here the heads are 64 wide (a quarter block) and the oracle is built
+/// independently: dequantize the SOURCE, place head `h` at `V_HEAD_MAP[h]`,
+/// quantize each row with the reference Q8_0 quantizer.
+#[test]
+fn a_k_quant_ssm_out_narrower_than_a_block_is_requantized_to_q8_0_in_v_head_order() {
+    const Q4_K: u32 = 12;
+    const HEAD: usize = 64;
+    const ROWS: usize = 64;
+    let mut source = Vec::new();
+    for r in 0..ROWS {
+        // One Q4_K superblock per row (256 columns): d, dmin (finite f16),
+        // 12 scale bytes, 128 nibble bytes, all varying with the row so a
+        // moved row or head cannot hide behind a constant.
+        source.extend_from_slice(&0x211Eu16.to_le_bytes());
+        source.extend_from_slice(&0x1D1Eu16.to_le_bytes());
+        source.extend((0..12).map(|i| ((r * 7 + i * 13) % 61 + 1) as u8));
+        source.extend((0..128).map(|i| ((r * 31 + i * 17) % 251) as u8));
+    }
+    assert_eq!(source.len(), ROWS * 144);
+
+    let (bytes, _) = GgufBuilder::new()
+        .metadata_str("general.architecture", "qwen35moe")
+        .metadata_u32("qwen35moe.block_count", 1)
+        .metadata_u32("qwen35moe.embedding_length", 64)
+        .metadata_u32("qwen35moe.attention.head_count", 4)
+        .metadata_u32("qwen35moe.attention.head_count_kv", 2)
+        .metadata_u32("qwen35moe.expert_count", 4)
+        .metadata_u32("qwen35moe.expert_used_count", 2)
+        .metadata_u32("qwen35moe.expert_feed_forward_length", 16)
+        .metadata_u32("qwen35moe.full_attention_interval", 4)
+        .metadata_u32("qwen35moe.ssm.group_count", 2)
+        .metadata_u32("qwen35moe.ssm.time_step_rank", 4)
+        .metadata_u32("qwen35moe.ssm.state_size", HEAD as u32)
+        .metadata_u32("qwen35moe.ssm.inner_size", (4 * HEAD) as u32)
+        .metadata_u32("qwen35moe.ssm.conv_kernel", 2)
+        .q8_0_tensor("token_embd.weight", &[64, 128], 1)
+        .tensor(
+            "blk.0.ssm_out.weight",
+            Q4_K,
+            &[(4 * HEAD) as u64, ROWS as u64],
+            source.clone(),
+        )
+        .build();
+    let header = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let out = orchestrate_gguf_checkpoint(&header, &MemoryRangeSource::new(&bytes)).expect("walk");
+
+    let got = out
+        .resident
+        .iter()
+        .find_map(|e| match e {
+            ResidentEntrySpec::Raw(r)
+                if r.name == "language_model.model.layers.0.linear_attn.out_proj.weight" =>
+            {
+                Some(r)
+            }
+            _ => None,
+        })
+        .expect("out_proj entry");
+    assert_eq!(got.dtype, DTYPE_GGUF_Q8_0);
+
+    let cols = 4 * HEAD;
+    let dequant = compute::quant_gguf::dequantize_q4_k(&source, ROWS * cols);
+    let mut want = Vec::new();
+    for r in 0..ROWS {
+        let mut row = vec![0f32; cols];
+        for (h, &to) in V_HEAD_MAP.iter().enumerate() {
+            row[to * HEAD..(to + 1) * HEAD]
+                .copy_from_slice(&dequant[r * cols + h * HEAD..r * cols + (h + 1) * HEAD]);
+        }
+        want.extend_from_slice(&compute::quant_gguf::quantize_q8_0(&row));
+    }
+    assert_eq!(got.bytes, want, "rows must be in grouped V-head order");
+    assert!(
+        out.lossy_narrowing
+            .iter()
+            .any(|(n, c)| n == "blk.0.ssm_out.weight" && *c == ROWS * cols),
+        "the re-encode is not byte-lossless and must be counted: {:?}",
+        out.lossy_narrowing
+    );
+}
+
 /// `ssm_a` is `-exp(A_log)`, so a non-negative value means the tensor is not
 /// what this walk thinks it is. Loud beats a NaN reaching the install: a
 /// silent `ln` of a negative number would decode as gibberish 19 GB later.

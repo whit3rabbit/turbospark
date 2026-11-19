@@ -888,6 +888,33 @@
       "notes": "Same architecture as ternary27b and bonsai27b, at a third quantization. Renders in NON-THINKING mode, so the shared 1024-token budget is enough. No merges.txt: this conversion embeds the merges in tokenizer.json. Has no cross-engine KL number (see qwen36)."
     },
     {
+      "alias": "qwen38-27b-pi",
+      "name": "Qwen3.8 27B pi-adapted (MLX INT4, group 64)",
+      "family": "qwen35",
+      "source": {
+        "kind": "mlx",
+        "repo": "tozuo/Qwen3.8-27B-pi-adapted-MLX-4bit",
+        "revision": "a88366df619a4fa6647ba48e3aaa90707fce7c11",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json",
+          "vocab.json"
+        ]
+      },
+      "download_bytes": 16054541349,
+      "install_bytes": 15200000000,
+      "status": "runs",
+      "gates": [],
+      "notes": "The harness-hub/Qwen3.8-27B-pi-adapted LoRA (r=32, alpha=64, RL-tuned for the pi coding agent) merged into Qwen3.8-27B BF16 and quantized to MLX affine INT4 group 64 by tozuo. Shard bytes total exactly the same as mlx-community/Qwen3.8-27B-4bit (16,054,541,349), and the repo declares model_type qwen3_5, so it takes the same dense GDN intake as qwen38-27b. Probed runnable; NOT yet run through qwen38_quality_gate or qwen38_memory_oracle, so the status stays runs. The adapter's author recommends thinking OFF (enable_thinking false). No MTP head (MLX conversions drop mtp.*). The unmerged adapter installs from harness-hub/Qwen3.8-27B-pi-adapted itself: that merges at install time from the BF16 base (docs/LORA_MERGE.md)."
+    },
+    {
       "alias": "qwen38-27b-mtp",
       "name": "Qwen3.8 27B (MLX INT4, group 64) + MTP head",
       "family": "qwen35",
