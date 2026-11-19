@@ -65,6 +65,7 @@ pub fn evaluate_gguf(
         sidecars_missing: Vec::new(),
         chat_template: None,
         verdict: Verdict::Runnable,
+        adapter: None,
         warnings: Vec::new(),
     };
 

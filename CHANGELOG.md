@@ -13,6 +13,18 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Added
+- PEFT LoRA adapter repositories install by merging into their base while it
+  streams (`repack::lora_merge`, `docs/LORA_MERGE.md`):
+  `harness-hub/Qwen3.8-27B-pi-adapted` probes runnable and merges into
+  `Qwen/Qwen3.8-27B`, then quantizes to INT4. Merge parity with
+  `tozuo/Qwen3.8-27B-pi-adapted-MLX-4bit` is byte-exact on sampled rows.
+- Catalog row `qwen38-27b-pi` (`tozuo/Qwen3.8-27B-pi-adapted-MLX-4bit`, status
+  `runs`).
+- Hugging Face search also lists `image-text-to-text` repositories (Qwen3.8,
+  Gemma 4, their MLX builds and adapters), which a `text-generation` query
+  never returned. FFI/app searches opt in with `HubQuery::with_vision_language`.
+
 ## [0.9.0] - 2026-11-15
 
 ### Added

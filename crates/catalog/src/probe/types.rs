@@ -80,6 +80,11 @@ pub struct ProbeReport {
     /// Where a chat template was found, if anywhere.
     pub chat_template: Option<String>,
     pub verdict: Verdict,
+    /// Set when the probed repository is a PEFT LoRA adapter: the adapter
+    /// repo itself. `repo` then names the BASE it merges into, which is
+    /// what the install streams; the adapter's own tokenizer files are
+    /// the sidecar source.
+    pub adapter: Option<RepoRef>,
     /// Advisory lines that do not gate: expert-cache arithmetic, quantization
     /// surprises, anything a reader should see before committing a download.
     pub warnings: Vec<String>,
