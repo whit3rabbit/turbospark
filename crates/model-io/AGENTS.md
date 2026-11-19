@@ -27,7 +27,11 @@ Checkpoint manifests, tensor metadata, mappings, and resident buffers.
   live here and repack imports them. Bump `MANIFEST_VERSION_MINOR` for a
   layout addition an older reader can skip, and the major (with
   `INDEX_FORMAT_VERSION`) for one an older reader would misparse. Both
-  readers refuse a newer value by name instead of guessing.
+  readers refuse a newer value by name instead of guessing. A field an
+  older reader would silently ignore and then decode wrong (minor 2,
+  `ropeFreqFactors`) is stamped as a minor ONLY on the installs that carry
+  it, so those are refused by version and every other install stays at
+  `MANIFEST_VERSION_MINOR_BASE`.
 - Distinguish resident allocation from on-disk size. MoE expert tables may
   stream, while slots, KV, and resident core determine the working set.
 - A new family or checkpoint is not complete until model-io, runtime, FFI,

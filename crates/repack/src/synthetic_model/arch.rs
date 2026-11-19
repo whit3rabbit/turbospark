@@ -69,6 +69,7 @@ pub fn tiny_gemma4_arch(vocab_size: i64, num_layers: i64) -> ArchConfig {
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
         short_conv_kernel_size: 0,
+        rope_freq_factors: Vec::new(),
         ple: PleConfig::NONE,
     }
 }

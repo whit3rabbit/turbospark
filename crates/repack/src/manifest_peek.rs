@@ -186,6 +186,10 @@ pub fn peek_manifest_arch(model_dir: &Path) -> Result<ArchConfig, String> {
         beta_slow: m.rope_scaling_beta_slow.unwrap_or(0.0),
         mscale: m.rope_scaling_mscale.unwrap_or(0.0),
     };
+    // Llama 3.x per-pair rope divisors. Absent means none, never another
+    // family's table: an omitted field is a pre-minor-2 install, and no
+    // install before the field existed scaled per pair.
+    arch.rope_freq_factors = m.rope_freq_factors.clone().unwrap_or_default();
 
     // THE VISION TOWER, AND `unwrap_or(0)` RATHER THAN THE BASELINE, which is
     // the one place this function's own fallback rule does not apply.

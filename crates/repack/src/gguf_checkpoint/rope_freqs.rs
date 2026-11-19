@@ -65,6 +65,78 @@ pub fn verify_plan(
     zero_tail_pattern(&bytes, arch).map_err(mismatch)
 }
 
+/// `llama`'s `rope_freqs.weight` (Llama 3.x), read by value into the per-pair
+/// divisors the flow binds as a frequency table. Empty for every other
+/// family, and for a `llama` file without the tensor (Llama 2, Mistral,
+/// TinyLlama), which is unscaled RoPE.
+pub fn llama_factors(
+    header: &GgufHeader,
+    source: &dyn RangeSource,
+    arch: &ArchConfig,
+    plan: &Plan<'_>,
+) -> Result<Vec<f32>, GgufRepackError> {
+    if arch.family != ModelFamily::Llama {
+        return Ok(Vec::new());
+    }
+    let Some(name) = plan.rope_freqs else {
+        return Ok(Vec::new());
+    };
+    let info = header
+        .tensors
+        .get(name)
+        .ok_or_else(|| GgufRepackError::MissingTensor {
+            name: name.to_string(),
+        })?;
+    let mismatch = |detail: String| GgufRepackError::ShapeMismatch {
+        tensor: name.to_string(),
+        detail,
+    };
+    if info.ggml_type != GGML_TYPE_F32 {
+        return Err(mismatch(format!(
+            "ggml type {} where llama.cpp writes rope divisors as F32",
+            info.ggml_type
+        )));
+    }
+    let bytes = read_tensor(header, source, name)?;
+    llama_factor_values(&bytes, arch).map_err(mismatch)
+}
+
+/// The pure decode behind [`llama_factors`]: exactly `full_head_dim / 2`
+/// little-endian f32 values, each finite and positive. The llama flow
+/// rotates the whole head, so the vector must cover the whole head; a
+/// divisor of zero or below would invert or blow up a pair's angle.
+pub fn llama_factor_values(bytes: &[u8], arch: &ArchConfig) -> Result<Vec<f32>, String> {
+    let pairs = usize::try_from(arch.full_head_dim / 2).map_err(|_| "negative head dim")?;
+    if pairs == 0 || bytes.len() != pairs * 4 {
+        return Err(format!(
+            "{} bytes where {pairs} f32 divisors (head_dim {}) are expected",
+            bytes.len(),
+            arch.full_head_dim
+        ));
+    }
+    if arch.partial_rotary_factor != 1.0 {
+        return Err(format!(
+            "partial_rotary_factor {} with per-pair rope divisors; the llama flow \
+             binds divisors only for a fully rotated head",
+            arch.partial_rotary_factor
+        ));
+    }
+    let values: Vec<f32> = bytes
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+    if let Some((i, v)) = values
+        .iter()
+        .enumerate()
+        .find(|(_, v)| !(v.is_finite() && **v > 0.0))
+    {
+        return Err(format!(
+            "divisor {i} is {v}; every rope divisor must be finite and positive"
+        ));
+    }
+    Ok(values)
+}
+
 /// The pure check: `pairs = full_head_dim / 2` little-endian f32 values, the
 /// first `partial_rotary_factor * pairs` exactly 1.0 and the rest at or
 /// above [`UNROTATED_FACTOR_FLOOR`].
@@ -163,5 +235,34 @@ mod tests {
         let arch = model_io::lfm3_1_7b();
         let v = &published()[..48];
         assert!(zero_tail_pattern(&encode(v), &arch).is_err());
+    }
+
+    fn llama_arch() -> ArchConfig {
+        let mut arch = model_io::known_architecture(ModelFamily::Llama);
+        arch.full_head_dim = 8;
+        arch.partial_rotary_factor = 1.0;
+        arch
+    }
+
+    #[test]
+    fn llama_divisors_decode_by_value() {
+        let want = [1.0f32, 1.5, 4.0, 4.0];
+        assert_eq!(
+            llama_factor_values(&encode(&want), &llama_arch()).unwrap(),
+            want.to_vec()
+        );
+    }
+
+    #[test]
+    fn llama_divisors_refuse_wrong_length_and_bad_values() {
+        let arch = llama_arch();
+        assert!(llama_factor_values(&encode(&[1.0; 3]), &arch).is_err());
+        assert!(llama_factor_values(&encode(&[1.0, 0.0, 1.0, 1.0]), &arch).is_err());
+        assert!(llama_factor_values(&encode(&[1.0, -2.0, 1.0, 1.0]), &arch).is_err());
+        assert!(llama_factor_values(&encode(&[1.0, f32::NAN, 1.0, 1.0]), &arch).is_err());
+        assert!(llama_factor_values(&encode(&[1.0, f32::INFINITY, 1.0, 1.0]), &arch).is_err());
+        let mut partial = arch;
+        partial.partial_rotary_factor = 0.5;
+        assert!(llama_factor_values(&encode(&[1.0; 4]), &partial).is_err());
     }
 }

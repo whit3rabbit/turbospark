@@ -219,6 +219,7 @@ pub fn parse_unlimited_ocr2_config(json: &str) -> Result<ArchConfig, Gemma4Error
         },
         vision: VisionConfig::NONE,
         short_conv_kernel_size: 0,
+        rope_freq_factors: Vec::new(),
         ple: PleConfig::NONE,
         dense_lead_intermediate_size: dense_width,
         num_dense_leading_layers: dense_lead,

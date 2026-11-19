@@ -369,6 +369,13 @@ pub(crate) fn validate_arch(a: &ManifestArch, e: &ArchConfig) -> Result<(), Mode
         a.rope_scaling_mscale.unwrap_or(0.0),
         e.rope_scaling.mscale
     );
+    // Per-pair rope divisors (Llama 3.x). Absent compares as empty, the
+    // same silence-means-none rule as the YaRN block above.
+    check!(
+        "ropeFreqFactors",
+        a.rope_freq_factors.clone().unwrap_or_default(),
+        e.rope_freq_factors
+    );
     // Multi-head latent attention (`deepseek2`). Zero fallback, same rule
     // as the linear* block above: silence means `MlaConfig::NONE`, and no
     // other family's answer about ITS attention is evidence.

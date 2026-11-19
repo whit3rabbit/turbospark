@@ -1082,3 +1082,148 @@ fn a_gpt_oss_gguf_installs_with_its_biases_sinks_and_untied_head() {
     let sinks = &index.entries["language_model.model.layers.0.self_attn.sinks.weight"];
     assert_eq!(sinks.size_bytes as u64, shape.num_heads * 2);
 }
+
+/// A dense Llama 3.x GGUF: the dense fixture above plus `rope_freqs.weight`,
+/// the per-pair divisor vector llama.cpp's converter writes from
+/// `rope_scaling.rope_type == "llama3"`. Head dim 64, so 32 divisors.
+fn dense_llama3_gguf(rope_freqs: &[f32]) -> Vec<u8> {
+    const HIDDEN: u64 = 256;
+    const HEADS: u32 = 4;
+    const KV_HEADS: u32 = 2;
+    const FFN: u64 = 256;
+    let kv = HIDDEN * KV_HEADS as u64 / HEADS as u64;
+    let freq_bytes: Vec<u8> = rope_freqs.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let (bytes, _) = turbospark_repack::GgufBuilder::new()
+        .metadata_str("general.architecture", "llama")
+        .metadata_u32("llama.block_count", 1)
+        .metadata_u32("llama.embedding_length", HIDDEN as u32)
+        .metadata_u32("llama.feed_forward_length", FFN as u32)
+        .metadata_u32("llama.attention.head_count", HEADS)
+        .metadata_u32("llama.attention.head_count_kv", KV_HEADS)
+        .metadata_f32("llama.rope.freq_base", 500000.0)
+        .metadata_f32("llama.attention.layer_norm_rms_epsilon", 1e-5)
+        .q4_k_tensor("token_embd.weight", &[HIDDEN, 512], 1)
+        .q6_k_tensor("output.weight", &[HIDDEN, 512], 2)
+        .f32_upcast_bf16_tensor("output_norm.weight", &[HIDDEN], 3)
+        .tensor(
+            "rope_freqs.weight",
+            0,
+            &[rope_freqs.len() as u64],
+            freq_bytes,
+        )
+        .f32_upcast_bf16_tensor("blk.0.attn_norm.weight", &[HIDDEN], 4)
+        .f32_upcast_bf16_tensor("blk.0.ffn_norm.weight", &[HIDDEN], 5)
+        .q4_k_tensor("blk.0.attn_q.weight", &[HIDDEN, HIDDEN], 6)
+        .q4_k_tensor("blk.0.attn_k.weight", &[HIDDEN, kv], 7)
+        .q4_k_tensor("blk.0.attn_v.weight", &[HIDDEN, kv], 8)
+        .q4_k_tensor("blk.0.attn_output.weight", &[HIDDEN, HIDDEN], 9)
+        .q4_k_tensor("blk.0.ffn_gate.weight", &[HIDDEN, FFN], 10)
+        .q4_k_tensor("blk.0.ffn_up.weight", &[HIDDEN, FFN], 11)
+        .q4_k_tensor("blk.0.ffn_down.weight", &[FFN, HIDDEN], 12)
+        .build();
+    bytes
+}
+
+/// Llama 3.x's `rope_freqs.weight` was refused by name for every family
+/// until the llama flow could bind a per-pair frequency table. It is now
+/// read by VALUE into `arch.ropeFreqFactors`, written at manifest minor 2
+/// (so an older reader refuses the install instead of decoding with
+/// unscaled frequencies), and read back unchanged.
+#[test]
+fn a_llama3_gguf_carries_its_rope_divisors_into_the_manifest() {
+    let factors =
+        compute::llama3_rope_factors(64, 500000.0, 8.0, 1.0, 4.0, 8192.0).expect("llama3 factors");
+    let bytes = dense_llama3_gguf(&factors);
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let dir = tempdir();
+    let arch =
+        write_gguf_install_streamed(&dir, &h, &MemoryRangeSource::new(&bytes), "llama3", |_| {})
+            .expect("a llama3 install writes");
+    assert_eq!(arch.rope_freq_factors, factors);
+
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["versionMinor"], model_io::MANIFEST_VERSION_MINOR);
+    assert_eq!(model_io::MANIFEST_VERSION_MINOR, 2);
+    assert_eq!(
+        manifest["arch"]["ropeFreqFactors"]
+            .as_array()
+            .map(|a| a.len()),
+        Some(32)
+    );
+
+    let peeked = turbospark_repack::peek_manifest_arch(&dir).expect("peek");
+    assert_eq!(
+        peeked.rope_freq_factors, factors,
+        "f32 survives the JSON trip"
+    );
+    model_io::load_manifest(&dir, &peeked, model_io::DEFAULT_MAX_BYTES)
+        .expect("the llama3 manifest validates against its own read-back");
+
+    // An arch that forgot the factors must not validate against the install.
+    let mut forgot = peeked.clone();
+    forgot.rope_freq_factors.clear();
+    assert!(model_io::load_manifest(&dir, &forgot, model_io::DEFAULT_MAX_BYTES).is_err());
+}
+
+#[test]
+fn a_llama3_gguf_with_malformed_rope_divisors_is_refused() {
+    // One short of head_dim / 2.
+    let bytes = dense_llama3_gguf(&[1.0; 31]);
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let err = orchestrate_gguf_checkpoint(&h, &MemoryRangeSource::new(&bytes))
+        .err()
+        .expect("a short divisor vector must be refused");
+    assert!(err.to_string().contains("rope_freqs.weight"), "{err}");
+
+    let mut zero = vec![1.0f32; 32];
+    zero[7] = 0.0;
+    let bytes = dense_llama3_gguf(&zero);
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    assert!(orchestrate_gguf_checkpoint(&h, &MemoryRangeSource::new(&bytes)).is_err());
+}
+
+/// A llama file WITHOUT the tensor (Llama 2, Mistral, TinyLlama) keeps an
+/// empty table and the base manifest minor, so it stays readable by every
+/// reader that could read it before.
+#[test]
+fn a_llama_gguf_without_rope_freqs_keeps_the_base_minor() {
+    let dir = tempdir();
+    let (bytes, _) = turbospark_repack::GgufBuilder::new()
+        .metadata_str("general.architecture", "llama")
+        .metadata_u32("llama.block_count", 1)
+        .metadata_u32("llama.embedding_length", 256)
+        .metadata_u32("llama.feed_forward_length", 256)
+        .metadata_u32("llama.attention.head_count", 4)
+        .metadata_u32("llama.attention.head_count_kv", 2)
+        .metadata_f32("llama.rope.freq_base", 10000.0)
+        .metadata_f32("llama.attention.layer_norm_rms_epsilon", 1e-5)
+        .q4_k_tensor("token_embd.weight", &[256, 512], 1)
+        .q6_k_tensor("output.weight", &[256, 512], 2)
+        .f32_upcast_bf16_tensor("output_norm.weight", &[256], 3)
+        .f32_upcast_bf16_tensor("blk.0.attn_norm.weight", &[256], 4)
+        .f32_upcast_bf16_tensor("blk.0.ffn_norm.weight", &[256], 5)
+        .q4_k_tensor("blk.0.attn_q.weight", &[256, 256], 6)
+        .q4_k_tensor("blk.0.attn_k.weight", &[256, 128], 7)
+        .q4_k_tensor("blk.0.attn_v.weight", &[256, 128], 8)
+        .q4_k_tensor("blk.0.attn_output.weight", &[256, 256], 9)
+        .q4_k_tensor("blk.0.ffn_gate.weight", &[256, 256], 10)
+        .q4_k_tensor("blk.0.ffn_up.weight", &[256, 256], 11)
+        .q4_k_tensor("blk.0.ffn_down.weight", &[256, 256], 12)
+        .build();
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let arch = write_gguf_install_streamed(&dir, &h, &MemoryRangeSource::new(&bytes), "l2", |_| {})
+        .expect("writes");
+    assert!(arch.rope_freq_factors.is_empty());
+    // 256 hidden over 4 heads is a 64-wide head, so the score scale is
+    // 64^-0.5, not the Mixtral baseline's 128^-0.5.
+    assert_eq!(arch.full_head_dim, 64);
+    assert_eq!(arch.attention_scale, 0.125);
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(
+        manifest["versionMinor"],
+        model_io::MANIFEST_VERSION_MINOR_BASE
+    );
+    assert!(manifest["arch"].get("ropeFreqFactors").is_none());
+}
