@@ -1082,6 +1082,14 @@ follows what the engine learns to read. Its useful keys are `runnable`,
 `downloadBytes`, since what decides whether a model runs here is
 `slots x layers x expert stride`, not the model's size.
 
+Two more keys matter for particular repositories. `adapterBaseRepo` (also on
+the Hub check, `HubCheck.adapterBaseRepo`, and the Swift probe report) is set
+when the repository is a PEFT LoRA adapter: the install downloads that base and
+merges the adapter into it (`docs/LORA_MERGE.md`), so the download is the base's
+size, not the adapter's. And `warnings` carries notes the install owes the
+user, for example that a GGUF's `linear_attn.out_proj` is re-encoded to Q8_0
+(`docs/GGUF.md`). Show both before the install is confirmed.
+
 ### Installing
 
 ```swift

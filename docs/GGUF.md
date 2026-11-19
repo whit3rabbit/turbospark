@@ -199,6 +199,28 @@ writable types with `executable` and `readableByStockLlamaCpp`). See
 
 ## Known limits
 
+- **A K-quant `ssm_out` is re-encoded, not copied.** Qwen's gated-DeltaNet
+  families (`qwen35`, `qwen35moe`) de-interleave the V heads on the COLUMNS of
+  `linear_attn.out_proj` (GGUF `ssm_out`). A standard llama.cpp Q4_K_M stores
+  that tensor at Q4_K or Q6_K, whose 256-element block is wider than a
+  128-column head, so the permutation cannot be a byte move. The walk
+  dequantizes that one tensor, restores the order in f32 and stores Q8_0
+  (`gdn_out_proj_needs_q8_0_requant`), counted in `lossy_narrowing`, and the
+  probe says so as a warning. It is not byte-identical to the file, and the
+  install is a little larger (about 0.8 GB on a 27B). Checked on a real Q4_K_M
+  of `Qwen3.8-27B-pi-adapted` (coherent chat decode); Q3_K, Q5_K, Q6_K and IQ
+  `ssm_out` take the same path with no real-file run. A Q8_0 `ssm_out` is a
+  pure byte move and is untouched.
+- **The multi-token-prediction head is dropped, and speculation is off for a
+  K-quant trunk.** A GGUF that declares `nextn_predict_layers` carries the head
+  as one more `blk.N.` block; the walk excludes it from the trunk. Ingesting it
+  would not enable speculation on its own: the batched verify has a GEMM only
+  for INT4-affine and the 1-/2-bit affine pair, so a Q4_K/Q6_K/Q8_0 trunk
+  decodes normally with speculation off. See [MTP.md](MTP.md).
+- **A GGUF with no tokenizer needs `--sidecar-repo`.** The probe reports
+  RUNNABLE only with a repository that supplies `tokenizer.json` and the chat
+  template (for example the matching MLX repo).
+
 - **No real-file comparison for the newer types.** No real Q4_0, Q1_0, TQ, NVFP4
   or fork-type file has been run side by side with llama.cpp. The evidence is
   ggml-derived goldens and Q8_0 oracles on synthetic installs. Those catch

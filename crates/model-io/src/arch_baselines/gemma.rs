@@ -69,6 +69,7 @@ pub fn gemma4_26b_a4b() -> ArchConfig {
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
         short_conv_kernel_size: 0,
+        rope_freq_factors: Vec::new(),
         ple: PleConfig::NONE,
     }
 }
@@ -132,6 +133,7 @@ pub fn gemma4_12b_dense() -> ArchConfig {
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
         short_conv_kernel_size: 0,
+        rope_freq_factors: Vec::new(),
         ple: PleConfig::NONE,
     }
 }

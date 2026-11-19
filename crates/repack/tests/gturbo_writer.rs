@@ -63,6 +63,7 @@ fn toy_arch() -> model_io::ArchConfig {
         rope_scaling: model_io::RopeScalingConfig::NONE,
         vision: model_io::VisionConfig::NONE,
         short_conv_kernel_size: 0,
+        rope_freq_factors: Vec::new(),
         ple: model_io::PleConfig::NONE,
     }
 }
@@ -116,7 +117,11 @@ fn writer_output_round_trips_through_every_model_io_loader() {
     let manifest = model_io::load_manifest(&dir, &arch, model_io::DEFAULT_MAX_BYTES).unwrap();
     assert_eq!(manifest.magic, "GTURBO");
     assert_eq!(manifest.version_major, model_io::MANIFEST_VERSION_MAJOR);
-    assert_eq!(manifest.version_minor, model_io::MANIFEST_VERSION_MINOR);
+    // No rope factors in this arch, so the writer stamps the base minor.
+    assert_eq!(
+        manifest.version_minor,
+        model_io::MANIFEST_VERSION_MINOR_BASE
+    );
     assert_eq!(manifest.num_layers, NUM_LAYERS as i64);
     assert_eq!(manifest.expert_stride, EXPERT_STRIDE);
 

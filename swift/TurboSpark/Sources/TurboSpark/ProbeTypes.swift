@@ -153,6 +153,10 @@ public struct ProbeReport: Decodable, Sendable, Equatable {
     public let sidecarsMissing: [String]
     public let chatTemplate: String?
     public let warnings: [String]
+    /// Set for a PEFT LoRA adapter repository: the base the install
+    /// downloads and merges the adapter into. `nil` for an ordinary
+    /// checkpoint.
+    public let adapterBaseRepo: String?
     /// This machine's answer, or `nil` when the header yielded no shape.
     /// Never a zeroed object.
     public let fit: ProbeFit?

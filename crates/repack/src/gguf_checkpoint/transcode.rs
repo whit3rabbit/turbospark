@@ -46,6 +46,38 @@ pub fn qwen4exp_tensor_is_transcoded(canonical: &str, ggml_type: u32) -> bool {
             && QWEN4EXP_SSM_OUT_TRANSCODE_TYPES.contains(&ggml_type))
 }
 
+fn dequantize_ssm_out(ggml_type: u32, bytes: &[u8], elements: usize) -> Vec<f32> {
+    match ggml_type {
+        GGML_TYPE_Q3_K => compute::quant_gguf::dequantize_q3_k(bytes, elements),
+        GGML_TYPE_Q4_K => compute::quant_gguf::dequantize_q4_k(bytes, elements),
+        GGML_TYPE_Q5_K => compute::quant_gguf::dequantize_q5_k(bytes, elements),
+        GGML_TYPE_Q6_K => compute::quant_gguf::dequantize_q6_k(bytes, elements),
+        GGML_TYPE_IQ3_S => compute::quant_gguf_iq::dequantize_iq3_s(bytes, elements),
+        GGML_TYPE_IQ4_XS => compute::quant_gguf_iq::dequantize_iq4_xs(bytes, elements),
+        _ => unreachable!("guarded by QWEN4EXP_SSM_OUT_TRANSCODE_TYPES"),
+    }
+}
+
+/// Whether a dense or MoE GDN `linear_attn.out_proj` source is a block type
+/// wider than one V head, so the column de-interleave cannot copy bytes and
+/// the walk re-encodes it as Q8_0. Shared with the catalog probe so the probe
+/// and the install agree (the probe once called such a file runnable and the
+/// install refused it after the download).
+pub fn gdn_out_proj_needs_q8_0_requant(canonical: &str, ggml_type: u32, arch: &ArchConfig) -> bool {
+    if !matches!(
+        arch.family,
+        ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe
+    ) || !canonical.ends_with("linear_attn.out_proj.weight")
+        || !QWEN4EXP_SSM_OUT_TRANSCODE_TYPES.contains(&ggml_type)
+    {
+        return false;
+    }
+    let width = usize::try_from(arch.linear_attention.value_head_dim).unwrap_or(0);
+    crate::gguf_header::ggml_type_block(ggml_type)
+        .map(|(elements, _)| elements as usize)
+        .is_some_and(|block| block > 1 && width % block != 0)
+}
+
 /// Whether the Gemma 3 walk converts this source tensor to BF16. The 1B
 /// Q4_K_M mixes in Q5_0 for 117 of its tensors, and Q5_0 has no resident
 /// GEMV here, so those dequantize to BF16 at repack (the Qwen4Exp precedent,
@@ -514,6 +546,49 @@ pub fn resident_entries(
             out.push(t.spec);
             continue;
         }
+        if gdn_out_proj_needs_q8_0_requant(&canonical, info.ggml_type, arch) {
+            // A standard llama.cpp K-quant recipe stores `ssm_out` as Q4_K or
+            // Q6_K, whose 256-element block is wider than one 128-column V
+            // head, so the column de-interleave cannot be a byte shuffle (the
+            // refusal in `apply_source_convention_bytes`). Dequantize this one
+            // tensor, permute in f32 with the same routine the other paths
+            // use, and store Q8_0: a dtype the dense GDN families already
+            // read for this tensor (older recipes ship it at Q8_0), whose
+            // 32-element blocks hold the source values to ~0.4% of the block
+            // maximum, far below the K-quant's own step. Not byte-lossless,
+            // and counted as lossy.
+            let (rows, cols) = row_and_col(&info.dims);
+            let elements =
+                rows.checked_mul(cols)
+                    .ok_or_else(|| GgufRepackError::ShapeMismatch {
+                        tensor: (*name).to_string(),
+                        detail: "V-head output projection element count overflows".to_string(),
+                    })?;
+            let mut values = dequantize_ssm_out(info.ggml_type, &bytes, elements);
+            if values.len() != elements || values.iter().any(|value| !value.is_finite()) {
+                return Err(GgufRepackError::ShapeMismatch {
+                    tensor: (*name).to_string(),
+                    detail: format!(
+                        "type {} dequantized to {} finite values, expected {elements}",
+                        info.ggml_type,
+                        values.len()
+                    ),
+                });
+            }
+            apply_source_convention(name, &canonical, arch, cols, &mut values)?;
+            let mut packed = Vec::new();
+            for row in values.chunks_exact(cols) {
+                packed.extend_from_slice(&compute::quant_gguf::quantize_q8_0(row));
+            }
+            lossy.push(((*name).to_string(), elements));
+            out.push(ResidentEntrySpec::Raw(RawTensorSpec {
+                name: canonical,
+                dtype: crate::resident_writer::DTYPE_GGUF_Q8_0,
+                bytes: packed,
+                shape: logical_shape(&info.dims),
+            }));
+            continue;
+        }
         if family == ModelFamily::Qwen4Exp
             && canonical.ends_with("linear_attn.out_proj.weight")
             && QWEN4EXP_SSM_OUT_TRANSCODE_TYPES.contains(&info.ggml_type)
@@ -533,15 +608,7 @@ pub fn resident_entries(
                     tensor: (*name).to_string(),
                     detail: "V-head output projection element count overflows".to_string(),
                 })?;
-            let values = match info.ggml_type {
-                GGML_TYPE_Q3_K => compute::quant_gguf::dequantize_q3_k(&bytes, elements),
-                GGML_TYPE_Q4_K => compute::quant_gguf::dequantize_q4_k(&bytes, elements),
-                GGML_TYPE_Q5_K => compute::quant_gguf::dequantize_q5_k(&bytes, elements),
-                GGML_TYPE_Q6_K => compute::quant_gguf::dequantize_q6_k(&bytes, elements),
-                GGML_TYPE_IQ3_S => compute::quant_gguf_iq::dequantize_iq3_s(&bytes, elements),
-                GGML_TYPE_IQ4_XS => compute::quant_gguf_iq::dequantize_iq4_xs(&bytes, elements),
-                _ => unreachable!(),
-            };
+            let values = dequantize_ssm_out(info.ggml_type, &bytes, elements);
             if values.len() != elements || values.iter().any(|value| !value.is_finite()) {
                 return Err(GgufRepackError::ShapeMismatch {
                     tensor: (*name).to_string(),

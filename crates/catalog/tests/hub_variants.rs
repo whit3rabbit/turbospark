@@ -122,6 +122,7 @@ fn report(
         sidecars_missing: Vec::new(),
         chat_template: None,
         verdict,
+        adapter: None,
         warnings: Vec::new(),
     }
 }

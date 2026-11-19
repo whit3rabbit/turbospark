@@ -150,7 +150,8 @@ pub(crate) fn hub_search_json(query: &str, options: &HubSearchOptions) -> Result
     let query = HubQuery::new(text)
         .with_limit(limit)
         .with_sort(sort)
-        .with_format(format);
+        .with_format(format)
+        .with_vision_language(true);
     Ok(match hub.search(&query, refresh) {
         Ok(page) => page_json(&page),
         Err(error) => failure_json(&error),
@@ -202,6 +203,9 @@ pub(crate) fn hub_check_json(
         "trainedContext": report.and_then(|r| r.trained_context),
         "chatTemplate": report.and_then(|r| r.chat_template.clone()),
         "warnings": report.map(|r| r.warnings.clone()).unwrap_or_default(),
+        // Set for a PEFT LoRA adapter: the base the install merges it into.
+        "adapterBaseRepo": report
+            .and_then(|r| r.adapter.as_ref().map(|_| r.repo.repo.clone())),
         "sidecarsMissing": report.map(|r| r.sidecars_missing.clone()).unwrap_or_default(),
         // Set only when the hint supplied the tokenizer. An install of this
         // result must pass the same repository as its sidecar.

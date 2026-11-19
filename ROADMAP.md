@@ -171,7 +171,7 @@ Verification sweeps, cross-engine KL proofs, and power captures.
 - **Still Open**: `qwen36` row is pinned in `scripts/kld_mlx_affine.py` but blocked on downloading `qwen36.gturbo` (~19 GB) and reference `mlx-community/Qwen3.6-35B-A3B-4bit` (~18 GB).
 
 #### 2. Missing Quality & Memory Oracle Baseline Rows (`museglimmer`, `minimax`)
-- **Status**: Mistral (9.3971), Bonsai-2 (5.8134), Bonsai (8.3554), TinyLlama (17.6084), and Qwen3-MoE (14.5988) quality and memory rows are frozen and asserted.
+- **Status**: Mistral (9.3971), Bonsai-2 (5.8134), Bonsai (8.3554), TinyLlama (12.5191, re-frozen 2026-11-18 after the attention-scale fix), and Qwen3-MoE (14.5988) quality and memory rows are frozen and asserted.
 - **Still Open**: `museglimmer` and `minimax` gate files exist but installs are not currently on disk.
 
 #### 3. Power Profile Sweep Across Remaining Catalog Rows

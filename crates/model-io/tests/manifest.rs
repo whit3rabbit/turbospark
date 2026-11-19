@@ -53,6 +53,7 @@ fn toy_arch() -> turbospark_model_io::ArchConfig {
         rope_scaling: turbospark_model_io::RopeScalingConfig::NONE,
         vision: turbospark_model_io::VisionConfig::NONE,
         short_conv_kernel_size: 0,
+        rope_freq_factors: Vec::new(),
         ple: turbospark_model_io::PleConfig::NONE,
     }
 }

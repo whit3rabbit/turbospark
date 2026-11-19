@@ -14,6 +14,16 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- PEFT LoRA adapter repositories install by merging into their base while it
+  streams (`repack::lora_merge`, `docs/LORA_MERGE.md`):
+  `harness-hub/Qwen3.8-27B-pi-adapted` probes runnable and merges into
+  `Qwen/Qwen3.8-27B`, then quantizes to INT4. Merge parity with
+  `tozuo/Qwen3.8-27B-pi-adapted-MLX-4bit` is byte-exact on sampled rows.
+- Catalog row `qwen38-27b-pi` (`tozuo/Qwen3.8-27B-pi-adapted-MLX-4bit`, status
+  `runs`).
+- Hugging Face search also lists `image-text-to-text` repositories (Qwen3.8,
+  Gemma 4, their MLX builds and adapters), which a `text-generation` query
+  never returned. FFI/app searches opt in with `HubQuery::with_vision_language`.
 - Catalog rows can carry `featured_rank`. Only a `verified` model row may be
   featured, and the embedded table must feature at least one row with
   distinct ranks. Eight rows are featured, from LFM3 1.7B to Qwen 3.6 35B.
@@ -22,12 +32,31 @@ when this file gets updated relative to the version bump and the tag.
   replaces the Recommended tab; every other row is under All models.
 
 ### Changed
+- Rust API, source-breaking for code that builds these with struct literals
+  (neither is `#[non_exhaustive]`): `catalog::ProbeReport` and
+  `catalog::InstallPlan` gain a public `adapter: Option<RepoRef>`, and
+  `catalog::HubQuery` gains `vision_language: bool` (default false, set with
+  `with_vision_language`). Add `adapter: None` to literals. New public items:
+  `repack::lora_merge` and `repack::gdn_out_proj_needs_q8_0_requant`.
+- FFI/Swift: the probe and Hub check JSON carry `adapterBaseRepo` (null unless
+  the repository is a LoRA adapter); the Swift types expose it as
+  `adapterBaseRepo: String?`. Existing keys are unchanged.
 - Discover and Installed draw their accents, selection and badges from the
   theme instead of system colors, so custom themes and light mode apply.
   Badge labels use the theme text color for contrast.
 - Discover's search box says Search, a search with no catalog match leads
   with the Hugging Face search, and the header badge reads Tested on Mac
   instead of Online catalog (the catalog ships with the app).
+
+### Fixed
+- A standard llama.cpp K-quant GGUF of a Qwen gated-DeltaNet model (Q4_K_M and
+  friends store `ssm_out` at Q4_K/Q6_K) no longer fails mid-install with "a
+  128-column V head is not a whole number of 256-element blocks". The walk
+  dequantizes that one tensor, restores the V-head order and stores it as Q8_0
+  (counted as lossy), and the probe warns about it. Checked on a real
+  `netprojects/Qwen3.8-27B-pi-adapted-GGUF` Q4_K_M install (coherent chat
+  decode, speculation off). Q3_K, Q5_K, Q6_K and IQ `ssm_out` take the same
+  path and have no real-file run yet.
 
 ## [0.9.0] - 2026-11-15
 

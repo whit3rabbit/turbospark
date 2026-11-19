@@ -382,6 +382,28 @@ there is no cross-engine KL for the head against mlx-vlm's drafter (the bisect
 compares stage by stage on one step, which is not the same claim), and the
 chain's death around position 8 has a plausible cause and no evidence for it.
 
+## GGUF installs and the head
+
+Published GGUFs of this architecture can carry the head (for example
+`netprojects/Qwen3.8-27B-pi-adapted-GGUF`: `blk.64.nextn.eh_proj`, `enorm`,
+`hnorm`, `shared_head_norm` and a full attention and FFN block, in Q4_K/Q6_K).
+The GGUF walk excludes it from the trunk (`nextn_predict_layers` is subtracted
+from `block_count`) and reports the tensors as ignored, so a GGUF install has no
+head. **Two things are missing, and only one is in the repack.**
+
+1. Intake: mapping `blk.N.nextn.*` and the head block onto the `mtp.layers.0.*`
+   names `REQUIRED` lists. Small, and the head's types already have resident
+   GEMV kernels.
+2. The batched verify: `BATCHED_GEMM_DTYPES` is `[4, 15, 16]`, so a trunk whose
+   `q_proj` is Q4_K (dtype 7) resolves speculation to off with "the batched
+   verify covers INT4-affine...". Lifting that needs batched Q4_K, Q6_K and Q8_0
+   GEMM kernels with their own parity, performance and quality gates.
+
+Until (2) lands, ingesting the head changes nothing a user sees. The MLX route
+(`qwen38-27b-mtp`) is the way to speculate today. A head grafted onto a trunk it
+was not trained with, such as a LoRA-merged one, should draft with lower
+acceptance; that is unmeasured.
+
 ## Instruments
 
 | target | what it answers | cost |

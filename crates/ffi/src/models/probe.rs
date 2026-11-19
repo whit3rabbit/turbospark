@@ -80,6 +80,9 @@ pub(crate) fn probe_json(
         "sidecarsMissing": report.sidecars_missing,
         "chatTemplate": report.chat_template,
         "warnings": report.warnings,
+        // Set for a PEFT LoRA adapter: the base the install streams and
+        // merges the adapter into. Null for an ordinary checkpoint.
+        "adapterBaseRepo": report.adapter.as_ref().map(|_| report.repo.repo.clone()),
         // Null when nothing could be read off the header, never a zeroed
         // object: an absent measurement is not a measurement of zero, and a
         // fit of 0 bytes reads as "it fits easily" -- the exact inverse.

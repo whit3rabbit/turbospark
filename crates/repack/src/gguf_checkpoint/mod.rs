@@ -16,7 +16,9 @@ pub use manifest::gguf_manifest_quant;
 pub use muse_qk_norms::constant_vector as muse_qk_norm_is_constant;
 pub use resume::ResumeProvenance;
 pub use rope_freqs::zero_tail_pattern as lfm3_rope_freqs_are_zero_tail;
-pub use transcode::{gemma3_tensor_is_transcoded, qwen4exp_tensor_is_transcoded};
+pub use transcode::{
+    gdn_out_proj_needs_q8_0_requant, gemma3_tensor_is_transcoded, qwen4exp_tensor_is_transcoded,
+};
 pub use types::{dtype_tag_for_ggml_type, GgufRepackError, GgufRepackOutput, FUSED_GATE_FIRST};
 
 use std::path::Path;
@@ -33,7 +35,7 @@ pub fn orchestrate_gguf_checkpoint(
     header: &GgufHeader,
     source: &dyn RangeSource,
 ) -> Result<GgufRepackOutput, GgufRepackError> {
-    let arch = arch_from_gguf(header)?;
+    let mut arch = arch_from_gguf(header)?;
     if arch.family == ModelFamily::DeepseekV4Flash {
         return Err(GgufRepackError::UnsupportedFamily {
             family: arch.family.as_str(),
@@ -41,6 +43,7 @@ pub fn orchestrate_gguf_checkpoint(
     }
     let plan = plan::classify(header, arch.family, arch.num_layers as usize)?;
     rope_freqs::verify_plan(header, source, &arch, &plan)?;
+    arch.rope_freq_factors = rope_freqs::llama_factors(header, source, &arch, &plan)?;
     muse_qk_norms::verify_plan(header, source, &arch, &plan)?;
     let stride = plan::expert_stride(header, &arch, &plan)?;
     let (resident, lossy_narrowing) =
@@ -88,7 +91,7 @@ pub fn write_gguf_install_streamed_resumable(
     provenance: Option<&ResumeProvenance>,
     mut progress: impl FnMut(&str),
 ) -> Result<ArchConfig, GgufRepackError> {
-    let arch = arch_from_gguf(header)?;
+    let mut arch = arch_from_gguf(header)?;
     if arch.family == ModelFamily::DeepseekV4Flash {
         return Err(GgufRepackError::UnsupportedFamily {
             family: arch.family.as_str(),
@@ -98,6 +101,7 @@ pub fn write_gguf_install_streamed_resumable(
     // Before the first byte reaches disk: a vector that is not the exact
     // zero-tail pattern refuses the whole install.
     rope_freqs::verify_plan(header, source, &arch, &plan)?;
+    arch.rope_freq_factors = rope_freqs::llama_factors(header, source, &arch, &plan)?;
     muse_qk_norms::verify_plan(header, source, &arch, &plan)?;
     let stride = plan::expert_stride(header, &arch, &plan)?;
     progress(&format!(
