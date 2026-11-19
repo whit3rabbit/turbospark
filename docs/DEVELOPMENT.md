@@ -19,7 +19,7 @@ dashes.
 | What | Version | Why | Check |
 |---|---|---|---|
 | macOS on Apple Silicon | 13.0+ for the binding, 14.0+ for the app | The engine is Metal; there is no CPU decode path and no Intel build | `sw_vers -productVersion` |
-| Rust | stable, 1.82 or newer | `rust-toolchain.toml` pins the channel and the `rustfmt` + `clippy` components; `Cargo.toml` sets the MSRV | `cargo --version` |
+| Rust | 1.100.0 (pinned), MSRV 1.82 | `rust-toolchain.toml` pins the exact toolchain and the `rustfmt` + `clippy` components, and rustup installs it on first use; `Cargo.toml` sets the MSRV | `cargo --version` |
 | Xcode command line tools | any recent | The `metal` compiler, which `crates/gpu` needs to build its shaders | `xcrun -sdk macosx metal --version` |
 | Swift | 5.9 or newer | Both `Package.swift` files declare `swift-tools-version: 5.9` | `swift --version` |
 
