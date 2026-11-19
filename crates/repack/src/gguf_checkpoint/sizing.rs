@@ -1,6 +1,6 @@
 //! Header-only storage sizing for the witnessed MiniMax GGUF contract.
 use super::{plan, GgufRepackError};
-use crate::{arch_from_gguf, map_gguf_name, GgufHeader, GgufMapping, GTURBO_PAGE_BYTES};
+use crate::{arch_from_gguf, GgufHeader, GgufMapping, GTURBO_PAGE_BYTES};
 use model_io::ModelFamily;
 
 #[derive(Debug)]
@@ -38,7 +38,12 @@ pub fn minimax_gguf_sizing(header: &GgufHeader) -> Result<MiniMaxSizing, GgufRep
     let mut index = 24u64;
     let mut payload = 0u64;
     for name in &plan.resident {
-        let GgufMapping::Resident(canonical) = map_gguf_name(name, arch.family)? else {
+        let GgufMapping::Resident(canonical) = crate::gguf_names::map_gguf_name_with_head(
+            name,
+            arch.family,
+            arch.num_layers as usize,
+        )?
+        else {
             unreachable!()
         };
         index = add(index, add(72, canonical.len() as u64)?)?;

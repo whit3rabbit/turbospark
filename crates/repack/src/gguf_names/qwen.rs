@@ -171,6 +171,43 @@ pub fn map_qwen_gdn_dense_layer(suffix: &str, layer: usize) -> Option<GgufMappin
     }
 }
 
+/// The DENSE `qwen35` multi-token-prediction head: suffixes of the ONE
+/// `blk.<num_layers>.` block llama.cpp appends after the trunk, mapped to the
+/// `mtp.*` names the runtime binds (`MtpState::REQUIRED`).
+///
+/// Read off llama.cpp's converter (`conversion/qwen.py`, `_QwenMtpMixin`),
+/// not off a file: it renames `mtp.fc` / `pre_fc_norm_embedding` /
+/// `pre_fc_norm_hidden` / `norm` to `nextn.{eh_proj,enorm,hnorm,
+/// shared_head_norm}` and `mtp.layers.0.*` to ordinary trunk suffixes, with
+/// no change to the bytes beyond the `+1` every `*norm.weight` gets (undone
+/// in `conventions.rs`). The pi checkpoint's header carries exactly these
+/// fifteen.
+pub fn map_qwen_gdn_dense_mtp_head(suffix: &str) -> Option<String> {
+    let name = match suffix {
+        "nextn.eh_proj.weight" => "mtp.fc.weight",
+        "nextn.enorm.weight" => "mtp.pre_fc_norm_embedding.weight",
+        "nextn.hnorm.weight" => "mtp.pre_fc_norm_hidden.weight",
+        "nextn.shared_head_norm.weight" => "mtp.norm.weight",
+        "attn_norm.weight" => "mtp.layers.0.input_layernorm.weight",
+        "post_attention_norm.weight" => "mtp.layers.0.post_attention_layernorm.weight",
+        "attn_q.weight" => "mtp.layers.0.self_attn.q_proj.weight",
+        "attn_k.weight" => "mtp.layers.0.self_attn.k_proj.weight",
+        "attn_v.weight" => "mtp.layers.0.self_attn.v_proj.weight",
+        "attn_output.weight" => "mtp.layers.0.self_attn.o_proj.weight",
+        "attn_q_norm.weight" => "mtp.layers.0.self_attn.q_norm.weight",
+        "attn_k_norm.weight" => "mtp.layers.0.self_attn.k_norm.weight",
+        "ffn_gate.weight" => "mtp.layers.0.mlp.gate_proj.weight",
+        "ffn_up.weight" => "mtp.layers.0.mlp.up_proj.weight",
+        "ffn_down.weight" => "mtp.layers.0.mlp.down_proj.weight",
+        _ => return None,
+    };
+    Some(name.to_string())
+}
+
+/// How many tensors [`map_qwen_gdn_dense_mtp_head`] maps. A head block is
+/// ingested only when it carries all of them and nothing else.
+pub const QWEN_GDN_DENSE_MTP_HEAD_TENSORS: usize = 15;
+
 /// Qwen3-MoE's per-layer suffixes, verified against
 /// `Qwen3-30B-A3B-Q4_K_M.gguf` (ROADMAP Phase M, the fine-grained follow-on).
 ///

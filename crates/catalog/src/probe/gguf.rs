@@ -66,6 +66,7 @@ pub fn evaluate_gguf(
         chat_template: None,
         verdict: Verdict::Runnable,
         adapter: None,
+        speculation: None,
         warnings: Vec::new(),
     };
 
@@ -130,6 +131,7 @@ pub fn evaluate_gguf(
                     to.saturating_sub(from) / (1 << 20)
                 ));
             }
+            report.speculation = repack::gguf_speculation(header, &arch);
             report.arch = Some(arch);
         }
         Err(e) => {
@@ -156,6 +158,10 @@ pub fn evaluate_gguf(
             "{} could not be sized, so the byte shares below exclude it and understate it",
             share.name
         ));
+    }
+    // A file that will not install has no install to speculate on.
+    if !report.verdict.is_runnable() {
+        report.speculation = None;
     }
     report.warnings = warnings;
     report
@@ -308,6 +314,21 @@ mod tests {
             )
             .build();
         repack::parse_gguf_header(&bytes, repack::GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap()
+    }
+
+    #[test]
+    fn a_dense_qwen35_file_reports_whether_it_speculates() {
+        let repo = crate::hf::RepoRef::new("owner/name", "main");
+        let verdict = |with_head: bool| {
+            let (bytes, _) = repack::build_synthetic_qwen35_dense_gguf(with_head);
+            let header =
+                repack::parse_gguf_header(&bytes, repack::GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+            let report = super::evaluate_gguf(&header, &repo, "m.gguf", None);
+            assert!(report.verdict.is_runnable(), "{:?}", report.verdict);
+            report.speculation
+        };
+        assert_eq!(verdict(true), Some(repack::GgufSpeculation::Available));
+        assert_eq!(verdict(false), Some(repack::GgufSpeculation::NoHead));
     }
 
     #[test]

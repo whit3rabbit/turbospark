@@ -800,6 +800,7 @@ fn vision_tower_stub_report(plan: &InstallPlan) -> ProbeReport {
         chat_template: None,
         verdict: Verdict::Runnable,
         adapter: None,
+        speculation: None,
         warnings: vec![
             "vision-tower install: the trunk probe was skipped by design (see `gate`'s doc)"
                 .to_string(),

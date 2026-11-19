@@ -8,7 +8,7 @@ use super::types::{
     dtype_tag_for_ggml_type, logical_shape, read_tensor, GgufRepackError, GGML_TYPE_F32,
 };
 use crate::gguf_header::GgufHeader;
-use crate::gguf_names::{map_gguf_name, GgufMapping};
+use crate::gguf_names::GgufMapping;
 use crate::ranged_download::RangeSource;
 use crate::resident_writer::{RawTensorSpec, ResidentEntrySpec};
 
@@ -459,7 +459,9 @@ pub fn resident_entries(
         BTreeMap::new();
     for name in names {
         let info = &header.tensors[*name];
-        let GgufMapping::Resident(canonical) = map_gguf_name(name, family)? else {
+        let GgufMapping::Resident(canonical) =
+            crate::gguf_names::map_gguf_name_with_head(name, family, arch.num_layers as usize)?
+        else {
             continue;
         };
         let gemma3_q5_0 =

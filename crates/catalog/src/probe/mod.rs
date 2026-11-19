@@ -305,6 +305,7 @@ mod chat_template_resolution_tests {
             chat_template: None,
             verdict: Verdict::Runnable,
             adapter: None,
+            speculation: None,
             warnings: Vec::new(),
         }
     }

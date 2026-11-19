@@ -8,6 +8,7 @@ mod plan;
 mod resume;
 mod rope_freqs;
 mod sizing;
+mod speculation;
 mod transcode;
 pub use sizing::{minimax_gguf_sizing, MiniMaxSizing};
 mod types;
@@ -16,6 +17,7 @@ pub use manifest::gguf_manifest_quant;
 pub use muse_qk_norms::constant_vector as muse_qk_norm_is_constant;
 pub use resume::ResumeProvenance;
 pub use rope_freqs::zero_tail_pattern as lfm3_rope_freqs_are_zero_tail;
+pub use speculation::{gguf_speculation, GgufSpeculation};
 pub use transcode::{
     gdn_out_proj_needs_q8_0_requant, gemma3_tensor_is_transcoded, qwen4exp_tensor_is_transcoded,
 };

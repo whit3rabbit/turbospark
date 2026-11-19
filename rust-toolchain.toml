@@ -1,3 +1,7 @@
+# Pinned by version, not `stable`: CI's verify job installs whatever this
+# names, and a floating stable changed cargo's test-binary layout under a
+# green tree (1.100.0, 2026-11). Bump it in a commit, like the pinned runners
+# and Xcodes. The MSRV for consumers is `rust-version` in Cargo.toml.
 [toolchain]
-channel = "stable"
+channel = "1.100.0"
 components = ["rustfmt", "clippy"]

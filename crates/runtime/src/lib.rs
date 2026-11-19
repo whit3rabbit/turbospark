@@ -177,8 +177,8 @@ pub use startup::{ExpertPrefetchStats, StartupStats};
 // for why it is here rather than copied.
 #[cfg(target_os = "macos")]
 pub use speculation_policy::{
-    draft_policies, resolve_drafter, resolve_speculation, DrafterChoice, Speculation,
-    SpeculationPlan, SpeculativeDrafter,
+    draft_policies, install_speculation_blocker, resolve_drafter, resolve_speculation,
+    DrafterChoice, Speculation, SpeculationPlan, SpeculativeDrafter,
 };
 pub use speculative::{
     run_raw_completion_speculative, run_raw_completion_speculative_adaptive,

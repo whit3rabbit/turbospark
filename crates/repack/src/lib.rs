@@ -123,10 +123,10 @@ pub use gemma4_checkpoint::{
 };
 pub use gguf_checkpoint::{
     dtype_tag_for_ggml_type, gdn_out_proj_needs_q8_0_requant, gemma3_tensor_is_transcoded,
-    gguf_manifest_quant, lfm3_rope_freqs_are_zero_tail, muse_qk_norm_is_constant,
+    gguf_manifest_quant, gguf_speculation, lfm3_rope_freqs_are_zero_tail, muse_qk_norm_is_constant,
     orchestrate_gguf_checkpoint, qwen4exp_tensor_is_transcoded, write_gguf_install_streamed,
-    write_gguf_install_streamed_resumable, GgufRepackError, GgufRepackOutput, ResumeProvenance,
-    FUSED_GATE_FIRST,
+    write_gguf_install_streamed_resumable, GgufRepackError, GgufRepackOutput, GgufSpeculation,
+    ResumeProvenance, FUSED_GATE_FIRST,
 };
 pub use gguf_config::{arch_from_gguf, GgufConfigError};
 pub use gguf_header::{
@@ -182,7 +182,9 @@ pub use synthetic_flint::{
 };
 pub use synthetic_gguf::{
     build_synthetic_gemma4_gguf, build_synthetic_gpt_oss_gguf, build_synthetic_qwen2_gguf,
-    GgufBuilder, GgufFileAndRanges, QuantMix, SyntheticGgufShape, SyntheticGptOssShape,
+    build_synthetic_qwen35_dense_gguf, GgufBuilder, GgufFileAndRanges, QuantMix,
+    SyntheticGgufShape, SyntheticGptOssShape, QWEN35_GGUF_HIDDEN, QWEN35_GGUF_LAYERS,
+    QWEN35_GGUF_VOCAB,
 };
 pub use synthetic_lfm3::{
     build_synthetic_lfm3_install, build_synthetic_lfm3_install_with_rope_freqs,

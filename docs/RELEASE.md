@@ -444,8 +444,8 @@ refuses the handover it happens HERE, not on a user's machine.
 
 - **Local cargo >= 1.90** if you ever want to run `cargo publish
   --workspace` by hand outside CI. Multi-package publishing stabilized in
-  Cargo 1.90 (2025-09-18). `rust-toolchain.toml` here pins `channel =
-  "stable"`, so a `rustup update` keeps you current; the workspace's
+  Cargo 1.90 (2025-09-18). `rust-toolchain.toml` here pins an exact
+  version (1.100.0), which rustup installs on first use; the workspace's
   declared `rust-version = "1.82"` is the MSRV floor for *consumers*
   compiling this code, not the cargo binary you invoke `publish` with.
 - **`CARGO_REGISTRY_TOKEN`** repo secret: a crates.io API token

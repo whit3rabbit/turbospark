@@ -22,8 +22,10 @@ mod install;
 pub(crate) use install::{ActiveInstall, ActiveMove};
 mod probe;
 
+#[cfg(not(target_os = "macos"))]
+pub(crate) use capabilities::speculation_preflight_json;
 #[cfg(target_os = "macos")]
-pub(crate) use capabilities::expert_residency_for_install_json;
+pub(crate) use capabilities::{expert_residency_for_install_json, install_speculation_json};
 pub(crate) use capabilities::{family_capabilities_json, kv_quant_supported};
 pub(crate) use catalog::{
     catalog_json, delete, delete_image, image_installed_in_json, image_installed_json,

@@ -157,6 +157,10 @@ public struct ProbeReport: Decodable, Sendable, Equatable {
     /// downloads and merges the adapter into. `nil` for an ordinary
     /// checkpoint.
     public let adapterBaseRepo: String?
+    /// GGUF only: whether this file's install would speculate. `nil` when its
+    /// family has no GGUF speculation path, for safetensors, and from a
+    /// library older than the field.
+    public let speculation: SpeculationPreflight?
     /// This machine's answer, or `nil` when the header yielded no shape.
     /// Never a zeroed object.
     public let fit: ProbeFit?

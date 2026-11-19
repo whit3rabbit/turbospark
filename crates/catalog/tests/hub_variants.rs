@@ -123,6 +123,7 @@ fn report(
         chat_template: None,
         verdict,
         adapter: None,
+        speculation: None,
         warnings: Vec::new(),
     }
 }
