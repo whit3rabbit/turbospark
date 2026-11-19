@@ -109,6 +109,31 @@ enum AudioMediaIO {
         return samples
     }
 
+    /// A playback overview uses the same timeline and mix as playback. Bound the
+    /// preview's materialization cost so browsing a long meeting stays cheap.
+    static func waveformPeaks(_ clips: [AudioLibraryClip], duration: Double, count: Int,
+                              cancel: () throws -> Void = {}, resolve: (String) throws -> URL) throws -> [Float] {
+        let pcmBytes = clips.reduce(0.0) { $0 + Double($1.frameCount) * Double($1.channels) * 4 }
+        guard !clips.isEmpty, count > 0, duration.isFinite, (0...300).contains(duration),
+              pcmBytes > 0, pcmBytes <= 64 * 1024 * 1024 else { return [] }
+        let rate = 16_000.0
+        let totalFrames = Int((duration * rate).rounded())
+        guard totalFrames > 0 else { return [] }
+        let channels = clips.map(\.channels).max() ?? 1
+        let buckets = min(count, totalFrames)
+        var peaks = [Float](repeating: 0, count: buckets)
+        var cursor = 0
+        try streamMix(clips, resolve: resolve, sampleRate: rate, channels: channels, start: 0, duration: duration, cancel: cancel) { samples in
+            for (index, sample) in samples.enumerated() where sample.isFinite {
+                let bucket = Int(Int64(cursor + index / channels) * Int64(buckets) / Int64(totalFrames))
+                peaks[bucket] = max(peaks[bucket], abs(sample))
+            }
+            cursor += samples.count / channels
+        }
+        guard let loudest = peaks.max(), loudest > 0 else { return peaks }
+        return peaks.map { $0 / loudest }
+    }
+
     /// Render the common timeline in short blocks. Same-source chunks stay sequential;
     /// overlapping microphone and system tracks are mixed at their captured offsets.
     static func render(_ clips: [AudioLibraryClip], store: ManagedAssetStore = .shared, to url: URL, sampleRate: Double? = nil, cancel: () throws -> Void = {}) throws {

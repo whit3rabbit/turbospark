@@ -440,7 +440,7 @@ struct ToolCallCardView: View {
                         .foregroundStyle(isCancelled ? theme.secondaryText : theme.foreground)
                 }
             }
-            .strikethrough(isCancelled, color: .secondary)
+            .strikethrough(isCancelled, color: theme.secondaryText)
             .lineLimit(1)
         } else if submittedPlan != nil {
             Text("Plan", bundle: .module)
@@ -454,7 +454,7 @@ struct ToolCallCardView: View {
                     .font(theme.code(.base, weight: .semibold))
             }
             .foregroundStyle(isCancelled ? theme.secondaryText : theme.foreground)
-            .strikethrough(isCancelled, color: .secondary)
+            .strikethrough(isCancelled, color: theme.secondaryText)
             .lineLimit(1)
         } else if call.category == .web, let query = call.arguments["query"] {
             HStack(spacing: 4) {
@@ -465,7 +465,7 @@ struct ToolCallCardView: View {
                     .font(theme.code(.base, weight: .semibold))
                     .foregroundStyle(.appText)
             }
-            .strikethrough(isCancelled, color: .secondary)
+            .strikethrough(isCancelled, color: theme.secondaryText)
             .lineLimit(1)
         } else {
             HStack(spacing: 5) {
@@ -477,7 +477,7 @@ struct ToolCallCardView: View {
                     .font(theme.code(.base, weight: .semibold))
                     .foregroundStyle(isCancelled ? theme.secondaryText : theme.foreground)
             }
-            .strikethrough(isCancelled, color: .secondary)
+            .strikethrough(isCancelled, color: theme.secondaryText)
             .lineLimit(1)
         }
     }
@@ -1136,7 +1136,7 @@ struct ToolCallCardView: View {
                     } label: {
                         Text("Deny", bundle: .module)
                     }
-                    .buttonStyle(.bordered)
+                    .appAction(.secondary, size: .small)
                 }
             } else if !isHighRisk, let host = AppNetworkPolicy.host(forWebCall: call) {
                 // A URL tool remembers its HOST, never the tool name: one
@@ -1164,12 +1164,15 @@ struct ToolCallCardView: View {
                     .foregroundStyle(.appSecondary)
 
                 HStack(spacing: 8) {
+                    // The approval row speaks the shared action vocabulary,
+                    // like the network approval card beside it: primary is
+                    // the one approve, secondary everything else.
                     Button {
                         model.approvePendingToolCall(id: call.id, alwaysAllowSession: false)
                     } label: {
                         Label { Text("Approve Once", bundle: .module) } icon: { Image(systemName: "checkmark") }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .appAction(.primary, size: .small)
                     .tint(isHighRisk ? theme.warning : theme.accent)
                     .help(Text("Approve this tool call once", bundle: .module))
                     .accessibilityLabel(Text("Approve once \(call.name)", bundle: .module))
@@ -1181,7 +1184,7 @@ struct ToolCallCardView: View {
                         } label: {
                             Label { Text("Suspend Agent Mode", bundle: .module) } icon: { Image(systemName: "pause.circle") }
                         }
-                        .buttonStyle(.bordered)
+                        .appAction(.secondary, size: .small)
                         .help(Text("Approve once and stop using the classifier for the rest of this session", bundle: .module))
                         .accessibilityLabel(Text("Suspend Agent mode for this session and approve once", bundle: .module))
                     }
@@ -1205,7 +1208,7 @@ struct ToolCallCardView: View {
                         } label: {
                             Label { Text("Always Allow", bundle: .module) } icon: { Image(systemName: "checkmark.seal") }
                         }
-                        .buttonStyle(.bordered)
+                        .appMenuAction(size: .small)
                         .help(Text("Persist an allow rule for this MCP tool or server in project settings", bundle: .module))
                         .accessibilityLabel(Text("Always allow \(call.name) in project settings", bundle: .module))
                     } else if !isHighRisk {
@@ -1217,7 +1220,7 @@ struct ToolCallCardView: View {
                         } label: {
                             Label { Text("Always Allow", bundle: .module) } icon: { Image(systemName: "checkmark.circle") }
                         }
-                        .buttonStyle(.bordered)
+                        .appAction(.secondary, size: .small)
                         .help(call.shellCommand != nil
                             ? Text("Always allow this exact command in this session", bundle: .module)
                             : Text("Always allow this tool and command in this session", bundle: .module))
@@ -1227,11 +1230,10 @@ struct ToolCallCardView: View {
                     Button(role: .cancel) {
                         model.denyPendingToolCall(id: call.id)
                     } label: { Text("Deny", bundle: .module) }
-                    .buttonStyle(.bordered)
+                    .appAction(.secondary, size: .small)
                     .help(Text("Deny this tool call execution", bundle: .module))
                     .accessibilityLabel(Text("Deny \(call.name)", bundle: .module))
                 }
-                .controlSize(.small)
             }
         }
         .padding(.top, 4)

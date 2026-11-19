@@ -117,6 +117,7 @@ struct ServerLoadedModelsView: View {
 /// that can only fail is a row that should not be there.
 private struct ServerModelPickerSheet: View {
     @ObservedObject var model: AppModel
+    @Environment(\.appTheme) private var theme
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -163,7 +164,8 @@ private struct ServerModelPickerSheet: View {
             }
             .padding(12)
         }
-        .frame(width: 460)
+        // The panel holds translatable rows: its width follows Text Size.
+        .frame(width: (460 * AppMetrics.textScale(theme)).rounded())
     }
 
     private func row(_ candidate: InstalledModel) -> some View {

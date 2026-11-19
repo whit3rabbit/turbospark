@@ -84,7 +84,7 @@ enum SettingsControlCatalog {
         .init(title: "Error", pane: .general, timing: .immediate),
         .init(title: "Format files after the agent edits them", pane: .general, timing: .nextTurn),
         .init(title: "Has a question", pane: .general, timing: .immediate),
-        .init(title: "Import from Other Agents\u{2026}", pane: .general, timing: .action),
+        .init(title: "Import from Other Agents...", pane: .general, timing: .action),
         .init(title: "Include pinned instructions in model requests", pane: .general, timing: .nextTurn),
         .init(title: "Keep a trajectory log of model calls", pane: .general, timing: .nextTurn),
         .init(title: "Keep recent messages verbatim", pane: .general, timing: .nextTurn),

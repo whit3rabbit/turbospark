@@ -1,16 +1,13 @@
 import SwiftUI
 import TurboSpark
 
-/// The card laid over Music or Voice Cloning while none of the page's curated
-/// models is on this Mac. It lists each model with its download size and the
-/// memory it needs, and downloads the one the user picks. The page under it is
-/// disabled, so nothing runs without a model. The sidebar and the page header are
-/// outside the overlay: the way out that is not a download is the Audio library.
+/// Download choices for pages that use a curated set of audio models.
 @MainActor
 struct AudioModelGateView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var controller: AudioWorkspaceController
     let gate: AudioWorkspaceController.ModelGate
+    var inline = false
 
     @Environment(\.appTheme) private var theme
 
@@ -21,42 +18,36 @@ struct AudioModelGateView: View {
     private static let memoryBudgetBytes = MusicMemoryAdvisor.evaluate(for: nil).budgetBytes
 
     var body: some View {
-        ZStack {
-            // Opaque enough to read the card over, and it takes the clicks the
-            // disabled page would otherwise leave to the scroll view under it.
-            Rectangle().fill(.appPage).opacity(theme.surfaceOpacity(0.86))
-                .contentShape(Rectangle())
-                .onTapGesture {}
-                .accessibilityHidden(true)
+        if inline {
+            card
+        } else {
             ScrollView {
                 card
-                    .frame(maxWidth: (560 * scale).rounded())
+                    .frame(maxWidth: (640 * scale).rounded())
                     .padding(24)
                     .frame(maxWidth: .infinity)
             }
+            .accessibilityElement(children: .contain)
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityAddTraits(.isModal)
     }
 
     private var card: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
-                title.themedFont(.title3, weight: .semibold).accessibilityAddTraits(.isHeader)
-                message.foregroundStyle(.appSecondary).themedFont(.small)
-                    .fixedSize(horizontal: false, vertical: true)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: gate.page.symbol)
+                    .themedFont(.title3).foregroundStyle(.appAccentText).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    title.themedFont(.title3, weight: .semibold).accessibilityAddTraits(.isHeader)
+                    message.foregroundStyle(.appSecondary).themedFont(.small)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             ForEach(Array(gate.entries.enumerated()), id: \.element.identity.alias) { index, profile in
                 if index > 0 { Divider() }
                 row(profile)
             }
-            Divider()
-            Button { controller.selectPage(.library) } label: {
-                Label { Text("Audio library", bundle: .module) } icon: { Image(systemName: "books.vertical") }
-            }
-            .appAction(.quiet, size: .small)
         }
-        .appCardSurface(padding: 20)
+        .appCardSurface(padding: 16)
     }
 
     private var title: Text {

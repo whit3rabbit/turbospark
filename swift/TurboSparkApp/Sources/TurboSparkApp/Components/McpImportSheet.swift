@@ -6,6 +6,7 @@ import SwiftUI
 /// Browses an MCP server catalog and installs entries from it.
 @MainActor
 public struct McpImportSheet: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
 
     /// Where a catalog is read from. The user picks this explicitly rather than
@@ -83,7 +84,10 @@ public struct McpImportSheet: View {
                 Task { await fetchCatalog(source: source) }
             }
         }
-        .frame(width: 620, height: 660)
+        // The sheet holds translatable rows and labels: it grows with Text
+        // Size instead of clipping under Extra Large.
+        .frame(width: (620 * AppMetrics.textScale(theme)).rounded(),
+               height: (660 * AppMetrics.textScale(theme)).rounded())
         .onChange(of: installToProjectScope) { _, _ in installedNames = []; entryErrors = [:] }
     }
 

@@ -1,5 +1,28 @@
 import SwiftUI
 
+@MainActor
+struct AudioSpeechOptions: View {
+    @ObservedObject var controller: AudioWorkspaceController
+    @Environment(\.appTheme) private var theme
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                AudioVoicePicker(controller: controller).fixedSize(horizontal: true, vertical: false)
+                AudioLanguagePicker(controller: controller).fixedSize()
+                AudioSpeedControl(controller: controller)
+                    .frame(minWidth: 160 * AppMetrics.textScale(theme))
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                AudioVoicePicker(controller: controller)
+                AudioLanguagePicker(controller: controller)
+                AudioSpeedControl(controller: controller)
+            }
+        }
+        .themedFont(.small)
+    }
+}
+
 /// Speech controls shared by the Audio workspace's generic speech editor and
 /// the Voice Cloning composer. Moved out of `AudioWorkspaceView` unchanged.
 @MainActor

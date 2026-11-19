@@ -15,9 +15,8 @@ struct VoiceCloneTakesList: View {
                     .accessibilityHidden(true)
             }
             if takes.isEmpty {
-                AppEmptyState(systemImage: "waveform", title: Text("No outputs yet", bundle: .module),
-                              message: Text("Audio and edits are saved in your encrypted profile.", bundle: .module))
-                    .appCardSurface(padding: 0)
+                Text("No outputs yet", bundle: .module)
+                    .themedFont(.small).foregroundStyle(.appSecondary)
             } else {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     ForEach(takes) { take in VoiceCloneTakeRow(controller: controller, take: take) }
@@ -41,13 +40,14 @@ private struct VoiceCloneTakeRow: View {
     @ObservedObject private var appearanceManager = AppearanceManager.shared
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
     @State private var hovered = false
+    @State private var deletingItem: AudioLibraryItem?
 
     private var reduceMotion: Bool {
         appearanceManager.shouldReduceMotion(systemReduceMotion: systemReduceMotion)
     }
 
     private var isSelected: Bool { controller.selectedID == take.id }
-    private var isPlaying: Bool { isSelected && controller.isPlaying }
+    private var isPlaying: Bool { controller.playbackItemID == take.id && controller.isPlaying }
     private var reference: AudioVoiceReference? { take.recipe.speech?.reference }
 
     var body: some View {
@@ -59,18 +59,18 @@ private struct VoiceCloneTakeRow: View {
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 10)
-        .background(isSelected ? AnyShapeStyle(.appAccent.opacity(0.08)) : AnyShapeStyle(.appSurface),
+        .background(isSelected ? theme.selection : Color.clear,
                     in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
                 .stroke(edge, lineWidth: isSelected && theme.isHighContrast ? 2 : 1)
         }
-        .tsHoverLift(scale: 1.006)
         .onHover { hovered = $0 }
         .tsAnimation(TSMotion.hover, value: hovered)
         .tsAnimation(TSMotion.select, value: isSelected)
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .modifier(AudioDeleteConfirmation(controller: controller, item: $deletingItem))
     }
 
     private var edge: AnyShapeStyle {
@@ -79,21 +79,7 @@ private struct VoiceCloneTakeRow: View {
     }
 
     private var playButton: some View {
-        Button {
-            if isSelected { controller.playPause() } else { controller.select(take); controller.play(take, at: 0) }
-        } label: {
-            Label {
-                if isPlaying { Text("Pause", bundle: .module) } else { Text("Play", bundle: .module) }
-            } icon: {
-                Image(systemName: isPlaying ? "pause.fill" : "play.fill").contentTransition(.symbolEffect(.replace))
-            }
-            .labelStyle(.iconOnly)
-            .frame(width: 18)
-        }
-        .appAction(.secondary, size: .small)
-        .help(isPlaying ? Text("Pause", bundle: .module) : Text("Play", bundle: .module))
-        .tsAnimation(TSMotion.hover, value: isPlaying)
-        .disabled(controller.hasRecordingActivity)
+        AudioTakeAuditionButton(controller: controller, item: take)
     }
 
     private var info: some View {
@@ -141,16 +127,22 @@ private struct VoiceCloneTakeRow: View {
     }
 
     private var actions: some View {
-        HStack(spacing: AppMetrics.actionSpacing) {
-            Button { controller.useVoiceReference(fromTake: take) } label: {
-                Label { Text("Reuse reference", bundle: .module) } icon: { Image(systemName: "arrow.uturn.backward") }
+        Menu {
+            if reference != nil {
+                Button { controller.useVoiceReference(fromTake: take) } label: { Text("Reuse reference", bundle: .module) }
+                    .disabled(!controller.canEditVoiceReference)
             }
-            .appAction(.secondary, size: .small)
-            .disabled(reference == nil || !controller.canEditVoiceReference)
-            .help(Text("Reuse reference", bundle: .module))
-            AudioSaveAsButton(controller: controller, item: take, compact: true)
-            AudioDeleteButton(controller: controller, item: take, compact: true)
+            Button { controller.exportAudio(take) } label: { Text("Save As...", bundle: .module) }
+                .disabled(controller.hasRecordingActivity || controller.isExporting)
+            Divider()
+            Button(role: .destructive) { deletingItem = take } label: { Text("Delete", bundle: .module) }
+                .disabled(!controller.canDelete(take))
+        } label: {
+            Image(systemName: "ellipsis")
         }
-        .fixedSize()
+        .appMenuAction(size: .small, quiet: true)
+        .menuIndicator(.hidden)
+        .accessibilityLabel(Text("Audio actions", bundle: .module))
+        .help(Text("Audio actions", bundle: .module))
     }
 }

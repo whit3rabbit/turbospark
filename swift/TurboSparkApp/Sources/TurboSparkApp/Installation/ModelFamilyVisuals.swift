@@ -192,7 +192,8 @@ public struct ModelFamilyVisuals {
                 family: "Bonsai 27B",
                 letter: "B",
                 iconSystemName: "leaf.fill",
-                logoAssetName: "meta.svg",
+                // No Meta mark: Bonsai is not a Meta model. The letter tile is honest.
+                logoAssetName: nil,
                 accentColor: Color.mint,
                 parameterTag: "27B Dense",
                 architectureType: "Dense 27B",

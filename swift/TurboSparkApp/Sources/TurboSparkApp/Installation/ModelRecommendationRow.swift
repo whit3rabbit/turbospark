@@ -70,7 +70,7 @@ struct ModelRecommendationRow: View {
 
                     Text(verbatim: "-")
                         .themedFont(.tiny)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
 
                     HStack(spacing: 3) {
                         Image(systemName: "internaldrive")
@@ -84,7 +84,7 @@ struct ModelRecommendationRow: View {
                     if let minRate = recommendation.toksPerSecondMin, let maxRate = recommendation.toksPerSecondMax {
                         Text(verbatim: "-")
                             .themedFont(.tiny)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.appSecondary)
                         Text(verbatim: "\(Int(minRate))-\(Int(maxRate)) tok/s")
                             .themedFont(.tiny).monospacedDigit()
                             .foregroundStyle(.appAccent)

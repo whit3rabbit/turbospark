@@ -14,25 +14,22 @@ private final class ForegroundAppDelegate: NSObject, NSApplicationDelegate {
         _ = KeybindOverrideStore.shared
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        Self.adoptMaximizedDefaultFrameOnce()
+        Self.adoptMaximizedFrameAtLaunch()
     }
 
-    /// One-time, ever: maximize the window to fill the screen's visible frame.
+    /// Every launch: open the window filling the screen's visible frame.
     ///
     /// The app takes up all available screen real estate without entering
     /// macOS Spaces full-screen mode, keeping the top menu bar visible.
-    ///
-    /// After this one-time adoption, macOS automatically autosaves and restores
-    /// the user's chosen window size and position on every subsequent launch.
-    /// Resizing, tiling, or moving the window is preserved naturally.
+    /// A saved autosave frame restores first (AppKit applies it at window
+    /// creation, before this runs), so whatever it holds -- a stale default
+    /// from an older build, a half-screen resize -- is replaced by the
+    /// visible frame on every launch. Resizing, tiling, or moving the window
+    /// still works for the rest of the session.
     ///
     /// It runs async because at `applicationDidFinishLaunching` the SwiftUI
     /// scene has not built its window yet, so `NSApp.windows` is empty.
-    private static func adoptMaximizedDefaultFrameOnce() {
-        let key = "TurboSpark.didAdoptMaximizedDefaultWindowFrame"
-        guard !UserDefaults.standard.bool(forKey: key) else { return }
-        UserDefaults.standard.set(true, forKey: key)
-
+    private static func adoptMaximizedFrameAtLaunch() {
         DispatchQueue.main.async {
             guard let window = NSApp.windows.first(where: { $0.canBecomeMain }),
                   let screen = window.screen ?? NSScreen.main
@@ -120,22 +117,10 @@ struct TurboSparkApp: App {
         SparkleUpdateController.shared.start()
     }
 
-    /// The default window size: the whole visible screen.
-    ///
-    /// This asks the screen for its VISIBLE frame -- visible rather than full,
-    /// so the menu bar and Dock are subtracted and the window does not open
-    /// underneath either one.
-    ///
-    /// `NSScreen.main` is nil in some launch contexts (no attached display,
-    /// certain headless runs), and the fallback is the standard default size
-    /// rather than a computed guess.
+    /// The default window size for a window with no frame yet: the whole
+    /// visible screen (`AppWindowDefaultSize`).
     static var defaultWindowSize: CGSize {
-        guard let visible = NSScreen.main?.visibleFrame else {
-            return CGSize(width: 1280, height: 760)
-        }
-        return CGSize(
-            width: max(AppChromeLayout.minimumHeight, visible.width),
-            height: max(AppChromeLayout.minimumHeight, visible.height))
+        AppWindowDefaultSize.size()
     }
 
     /// Window content follows the picker at once through `\.locale`. The menu
@@ -206,11 +191,9 @@ struct TurboSparkApp: App {
                     Text("TurboSpark Help", bundle: .module)
                 }
                 if let model = vaultCoordinator.model {
-                    Button {
-                        model.openSettings(tab: .shortcuts)
-                    } label: {
-                        Text("Keyboard Shortcuts...", bundle: .module)
-                    }
+                    // "Keyboard Shortcuts..." lives only in the View group,
+                    // where it carries its chord; a second, chord-less copy
+                    // here read as a different command with the same name.
                     // OC-07: replays the first-run flow for any user. No
                     // chord: it is a rare action, and the catalog needs a
                     // default chord per command (see the OC-07 record).
@@ -281,10 +264,15 @@ struct TurboSparkApp: App {
             // A THIRD scene: the same reason the Settings scene above injects
             // its own theme applies here, and the menu bar's own text and
             // icons were reading `ResolvedAppTheme.fallback` for the life of
-            // the feature (swift/docs/SWIFT_SETTINGS_AUDIT.md item 7).
+            // the feature (swift/docs/SWIFT_SETTINGS_AUDIT.md item 7). It
+            // also injects locale and layout direction like every other
+            // scene: without them the dashboard followed the system language
+            // instead of the in-app picker.
             if let model = vaultCoordinator.model {
                 ServerMenuDashboardView(model: model)
                     .appThemed()
+                    .environment(\.locale, currentLanguage.locale)
+                    .environment(\.layoutDirection, currentLanguage.layoutDirection)
             }
         }
         .menuBarExtraStyle(.window)

@@ -723,6 +723,10 @@ a code change:
       it installs and runs and the notes disqualify it, and is worth using:
       `mixtral` is a row precisely because "installs, decodes, wants
       54.5 GiB of pinned slot cache" is invisible any other way.
+- [ ] Leave `featured_rank` out unless the row should lead the app's
+      Featured tab (the default Discover view). Only a `verified` model row
+      may carry one (the loader refuses anything else), ranks are unique,
+      and lower shows first inside each fit group.
 - [ ] `install_bytes` feeds the free-space check, so keep it generous
       rather than exact. The honest post-install figure is recorded from
       `directory_bytes` at install time.

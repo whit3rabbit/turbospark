@@ -92,10 +92,12 @@ struct ModelLoaderControl: View {
 
     /// The pill's own border picks up the accent while a session is live, so
     /// "a model is loaded" is legible from the shape of the chrome and not
-    /// only from reading the words.
+    /// only from reading the words. Under Increase Contrast the partial edge
+    /// becomes the solid accent, the same status-edge treatment the Humanize
+    /// model bar uses (a quiet edge alone must never carry the state there).
     private var strokeColor: Color {
         model.session != nil
-            ? theme.accent.opacity(0.32)
+            ? (theme.isHighContrast ? theme.accent : theme.accent.opacity(0.32))
             : TurboSparkTheme.hairlineColor(isDark: theme.isDark)
     }
 
@@ -175,7 +177,9 @@ struct ModelLoaderControl: View {
 
                 if loaderState == .opening {
                     ModelLoadProgressBar(fraction: nil, tint: theme.accent)
-                        .frame(width: 42)
+                        // Scaled like the surrounding pill, which is
+                        // ScaledMetric-sized, so Extra Large does not clip it.
+                        .frame(width: (42 * AppMetrics.textScale(theme)).rounded())
                 } else {
                     Image(systemName: "chevron.up.chevron.down")
                         .font(theme.ui(.micro, weight: .bold))

@@ -46,7 +46,7 @@ struct ModelCardView: View {
                                 if let fraction = downloadFraction {
                                     Text(verbatim: "\(Int(fraction * 100))%")
                                         .themedFont(.tiny, weight: .medium).monospacedDigit()
-                                        .foregroundStyle(Color.accentColor)
+                                        .foregroundStyle(.appAccentText)
                                 }
                             }
                             .accessibilityElement(children: .ignore)
@@ -59,8 +59,8 @@ struct ModelCardView: View {
                                 .themedFont(.tiny, weight: .bold)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 1.5)
-                                .background(Color.accentColor.opacity(0.18), in: Capsule())
-                                .foregroundStyle(Color.accentColor)
+                                .background(.appAccent.opacity(0.18), in: Capsule())
+                                .foregroundStyle(.appAccentText)
                         } else if isInstalled {
                             HStack(spacing: 3) {
                                 Circle().fill(.appSuccess).frame(width: 5, height: 5)
@@ -104,7 +104,7 @@ struct ModelCardView: View {
                             .themedFont(.tiny).monospacedDigit()
                             .lineLimit(1)
                             .fixedSize()
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.appSecondary)
                     }
                 }
             }
@@ -114,15 +114,13 @@ struct ModelCardView: View {
         }
         .buttonStyle(.plain)
         .background(
-            isSelected
-                ? Color.accentColor.opacity(0.14)
-                : Color.clear,
+            isSelected ? AnyShapeStyle(.appAccent.opacity(0.14)) : AnyShapeStyle(Color.clear),
             in: RoundedRectangle(cornerRadius: 10)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(
-                    isSelected ? Color.accentColor.opacity(0.4) : Color.clear,
+                    isSelected ? AnyShapeStyle(.appAccent.opacity(0.4)) : AnyShapeStyle(Color.clear),
                     lineWidth: 1
                 )
         )

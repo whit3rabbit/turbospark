@@ -158,6 +158,6 @@ struct FanReadoutView: View {
             .fixedSize(horizontal: false, vertical: true)
         }
         .padding(14)
-        .frame(width: 300, alignment: .leading)
+        .frame(width: (300 * AppMetrics.textScale(theme)).rounded(), alignment: .leading)
     }
 }

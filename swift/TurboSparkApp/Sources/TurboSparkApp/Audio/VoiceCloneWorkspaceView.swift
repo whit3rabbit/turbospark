@@ -5,9 +5,8 @@ import SwiftUI
 /// progress, the latest take and every take). One column when the window or
 /// the text size leaves too little width for two.
 ///
-/// The look follows the welcome screen: a faint radial accent wash, cards
-/// that assemble with a short stagger, the composer's radius and focus glow,
-/// and a glowing primary action.
+/// The reference and consent stay beside the composer, and only the
+/// script and the current job occupy the main column.
 @MainActor
 struct VoiceCloneWorkspaceView: View {
     @ObservedObject var model: AppModel
@@ -36,7 +35,6 @@ struct VoiceCloneWorkspaceView: View {
                 }
             }
         }
-        .background { backdrop }
         .onChange(of: controller.speechRun == nil) { _, finished in
             guard finished else { return }
             _ = AccessibilityNotification.Announcement.post(.init(controller.error ?? controller.status))
@@ -46,27 +44,27 @@ struct VoiceCloneWorkspaceView: View {
     // MARK: Layouts
 
     private func twoColumns(_ proxy: ScrollViewProxy) -> some View {
-        HStack(alignment: .top, spacing: 24) {
+        HStack(alignment: .top, spacing: 16) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) { setupCards(proxy) }
-                    .padding(.vertical, 24)
+                VStack(alignment: .leading, spacing: 12) { setupCards(proxy) }
+                    .padding(.vertical, 16)
             }
             .frame(minWidth: (300 * scale).rounded(), idealWidth: (360 * scale).rounded(), maxWidth: (440 * scale).rounded())
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) { mainContent(proxy) }
-                    .padding(.vertical, 24)
+                VStack(alignment: .leading, spacing: 14) { mainContent(proxy) }
+                    .padding(.vertical, 16)
             }
             .frame(maxWidth: .infinity)
         }
         .padding(.horizontal, 24)
-        .frame(maxWidth: 1440)
+        .frame(maxWidth: 1440 * scale)
         .frame(maxWidth: .infinity)
     }
 
     private func oneColumn(_ proxy: ScrollViewProxy) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                description.foregroundStyle(.appSecondary).fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 14) {
+                description.themedFont(.small).foregroundStyle(.appSecondary).fixedSize(horizontal: false, vertical: true)
                 stepsStrip(proxy)
                 setupCards(proxy)
                 workContent(proxy)
@@ -78,22 +76,20 @@ struct VoiceCloneWorkspaceView: View {
     /// Reference, engine cards and model. The model comes first until one
     /// is chosen, because the engine decides which cards follow.
     @ViewBuilder private func setupCards(_ proxy: ScrollViewProxy) -> some View {
-        if controller.selectedProfile == nil { modelCard.tsEntrance() }
+        if controller.selectedProfile == nil { modelCard }
         VoiceReferenceCard(controller: controller, attention: attention, missing: missing)
             .id(VoiceCloneStep.voice)
             .accessibilityFocused($focusedStep, equals: .voice)
-            .tsEntrance(delay: 0.04)
         VoiceCloneEngineCards(controller: controller, attention: attention, missing: missing,
                               transcriptFocused: $transcriptFocused, consentFocused: $consentFocused,
                               needsReference: { show([.voice], proxy: proxy) })
-            .tsEntrance(delay: 0.08)
-        if controller.selectedProfile != nil { modelCard.tsEntrance(delay: 0.12) }
+        if controller.selectedProfile != nil { modelCard }
     }
 
     private func mainContent(_ proxy: ScrollViewProxy) -> some View {
         Group {
-            description.foregroundStyle(.appSecondary).fixedSize(horizontal: false, vertical: true)
-            stepsStrip(proxy).tsEntrance()
+            description.themedFont(.small).foregroundStyle(.appSecondary).fixedSize(horizontal: false, vertical: true)
+            stepsStrip(proxy)
             workContent(proxy)
         }
     }
@@ -105,7 +101,6 @@ struct VoiceCloneWorkspaceView: View {
                                  generate: { attemptRun(proxy) },
                                  showMissing: { show(missing, proxy: proxy) })
             .id(VoiceCloneStep.script)
-            .tsEntrance(delay: 0.04)
         AudioScriptSections(controller: controller)
         Group {
             if let run = controller.speechRun, controller.isBusy {
@@ -116,11 +111,9 @@ struct VoiceCloneWorkspaceView: View {
         .tsAnimation(TSMotion.pane, value: controller.speechRun == nil)
         if let item = controller.workspaceResult, item.status != .processing {
             AudioItemDetailView(controller: controller, item: item)
-                .appCardSurface()
                 .transition(.opacity)
         }
         VoiceCloneTakesList(controller: controller)
-            .tsEntrance(delay: 0.08)
     }
 
     private func stepsStrip(_ proxy: ScrollViewProxy) -> some View {
@@ -171,16 +164,6 @@ struct VoiceCloneWorkspaceView: View {
     // MARK: Pieces
 
     private var modelCard: some View {
-        AudioModelPickerView(model: model, controller: controller).appCardSurface()
-    }
-
-    /// The welcome hero's wash: a faint accent glow behind the page.
-    private var backdrop: some View {
-        RadialGradient(
-            colors: [theme.accent.opacity(theme.isDark ? 0.10 : 0.07), .clear],
-            center: UnitPoint(x: 0.5, y: 0.0), startRadius: 0, endRadius: 620)
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
+        AudioWorkspaceModelPanel(model: model, controller: controller)
     }
 }

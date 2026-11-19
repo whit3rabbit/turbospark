@@ -24,6 +24,13 @@ extension AudioWorkspaceController {
         return items.filter { $0.kind == kind && (task != .textToSpeech || ($0.recipe.speech?.mode ?? .customVoice) == (recipe.speech?.mode ?? .customVoice)) && $0.id != selectedID && $0.status == .completed && $0.hasPlayableAudio }
             .sorted { $0.createdAt > $1.createdAt }
     }
+
+    /// Keep the selected take in the Music list so clicking Play preserves
+    /// the row and its keyboard focus.
+    var musicTakes: [AudioLibraryItem] {
+        items.filter { $0.kind == .music && $0.status == .completed && $0.hasPlayableAudio }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
 }
 
 /// One step of the Voice Cloning steps strip.

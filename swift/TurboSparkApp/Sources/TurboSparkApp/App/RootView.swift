@@ -33,7 +33,6 @@ struct RootView: View {
     @State private var paletteSeedToken = 0
     @State private var isSummaryVisible = true
     @State private var workingWidth: CGFloat = 0
-    @State private var downloadControlHeight: CGFloat = 38
 
     private var canPinSummary: Bool { ProjectChatSummary.canPin(availableWidth: workingWidth) }
     private var hasProjectSummary: Bool {
@@ -171,9 +170,6 @@ struct RootView: View {
                 }
 
                 workingArea
-                    // Reserve room for Downloads so its collapsed control
-                    // never covers the composer or model selector.
-                    .padding(.bottom, downloadControlHeight + 24)
 
                 StatusBarView(model: model)
             }
@@ -216,17 +212,17 @@ struct RootView: View {
             model.pluginUiHost.closePages(exceptSession: newID.uuidString)
         }
         .overlay(alignment: .trailing) {
-            // Share the available height so a toast cannot cover the manager
-            // when the window is short or interface text is enlarged.
+            // The downloads panel opens under its top-bar button, with toasts
+            // beneath it. They share the available height so neither can
+            // cover the other when the window is short or text is enlarged.
             VStack(alignment: .trailing, spacing: 12) {
+                DownloadManagerView(model: model)
                 ToastOverlayView(model: model)
                 Spacer(minLength: 0)
-                DownloadManagerView(model: model)
-                    .onPreferenceChange(DownloadControlHeightKey.self) { downloadControlHeight = $0 }
             }
             .frame(maxWidth: 420)
             .padding(.horizontal, 16)
-            .padding(.top, AppChromeLayout.topBarHeight + 10)
+            .padding(.top, AppChromeLayout.topBarHeight + 8)
             .padding(.bottom, AppChromeLayout.statusBarHeight + 12)
         }
         .overlay {

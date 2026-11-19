@@ -140,7 +140,11 @@ extension AudioWorkspaceController {
             Task { @MainActor in
                 guard let self, self.valid(token), self.recordingID == id else { return }
                 switch event {
-                case .level(_, let value): self.inputLevel = value
+                case .level(let source, let value):
+                    if !self.isPaused, let input = AudioCapture.InputSource(rawValue: source),
+                       let previous = self.recordingLevels[input], previous != value {
+                        self.recordingLevels[input] = value
+                    }
                 case .failure(let message), .interruption(let message):
                     self.error = message
                     self.stopRecording(interrupted: true)
@@ -153,7 +157,10 @@ extension AudioWorkspaceController {
         let config = AudioCapture.Configuration(microphoneID: microphoneID.flatMap(UInt32.init), capturesMicrophone: capturesMicrophone, systemSource: capturesSystemAudio ? selectedApplicationID.map(AudioCapture.SystemSource.application) ?? .all : .none)
         let attempt = UUID(); let dependencies = recordingSetupDependencies
         recordingSetupAttempt = attempt
-        recordingSeconds = 0; isPaused = false; inputLevel = 0
+        recordingSeconds = 0; isPaused = false
+        recordingLevels = [:]
+        if capturesMicrophone { recordingLevels[.microphone] = 0 }
+        if capturesSystemAudio { recordingLevels[.system] = 0 }
         showRecordingSetup(config.capturesMicrophone ? microphoneSetupMessage : systemSetupMessage)
         recordingSetupTask = Task { [weak self] in
             guard let self else { return }
@@ -178,6 +185,7 @@ extension AudioWorkspaceController {
                 Task { _ = await capture.stop() }
                 self.live.transcriber?.stopAndDrain(); self.live.clear()
                 self.isRecording = false; self.capture = nil; self.recordingID = nil; self.voiceReferenceRecordingID = nil
+                self.recordingLevels.removeAll()
                 self.update(id) { $0.status = .interrupted; $0.failure = error.localizedDescription }
                 self.error = error.localizedDescription; self.status = error.localizedDescription
             }
@@ -190,7 +198,12 @@ extension AudioWorkspaceController {
         catch { fail(error); return false }
         return true
     }
-    func pauseRecording() { guard isRecording else { return }; capture?.pause(); isPaused = true }
+    func pauseRecording() {
+        guard isRecording else { return }
+        capture?.pause()
+        isPaused = true
+        recordingLevels = recordingLevels.mapValues { _ in 0 }
+    }
     func resumeRecording() { guard isRecording else { return }; capture?.resume(); isPaused = false }
     func addMarker() {
         guard isRecording, let id = recordingID, let capture else { return }
@@ -209,7 +222,8 @@ extension AudioWorkspaceController {
         var interrupted = interrupted || captureFailure != nil || !started
         var failure = captureFailure ?? (started ? nil : setupCancelledMessage)
         if let captureFailure { error = captureFailure }
-        self.capture = nil; recordingID = nil; isRecording = false; isPaused = false; inputLevel = 0
+        self.capture = nil; recordingID = nil; isRecording = false; isPaused = false
+        recordingLevels.removeAll()
         if let id {
             update(id) {
                 if !$0.clips.contains(where: { $0.frameCount > 0 }), started {

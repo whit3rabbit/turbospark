@@ -14,11 +14,20 @@ imported file. Each mode lists only its own takes and files them into its own
 collection (Voice notes, Meetings, App audio), whatever the Record page's type
 is set to.
 
-One record bar sits at the bottom of every mode, and only one capture
-runs at a time: switching modes while recording changes the view, not the take,
-and the recording mode's pill shows a live dot. The top bar's recording badge
-opens the page or mode that started the capture. The Record page stays for
-Sound takes and hand-picked sources.
+Voice Notes and Meeting put the record controls beside the empty state before
+the first take. The record bar moves to the bottom once capture starts or the
+mode has saved takes. Any Audio puts Start recording next to the source
+picker and shows the record bar at the bottom during setup and capture.
+The record bar shows a separate level for every active source. Only one
+capture runs at a time. The recording mode's pill shows a live dot, and the
+top bar's recording badge returns to the page or mode that started the
+capture. Use the Record page for Sound takes and hand-picked sources.
+
+Scrub a saved take's waveform to seek, or use the Playback position slider.
+The slider also works when a waveform preview is unavailable. A transcript
+timestamp seeks to its segment, which is highlighted while the playhead is
+within it. The take's Export menu offers the audio file and any available
+transcript formats. Use Play beside a take to audition it from a list.
 
 Each mode keeps one model per job: Live Text (Live Captions in Any Audio),
 Final Transcript, and Speakers. The header's model button lists them, each with
@@ -198,9 +207,17 @@ The main column holds the work:
   confirm it again for the restored region.
 
 Voiceover accepts a script split into sections. Generate section creates a new
-take; it does not replace an earlier section. Music retains description, lyrics,
-seed, and supported settings. Presets and Duplicate with changes make experiments
-repeatable. A/B comparison keeps the current playback position.
+take; it does not replace an earlier section.
+
+Music pairs a prompt composer with model setup and saved takes. You can draft
+a description, use the prompt library, or play saved music before installing
+the model. Choose a short duration preset or enter the exact seconds. Lyrics
+and detailed generation settings open on demand. Select a take to see its
+waveform, or use the Play button on its row. Compare at this position switches
+to a different music take at the current playback time. Each generated take
+keeps its description, lyrics, seed, and generation settings.
+
+Presets and Duplicate with changes make experiments repeatable.
 
 WAV export preserves the selected output rate. The video preset resamples to
 48 kHz, and M4A is available for sharing. Text, SRT, WebVTT, and structured JSON

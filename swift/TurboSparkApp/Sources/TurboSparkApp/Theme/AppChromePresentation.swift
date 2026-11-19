@@ -23,11 +23,13 @@ public struct AppSidebarControlPresentation: Equatable, Sendable {
             // because the sections live in it and navigation must never be
             // hideable. See `AppSidebarView`.
             title = isVisible ? "Collapse sidebar" : "Expand sidebar"
-            help = "\(title) (Ctrl+Cmd+S)"
+            help = title
         case .inspector:
             systemImage = "sidebar.right"
-            title = isVisible ? "Hide settings" : "Show settings"
-            help = "\(title) (Shift+Cmd+I)"
+            // The View menu's command is "Toggle Inspector"; the button uses
+            // the same word. "Settings" named the real Settings window here.
+            title = isVisible ? "Hide Inspector" : "Show Inspector"
+            help = title
         }
     }
 }

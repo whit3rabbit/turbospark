@@ -271,7 +271,7 @@ public struct SkillsSettingsPaneView: View {
                 if !skill.referenceFiles.isEmpty {
                     Text("Files: \(skill.referenceFiles.count)", bundle: .module)
                         .themedFont(.tiny)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.appSecondary)
                 }
             }
             .padding(.top, 2)

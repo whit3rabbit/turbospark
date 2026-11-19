@@ -589,6 +589,10 @@ final class LocalizationParityTests: XCTestCase {
         for kind in InstalledModelKind.allCases {
             values.append(("InstalledModelKind.title", kind.title))
         }
+        // The Installed filter bar renders each raw value as a key.
+        for filter in ModelManagerView.ArchitectureFilter.allCases {
+            values.append(("ModelManagerView.ArchitectureFilter", filter.rawValue))
+        }
         // OC-02: the Notifications section renders these as keys.
         for event in AttentionEvent.allCases {
             values.append(("AttentionEvent.settingsTitle", event.settingsTitle))

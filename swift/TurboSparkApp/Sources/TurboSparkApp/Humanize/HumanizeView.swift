@@ -180,10 +180,14 @@ struct HumanizeView: View {
             } else {
                 ZStack(alignment: .topLeading) {
                     if controller.draft.isEmpty {
-                        Text("Paste a draft to rewrite.", bundle: .module)
-                            .foregroundStyle(.appSecondary)
-                            .padding(.horizontal, 21).padding(.vertical, 18)
-                            .allowsHitTesting(false)
+                        HStack(spacing: 10) {
+                            HumanizeGlyphTile(systemImage: "doc.on.clipboard", size: 30)
+                            Text("Paste a draft to rewrite.", bundle: .module)
+                                .foregroundStyle(.appSecondary)
+                        }
+                        .padding(.horizontal, 21).padding(.vertical, 18)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
                     }
                     TextEditor(text: $controller.draft)
                         .font(theme.ui(.base)).lineSpacing(6)
@@ -227,7 +231,9 @@ struct HumanizeView: View {
     }
 
     private func resultPanel(tight: Bool) -> some View {
-        HumanizeCard {
+        // The solid accent edge while the model writes: the card the work is
+        // landing in says so, using the same focus look as the draft card.
+        HumanizeCard(focused: controller.isBusy) {
             panelTitle(number: "02", title: "Rewrite")
             Spacer(minLength: 8)
             ViewThatFits(in: .horizontal) {
@@ -246,10 +252,7 @@ struct HumanizeView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .transition(.opacity)
                 } else {
-                    AppEmptyState(
-                        systemImage: "text.alignleft",
-                        title: Text("Your rewrite will appear here.", bundle: .module)
-                    )
+                    HumanizeRewriteEmptyState()
                 }
             } else {
                 ScrollView {
@@ -325,7 +328,10 @@ struct HumanizeView: View {
     private func panelTitle(number: String, title: LocalizedStringKey) -> some View {
         HStack(spacing: 8) {
             Text(verbatim: number)
-                .font(theme.ui(.tiny, weight: .semibold)).monospacedDigit().foregroundStyle(.appSecondary)
+                .font(theme.ui(.tiny, weight: .semibold)).monospacedDigit().foregroundStyle(.appAccentText)
+                .padding(.horizontal, 6).padding(.vertical, 2)
+                .background(theme.accent.opacity(0.14), in: Capsule())
+                .accessibilityHidden(true)
             Text(title, bundle: .module).font(theme.ui(.callout, weight: .semibold))
                 .accessibilityAddTraits(.isHeader)
         }
@@ -345,6 +351,9 @@ struct HumanizeView: View {
 
     private func checksChip(clean: Bool) -> some View {
         let tint: Color = clean ? theme.success : theme.warning
+        // The theme's own 14% wash, so the chip's contrast is the one
+        // AppStatusColorTests pins, not a local 12%.
+        let wash: AnyShapeStyle = clean ? AnyShapeStyle(.appSuccessTint) : AnyShapeStyle(.appWarningTint)
         return Label {
             if clean { Text("Checks passed", bundle: .module) } else { Text("Check before you use it", bundle: .module) }
         } icon: {
@@ -354,7 +363,7 @@ struct HumanizeView: View {
         .foregroundStyle(tint)
         .lineLimit(1)
         .padding(.horizontal, 8).padding(.vertical, 5)
-        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+        .background(wash, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         .fixedSize()
         .help(clean
               ? Text("The automatic checks found nothing. Read it before you use it.", bundle: .module)
@@ -428,9 +437,16 @@ struct HumanizeView: View {
 
     /// The welcome hero's wash: a faint accent glow behind the page, matching Voice Cloning.
     private var backdrop: some View {
-        RadialGradient(
-            colors: [theme.accent.opacity(theme.isDark ? 0.10 : 0.07), .clear],
-            center: UnitPoint(x: 0.5, y: 0.0), startRadius: 0, endRadius: 620)
+        ZStack {
+            RadialGradient(
+                colors: [theme.accent.opacity(theme.isDark ? 0.20 : 0.12), .clear],
+                center: UnitPoint(x: 0.5, y: 0.0), startRadius: 0, endRadius: 680)
+            // A second, wider pool low on the trailing side, so the page has a
+            // gradient and not just a lit top edge.
+            RadialGradient(
+                colors: [theme.accent.opacity(theme.isDark ? 0.10 : 0.06), .clear],
+                center: UnitPoint(x: 1.0, y: 1.0), startRadius: 0, endRadius: 640)
+        }
             .ignoresSafeArea()
             .allowsHitTesting(false)
             .accessibilityHidden(true)

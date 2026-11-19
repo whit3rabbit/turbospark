@@ -18,7 +18,9 @@ struct ModelHubFilterBarView: View {
         FlowLayout(spacing: 8, lineSpacing: 6) {
             AppSearchField(
                 text: $filter.searchText,
-                prompt: Text("Filter", bundle: .module))
+                // "Search", not "Filter": the same box also sends the query to
+                // Hugging Face on Return, so it is the one place to look for a model.
+                prompt: Text("Search", bundle: .module))
                 .help(Text("Filters by alias, name, family or notes", bundle: .module))
 
             // "Installed only" narrows the CATALOG to entries already on this
@@ -118,8 +120,10 @@ struct ModelHubFilterBarView: View {
 
     private func tabText(_ tab: ModelHubFilter.Tab) -> Text {
         switch tab {
-        case .recommended: return Text("Recommended", bundle: .module)
-        case .discover: return Text("Discover", bundle: .module)
+        case .featured: return Text("Featured", bundle: .module)
+        // Not "Discover": that is the section's own name, so a tab with the
+        // same word did not say how it differs from the others.
+        case .discover: return Text("All models", bundle: .module)
         case .audio: return Text("Audio", bundle: .module)
         case .onDevice: return Text("Installed only", bundle: .module)
         }

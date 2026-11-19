@@ -264,10 +264,11 @@ struct FilePreviewView: View {
                 }
 
                 if let reference = model.attachmentReference(id: attachment.id) {
-                    AppIconButton("trash", label: Text("Remove", bundle: .module), role: .destructive) {
+                    // Detach, not delete: the file stays on disk, so this is
+                    // a quiet rebuildable removal, not a destructive role.
+                    AppIconButton("minus.circle", label: Text("Remove", bundle: .module)) {
                         model.removeAttachment(reference: reference)
                     }
-                    .foregroundStyle(.appDanger)
                     .accessibilityHint(Text("Detaches this document from the chat", bundle: .module))
                     .disabled(model.isRunning)
                 }

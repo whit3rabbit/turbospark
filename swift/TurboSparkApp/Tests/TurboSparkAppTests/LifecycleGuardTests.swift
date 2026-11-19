@@ -386,7 +386,7 @@ final class LifecycleGuardTests: XCTestCase {
         XCTAssertEqual(republished, 1, "Loading an audio model must redraw the top bar's eject.")
         XCTAssertTrue(appModel.canUnloadAnyModel)
 
-        audio.inputLevel = 0.5
+        audio.recordingLevels[.microphone] = 0.5
         audio.playbackTime = 3
         await drainMainQueue()
         XCTAssertEqual(republished, 1, "A meter or playback tick must not redraw every AppModel view.")

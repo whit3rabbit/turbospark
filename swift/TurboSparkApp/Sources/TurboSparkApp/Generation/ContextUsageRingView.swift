@@ -47,7 +47,10 @@ struct ContextUsageRingView: View {
                 showsPopover.toggle()
             } label: {
                 ring
-                    .frame(width: 28, height: 28)
+                    // Scaled with Text Size like the Send button beside it,
+                    // so the ring keeps its proportion at Extra Large.
+                    .frame(width: (28 * AppMetrics.textScale(theme)).rounded(),
+                           height: (28 * AppMetrics.textScale(theme)).rounded())
                     .background(
                         isHovered ? AnyShapeStyle(.appElevated) : AnyShapeStyle(Color.clear),
                         in: Circle()

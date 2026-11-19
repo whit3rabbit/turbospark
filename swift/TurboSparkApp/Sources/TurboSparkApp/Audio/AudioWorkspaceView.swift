@@ -26,7 +26,7 @@ struct AudioWorkspaceView: View {
         .background(.appPage)
         .themedFont(.base)
         .sheet(isPresented: $showingPreset) {
-            AudioNameSheet(title: savingPrompt ? "Save Prompt" : "Save preset", value: $presetName) {
+            AudioNameSheet(title: savingPrompt ? "Save Prompt" : "Save Preset", value: $presetName) {
                 if savingPrompt {
                     if controller.savePrompt(name: presetName) { showingPreset = false }
                 } else {
@@ -46,20 +46,25 @@ struct AudioWorkspaceView: View {
         }
     }
 
-    /// The page under the model gate. Music and Voice Cloning are disabled and
-    /// hidden from VoiceOver while the gate is up, so nothing under it can run.
+    /// Music keeps its composer and listening controls available during setup.
+    @ViewBuilder
     private var pageArea: some View {
-        let gate = controller.modelGate
-        return ZStack {
-            pageContent
-                .disabled(gate != nil)
-                .accessibilityHidden(gate != nil)
-            if let gate {
-                AudioModelGateView(model: model, controller: controller, gate: gate)
-                    .transition(.opacity)
+        if controller.page == .music {
+            AudioMusicWorkspaceView(model: model, controller: controller, showGenerator: { showingGenerator = true }) {
+                libraryActions
             }
+        } else {
+            let gate = controller.modelGate
+            ZStack {
+                if let gate {
+                    AudioModelGateView(model: model, controller: controller, gate: gate)
+                        .transition(.opacity)
+                } else {
+                    pageContent
+                }
+            }
+            .tsAnimation(TSMotion.pane, value: gate != nil)
         }
-        .tsAnimation(TSMotion.pane, value: gate != nil)
     }
 
     @ViewBuilder private var pageContent: some View {
@@ -78,17 +83,23 @@ struct AudioWorkspaceView: View {
                     if geometry.size.width >= (940 * scale).rounded() && controller.page != .record {
                         HStack(alignment: .top, spacing: 24) {
                             workflow.frame(maxWidth: .infinity)
-                            modelPanel.frame(width: (300 * scale).rounded())
+                            modelPanel.frame(width: (280 * scale).rounded())
                         }
-                        .frame(maxWidth: 1440)
+                        .frame(maxWidth: (1440 * scale).rounded())
                         .frame(maxWidth: .infinity)
                         .padding(24)
                     } else {
                         VStack(alignment: .leading, spacing: 20) {
-                            if controller.page != .record { compactModelPanel }
+                            if controller.page != .record { modelPanel }
                             workflow
                         }
                         .padding(24)
+                        // Record is the only page that always takes this branch,
+                        // so this cap is its reading measure; a narrow render of
+                        // the other pages is already below it, because the branch
+                        // itself opens under 940 scaled points.
+                        .frame(maxWidth: (980 * scale).rounded())
+                        .frame(maxWidth: .infinity)
                     }
                 }
             }
@@ -101,13 +112,13 @@ struct AudioWorkspaceView: View {
         }, actions: {
             workspaceActions
         })
-        .padding(.horizontal, 24).padding(.vertical, 18)
+        .padding(.horizontal, 24).padding(.vertical, 12)
     }
 
     private var workspaceTitle: some View {
         HStack(spacing: 12) {
             Image(systemName: controller.page.symbol)
-                .themedFont(.title2).foregroundStyle(.appAccent)
+                .themedFont(.title3).foregroundStyle(.appAccentText)
                 .accessibilityHidden(true)
             Text(LocalizedStringKey(controller.page.title), bundle: .module)
                 .themedFont(.title2, weight: .semibold).accessibilityAddTraits(.isHeader)
@@ -120,88 +131,40 @@ struct AudioWorkspaceView: View {
                 Button { controller.selectPage(.library) } label: {
                     Label { Text("Audio library", bundle: .module) } icon: { Image(systemName: "books.vertical") }
                 }
-                .appAction(.secondary)
+                .appAction(.quiet)
             }
             Menu { AudioDestinationMenu(model: model) } label: {
                 Label { Text("Audio tasks", bundle: .module) } icon: { Image(systemName: "ellipsis.circle") }
             }
-            .appMenuAction()
+            .appMenuAction(quiet: true)
         }
         .themedFont(.small)
     }
 
     private var workflow: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        let recentTakes = Array(controller.workspaceHistory.prefix(5))
+        return VStack(alignment: .leading, spacing: 16) {
             Text(LocalizedStringKey(pageDescription), bundle: .module)
-                .foregroundStyle(.appSecondary).fixedSize(horizontal: false, vertical: true)
+                .themedFont(.small).foregroundStyle(.appSecondary).fixedSize(horizontal: false, vertical: true)
             if controller.page == .record { AudioRecordingPanel(model: model, controller: controller) }
             else { modelAndInputs }
             if let item = controller.workspaceResult, item.status != .processing {
                 AudioItemDetailView(controller: controller, item: item)
-            } else if !controller.isBusy && AudioWorkspacePage.destinations.contains(controller.page) {
-                AppEmptyState(
-                    systemImage: "waveform",
-                    title: Text("No outputs yet", bundle: .module),
-                    message: Text("Audio and edits are saved in your encrypted profile.", bundle: .module)
-                )
+            } else if recentTakes.isEmpty && !controller.isBusy && AudioWorkspacePage.destinations.contains(controller.page) {
+                Label { Text("No outputs yet", bundle: .module) } icon: { Image(systemName: "waveform") }
+                    .themedFont(.small).foregroundStyle(.appSecondary)
             }
-            if !controller.workspaceHistory.isEmpty {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Saved audio", bundle: .module).themedFont(.base, weight: .semibold)
-                        .accessibilityAddTraits(.isHeader)
-                    ForEach(controller.workspaceHistory.prefix(5)) { item in
-                        HStack(spacing: 12) {
-                            Button { controller.select(item) } label: {
-                                HStack(spacing: 12) {
-                                    Image(systemName: controller.page.symbol).foregroundStyle(.appAccent)
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(item.title).lineLimit(1)
-                                        Text(item.createdAt, format: .dateTime.month(.abbreviated).day().hour().minute())
-                                            .themedFont(.tiny).foregroundStyle(.appSecondary)
-                                    }
-                                    Spacer(minLength: 8)
-                                    Text(audioTime(item.duration)).monospacedDigit().foregroundStyle(.appSecondary)
-                                }
-                                .contentShape(Rectangle())
-                            }.buttonStyle(.plain)
-                            AudioSaveAsButton(controller: controller, item: item, compact: true)
-                            AudioDeleteButton(controller: controller, item: item, compact: true)
-                        }
-                        .padding(12).background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
-                    }
+            if !recentTakes.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    AppSectionHeader(title: Text("Saved audio", bundle: .module))
+                    AudioLibraryList(controller: controller, items: recentTakes)
                 }
             }
         }
     }
 
     private var modelPanel: some View {
-        AudioModelPickerView(model: model, controller: controller)
-            .appCardSurface(padding: 18)
-    }
-
-    @ViewBuilder private var compactModelPanel: some View {
-        if controller.page == .music {
-            modelPanel
-        } else {
-            collapsibleModelPanel
-        }
-    }
-
-    private var collapsibleModelPanel: some View {
-        DisclosureGroup {
-            AudioModelPickerView(model: model, controller: controller).padding(.top, 12)
-        } label: {
-            HStack(spacing: 12) {
-                Label { Text("Audio model", bundle: .module) } icon: { Image(systemName: "cpu") }
-                Spacer(minLength: 8)
-                if let profile = controller.selectedProfile {
-                    Text(profile.displayName).lineLimit(1).foregroundStyle(.appSecondary)
-                } else {
-                    Text("Choose a model", bundle: .module).foregroundStyle(.appSecondary)
-                }
-            }.themedFont(.small)
-        }
-        .appCardSurface(padding: 16)
+        AudioWorkspaceModelPanel(model: model, controller: controller)
     }
 
     private var pageDescription: String {
@@ -219,28 +182,14 @@ struct AudioWorkspaceView: View {
     }
 
     private var modelAndInputs: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 14) {
             if controller.page == .cleanup || controller.page == .advanced { AudioOperationPicker(controller: controller) }
-            if controller.page == .advanced {
-                Toggle(isOn: $controller.allowPortableExperiment) {
-                    Text("Allow portable model experiments", bundle: .module)
-                }
-                Text("Portable experiments run on the CPU and have not passed production quality or performance gates.", bundle: .module)
-                    .themedFont(.small).foregroundStyle(.appSecondary)
-                if controller.selectedProfile?.family == "qwen3_asr" {
-                    Toggle(isOn: $controller.allowExperimentalMetal) {
-                        Text("Use experimental Metal decoder", bundle: .module)
-                    }.disabled(controller.isBusy)
-                }
-            }
-            if controller.page == .advanced { familyDetails }
             if controller.page == .cleanup
                 || (controller.page == .advanced && controller.task != .textToSpeech && controller.task != .music) {
                 sourcePicker
             }
             switch controller.page {
             case .voiceover, .voiceClone, .voiceDesign: voiceoverInputs
-            case .music: AudioMusicInputs(controller: controller) { showingGenerator = true }
             case .advanced:
                 if controller.task == .speechToText { languagePicker }
                 if controller.task == .alignment { scriptEditor }
@@ -249,8 +198,9 @@ struct AudioWorkspaceView: View {
             default: EmptyView()
             }
             experimentActions
+            if controller.page == .advanced { familyDetails }
         }
-        .appCardSurface(padding: 20)
+        .appCardSurface(padding: 16)
     }
 
     private var sourcePicker: some View {
@@ -260,6 +210,8 @@ struct AudioWorkspaceView: View {
                 VStack(alignment: .leading) { importButton; recordButton; savedSourceMenu }
             }
             if let item = controller.selectedItem, !item.clips.isEmpty {
+                // The source under the card's own surface: an inset, not a
+                // second card, so the picked recording reads as one object.
                 HStack {
                     Image(systemName: "waveform")
                     Text(item.title).lineLimit(2)
@@ -267,6 +219,12 @@ struct AudioWorkspaceView: View {
                     Text(audioTime(item.duration)).monospacedDigit()
                 }
                 .foregroundStyle(.appSecondary)
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .background(.appPage, in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                        .stroke(.appBorder, lineWidth: 1)
+                }
             } else {
                 Text("Choose a saved recording or import audio to begin.", bundle: .module)
                     .foregroundStyle(.appSecondary)
@@ -278,7 +236,7 @@ struct AudioWorkspaceView: View {
         Button { controller.selectPage(.record) } label: {
             Label { Text("Record", bundle: .module) } icon: { Image(systemName: "mic") }
         }
-        .appAction(.secondary, size: .small)
+        .appAction(.quiet, size: .small)
         .disabled(controller.isBusy)
     }
 
@@ -290,7 +248,7 @@ struct AudioWorkspaceView: View {
         } label: {
             Label { Text("Saved audio", bundle: .module) } icon: { Image(systemName: "books.vertical") }
         }
-        .appMenuAction(size: .small)
+        .appMenuAction(size: .small, quiet: true)
         .disabled(controller.isBusy || controller.hasRecordingActivity || !controller.items.contains { !$0.clips.isEmpty })
     }
 
@@ -298,7 +256,7 @@ struct AudioWorkspaceView: View {
         Button { controller.importAudio() } label: {
             Label { Text("Import audio", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
         }
-        .appAction(.secondary, size: .small)
+        .appAction(.quiet, size: .small)
         .disabled(controller.isBusy || controller.hasRecordingActivity)
     }
 
@@ -312,9 +270,7 @@ struct AudioWorkspaceView: View {
             } else if controller.selectedProfileClonesNatively {
                 VoiceCloneInputsView(controller: controller)
             }
-            AudioVoicePicker(controller: controller)
-            languagePicker
-            AudioSpeedControl(controller: controller)
+            AudioSpeechOptions(controller: controller)
             AudioScriptSections(controller: controller)
         }
     }
@@ -326,36 +282,29 @@ struct AudioWorkspaceView: View {
             TextEditor(text: $controller.recipe.text)
                 .themedFont(.base)
                 .accessibilityLabel(Text("Script", bundle: .module))
-                .appEditorSurface(minHeight: 180)
+                .appEditorSurface(minHeight: 112 * scale)
         }
     }
 
     private var languagePicker: some View { AudioLanguagePicker(controller: controller) }
 
     private var experimentActions: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 12) { libraryActions; Spacer(minLength: 16); runButton }
-            VStack(alignment: .leading, spacing: 12) {
-                libraryActions
-                runButton
-            }
-        }
-        .padding(.top, 4)
+        AudioRunControls(controller: controller) { libraryActions }
     }
 
     @ViewBuilder private var libraryActions: some View {
         if controller.task == .music || controller.task == .textToSpeech {
-            HStack(spacing: 12) {
+            FlowLayout(spacing: AppMetrics.actionSpacing, lineSpacing: 6) {
                 Button { showingPrompts = true } label: {
                     Label { Text("Prompt library", bundle: .module) } icon: { Image(systemName: "text.book.closed") }
                 }
-                .appAction(.secondary, size: .small)
+                .appAction(.quiet, size: .small)
                 Button(action: beginSavingPrompt) { Text("Save Prompt", bundle: .module) }
-                    .appAction(.secondary, size: .small)
+                    .appAction(.quiet, size: .small)
                     .disabled(!controller.canSavePrompt)
-            }.fixedSize()
+            }
         } else {
-            HStack(spacing: 12) { presetMenu; saveDraftButton }
+            FlowLayout(spacing: AppMetrics.actionSpacing, lineSpacing: 6) { presetMenu; saveDraftButton }
         }
     }
 
@@ -368,6 +317,16 @@ struct AudioWorkspaceView: View {
     private var familyDetails: some View {
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 14) {
+                Toggle(isOn: $controller.allowPortableExperiment) {
+                    Text("Allow portable model experiments", bundle: .module)
+                }
+                Text("Portable experiments run on the CPU and have not passed production quality or performance gates.", bundle: .module)
+                    .themedFont(.small).foregroundStyle(.appSecondary)
+                if controller.selectedProfile?.family == "qwen3_asr" {
+                    Toggle(isOn: $controller.allowExperimentalMetal) {
+                        Text("Use experimental Metal decoder", bundle: .module)
+                    }.disabled(controller.isBusy)
+                }
                 ForEach(controller.familyCapabilities.filter { $0.task == controller.task }) { family in
                     VStack(alignment: .leading, spacing: 6) {
                         Label {
@@ -385,7 +344,7 @@ struct AudioWorkspaceView: View {
 
     private var presetMenu: some View {
         Menu {
-            Button { savingPrompt = false; presetName = ""; showingPreset = true } label: { Text("Save preset", bundle: .module) }
+            Button { savingPrompt = false; presetName = ""; showingPreset = true } label: { Text("Save Preset", bundle: .module) }
             if !controller.presets.isEmpty {
                 Divider()
                 ForEach(controller.presets) { preset in
@@ -393,22 +352,14 @@ struct AudioWorkspaceView: View {
                 }
             }
         } label: { Text("Presets", bundle: .module) }
-        .appMenuAction(size: .small)
+        .appMenuAction(size: .small, quiet: true)
         .disabled(controller.isBusy)
     }
 
     private var saveDraftButton: some View {
         Button { controller.saveDraft() } label: { Text("Save draft", bundle: .module) }
-            .appAction(.secondary, size: .small)
+            .appAction(.quiet, size: .small)
             .disabled(controller.isBusy)
     }
 
-    private var runButton: some View {
-        Button { controller.run() } label: {
-            Label { Text(LocalizedStringKey(controller.runTitle), bundle: .module) }
-                icon: { Image(systemName: controller.page.symbol) }
-        }
-        .appAction(.primary, size: .large).disabled(!controller.canRun)
-        .keyboardShortcut(.return, modifiers: .command)
-    }
 }

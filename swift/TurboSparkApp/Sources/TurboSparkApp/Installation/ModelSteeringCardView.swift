@@ -51,7 +51,7 @@ struct ModelSteeringCardView: View {
                 } icon: {
                     Image(systemName: "xmark.octagon.fill")
                 }
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.appSecondary)
             } else if installedModel == nil {
                 notInstalledMessage
             } else {
@@ -153,7 +153,7 @@ struct ModelSteeringCardView: View {
                     bundle: .module))
 
                 Text(verbatim: "or")
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.appSecondary)
 
                 Button {
                     model.openSettings(tab: .safety)

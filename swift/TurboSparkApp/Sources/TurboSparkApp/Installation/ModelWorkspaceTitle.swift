@@ -8,11 +8,13 @@ import SwiftUI
 /// audit of 2026-10-11 found them with different header structure, search
 /// placement and action styles. The summary wraps instead of truncating, so
 /// a long translation adds a line rather than losing the counts.
-struct ModelWorkspaceTitle<Tint: ShapeStyle>: View {
+///
+/// Always the theme accent: Installed used a fixed teal that ignored custom
+/// themes and drew its badge text below 4.5:1 in light mode. The wash takes
+/// the accent and the text and glyph take `.appAccentText`, which light mode
+/// darkens to stay readable.
+struct ModelWorkspaceTitle: View {
     let systemImage: String
-    /// Generic so a theme token (`.appAccent`) and a fixed hue (`.teal`)
-    /// both work without resolving the theme here.
-    let tint: Tint
     let title: Text
     let badge: Text
     let summary: Text
@@ -21,11 +23,11 @@ struct ModelWorkspaceTitle<Tint: ShapeStyle>: View {
         HStack(spacing: 8) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(tint.opacity(0.15))
+                    .fill(.appAccent.opacity(0.15))
                     .frame(width: 30, height: 30)
                 Image(systemName: systemImage)
                     .themedFont(.callout, weight: .semibold)
-                    .foregroundStyle(tint)
+                    .foregroundStyle(.appAccentText)
             }
             .accessibilityHidden(true)
 
@@ -38,8 +40,8 @@ struct ModelWorkspaceTitle<Tint: ShapeStyle>: View {
                         .themedFont(.micro, weight: .bold)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 1.5)
-                        .background(tint.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
-                        .foregroundStyle(tint)
+                        .background(.appAccent.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                        .foregroundStyle(.appAccentText)
                 }
                 summary
                     .themedFont(.tiny)

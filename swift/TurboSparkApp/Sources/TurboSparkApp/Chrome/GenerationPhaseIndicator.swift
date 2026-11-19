@@ -64,10 +64,13 @@ private struct PulsingIndicatorDot: View {
         Circle()
             .fill(.appAccent)
             .frame(width: 6, height: 6)
+            // The named curve, not an inline duration: this is the same
+            // pulsing dot ModelLoaderIndicators draws, so it breathes at the
+            // same rate.
             .phaseAnimator([0.4, 1.0]) { dot, opacity in
                 dot.opacity(opacity)
             } animation: { _ in
-                .easeInOut(duration: 0.7)
+                TSMotion.breathe
             }
     }
 }

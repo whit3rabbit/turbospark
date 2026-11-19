@@ -26,6 +26,7 @@ struct HumanizeAdvancedPanel: View {
         } content: {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    presetSection
                     ruleField(
                         "Protected terms",
                         detail: "Each line must appear in the rewrite exactly as written. Missing terms are flagged.",
@@ -55,7 +56,21 @@ struct HumanizeAdvancedPanel: View {
         text: Binding<String>, field: Field
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(title, bundle: .module).font(theme.ui(.small, weight: .semibold))
+            HStack(spacing: 8) {
+                Text(title, bundle: .module).font(theme.ui(.small, weight: .semibold))
+                Spacer(minLength: 8)
+                // Like Clear Draft: the lists are text the user can retype or
+                // re-add from a preset, so no confirmation. Hidden while empty
+                // rather than disabled, so a blank list shows no dead control.
+                if !text.wrappedValue.isEmpty {
+                    AppChip(Text("Clear", bundle: .module), systemImage: "eraser", iconOnly: true) {
+                        text.wrappedValue = ""
+                    }
+                    .accessibilityValue(Text(title, bundle: .module))
+                    .transition(.opacity)
+                }
+            }
+            .tsAnimation(TSMotion.hover, value: text.wrappedValue.isEmpty)
             Text(detail, bundle: .module).font(theme.ui(.tiny)).foregroundStyle(.appSecondary)
                 .fixedSize(horizontal: false, vertical: true)
             ZStack(alignment: .topLeading) {
@@ -83,6 +98,42 @@ struct HumanizeAdvancedPanel: View {
             }
             .tsAnimation(TSMotion.hover, value: focusedField)
         }
+    }
+
+    /// Style is steered here, outside the model: the model's instruction is
+    /// fixed, so a preset fills the lists below instead of changing the prompt.
+    private var presetSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Menu {
+                presetButton(.plainEnglish) { Text("Plain English", bundle: .module) }
+                presetButton(.business) { Text("Business writing", bundle: .module) }
+                presetButton(.casual) { Text("Casual", bundle: .module) }
+            } label: {
+                Label { Text("Presets", bundle: .module) } icon: { Image(systemName: "wand.and.stars") }
+            }
+            .appMenuAction(size: .small)
+            Text("Adds words to the lists below. Nothing is removed.", bundle: .module)
+                .font(theme.ui(.tiny)).foregroundStyle(.appSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// A preset already in the lists shows a checkmark and does nothing, so
+    /// the menu reads as what is on, not as a list of actions to repeat.
+    private func presetButton<Name: View>(
+        _ preset: HumanizePreset, @ViewBuilder name: () -> Name
+    ) -> some View {
+        let applied = controller.rules.contains(preset)
+        return Button {
+            controller.rules = controller.rules.adding(preset)
+        } label: {
+            if applied {
+                Label { name() } icon: { Image(systemName: "checkmark") }
+            } else {
+                name()
+            }
+        }
+        .disabled(applied)
     }
 
     private var seedSection: some View {

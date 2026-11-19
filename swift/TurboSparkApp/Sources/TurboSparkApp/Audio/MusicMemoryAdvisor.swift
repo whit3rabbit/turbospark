@@ -126,7 +126,7 @@ enum MusicMemoryAdvisor {
             return AppStrings.localized("Duration must be greater than 0 seconds.")
         }
 
-        let frames = Int((duration * mem.frameRate).rounded())
+        let frames = Int(exactly: (duration * mem.frameRate).rounded()) ?? Int.max
 
         if frames > mem.maxSupportedFrames {
             return String(

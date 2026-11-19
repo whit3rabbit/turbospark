@@ -41,7 +41,7 @@ struct PromptAttachmentChipView: View {
                         pixelSize: 16,
                         fallbackSymbol: attachment.symbolName,
                         symbolStep: .tiny,
-                        symbolTint: isPreviewing ? theme.accent : .secondary
+                        symbolTint: isPreviewing ? theme.accent : theme.secondaryText
                     )
                     .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 0) {
@@ -74,7 +74,7 @@ struct PromptAttachmentChipView: View {
             )
             .accessibilityHint(Text("Detaches this document from the prompt", bundle: .module))
         }
-        .frame(maxWidth: 220, alignment: .leading)
+        .frame(maxWidth: (220 * AppMetrics.textScale(theme)).rounded(), alignment: .leading)
         .padding(.leading, 8)
         .padding(.trailing, 6)
         .padding(.vertical, 5)

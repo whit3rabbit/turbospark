@@ -110,7 +110,7 @@ struct InstalledModelRowView: View {
                         HStack(spacing: 2) {
                             Image(systemName: "internaldrive")
                                 .themedFont(.micro)
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.appSecondary)
                                 .accessibilityHidden(true)
                             Text(verbatim: MetricFormat.storage(modelItem.installBytes))
                                 .themedFont(.tiny).monospacedDigit()
@@ -140,8 +140,8 @@ struct InstalledModelRowView: View {
                                     .themedFont(.micro, weight: .medium)
                                     .padding(.horizontal, 4)
                                     .padding(.vertical, 1)
-                                    .background(Color.teal.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
-                                    .foregroundStyle(Color.teal)
+                                    .background(.appAccent.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
+                                    .foregroundStyle(.appAccentText)
                             }
                         }
                     }
@@ -153,15 +153,13 @@ struct InstalledModelRowView: View {
         }
         .buttonStyle(.plain)
         .background(
-            isSelected
-                ? Color.teal.opacity(0.14)
-                : Color.clear,
+            isSelected ? AnyShapeStyle(.appAccent.opacity(0.14)) : AnyShapeStyle(Color.clear),
             in: RoundedRectangle(cornerRadius: 8)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(
-                    isSelected ? Color.teal.opacity(0.4) : Color.clear,
+                    isSelected ? AnyShapeStyle(.appAccent.opacity(0.4)) : AnyShapeStyle(Color.clear),
                     lineWidth: 1
                 )
         )

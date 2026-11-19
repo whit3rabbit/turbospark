@@ -134,7 +134,9 @@ struct ImagePreviewView: View {
             session.redo()
         }
         .disabled(!session.history.canRedo)
-        AppIconButton("trash", label: Text("Delete annotation", bundle: .module), role: .destructive) {
+        // Deletion is reversible through the Undo action beside it, so this
+        // carries no destructive role: no red styling, no confirmation.
+        AppIconButton("trash", label: Text("Delete annotation", bundle: .module)) {
             session.deleteSelection()
         }
         .disabled(session.selectedID == nil)

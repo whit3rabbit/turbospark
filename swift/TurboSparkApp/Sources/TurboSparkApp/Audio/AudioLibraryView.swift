@@ -7,6 +7,7 @@ struct AudioLibraryView: View {
     @State private var filter: AudioLibraryFilter = .all
     @State private var collection: String?
     @State private var tag: String?
+    @State private var compactLibraryExpanded = false
 
     private var scale: CGFloat { AppMetrics.textScale(theme) }
 
@@ -18,7 +19,7 @@ struct AudioLibraryView: View {
         GeometryReader { geometry in
             if geometry.size.width > (850 * scale).rounded() {
                 HSplitView {
-                    library.frame(
+                    library(scrollsItems: true).frame(
                         minWidth: (260 * scale).rounded(),
                         idealWidth: (310 * scale).rounded(),
                         maxWidth: (400 * scale).rounded()
@@ -26,67 +27,91 @@ struct AudioLibraryView: View {
                     detail.frame(minWidth: (360 * scale).rounded())
                 }
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        library
-                        if let item = controller.selectedItem {
-                            AudioItemDetailView(controller: controller, item: item).padding(.horizontal, 20)
+                ScrollViewReader { scroll in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 20) {
+                            if let item = controller.selectedItem {
+                                DisclosureGroup(isExpanded: $compactLibraryExpanded) {
+                                    library(scrollsItems: false)
+                                } label: {
+                                    Label { Text("Choose a recording or take", bundle: .module) }
+                                        icon: { Image(systemName: "books.vertical") }
+                                        .themedFont(.small, weight: .medium)
+                                }
+                                .padding(.horizontal, 24).padding(.top, 20)
+                                AudioItemDetailView(controller: controller, item: item).padding(.horizontal, 20)
+                            } else {
+                                library(scrollsItems: false)
+                            }
                         }
-                    }.padding(.bottom, 20)
+                        .padding(.bottom, 20)
+                        .id("audio-library-top")
+                    }
+                    .onChange(of: controller.selectedID) { _, _ in
+                        // A choice near the bottom must reveal the new detail.
+                        compactLibraryExpanded = false
+                        scroll.scrollTo("audio-library-top", anchor: .top)
+                    }
                 }
             }
         }
     }
 
-    private var library: some View {
+    private func library(scrollsItems: Bool) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Audio library", bundle: .module)
-                .themedFont(.title2, weight: .semibold).accessibilityAddTraits(.isHeader)
             AppSearchField(text: $controller.search, prompt: Text("Search recordings and takes", bundle: .module), maxWidth: .infinity)
             AudioLibraryFilterBar(controller: controller, filter: $filter, collection: $collection, tag: $tag)
-            HStack {
-                Button { controller.importAudio() } label: {
-                    Label { Text("Import audio", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
-                }
-                .appAction(.secondary, size: .small)
-                .disabled(controller.isBusy || controller.hasRecordingActivity)
-                Button { controller.selectPage(.record) } label: {
-                    Label { Text("Record", bundle: .module) } icon: { Image(systemName: "mic") }
-                }
-                .appAction(.secondary, size: .small)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { importButton; recordButton }
+                VStack(alignment: .leading, spacing: 8) { importButton; recordButton }
             }
-            if !controller.search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                AudioSearchResultsView(controller: controller, search: controller.librarySearch)
-            } else if visibleItems.isEmpty {
-                AppEmptyState(
-                    systemImage: "waveform",
-                    title: Text("No recordings or takes found", bundle: .module),
-                    message: Text("Reopen recordings and takes, or start with an audio file.", bundle: .module)
-                ) {
-                    Button { controller.importAudio() } label: {
-                        Label { Text("Import audio", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
-                    }
-                    .appAction(.secondary, size: .small)
-                    .disabled(controller.isBusy || controller.hasRecordingActivity)
-                }
-                .padding(.vertical, 20)
-            } else {
-                ScrollView {
-                    AudioLibraryList(controller: controller, items: visibleItems)
-                }.frame(minHeight: 180)
-            }
-            Spacer(minLength: 0)
+            libraryItems(scrolls: scrollsItems)
+            if scrollsItems { Spacer(minLength: 0) }
         }
         .padding(20)
         .onChange(of: controller.search) { _, query in controller.librarySearch.run(query, controller: controller) }
         .task { controller.librarySearch.scheduleIndexing(controller) }
     }
 
+    private var importButton: some View {
+        Button { controller.importAudio() } label: {
+            Label { Text("Import audio", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
+        }
+        .appAction(controller.items.isEmpty ? .primary : .quiet, size: .small)
+        .disabled(controller.isBusy || controller.hasRecordingActivity)
+    }
+
+    private var recordButton: some View {
+        Button { controller.selectPage(.record) } label: {
+            Label { Text("Record", bundle: .module) } icon: { Image(systemName: "mic") }
+        }
+        .appAction(.quiet, size: .small)
+    }
+
+    @ViewBuilder private func libraryItems(scrolls: Bool) -> some View {
+        if !controller.search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            AudioSearchResultsView(controller: controller, search: controller.librarySearch)
+        } else if visibleItems.isEmpty {
+            AppEmptyState(
+                systemImage: "waveform",
+                title: Text("No recordings or takes found", bundle: .module),
+                message: Text("Reopen recordings and takes, or start with an audio file.", bundle: .module)
+            )
+            .padding(.vertical, 20)
+        } else if scrolls {
+            ScrollView {
+                AudioLibraryList(controller: controller, items: visibleItems)
+            }.frame(minHeight: 180)
+        } else {
+            AudioLibraryList(controller: controller, items: visibleItems)
+        }
+    }
+
     @ViewBuilder private var detail: some View {
         if let item = controller.selectedItem {
             ScrollView {
                 AudioItemDetailView(controller: controller, item: item)
-                    .padding(24).frame(maxWidth: 900, alignment: .leading).frame(maxWidth: .infinity)
+                    .padding(24).frame(maxWidth: 900 * scale, alignment: .leading).frame(maxWidth: .infinity)
             }
         } else {
             AppEmptyState(
@@ -104,6 +129,7 @@ struct AudioLibraryView: View {
 struct AudioItemDetailView: View {
     @ObservedObject var controller: AudioWorkspaceController
     let item: AudioLibraryItem
+    var showsComparisonMenu = true
 
     enum DetailViewTab: String, CaseIterable, Identifiable {
         case transcript = "Transcript"
@@ -112,45 +138,35 @@ struct AudioItemDetailView: View {
     }
 
     @State private var selectedTab: DetailViewTab = .transcript
+    @State private var deletingItem: AudioLibraryItem?
 
     private var comparisonItems: [AudioLibraryItem] {
         controller.items.filter { $0.id != item.id && !$0.clips.isEmpty }
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(item.title).themedFont(.title2, weight: .semibold).textSelection(.enabled)
-                        .accessibilityAddTraits(.isHeader)
-                    Text(item.createdAt, format: .dateTime.month(.wide).day().year().hour().minute())
-                        .themedFont(.small).foregroundStyle(.appSecondary)
-                    AudioTagEditor(controller: controller, item: item).padding(.top, 4)
-                }
-                Spacer()
+        VStack(alignment: .leading, spacing: 14) {
+            detailHeader
+            if !item.clips.isEmpty {
+                AudioTransportView(controller: controller, item: item)
             }
-            HStack(spacing: 12) {
-                if item.hasPlayableAudio { AudioSaveAsButton(controller: controller, item: item) }
-                if item.hasPlayableAudio && item.kind == .voiceover {
-                    Button { controller.reuseVoice(item) } label: { Text("Use as reference voice", bundle: .module) }
-                        .appAction(.secondary, size: .small)
-                        .disabled(controller.isBusy || controller.hasRecordingActivity)
-                }
-                if item.preferredTranscript != nil { AudioExportMenu(controller: controller, item: item) }
-                Spacer(minLength: 8)
-                AudioDeleteButton(controller: controller, item: item)
-            }
-            if !item.clips.isEmpty { AudioTransportView(controller: controller) }
+            takeDetails
+        }
+        .modifier(AudioDeleteConfirmation(controller: controller, item: $deletingItem))
+    }
+
+    private var takeDetails: some View {
+        VStack(alignment: .leading, spacing: 14) {
             if let failure = item.failure {
                 Label { Text(failure).textSelection(.enabled) } icon: { Image(systemName: "exclamationmark.triangle") }
                     .foregroundStyle(.appSecondary)
             }
-            itemActions
             if !item.markers.isEmpty { markers }
             if item.clips.count > 1 { clips }
             if !item.transcripts.isEmpty { detailContentSwitcher }
             DisclosureGroup {
                 VStack(alignment: .leading, spacing: 8) {
+                    AudioTagEditor(controller: controller, item: item)
                     if let modelID = item.recipe.modelID { Text(modelID).textSelection(.enabled) }
                     if !item.recipe.text.isEmpty { Text(item.recipe.text).textSelection(.enabled) }
                     if !item.recipe.caption.isEmpty { Text(item.recipe.caption).textSelection(.enabled) }
@@ -166,10 +182,20 @@ struct AudioItemDetailView: View {
         }
     }
 
-    private var itemActions: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack { duplicateButton; runAgainButton; compareMenu }
-            VStack(alignment: .leading, spacing: 8) { duplicateButton; runAgainButton; compareMenu }
+    private var detailHeader: some View {
+        AppAdaptiveHeader {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(item.title).themedFont(.title2, weight: .semibold).textSelection(.enabled)
+                    .accessibilityAddTraits(.isHeader)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(item.createdAt, format: .dateTime.month(.wide).day().year().hour().minute())
+                    .themedFont(.small).foregroundStyle(.appSecondary)
+            }
+        } actions: {
+            if item.hasPlayableAudio || item.preferredTranscript != nil {
+                AudioExportMenu(controller: controller, item: item)
+            }
+            takeActions
         }
     }
 
@@ -185,16 +211,26 @@ struct AudioItemDetailView: View {
         }
     }
 
-    private var duplicateButton: some View {
-        Button { controller.duplicateSelected() } label: { Text("Duplicate with changes", bundle: .module) }
-            .appAction(.secondary, size: .small)
-            .disabled(controller.isBusy || controller.hasRecordingActivity)
-    }
-
-    private var runAgainButton: some View {
-        Button { controller.runAgain(item) } label: { Text("Run again", bundle: .module) }
-            .appAction(.secondary, size: .small)
-            .disabled(controller.isBusy || controller.hasRecordingActivity || item.recipe.modelID == nil)
+    private var takeActions: some View {
+        Menu {
+            if item.hasPlayableAudio && item.kind == .voiceover {
+                Button { controller.reuseVoice(item) } label: { Text("Use as reference voice", bundle: .module) }
+                    .disabled(controller.isBusy || controller.hasRecordingActivity)
+            }
+            Button { controller.duplicateSelected() } label: { Text("Duplicate with changes", bundle: .module) }
+                .disabled(controller.isBusy || controller.hasRecordingActivity)
+            Button { controller.runAgain(item) } label: { Text("Run again", bundle: .module) }
+                .disabled(controller.isBusy || controller.hasRecordingActivity || item.recipe.modelID == nil)
+            if showsComparisonMenu { compareMenu }
+            Divider()
+            Button(role: .destructive) { deletingItem = item } label: { Text("Delete", bundle: .module) }
+                .disabled(!controller.canDelete(item))
+        } label: {
+            Label { Text("More", bundle: .module) } icon: { Image(systemName: "ellipsis.circle") }
+        }
+        .appMenuAction(size: .small, quiet: true)
+        .accessibilityLabel(Text("Audio actions", bundle: .module))
+        .help(Text("Audio actions", bundle: .module))
     }
 
     private var compareMenu: some View {
@@ -203,7 +239,6 @@ struct AudioItemDetailView: View {
                 Button { controller.compare(with: candidate) } label: { Text(candidate.title) }
             }
         } label: { Text("Compare at this position", bundle: .module) }
-        .appMenuAction(size: .small)
         .disabled(item.clips.isEmpty || comparisonItems.isEmpty || controller.hasRecordingActivity)
         .help(Text("Switch takes while keeping the playback position.", bundle: .module))
     }
@@ -211,7 +246,7 @@ struct AudioItemDetailView: View {
     private var markers: some View {
         DisclosureGroup {
             ForEach(item.markers) { marker in
-                Button { controller.seek(to: marker.time) } label: {
+                Button { controller.seek(to: marker.time, item: item) } label: {
                     HStack {
                         Image(systemName: "bookmark")
                         Text(audioTime(marker.time)).monospacedDigit()

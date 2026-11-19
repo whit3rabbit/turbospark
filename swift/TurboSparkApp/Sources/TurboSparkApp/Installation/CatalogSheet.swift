@@ -192,7 +192,7 @@ struct CatalogSheet: View {
                                 "Download: \(MetricFormat.storage(entry.downloadBytes)) | Disk: \(MetricFormat.storage(entry.installBytes))",
                                 bundle: .module)
                                 .themedFont(.tiny)
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(.appSecondary)
                         }
                     }
                     Spacer()

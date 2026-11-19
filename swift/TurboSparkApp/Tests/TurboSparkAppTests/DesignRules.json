@@ -4,7 +4,7 @@
     {
       "name": "bare static TurboSparkTheme accessor",
       "pattern": "TurboSparkTheme\\.\\w+(Color|Background)\\b(?!\\s*\\()",
-      "baseline": 6,
+      "baseline": 4,
       "fix": "use TurboSparkTheme.x(isDark: theme.isDark) or the resolved theme"
     },
     {
@@ -16,13 +16,13 @@
     {
       "name": "system accent color",
       "pattern": "Color\\.accentColor",
-      "baseline": 19,
+      "baseline": 1,
       "fix": "use .appAccent, .appAccentText or theme.accent"
     },
     {
       "name": "system secondary style",
       "pattern": "Color\\.secondary|Color\\.primary\\.opacity|(?<!appAction)\\(\\.secondary\\)|\\(\\.tertiary\\)",
-      "baseline": 28,
+      "baseline": 8,
       "fix": "use .appSecondary or .appSurface"
     },
     {

@@ -1,76 +1,113 @@
 import SwiftUI
 
-// One treatment for the actions every Audio route shares (Library, Record,
-// Transcribe, Voiceover, Voice Clone, Voice Design, Music, Cleanup and
-// Advanced all draw their saved items through these components):
-// playback, Save As and Export are `.secondary`, Delete is `.destructive`,
-// all `.small` because they sit in cards and rows. Rows pass
-// `compact: true` for icon-only Save As and Delete with the same roles.
-// The route's run action and the model panel's Download/Retry/Adopt are
-// the only `.primary` actions.
-
 @MainActor
 struct AudioTransportView: View {
     @ObservedObject var controller: AudioWorkspaceController
+    let item: AudioLibraryItem
     @State private var seekTime: Double = 0
+    @State private var waveform: (clips: [AudioLibraryClip], peaks: [Float])?
 
-    private var duration: Double { max(0, controller.playbackDuration) }
+    private var playingItem: AudioLibraryItem {
+        guard let id = controller.playbackItemID, id != item.id else { return item }
+        return controller.items.first { $0.id == id } ?? item
+    }
+    private var duration: Double {
+        let value = controller.playbackItemID == nil ? item.duration : controller.playbackDuration
+        return value.isFinite ? max(0, value) : 0
+    }
     private var position: Double { max(0, min(duration, controller.playbackTime)) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 14) {
-                AppIconButton("gobackward.5", label: Text("Back five seconds", bundle: .module)) {
-                    controller.seek(to: max(0, position - 5))
-                }
-                .appAction(.quiet, size: .small)
-                Button { controller.playPause() } label: {
-                    Label {
-                        controller.isPlaying ? Text("Pause", bundle: .module) : Text("Play", bundle: .module)
-                    } icon: { Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill") }
-                }
-                .appAction(.secondary, size: .small)
-                .keyboardShortcut(.space, modifiers: .option)
-                AppIconButton("goforward.5", label: Text("Forward five seconds", bundle: .module)) {
-                    controller.seek(to: min(duration, position + 5))
-                }
-                .appAction(.quiet, size: .small)
-                Spacer(minLength: 0)
+        VStack(alignment: .leading, spacing: 6) {
+            if playingItem.id != item.id {
+                Text(verbatim: playingItem.title).themedFont(.small).foregroundStyle(.appSecondary)
+            }
+            AppAdaptiveHeader {
+                transportButtons
+            } actions: {
                 Text(verbatim: audioTime(position) + " / " + audioTime(duration))
-                    .themedFont(.small).monospacedDigit()
-                    .accessibilityLabel(Text("Playback position", bundle: .module))
+                    .themedFont(.small).monospacedDigit().foregroundStyle(.appSecondary)
+                    .accessibilityHidden(true)
             }
-            Slider(value: Binding(get: { position }, set: { controller.seek(to: $0) }), in: 0...max(0.01, duration)) {
-                Text("Playback position", bundle: .module)
-            }
-            .accessibilityValue(Text(verbatim: audioTime(position)))
-            .accessibilityAdjustableAction { direction in
-                switch direction {
-                case .increment: controller.seek(to: min(duration, position + 5))
-                case .decrement: controller.seek(to: max(0, position - 5))
-                @unknown default: break
+            if let waveform, waveform.clips == playingItem.clips, !waveform.peaks.isEmpty,
+               controller.playbackItemID == nil || controller.playbackItemID == playingItem.id {
+                AudioPlaybackWaveform(peaks: waveform.peaks, progress: position / max(0.01, duration)) {
+                    seek(to: $0 * duration)
                 }
             }
+            positionSlider
             DisclosureGroup {
-                HStack {
-                    TextField(value: $seekTime, format: .number.precision(.fractionLength(0...2))) {
-                        Text("Position in seconds", bundle: .module)
-                    }
-                    .textFieldStyle(.roundedBorder).frame(maxWidth: 140)
-                    .onSubmit { seek() }
-                    Button { seek() } label: { Text("Go to position", bundle: .module) }
-                        .appAction(.secondary, size: .small)
-                }.padding(.top, 8)
+                ViewThatFits(in: .horizontal) {
+                    HStack { positionField; jumpButton }
+                    VStack(alignment: .leading) { positionField; jumpButton }
+                }
+                .padding(.top, 6)
             } label: { Text("Go to position", bundle: .module) }
             .themedFont(.small)
         }
         .disabled(duration <= 0 || controller.hasRecordingActivity)
-        .padding(16).background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
+        .appCardSurface(padding: 12)
+        .task(id: playingItem.clips) {
+            let current = playingItem
+            let peaks = try? await controller.waveformPeaks(for: current, count: 64)
+            guard !Task.isCancelled else { return }
+            waveform = (current.clips, peaks ?? [])
+        }
     }
 
-    private func seek() {
-        guard seekTime.isFinite else { return }
-        controller.seek(to: max(0, min(duration, seekTime)))
+    private var transportButtons: some View {
+        HStack(spacing: 6) {
+            Button { controller.playPause(item: item) } label: {
+                Label {
+                    controller.isPlaying ? Text("Pause", bundle: .module) : Text("Play", bundle: .module)
+                } icon: { Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill") }
+            }
+            .appAction(.primary, size: .small)
+            .keyboardShortcut(.space, modifiers: .option)
+            AppIconButton("gobackward.5", label: Text("Back five seconds", bundle: .module)) {
+                seek(to: position - 5)
+            }
+            .appAction(.quiet, size: .small)
+            AppIconButton("goforward.5", label: Text("Forward five seconds", bundle: .module)) {
+                seek(to: position + 5)
+            }
+            .appAction(.quiet, size: .small)
+        }
+    }
+
+    private var positionSlider: some View {
+        Slider(value: Binding(get: { position }, set: { seek(to: $0) }), in: 0...max(0.01, duration)) {
+            Text("Playback position", bundle: .module)
+        }
+        .labelsHidden()
+        .controlSize(.small)
+        .accessibilityValue(Text(verbatim: audioTime(position) + " / " + audioTime(duration)))
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: seek(to: position + 5)
+            case .decrement: seek(to: position - 5)
+            @unknown default: break
+            }
+        }
+    }
+
+    private var positionField: some View {
+        TextField(value: $seekTime, format: .number.precision(.fractionLength(0...2))) {
+            Text("Position in seconds", bundle: .module)
+        }
+        .textFieldStyle(.roundedBorder)
+        .frame(maxWidth: 140)
+        .onSubmit { seek(to: seekTime) }
+    }
+
+    private var jumpButton: some View {
+        Button { seek(to: seekTime) } label: { Text("Go to position", bundle: .module) }
+            .appAction(.quiet, size: .small)
+    }
+
+    private func seek(to seconds: Double) {
+        guard seconds.isFinite else { return }
+        controller.seek(to: min(duration, max(0, seconds)), item: controller.playbackItemID == nil ? item : nil)
     }
 }
 
@@ -81,6 +118,10 @@ struct AudioExportMenu: View {
 
     var body: some View {
         Menu {
+            if item.hasPlayableAudio {
+                Button { controller.exportAudio(item) } label: { Text("Save As...", bundle: .module) }
+                if item.preferredTranscript != nil { Divider() }
+            }
             if item.preferredTranscript != nil {
                 Button { controller.exportTranscript(item, format: .text) } label: { Text("Text", bundle: .module) }
                 Button { controller.exportTranscript(item, format: .srt) } label: { Text("SRT subtitles", bundle: .module) }
@@ -90,64 +131,8 @@ struct AudioExportMenu: View {
         } label: {
             Label { Text("Export", bundle: .module) } icon: { Image(systemName: "square.and.arrow.up") }
         }
-        .appMenuAction(size: .small)
-        .disabled(item.preferredTranscript == nil || controller.hasRecordingActivity || controller.isExporting)
-    }
-}
-
-@MainActor
-struct AudioSaveAsButton: View {
-    @ObservedObject var controller: AudioWorkspaceController
-    let item: AudioLibraryItem
-    /// Icon only, for rows; the title stays the tooltip and VoiceOver name.
-    var compact = false
-
-    var body: some View {
-        Button { controller.exportAudio(item) } label: {
-            Label { Text("Save As...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
-                .labelStyle(AudioActionLabelStyle(compact: compact))
-        }
-        .appAction(.secondary, size: .small)
-        .fixedSize()
-        .help(Text("Save As...", bundle: .module))
-        .disabled(!item.hasPlayableAudio || controller.hasRecordingActivity || controller.isExporting)
-    }
-}
-
-/// Title and icon, or icon only for a row, without a conditional modifier
-/// that would change the button's identity.
-struct AudioActionLabelStyle: LabelStyle {
-    let compact: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        if compact {
-            // One width for every icon-only row action, so Play, Save As and
-            // Delete line up instead of each taking its glyph's width.
-            configuration.icon.frame(minWidth: 18)
-        } else {
-            Label(title: { configuration.title }, icon: { configuration.icon })
-        }
-    }
-}
-
-@MainActor
-struct AudioDeleteButton: View {
-    @ObservedObject var controller: AudioWorkspaceController
-    let item: AudioLibraryItem
-    /// Icon only, for rows; the title stays the tooltip and VoiceOver name.
-    var compact = false
-    @State private var deletingItem: AudioLibraryItem?
-
-    var body: some View {
-        Button(role: .destructive) { deletingItem = item } label: {
-            Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
-                .labelStyle(AudioActionLabelStyle(compact: compact))
-        }
-        .appAction(.destructive, size: .small)
-        .fixedSize()
-        .help(Text("Delete", bundle: .module))
-        .disabled(!controller.canDelete(item))
-        .modifier(AudioDeleteConfirmation(controller: controller, item: $deletingItem))
+        .appMenuAction(size: .small, quiet: true)
+        .disabled(controller.hasRecordingActivity || controller.isExporting)
     }
 }
 
@@ -179,21 +164,7 @@ struct AudioRecordingBadge: View {
             // Opens the page that started the capture: Voice Cloning for a
             // voice reference, the Speech-to-Text mode, or Record.
             Button { openWorkspace(); controller.openActiveCapture() } label: {
-                HStack(spacing: 6) {
-                    if controller.recordingSetupStatus != nil {
-                        Image(systemName: "hourglass")
-                        Text("Preparing recording...", bundle: .module)
-                    } else {
-                        Image(systemName: controller.isPaused ? "pause.circle.fill" : "record.circle")
-                            .tsPulse(active: controller.isRecording && !controller.isPaused)
-                        if controller.isPaused {
-                            Text("Paused", bundle: .module)
-                        } else {
-                            Text("Recording", bundle: .module)
-                        }
-                        Text(verbatim: audioTime(controller.recordingSeconds)).monospacedDigit()
-                    }
-                }.themedFont(.small, weight: .semibold)
+                AudioRecordingReadout(controller: controller)
             }
             .appAction(.secondary)
             .accessibilityHint(Text("Open recording controls", bundle: .module))
@@ -202,10 +173,49 @@ struct AudioRecordingBadge: View {
 }
 
 @MainActor
-struct AudioWorkspaceStatusView: View {
+struct AudioRecordingReadout: View {
     @ObservedObject var controller: AudioWorkspaceController
 
     var body: some View {
+        HStack(spacing: 6) {
+            if controller.recordingSetupStatus != nil {
+                Image(systemName: "hourglass").accessibilityHidden(true)
+                Text("Preparing recording...", bundle: .module)
+            } else {
+                Image(systemName: controller.isPaused ? "pause.circle.fill" : "record.circle.fill")
+                    .foregroundStyle(controller.isPaused ? AnyShapeStyle(.appSecondary) : AnyShapeStyle(.appDanger))
+                    .accessibilityHidden(true)
+                if controller.isPaused {
+                    Text("Paused", bundle: .module)
+                } else {
+                    Text("Recording", bundle: .module)
+                }
+                Text(verbatim: audioTime(controller.recordingSeconds)).monospacedDigit()
+            }
+        }
+        .themedFont(.small, weight: .semibold)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+@MainActor
+struct AudioWorkspaceStatusView: View {
+    @ObservedObject var controller: AudioWorkspaceController
+
+    private var showsStatus: Bool {
+        controller.error != nil || controller.isBusy || controller.isInstalling || controller.isExporting
+            || controller.recordingSetupStatus != nil || controller.transcriptBacklog > 0
+            || !controller.pendingSaves.isEmpty || !controller.pendingTranscriptEdits.isEmpty
+            || controller.status != AppStrings.localized("Saved in this profile")
+    }
+
+    var body: some View {
+        if showsStatus {
+            statusContent
+        }
+    }
+
+    private var statusContent: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let error = controller.error {
                 HStack(alignment: .top) {
@@ -284,8 +294,9 @@ struct AudioWorkspaceStatusView: View {
             }
         }
         .themedFont(.small)
-        .padding(.horizontal, 20).padding(.vertical, 12)
-        .background(.appSurface)
+        .padding(.horizontal, 24).padding(.vertical, 8)
+        .background(.appPage)
+        .overlay(alignment: .top) { Divider() }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text("Audio status", bundle: .module))
     }

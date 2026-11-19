@@ -2,10 +2,11 @@ import SwiftUI
 
 /// Settings > Browser. A grouped Form like General, one computed property
 /// per `Section` for the macOS 14 type-checker reason documented on
-/// `EngineSettingsPaneView.body`. The Settings shell already shows the
-/// pane's title, so the pane starts with its first section.
+/// `EngineSettingsPaneView.body`. The shell already shows the title; the
+/// pane opens with its one-line purpose.
 @MainActor
 struct BrowserSettingsPaneView: View {
+    @Environment(\.appTheme) private var theme
     @StateObject private var viewModel: BrowserSettingsPaneViewModel
     @State private var showingFirstEnableOnboarding = false
     @State private var showingChromeImportPreview = false
@@ -24,6 +25,12 @@ struct BrowserSettingsPaneView: View {
 
     var body: some View {
         Form {
+            // The pane's one-line purpose (DESIGN.md section 3); the shell
+            // already renders the title.
+            Text("Controls the built-in browser a model can drive: automation, the viewport, bookmarks, and which sites it may use.", bundle: .module)
+                .font(theme.ui(.small))
+                .foregroundStyle(.appSecondary)
+
             automationSection
             viewportSection
             bookmarksSection

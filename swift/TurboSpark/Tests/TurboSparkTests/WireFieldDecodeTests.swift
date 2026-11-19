@@ -44,6 +44,7 @@ final class WireFieldDecodeTests: XCTestCase {
            "peak_footprint_mib":9000,"decode_tok_s_min":10.5,"decode_tok_s_max":12.5,
            "measured_on":"2026-01-01","source":"AC"}],
          "mtp":{"repo":"o/mtp","revision":"def"},
+         "featured_rank":3,
          "notes":null,"installed":false}
         """#
         let e = try JSONDecoder().decode(CatalogEntry.self, from: Data(json.utf8))
@@ -53,6 +54,8 @@ final class WireFieldDecodeTests: XCTestCase {
         XCTAssertEqual(e.gates, ["t1"])
         XCTAssertEqual(e.measured.first?.peakFootprintMib, 9000)
         XCTAssertEqual(e.mtp?.repo, "o/mtp")
+        XCTAssertEqual(e.featuredRank, 3)
+        XCTAssertTrue(e.isFeatured)
     }
 
     func testCatalogEntryFromOlderEngineDefaultsToTrunkModel() throws {
@@ -65,6 +68,8 @@ final class WireFieldDecodeTests: XCTestCase {
         XCTAssertFalse(e.isVisionTower)
         XCTAssertTrue(e.gates.isEmpty && e.measured.isEmpty)
         XCTAssertNil(e.source)
+        XCTAssertNil(e.featuredRank)
+        XCTAssertFalse(e.isFeatured)
     }
 
     func testInstalledModelCarriesStatusKindAndVariant() throws {

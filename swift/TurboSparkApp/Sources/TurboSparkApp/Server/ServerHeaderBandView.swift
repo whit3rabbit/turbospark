@@ -92,7 +92,7 @@ struct ServerHeaderBandView: View {
             // be changed without a restart.
             Label { guardrailsText(rows) } icon: { Image(systemName: "shield.lefthalf.filled") }
                 .themedFont(.small)
-                .foregroundStyle(Color.secondary)
+                .foregroundStyle(.appSecondary)
                 .help(Text("Tool-call guardrails for requests this server answers. Resolved when the server started; restart it to change them.", bundle: .module))
 
             Label {

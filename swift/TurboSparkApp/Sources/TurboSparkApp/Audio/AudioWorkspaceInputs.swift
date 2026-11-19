@@ -54,8 +54,12 @@ struct AudioOperationPicker: View {
 /// The Music page's description, lyrics, duration and generation settings.
 @MainActor
 struct AudioMusicInputs: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var controller: AudioWorkspaceController
     let showGenerator: () -> Void
+    @State private var showingLyrics = false
+    @FocusState private var descriptionFocused: Bool
+    @FocusState private var lyricsFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -70,13 +74,15 @@ struct AudioMusicInputs: View {
                         Button { showGenerator() } label: {
                             Label { Text("Prompt generator", bundle: .module) } icon: { Image(systemName: "wand.and.stars") }
                         }
-                        .appAction(.secondary, size: .small)
+                        .appAction(.quiet, size: .small)
                     }
                 )
                 ZStack(alignment: .topLeading) {
                     TextEditor(text: $controller.recipe.caption)
                         .themedFont(.base)
-                        .appEditorSurface(minHeight: 110)
+                        .appEditorSurface(minHeight: 110 * AppMetrics.textScale(theme))
+                        .focused($descriptionFocused)
+                        .appFocusGlow(descriptionFocused)
                         .accessibilityLabel(Text("Music description", bundle: .module))
                     if controller.recipe.caption.isEmpty {
                         Text("Describe the mood, instruments, and style", bundle: .module)
@@ -87,23 +93,13 @@ struct AudioMusicInputs: View {
                 }
             }
             if controller.selectedProfile?.capabilities.supportsLyrics == true {
-                VStack(alignment: .leading, spacing: 8) {
-                    AppAdaptiveHeader(
-                        leading: {
-                            Text("Lyrics", bundle: .module)
-                                .themedFont(.small, weight: .semibold)
-                                .accessibilityAddTraits(.isHeader)
-                        },
-                        actions: {
-                            if AudioWorkspaceController.effectiveLyrics(controller.recipe.lyrics) == AudioWorkspaceController.instrumentalLyrics {
-                                Text("Instrumental", bundle: .module).themedFont(.small).foregroundStyle(.appSecondary)
-                            }
-                        }
-                    )
+                DisclosureGroup(isExpanded: $showingLyrics) {
                     ZStack(alignment: .topLeading) {
                         TextEditor(text: $controller.recipe.lyrics)
                             .themedFont(.base)
-                            .appEditorSurface(minHeight: 100)
+                            .appEditorSurface(minHeight: 100 * AppMetrics.textScale(theme))
+                            .focused($lyricsFocused)
+                            .appFocusGlow(lyricsFocused)
                             .accessibilityLabel(Text("Lyrics", bundle: .module))
                         if controller.recipe.lyrics.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             Text(verbatim: AudioWorkspaceController.instrumentalLyrics)
@@ -112,68 +108,44 @@ struct AudioMusicInputs: View {
                                 .allowsHitTesting(false).accessibilityHidden(true)
                         }
                     }
+                    .padding(.top, 8)
+                } label: {
+                    HStack(spacing: 8) {
+                        Text("Lyrics", bundle: .module)
+                        if !hasLyrics {
+                            Text("Instrumental", bundle: .module)
+                                .foregroundStyle(.appSecondary)
+                        }
+                    }
+                    .themedFont(.small)
                 }
             }
+            let advice = controller.musicMemoryAdvice
+            if controller.page == .music {
+                durations(upTo: advice.maxSupportedSeconds)
+            } else if controller.selectedProfile != nil {
+                durationField
+            }
+
             if controller.selectedProfile != nil {
-                let advice = controller.musicMemoryAdvice
-
-                HStack(spacing: 8) {
-                    Image(systemName: "memorychip")
-                        .foregroundStyle(.appAccent)
-                    Text(advice.tierSummary)
-                        .themedFont(.small)
-                        .foregroundStyle(.appSecondary)
-                    Spacer()
-                    if advice.canSupportMaxContext {
-                        Button {
-                            controller.setMusicContextToMaxIfSupported()
-                        } label: {
-                            Text("Set to max (360s)", bundle: .module)
-                        }
-                        .appAction(.secondary, size: .small)
-                        .help(Text("Sets duration to maximum context limit (9,000 frames / 360s) supported by your hardware.", bundle: .module))
-                    }
-                }
-                .padding(8)
-                .appCardSurface()
-
-                if let message = controller.musicValidationMessage {
-                    AppAttentionNote(message: Text(verbatim: message))
-                }
-
-                HStack(spacing: 16) {
-                    HStack {
-                        Text("Duration (seconds)", bundle: .module)
-                        TextField(value: $controller.recipe.durationSeconds, format: .number) {
-                            Text("Duration (seconds)", bundle: .module)
-                        }
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 100)
-                    }
-                    HStack {
-                        Text("Frames", bundle: .module)
-                        TextField(
-                            value: Binding(
-                                get: { controller.recipe.musicFrames },
-                                set: { newFrames in
-                                    let rate = controller.recipe.music?.frameRate ?? advice.frameRate
-                                    controller.recipe.durationSeconds = Double(newFrames) / rate
-                                }
-                            ),
-                            format: .number
-                        ) {
-                            Text("Frames", bundle: .module)
-                        }
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 100)
-                        Text(verbatim: "@ \(Int(advice.frameRate)) fps")
-                            .themedFont(.small)
-                            .foregroundStyle(.appSecondary)
-                    }
-                }
-
                 DisclosureGroup {
                     VStack(alignment: .leading, spacing: 10) {
+                        Label {
+                            Text(verbatim: advice.tierSummary).fixedSize(horizontal: false, vertical: true)
+                        } icon: {
+                            Image(systemName: "memorychip").foregroundStyle(.appAccentText)
+                        }
+                        .themedFont(.small).foregroundStyle(.appSecondary)
+                        if advice.canSupportMaxContext {
+                            Button {
+                                controller.setMusicContextToMaxIfSupported()
+                            } label: {
+                                Text("Set to max (360s)", bundle: .module)
+                            }
+                            .appAction(.quiet, size: .small)
+                            .help(Text("Sets duration to maximum context limit (9,000 frames / 360s) supported by your hardware.", bundle: .module))
+                        }
+                        framesField(frameRate: advice.frameRate)
                         HStack {
                             Text("Context size (tokens)", bundle: .module)
                             TextField(
@@ -248,6 +220,75 @@ struct AudioMusicInputs: View {
                     }.padding(.top, 8)
                 } label: { Text("Generation settings", bundle: .module) }
             }
+        }
+        .onAppear { showingLyrics = hasLyrics }
+        .onChange(of: controller.recipe.lyrics) { _, _ in
+            if hasLyrics { showingLyrics = true }
+        }
+    }
+
+    private var hasLyrics: Bool {
+        AudioWorkspaceController.effectiveLyrics(controller.recipe.lyrics) != AudioWorkspaceController.instrumentalLyrics
+    }
+
+    private func durations(upTo limit: Double) -> some View {
+        let choices = [Double(15), 30, 60].filter { $0 <= limit }
+        return FlowLayout(spacing: 12, lineSpacing: 8) {
+            Text("Duration (seconds)", bundle: .module)
+                .themedFont(.small, weight: .medium)
+            durationEntry
+            if !choices.isEmpty {
+                AppPillPicker(
+                    selection: $controller.recipe.durationSeconds,
+                    items: choices.map { seconds in
+                        AppPillItem(
+                            value: seconds,
+                            label: Text(verbatim: Duration.seconds(seconds).formatted(
+                                .units(allowed: [.seconds], width: .abbreviated)
+                            ))
+                        )
+                    },
+                    label: Text("Duration (seconds)", bundle: .module)
+                )
+            }
+        }
+    }
+
+    private var durationField: some View {
+        HStack {
+            Text("Duration (seconds)", bundle: .module)
+            durationEntry
+        }
+    }
+
+    private var durationEntry: some View {
+        TextField(value: $controller.recipe.durationSeconds, format: .number) {
+            Text("Duration (seconds)", bundle: .module)
+        }
+        .textFieldStyle(.roundedBorder)
+        .frame(width: 76 * AppMetrics.textScale(theme))
+    }
+
+    private func framesField(frameRate: Double) -> some View {
+        HStack {
+            Text("Frames", bundle: .module)
+            TextField(
+                value: Binding(
+                    get: { controller.recipe.musicFrames },
+                    set: { newFrames in
+                        let rate = controller.recipe.music?.frameRate ?? frameRate
+                        controller.recipe.durationSeconds = Double(newFrames) / rate
+                    }
+                ),
+                format: .number
+            ) {
+                Text("Frames", bundle: .module)
+            }
+            .textFieldStyle(.roundedBorder)
+            .frame(maxWidth: 100)
+            Text(verbatim: "@ \(Int(frameRate)) fps")
+                .themedFont(.small)
+                .foregroundStyle(.appSecondary)
         }
     }
 }

@@ -90,16 +90,23 @@ public struct CatalogEntry: Decodable, Sendable, Identifiable, Equatable {
     /// own conversion carries none.
     public let mtp: CatalogMtpSource?
     public let notes: String?
+    /// Position in the Featured list, lowest first; `nil` is not featured.
+    /// Optional on the wire, so an engine older than the field decodes.
+    public let featuredRank: Int?
     /// Whether this row is already installed, so a list needs one call
     /// rather than two and a join. Added by the binding, not by the
     /// catalog file.
     public let installed: Bool
+
+    /// Whether the catalog features this row.
+    public var isFeatured: Bool { featuredRank != nil }
 
     /// True for a vision-tower sidecar row.
     public var isVisionTower: Bool { kind == "vision-tower" }
 
     enum CodingKeys: String, CodingKey {
         case alias, name, family, kind, source, status, gates, measured, mtp, notes, installed
+        case featuredRank = "featured_rank"
         case includeVision = "include_vision"
         case downloadBytes = "download_bytes"
         case installBytes = "install_bytes"
@@ -120,6 +127,7 @@ public struct CatalogEntry: Decodable, Sendable, Identifiable, Equatable {
         measured = try c.decodeIfPresent([CatalogMeasurement].self, forKey: .measured) ?? []
         mtp = try c.decodeIfPresent(CatalogMtpSource.self, forKey: .mtp)
         notes = try c.decodeIfPresent(String.self, forKey: .notes)
+        featuredRank = try c.decodeIfPresent(Int.self, forKey: .featuredRank)
         installed = try c.decode(Bool.self, forKey: .installed)
     }
 }

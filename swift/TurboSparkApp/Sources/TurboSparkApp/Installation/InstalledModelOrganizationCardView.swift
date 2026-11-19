@@ -34,8 +34,8 @@ struct InstalledModelOrganizationCardView: View {
                         }
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background(Color.accentColor.opacity(0.14), in: RoundedRectangle(cornerRadius: 4))
-                        .foregroundStyle(Color.accentColor)
+                        .background(.appAccent.opacity(0.14), in: RoundedRectangle(cornerRadius: 4))
+                        .foregroundStyle(.appAccentText)
                     }
 
                     if isAddingTag {
@@ -59,7 +59,7 @@ struct InstalledModelOrganizationCardView: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
                         .background(.appElevated, in: RoundedRectangle(cornerRadius: 4))
-                        .overlay { RoundedRectangle(cornerRadius: 4).stroke(Color.accentColor, lineWidth: 0.5) }
+                        .overlay { RoundedRectangle(cornerRadius: 4).stroke(.appAccent, lineWidth: 0.5) }
                     } else {
                         Button {
                             isAddingTag = true

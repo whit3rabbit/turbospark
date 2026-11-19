@@ -16,7 +16,6 @@ struct ModelManagerHeaderView: View {
         AppAdaptiveHeader {
             ModelWorkspaceTitle(
                 systemImage: "internaldrive.fill",
-                tint: .teal,
                 title: Text("Installed Models", bundle: .module),
                 badge: Text("LOCAL STORAGE", bundle: .module),
                 summary: summaryText)

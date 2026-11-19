@@ -43,6 +43,7 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
     struct Microphone: Identifiable, Sendable { var id: UInt32; var name: String }
     struct Application: Identifiable, Sendable { var id: Int32; var name: String }
     enum SystemSource: Equatable, Sendable { case none, all, application(Int32) }
+    enum InputSource: String, CaseIterable, Sendable { case microphone, system }
     struct Configuration: Sendable {
         var microphoneID: UInt32? = nil
         var capturesMicrophone = true

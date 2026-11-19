@@ -29,7 +29,7 @@ struct ModelHardwareFitCardView: View {
             HStack(spacing: 8) {
                 Image(systemName: "gauge.with.needle")
                     .themedFont(.small)
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(.appAccentText)
                     .help(Text("Hardware compatibility estimate", bundle: .module))
                 Text("Hardware Compatibility", bundle: .module)
                     .themedFont(.base, weight: .semibold)
@@ -124,7 +124,7 @@ struct ModelHardwareFitCardView: View {
 
             Text("Read the headers to size it: turbospark-model recommend --probe", bundle: .module)
                 .themedCode(.small)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.appSecondary)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }

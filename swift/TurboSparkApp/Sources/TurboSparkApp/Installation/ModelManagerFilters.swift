@@ -3,7 +3,7 @@ import TurboSpark
 
 extension ModelManagerView {
     enum ArchitectureFilter: String, CaseIterable, Identifiable {
-        case all = "All"
+        case all = "All Architectures"
         case moeOnly = "MoE Only"
         case denseOnly = "Dense Only"
 

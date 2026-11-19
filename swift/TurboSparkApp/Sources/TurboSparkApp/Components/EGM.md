@@ -31,7 +31,7 @@ Shared SwiftUI views for the TurboSpark macOS app, mostly the Settings panes and
 - Moving models: [ModelMoveSheet.swift:ModelMoveSheet], [ModelMoveSheet.swift:ModelMoveSheetHost] (via `View.modelMoveSheet(model:kinds:)`)
 - Load policy: [LocalModelDefaultsSectionView.swift:LocalModelDefaultsSectionView], [LoadAnywayConfirmation.swift:LoadAnywayConfirmation]
 - Embeddings: [EmbeddingModelPicker.swift:EmbeddingModelPicker], [EmbeddingModelPicker.swift:EmbeddingStatusLabel]
-- Downloads: [DownloadManagerView.swift:DownloadManagerView], [ModelInstallToastView.swift:ModelInstallToastView]
+- Downloads: [DownloadManagerView.swift:DownloadsTopBarButton] (top bar control with live progress), [DownloadManagerView.swift:DownloadManagerView] (the panel RootView opens under it), [ModelInstallToastView.swift:ModelInstallToastView]
 
 ### Appearance
 - [AppearanceSettingsPaneView.swift:AppearanceSettingsPaneView], [AppearancePreferencesCardView.swift:AppearancePreferencesCardView], [ThemeConfigCardView.swift:ThemeConfigCardView], [ThemeGalleryView.swift:ThemeGalleryView], [ThemeGalleryView.swift:ThemeModeThumbnail]
