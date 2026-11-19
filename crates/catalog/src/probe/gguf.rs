@@ -104,6 +104,32 @@ pub fn evaluate_gguf(
                     Err(e) => report.refuse(format!("MiniMax sizing: {e}")),
                 }
             }
+            // The install re-encodes a GDN `ssm_out` whose block is wider than
+            // one V head to Q8_0 (`gdn_out_proj_needs_q8_0_requant`, the SAME
+            // predicate the walk uses, so the two cannot drift). Say so: it is
+            // not byte-lossless and it grows the install.
+            let (mut count, mut from, mut to) = (0usize, 0u64, 0u64);
+            for (name, info) in &header.tensors {
+                let Ok(repack::GgufMapping::Resident(canonical)) =
+                    repack::map_gguf_name(name, family)
+                else {
+                    continue;
+                };
+                if repack::gdn_out_proj_needs_q8_0_requant(&canonical, info.ggml_type, &arch) {
+                    count += 1;
+                    from += info.byte_size(name).unwrap_or(0);
+                    // Q8_0: 34 bytes per 32 elements.
+                    to += info.dims.iter().product::<u64>() / 32 * 34;
+                }
+            }
+            if count > 0 {
+                warnings.push(format!(
+                    "{count} linear_attn.out_proj tensor(s) are stored in a block wider than one \
+                     V head, so the install dequantizes them, restores the V-head order and \
+                     re-encodes them as Q8_0 (not byte-identical to the file; about {} MiB larger)",
+                    to.saturating_sub(from) / (1 << 20)
+                ));
+            }
             report.arch = Some(arch);
         }
         Err(e) => {
@@ -253,6 +279,58 @@ mod tests {
             .iter()
             .find(|share| share.name == name)
             .unwrap_or_else(|| panic!("missing {name} type share"))
+    }
+
+    /// A GDN GGUF with 64-wide V heads and `ssm_out` of the given type. 64 rows
+    /// of 256 columns: one Q4_K superblock per row, a quarter of it per head.
+    fn gdn_header_with_ssm_out(ggml_type: u32, bytes_per_row: usize) -> GgufHeader {
+        let (bytes, _) = repack::GgufBuilder::new()
+            .metadata_str("general.architecture", "qwen35moe")
+            .metadata_u32("qwen35moe.block_count", 1)
+            .metadata_u32("qwen35moe.embedding_length", 64)
+            .metadata_u32("qwen35moe.attention.head_count", 4)
+            .metadata_u32("qwen35moe.attention.head_count_kv", 2)
+            .metadata_u32("qwen35moe.expert_count", 4)
+            .metadata_u32("qwen35moe.expert_used_count", 2)
+            .metadata_u32("qwen35moe.expert_feed_forward_length", 16)
+            .metadata_u32("qwen35moe.full_attention_interval", 4)
+            .metadata_u32("qwen35moe.ssm.group_count", 2)
+            .metadata_u32("qwen35moe.ssm.time_step_rank", 4)
+            .metadata_u32("qwen35moe.ssm.state_size", 64)
+            .metadata_u32("qwen35moe.ssm.inner_size", 256)
+            .metadata_u32("qwen35moe.ssm.conv_kernel", 2)
+            .q8_0_tensor("token_embd.weight", &[64, 128], 1)
+            .tensor(
+                "blk.0.ssm_out.weight",
+                ggml_type,
+                &[256, 64],
+                vec![0u8; 64 * bytes_per_row],
+            )
+            .build();
+        repack::parse_gguf_header(&bytes, repack::GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap()
+    }
+
+    #[test]
+    fn a_k_quant_ssm_out_narrower_than_a_block_warns_that_it_is_reencoded() {
+        let repo = crate::hf::RepoRef::new("owner/name", "main");
+        let warned = |ggml_type: u32, bytes_per_row: usize| {
+            super::evaluate_gguf(
+                &gdn_header_with_ssm_out(ggml_type, bytes_per_row),
+                &repo,
+                "m.gguf",
+                None,
+            )
+            .warnings
+            .iter()
+            .any(|w| w.contains("re-encodes them as Q8_0"))
+        };
+        // Q4_K: 144 bytes per 256 elements, wider than a 64-wide head.
+        assert!(warned(12, 144), "Q4_K ssm_out must be flagged");
+        // Q8_0: 32-element blocks divide a head, so it is a pure byte move.
+        assert!(
+            !warned(8, 256 / 32 * 34),
+            "Q8_0 ssm_out must not be flagged"
+        );
     }
 
     #[test]
