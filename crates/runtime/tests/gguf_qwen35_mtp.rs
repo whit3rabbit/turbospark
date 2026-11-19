@@ -102,6 +102,11 @@ fn a_kquant_gguf_with_a_head_can_speculate() {
     // The trunk keeps the K-quant tags the batched kernels serve.
     let q = &index.entries["language_model.model.layers.3.self_attn.q_proj.weight"];
     assert_eq!(q.dtype, 7, "Q4_K");
+    // The install-only check a host labels models with agrees, unopened.
+    assert_eq!(
+        turbospark_runtime::install_speculation_blocker(&dir, &arch),
+        None
+    );
     let runner = open(&dir, arch);
     assert_eq!(runner.speculation_blocker(), None);
     std::fs::remove_dir_all(&dir).ok();
@@ -112,6 +117,12 @@ fn a_kquant_gguf_with_a_head_can_speculate() {
 #[test]
 fn a_headless_kquant_gguf_is_refused_for_the_head_not_the_dtype() {
     let (dir, arch) = install("headless", false);
+    let unopened = turbospark_runtime::install_speculation_blocker(&dir, &arch)
+        .expect("the install-only check refuses a headless install too");
+    assert!(
+        unopened.contains("multi-token-prediction head"),
+        "{unopened}"
+    );
     let result = RealForwardRunner::open_with_options_and_speculation(
         &dir,
         arch.clone(),

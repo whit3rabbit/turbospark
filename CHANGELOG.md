@@ -46,8 +46,24 @@ when this file gets updated relative to the version bump and the tag.
 - `mtp_accept_length_probe` now ends each batched round the way the product
   loop does (round checkpoint, retaining rollback, `commit_pending`). Under
   the default lazy GDN tape it previously never committed and diverged.
+- Speculation is known before a model loads. The GGUF probe and Hub check
+  report whether a dense `qwen35` file's install would speculate, read off its
+  header with the open-time gate's rules (`repack::gguf_speculation`; the
+  verify list and batched dtype set now live in `model_io::mtp_verify`, shared
+  with the runtime). `ts_install_speculation_json` /
+  `TurboSparkCapabilities.speculation(forInstallAt:)` answers the same for an
+  install from its resident index, with no weights loaded
+  (`runtime::install_speculation_blocker`). The app's MTP badge on installed
+  models now follows that answer instead of the model's name, so a headless or
+  Q3_K GGUF named "MTP" is no longer badged, and the Hub detail shows the badge
+  for a file that would speculate.
 
 ### Changed
+- Rust API, source-breaking for struct literals: `catalog::ProbeReport` gains
+  `speculation: Option<repack::GgufSpeculation>` (add `speculation: None`).
+  FFI/Swift: the probe and Hub check JSON gain `speculation`
+  (`{available, reason}` or null), exposed as `speculation:
+  SpeculationPreflight?`. Existing keys are unchanged.
 - Rust API, source-breaking for code that builds these with struct literals
   (neither is `#[non_exhaustive]`): `catalog::ProbeReport` and
   `catalog::InstallPlan` gain a public `adapter: Option<RepoRef>`, and

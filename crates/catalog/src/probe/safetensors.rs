@@ -72,6 +72,7 @@ pub fn evaluate_config(
         chat_template: None,
         verdict: Verdict::Runnable,
         adapter: None,
+        speculation: None,
         warnings: Vec::new(),
     };
 

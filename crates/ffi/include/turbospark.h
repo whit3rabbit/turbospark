@@ -1737,6 +1737,19 @@ int32_t ts_kv_quant_supported(int64_t full_head_dim, const uint8_t *layer_mask,
 int32_t ts_family_capabilities_json(const char *family, char **out);
 
 /*
+ * Whether ts_session_open on the install at `path` with default options
+ * (speculation "auto", drafter "auto") would speculate, without opening it:
+ * reads the manifest and resident index only, no weights. Writes to *out
+ * (free with ts_string_free):
+ *   { "available": true, "drafter": "mtp", "reason": null }
+ *   { "available": false, "drafter": null, "reason": "..." }
+ * reason is the engine's own blocker, the text sessionInfo.speculation.reason
+ * would carry. An unreadable manifest is TS_ERR_INVALID_ARGUMENT. Always
+ * available: false off macOS.
+ */
+int32_t ts_install_speculation_json(const char *path, char **out);
+
+/*
  * Returns 1 if the host chip is an Apple Silicon M4 or newer capable of ANE prefill,
  * 0 otherwise.
  */

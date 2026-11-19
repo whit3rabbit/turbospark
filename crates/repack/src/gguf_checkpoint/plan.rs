@@ -51,7 +51,7 @@ pub struct Plan<'a> {
 /// A file declaring no head has `num_layers == block_count`, so this is
 /// `None` for every tensor of every GGUF this port installed before the key
 /// was read.
-fn head_block_index(name: &str, num_layers: usize) -> Option<usize> {
+pub(super) fn head_block_index(name: &str, num_layers: usize) -> Option<usize> {
     let (idx, _) = name.strip_prefix("blk.")?.split_once('.')?;
     let layer: usize = idx.parse().ok()?;
     (layer >= num_layers).then_some(layer)

@@ -16,6 +16,7 @@ The GGUF repack walk: takes a parsed `GgufHeader` plus a `RangeSource` and produ
 - `minimax_gguf_sizing` / `MiniMaxSizing` [sizing.rs:minimax_gguf_sizing]: header-only storage and KV sizing for MiniMax M2
 - `verify_plan` / `zero_tail_pattern` [rope_freqs.rs:zero_tail_pattern]: pure check of the LFM3 `rope_freqs.weight` zero-tail encoding
 - `qwen4exp_tensor_is_transcoded` [transcode.rs:qwen4exp_tensor_is_transcoded]: whether Qwen4Exp converts a resident tensor to BF16 (shared with catalog probe)
+- `gguf_speculation` / `GgufSpeculation` [speculation.rs:gguf_speculation]: whether a dense `qwen35` file's install would speculate, from the header and `classify`, with the runtime gate's rules (`model_io::mtp_verify`); `None` for other families. Its per-tensor dtype prediction is held against the walk by `predicted_dtypes_match_the_walk`
 - Internal: `plan::classify`, `expert_stride`, `plan_one_layer`, `plan_one_layer_shape`, `layer_file_bytes` [plan.rs]; `resident_entries`, `transcode_f32` [transcode.rs]; `apply_source_convention(_bytes)` [conventions.rs]; `write_gguf_ngram_table` [ngram.rs]
 
 ## Invariants

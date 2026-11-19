@@ -182,32 +182,22 @@ impl MtpState {
     /// Q5_K, held bit-exact the same way (`dequant_kquant_gemm_parity.rs`). 1
     /// is a resident BF16 matrix, which a GGUF `qwen35` carries for its F32
     /// `ssm_alpha`/`ssm_beta` (`gemv_bf16_gemm_parity.rs`).
-    const BATCHED_GEMM_DTYPES: [u8; 8] = [1, 4, 6, 7, 8, 13, 15, 16];
+    /// The list itself is `model_io::mtp_verify`'s, so the GGUF probe
+    /// predicts with the same set.
+    const BATCHED_GEMM_DTYPES: [u8; 8] = model_io::MTP_BATCHED_GEMM_DTYPES;
 
     /// The GGUF members of [`Self::BATCHED_GEMM_DTYPES`]. A GGUF trunk is the
     /// one kind of install that mixes block types by tensor (Q4_K_M puts
     /// Q6_K on some layers, Q4_K_S puts Q5_K on others, and a low-bit mix
     /// can carry Q3_K), so for these the single `q_proj` probe below is not
     /// enough and every projection the verify dispatches is checked.
-    const GGUF_BATCHED_DTYPES: [u8; 4] = [6, 7, 8, 13];
+    const GGUF_BATCHED_DTYPES: [u8; 4] = model_io::MTP_GGUF_BATCHED_DTYPES;
 
     /// Every trunk projection `produce_batched` sends through
     /// `encode_gemm_any`, per layer. Absent names are skipped: a linear
     /// layer has no `self_attn.*` and a full one no `linear_attn.*`.
-    const VERIFY_PROJECTIONS: [&'static str; 12] = [
-        "self_attn.q_proj.weight",
-        "self_attn.k_proj.weight",
-        "self_attn.v_proj.weight",
-        "self_attn.o_proj.weight",
-        "linear_attn.in_proj_qkv.weight",
-        "linear_attn.in_proj_z.weight",
-        "linear_attn.in_proj_a.weight",
-        "linear_attn.in_proj_b.weight",
-        "linear_attn.out_proj.weight",
-        "mlp.gate_proj.weight",
-        "mlp.up_proj.weight",
-        "mlp.down_proj.weight",
-    ];
+    /// Shared with the GGUF probe (`model_io::mtp_verify`).
+    const VERIFY_PROJECTIONS: [&'static str; 12] = model_io::MTP_VERIFY_PROJECTIONS;
 
     /// The first verify-dispatched matrix on a GGUF trunk whose dtype has no
     /// batched kernel, as `(name, dtype)`. Includes the LM head the verify

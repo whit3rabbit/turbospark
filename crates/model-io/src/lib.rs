@@ -26,6 +26,7 @@ mod install_receipt;
 mod kv_quant;
 mod load_guard;
 mod manifest;
+mod mtp_verify;
 mod ngram_hash;
 mod ngram_table;
 mod packed_experts_layout;
@@ -91,6 +92,7 @@ pub use manifest::{
     MANIFEST_VERSION_MAJOR, MANIFEST_VERSION_MINOR, MANIFEST_VERSION_MINOR_BASE, REQUIRED_FILES,
     RESIDENT_ONLY_GGUF_TYPES,
 };
+pub use mtp_verify::{MTP_BATCHED_GEMM_DTYPES, MTP_GGUF_BATCHED_DTYPES, MTP_VERIFY_PROJECTIONS};
 pub use ngram_hash::{
     build_layer_multipliers, derive_head_vocab_and_offsets, find_nth_prime_after, ple_ngram_rows,
     NgramContext,

@@ -133,6 +133,9 @@ public struct HubCheck: Decodable, Sendable, Equatable {
     /// hint supplied one that does. **An install of this result must pass the
     /// same repository as `sidecarRepo`.**
     public let sidecarRepo: String?
+    /// GGUF only: whether `file`'s install would speculate. Describes the
+    /// representative file, so check the user's pick before showing it.
+    public let speculation: SpeculationPreflight?
     /// Every pickable `.gguf`, best quality first. Empty for safetensors.
     public let variants: [RepoVariant]
     public let shardedSkipped: Int
