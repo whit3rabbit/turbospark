@@ -250,6 +250,7 @@ pub fn parse_deepseek_vl2_config(json: &str) -> Result<ArchConfig, Gemma4Error> 
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
         short_conv_kernel_size: 0,
+        rope_freq_factors: Vec::new(),
         ple: PleConfig::NONE,
         dense_lead_intermediate_size,
         num_dense_leading_layers: lead,

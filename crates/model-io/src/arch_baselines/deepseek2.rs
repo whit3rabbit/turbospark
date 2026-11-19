@@ -111,6 +111,7 @@ pub fn deepseek_v2_lite_16b() -> ArchConfig {
         },
         vision: VisionConfig::NONE,
         short_conv_kernel_size: 0,
+        rope_freq_factors: Vec::new(),
         ple: PleConfig::NONE,
         // Layer 0's dense FFN: `intermediate_size` at 10944 against the
         // shared expert's 2816 above. Zero means "no dense lead".
@@ -179,6 +180,7 @@ pub fn deepseek_vl2_tiny() -> ArchConfig {
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
         short_conv_kernel_size: 0,
+        rope_freq_factors: Vec::new(),
         ple: PleConfig::NONE,
         dense_lead_intermediate_size: 6848,
         num_dense_leading_layers: 1,

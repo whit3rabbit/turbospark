@@ -137,6 +137,19 @@ pub struct ArchConfig {
     /// value, for the reason [`Self::vision`] states (AGENTS.md Gotcha 24).
     /// `build_manifest_json` writes it unconditionally.
     pub short_conv_kernel_size: i64,
+    /// Llama 3.x rope scaling as one DIVISOR per rotated pair (the
+    /// `rope_freqs.weight` vector a GGUF Llama 3.1 file ships, or the same
+    /// vector built from an HF `rope_scaling` block of `rope_type: llama3`
+    /// by `turbospark_compute::llama3_rope_factors`). EMPTY means no
+    /// per-pair scaling, which is every family but `llama`.
+    ///
+    /// A vector rather than the five llama3 numbers because the GGUF
+    /// intake has only the vector: llama.cpp's converter writes the tensor
+    /// and none of `rope_scaling`'s keys. The llama flow refuses a non-empty
+    /// vector it cannot bind, and an install carrying one is written at
+    /// manifest minor 2, so a reader that predates the field refuses it by
+    /// version instead of decoding with unscaled frequencies.
+    pub rope_freq_factors: Vec<f32>,
 }
 
 impl ArchConfig {

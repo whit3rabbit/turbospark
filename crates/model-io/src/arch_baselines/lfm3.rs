@@ -86,6 +86,7 @@ pub fn lfm3_1_7b() -> ArchConfig {
         vision: VisionConfig::NONE,
         // `conv_L_cache` / GGUF `shortconv.l_cache`.
         short_conv_kernel_size: 7,
+        rope_freq_factors: Vec::new(),
         ple: PleConfig::NONE,
     }
 }

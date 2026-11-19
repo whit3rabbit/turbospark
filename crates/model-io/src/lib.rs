@@ -88,7 +88,8 @@ pub use manifest::{
     known_flags, load as load_manifest, peek_family, validate as validate_manifest, Manifest,
     ManifestArch, ManifestFileEntry, ManifestHadamard, ManifestHadamardSigns, ManifestProducer,
     ManifestQuant, ManifestQuantSlot, DEFAULT_MAX_BYTES, EXECUTABLE_GGUF_TYPES,
-    MANIFEST_VERSION_MAJOR, MANIFEST_VERSION_MINOR, REQUIRED_FILES, RESIDENT_ONLY_GGUF_TYPES,
+    MANIFEST_VERSION_MAJOR, MANIFEST_VERSION_MINOR, MANIFEST_VERSION_MINOR_BASE, REQUIRED_FILES,
+    RESIDENT_ONLY_GGUF_TYPES,
 };
 pub use ngram_hash::{
     build_layer_multipliers, derive_head_vocab_and_offsets, find_nth_prime_after, ple_ngram_rows,

@@ -3,7 +3,8 @@
 use std::path::Path;
 
 use model_io::{
-    ArchConfig, HEADER_BYTES, MANIFEST_VERSION_MAJOR, MANIFEST_VERSION_MINOR, TRAILER_BYTES,
+    ArchConfig, HEADER_BYTES, MANIFEST_VERSION_MAJOR, MANIFEST_VERSION_MINOR,
+    MANIFEST_VERSION_MINOR_BASE, TRAILER_BYTES,
 };
 
 use super::types::{io_err, WriterError};
@@ -79,10 +80,16 @@ pub(crate) fn build_manifest_json(
         );
     }
 
-    Ok(serde_json::json!({
+    let mut manifest = serde_json::json!({
         "magic": "GTURBO",
         "versionMajor": MANIFEST_VERSION_MAJOR,
-        "versionMinor": MANIFEST_VERSION_MINOR,
+        // Minor 2 only when the install carries a field an older reader
+        // would skip and then decode wrong (`MANIFEST_VERSION_MINOR`'s doc).
+        "versionMinor": if arch.rope_freq_factors.is_empty() {
+            MANIFEST_VERSION_MINOR_BASE
+        } else {
+            MANIFEST_VERSION_MINOR
+        },
         "flags": {},
         "modelID": model_id,
         "sourceSnapshotHash": null,
@@ -268,5 +275,11 @@ pub(crate) fn build_manifest_json(
             "tool": "turbospark-repack",
             "version": env!("CARGO_PKG_VERSION"),
         },
-    }))
+    });
+    // Written only when present, so every install without per-pair rope
+    // divisors keeps a byte-identical manifest at the base minor.
+    if !arch.rope_freq_factors.is_empty() {
+        manifest["arch"]["ropeFreqFactors"] = serde_json::json!(arch.rope_freq_factors);
+    }
+    Ok(manifest)
 }

@@ -188,15 +188,20 @@ fn maps_top_level_tensors_for_both_families() {
 /// the original training length -- no symptom at any length a smoke test
 /// reaches.
 ///
-/// Asserted for every family because the check sits ahead of the per-family
-/// tables, so no family can grow a row for it by accident.
+/// Asserted per family because the check sits ahead of the per-family
+/// tables, so no family can grow a row for it by accident. `llama` is the
+/// one exception (below): its flow binds the vector as per-pair rope
+/// divisors. The families that SHARE that flow (Qwen2/Qwen3/MiniMax) still
+/// refuse it, since none of them publishes one.
 #[test]
-fn refuses_a_learned_rope_frequency_scaling_for_every_family() {
+fn refuses_a_learned_rope_frequency_scaling_for_every_other_family() {
     for family in [
         ModelFamily::Gemma4,
         ModelFamily::QwenGdnMoe,
-        ModelFamily::Llama,
         ModelFamily::Qwen3Moe,
+        ModelFamily::Qwen3Dense,
+        ModelFamily::Qwen2Dense,
+        ModelFamily::MiniMaxM2,
     ] {
         match map_gguf_name("rope_freqs.weight", family) {
             Err(GgufNameError::UnsupportedRopeScaling { name }) => {
@@ -205,6 +210,16 @@ fn refuses_a_learned_rope_frequency_scaling_for_every_family() {
             other => panic!("{}: expected a refusal, got {other:?}", family.as_str()),
         }
     }
+}
+
+/// Llama 3.x's `rope_freqs.weight` is per-pair rope divisors, read by value
+/// at the walk (`gguf_checkpoint::rope_freqs::llama_factors`).
+#[test]
+fn llama_maps_rope_freqs_to_its_per_pair_divisors() {
+    assert_eq!(
+        map_gguf_name("rope_freqs.weight", ModelFamily::Llama).unwrap(),
+        turbospark_repack::GgufMapping::LlamaRopeFreqFactors
+    );
 }
 
 /// An unmapped name must be an error rather than a skip. Gotcha 26 records

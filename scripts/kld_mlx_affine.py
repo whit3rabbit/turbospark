@@ -216,6 +216,17 @@ CHECKPOINTS = {
             "unaffordable at this size, as on Bonsai and Ternary above)"
         ),
     },
+    # Llama 3.2 1B Instruct, the first `llama` HF/MLX row (dense, tied head,
+    # llama3 rope scaling carried as `ropeFreqFactors`). 113 `.scales`
+    # counted off the pinned header (16 layers x 7 projections plus the tied
+    # embedding), all at (4, 64), uniform. Its companions are F16, so the
+    # install narrows them to BF16: part of what this KL measures.
+    "llama32-1b-4bit": {
+        "repo": "mlx-community/Llama-3.2-1B-Instruct-4bit",
+        "revision": "08231374eeacb049a0eade7922910865b8fce912",
+        "widths": {(4, 64): 113},
+        "backend_floor_note": "not measured",
+    },
     # Ornith-1.5-35B-A3B, the MoE half, and the first MIXED-width entry.
     # 432 modules at 4 bits plus the 80 eight-bit ones named above; 512 in
     # total, which is the header's `.scales` count.

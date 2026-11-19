@@ -104,10 +104,12 @@ fn a_missing_rope_freqs_vector_refuses_the_install() {
     assert!(err.contains("rope_freqs.weight"), "{err}");
 }
 
-/// Every other family keeps the by-name refusal.
+/// Every other family keeps the by-name refusal, except `llama`, whose
+/// vector is per-pair rope divisors (`gguf_names.rs` tests that half).
+/// Qwen3 dense shares the llama flow and still refuses it.
 #[test]
 fn rope_freqs_stays_refused_for_other_families() {
-    let err = turbospark_repack::map_gguf_name("rope_freqs.weight", ModelFamily::Llama)
+    let err = turbospark_repack::map_gguf_name("rope_freqs.weight", ModelFamily::Qwen3Dense)
         .unwrap_err()
         .to_string();
     assert!(err.contains("learned per-dimension RoPE"), "{err}");

@@ -96,10 +96,10 @@ impl std::fmt::Display for GgufNameError {
                 f,
                 "GGUF tensor {name} is a learned per-dimension RoPE frequency \
                  scaling vector (Llama 3.1's), and this port's rope kernels take \
-                 a scalar theta. Carrying the checkpoint without it would be \
-                 wrong only at long context, so it is refused instead. Use a \
-                 checkpoint that does not ship rope_freqs.weight (Mistral 7B, \
-                 Llama 2, TinyLlama), or land scaled RoPE first"
+                 a scalar theta for this family. Carrying the checkpoint without \
+                 it would decode with unscaled frequencies, so it is refused \
+                 instead. Only the `llama` family reads this vector (as per-pair \
+                 rope divisors)"
             ),
         }
     }
@@ -127,6 +127,12 @@ pub enum GgufMapping {
     /// refuses any value but that exact pattern, because the same tensor
     /// name in Llama 3.1 is learned scaling (`UnsupportedRopeScaling`).
     ZeroTailRopeFreqs,
+    /// `llama`'s `rope_freqs.weight`: Llama 3.x rope scaling as one divisor
+    /// per rotated pair. Not a resident tensor: the walk reads it by value
+    /// into `ArchConfig::rope_freq_factors` (checked: F32, one finite
+    /// positive value per pair), and the llama flow binds it as a frequency
+    /// table. Every other family still refuses the name.
+    LlamaRopeFreqFactors,
     /// Muse Glimmer's synthesized `attn_q_norm` / `attn_k_norm`: a constant
     /// vector the converter fills with `qk_scale_factor` (Q) or ones (K). The
     /// flow keeps both as constants, so the tensors are not carried, and not
@@ -223,6 +229,12 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
         if let Some(mapping) = lfm3::map_lfm3_top_level(name) {
             return Ok(mapping);
         }
+    }
+    // `llama` (Llama 3.x) carries it as per-pair rope divisors, read by
+    // value at the walk. Only the `Llama` family: Qwen2/Qwen3/MiniMax share
+    // the flow but publish no such vector, so for them it stays a refusal.
+    if family == ModelFamily::Llama && name == "rope_freqs.weight" {
+        return Ok(GgufMapping::LlamaRopeFreqFactors);
     }
     // Refused for every other family, before the table, so no family can
     // grow a row for it by accident. See `UnsupportedRopeScaling`: this used

@@ -49,6 +49,7 @@ fn toy_arch(mask: Vec<u8>) -> model_io::ArchConfig {
         rope_scaling: model_io::RopeScalingConfig::NONE,
         vision: model_io::VisionConfig::NONE,
         short_conv_kernel_size: 0,
+        rope_freq_factors: Vec::new(),
         ple: model_io::PleConfig::NONE,
     }
 }

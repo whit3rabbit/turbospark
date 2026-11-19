@@ -25,8 +25,9 @@ pub struct Plan<'a> {
     /// layer -> role-bearing source tensors.
     pub routed: BTreeMap<usize, Vec<RoutedSource<'a>>>,
     pub ignored: Vec<String>,
-    /// `lfm3`'s `rope_freqs.weight`, verified by value before any write
-    /// (`rope_freqs::verify_zero_tail`).
+    /// `rope_freqs.weight`, read by value before any write: `lfm3`'s
+    /// zero-tail encoding (`rope_freqs::verify_plan`) or `llama`'s per-pair
+    /// divisors (`rope_freqs::llama_factors`).
     pub rope_freqs: Option<&'a str>,
     /// Muse Glimmer's synthesized `attn_q_norm` / `attn_k_norm` tensors
     /// (`(name, is_q)`), verified by value before any write
@@ -124,6 +125,13 @@ pub fn classify<'a>(
                 plan.ignored.push(format!(
                     "{name} (synthesized by the converter; the flow keeps the q scale and the \
                      identity k norm as constants once the values are verified)"
+                ));
+            }
+            GgufMapping::LlamaRopeFreqFactors => {
+                plan.rope_freqs = Some(name.as_str());
+                plan.ignored.push(format!(
+                    "{name} (Llama 3.x per-pair rope divisors, carried as \
+                     arch.ropeFreqFactors once its values are verified)"
                 ));
             }
             GgufMapping::ZeroTailRopeFreqs => {
