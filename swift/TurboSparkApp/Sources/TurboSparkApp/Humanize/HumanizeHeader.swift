@@ -27,9 +27,14 @@ struct HumanizeHeader: View {
             }
         } actions: {
             modelBar
-            AppChip(Text("Advanced", bundle: .module), systemImage: "sidebar.right", isOn: showAdvanced) {
+            // The dot says rules are set even while the panel is closed, so a
+            // rewrite that behaves differently is not a mystery. Its shape
+            // (filled dot) and the spoken value carry it without color.
+            AppChip(Text("Advanced", bundle: .module), systemImage: "sidebar.right", isOn: showAdvanced,
+                    indicator: controller.rules.isEmpty ? nil : .on) {
                 TSMotion.animate(TSMotion.pane) { showAdvanced.toggle() }
             }
+            .accessibilityValue(controller.rules.isEmpty ? Text("Off", bundle: .module) : Text("On", bundle: .module))
         } compactActions: {
             modelBar
             Menu {

@@ -129,7 +129,7 @@ private struct ServerEndpointListView: View {
                                 .themedFont(.micro, weight: .medium)
                                 .padding(.horizontal, 4)
                                 .padding(.vertical, 1)
-                                .background(Color.secondary.opacity(0.15), in: Capsule())
+                                .background(.appSecondary.opacity(0.15), in: Capsule())
                                 .help(
                                     family == .ollama
                                         ? Text("One JSON object per line, no sentinel. Ollama's framing.", bundle: .module)

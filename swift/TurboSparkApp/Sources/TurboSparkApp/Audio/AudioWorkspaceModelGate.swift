@@ -2,8 +2,8 @@ import Foundation
 import TurboSpark
 
 extension AudioWorkspaceController {
-    /// The models a page needs one of before it can be used, shown over the page
-    /// until one is on this Mac.
+    /// The models a page needs before it can generate, shown until one is on
+    /// this Mac.
     struct ModelGate: Equatable {
         let page: AudioWorkspacePage
         /// The page's curated models, in listing order. Never empty.

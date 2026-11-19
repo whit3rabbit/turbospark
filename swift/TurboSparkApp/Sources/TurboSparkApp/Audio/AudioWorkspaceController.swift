@@ -56,7 +56,8 @@ final class AudioWorkspaceController: ObservableObject {
     var externalCaptureActive: () -> Bool = { false }
     @Published var isPaused = false
     @Published var recordingSeconds: Double = 0
-    @Published var inputLevel: Float = 0
+    @Published var recordingLevels: [AudioCapture.InputSource: Float] = [:]
+    var inputLevel: Float { recordingLevels.values.max() ?? 0 }
     @Published var status = AppStrings.localized("Saved in this profile")
     @Published var error: String?
     @Published var progress: Double?
@@ -69,6 +70,7 @@ final class AudioWorkspaceController: ObservableObject {
     @Published var isPlaying = false
     @Published var isExporting = false
     @Published var playbackTime: Double = 0
+    @Published var playbackItemID: UUID?
     @Published var captureMicrophone = true
     @Published var captureSystemAudio = false
     @Published var selectedApplicationID: Int32?
@@ -353,7 +355,11 @@ final class AudioWorkspaceController: ObservableObject {
         recipe.durationSeconds = advice.maxSupportedSeconds
     }
     var presets: [AudioPreset] { preferences.presets }
-    var playbackDuration: Double { player?.duration ?? selectedItem?.duration ?? 0 }
+    var playbackDuration: Double {
+        if let player { return player.duration }
+        if let playbackItemID, let take = items.first(where: { $0.id == playbackItemID }) { return take.duration }
+        return selectedItem?.duration ?? 0
+    }
     var filteredItems: [AudioLibraryItem] {
         let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
         return items.filter {
@@ -379,7 +385,11 @@ final class AudioWorkspaceController: ObservableObject {
         // view observing the controller four times a second.
         let playing = referencePlayer?.isPlaying == true
         if referencePlaying != playing { referencePlaying = playing }
-        if let player { playbackTime = player.currentTime; isPlaying = player.isPlaying }
+        if let player {
+            let time = player.currentTime
+            if playbackTime != time { playbackTime = time }
+            if isPlaying != player.isPlaying { isPlaying = player.isPlaying }
+        }
         if !isBusy { startNextDraft() }
     }
     func persistPreferences() {
@@ -1119,6 +1129,7 @@ final class AudioWorkspaceController: ObservableObject {
         isShutDown = true; epoch = UUID()
         timer?.invalidate(); timer = nil; idleTask?.cancel(); deletionCleanupTask?.cancel(); cancel(); importTask?.cancel(); exportTask?.cancel()
         capture = nil; recordingID = nil; pendingRefinementIDs.removeAll(); isRecording = false
+        recordingLevels.removeAll()
         stopPlayback(); stopReferencePreview()
         qwenSpeechJob?.stopAndDrain(); qwenSpeechJob = nil
         if let opening { DispatchQueue.global(qos: .userInitiated).sync { opening.stopAndDrain() } }

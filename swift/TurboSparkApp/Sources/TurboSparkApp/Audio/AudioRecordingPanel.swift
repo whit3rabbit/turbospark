@@ -9,10 +9,15 @@ struct AudioRecordingPanel: View {
     @ObservedObject var controller: AudioWorkspaceController
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            AudioRecordingPresetPicker(controller: controller)
-            AudioCaptureSourcePickers(controller: controller)
-            AudioRecordBar(controller: controller)
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 12) {
+                AudioRecordingPresetPicker(controller: controller)
+                AudioCaptureSourcePickers(controller: controller)
+                Divider()
+                AudioRecordBar(controller: controller)
+            }
+            .appCardSurface(padding: 16)
+
             AudioLiveTextView(live: controller.live)
             DisclosureGroup {
                 Toggle(isOn: $controller.liveTranscription) { Text("Show a live draft transcript", bundle: .module) }
@@ -22,7 +27,5 @@ struct AudioRecordingPanel: View {
                     .themedFont(.small).foregroundStyle(.appSecondary)
             } label: { Text("Transcription model", bundle: .module) }
         }
-        .padding(20).background(.appSurface, in: RoundedRectangle(cornerRadius: 12))
-        .overlay { RoundedRectangle(cornerRadius: 12).stroke(.appBorder, lineWidth: 1) }
     }
 }

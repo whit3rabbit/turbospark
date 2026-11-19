@@ -102,7 +102,9 @@ struct ToolsPopoverView: View {
             .buttonStyle(.link)
         }
         .font(theme.ui(.small))
-        .frame(width: 340, alignment: .leading)
+        // Width scales with Text Size so the checkbox rows reflow under
+        // Extra Large instead of wrapping inside a fixed 340 points.
+        .frame(width: (340 * AppMetrics.textScale(theme)).rounded(), alignment: .leading)
         .padding(16)
     }
 
@@ -166,7 +168,11 @@ struct ToolsPopoverView: View {
             get: { model.isToolEnabled(entry.id) },
             set: { model.setToolEnabled(entry.id, $0) })) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(entry.name)
+                // The tool id is a machine fact: code face, verbatim. The
+                // summary is engine-held English and stays verbatim too
+                // (localizing 38 engine descriptions is its own change).
+                Text(verbatim: entry.name)
+                    .themedCode(.small)
                 Text(entry.summary)
                     .font(theme.ui(.tiny))
                     .foregroundStyle(.appSecondary)

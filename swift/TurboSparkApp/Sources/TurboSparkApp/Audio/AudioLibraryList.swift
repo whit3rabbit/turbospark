@@ -5,6 +5,7 @@ import SwiftUI
 /// Speech-to-Text mode list their own items with it. The caller scrolls it.
 @MainActor
 struct AudioLibraryList: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var controller: AudioWorkspaceController
     let items: [AudioLibraryItem]
     /// The row drawn as selected. A Speech-to-Text mode passes a transcript's
@@ -24,7 +25,7 @@ struct AudioLibraryList: View {
     private var highlightedID: UUID? { selectedID ?? controller.selectedID }
 
     var body: some View {
-        LazyVStack(alignment: .leading, spacing: 8) {
+        LazyVStack(alignment: .leading, spacing: 4) {
             ForEach(AudioLibraryOrganizer.grouped(items), id: \.group) { section in
                 Text(LocalizedStringKey(section.group.titleKey), bundle: .module)
                     .themedFont(.small, weight: .semibold).foregroundStyle(.appSecondary)
@@ -46,10 +47,13 @@ struct AudioLibraryList: View {
 
     private func row(_ item: AudioLibraryItem) -> some View {
         let isSelected = highlightedID == item.id
-        return HStack(alignment: .top, spacing: 8) {
+        return HStack(alignment: .center, spacing: 8) {
+            if item.hasPlayableAudio { AudioTakeAuditionButton(controller: controller, item: item) }
             Button { controller.select(item) } label: {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(item.title).themedFont(.base, weight: .medium).lineLimit(2)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.title).themedFont(.callout, weight: .medium).lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .help(Text(verbatim: item.title))
                     HStack {
                         Text(item.createdAt, format: .dateTime.month(.abbreviated).day())
                         if item.hasPlayableAudio { Text(audioTime(item.duration)).monospacedDigit() }
@@ -71,30 +75,38 @@ struct AudioLibraryList: View {
             .accessibilityAction(named: Text("Favorite", bundle: .module)) { controller.toggleFavorite(item) }
             .accessibilityAction(named: Text("Rename", bundle: .module)) { beginEditing(item, collection: false) }
             .accessibilityAction(named: Text("Delete", bundle: .module)) { deletingItem = item }
-            VStack(spacing: 8) {
-                Button { controller.toggleFavorite(item) } label: {
-                    Image(systemName: item.favorite ? "star.fill" : "star")
-                }.buttonStyle(.plain)
-                    .accessibilityLabel(Text(item.favorite ? "Remove favorite" : "Favorite", bundle: .module))
+            HStack(spacing: 4) {
+                AppIconButton(item.favorite ? "star.fill" : "star", label:
+                    item.favorite ? Text("Remove favorite", bundle: .module) : Text("Favorite", bundle: .module)
+                ) { controller.toggleFavorite(item) }
+                .appAction(.quiet, size: .small)
+                .accessibilityValue(item.favorite ? Text("On", bundle: .module) : Text("Off", bundle: .module))
                 Menu {
                     Button { beginEditing(item, collection: false) } label: { Text("Rename", bundle: .module) }
                     Button { beginEditing(item, collection: true) } label: { Text("Collection", bundle: .module) }
+                    if item.hasPlayableAudio {
+                        Button { controller.exportAudio(item) } label: { Text("Save As...", bundle: .module) }
+                            .disabled(controller.isExporting)
+                    }
                     Button { controller.select(item); controller.duplicateSelected() } label: {
                         Text("Duplicate with changes", bundle: .module)
                     }
                     Divider()
                     Button(role: .destructive) { deletingItem = item } label: { Text("Delete", bundle: .module) }
                 } label: { Image(systemName: "ellipsis") }
-                .menuStyle(.borderlessButton).fixedSize()
+                .appMenuAction(size: .small, quiet: true)
+                .menuIndicator(.hidden)
                 .accessibilityLabel(Text("Audio actions", bundle: .module))
+                .help(Text("Audio actions", bundle: .module))
                 .disabled(controller.hasRecordingActivity || controller.isBusy)
-                AudioDeleteButton(controller: controller, item: item, compact: true)
             }
         }
-        .appCardSurface(padding: 12)
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .background(isSelected ? theme.selection : Color.clear,
+                    in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
         .overlay {
-            if isSelected {
-                RoundedRectangle(cornerRadius: AppMetrics.cardRadius).stroke(.appAccent, lineWidth: 2)
+            if isSelected && theme.isHighContrast {
+                RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous).stroke(.appAccent, lineWidth: 1)
             }
         }
     }

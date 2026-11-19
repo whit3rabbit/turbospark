@@ -172,9 +172,9 @@ struct GeneralSettingsPaneView: View {
             Button {
                 showsImportWizard = true
             } label: {
-                Text("Import from Other Agents\u{2026}", bundle: .module)
+                Text("Import from Other Agents...", bundle: .module)
             }
-            .settingsControl("Import from Other Agents\u{2026}", pane: .general, timing: .action)
+            .settingsControl("Import from Other Agents...", pane: .general, timing: .action)
         }
     }
 

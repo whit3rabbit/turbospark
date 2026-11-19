@@ -211,7 +211,7 @@ struct StatusBarView: View {
                 .monospacedDigit()
                 .foregroundStyle(.appText)
             Text("tok/s", bundle: .module)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.appSecondary)
         }
         .help(Text("Live or last run decoding throughput (tokens per second)", bundle: .module))
         .accessibilityElement(children: .ignore)
@@ -225,7 +225,7 @@ struct StatusBarView: View {
                 .monospacedDigit()
                 .foregroundStyle(.appText)
             Text("tokens", bundle: .module)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.appSecondary)
         }
         .help(Text("Total tokens generated in this turn or previous run", bundle: .module))
         .accessibilityElement(children: .ignore)

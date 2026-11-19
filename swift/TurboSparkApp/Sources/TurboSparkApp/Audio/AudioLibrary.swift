@@ -69,7 +69,7 @@ struct AudioRecipe: Codable, Equatable, Sendable {
     }
 
     var musicFrames: Int {
-        Int((durationSeconds * musicSettings.frameRate).rounded())
+        Int(exactly: (durationSeconds * musicSettings.frameRate).rounded()) ?? 0
     }
 }
 

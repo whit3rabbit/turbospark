@@ -57,6 +57,20 @@ final class AudioMediaIOTests: XCTestCase {
         XCTAssertEqual(samples[20_000], 0.6, accuracy: 1e-5)
         XCTAssertEqual(samples[28_000], 0.5, accuracy: 1e-5)
         XCTAssertTrue(samples.allSatisfy { $0 > 0.24 })
+
+        let peaks = try AudioMediaIO.waveformPeaks(clips, duration: 2.5, count: 5) { name in
+            root.appendingPathComponent(name)
+        }
+        XCTAssertEqual(peaks.count, 5)
+        for (actual, expected) in zip(peaks, [0.25, 0.35, 0.60, 0.50, 0] as [Float]) {
+            XCTAssertEqual(actual, expected / 0.60, accuracy: 1e-5)
+        }
+
+        let longPreview = try AudioMediaIO.waveformPeaks(clips, duration: 301, count: 5) { _ in
+            XCTFail("An oversized preview must fall back before resolving any assets.")
+            throw AudioMediaIO.MediaError.tooLong
+        }
+        XCTAssertTrue(longPreview.isEmpty)
     }
 
     func testResamplingDoesNotInsertGapsBetweenSavedChunks() throws {

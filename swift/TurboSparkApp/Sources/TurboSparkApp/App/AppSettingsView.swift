@@ -25,25 +25,13 @@ enum SettingsLayout {
 public struct AppSettingsView: View {
     /// The Settings scene ignores `idealWidth`/`idealHeight` and opens at the
     /// content's minimum, so a min/ideal frame alone left every display at the
-    /// floor. `SettingsWindowFrame` applies this size to the AppKit window the
-    /// first time it opens; the content itself only declares `minimumSize`, so
-    /// the user can resize the window to recover a crowded pane. Derived from
-    /// the visible frame, same approach as `TurboSparkApp.defaultWindowSize`:
-    /// roughly three quarters of a large display, clamped to a floor that
-    /// still fits a 1280x800 one.
+    /// floor. `SettingsWindowFrame` applies this size to the AppKit window
+    /// each time it opens; the content itself only declares `minimumSize`, so
+    /// the user can resize the window to recover a crowded pane. The rule is
+    /// the main window's own (`AppWindowDefaultSize`): the whole visible
+    /// screen, so Settings opens about the same size as the app.
     static var defaultWindowSize: CGSize {
-        windowSize(forVisibleFrame: NSScreen.main?.visibleFrame)
-    }
-
-    /// Separate from `NSScreen` so the clamps are testable without a display.
-    static func windowSize(forVisibleFrame visible: CGRect?) -> CGSize {
-        guard let visible else {
-            return CGSize(width: 1180, height: 800)
-        }
-        return CGSize(
-            width: min(max(940, visible.width * 0.76), 1480),
-            height: min(max(660, visible.height * 0.86), 1000)
-        )
+        AppWindowDefaultSize.size()
     }
 
     /// The smallest window the panes still lay out in: the 252pt sidebar plus
@@ -207,7 +195,9 @@ public struct AppSettingsView: View {
                         HStack(spacing: 10) {
                             Image(systemName: tab.systemImage)
                                 .font(theme.ui(.callout, weight: .medium))
-                                .frame(width: 20)
+                                // The glyph grows with Text Size, so its box
+                                // grows with it (SidebarPanelList's rule).
+                                .frame(width: 20 * AppMetrics.textScale(theme))
                                 .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
                                 .accessibilityHidden(true)
 

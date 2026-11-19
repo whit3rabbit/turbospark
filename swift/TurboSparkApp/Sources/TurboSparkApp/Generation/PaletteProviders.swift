@@ -108,10 +108,15 @@ enum PaletteCommandCatalog {
     /// Everything the Commands scope can list right now. `canCheckForUpdates`
     /// is the menu item's own enabled predicate: a command the menu would
     /// show disabled is left out instead of listed and ignored.
+    /// `navigationBindings` carries the chord each section's View-menu item
+    /// holds RIGHT NOW, resolved by the caller from `KeybindOverrideStore`;
+    /// a section missing from the map lists with no chord rather than a
+    /// stale default.
     static func commands(
         skills: [AppSkill],
         canCheckForUpdates: Bool,
-        builtIns: [BuiltInSlashCommand] = BuiltInSlashCommand.all
+        builtIns: [BuiltInSlashCommand] = BuiltInSlashCommand.all,
+        navigationBindings: [AppModel.AppNavigationSection: String] = [:]
     ) -> [PaletteCommand] {
         var rows: [PaletteCommand] = []
 
@@ -140,7 +145,7 @@ enum PaletteCommandCatalog {
             rows.append(PaletteCommand(
                 id: "nav:\(section.rawValue)", title: section.title, titleIsCatalogKey: true,
                 subtitle: "Navigate", subtitleIsCatalogKey: true,
-                iconName: section.systemImage, binding: "\u{2318}\(section.shortcutKey)",
+                iconName: section.systemImage, binding: navigationBindings[section],
                 action: .navigate(section)))
         }
 

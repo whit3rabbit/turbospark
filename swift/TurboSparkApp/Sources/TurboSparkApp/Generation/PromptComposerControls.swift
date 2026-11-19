@@ -125,24 +125,22 @@ struct PromptAudioInputButton: View {
     @State private var isHovered: Bool = false
 
     var body: some View {
-        Button {
+        // The shared icon button: the label is the tooltip and the VoiceOver
+        // name at once (the two spellings had already drifted apart here).
+        let btnSize = (28 * AppMetrics.textScale(theme)).rounded()
+        return AppIconButton("mic", label: Text("Start voice dictation", bundle: .module)) {
             promptFocused = true
             NSApp.sendAction(Selector(("startDictation:")), to: nil, from: nil)
-        } label: {
-            let btnSize = (28 * AppMetrics.textScale(theme)).rounded()
-            Image(systemName: "mic")
-                .themedFont(.callout, weight: .medium)
-                .foregroundStyle(.appSecondary)
-                .frame(width: btnSize, height: btnSize)
-                .background(
-                    isHovered ? AnyShapeStyle(.appElevated) : AnyShapeStyle(Color.clear),
-                    in: Circle()
-                )
-                .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .themedFont(.callout, weight: .medium)
+        .foregroundStyle(.appSecondary)
+        .frame(width: btnSize, height: btnSize)
+        .background(
+            isHovered ? AnyShapeStyle(.appElevated) : AnyShapeStyle(Color.clear),
+            in: Circle()
+        )
+        .contentShape(Circle())
         .onHover { isHovered = $0 }
-        .help(Text("Start voice dictation", bundle: .module))
-        .accessibilityLabel(Text("Voice input dictation", bundle: .module))
     }
 }

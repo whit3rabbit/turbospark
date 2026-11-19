@@ -167,6 +167,11 @@ the app taking access, and macOS shows each prompt only once.
 - The same holds one level down: a control directly under a section header
   that names it keeps its real label for VoiceOver and hides it with
   `.labelsHidden()` (the inspector's Model picker under "Model").
+- A workspace header owns its title too. A list beneath it begins with search
+  and actions, rather than repeating the workspace name (Audio Library).
+- A missing-model setup page replaces the unavailable workflow inline. Do not
+  dim disabled inputs behind it or mark it modal: the sidebar and workspace
+  navigation must remain available to keyboard and VoiceOver users.
 - A pane whose sections share a card treatment defines it once (Models &
   Storage: `modelsSettingsCard()`) and EVERY section uses it, including a
   card that lives in its own file. An inline copy drifted to its own padding
@@ -189,10 +194,19 @@ the app taking access, and macOS shows each prompt only once.
   menu, and primary action.
 - List and detail splits are adjustable: `HSplitView`, or a list column with
   min, ideal, and max widths. Never a fixed list width.
+- In a narrow list/detail workspace, selecting an item brings its detail into
+  view. The Audio Library collapses its chooser above the detail and lets the
+  user reopen it; never stack an unbounded list above the selected item.
+- Repeated list rows keep selection dominant. Put occasional actions,
+  including confirmed deletion, in one labeled overflow menu instead of a
+  vertical stack of buttons. Audio Library keeps Favorite beside that menu.
 - A workspace that switches between one and two columns sets its breakpoint
   in points times `AppMetrics.textScale(theme)`, and scales its column widths
   the same way, so Extra Large text falls back to one column instead of
   squeezing both. Voice Cloning (`VoiceCloneWorkspaceView`) is the reference.
+  A page that stays one column at every width still caps its reading measure
+  the same way; the Record page's 980 scaled-point column
+  (`AudioWorkspaceView`) is the reference.
 
 ### Text in layouts
 
@@ -225,6 +239,54 @@ the app taking access, and macOS shows each prompt only once.
 - A setting has ONE canonical location. If it must be reachable from a
   second place, reuse the same component and the same label there, and point
   the settings search entry at the canonical pane.
+
+### Audio workspace direction
+
+Use the same compact controls across Audio for capture, saved takes, and
+playback. Keep source selection near capture, the script or prompt near
+Generate, and the take near its waveform and transcript.
+
+- Music pairs the prompt composer with a listening column that holds model
+  setup, the selected waveform, and saved takes. Stack these sections when
+  the window narrows. Keep the composer and saved takes available before
+  the model is installed. Offer short duration presets within the hardware
+  estimate and an exact duration field. Fold lyrics, frames, context, and
+  sampling settings into disclosures. Put comparison beside the take list.
+- Text-to-Speech, Voice Design, and Voice Cloning use a compact script editor
+  and the same voice, language, and speed layout. Voice Cloning keeps the
+  reference and consent visible beside the script.
+- Show the model setup when the workspace needs it. Summarize an installed
+  model in a disclosure that reopens its controls. Advanced and Clean Up
+  lead with the operation and source. Put Advanced's decoder and model
+  details below the run controls in a disclosure.
+
+- Put Record beside the empty state or recent takes. During capture, keep
+  elapsed time, Pause, and Stop together. Show a labeled level meter for each
+  selected source so the user can confirm what the Mac is hearing. Show
+  missing permission beside the affected source with its next action, using
+  the shared recording access flow.
+- Put a compact player above the take's transcript. Draw its waveform
+  from the take's audio and use the playhead for scrubbing. Keep an
+  adjustable playback position with a spoken time value. Clicking a
+  transcript timestamp moves the playhead, and playback highlights the
+  current transcript segment. Keep the time slider available while waveform
+  data is unavailable.
+- Give the current task one prominent action. Use quiet native controls
+  for secondary actions. Group audio and transcript exports in Export,
+  and put Duplicate, Run Again, and confirmed Delete in the take's action
+  menu. Put model details and vocabulary behind a compact, labeled control.
+  Reduce padding and repeated chrome while keeping readable text and
+  keyboard targets. Reflow the recorder and player at narrow widths.
+- Make saved takes easy to scan and audition. Show duration and a labeled
+  play control in the list, and the waveform in the take's player. Preserve
+  the playback position when comparing generated variants.
+- Inherit the app's Appearance settings, including custom themes. Use
+  `.appPage` for the workspace, `.appSurface` for recorder and player
+  surfaces, `.appAccent` for the playhead and progress, and `.appAccentText`
+  for timestamps and other accent labels. Use the theme's selection and
+  focus treatments. Recording and permission states use text and a symbol
+  with the semantic status colors. Respect Increase Contrast, Reduce
+  Transparency, and Reduce Motion in the audio visuals.
 
 ## 4. Theming and type
 
@@ -263,6 +325,10 @@ the app taking access, and macOS shows each prompt only once.
   `Window`, `Settings`, and `MenuBarExtra` each call `.appThemed()` and set
   `\.locale` and `\.layoutDirection`. A new scene must too, or it renders the
   light fallback theme in English.
+- Keep menus on `.appMenuAction`: it recreates the native menu bridge when
+  light/dark mode changes. Without that refresh, AppKit can retain pale label
+  text on a light bezel until the page is reopened. Use `quiet: true` for a
+  borderless menu beside the primary content.
 - Red is the destructive convention. Status is never color alone: pair it
   with a glyph or text (checkmark, triangle, octagon), so it survives color
   blindness and Differentiate Without Color.

@@ -27,7 +27,7 @@ struct VoiceCloneScriptComposer: View {
                 text: $controller.recipe.text,
                 label: Text("Script", bundle: .module),
                 placeholder: Text("Type or paste what the cloned voice should say.", bundle: .module),
-                minHeight: (150 * scale).rounded(), maxHeight: (360 * scale).rounded(),
+                minHeight: (112 * scale).rounded(), maxHeight: (360 * scale).rounded(),
                 focus: scriptFocused)
                 .padding(.horizontal, 11)
             Text("Separate sections with a blank line.", bundle: .module)
@@ -87,21 +87,8 @@ struct VoiceCloneScriptComposer: View {
     }
 
     private var settingsRow: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: 18) {
-                AudioLanguagePicker(controller: controller).fixedSize()
-                AudioVoicePicker(controller: controller).fixedSize()
-                AudioSpeedControl(controller: controller).frame(minWidth: 200, maxWidth: 300)
-                Spacer(minLength: 0)
-            }
-            VStack(alignment: .leading, spacing: 10) {
-                AudioLanguagePicker(controller: controller)
-                AudioVoicePicker(controller: controller)
-                AudioSpeedControl(controller: controller)
-            }
-        }
-        .themedFont(.small)
-        .disabled(controller.isBusy || controller.hasRecordingActivity)
+        AudioSpeechOptions(controller: controller)
+            .disabled(controller.isBusy || controller.hasRecordingActivity)
     }
 
     private var actionRow: some View {
@@ -116,16 +103,15 @@ struct VoiceCloneScriptComposer: View {
     }
 
     private var libraryActions: some View {
-        HStack(spacing: AppMetrics.actionSpacing) {
+        FlowLayout(spacing: AppMetrics.actionSpacing, lineSpacing: 6) {
             Button(action: showPromptLibrary) {
                 Label { Text("Prompt library", bundle: .module) } icon: { Image(systemName: "text.book.closed") }
             }
-            .appAction(.secondary, size: .small)
+            .appAction(.quiet, size: .small)
             Button(action: savePrompt) { Text("Save Prompt", bundle: .module) }
-                .appAction(.secondary, size: .small)
+                .appAction(.quiet, size: .small)
                 .disabled(!controller.canSavePrompt)
         }
-        .fixedSize()
     }
 
     /// What stands between the user and a run, beside the button: "Ready" when

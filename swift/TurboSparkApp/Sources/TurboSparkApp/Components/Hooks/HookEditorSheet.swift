@@ -171,7 +171,10 @@ public struct HookEditorSheet: View {
                             }
                             .labelsHidden()
                             .textFieldStyle(.roundedBorder)
-                                .frame(width: 80)
+                            // Min/ideal/max, not a fixed width: the field
+                            // grows with Extra Large text instead of clipping
+                            // (the same shape General's numeric fields use).
+                            .frame(minWidth: 80, idealWidth: 100, maxWidth: 140)
                             Text("Hooks discovered from Claude Code config default to 600s when unset.", bundle: .module)
                                 .themedFont(.tiny)
                                 .foregroundStyle(.appSecondary)

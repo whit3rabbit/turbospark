@@ -32,7 +32,9 @@ struct ComputerUseSettingsPaneView: View {
     }
 
     private var featureSection: some View {
-        Section(header: Text("Computer Use", bundle: .module)) {
+        Section {
+            // No header: the Settings shell already renders this pane's
+            // title, and repeating it here duplicated it (DESIGN.md section 3).
             Toggle(
                 isOn: Binding(
                     get: { model.computerUseSettings.enabled },

@@ -50,6 +50,29 @@ struct HumanizeCard<Header: View, Content: View, Footer: View>: View {
             HStack(spacing: 8) { footer }
                 .padding(.horizontal, 12).frame(height: HumanizeMetrics.rowHeight(theme))
         }
+        // A faint accent wash from the top edge and a hairline that fades down
+        // the sides, so the cards carry the theme's color at rest instead of
+        // reading as neutral gray. Skipped under Increase Contrast, which asks
+        // for plain surfaces and solid borders.
+        .background {
+            if !theme.isHighContrast {
+                let radius = AppMetrics.composerRadius
+                ZStack {
+                    LinearGradient(
+                        colors: [theme.accent.opacity(theme.isDark ? 0.17 : 0.11),
+                                 theme.accent.opacity(theme.isDark ? 0.06 : 0.04)],
+                        startPoint: .top, endPoint: .bottom)
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [theme.accent.opacity(0.5), theme.accent.opacity(0)],
+                                startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.45)),
+                            lineWidth: 1)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                .allowsHitTesting(false)
+            }
+        }
         .appComposerSurface(focused: focused, halo: false)
     }
 }
@@ -123,7 +146,10 @@ struct HumanizeModelBar: View {
                 }
                 .lineLimit(1)
                 if state == .opening {
-                    ModelLoadProgressBar(fraction: nil, tint: theme.accent).frame(width: 42)
+                    ModelLoadProgressBar(fraction: nil, tint: theme.accent)
+                        // Scaled with Text Size like the capsule's ScaledMetric
+                        // height, so Extra Large does not clip the bar.
+                        .frame(width: (42 * AppMetrics.textScale(theme)).rounded())
                 } else {
                     Image(systemName: "chevron.up.chevron.down")
                         .font(theme.ui(.micro, weight: .bold)).foregroundStyle(.appSecondary)
@@ -229,12 +255,18 @@ struct HumanizeRunButton: View {
             let scale = HumanizeMetrics.textScale(theme)
             let buttonSize = (50 * scale).rounded()
             let inkColor = ready ? theme.accent.contrastForeground : theme.metadataForeground
-            let inkStyle: AnyShapeStyle = ready ? AnyShapeStyle(theme.accent.contrastForeground) : AnyShapeStyle(.appSecondary)
+            let inkStyle: AnyShapeStyle = ready ? AnyShapeStyle(theme.accent.contrastForeground) : AnyShapeStyle(theme.accent.opacity(0.7))
             Button(action: action) {
                 ZStack {
                     if invite, ready, !busy, !reduceMotion { RunRipple(color: theme.accent) }
                     Circle()
-                        .fill(ready ? AnyShapeStyle(theme.accent.gradient) : AnyShapeStyle(.appSurface))
+                        .fill(ready ? AnyShapeStyle(theme.accent.gradient)
+                              : AnyShapeStyle(theme.accent.opacity(0.14)))
+                    if !ready, !theme.isHighContrast {
+                        // Not ready is dimmer, not colorless: the button keeps
+                        // the theme's accent so the rail is never a gray hole.
+                        Circle().stroke(theme.accent.opacity(0.4), lineWidth: 1)
+                    }
                     if theme.isHighContrast {
                         Circle()
                             .stroke(ready ? theme.accent : theme.border, lineWidth: 1.5)

@@ -1,6 +1,9 @@
 import SwiftUI
 
-/// Corner access to current work and profile history across launches.
+/// The downloads panel: current work and profile history across launches.
+/// It opens under the top bar, where `DownloadsTopBarButton` lives, and the
+/// root view hosts it. Anything that sets `isDownloadManagerExpanded` (the
+/// Humanize and Audio model bars) opens it the same way.
 @MainActor
 struct DownloadManagerView: View {
     @ObservedObject var model: AppModel
@@ -9,47 +12,7 @@ struct DownloadManagerView: View {
     var body: some View {
         VStack(alignment: .trailing, spacing: 10) {
             if model.isDownloadManagerExpanded {
-                panel
-            }
-
-            Button {
-                model.isDownloadManagerExpanded.toggle()
-            } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: model.isInstallPaused ? "pause.circle" : "arrow.down.circle")
-                    Text("Downloads", bundle: .module)
-                    if model.hasActiveModelDownload {
-                        if model.isCancellingModelInstall {
-                            Text("Cancelling", bundle: .module)
-                                .foregroundStyle(.appSecondary)
-                        } else if model.isInstallPaused {
-                            Text("Paused", bundle: .module)
-                                .foregroundStyle(.appSecondary)
-                        } else if let fraction = model.installProgressFraction {
-                            Text(verbatim: MetricFormat.percent(fraction * 100))
-                                .monospacedDigit()
-                        } else {
-                            AppProgressBar(value: nil, label: Text("Downloading", bundle: .module), size: .compact)
-                                .frame(width: 48)
-                        }
-                    }
-                    Image(systemName: model.isDownloadManagerExpanded ? "chevron.down" : "chevron.up")
-                        .accessibilityHidden(true)
-                }
-                .themedFont(.small, weight: .medium)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(.appPage, in: Capsule())
-                .overlay { Capsule().stroke(.appBorder, lineWidth: 1) }
-                .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(Text("Downloads", bundle: .module))
-            .background {
-                GeometryReader { geometry in
-                    Color.clear.preference(
-                        key: DownloadControlHeightKey.self, value: geometry.size.height)
-                }
+                panel.transition(.move(edge: .top).combined(with: .opacity))
             }
         }
         .foregroundStyle(.appText)
@@ -211,10 +174,64 @@ private struct DownloadListHeightKey: PreferenceKey {
     }
 }
 
-struct DownloadControlHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
+/// The top bar's downloads control. It replaced a floating pill in the
+/// window's bottom corner, and the strip of empty space every pane gave up to
+/// keep that pill clear of the composer. Idle it is one quiet icon; while a
+/// model downloads it grows a percentage (or a bar when the size is unknown)
+/// and an accent tint, so progress is visible from every section.
+struct DownloadsTopBarButton: View {
+    @ObservedObject var model: AppModel
+    @Environment(\.appTheme) private var theme
+    @ScaledMetric private var buttonSize: CGFloat = 26
 
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
+    var body: some View {
+        let active = model.hasActiveModelDownload
+        let lit = active || model.isDownloadManagerExpanded
+        Button {
+            TSMotion.animate(TSMotion.pane) { model.isDownloadManagerExpanded.toggle() }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: model.isInstallPaused ? "pause.circle" : "arrow.down.circle")
+                    .accessibilityHidden(true)
+                if active { progress }
+            }
+            .font(theme.ui(.callout, weight: .medium))
+            .padding(.horizontal, active ? 8 : 0)
+            .frame(minWidth: buttonSize, minHeight: buttonSize)
+            .foregroundStyle(lit ? AnyShapeStyle(.appAccentText) : AnyShapeStyle(.appSecondary))
+            .background(
+                lit ? theme.accent.opacity(0.14) : .clear,
+                in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(TSPressScaleStyle(scale: 0.9))
+        .tsAnimation(TSMotion.hover, value: lit)
+        .tsAnimation(TSMotion.hover, value: active)
+        .help(Text("Downloads", bundle: .module))
+        .accessibilityLabel(Text("Downloads", bundle: .module))
+        .accessibilityValue(progressValue)
+        .accessibilityAddTraits(model.isDownloadManagerExpanded ? .isSelected : [])
+    }
+
+    @ViewBuilder private var progress: some View {
+        if model.isCancellingModelInstall {
+            Text("Cancelling", bundle: .module).font(theme.ui(.small, weight: .medium))
+        } else if model.isInstallPaused {
+            Text("Paused", bundle: .module).font(theme.ui(.small, weight: .medium))
+        } else if let fraction = model.installProgressFraction {
+            Text(verbatim: MetricFormat.percent(fraction * 100))
+                .font(theme.ui(.small, weight: .medium)).monospacedDigit()
+        } else {
+            AppProgressBar(value: nil, label: Text("Downloading", bundle: .module), size: .compact)
+                .frame(width: 36)
+        }
+    }
+
+    private var progressValue: Text {
+        guard model.hasActiveModelDownload else { return Text(verbatim: "") }
+        if model.isCancellingModelInstall { return Text("Cancelling", bundle: .module) }
+        if model.isInstallPaused { return Text("Paused", bundle: .module) }
+        if let fraction = model.installProgressFraction { return Text(verbatim: MetricFormat.percent(fraction * 100)) }
+        return Text("Downloading", bundle: .module)
     }
 }

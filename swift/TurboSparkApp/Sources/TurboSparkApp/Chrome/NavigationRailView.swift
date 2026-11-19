@@ -30,6 +30,8 @@ struct NavigationRailView: View {
     private var itemSize: CGFloat { min(42, 34 * theme.sidebarScale) }
     @State private var hoveredSection: AppModel.AppNavigationSection? = nil
     @State private var isSettingsHovered = false
+    /// The live chord map, so rail tooltips show what is bound now.
+    @ObservedObject private var keybinds = KeybindOverrideStore.shared
     @Namespace private var selectionNamespace
 
     var body: some View {
@@ -89,6 +91,7 @@ struct NavigationRailView: View {
 
     private func railMenu(_ section: AppModel.AppNavigationSection) -> some View {
         let isSelected = model.activeSection == section
+        let isHovered = hoveredSection == section
         return Menu {
             switch section {
             case .audio:
@@ -124,9 +127,26 @@ struct NavigationRailView: View {
         // drops the tint.
         .menuStyle(.button).buttonStyle(.plain)
         .menuIndicator(.hidden).fixedSize()
-        .help(Text(LocalizedStringKey(section.title), bundle: .module))
+        // Same hover answer as the plain button beside it: a menu-labeled
+        // rail item used to be the one row that ignored the pointer.
+        .background {
+            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                .fill(theme.foreground.opacity(!isSelected && isHovered ? 0.07 : 0))
+        }
+        .onHover { hovering in
+            TSMotion.animate(TSMotion.hover) {
+                if hovering {
+                    hoveredSection = section
+                } else if hoveredSection == section {
+                    hoveredSection = nil
+                }
+            }
+        }
+        .help(Text(LocalizedStringKey(section.title), bundle: .module)
+              + (keybinds.chord(for: .navigation(section)).map { Text(verbatim: " (\($0.display))") }
+                 ?? Text(verbatim: "")))
         .accessibilityLabel(Text(LocalizedStringKey(section.title), bundle: .module))
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
     private func railButton(_ section: AppModel.AppNavigationSection) -> some View {
@@ -164,8 +184,11 @@ struct NavigationRailView: View {
                 .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.92))
+        // The live chord from the keybind store, not a hardcoded default: a
+        // rebinding must not leave the tooltip advertising a dead chord.
         .help(Text(LocalizedStringKey(section.title), bundle: .module)
-              + Text(verbatim: " (Cmd+\(section.shortcutKey))"))
+              + (keybinds.chord(for: .navigation(section)).map { Text(verbatim: " (\($0.display))") }
+                 ?? Text(verbatim: "")))
         .accessibilityLabel(Text(LocalizedStringKey(section.title), bundle: .module))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .onHover { hovering in

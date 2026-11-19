@@ -40,6 +40,9 @@ struct TopBarView: View {
     var toggleSummary: () -> Void = {}
     @State private var showsSummaryPopover = false
     @State private var barWidth: CGFloat = 0
+    /// The live chord map, so tooltips show what is bound NOW, not the
+    /// shipped default a rebinding left behind.
+    @ObservedObject private var keybinds = KeybindOverrideStore.shared
 
     @ScaledMetric private var buttonSize: CGFloat = 26
 
@@ -70,21 +73,22 @@ struct TopBarView: View {
                     if ProjectChatSummary.isAvailable(
                         projectID: model.selectedChat.projectID, isChat: true,
                         hasTranscript: model.hasOutputTranscript) {
-                        Button {
+                        AppIconButton("list.bullet.rectangle",
+                                      label: Text("Chat summary", bundle: .module)) {
                             if canPinSummary { toggleSummary() }
                             else { showsSummaryPopover.toggle() }
-                        } label: {
-                            Image(systemName: "list.bullet.rectangle")
-                                .font(theme.ui(.callout))
-                                .foregroundStyle(canPinSummary && isSummaryVisible ? theme.accent : theme.secondaryText)
                         }
                         .buttonStyle(.plain)
-                        .help(Text("Chat summary", bundle: .module))
-                        .accessibilityLabel(Text("Chat summary", bundle: .module))
+                        .font(theme.ui(.callout))
+                        .foregroundStyle(canPinSummary && isSummaryVisible ? theme.accent : theme.secondaryText)
                         .popover(isPresented: $showsSummaryPopover) {
                             ProjectChatSummaryView(model: model)
                                 .id(model.selectedChatID)
-                                .frame(width: ProjectChatSummary.width, height: 480)
+                                // Text-sized popover: the summary holds
+                                // translatable prose, so it grows at Extra
+                                // Large instead of clipping.
+                                .frame(width: (ProjectChatSummary.width * AppMetrics.textScale(theme)).rounded(),
+                                       height: (480 * AppMetrics.textScale(theme)).rounded())
                                 .appThemed()
                         }
                         .onChange(of: model.openArtifactID) { _, value in
@@ -95,6 +99,7 @@ struct TopBarView: View {
                         }
                     }
                 }
+                DownloadsTopBarButton(model: model)
                 unloadButton
                 if model.browserSettings.enabled && !model.activeSection.hidesChatPanes {
                     browserToggle
@@ -141,9 +146,9 @@ struct TopBarView: View {
         // No `.keyboardShortcut` here (U7): the "View" menu's "Toggle
         // Sidebar" command already claims Cmd+Ctrl+S, and SwiftUI does not
         // define which of two identical shortcuts on different controls wins.
-        .help(helpText(presentation))
+        .help(helpText(presentation, chord: keybinds.chord(for: .toggleSidebar)))
         .accessibilityLabel(titleText(presentation))
-        .accessibilityHint(helpText(presentation))
+        .accessibilityHint(helpText(presentation, chord: keybinds.chord(for: .toggleSidebar)))
         .accessibilityValue(Text(LocalizedStringKey(presentation.accessibilityValue), bundle: .module))
     }
 
@@ -167,67 +172,60 @@ struct TopBarView: View {
         // No `.keyboardShortcut` here (U7): the "View" menu's "Toggle
         // Inspector" command claims Cmd+Shift+I and its handler also
         // dismisses an open attachment preview first.
-        .help(helpText(presentation))
+        .help(helpText(presentation, chord: keybinds.chord(for: .toggleInspector)))
         .accessibilityLabel(titleText(presentation))
-        .accessibilityHint(helpText(presentation))
+        .accessibilityHint(helpText(presentation, chord: keybinds.chord(for: .toggleInspector)))
         .accessibilityValue(Text(LocalizedStringKey(presentation.accessibilityValue), bundle: .module))
     }
 
     /// `AppSidebarControlPresentation` carries English `String`s, which the
     /// `String` overloads of `.help` and `.accessibilityLabel` would show
-    /// untranslated. Its title and value are catalog keys; its help is the
-    /// title plus a shortcut suffix, which has nothing to translate.
+    /// untranslated. Its title and value are catalog keys; the chord is the
+    /// live one from `KeybindOverrideStore`, rendered in the same glyph form
+    /// the Shortcuts pane shows, so a rebinding never leaves a stale chord
+    /// in the tooltip.
     private func titleText(_ presentation: AppSidebarControlPresentation) -> Text {
         Text(LocalizedStringKey(presentation.title), bundle: .module)
     }
 
-    private func helpText(_ presentation: AppSidebarControlPresentation) -> Text {
-        guard presentation.help.hasPrefix(presentation.title) else {
-            return Text(LocalizedStringKey(presentation.help), bundle: .module)
-        }
-        return titleText(presentation)
-            + Text(verbatim: String(presentation.help.dropFirst(presentation.title.count)))
+    private func helpText(_ presentation: AppSidebarControlPresentation, chord: KeyChord?) -> Text {
+        titleText(presentation)
+        + (chord.map { Text(verbatim: " (\($0.display))") } ?? Text(verbatim: ""))
     }
 
     private var browserToggle: some View {
-        Button {
+        // One vocabulary control: the label is the tooltip AND the
+        // VoiceOver name, so the two cannot drift.
+        AppIconButton("globe", label: Text("Browser", bundle: .module)) {
             model.setBrowserPaneOpen(!model.browserPaneIsOpen)
-        } label: {
-            Image(systemName: "globe")
-                .font(theme.ui(.callout, weight: .medium))
-                .frame(width: buttonSize, height: buttonSize)
-                .contentShape(Rectangle())
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.9))
+        .font(theme.ui(.callout, weight: .medium))
+        .frame(width: buttonSize, height: buttonSize)
         .foregroundStyle(model.browserPaneIsOpen ? theme.accent : theme.secondaryText)
         .background {
             RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
                 .fill(model.browserPaneIsOpen ? theme.accent.opacity(0.14) : .clear)
         }
+        .contentShape(Rectangle())
         .tsAnimation(TSMotion.hover, value: model.browserPaneIsOpen)
-        .help(Text("Browser", bundle: .module))
-        .accessibilityLabel(Text("Browser", bundle: .module))
         .accessibilityAddTraits(model.browserPaneIsOpen ? .isSelected : [])
     }
 
     private var whiteboardToggle: some View {
-        Button {
+        AppIconButton("scribble", label: Text("Whiteboard", bundle: .module)) {
             model.setWhiteboardPaneOpen(!model.whiteboardPaneIsOpen)
-        } label: {
-            Image(systemName: "scribble")
-                .font(theme.ui(.callout, weight: .medium))
-                .frame(width: buttonSize, height: buttonSize)
-                .contentShape(Rectangle())
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.9))
+        .font(theme.ui(.callout, weight: .medium))
+        .frame(width: buttonSize, height: buttonSize)
         .foregroundStyle(model.whiteboardPaneIsOpen ? theme.accent : theme.secondaryText)
         .background {
             RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
                 .fill(model.whiteboardPaneIsOpen ? theme.accent.opacity(0.14) : .clear)
         }
+        .contentShape(Rectangle())
         .tsAnimation(TSMotion.hover, value: model.whiteboardPaneIsOpen)
-        .help(Text("Whiteboard", bundle: .module))
-        .accessibilityLabel(Text("Whiteboard", bundle: .module))
         .accessibilityAddTraits(model.whiteboardPaneIsOpen ? .isSelected : [])
     }
 
@@ -282,7 +280,7 @@ struct TopBarView: View {
                         model.unloadModel()
                     } label: {
                         Label {
-                            Text("Unload Model", bundle: .module)
+                            Text("Unload Chat Model", bundle: .module)
                         } icon: {
                             Image(systemName: "text.bubble")
                         }
@@ -293,7 +291,7 @@ struct TopBarView: View {
                         model.unloadImageModel()
                     } label: {
                         Label {
-                            Text("Unload", bundle: .module)
+                            Text("Unload Image Model", bundle: .module)
                         } icon: {
                             Image(systemName: "photo")
                         }
@@ -304,7 +302,7 @@ struct TopBarView: View {
                         model.audioWorkspace.unloadModel()
                     } label: {
                         Label {
-                            Text("Unload", bundle: .module)
+                            Text("Unload Audio Model", bundle: .module)
                         } icon: {
                             Image(systemName: "waveform")
                         }

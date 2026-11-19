@@ -200,6 +200,7 @@ private struct FileRowView: View {
     let reference: AppAttachmentReference
     let isSelected: Bool
 
+    @Environment(\.appTheme) private var theme
     @State private var isHovering = false
 
     private var attachment: AppPromptAttachment { reference.attachment }
@@ -211,7 +212,7 @@ private struct FileRowView: View {
                 pixelSize: 28,
                 fallbackSymbol: attachment.symbolName,
                 symbolStep: .callout,
-                symbolTint: isSelected ? TurboSparkTheme.accentColor : Color.secondary
+                symbolTint: isSelected ? theme.accent : theme.secondaryText
             )
             .accessibilityHidden(true)
 
@@ -242,8 +243,8 @@ private struct FileRowView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .background(
-            isSelected ? TurboSparkTheme.accentColor.opacity(0.12)
-                : (isHovering ? Color.primary.opacity(0.04) : Color.clear),
+            isSelected ? theme.accent.opacity(0.12)
+                : (isHovering ? theme.foreground.opacity(0.04) : Color.clear),
             in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onHover { isHovering = $0 }
@@ -272,7 +273,10 @@ private struct FileRowView: View {
                     model.revealAttachmentInFinder(attachment)
                 }
             }
-            AppIconButton("trash", label: Text("Detach", bundle: .module), role: .destructive) {
+            // Detaching removes the chat attachment, not the file: a
+            // rebuildable list entry, so a quiet neutral glyph and no
+            // destructive role (the scan-folder row is the same rule).
+            AppIconButton("minus.circle", label: Text("Detach", bundle: .module)) {
                 model.removeAttachment(reference: reference)
             }
             .disabled(model.isRunning)
@@ -307,10 +311,10 @@ private struct FileRowView: View {
             }
         }
         Divider()
-        Button(role: .destructive) {
+        Button {
             model.removeAttachment(reference: reference)
         } label: {
-            Label { Text("Detach", bundle: .module) } icon: { Image(systemName: "trash") }
+            Label { Text("Detach", bundle: .module) } icon: { Image(systemName: "minus.circle") }
         }
         .disabled(model.isRunning)
     }

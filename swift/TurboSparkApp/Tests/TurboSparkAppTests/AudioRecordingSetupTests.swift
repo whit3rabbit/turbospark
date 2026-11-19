@@ -104,8 +104,11 @@ final class AudioRecordingSetupTests: XCTestCase {
         defer { controller.shutdown(); try? FileManager.default.removeItem(at: root) }
         let starting = expectation(description: "native capture starting")
         var completion: CheckedContinuation<Void, Never>?
+        controller.captureSystemAudio = true
         controller.recordingSetupDependencies.requestMicrophonePermission = { true }
-        controller.recordingSetupDependencies.start = { _, _ in
+        controller.recordingSetupDependencies.start = { _, config in
+            XCTAssertTrue(config.capturesMicrophone)
+            XCTAssertEqual(config.systemSource, .all)
             await withCheckedContinuation { completion = $0; starting.fulfill() }
         }
         controller.startRecording()
@@ -118,7 +121,12 @@ final class AudioRecordingSetupTests: XCTestCase {
         XCTAssertTrue(controller.isRecording)
         XCTAssertNil(controller.recordingSetupStatus)
         XCTAssertEqual(try controller.library.item(id)?.status, .recording)
+        XCTAssertEqual(controller.recordingLevels, [.microphone: 0, .system: 0])
+        controller.recordingLevels = [.microphone: 0.25, .system: 0.5]
+        controller.pauseRecording()
+        XCTAssertEqual(controller.recordingLevels, [.microphone: 0, .system: 0])
         controller.stopRecording()
+        XCTAssertTrue(controller.recordingLevels.isEmpty)
         XCTAssertFalse(controller.hasRecordingActivity)
         XCTAssertEqual(try controller.library.item(id)?.status, .interrupted)
         XCTAssertNotNil(try controller.library.item(id)?.failure)

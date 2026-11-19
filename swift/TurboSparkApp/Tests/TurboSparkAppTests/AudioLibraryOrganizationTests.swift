@@ -130,7 +130,7 @@ final class AudioLibraryOrganizationTests: XCTestCase {
         let chord = #".keyboardShortcut("r", modifiers: [.command, .shift])"#
         XCTAssertTrue(try source("AudioRecordBar.swift").contains(chord), "the pane lists the chord the button binds")
         // One Start button binds it: every page that records mounts the shared bar.
-        for page in ["AudioRecordingPanel.swift", "SpeechToTextWorkspaceView.swift"] {
+        for page in ["AudioRecordingPanel.swift", "SpeechToTextCapturePane.swift", "SpeechToTextAnyAudioPane.swift"] {
             let text = try source(page)
             XCTAssertTrue(text.contains("AudioRecordBar("), "\(page) records through the shared bar")
             XCTAssertFalse(text.contains(#".keyboardShortcut("r""#), "\(page) does not bind a second Start")

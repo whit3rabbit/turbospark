@@ -1,50 +1,46 @@
 import XCTest
 @testable import TurboSparkApp
 
-/// The Settings window opens at a size derived from the visible frame (the
-/// scene ignored an ideal size and opened at the floor) and is resizable down
-/// to `minimumSize`. These pin the clamps: a large display gets a roomy
-/// window, a huge one is capped, a 1280x800 display still fits the window and
-/// its title bar, and the minimum never exceeds the default it shrinks from.
+/// The Settings window opens at the main window's own rule: the whole
+/// visible frame (`AppWindowDefaultSize`), so Settings is about the same
+/// size as the app, and it stays resizable down to `minimumSize`. These pin
+/// the rule, the no-screen fallback, and the floor: a 1280x800 display still
+/// fits the minimum and its title bar, and the minimum never exceeds the
+/// default it shrinks from.
 @MainActor
 final class SettingsWindowLayoutTests: XCTestCase {
     /// Title bar height above the content frame on a standard window.
     private let titleBar: CGFloat = 28
 
-    func testScalesWithA16InchVisibleFrame() {
-        let size = AppSettingsView.windowSize(
-            forVisibleFrame: CGRect(x: 0, y: 106, width: 1728, height: 978))
-        XCTAssertEqual(size.width, 1728 * 0.76, accuracy: 0.01)
-        XCTAssertEqual(size.height, 978 * 0.86, accuracy: 0.01)
-        // The old floor is what the window used to open at on this display.
-        XCTAssertGreaterThan(size.width, 940 + 300)
-        XCTAssertGreaterThan(size.height, 660 + 150)
+    func testOpensAtTheWholeVisibleFrame() {
+        // A 16-inch panel's visible frame.
+        let visible = CGRect(x: 0, y: 106, width: 1728, height: 978)
+        XCTAssertEqual(
+            AppWindowDefaultSize.size(forVisibleFrame: visible),
+            CGSize(width: 1728, height: 978))
     }
 
-    func testSmallDisplayClampsToFloorAndStillFits() {
+    func testSmallDisplayKeepsTheVisibleSizeAndFitsTheMinimum() {
         // 1280x800 with the menu bar and a bottom Dock.
         let visible = CGRect(x: 0, y: 70, width: 1280, height: 705)
-        let size = AppSettingsView.windowSize(forVisibleFrame: visible)
-        XCTAssertEqual(size.height, 660)
-        XCTAssertGreaterThanOrEqual(size.width, 940)
-        XCTAssertLessThanOrEqual(size.width, visible.width)
-        XCTAssertLessThanOrEqual(size.height + titleBar, visible.height)
-    }
-
-    func testLargeDisplayIsCapped() {
-        let size = AppSettingsView.windowSize(
-            forVisibleFrame: CGRect(x: 0, y: 0, width: 2560, height: 1385))
-        XCTAssertEqual(size.width, 1480)
-        XCTAssertEqual(size.height, 1000)
-    }
-
-    func testMinimumFitsSmallDisplayAndIsBelowEveryDefault() {
-        let small = CGRect(x: 0, y: 70, width: 1280, height: 705)
+        XCTAssertEqual(
+            AppWindowDefaultSize.size(forVisibleFrame: visible),
+            CGSize(width: 1280, height: 705))
         let minimum = AppSettingsView.minimumSize
-        XCTAssertLessThanOrEqual(minimum.width, small.width)
-        XCTAssertLessThanOrEqual(minimum.height + titleBar, small.height)
-        for visible in [small, CGRect(x: 0, y: 0, width: 2560, height: 1385), nil] {
-            let size = AppSettingsView.windowSize(forVisibleFrame: visible)
+        XCTAssertLessThanOrEqual(minimum.width, visible.width)
+        XCTAssertLessThanOrEqual(minimum.height + titleBar, visible.height)
+    }
+
+    func testMinimumIsBelowEveryDefault() {
+        let minimum = AppSettingsView.minimumSize
+        let frames: [CGRect?] = [
+            CGRect(x: 0, y: 70, width: 1280, height: 705),
+            CGRect(x: 0, y: 106, width: 1728, height: 978),
+            CGRect(x: 0, y: 0, width: 2560, height: 1385),
+            nil,
+        ]
+        for visible in frames {
+            let size = AppWindowDefaultSize.size(forVisibleFrame: visible)
             XCTAssertLessThanOrEqual(minimum.width, size.width)
             XCTAssertLessThanOrEqual(minimum.height, size.height)
         }
@@ -67,7 +63,8 @@ final class SettingsWindowLayoutTests: XCTestCase {
 
     func testNoScreenFallsBackToFixedSize() {
         XCTAssertEqual(
-            AppSettingsView.windowSize(forVisibleFrame: nil),
-            CGSize(width: 1180, height: 800))
+            AppWindowDefaultSize.size(forVisibleFrame: nil),
+            CGSize(width: 1280, height: 760))
+        XCTAssertEqual(AppWindowDefaultSize.size(forVisibleFrame: nil), AppWindowDefaultSize.fallback)
     }
 }

@@ -5,6 +5,7 @@ import SwiftUI
 /// an imported file gets a transcript of its own.
 @MainActor
 struct SpeechToTextAnyAudioPane: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     @ObservedObject var controller: AudioWorkspaceController
 
@@ -14,22 +15,27 @@ struct SpeechToTextAnyAudioPane: View {
 
     var body: some View {
         let items = self.items
+        let selection = SpeechToTextLibrary.listSelection(controller.selectedID, in: controller.items)
+        let live = controller.liveItem(for: .anyAudio)
         VStack(spacing: 0) {
             intake.padding(.horizontal, 24).padding(.vertical, 12)
             Divider()
-            if items.isEmpty && controller.liveItem(for: .anyAudio) == nil {
+            if items.isEmpty && live == nil {
                 AppEmptyState(systemImage: SpeechToTextMode.anyAudio.symbol,
                               title: Text("No audio yet", bundle: .module),
-                              message: Text("Import a file or capture audio from another app, then transcribe it.", bundle: .module)) {
-                    importButton
-                }
+                              message: Text("Import a file or capture audio from another app, then transcribe it.", bundle: .module))
             } else {
-                SpeechToTextSplit {
-                    AudioLibraryList(controller: controller, items: items,
-                                     selectedID: SpeechToTextLibrary.listSelection(controller.selectedID, in: controller.items))
+                SpeechToTextSplit(selectionID: live?.id ?? items.first { $0.id == selection }?.id) {
+                    AudioLibraryList(controller: controller, items: items, selectedID: selection)
                 } detail: {
                     detail(items)
                 }
+            }
+            if controller.hasRecordingActivity {
+                AudioRecordBar(controller: controller, layout: .capsule)
+                    .frame(maxWidth: 980 * AppMetrics.textScale(theme))
+                    .padding(.horizontal, 24).padding(.vertical, 12)
+                    .frame(maxWidth: .infinity)
             }
         }
     }
@@ -38,10 +44,13 @@ struct SpeechToTextAnyAudioPane: View {
     // (Dock, Spotlight, agents), which flooded the row as chips.
     private var intake: some View {
         VStack(alignment: .leading, spacing: 8) {
-            FlowLayout(spacing: 8, lineSpacing: 8) {
+            if controller.hasRecordingActivity {
                 importButton
-                Text("Capture from an app", bundle: .module).themedFont(.small).foregroundStyle(.appSecondary)
-                AudioCaptureSourcePickers(controller: controller, style: .menus)
+            } else {
+                AudioRecordBar(controller: controller, layout: .intake) {
+                    importButton
+                    AudioCaptureSourcePickers(controller: controller, style: .menus)
+                }
             }
             Text("TurboSpark playback is excluded. Only audio is saved.", bundle: .module)
                 .themedFont(.small).foregroundStyle(.appSecondary)
@@ -53,7 +62,7 @@ struct SpeechToTextAnyAudioPane: View {
         Button { controller.importAudio() } label: {
             Label { Text("Import audio", bundle: .module) } icon: { Image(systemName: "square.and.arrow.down") }
         }
-        .appAction(.secondary, size: .small)
+        .appAction(items.isEmpty ? .primary : .quiet, size: .small)
         .disabled(controller.isBusy || controller.hasRecordingActivity)
         .help(
             (controller.isBusy || controller.hasRecordingActivity)

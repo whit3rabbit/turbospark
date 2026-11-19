@@ -1,8 +1,7 @@
 import SwiftUI
 
 /// The Speech-to-Text page: a pill per job (Notes, Meeting, Any Audio), each
-/// with its own list and live or detail view, and one record bar pinned in
-/// the same place in every mode.
+/// with its own list and live or detail view.
 @MainActor
 struct SpeechToTextWorkspaceView: View {
     @ObservedObject var model: AppModel
@@ -28,8 +27,6 @@ struct SpeechToTextWorkspaceView: View {
                 .id(mode)
                 .transition(.opacity.combined(with: .offset(y: 8)))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-            recordBar
-                .padding(.horizontal, 24).padding(.vertical, 12)
         }
         .tsAnimation(TSMotion.pane, value: mode)
         .sheet(item: speakerNaming) { item in
@@ -69,17 +66,6 @@ struct SpeechToTextWorkspaceView: View {
         }
     }
 
-    @ViewBuilder private var recordBar: some View {
-        switch mode {
-        case .notes, .meeting:
-            AudioRecordBar(controller: controller, layout: .capsule) {
-                AudioCaptureSourcePickers(controller: controller, style: .menus)
-            }
-        case .anyAudio:
-            AudioRecordBar(controller: controller, layout: .capsule)
-        }
-    }
-
     private var vocabularyButton: some View {
         Button { showingVocabulary.toggle() } label: {
             Label {
@@ -87,7 +73,7 @@ struct SpeechToTextWorkspaceView: View {
             } icon: { Image(systemName: "character.book.closed") }
             .lineLimit(1)
         }
-        .appAction(.secondary, size: .small)
+        .appAction(.quiet, size: .small)
         .help(Text("Custom vocabulary & jargon", bundle: .module))
     }
 
@@ -99,7 +85,7 @@ struct SpeechToTextWorkspaceView: View {
             } icon: { Image(systemName: "cpu") }
             .lineLimit(1)
         }
-        .appAction(.secondary, size: .small)
+        .appAction(.quiet, size: .small)
         .help(Text("Audio model", bundle: .module))
         .popover(isPresented: $showingModels, arrowEdge: .bottom) {
             SpeechToTextModelPanel(model: model, controller: controller, mode: mode)
@@ -111,9 +97,11 @@ struct SpeechToTextWorkspaceView: View {
 /// room and stacked when there is not. The breakpoint scales with text size.
 @MainActor
 struct SpeechToTextSplit<Rows: View, Detail: View>: View {
+    var selectionID: UUID?
     @ViewBuilder let list: () -> Rows
     @ViewBuilder let detail: () -> Detail
     @Environment(\.appTheme) private var theme
+    @State private var showingList = false
 
     var body: some View {
         let scale = AppMetrics.textScale(theme)
@@ -123,14 +111,40 @@ struct SpeechToTextSplit<Rows: View, Detail: View>: View {
                     ScrollView { list().padding(16) }
                         .frame(minWidth: 240 * scale, idealWidth: 300 * scale, maxWidth: 420 * scale)
                     ScrollView {
-                        detail().padding(24).frame(maxWidth: 900, alignment: .leading).frame(maxWidth: .infinity)
+                        detail().padding(24).frame(maxWidth: 900 * scale, alignment: .leading).frame(maxWidth: .infinity)
                     }
                     .frame(minWidth: 360 * scale)
                 }
             } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) { list(); detail() }.padding(16)
+                compactLayout
+            }
+        }
+    }
+
+    private var compactLayout: some View {
+        ScrollViewReader { scroll in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    if selectionID == nil {
+                        list()
+                    } else {
+                        DisclosureGroup(isExpanded: $showingList) {
+                            list().padding(.top, 8)
+                        } label: {
+                            Label { Text("Choose a recording or take", bundle: .module) } icon: {
+                                Image(systemName: "books.vertical")
+                            }
+                            .themedFont(.small, weight: .medium)
+                        }
+                    }
+                    detail()
                 }
+                .padding(16)
+                .id("speech-to-text-top")
+            }
+            .onChange(of: selectionID) { _, _ in
+                showingList = false
+                scroll.scrollTo("speech-to-text-top", anchor: .top)
             }
         }
     }

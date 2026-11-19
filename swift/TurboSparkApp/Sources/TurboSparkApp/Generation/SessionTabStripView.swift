@@ -51,6 +51,9 @@ struct SessionTabStripView: View {
                 .labelStyle(.iconOnly)
         }
         .buttonStyle(.plain)
+        // The icon-only label drops the text VoiceOver needs; the name is
+        // set here so it cannot drift from the tooltip.
+        .accessibilityLabel(Text("New Tab", bundle: .module))
         .help(Text("New Tab", bundle: .module))
     }
 
@@ -83,6 +86,8 @@ struct SessionTabStripView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
+        // Named for VoiceOver, like the new-tab button beside it.
+        .accessibilityLabel(Text("All Tabs", bundle: .module))
         .help(Text("All Tabs", bundle: .module))
     }
 }

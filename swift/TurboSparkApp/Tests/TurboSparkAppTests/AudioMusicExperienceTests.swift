@@ -113,7 +113,17 @@ final class AudioMusicExperienceTests: XCTestCase {
             controller.items = [failure, interrupted, draft, success, invalidSuccess]
             XCTAssertEqual(controller.workspaceHistory.map(\.id), [success.id])
             XCTAssertEqual(Set(controller.filteredItems.map(\.id)), Set([draft.id, success.id]))
+
+            controller.select(success)
+            XCTAssertEqual(controller.musicTakes.map(\.id), [success.id], "An auditioned take stays in the list")
         }
+    }
+
+    func testExtremeDurationCannotTrapFrameControlsOrValidation() {
+        var recipe = AudioRecipe()
+        recipe.durationSeconds = Double.greatestFiniteMagnitude
+        XCTAssertEqual(recipe.musicFrames, 0)
+        XCTAssertNotNil(MusicMemoryAdvisor.validate(recipe: recipe, profile: nil))
     }
 
     @MainActor func testOldRunProgressAndAutosaveCannotOverwriteCurrentStatus() async throws {

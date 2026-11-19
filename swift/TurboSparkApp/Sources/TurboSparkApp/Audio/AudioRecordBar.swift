@@ -5,12 +5,13 @@ import SwiftUI
 /// access gate and the disabled reasons live in one place.
 @MainActor
 struct AudioRecordBar<Accessory: View>: View {
-    enum Layout { case panel, capsule }
+    enum Layout { case panel, capsule, inline, intake }
 
+    @Environment(\.appTheme) private var theme
     @ObservedObject var controller: AudioWorkspaceController
     let layout: Layout
     let startTitle: Text
-    /// What sits before Start while idle in the capsule, such as a source picker.
+    /// What sits before Start while idle, such as a source picker.
     @ViewBuilder let accessory: () -> Accessory
     @ObservedObject private var permissions = RecordingPermissions.shared
     @State private var accessRequest: RecordingAccessRequest?
@@ -58,6 +59,8 @@ struct AudioRecordBar<Accessory: View>: View {
             switch layout {
             case .panel: panel
             case .capsule: capsule
+            case .inline: idleControls.appCardSurface(padding: 12)
+            case .intake: idleControls
             }
         }
         .recordingAccessGate($accessRequest, permissions: permissions)
@@ -73,18 +76,7 @@ struct AudioRecordBar<Accessory: View>: View {
                     cancelButton
                 }
             } else if controller.isRecording {
-                HStack {
-                    AudioRecordingBadge(controller: controller)
-                    Spacer()
-                    markerButton
-                }
-                AppProgressBar(
-                    value: Double(level),
-                    label: Text("Input level", bundle: .module),
-                    valueText: Text(verbatim: "\(Int(level * 100))%"),
-                    size: .compact
-                )
-                HStack { pauseButton; stopButton }
+                liveControls
             } else {
                 startButton
                 if let reason = startDisabledReason {
@@ -102,35 +94,75 @@ struct AudioRecordBar<Accessory: View>: View {
                 Spacer(minLength: 8)
                 cancelButton
             } else if controller.isRecording {
-                pauseButton
-                AudioLiveLevels(controller: controller, barCount: 40, height: 26)
-                    .frame(minWidth: 80, maxWidth: .infinity)
-                Text(verbatim: audioTime(controller.recordingSeconds)).monospacedDigit().themedFont(.small, weight: .semibold)
-                    .accessibilityLabel(Text("Recording", bundle: .module))
-                    .accessibilityValue(Text(verbatim: audioTime(controller.recordingSeconds)))
-                markerButton
-                stopButton
+                liveControls
             } else {
-                accessory()
-                if let reason = startDisabledReason {
-                    reason.themedFont(.small).foregroundStyle(.appSecondary).lineLimit(2)
-                }
-                Spacer(minLength: 8)
-                startButton.appPrimaryGlow(startDisabledReason == nil)
+                idleControls
             }
         }
         .padding(.horizontal, 14).padding(.vertical, 10)
-        .appComposerSurface(focused: controller.hasRecordingActivity)
+        .appCardSurface(padding: 0)
         .tsAnimation(TSMotion.pane, value: controller.isRecording)
     }
 
-    private var level: Double { Double(max(0, min(1, controller.inputLevel))) }
+    private var idleControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            FlowLayout(spacing: 10, lineSpacing: 8) {
+                accessory()
+                startButton
+            }
+            if let reason = startDisabledReason {
+                reason.themedFont(.small).foregroundStyle(.appSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var liveControls: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            AppAdaptiveHeader {
+                AudioRecordingReadout(controller: controller)
+            } actions: {
+                FlowLayout(spacing: AppMetrics.actionSpacing, lineSpacing: 6) {
+                    markerButton
+                    pauseButton
+                    stopButton
+                }
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 16) { sourceMeters }
+                VStack(alignment: .leading, spacing: 8) { sourceMeters }
+            }
+        }
+    }
+
+    private var sourceMeters: some View {
+        ForEach(AudioCapture.InputSource.allCases, id: \.self) { source in
+            if let level = controller.recordingLevels[source] {
+                let isMic = source == .microphone
+                let label = isMic ? Text("Microphone", bundle: .module) : Text("App or system audio", bundle: .module)
+                let value = Double(min(1, max(0, level.isFinite ? level : 0)))
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Image(systemName: isMic ? "mic" : "speaker.wave.2")
+                        label
+                        Spacer(minLength: 8)
+                        Text(value, format: .percent.precision(.fractionLength(0))).monospacedDigit()
+                    }
+                    .themedFont(.small)
+                    .foregroundStyle(.appSecondary)
+                    .accessibilityHidden(true)
+                    AppProgressBar(value: value, label: label, size: .compact, animated: false)
+                }
+                .frame(idealWidth: 176 * AppMetrics.textScale(theme), maxWidth: .infinity)
+            }
+        }
+    }
 
     private var startButton: some View {
         Button { beginRecording() } label: {
             Label { startTitle } icon: { Image(systemName: "record.circle") }
         }
-        .appAction(.primary)
+        .appAction(layout == .intake ? .quiet : .primary)
         .disabled(startDisabledReason != nil)
         .help(startDisabledReason ?? startTitle)
         .keyboardShortcut("r", modifiers: [.command, .shift])
@@ -145,7 +177,7 @@ struct AudioRecordBar<Accessory: View>: View {
         Button { controller.addMarker() } label: {
             Label { Text("Add marker", bundle: .module) } icon: { Image(systemName: "bookmark") }
         }
-        .appAction(.secondary, size: .small)
+        .appAction(.quiet, size: .small)
     }
 
     private var pauseButton: some View {
@@ -156,7 +188,7 @@ struct AudioRecordBar<Accessory: View>: View {
                 controller.isPaused ? Text("Resume", bundle: .module) : Text("Pause", bundle: .module)
             } icon: { Image(systemName: controller.isPaused ? "play.fill" : "pause.fill") }
         }
-        .appAction(.secondary)
+        .appAction(.quiet, size: .small)
     }
 
     // Finishing the take is the bar's one primary action while recording, as
@@ -165,7 +197,7 @@ struct AudioRecordBar<Accessory: View>: View {
         Button { controller.stopRecording() } label: {
             Label { Text("Stop recording", bundle: .module) } icon: { Image(systemName: "stop.fill") }
         }
-        .appAction(.primary)
+        .appAction(.primary, size: .small)
     }
 }
 
@@ -183,8 +215,10 @@ extension AudioRecordBar where Accessory == EmptyView {
 struct AudioCaptureSourcePickers: View {
     enum Style { case form, menus }
 
+    @Environment(\.appTheme) private var theme
     @ObservedObject var controller: AudioWorkspaceController
     var style: Style = .form
+    var showsAccessWarning = false
     @ObservedObject private var permissions = RecordingPermissions.shared
     @State private var accessRequest: RecordingAccessRequest?
 
@@ -203,7 +237,11 @@ struct AudioCaptureSourcePickers: View {
         Group {
             switch style {
             case .form: form
-            case .menus: menus
+            case .menus:
+                VStack(alignment: .leading, spacing: 6) {
+                    menus
+                    if showsAccessWarning { accessWarning }
+                }
             }
         }
         .disabled(controller.hasRecordingActivity)
@@ -213,7 +251,7 @@ struct AudioCaptureSourcePickers: View {
     private var form: some View {
         VStack(alignment: .leading, spacing: 12) {
             Toggle(isOn: $controller.captureMicrophone) { Text("Microphone", bundle: .module) }
-            if controller.captureMicrophone { microphonePicker }
+            if controller.captureMicrophone { microphonePicker.labelsHidden() }
             Toggle(isOn: $controller.captureSystemAudio) { Text("App or system audio", bundle: .module) }
             if controller.captureSystemAudio {
                 applicationPicker
@@ -229,13 +267,14 @@ struct AudioCaptureSourcePickers: View {
     }
 
     private var menus: some View {
-        HStack(spacing: 8) {
+        let sourceWidth = 144 * AppMetrics.textScale(theme)
+        return HStack(spacing: 8) {
             if controller.captureMicrophone {
-                microphonePicker.pickerStyle(.menu).labelsHidden().fixedSize()
+                microphonePicker.pickerStyle(.menu).labelsHidden().frame(maxWidth: sourceWidth)
                     .help(Text("Microphone", bundle: .module))
             }
             if controller.captureSystemAudio {
-                applicationPicker.pickerStyle(.menu).labelsHidden().fixedSize()
+                applicationPicker.pickerStyle(.menu).labelsHidden().frame(maxWidth: sourceWidth)
                     .help(Text("TurboSpark playback is excluded. Only audio is saved.", bundle: .module))
             }
             AppIconButton(permissions.missing(neededPermissions).isEmpty ? "checkmark.shield" : "exclamationmark.triangle.fill",

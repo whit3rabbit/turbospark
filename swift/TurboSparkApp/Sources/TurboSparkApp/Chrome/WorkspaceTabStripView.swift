@@ -64,7 +64,14 @@ struct WorkspaceTabStripView: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .disabled(closedProjects.isEmpty)
-        .help(Text("Open Project in New Tab", bundle: .module))
+        // The icon-only label drops the text a VoiceOver name needs, so the
+        // name is set here and cannot drift from the tooltip's source.
+        .accessibilityLabel(Text("Open Project in New Tab", bundle: .module))
+        // A disabled control says why: the dead plus menu no longer
+        // describes an action it cannot take.
+        .help(closedProjects.isEmpty
+            ? Text("Every project already has a tab.", bundle: .module)
+            : Text("Open Project in New Tab", bundle: .module))
     }
 }
 
@@ -112,9 +119,11 @@ private struct WorkspaceTabItemView: View {
                 .labelStyle(.iconOnly)
                 .font(theme.ui(.micro, weight: .medium))
                 .foregroundStyle(.appSecondary)
-                // Always laid out, so a hover does not shift the title; shown
-                // on the selected tab, on hover, and to VoiceOver always.
-                .opacity(isSelected || isHovered ? 1 : 0)
+                // Always laid out, so a hover does not shift the title, and
+                // DIMMED rather than removed on unselected tabs: hover is
+                // never the only affordance (the session tab strip's rule,
+                // which this strip now shares).
+                .opacity(isSelected || isHovered ? 1 : 0.35)
             }
             .buttonStyle(.plain)
             .help(Text("Close Tab", bundle: .module))

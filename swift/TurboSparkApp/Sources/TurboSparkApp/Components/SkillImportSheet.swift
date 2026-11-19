@@ -162,7 +162,7 @@ public struct SkillImportSheet: View {
                         Spacer()
                         Text("Skills available: \(manifest.skills.count)", bundle: .module)
                             .themedFont(.tiny)
-                            .foregroundStyle(.tertiary)
+                            .foregroundStyle(.appSecondary)
                     }
                     .padding(.horizontal, 20)
                     .padding(.vertical, 10)

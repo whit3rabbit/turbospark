@@ -64,7 +64,10 @@ struct GenerateControl: View {
                 .background(Circle().fill(fill))
                 .overlay {
                     Circle().stroke(
-                        ready ? Color.white.opacity(0.2) : theme.foreground.opacity(0.06),
+                        // The edge tints from on-accent, not a white literal:
+                        // a custom theme's accent fill is not always dark.
+                        ready ? theme.accent.contrastForeground.opacity(0.2)
+                              : theme.foreground.opacity(0.06),
                         lineWidth: 0.5)
                 }
                 .appPrimaryGlow(ready)

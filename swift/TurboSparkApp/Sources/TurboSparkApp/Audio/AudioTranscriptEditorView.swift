@@ -2,6 +2,7 @@ import SwiftUI
 
 @MainActor
 struct AudioTranscriptEditorView: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var controller: AudioWorkspaceController
     let item: AudioLibraryItem
     @State private var editingID: UUID?
@@ -16,9 +17,16 @@ struct AudioTranscriptEditorView: View {
     /// export shows a rename at once.
     private var roster: AudioSpeakerRoster { AudioSpeakerRoster(item) }
 
+    private var currentSegmentID: UUID? {
+        guard controller.playbackItemID == item.id else { return nil }
+        let time = controller.playbackTime
+        return segments.last { $0.start <= time && time < $0.end }?.id
+    }
+
     var body: some View {
         let roster = self.roster
         let speakers = roster.roots(in: segments)
+        let current = currentSegmentID
         VStack(alignment: .leading, spacing: 12) {
             transcriptHeader
             if !speakers.isEmpty { speakersBar }
@@ -26,13 +34,22 @@ struct AudioTranscriptEditorView: View {
                 Label { Text("Draft transcript", bundle: .module) } icon: { Image(systemName: "pencil") }
                     .foregroundStyle(.appSecondary)
             }
-            LazyVStack(alignment: .leading, spacing: 16) {
+            LazyVStack(alignment: .leading, spacing: 8) {
                 ForEach($segments) { $segment in
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Button { controller.seek(to: segment.start) } label: {
-                                Text(audioTime(segment.start)).monospacedDigit()
-                            }.disabled(item.clips.isEmpty || controller.hasRecordingActivity)
+                    VStack(alignment: .leading, spacing: 4) {
+                        FlowLayout(spacing: AppMetrics.actionSpacing, lineSpacing: 4) {
+                            Button { controller.seek(to: segment.start, item: item) } label: {
+                                HStack(spacing: 4) {
+                                    if current == segment.id {
+                                        Image(systemName: "speaker.wave.1").accessibilityHidden(true)
+                                    }
+                                    Text(verbatim: audioTime(segment.start)).monospacedDigit()
+                                }
+                                .foregroundStyle(.appAccentText)
+                            }
+                            .appAction(.quiet, size: .small)
+                            .accessibilityAddTraits(current == segment.id ? .isSelected : [])
+                            .disabled(item.clips.isEmpty || controller.hasRecordingActivity)
                             speakerMenu(segment, roster: roster, speakers: speakers)
                             if segment.timing == "clip" || segment.timing == "window" {
                                 Text("Approximate timing", bundle: .module).themedFont(.small).foregroundStyle(.appSecondary)
@@ -42,8 +59,15 @@ struct AudioTranscriptEditorView: View {
                             get: { segment.text },
                             set: { segment.text = $0; stageEdits() }
                         )).themedFont(.base)
-                            .appEditorSurface(minHeight: 72)
+                            .appEditorSurface(minHeight: 52 * AppMetrics.textScale(theme))
                             .accessibilityLabel(Text("Transcript text", bundle: .module))
+                    }
+                    .padding(6)
+                    .background {
+                        if current == segment.id {
+                            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
+                                .fill(theme.selection)
+                        }
                     }
                     .accessibilityElement(children: .contain)
                 }
@@ -125,7 +149,7 @@ struct AudioTranscriptEditorView: View {
         } label: {
             if let label = roster.label(segment) { Text(verbatim: label) } else { Text("No Speaker", bundle: .module) }
         }
-        .appMenuAction(size: .small)
+        .appMenuAction(size: .small, quiet: true)
         .accessibilityLabel(Text("Speaker", bundle: .module))
         .accessibilityValue(roster.label(segment).map { Text(verbatim: $0) } ?? Text("No Speaker", bundle: .module))
     }

@@ -67,12 +67,8 @@ extension View {
     /// A pull-down `Menu` drawn like a secondary action, for grouping the
     /// overflow of a crowded header (Import sources, Refresh, Marketplace)
     /// behind one labeled control.
-    func appMenuAction(size: ControlSize = .regular) -> some View {
-        menuStyle(.button)
-            .buttonStyle(.bordered)
-            .controlSize(size)
-            .appControlLabelFont(size)
-            .fixedSize()
+    func appMenuAction(size: ControlSize = .regular, quiet: Bool = false) -> some View {
+        modifier(AppMenuActionModifier(size: size, quiet: quiet))
     }
 
     /// The label font a reduced control size needs. A native button keeps
@@ -94,6 +90,28 @@ extension View {
     /// raised theme surface, the theme hairline and a continuous corner.
     func appEditorSurface(minHeight: CGFloat? = nil) -> some View {
         modifier(AppEditorSurfaceModifier(minHeight: minHeight))
+    }
+}
+
+private struct AppMenuActionModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+    let size: ControlSize
+    let quiet: Bool
+
+    func body(content: Content) -> some View {
+        Group {
+            if quiet {
+                content.menuStyle(.borderlessButton)
+            } else {
+                content.menuStyle(.button).buttonStyle(.bordered)
+            }
+        }
+            .controlSize(size)
+            .appControlLabelFont(size)
+            .fixedSize()
+            // AppKit retains the old menu label color across appearance
+            // changes. Recreate the bridge so the new mode stays readable.
+            .id(colorScheme)
     }
 }
 

@@ -66,24 +66,29 @@ extension AudioWorkspaceController {
     func stopPlayback() {
         playbackLifetime?.end(); playbackLifetime = nil
         playbackTask?.cancel(); playbackTask = nil
-        player?.stop(); player = nil; isPlaying = false; playbackTime = 0
+        player?.stop(); player = nil; isPlaying = false; playbackTime = 0; playbackItemID = nil
         if let playbackURL { try? FileManager.default.removeItem(at: playbackURL); scratchURLs.remove(playbackURL) }
         playbackURL = nil
     }
-    func playPause() {
+    func playPause(item: AudioLibraryItem? = nil) {
         guard !hasRecordingActivity, !isShutDown else { return }
         if let player {
             if player.isPlaying { player.pause(); isPlaying = false }
             else { isPlaying = player.play() }
             return
         }
-        guard let item = selectedItem else { return }
+        guard let item = item ?? selectedItem else { return }
         play(item, at: 0)
     }
-    func seek(to seconds: Double) {
+    func seek(to seconds: Double, item: AudioLibraryItem? = nil) {
         guard seconds.isFinite, !hasRecordingActivity, !isShutDown else { return }
+        if let item, let playbackItemID, item.id != playbackItemID {
+            play(item, at: max(0, seconds), autoplay: isPlaying)
+            return
+        }
         if let player { player.currentTime = min(player.duration, max(0, seconds)); playbackTime = player.currentTime }
-        else if let selectedItem { play(selectedItem, at: max(0, seconds), autoplay: false) }
+        else if playbackTask != nil { playbackTime = min(playbackDuration, max(0, seconds)) }
+        else if let item = item ?? selectedItem { play(item, at: max(0, seconds), autoplay: false) }
     }
     func compare(with item: AudioLibraryItem) { play(item, at: playbackTime) }
     func play(_ item: AudioLibraryItem, at seconds: Double, autoplay: Bool = true) {
@@ -93,6 +98,8 @@ extension AudioWorkspaceController {
         do {
             let destination = try scratchURL(extension: "wav")
             playbackURL = destination
+            playbackItemID = item.id
+            playbackTime = min(item.duration, max(0, seconds))
             let rendering = AudioOperationLifetime()
             playbackLifetime = rendering
             playbackTask = Task { [weak self] in
@@ -102,9 +109,23 @@ extension AudioWorkspaceController {
                     })
                 } }.value
                 guard let self else { try? FileManager.default.removeItem(at: destination); return }
-                self.finishPreparingPlayback(outcome, destination: destination, at: seconds, autoplay: autoplay, token: token)
+                self.finishPreparingPlayback(outcome, destination: destination, at: self.playbackTime, autoplay: autoplay, token: token)
             }
         } catch { fail(error) }
+    }
+
+    func waveformPeaks(for item: AudioLibraryItem, count: Int) async throws -> [Float] {
+        let assets = self.assets; let lifetime = self.lifetime
+        let drawing = AudioOperationLifetime()
+        return try await withTaskCancellationHandler {
+            try await Task.detached(priority: .utility) {
+                try AudioMediaIO.waveformPeaks(item.clips, duration: item.duration, count: count, cancel: {
+                    try lifetime.check(); try drawing.check()
+                }, resolve: assets.materializedURL(for:))
+            }.value
+        } onCancel: {
+            drawing.end()
+        }
     }
     func finishPreparingPlayback(_ outcome: Result<Void, Error>, destination: URL, at seconds: Double, autoplay: Bool, token: UUID) {
         // Permission setup can begin while decryption/rendering is suspended.

@@ -382,9 +382,11 @@ struct PromptComposerPlusMenu: View {
     private func importGitOrUrlContext() {
         if let clip = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
            clip.hasPrefix("http://") || clip.hasPrefix("https://") {
-            onInsertPromptText("Analyze and resolve: \(clip)\n\n")
+            // A seeded draft is UI copy: it resolves through the string
+            // catalog like any Text, interpolating as a %@ format key.
+            onInsertPromptText(AppStrings.localized("Analyze and resolve: \(clip)\n\n"))
         } else {
-            onInsertPromptText("Review and resolve GitHub issue: ")
+            onInsertPromptText(AppStrings.localized("Review and resolve GitHub issue: "))
         }
     }
 }

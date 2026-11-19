@@ -378,9 +378,19 @@ struct CommandPaletteView: View {
 
     private func rebuildContext() {
         context.documents = ChatSearch.buildDocuments(from: model.chats)
+        // The chord each navigation row shows is the one in effect now, the
+        // same resolution the View menu uses, not a hardcoded default.
+        let keybinds = KeybindOverrideStore.shared
+        var navigationBindings: [AppModel.AppNavigationSection: String] = [:]
+        for section in AppModel.AppNavigationSection.allCases {
+            if let chord = keybinds.chord(for: .navigation(section)) {
+                navigationBindings[section] = chord.display
+            }
+        }
         context.commands = PaletteCommandCatalog.commands(
             skills: model.effectiveSkills,
-            canCheckForUpdates: SparkleUpdateController.shared.canCheckForUpdates)
+            canCheckForUpdates: SparkleUpdateController.shared.canCheckForUpdates,
+            navigationBindings: navigationBindings)
         context.history = PaletteHistoryStore.shared.entries(workspace: workspaceKey)
         context.hasProject = model.selectedProject?.rootDirectoryURL != nil
         if let root = model.selectedProject?.rootDirectoryURL {
