@@ -33,9 +33,9 @@ mod gturbo_writer;
 mod hf_checkpoint;
 mod install_verifier;
 mod lfm3_config;
+pub mod lora_merge;
 mod manifest_peek;
 mod museglimmer_config;
-pub mod lora_merge;
 pub mod quantize_on_install;
 mod qwen2_config;
 mod qwen36_config;
@@ -121,9 +121,8 @@ pub use gemma4_checkpoint::{
 };
 pub use gguf_checkpoint::{
     dtype_tag_for_ggml_type, gdn_out_proj_needs_q8_0_requant, gemma3_tensor_is_transcoded,
-    gguf_manifest_quant,
-    lfm3_rope_freqs_are_zero_tail, muse_qk_norm_is_constant, orchestrate_gguf_checkpoint,
-    qwen4exp_tensor_is_transcoded, write_gguf_install_streamed,
+    gguf_manifest_quant, lfm3_rope_freqs_are_zero_tail, muse_qk_norm_is_constant,
+    orchestrate_gguf_checkpoint, qwen4exp_tensor_is_transcoded, write_gguf_install_streamed,
     write_gguf_install_streamed_resumable, GgufRepackError, GgufRepackOutput, ResumeProvenance,
     FUSED_GATE_FIRST,
 };
