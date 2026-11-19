@@ -92,6 +92,8 @@ final class AudioWorkspaceController: ObservableObject {
     let librarySearch = AudioLibrarySearch()
     @Published var pendingSaves: [UUID: AudioLibraryItem] = [:]
     @Published var pendingTranscriptEdits: [UUID: [AudioLibrarySegment]] = [:]
+    /// Typed notes not yet saved, by item (AudioWorkspaceNotes.swift).
+    @Published var pendingUserNotes: [UUID: String] = [:]
     @Published var preferences = AudioWorkspacePreferences()
     @Published var installedPaths: [String: String] = [:]
     private var cachedMusicSamplingPath: String?
@@ -99,7 +101,15 @@ final class AudioWorkspaceController: ObservableObject {
 
     let pendingAssetOwner = UUID()
     let lifetime = AudioOperationLifetime()
-    var summaryHandler: ((AudioLibraryItem, InstalledModel?) async throws -> AudioMeetingSummary)?
+    var summaryHandler: ((AudioLibraryItem, InstalledModel?, @escaping @MainActor (AudioSummaryProgress) -> Void) async throws -> AudioMeetingSummary)?
+    /// Runs one prompt on the chat model (loading `InstalledModel` first when
+    /// given) and streams its text. Set by the owner; Ask uses it.
+    var promptHandler: ((_ system: String, _ user: String, InstalledModel?, @escaping @MainActor (String) -> Void) async throws -> String)?
+    /// Questions asked about meetings this session (AudioMeetingAskView.swift).
+    let ask = AudioMeetingAskState()
+    /// Notes being written for one take, shown while they stream in. Never
+    /// saved: only the finished summary reaches `item.summary`.
+    @Published var summaryPreview: AudioSummaryPreview?
     /// Whether the model at a path is being moved to another library. The move removes
     /// the original folder when it ends, so a session is never opened from a path for
     /// which this says yes (`residentSession`, the Qwen speech job). Set by the owner.
@@ -144,6 +154,7 @@ final class AudioWorkspaceController: ObservableObject {
     var jobTask: Task<Void, Never>?
     var preferencesTask: Task<Void, Never>?
     var transcriptSaveTasks: [UUID: Task<Void, Never>] = [:]
+    var userNotesSaveTasks: [UUID: Task<Void, Never>] = [:]
     var idleTask: Task<Void, Never>?
     var deletionCleanupTask: Task<Void, Never>?
     @Published var opening: AudioModelOpening?
@@ -595,8 +606,9 @@ final class AudioWorkspaceController: ObservableObject {
             do { try save(item) } catch { fail(error); return }
         }
         for (id, segments) in pendingTranscriptEdits { _ = saveTranscript(segments, for: id) }
+        for (id, notes) in pendingUserNotes { _ = saveUserNotes(notes, for: id) }
         flushPreferences()
-        if pendingSaves.isEmpty && pendingTranscriptEdits.isEmpty { error = nil }
+        if pendingSaves.isEmpty && pendingTranscriptEdits.isEmpty && pendingUserNotes.isEmpty { error = nil }
     }
     func fail(_ failure: Error) {
         error = failure.localizedDescription
@@ -623,6 +635,7 @@ final class AudioWorkspaceController: ObservableObject {
             try library.delete(item.id); items.removeAll { $0.id == item.id }
             pendingSaves.removeValue(forKey: item.id); pendingTranscriptEdits.removeValue(forKey: item.id); refreshPendingPins()
             transcriptSaveTasks.removeValue(forKey: item.id)?.cancel()
+            pendingUserNotes.removeValue(forKey: item.id); userNotesSaveTasks.removeValue(forKey: item.id)?.cancel()
             if selectedID == item.id { stopPlayback(); selectedID = nil }
             deletionCleanupTask?.cancel()
             deletionCleanupTask = Task { [weak self] in
@@ -1118,6 +1131,8 @@ final class AudioWorkspaceController: ObservableObject {
         guard !isShutDown else { return }
         preferencesTask?.cancel()
         transcriptSaveTasks.values.forEach { $0.cancel() }; transcriptSaveTasks.removeAll()
+        userNotesSaveTasks.values.forEach { $0.cancel() }; userNotesSaveTasks.removeAll()
+        // Saves staged transcript edits and typed notes before the vault locks.
         retryAutosave()
         recordingSetupTask?.cancel(); recordingSetupTask = nil
         recordingSetupAttempt = nil; recordingSetupStatus = nil
@@ -1141,7 +1156,8 @@ final class AudioWorkspaceController: ObservableObject {
         for url in scratchURLs { try? FileManager.default.removeItem(at: url) }
         scratchURLs.removeAll(); items.removeAll(); activeGeneration = nil; activeRunID = nil; generationProgress = nil
         speechRun = nil; voiceReferenceRecordingID = nil
-        pendingTranscriptEdits.removeAll(); pendingSaves.removeAll(); ManagedAssetPins.clear(owner: pendingAssetOwner); recipe = AudioRecipe(); preferences = AudioWorkspacePreferences()
+        pendingTranscriptEdits.removeAll(); pendingUserNotes.removeAll(); ask.entries.removeAll(); summaryPreview = nil
+        pendingSaves.removeAll(); ManagedAssetPins.clear(owner: pendingAssetOwner); recipe = AudioRecipe(); preferences = AudioWorkspacePreferences()
     }
 }
 

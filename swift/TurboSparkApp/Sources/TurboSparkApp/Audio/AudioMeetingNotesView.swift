@@ -39,9 +39,12 @@ struct AudioMeetingNotesView: View {
         VStack(alignment: .leading, spacing: 16) {
             groundTruthBanner
             headerControls
+            autoNotesToggle
             Divider()
 
-            if let summary = item.summary {
+            if let preview = controller.summaryPreview, preview.itemID == item.id {
+                streamingContent(preview.progress)
+            } else if let summary = item.summary {
                 summaryContent(summary)
             } else {
                 emptyState
@@ -198,6 +201,39 @@ struct AudioMeetingNotesView: View {
         .help(Text("Export notes as a Markdown file.", bundle: .module))
     }
 
+    /// Applies to every Meeting take, so it sits with the notes it produces.
+    private var autoNotesToggle: some View {
+        Toggle(isOn: Binding(get: { controller.autoMeetingNotes }, set: { controller.autoMeetingNotes = $0 })) {
+            Text("Write notes after each meeting", bundle: .module)
+        }
+        .toggleStyle(.checkbox)
+        .themedFont(.small)
+        .help(Text("When a meeting's final transcript is saved, write notes with the loaded or recommended chat model.", bundle: .module))
+    }
+
+    /// Notes as the model writes them. Nothing here is saved until the run
+    /// finishes, and then only into the summary.
+    private func streamingContent(_ progress: AudioSummaryProgress) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                if let stage = progress.stage, progress.text.isEmpty {
+                    Text(verbatim: stage)
+                } else {
+                    Text("Writing notes...", bundle: .module)
+                }
+            }
+            .themedFont(.small).foregroundStyle(.appSecondary)
+            .accessibilityElement(children: .combine)
+            if !progress.text.isEmpty {
+                AudioMeetingNotesReader(text: progress.text)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(12)
+                    .appCardSurface(padding: 0)
+            }
+        }
+    }
+
     // MARK: - Summary Content
 
     @ViewBuilder
@@ -342,7 +378,8 @@ struct AudioMeetingNotesView: View {
         panel.allowedContentTypes = [.plainText]
         panel.nameFieldStringValue = "\(item.title) - Notes.md"
         if panel.runModal() == .OK, let url = panel.url {
-            try? notesText.write(to: url, atomically: true, encoding: .utf8)
+            do { try notesText.write(to: url, atomically: true, encoding: .utf8) }
+            catch { controller.error = error.localizedDescription }
         }
     }
 }

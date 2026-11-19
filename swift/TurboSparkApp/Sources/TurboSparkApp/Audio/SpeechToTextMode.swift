@@ -41,6 +41,20 @@ enum AudioCaptureOrigin: Equatable, Sendable {
 
 /// What each mode lists. Pure so tests can drive it without a controller.
 enum SpeechToTextLibrary {
+    /// Takes whose title, notes, summary, tags or transcript contain every
+    /// word of the query, ignoring case and diacritics. An empty query keeps
+    /// all of them. A mode lists tens of takes, so a scan is enough here; the
+    /// Library's indexed search covers the whole profile.
+    static func matching(_ items: [AudioLibraryItem], query: String) -> [AudioLibraryItem] {
+        let words = query.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !words.isEmpty else { return items }
+        return items.filter { item in
+            let fields = [item.title, item.userNotes ?? "", item.summary?.text ?? "", item.tagList.joined(separator: " "),
+                          item.preferredTranscript.map { AudioTranscriptExport.text($0.segments) } ?? ""]
+            return words.allSatisfy { word in fields.contains { $0.localizedStandardContains(word) } }
+        }
+    }
+
     /// A take belongs to the mode whose preset recorded it. Takes saved
     /// before presets were stored match by their preset's collection. Any
     /// Audio also lists imported files, and transcripts whose source is gone.
