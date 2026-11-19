@@ -25,6 +25,17 @@ when this file gets updated relative to the version bump and the tag.
   Gemma 4, their MLX builds and adapters), which a `text-generation` query
   never returned. FFI/app searches opt in with `HubQuery::with_vision_language`.
 
+### Changed
+- Rust API, source-breaking for code that builds these with struct literals
+  (neither is `#[non_exhaustive]`): `catalog::ProbeReport` and
+  `catalog::InstallPlan` gain a public `adapter: Option<RepoRef>`, and
+  `catalog::HubQuery` gains `vision_language: bool` (default false, set with
+  `with_vision_language`). Add `adapter: None` to literals. New public items:
+  `repack::lora_merge` and `repack::gdn_out_proj_needs_q8_0_requant`.
+- FFI/Swift: the probe and Hub check JSON carry `adapterBaseRepo` (null unless
+  the repository is a LoRA adapter); the Swift types expose it as
+  `adapterBaseRepo: String?`. Existing keys are unchanged.
+
 ### Fixed
 - A standard llama.cpp K-quant GGUF of a Qwen gated-DeltaNet model (Q4_K_M and
   friends store `ssm_out` at Q4_K/Q6_K) no longer fails mid-install with "a
