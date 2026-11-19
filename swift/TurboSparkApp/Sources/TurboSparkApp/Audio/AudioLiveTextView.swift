@@ -55,6 +55,10 @@ struct AudioLiveTextView: View {
     @ViewBuilder private var transcript: some View {
         if live.text.isEmpty && live.isStreaming {
             Text("Listening...", bundle: .module).foregroundStyle(.appSecondary)
+        } else if let open = live.openWord, !open.isEmpty {
+            // The word still being heard, lighter, so the line keeps moving
+            // between commits without claiming the word is settled.
+            Text(verbatim: live.text) + Text(verbatim: (live.text.isEmpty ? "" : " ") + open).foregroundStyle(.appSecondary)
         } else {
             Text(verbatim: live.text)
         }

@@ -337,6 +337,8 @@ extension AudioWorkspaceController {
                 self.transcriptBacklog = 0
                 // The final transcript is in: embed it for meaning search.
                 self.librarySearch.scheduleIndexing(self)
+                // After this job's cleanup has run (isBusy cleared), not inside it.
+                Task { @MainActor [weak self] in self?.autoSummarizeIfWanted(id) }
             } catch {
                 guard self.valid(token) else { return }
                 if !Task.isCancelled && Self.isDeviceBusy(error) {
