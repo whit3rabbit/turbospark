@@ -13,7 +13,9 @@ struct SystemPromptSettingsSection: View {
             Picker(selection: selectedPromptBinding) {
                 Text("None", bundle: .module).tag(UUID?.none)
                 ForEach(model.systemPrompts) { prompt in
-                    Text(verbatim: prompt.name).tag(Optional(prompt.id))
+                    // Built-in names are catalog keys; a custom name has no key, so
+                    // it shows as typed.
+                    Text(LocalizedStringKey(prompt.name), bundle: .module).tag(Optional(prompt.id))
                 }
             } label: { Text("Load Prompt", bundle: .module) }
 
