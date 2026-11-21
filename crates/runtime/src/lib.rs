@@ -211,6 +211,8 @@ pub mod omnivoice;
 #[cfg(target_os = "macos")]
 pub mod voice_isolator;
 #[cfg(target_os = "macos")]
+pub mod voice_isolator_live;
+#[cfg(target_os = "macos")]
 pub use kokoro::KokoroRunner;
 pub use music3::{DispatchStat, Music3Runner};
 

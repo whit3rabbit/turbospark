@@ -2293,6 +2293,35 @@ int ts_audio_stream_finish(const TsAudioStream *stream, char **out);
 int ts_audio_stream_cancel(const TsAudioStream *stream);
 int ts_audio_stream_close(TsAudioStream *stream);
 
+/* LIVE VOICE ISOLATION STREAMS over the inworld realtime install
+ * (denoiser_realtime.safetensors, optionally with the stateful Core ML step
+ * VoiceIsolatorStep.mlmodelc beside it). 48 kHz mono f32 in; the isolated
+ * voice out as kind 2 PCM through cb as it becomes final (about 63 ms
+ * behind the input, plus compute). Like a transcription stream it takes no
+ * heavy-work permit.
+ *
+ * open verifies a managed install as ts_audio_session_open_cancellable does
+ * (token and cb may be NULL); options_json may be NULL or
+ * {"backend":"auto"|"coreml"|"metal"|"cpu"}; auto takes Core ML when the
+ * step is installed on macOS 15+, else Metal. info returns {"backend":...}.
+ * push takes 1..32000 samples and returns {"released","processing_ms",
+ * "late"} in *out (free with ts_string_free); late means the push took
+ * longer than its audio, and a host feeding the voice onward should use the
+ * raw input while pushes run late. flush delivers the remaining voice and
+ * ends the stream. A call while another runs on the same stream fails with
+ * TS_ERR_BUSY; close is refused while a call runs. */
+typedef struct TsAudioEnhanceStream TsAudioEnhanceStream;
+int ts_audio_enhance_stream_open(const char *path, const char *options_json,
+                                 const TsAudioOpenToken *token, TsAudioCallback cb,
+                                 void *userdata, TsAudioEnhanceStream **out);
+int ts_audio_enhance_stream_info(const TsAudioEnhanceStream *stream, char **out);
+int ts_audio_enhance_stream_push(const TsAudioEnhanceStream *stream, const float *pcm,
+                                 size_t count, TsAudioCallback cb, void *userdata,
+                                 char **out);
+int ts_audio_enhance_stream_flush(const TsAudioEnhanceStream *stream, TsAudioCallback cb,
+                                  void *userdata);
+int ts_audio_enhance_stream_close(TsAudioEnhanceStream *stream);
+
 /* ---- GGUF quantizer ---- */
 
 /*

@@ -1104,6 +1104,7 @@ impl BiMamba {
 
 /// Reverses every sequence of `x [seqs, len, width]` along `len`.
 fn flip(x: &[f32], seqs: usize, len: usize, width: usize) -> Vec<f32> {
+    debug_assert_eq!(x.len(), seqs * len * width);
     let mut out = vec![0.0f32; x.len()];
     out.par_chunks_mut(len * width)
         .enumerate()

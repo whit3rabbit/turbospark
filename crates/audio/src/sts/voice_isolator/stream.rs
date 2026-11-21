@@ -24,13 +24,36 @@ use crate::{Result, SpeechError};
 /// Default frames computed together (the reference `block_frames`).
 pub const DEFAULT_BLOCK_FRAMES: usize = 4;
 
-/// One stream's state. It borrows nothing: every call takes the model, so a
-/// host can own both side by side.
+/// A network outside the port that computes the stream's blocks (a Core ML
+/// program holding its own caches). It sees every frame exactly once, in
+/// order, `frames_per_call` at a time.
+pub trait StreamStep {
+    /// Frames every call takes; the stream pads its last call at flush.
+    fn frames_per_call(&self) -> usize;
+    /// Decoder output `[count, bins, 4]` (before the look-ahead read) for
+    /// the spectra of frames `first..first + count`.
+    fn run(&mut self, first: usize, spectra: &[Vec<ComplexF32>]) -> Result<Vec<f32>>;
+}
+
+/// Which network computes a block.
+enum Net<'a> {
+    Port(&'a VoiceIsolator),
+    External(&'a mut dyn StreamStep),
+}
+
+/// One stream's state. It borrows nothing: every call takes the network, so
+/// a host can own both side by side.
 pub struct VoiceIsolatorStream {
     block_frames: usize,
     lookahead: usize,
     n_fft: usize,
     hop: usize,
+    window: Vec<f32>,
+    bound: f32,
+    /// A fixed frames-per-call network: blocks are exactly this size.
+    fixed: Option<usize>,
+    /// Frames the audio really has, once flushed (padding excluded).
+    end_frames: Option<usize>,
     states: Vec<BlockState>,
     audio: Vec<f32>,
     audio_base: usize,
@@ -82,12 +105,60 @@ impl VoiceIsolatorStream {
             .iter()
             .map(|b| b.stream_state(bands, c.width, cache, capacity, c.attention_window_frames))
             .collect();
+        let mut stream = Self::core(
+            c.n_fft,
+            c.hop_length,
+            c.correction_bound,
+            model.lookahead_frames(),
+            block_frames,
+        )?;
+        stream.states = states;
+        Ok(stream)
+    }
+
+    /// A stream whose blocks come from an external [`StreamStep`] for a
+    /// checkpoint with this STFT, correction bound and look-ahead.
+    pub fn external(
+        n_fft: usize,
+        hop: usize,
+        correction_bound: f32,
+        lookahead: usize,
+        step: &dyn StreamStep,
+    ) -> Result<Self> {
+        let frames = step.frames_per_call();
+        let mut stream = Self::core(n_fft, hop, correction_bound, lookahead, frames)?;
+        stream.fixed = Some(frames);
+        Ok(stream)
+    }
+
+    fn core(
+        n_fft: usize,
+        hop: usize,
+        bound: f32,
+        lookahead: usize,
+        block_frames: usize,
+    ) -> Result<Self> {
+        if block_frames == 0 || n_fft < 4 || hop == 0 {
+            return Err(SpeechError::Input {
+                why: "a stream needs at least one frame per block and a valid STFT".into(),
+            });
+        }
+        // torch.hann_window: periodic.
+        let window = (0..n_fft)
+            .map(|i| {
+                (0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / n_fft as f64).cos()) as f32
+            })
+            .collect();
         Ok(Self {
             block_frames,
-            lookahead: model.lookahead_frames(),
-            n_fft: c.n_fft,
-            hop: c.hop_length,
-            states,
+            lookahead,
+            n_fft,
+            hop,
+            window,
+            bound,
+            fixed: None,
+            end_frames: None,
+            states: Vec::new(),
             audio: Vec::new(),
             audio_base: 0,
             frames: 0,
@@ -95,12 +166,12 @@ impl VoiceIsolatorStream {
             raw: Default::default(),
             spectra: Default::default(),
             pending_base: 0,
-            ola: vec![0.0; c.n_fft],
-            envelope: vec![0.0; c.n_fft],
+            ola: vec![0.0; n_fft],
+            envelope: vec![0.0; n_fft],
             ola_base: 0,
             released: 0,
             closed: false,
-            plan: RealFftPlan::cached(c.n_fft)
+            plan: RealFftPlan::cached(n_fft)
                 .map_err(|e| SpeechError::Input { why: e.to_string() })?,
             scratch: RealFftScratch::default(),
         })
@@ -114,6 +185,29 @@ impl VoiceIsolatorStream {
     /// Feeds new mono samples at the model rate; returns the output samples
     /// that became final.
     pub fn push(&mut self, model: &VoiceIsolator, samples: &[f32]) -> Result<Vec<f32>> {
+        self.push_net(Net::Port(model), samples)
+    }
+
+    /// Ends the stream and returns every remaining output sample.
+    pub fn flush(&mut self, model: &VoiceIsolator) -> Result<Vec<f32>> {
+        self.flush_net(Net::Port(model))
+    }
+
+    /// [`push`](Self::push) through an external network.
+    pub fn push_external(
+        &mut self,
+        step: &mut dyn StreamStep,
+        samples: &[f32],
+    ) -> Result<Vec<f32>> {
+        self.push_net(Net::External(step), samples)
+    }
+
+    /// [`flush`](Self::flush) through an external network.
+    pub fn flush_external(&mut self, step: &mut dyn StreamStep) -> Result<Vec<f32>> {
+        self.flush_net(Net::External(step))
+    }
+
+    fn push_net(&mut self, mut net: Net<'_>, samples: &[f32]) -> Result<Vec<f32>> {
         if self.closed {
             return Err(SpeechError::Input {
                 why: "the stream was flushed".into(),
@@ -132,37 +226,50 @@ impl VoiceIsolatorStream {
         } else {
             0
         };
-        self.advance(model, computable)?;
+        // A fixed-size network waits for whole calls; the rest waits for the
+        // next push (at most one call's frames, 10 ms each at 48 kHz).
+        let computable = match self.fixed {
+            Some(f) => self.frames + (computable.saturating_sub(self.frames)) / f * f,
+            None => computable,
+        };
+        self.advance(&mut net, computable)?;
         let upto = (self.emitted * self.hop).saturating_sub(half);
         let out = self.release(upto);
         self.trim();
         Ok(out)
     }
 
-    /// Ends the stream and returns every remaining output sample.
-    pub fn flush(&mut self, model: &VoiceIsolator) -> Result<Vec<f32>> {
+    fn flush_net(&mut self, mut net: Net<'_>) -> Result<Vec<f32>> {
         if self.closed {
             return Ok(Vec::new());
         }
         self.closed = true;
         let total = self.audio_base + self.audio.len();
-        self.advance(model, total / self.hop + 1)?;
-        while self.emitted < self.frames {
-            self.synthesize(model)?;
+        let real = total / self.hop + 1;
+        // A fixed-size network's last call is padded with frames past the
+        // audio; they never serve the look-ahead (`end_frames`).
+        let limit = match self.fixed {
+            Some(f) => real.max(self.frames).div_ceil(f) * f,
+            None => real,
+        };
+        self.end_frames = Some(real);
+        self.advance(&mut net, limit)?;
+        while self.emitted < real {
+            self.synthesize()?;
         }
         Ok(self.release(total))
     }
 
     /// Spectrum of frame `f`: its window of the audio, zeros where there is
     /// none (`_analyze`).
-    fn analyze(&mut self, model: &VoiceIsolator, f: usize) -> Result<Vec<ComplexF32>> {
+    fn analyze(&mut self, f: usize) -> Result<Vec<ComplexF32>> {
         let start = (f * self.hop) as isize - (self.n_fft / 2) as isize;
         let total = (self.audio_base + self.audio.len()) as isize;
         let mut frame = vec![0.0f32; self.n_fft];
         for (i, slot) in frame.iter_mut().enumerate() {
             let at = start + i as isize;
             if at >= self.audio_base as isize && at < total {
-                *slot = self.audio[at as usize - self.audio_base] * model.window[i];
+                *slot = self.audio[at as usize - self.audio_base] * self.window[i];
             }
         }
         let mut spectrum = Vec::with_capacity(self.n_fft / 2 + 1);
@@ -174,18 +281,32 @@ impl VoiceIsolatorStream {
 
     /// Computes every frame below `limit` in blocks, then synthesizes the
     /// frames whose look-ahead frame exists (`_advance`).
-    fn advance(&mut self, model: &VoiceIsolator, limit: usize) -> Result<()> {
+    fn advance(&mut self, net: &mut Net<'_>, limit: usize) -> Result<()> {
         while self.frames < limit {
             let count = self.block_frames.min(limit - self.frames);
             let spectra: Vec<Vec<ComplexF32>> = (self.frames..self.frames + count)
-                .map(|f| self.analyze(model, f))
+                .map(|f| self.analyze(f))
                 .collect::<Result<_>>()?;
-            let mut x = model.encode(&spectra);
-            let bands = model.bands();
-            for (block, state) in model.blocks.iter().zip(self.states.iter_mut()) {
-                block.forward_stream(&model.exec, &mut x, bands, count, state);
+            let raw = match net {
+                Net::Port(model) => {
+                    let mut x = model.encode(&spectra);
+                    let bands = model.bands();
+                    for (block, state) in model.blocks.iter().zip(self.states.iter_mut()) {
+                        block.forward_stream(&model.exec, &mut x, bands, count, state);
+                    }
+                    model.decoder.forward(&model.exec, &x, count, &model.edges)
+                }
+                Net::External(step) => step.run(self.frames, &spectra)?,
+            };
+            let bins = self.n_fft / 2 + 1;
+            if raw.len() != count * bins * 4 {
+                return Err(SpeechError::Input {
+                    why: format!(
+                        "the network returned {} values for {count} frames",
+                        raw.len()
+                    ),
+                });
             }
-            let raw = model.decoder.forward(&model.exec, &x, count, &model.edges);
             let stride = raw.len() / count;
             for (i, spectrum) in spectra.into_iter().enumerate() {
                 self.raw
@@ -194,21 +315,22 @@ impl VoiceIsolatorStream {
             }
             self.frames += count;
         }
-        while self.emitted + self.lookahead < self.frames {
-            self.synthesize(model)?;
+        let real = self.end_frames.unwrap_or(self.frames).min(self.frames);
+        while self.emitted + self.lookahead < real {
+            self.synthesize()?;
         }
         self.trim();
         Ok(())
     }
 
     /// Synthesizes the next frame from the decoder output `lookahead`
-    /// frames later; the last computed frame serves every frame beyond it.
-    fn synthesize(&mut self, model: &VoiceIsolator) -> Result<()> {
+    /// frames later; the audio's last frame serves every frame beyond it.
+    fn synthesize(&mut self) -> Result<()> {
         let index = self.emitted;
-        let last = self.frames - 1;
+        let last = self.end_frames.unwrap_or(self.frames).min(self.frames) - 1;
         let source = (index + self.lookahead).min(last);
         let bins = self.n_fft / 2 + 1;
-        let bound = model.config.correction_bound;
+        let bound = self.bound;
         let raw = &self.raw[source - self.pending_base];
         let spectrum = &self.spectra[index - self.pending_base];
         let mut delta: Vec<ComplexF32> = (0..bins)
@@ -228,7 +350,7 @@ impl VoiceIsolatorStream {
             self.envelope.resize(needed, 0.0);
         }
         for i in 0..self.n_fft {
-            let w = model.window[i];
+            let w = self.window[i];
             self.ola[start + i] += frame[i] * w;
             self.envelope[start + i] += w * w;
         }

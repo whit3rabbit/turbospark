@@ -313,6 +313,88 @@ fn stream_output_does_not_depend_on_the_pushes() {
     );
 }
 
+/// The port network behind the external-step seam, two frames a call: the
+/// shape a Core ML program has.
+struct PortStep<'a> {
+    model: &'a VoiceIsolator,
+    states: Vec<layers::BlockState>,
+    calls: usize,
+    next: usize,
+}
+
+impl stream::StreamStep for PortStep<'_> {
+    fn frames_per_call(&self) -> usize {
+        2
+    }
+
+    fn run(
+        &mut self,
+        first: usize,
+        spectra: &[Vec<crate::fft::ComplexF32>],
+    ) -> crate::Result<Vec<f32>> {
+        assert_eq!(spectra.len(), 2, "every call is whole");
+        assert_eq!(first, self.next, "frames arrive once, in order");
+        self.next += 2;
+        self.calls += 1;
+        let m = self.model;
+        let mut x = m.encode(spectra);
+        for (block, state) in m.blocks.iter().zip(self.states.iter_mut()) {
+            block.forward_stream(&m.exec, &mut x, m.bands(), 2, state);
+        }
+        Ok(m.decoder.forward(&m.exec, &x, 2, &m.edges))
+    }
+}
+
+/// An external fixed-size network gives the port stream's output: calls are
+/// whole, the flush pads, and padded frames never serve the look-ahead.
+#[test]
+fn external_fixed_step_matches_the_port_stream() {
+    let net = model("causal");
+    let c = &net.config;
+    let (_, wave) = npy("causal", "wave.npy");
+    for len in [wave.len(), wave.len() - 64, 4_000] {
+        let clip = &wave[..len];
+        let (base, _) = stream_over(&net, clip, &[37, 200, 513, 64], 4);
+        let capacity = c.attention_window_frames + (c.attention_window_frames / 2).max(2);
+        let mut step = PortStep {
+            model: &net,
+            states: net
+                .blocks
+                .iter()
+                .map(|b| {
+                    b.stream_state(
+                        net.bands(),
+                        c.width,
+                        c.attention_window_frames,
+                        capacity,
+                        c.attention_window_frames,
+                    )
+                })
+                .collect(),
+            calls: 0,
+            next: 0,
+        };
+        let mut s = VoiceIsolatorStream::external(
+            c.n_fft,
+            c.hop_length,
+            c.correction_bound,
+            net.lookahead_frames(),
+            &step,
+        )
+        .unwrap();
+        let mut out = Vec::new();
+        for piece in clip.chunks(150) {
+            out.extend(s.push_external(&mut step, piece).unwrap());
+        }
+        out.extend(s.flush_external(&mut step).unwrap());
+        let frames = len / c.hop_length + 1;
+        assert_eq!(step.calls, frames.div_ceil(2), "len {len}");
+        assert_eq!(out.len(), len);
+        let diff = max_diff(&out, &base);
+        assert!(diff < 1e-5, "len {len}: {diff}");
+    }
+}
+
 #[test]
 fn controlled_render_reports_progress_and_stops() {
     let net = model("offline");

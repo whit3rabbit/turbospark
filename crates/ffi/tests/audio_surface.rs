@@ -571,3 +571,110 @@ fn the_catalog_memory_estimate_matches_the_runtimes_open_bytes() {
         profile.resident_memory_bytes
     );
 }
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" fn collect_pcm(
+    userdata: *mut std::os::raw::c_void,
+    kind: std::os::raw::c_int,
+    _json: *const std::os::raw::c_char,
+    _json_len: usize,
+    pcm: *const f32,
+    count: usize,
+) {
+    if kind == 2 {
+        let out = &mut *(userdata as *mut Vec<f32>);
+        out.extend_from_slice(std::slice::from_raw_parts(pcm, count));
+    }
+}
+
+/// A live voice-isolation stream over the tiny causal fixture on the CPU
+/// backend: every pushed sample comes back through the callback, results
+/// are JSON, and bad arguments are refused.
+#[cfg(target_os = "macos")]
+#[test]
+fn enhance_stream_round_trips_pcm_through_the_callback() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../audio/testdata/voice_isolator/causal/model.safetensors");
+    let dir = std::env::temp_dir().join(format!("ts-ffi-enhance-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::copy(fixture, dir.join("denoiser_realtime.safetensors")).unwrap();
+    unsafe {
+        let path = CString::new(dir.to_str().unwrap()).unwrap();
+        let options = CString::new(r#"{"backend":"cpu"}"#).unwrap();
+        let mut stream = ptr::null_mut();
+        let code = ts_audio_enhance_stream_open(
+            path.as_ptr(),
+            options.as_ptr(),
+            ptr::null(),
+            None,
+            ptr::null_mut(),
+            &mut stream,
+        );
+        assert_eq!(code, 0, "{}", last_error_text());
+        let mut info = ptr::null_mut();
+        assert_eq!(ts_audio_enhance_stream_info(stream, &mut info), 0);
+        assert_eq!(
+            CStr::from_ptr(info).to_str().unwrap(),
+            r#"{"backend":"cpu"}"#
+        );
+        ts_string_free(info);
+        let audio: Vec<f32> = (0..4_000).map(|i| (i as f32 * 0.03).sin() * 0.2).collect();
+        let mut voice: Vec<f32> = Vec::new();
+        let userdata = (&mut voice as *mut Vec<f32>).cast();
+        for piece in audio.chunks(320) {
+            let mut json = ptr::null_mut();
+            let code = ts_audio_enhance_stream_push(
+                stream,
+                piece.as_ptr(),
+                piece.len(),
+                Some(collect_pcm),
+                userdata,
+                &mut json,
+            );
+            assert_eq!(code, 0, "{}", last_error_text());
+            let text = CStr::from_ptr(json).to_str().unwrap().to_owned();
+            assert!(
+                text.contains("\"released\"") && text.contains("\"late\""),
+                "{text}"
+            );
+            ts_string_free(json);
+        }
+        assert_eq!(
+            ts_audio_enhance_stream_flush(stream, Some(collect_pcm), userdata),
+            0
+        );
+        assert_eq!(voice.len(), audio.len());
+        assert!(voice.iter().all(|v| v.is_finite()));
+        let mut json = ptr::null_mut();
+        assert_ne!(
+            ts_audio_enhance_stream_push(
+                stream,
+                audio.as_ptr(),
+                0,
+                None,
+                ptr::null_mut(),
+                &mut json
+            ),
+            0,
+            "an empty push is refused"
+        );
+        assert!(json.is_null());
+        assert_eq!(ts_audio_enhance_stream_close(stream), 0);
+        let missing = CString::new("/missing/voice/isolator").unwrap();
+        let mut none = ptr::null_mut();
+        assert_ne!(
+            ts_audio_enhance_stream_open(
+                missing.as_ptr(),
+                ptr::null(),
+                ptr::null(),
+                None,
+                ptr::null_mut(),
+                &mut none
+            ),
+            0
+        );
+        assert!(none.is_null());
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
