@@ -264,7 +264,16 @@ modules and internal codecs are not presented as runnable jobs.
   cleaned voice is saved as a new take; the source take is never changed.
   The same engine runs from the command line as `turbospark enhance`. Quality
   is not yet gated beyond reference parity (`crates/audio/src/sts/mossformer2_se/README.md`).
-- Separation, alignment, speech detection, codecs, the other enhancement
+- Vocal separation runs the pinned Mel-Band RoFormer vocals profile
+  (`mel-roformer-vocals-v1`, portable CPU) from the Clean Up page's
+  "Separate stems". The take is read at 44.1 kHz stereo (a mono take is
+  upmixed), at most 326 seconds, and the vocals are saved as a new take; the
+  source take is never changed. The page does not save the instrumental;
+  `turbospark enhance --task separate --background` writes it (input minus
+  vocals). Expect about two to four times the take's length on the CPU.
+  Quality is not yet gated beyond reference parity
+  (`crates/audio/src/sts/mel_roformer/README.md`).
+- Alignment, speech detection, codecs, the other enhancement
   families (DeepFilterNet), the CPU diarization families (Sortformer,
   Nemotron), and other transcription families stay unavailable until their
   native adapters and model gates exist. Their source implementations alone
