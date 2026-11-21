@@ -32,6 +32,7 @@ pub mod gguf_quantize;
 mod gturbo_writer;
 mod hf_checkpoint;
 mod inkling2_checkpoint;
+mod inkling2_gguf_names;
 mod inkling2_mlx;
 mod install_verifier;
 mod lfm3_config;
@@ -151,6 +152,9 @@ pub use inkling2_checkpoint::{
     write_inkling2_install, write_inkling2_install_from, AffineTensor, Inkling2InstallReport,
     Inkling2RepackError, Inkling2Source, SourceTensor, INKLING2_MXFP8_DTYPE, INKLING2_NVFP4_DTYPE,
     INKLING2_OUTER_RECORD_BYTES, INKLING2_TOKENIZER_FILES,
+};
+pub use inkling2_gguf_names::{
+    gguf_to_hf as inkling2_gguf_to_hf, GgufTransform as Inkling2GgufTransform,
 };
 pub use inkling2_mlx::{
     inkling2_mlx_manifest_quant, mlx_to_hf, Inkling2MlxSource, MLX_NVFP4_GLOBAL_FACTOR,

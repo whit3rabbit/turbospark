@@ -356,6 +356,21 @@ Stage A: reachable and correct (decode only)
    gates, then a catalog row.
 
 Stage B: speed and memory (after A's gates, each with a kill switch)
+- DONE (2026-11-21): GGUF name table (`crates/repack/src/inkling2_gguf_names.rs`),
+  from llama.cpp's `conversion/inkling2.py` and `gguf-py` tables. Both
+  conventions map: llama.cpp master (`ggml-org/Inkling-2-Mini-GGUF`, arch
+  `inkling2_loop`, `loop_*_ctrl_*`, per-layer `loop_msg_query`) and the older
+  converter (`unsloth/Inkling-2-Mini-GGUF`, arch `inkling2`, `loop_{attn,k,v,mlp}_*`,
+  global `loop_res_query`). Each tensor carries the converter's transform:
+  transposed `rel_logits_proj`, squeezed conv weights (the full-attention
+  `static_w` arrives already flipped, matching the install's rewrite), gate
+  rows before up rows in `ffn_gate_up_exps`, per-expert NVFP4 `.scale`.
+  `examples/inkling2_gguf_names.rs` checks a header's tensor list against an
+  install: both real headers map all 646 text tensors with nothing missing or
+  extra. Not done: a GGUF intake. Experts there are ggml NVFP4 re-encoded by
+  the converter (not the source bytes) or re-quantized types (Q8_0 in the
+  ggml-org Q8_0 file, Q5_K/Q8_0 on the MXFP8 layers of unsloth's), which the
+  Inkling MoE kernels do not read.
 - MEASURED (2026-11-21): DSpark drafter acceptance, offline. The drafter is
   the bundled `mtp.safetensors` of `mlx-community/Inkling-2-Mini-oQ4e-mtp`
   (BF16, 3 layers, block 8; the same weights unsloth ships as a GGUF). The
