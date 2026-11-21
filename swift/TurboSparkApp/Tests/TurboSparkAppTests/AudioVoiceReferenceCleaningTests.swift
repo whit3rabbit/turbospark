@@ -190,6 +190,8 @@ final class AudioVoiceReferenceCleaningTests: XCTestCase {
             return AudioResult()
         }
         controller.cleanVoiceReference()
+        // Without a run the stream never yields, so fail instead of hanging.
+        _ = try XCTUnwrap(controller.jobTask)
         for await _ in entered { break }
         controller.cancel()
         await controller.jobTask?.value
