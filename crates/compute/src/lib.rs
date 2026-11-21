@@ -36,6 +36,9 @@ pub mod inkling2;
 pub mod kv_quant;
 /// CPU reference for causal attention over TurboQuant-quantized K/V rows.
 pub mod kv_quant_attention;
+/// LookAtMyQuant trellis and level weight codes under a Kronecker Hadamard
+/// rotation (CPU reference, `docs/LAMQ.md`).
+pub mod lamq;
 /// Mixture-of-Experts (MoE) routing and FFN compute kernels.
 pub mod mla;
 pub mod moe;

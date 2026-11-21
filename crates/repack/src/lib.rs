@@ -33,6 +33,7 @@ mod gturbo_writer;
 mod hf_checkpoint;
 mod inkling2_checkpoint;
 mod inkling2_gguf_names;
+mod inkling2_lamq;
 mod inkling2_mlx;
 mod install_verifier;
 mod lfm3_config;
@@ -40,6 +41,9 @@ mod llama_config;
 pub mod lora_merge;
 mod manifest_peek;
 mod museglimmer_config;
+pub mod npz;
+#[cfg(test)]
+mod npz_fixture;
 pub mod quantize_on_install;
 mod qwen2_config;
 mod qwen36_config;
@@ -156,6 +160,11 @@ pub use inkling2_checkpoint::{
 pub use inkling2_gguf_names::{
     gguf_to_hf as inkling2_gguf_to_hf, GgufTransform as Inkling2GgufTransform,
 };
+pub use inkling2_lamq::{
+    inkling2_lamq_manifest_quant, lamq_steering_to_hf, write_inkling2_lamq_install,
+    Inkling2LamqReport, INKLING2_LAMQ_DTYPE, INKLING2_LAMQ_FMT_BYTES, INKLING2_LAMQ_FMT_DTYPE,
+    LAMQ_INKLING2_FORMAT,
+};
 pub use inkling2_mlx::{
     inkling2_mlx_manifest_quant, mlx_to_hf, Inkling2MlxSource, MLX_NVFP4_GLOBAL_FACTOR,
 };
@@ -184,7 +193,7 @@ pub use resident_writer::{
     build_resident_weights_bin, build_resident_weights_bin_mixed, RawTensorSpec, ResidentEntrySpec,
     ResidentTensorSpec, DTYPE_BF16, DTYPE_FP16, DTYPE_FP32, DTYPE_GGUF_Q2_0, DTYPE_GGUF_Q4_0,
     DTYPE_GGUF_Q4_1, DTYPE_GGUF_Q4_K, DTYPE_GGUF_Q5_0, DTYPE_GGUF_Q5_1, DTYPE_GGUF_Q6_K,
-    DTYPE_GGUF_Q8_0, DTYPE_INT8_AFFINE, GGUF_BLOCK_DTYPES,
+    DTYPE_GGUF_Q8_0, DTYPE_INT8_AFFINE, DTYPE_LAMQ, GGUF_BLOCK_DTYPES,
 };
 pub use safetensors_header::{
     parse_header, required_prefix_len, SafetensorsHeader, SafetensorsHeaderError, TensorInfo,

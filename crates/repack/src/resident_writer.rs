@@ -75,6 +75,17 @@ pub const DTYPE_INT1_AFFINE: u8 = 15;
 /// widths.
 pub const DTYPE_INT2_AFFINE: u8 = 16;
 
+/// LookAtMyQuant coded entry (`docs/LAMQ.md`, `compute::lamq`): the packed
+/// three-region shape, but the regions mean something else. The weight run is
+/// the code stream (or an i32 bucket order, or int8 signs), the scale region
+/// is one f16 per row, and the "bias" region is an aux block opening with a
+/// 16-byte `LamqAuxHeader` that names the entry kind and code. Readers must
+/// parse that header, never read the region as BF16 biases.
+///
+/// 36 is the next free number on every branch at the time of writing. It is
+/// not affine and not a GGUF block type, so it joins neither list.
+pub const DTYPE_LAMQ: u8 = 36;
+
 /// Raw (unquantized, companion-less) dtype tags, matching the Swift
 /// repacker's `IndexEntry` convention: 1 = BF16, 2 = FP16, 3 = FP32.
 pub const DTYPE_BF16: u8 = 1;
@@ -239,6 +250,9 @@ pub enum ResidentEntrySpec {
     Int2(ResidentTensorSpec),
     /// Unquantized raw tensor spec.
     Raw(RawTensorSpec),
+    /// LookAtMyQuant entry ([`DTYPE_LAMQ`]): `packed` is the payload,
+    /// `scales` the f16 row scales, `biases` the aux block as u16 words.
+    Lamq(ResidentTensorSpec),
 }
 
 fn u16_slice_to_le_bytes(values: &[u16]) -> Vec<u8> {
@@ -296,6 +310,7 @@ pub fn write_resident_weights_bin_mixed(
             ResidentEntrySpec::Int1(t) => EntryView::Packed(t, DTYPE_INT1_AFFINE),
             ResidentEntrySpec::Int2(t) => EntryView::Packed(t, DTYPE_INT2_AFFINE),
             ResidentEntrySpec::Raw(r) => EntryView::Raw(r),
+            ResidentEntrySpec::Lamq(t) => EntryView::Packed(t, DTYPE_LAMQ),
         })
         .collect();
     write_from_views(&views, out)

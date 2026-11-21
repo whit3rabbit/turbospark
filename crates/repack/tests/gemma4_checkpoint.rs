@@ -730,7 +730,8 @@ fn orchestrate_orders_passes_through_and_slices_experts() {
             ResidentEntrySpec::Int4(t)
             | ResidentEntrySpec::Int8(t)
             | ResidentEntrySpec::Int1(t)
-            | ResidentEntrySpec::Int2(t) => t.name.as_str(),
+            | ResidentEntrySpec::Int2(t)
+            | ResidentEntrySpec::Lamq(t) => t.name.as_str(),
             ResidentEntrySpec::Raw(r) => r.name.as_str(),
         })
         .collect();
@@ -881,7 +882,8 @@ fn sharded_orchestration_matches_single_source() {
                 ResidentEntrySpec::Int4(t)
                 | ResidentEntrySpec::Int8(t)
                 | ResidentEntrySpec::Int1(t)
-                | ResidentEntrySpec::Int2(t) => t.name.clone(),
+                | ResidentEntrySpec::Int2(t)
+                | ResidentEntrySpec::Lamq(t) => t.name.clone(),
                 ResidentEntrySpec::Raw(r) => r.name.clone(),
             })
             .collect()

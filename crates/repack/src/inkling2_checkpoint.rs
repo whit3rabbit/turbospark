@@ -572,16 +572,7 @@ fn resident_entries(
                 ));
             }
             let ch = shape[1];
-            let mut rewritten = vec![0u8; bytes.len()];
-            for c in 0..ch {
-                for j in 0..taps {
-                    // static_w[lag, c] with lag 0 the current row, to
-                    // w[c, j] with tap taps-1 the current row.
-                    let s = ((taps - 1 - j) * ch + c) * 2;
-                    let d = (c * taps + j) * 2;
-                    rewritten[d..d + 2].copy_from_slice(&bytes[s..s + 2]);
-                }
-            }
+            let rewritten = rewrite_static_w(&bytes, taps, ch);
             out.push(raw(
                 format!("{stem}_sconv.weight"),
                 DTYPE_BF16,
@@ -598,6 +589,21 @@ fn resident_entries(
         out.push(raw(name.to_string(), dtype, bytes.to_vec(), shape)?);
     }
     Ok(out)
+}
+
+/// A full-attention `static_w` (BF16 `[taps, ch]`, indexed by lag with lag 0
+/// the current row) as the conv kernel's `w[ch, j]` with tap `taps - 1` the
+/// current row: the converter's `flip(0).T`. Callers check dtype and shape.
+pub(crate) fn rewrite_static_w(bytes: &[u8], taps: usize, ch: usize) -> Vec<u8> {
+    let mut rewritten = vec![0u8; bytes.len()];
+    for c in 0..ch {
+        for j in 0..taps {
+            let s = ((taps - 1 - j) * ch + c) * 2;
+            let d = (c * taps + j) * 2;
+            rewritten[d..d + 2].copy_from_slice(&bytes[s..s + 2]);
+        }
+    }
+    rewritten
 }
 
 /// An affine resident entry, checked against the reader's contract (logical

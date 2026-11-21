@@ -4,12 +4,13 @@ Target: `thinkingmachines/Inkling-2-Mini`, revision
 `ed40e7da625f594fc9c4990f5f66be24873c22d7`. Apache 2.0, ~26B physical / 3B
 active per pass, 1M context, text + image in, text out.
 
-STATUS: **not runnable.** The portable CPU reference
-(`crates/compute/src/inkling2.rs`) and the routed-expert decode pair (Metal,
-parity-tested on an M4 Max) exist. No family enum, repack, decode flow or
-catalog row has landed. Nothing here has been compared with a real
-checkpoint. Do not add a catalog row or call it supported until the Phase 3
-to 6 gates in `docs/NEW_MODEL.md` have run on a Mac.
+STATUS: **decodes, not supported.** The family enum, the HF and MLX intakes
+and a Metal decode flow have landed. The flow is greedy-matched to the CPU
+reference and llama.cpp on real installs (Stage A below). There is no catalog
+row, and the memory oracle and the Phase 6 quality gates in
+`docs/NEW_MODEL.md` have not run. Do not call it supported until they have.
+GGUF intake is still refused. LookAtMyQuant packed releases are planned, not
+landed (`docs/LAMQ.md`).
 
 Sources (formulas are transcribed, not derived): Hugging Face
 `transformers/models/inkling2/modeling_inkling2.py` (layer math; it has NO loop
