@@ -54,6 +54,10 @@ pub(crate) struct RealInkling2State {
     /// expert of every layer resident, so routing and the MoE run on the GPU
     /// and a token is one command buffer (`mod.rs`).
     pub(crate) resident: Option<ResidentExperts>,
+    /// A LookAtMyQuant install's coded linears, embedding, head and experts
+    /// (`lamq.rs`). Shared so the flow's GEMV helper can hold it beside the
+    /// mutable state.
+    pub(crate) lamq: Option<std::sync::Arc<super::lamq::LamqRuntime>>,
     /// `[DSPARK_TAP_ROWS, hidden]` f16, the last token's DSpark context taps
     /// (`TURBOSPARK_INKLING2_TAPS=1`; `RealForwardRunner::inkling2_taps`).
     pub(crate) taps: Option<gpu::MetalBuffer>,
@@ -139,7 +143,8 @@ pub(crate) fn require(
 }
 
 /// A dense matrix the flow runs a GEMV over (or looks rows up in): raw BF16,
-/// or MLX affine 4/8-bit at group 64 (an MLX-sourced install), checked
+/// MLX affine 4/8-bit at group 64 (an MLX-sourced install), or a LAMQ coded
+/// matrix (tag 36, whose aux and table `lamq.rs` checks at build), checked
 /// against its logical `rows x cols`.
 pub(crate) fn require_matrix(
     index: &ResidentIndex,
@@ -155,6 +160,7 @@ pub(crate) fn require_matrix(
         {
             Ok(())
         }
+        super::lamq::TAG_LAMQ if (e.shape.0 as usize, e.shape.1 as usize) == (rows, cols) => Ok(()),
         other => Err(RealForwardError::Unsupported(format!(
             "{name}: expected a BF16 or affine 4/8-bit [{rows}, {cols}] matrix, found dtype \
              {other} shaped {:?}",
@@ -210,14 +216,27 @@ impl RealInkling2State {
             return Err(unsupported("zero context capacity".into()));
         }
 
-        // Every tensor the flow reads, checked once.
-        require_matrix(index, "model.llm.embed.weight", arch.vocab_size as usize, h)?;
-        require_matrix(
+        // A LAMQ install's coded entries, parsed and checked once; its
+        // embedding and head are bucket orders, checked there.
+        let mut lamq = super::lamq::LamqRuntime::build(
+            context,
+            weights,
             index,
-            "model.llm.unembed.weight",
-            arch.vocab_size as usize,
             h,
+            ffn,
+            arch.vocab_size as usize,
+            cfg.unpadded_vocab as usize,
         )?;
+        // Every tensor the flow reads, checked once.
+        if lamq.is_none() {
+            require_matrix(index, "model.llm.embed.weight", arch.vocab_size as usize, h)?;
+            require_matrix(
+                index,
+                "model.llm.unembed.weight",
+                arch.vocab_size as usize,
+                h,
+            )?;
+        }
         require(index, "model.llm.embed_norm.weight", TAG_BF16, h)?;
         require(index, "model.llm.norm.weight", TAG_BF16, h)?;
         require(index, "model.llm.attn_res.output_query", TAG_F32, h)?;
@@ -331,7 +350,28 @@ impl RealInkling2State {
         }
         let mut offsets = Vec::with_capacity(layers);
         let mut kinds = Vec::with_capacity(layers);
+        // LAMQ blobs open with a format record; their experts mix codes, so
+        // `lamq.rs` checks every record and the LAMQ pair reads them.
+        let lamq_experts = layout
+            .layers
+            .first()
+            .and_then(|l| l.experts.first())
+            .is_some_and(|e| e.sub_tensors.contains_key("lamq_fmt"));
+        if lamq_experts {
+            let rt = lamq.as_mut().ok_or_else(|| {
+                unsupported("LAMQ expert blobs in an install without LAMQ resident entries".into())
+            })?;
+            let luts = super::lamq::read_luts(weights, index)?;
+            rt.attach_experts(context, weights, index, install_dir, &layout, h, ffn, &luts)?;
+        } else if lamq.is_some() {
+            return Err(unsupported(
+                "a LAMQ install without LAMQ expert blobs".into(),
+            ));
+        }
         for (l, ll) in layout.layers.iter().enumerate() {
+            if lamq_experts {
+                break;
+            }
             let first = ll
                 .experts
                 .first()
@@ -409,13 +449,19 @@ impl RealInkling2State {
         } else {
             None
         };
-        let routed = gpu::RoutedBlobsBuffer::new_for(
-            context,
-            gpu::moe_inkling2_source(),
-            gpu::MOE_INKLING2_REFLECT_FUNCTION,
-            false,
-        )
-        .map_err(RealForwardError::Gpu)?;
+        let (source, function) = if lamq_experts {
+            (
+                gpu::moe_inkling2_lamq_source(),
+                gpu::MOE_INKLING2_LAMQ_REFLECT_FUNCTION,
+            )
+        } else {
+            (
+                gpu::moe_inkling2_source(),
+                gpu::MOE_INKLING2_REFLECT_FUNCTION,
+            )
+        };
+        let routed = gpu::RoutedBlobsBuffer::new_for(context, source, function, false)
+            .map_err(RealForwardError::Gpu)?;
 
         let half = |context: &gpu::MetalContext, n: usize| {
             context.new_output_buffer((n.max(1) * 2) as u64)
@@ -457,6 +503,7 @@ impl RealInkling2State {
         Ok(RealInkling2State {
             taps: tap_buffer,
             resident,
+            lamq: lamq.map(std::sync::Arc::new),
             max_ctx,
             slots,
             offsets,

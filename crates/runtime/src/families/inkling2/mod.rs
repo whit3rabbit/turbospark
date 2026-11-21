@@ -21,6 +21,7 @@
 //! Exactness class: KL-bounded against the CPU reference (FP16 activations,
 //! FP32 accumulation, FP32 router). Prefill is this decode path per token.
 
+mod lamq;
 mod state;
 
 use half::f16;
@@ -52,6 +53,8 @@ struct Ctx<'a> {
     index: &'a ResidentIndex,
     h: usize,
     eps: f32,
+    /// A LookAtMyQuant install's coded entries (`lamq.rs`).
+    lamq: Option<std::sync::Arc<lamq::LamqRuntime>>,
 }
 
 impl Ctx<'_> {
@@ -78,7 +81,21 @@ impl Ctx<'_> {
         segs: &[(&str, usize, usize, usize, Buf<'_>)],
     ) -> Result<(), RealForwardError> {
         let mut v = Vec::with_capacity(segs.len());
+        let lq = self.lamq.clone();
         for &(name, rows, cols, x, y) in segs {
+            if let Some(l) = lq.as_ref().filter(|l| l.has(name)) {
+                l.gemv(
+                    self.context,
+                    pass,
+                    self.weights.buffer(),
+                    name,
+                    rows,
+                    cols,
+                    xs[x],
+                    y,
+                )?;
+                continue;
+            }
             if entry(self.index, name)?.dtype != state::TAG_BF16 {
                 crate::real_forward_dispatch::encode_gemv_any(
                     self.context,
@@ -293,21 +310,33 @@ impl RealForwardRunner {
             index: &self.index,
             h,
             eps: cfg.rms_eps,
+            lamq: st.lamq.clone(),
         };
         let mut pass = c.context.begin_pass_labeled("inkling2 attn+router");
-        // BF16, or MLX affine 4/8-bit on an MLX-sourced install.
-        crate::real_forward_dispatch::encode_embed_any(
-            c.context,
-            &pass,
-            c.weights,
-            c.index,
-            "model.llm.embed.weight",
-            (&st.y, 0),
-            token as u32,
-            h as u32,
-            vocab,
-            1.0,
-        )?;
+        // BF16, MLX affine 4/8-bit on an MLX-sourced install, or a LAMQ
+        // bucket row.
+        if let Some(l) = c.lamq.clone() {
+            l.embed(
+                c.context,
+                &pass,
+                c.weights.buffer(),
+                token as u32,
+                (&st.y, 0),
+            )?;
+        } else {
+            crate::real_forward_dispatch::encode_embed_any(
+                c.context,
+                &pass,
+                c.weights,
+                c.index,
+                "model.llm.embed.weight",
+                (&st.y, 0),
+                token as u32,
+                h as u32,
+                vocab,
+                1.0,
+            )?;
+        }
         c.norm(
             &pass,
             (&st.y, 0),
@@ -460,14 +489,24 @@ impl RealForwardRunner {
                     h,
                 )?;
             }
-            c.gemv(
-                &pass,
-                "model.llm.unembed.weight",
-                vocab,
-                h,
-                (&st.mn, 0),
-                (&self.scratch.logits, 0),
-            )?;
+            if let Some(l) = c.lamq.clone() {
+                l.head(
+                    c.context,
+                    &pass,
+                    c.weights.buffer(),
+                    (&st.mn, 0),
+                    (&self.scratch.logits, 0),
+                )?;
+            } else {
+                c.gemv(
+                    &pass,
+                    "model.llm.unembed.weight",
+                    vocab,
+                    h,
+                    (&st.mn, 0),
+                    (&self.scratch.logits, 0),
+                )?;
+            }
             gpu::encode_logit_softcap(
                 c.context,
                 &pass,
@@ -881,17 +920,41 @@ fn layer_moe(
         .iter()
         .map(|&s| (&slot_buffers[ip][s], 0u64))
         .collect();
-    st.routed
-        .bind_for(
-            c.context,
+    let lq = st.lamq.clone().filter(|l| l.experts.is_some());
+    let (source, function) = if lq.is_some() {
+        (
+            gpu::moe_inkling2_lamq_source(),
+            gpu::MOE_INKLING2_LAMQ_REFLECT_FUNCTION,
+        )
+    } else {
+        (
             gpu::moe_inkling2_source(),
             gpu::MOE_INKLING2_REFLECT_FUNCTION,
-            false,
-            &blobs,
         )
+    };
+    st.routed
+        .bind_for(c.context, source, function, false, &blobs)
         .map_err(g)?;
     for &(b, _) in &blobs {
         pass.use_read_buffer(b);
+    }
+    if let Some(l) = lq {
+        l.moe(
+            c.context,
+            pass,
+            c.weights.buffer(),
+            &gpu::LamqExperts::Streamed(&st.routed),
+            ip,
+            (&st.mn, 0),
+            (&st.routing_w, 0),
+            (&st.y, 0),
+            h,
+            ffn,
+            top_k,
+            (cfg.gate_softcap, cfg.up_softcap),
+        )?;
+        moe_tail(c, pass, st, arch, slot, ip)?;
+        return Ok((plan.hits, plan.misses.len()));
     }
     let kind = st.kinds[ip];
     gpu::encode_inkling2_moe_phase1(
@@ -1010,6 +1073,23 @@ fn layer_moe_resident(
         n_experts: r.n_experts,
         sel: (&r.sel, 0),
     };
+    if let Some(l) = st.lamq.clone().filter(|l| l.experts.is_some()) {
+        l.moe(
+            c.context,
+            pass,
+            c.weights.buffer(),
+            &gpu::LamqExperts::Resident(&layer),
+            ip,
+            (&st.mn, 0),
+            (&st.routing_w, 0),
+            (&st.y, 0),
+            h,
+            ffn,
+            top_k,
+            (cfg.gate_softcap, cfg.up_softcap),
+        )?;
+        return moe_tail(c, pass, st, arch, slot, ip);
+    }
     let kind = st.kinds[ip];
     gpu::encode_inkling2_moe_phase1_indexed(
         c.context,

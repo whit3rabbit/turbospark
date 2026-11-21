@@ -214,6 +214,11 @@ impl RealForwardRunner {
                     // each checked by dtype and size at build
                     // (`families/inkling2/state.rs`).
                     && !(expecting.family == model_io::ModelFamily::Inkling2Loop && e.dtype == 3)
+                    // A LookAtMyQuant Inkling install: tag 36 entries and the
+                    // FP16 trellis LUTs under `lamq.lut.`, each read by name
+                    // and checked at build (`families/inkling2/lamq.rs`).
+                    && !(expecting.family == model_io::ModelFamily::Inkling2Loop
+                        && (e.dtype == 36 || (e.dtype == 2 && e.name.starts_with("lamq.lut."))))
             })
             .min_by_key(|e| &e.name)
         {

@@ -29,6 +29,8 @@ foundation = { package = "turbospark-core", path = "../core", version = "0.9.0" 
 # and tests them -- see that crate's `kv_quant` module. Every OTHER use of
 # `turbospark-compute` in this crate remains test-only (CPU reference
 # kernels validating a Metal dispatch); this one builds real runtime state.
+# So does `lamq.rs`: the LookAtMyQuant Hadamard factors come from
+# `turbospark_compute::lamq` (one construction, not a second copy).
 
 turbospark-compute = { path = "../compute", version = "0.9.0" }
 

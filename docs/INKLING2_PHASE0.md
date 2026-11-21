@@ -9,8 +9,9 @@ and a Metal decode flow have landed. The flow is greedy-matched to the CPU
 reference and llama.cpp on real installs (Stage A below). There is no catalog
 row, and the memory oracle and the Phase 6 quality gates in
 `docs/NEW_MODEL.md` have not run. Do not call it supported until they have.
-GGUF intake is still refused. LookAtMyQuant packed releases are planned, not
-landed (`docs/LAMQ.md`).
+GGUF intake is still refused. LookAtMyQuant packed releases install and
+decode with their codes native (`docs/LAMQ.md`, 5.4 GB release: 19/19 and
+182/232 top-1 against the BF16 install, with a quality gap still open).
 
 Sources (formulas are transcribed, not derived): Hugging Face
 `transformers/models/inkling2/modeling_inkling2.py` (layer math; it has NO loop

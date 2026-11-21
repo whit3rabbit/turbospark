@@ -562,6 +562,13 @@ impl Rht {
         Some(Self { n, a, na, b, nb })
     }
 
+    /// The Kronecker factors `(|A|, A, |B|, B)`, row-major. `A` is always a
+    /// Sylvester matrix (a GPU applies it as a fast Walsh-Hadamard transform);
+    /// `B` is the small dense factor.
+    pub fn factors(&self) -> (usize, &[f64], usize, &[f64]) {
+        (self.na, &self.a, self.nb, &self.b)
+    }
+
     /// The dense `H_n = kron(A, B)` (unnormalized), for tests and small n.
     pub fn dense(&self) -> Vec<f64> {
         let n = self.n;

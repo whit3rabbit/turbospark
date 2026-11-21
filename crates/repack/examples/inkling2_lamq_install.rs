@@ -47,6 +47,10 @@ fn main() {
     turbospark_repack::copy_inkling2_tokenizer_files(src, out).expect("tokenizer files");
     println!("{report:?}");
     println!(
+        "steering: {} F32 tensors rounded to BF16, largest relative change {:.3e}",
+        report.steering_narrowed, report.steering_max_rel_error
+    );
+    println!(
         "experts: {:.2} GB packed, {:.2} GB written (x{:.2} from per-layer padding)",
         report.expert_bytes_packed as f64 / 1e9,
         report.expert_bytes_written as f64 / 1e9,

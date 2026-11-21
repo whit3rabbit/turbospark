@@ -1,7 +1,7 @@
 # LookAtMyQuant (LAMQ) formats
 
-STATUS: **not implemented.** This page is the spec the intake and kernels
-follow. The `inkling2-packed` section was checked on 2026-11-21 against the
+STATUS: **runs on the 5.4 GB Inkling release, quality gap open.** This page
+is the spec the intake and kernels follow, and the record of their gates. The `inkling2-packed` section was checked on 2026-11-21 against the
 5.4 GB release (container layout, dtypes, shapes, maps, the name map). The
 math comes from the upstream source and is marked "from source" where no file
 can confirm it. The CPU reference and the logits gate are the real check.
@@ -301,14 +301,48 @@ The intake must check every offset bound and every sha256.
    out-of-range token ids, short buckets, stray members and `signs_out`,
    reused or unknown expert slots); each guard was mutation-checked.
    The runtime does not open the install yet.
-4. Workstream A remaining: Metal Kronecker RHT,
-   trellis and levels GEMV, bucketed embed and head, LAMQ expert arms in
-   `moe_inkling2`. Gates: kernel parity against the CPU reference with
-   mutation checks, then logits against the BF16 install and llama.cpp BF16,
-   the memory oracle, and a tslab profile against the MLX 4-bit install.
-5. Workstream B: Inkling 2 GGUF intake for the published ggml-org and unsloth
+4. DONE (2026-11-21): Metal and runtime. `shaders/lamq.metal` (`gpu::lamq`):
+   the Kronecker RHT (FWHT over the Sylvester factor, dense small factor),
+   trellis and level GEMVs, one-row decode, bucket scatter. Function
+   constants are 120-126 (used by no other shader; the expert pair compiles
+   this file with `moe.metal`) and every one is in the pipeline key.
+   `shaders/moe_inkling2_lamq.metal` (`gpu::moe_inkling2_lamq`): the expert
+   pair, streamed and resident, reading each expert's code from its format
+   record and every LUT from one pack. Parity (`tests/lamq_parity.rs`,
+   `tests/moe_inkling2_lamq_parity.rs`, M4 Max) against `compute::lamq`: every
+   code, every release width both ways, 8 mixed-format slots at the Mini's
+   dims; 16 shader mutants each fail a test. The flow
+   (`families/inkling2/lamq.rs`) parses every tag-36 entry at open, rotates,
+   runs the GEMV and the output rotation for coded linears, decodes the
+   embedding row through the token's bucket, scatters the head buckets into
+   the FP16 logits, and runs the expert pair in both MoE paths. Open admits
+   tag 36 and the `lamq.lut.` FP16 tables for this family only.
+   Steering: the 184 F32 conv-tap and controller tensors are rounded to BF16
+   at intake (round to nearest even, largest relative change 3.9e-3), since
+   their kernels read BF16. The router, its bias and every query stay F32.
+5. Logits gate (2026-11-21, M4 Max, 5.4 GB release, `inkling2_logits`),
+   against the BF16 HF install on the same Metal flow (that install is itself
+   at mean KL ~5e-4 against llama.cpp):
+
+   | prompt | top-1 | mean KL | median | max |
+   |---|---|---|---|---|
+   | 19 tokens (capitals) | 19/19 | 2.6e-2 | 2.2e-2 | 6.0e-2 |
+   | 232 tokens (prose) | 182/232 | 0.154 | 0.095 | 2.03 |
+
+   KL is flat over position (0.12 to 0.22 per 29-token band), so this reads
+   as weight error, not a position-dependent defect. Most misses are the
+   reference's second choice. Decode is 64 ms per token against 28 ms for
+   the BF16 install (untuned kernels, unpaired, not a protocol number).
+   OPEN: the authors report `free_KL` 0.0895 and 89.2% top-1 for this file
+   (English/chat/code windows against the BF16 teacher, their harness). The
+   protocols differ, so the gap is not a measured defect, but it is not
+   explained either. First suspect: the BF16 rounding of the F32 steering
+   above (the authors' runtime precision for it is not stated). Not yet run:
+   the 8.9 GB release, the memory oracle, a tslab profile, sampled
+   generation. No catalog row.
+6. Workstream B: Inkling 2 GGUF intake for the published ggml-org and unsloth
    files (stock types).
-6. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
+7. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
    on the same kernels, each with its own family quality gate.
 
 No catalog row, and no change to any family's defaults, without its gate.

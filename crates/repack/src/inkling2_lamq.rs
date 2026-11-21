@@ -12,8 +12,10 @@
 //! - The shared trellis LUTs as raw FP16 entries `lamq.lut.<code>`.
 //! - Each layer's expert signs as a `DTYPE_LAMQ` signs entry
 //!   `model.llm.layers.<l>.mlp.experts.lamq_signs` (gate-up 2304, down 1152).
-//! - The 499 steering tensors under their HF install names, in their release
-//!   dtypes. Their F32 values are not exact BF16, so nothing is narrowed.
+//! - The 499 steering tensors under their install names. The conv taps and
+//!   controller planes are F32 values that are not exact BF16, and their
+//!   kernels read BF16, so they are rounded to nearest even (the report gives
+//!   the largest relative change). Everything else keeps its release dtype.
 //! - Experts as `packed_experts` blobs: a 16-byte format record, then
 //!   gate-up codes, gate-up scales, down codes, down scales. Code sub-tensors
 //!   are padded to the layer's widest format so every expert of a layer has
@@ -146,13 +148,46 @@ fn u16s(b: &[u8]) -> Vec<u16> {
         .collect()
 }
 
-/// Steering tensors as raw resident entries under HF names.
+/// Install names whose kernels read BF16 (the short-conv taps and the loop
+/// controllers' forget and gain planes). The release holds them as F32 values
+/// that are not exact BF16, so they are rounded here, to nearest even, and
+/// the largest relative change is reported. Router, router bias and every
+/// query stay F32: their kernels read F32.
+fn narrowed_to_bf16(hf: &str) -> bool {
+    hf.ends_with("_sconv.weight") || hf.ends_with(".forget_weight") || hf.ends_with(".gain_weight")
+}
+
+/// F32 bytes to BF16 by round-to-nearest-even, refusing a non-finite value.
+/// Returns the bytes and the largest `|bf16 - f32| / |f32|` over nonzero
+/// values.
+pub(crate) fn narrow_f32_rne(name: &str, b: &[u8]) -> Result<(Vec<u8>, f32), Inkling2RepackError> {
+    let mut out = Vec::with_capacity(b.len() / 2);
+    let mut worst = 0.0f32;
+    for c in b.chunks_exact(4) {
+        let v = f32::from_le_bytes([c[0], c[1], c[2], c[3]]);
+        if !v.is_finite() {
+            return err(format!("{name}: a non-finite steering value"));
+        }
+        let bits = v.to_bits();
+        let r = (bits + 0x7FFF + ((bits >> 16) & 1)) >> 16;
+        let back = f32::from_bits(r << 16);
+        if v != 0.0 {
+            worst = worst.max(((back - v) / v).abs());
+        }
+        out.extend_from_slice(&(r as u16).to_le_bytes());
+    }
+    Ok((out, worst))
+}
+
+/// Steering tensors as raw resident entries under install names, with the
+/// count of narrowed tensors and the largest relative rounding error.
 fn steering_entries(
     st: &SafetensorsFile,
     core: usize,
     hidden: usize,
     taps: usize,
-) -> Result<Vec<ResidentEntrySpec>, Inkling2RepackError> {
+) -> Result<(Vec<ResidentEntrySpec>, usize, f32), Inkling2RepackError> {
+    let (mut narrowed, mut worst) = (0usize, 0.0f32);
     let mut out = Vec::new();
     let mut names: Vec<String> = st.tensor_names().map(str::to_string).collect();
     names.sort_unstable();
@@ -210,6 +245,18 @@ fn steering_entries(
             }));
             continue;
         }
+        if d.dtype == "F32" && narrowed_to_bf16(&hf) {
+            let (bytes, w) = narrow_f32_rne(name, b)?;
+            narrowed += 1;
+            worst = worst.max(w);
+            out.push(ResidentEntrySpec::Raw(RawTensorSpec {
+                name: hf,
+                dtype: DTYPE_BF16,
+                bytes,
+                shape: rank4(&d.shape)?,
+            }));
+            continue;
+        }
         out.push(ResidentEntrySpec::Raw(RawTensorSpec {
             name: hf,
             dtype: dtype_tag(name, &d.dtype)?,
@@ -217,7 +264,7 @@ fn steering_entries(
             shape: rank4(&d.shape)?,
         }));
     }
-    Ok(out)
+    Ok((out, narrowed, worst))
 }
 
 /// The shared trellis LUTs, as f32 for validation and as raw FP16 entries.
@@ -519,6 +566,10 @@ pub struct Inkling2LamqReport {
     /// Expert bytes before the per-layer padding, and after.
     pub expert_bytes_packed: u64,
     pub expert_bytes_written: u64,
+    /// F32 steering tensors rounded to BF16 for BF16 kernels, and the largest
+    /// relative change that rounding made.
+    pub steering_narrowed: usize,
+    pub steering_max_rel_error: f32,
 }
 
 /// One layer's experts as blobs, plus its signs entry.
@@ -799,7 +850,7 @@ pub fn write_inkling2_lamq_install(
     let luts = read_luts(dir, &mut resident)?;
     let st = SafetensorsFile::open(&dir.join("steering.safetensors"))
         .map_err(|e| Inkling2RepackError(format!("steering.safetensors: {e}")))?;
-    let steering = steering_entries(&st, core, hidden, taps)?;
+    let (steering, narrowed, worst) = steering_entries(&st, core, hidden, taps)?;
     if manifest["steering_tensors"].as_u64() != Some(st.tensor_names().count() as u64) {
         return err("steering.safetensors tensor count disagrees with manifest.json");
     }
@@ -939,6 +990,8 @@ pub fn write_inkling2_lamq_install(
         expert_stride: stride,
         expert_bytes_packed: packed,
         expert_bytes_written: written,
+        steering_narrowed: narrowed,
+        steering_max_rel_error: worst,
     })
 }
 

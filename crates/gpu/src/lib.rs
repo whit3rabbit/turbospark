@@ -120,6 +120,8 @@ mod hyper_connection;
 #[cfg(target_os = "macos")]
 mod inkling2_ops;
 #[cfg(target_os = "macos")]
+mod lamq;
+#[cfg(target_os = "macos")]
 mod kv_cache;
 #[cfg(target_os = "macos")]
 mod kv_cache_mem;
@@ -137,6 +139,8 @@ mod moe_decode;
 mod moe_gguf;
 #[cfg(target_os = "macos")]
 mod moe_inkling2;
+#[cfg(target_os = "macos")]
+mod moe_inkling2_lamq;
 #[cfg(target_os = "macos")]
 mod moe_prefill_batch;
 #[cfg(target_os = "macos")]
@@ -364,6 +368,11 @@ pub use hadamard::{
 #[cfg(target_os = "macos")]
 pub use hyper_connection::{encode_hc_inject_add, encode_hc_mix};
 #[cfg(target_os = "macos")]
+pub use lamq::{
+    encode_lamq_decode_row, encode_lamq_gemv, encode_lamq_rht, encode_lamq_scatter, LamqMatrixView,
+    LamqRhtDir, LamqRhtFactor, LAMQ_MAX_N, LAMQ_MAX_TABLE,
+};
+#[cfg(target_os = "macos")]
 pub use inkling2_ops::{
     encode_inkling2_attention_decode, encode_inkling2_bf16_gemv_multi,
     encode_inkling2_control_combine, encode_inkling2_copy_half, encode_inkling2_depth_mix,
@@ -408,6 +417,12 @@ pub use moe_inkling2::{
     encode_inkling2_moe_phase2_indexed, moe_inkling2_source, Inkling2ExpertType,
     Inkling2ResidentLayer, INKLING2_MAX_SLOTS, INKLING2_OUTER_SCALE_BYTES,
     MOE_INKLING2_REFLECT_FUNCTION,
+};
+#[cfg(target_os = "macos")]
+pub use moe_inkling2_lamq::{
+    encode_inkling2_lamq_phase1, encode_inkling2_lamq_phase2, lamq_lut_pack,
+    moe_inkling2_lamq_source, LamqExpertOffsets, LamqExperts, INKLING2_LAMQ_MAX_SLOTS,
+    LAMQ_LUT_PACK, LAMQ_LUT_PACK_HALVES, MOE_INKLING2_LAMQ_REFLECT_FUNCTION,
 };
 #[cfg(target_os = "macos")]
 pub use moe_prefill_batch::{
