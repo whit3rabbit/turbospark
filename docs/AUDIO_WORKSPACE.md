@@ -258,12 +258,21 @@ modules and internal codecs are not presented as runnable jobs.
   speaker, so a voice that is silent in the shared span can appear twice (merge
   it in Name the Speakers), but voices are never joined on weaker evidence.
   The sheet says how many parts were used. See [Core ML models](COREML.md).
-- Speech enhancement runs the pinned MossFormer2 SE 48 kHz fp16 profile
-  (`mossformer2-se-48k-fp16`, portable CPU) from the Clean Up page's "Enhance
-  speech". The take is read at 48 kHz mono, at most 600 seconds, and the
-  cleaned voice is saved as a new take; the source take is never changed.
-  The same engine runs from the command line as `turbospark enhance`. Quality
-  is not yet gated beyond reference parity (`crates/audio/src/sts/mossformer2_se/README.md`).
+- Speech enhancement runs from the Clean Up page's "Enhance speech" with one
+  of three pinned profiles: `voice-isolator-v1` (inworld Voice Isolator,
+  offline, Metal projections, attention and scan), `voice-isolator-v1-realtime`
+  (its causal sibling), or `mossformer2-se-48k-fp16` (MossFormer2 SE,
+  portable CPU). The take is read at 48 kHz mono, at most 600 seconds, and
+  the cleaned voice is saved as a new take; the source take is never changed.
+  The same engines run from the command line as `turbospark enhance`. Quality
+  is not yet gated beyond reference parity (family READMEs under
+  `crates/audio/src/sts/`).
+- Live voice isolation (`ts_audio_enhance_stream_*`) streams the realtime
+  profile at 48 kHz with 63 ms algorithmic latency, on a stateful Core ML
+  step when installed, else Metal. Every push reports whether it ran late;
+  the per-call Metal path is not real time on its own (RTF about 3 on an M4
+  Max), so a host falls back to raw audio while pushes run late
+  (`crates/audio/src/sts/voice_isolator/README.md`).
 - Separation, alignment, speech detection, codecs, the other enhancement
   families (DeepFilterNet), the CPU diarization families (Sortformer,
   Nemotron), and other transcription families stay unavailable until their
