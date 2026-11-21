@@ -130,10 +130,14 @@ struct AudioItemDetailView: View {
     @ObservedObject var controller: AudioWorkspaceController
     let item: AudioLibraryItem
     var showsComparisonMenu = true
+    /// Meeting takes put the user's notes beside the transcript and summary.
+    var meetingLayout = false
 
     enum DetailViewTab: String, CaseIterable, Identifiable {
         case transcript = "Transcript"
         case notes = "Notes & Summary"
+        /// Meeting takes only: questions answered from the take.
+        case ask = "Ask"
         var id: String { rawValue }
     }
 
@@ -150,6 +154,13 @@ struct AudioItemDetailView: View {
             if !item.clips.isEmpty {
                 AudioTransportView(controller: controller, item: item)
             }
+            if meetingLayout {
+                AudioMeetingColumns {
+                    AudioMeetingNotesEditor(controller: controller, item: item)
+                } panel: {
+                    meetingPanel
+                }
+            }
             takeDetails
         }
         .modifier(AudioDeleteConfirmation(controller: controller, item: $deletingItem))
@@ -163,7 +174,7 @@ struct AudioItemDetailView: View {
             }
             if !item.markers.isEmpty { markers }
             if item.clips.count > 1 { clips }
-            if !item.transcripts.isEmpty { detailContentSwitcher }
+            if !meetingLayout, !item.transcripts.isEmpty { detailContentSwitcher }
             DisclosureGroup {
                 VStack(alignment: .leading, spacing: 8) {
                     AudioTagEditor(controller: controller, item: item)
@@ -203,10 +214,28 @@ struct AudioItemDetailView: View {
         VStack(alignment: .leading, spacing: 14) {
             AudioDetailModeSwitcher(selection: $selectedTab, hasSummary: item.summary != nil)
 
-            if selectedTab == .transcript {
-                AudioTranscriptEditorView(controller: controller, item: item)
-            } else {
+            if selectedTab == .notes {
                 AudioMeetingNotesView(controller: controller, item: item)
+            } else {
+                AudioTranscriptEditorView(controller: controller, item: item)
+            }
+        }
+    }
+
+    @ViewBuilder private var meetingPanel: some View {
+        if item.transcripts.isEmpty {
+            Label { Text("The transcript appears here once the recording is processed.", bundle: .module) }
+                icon: { Image(systemName: "text.alignleft").accessibilityHidden(true) }
+                .themedFont(.small).foregroundStyle(.appSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            VStack(alignment: .leading, spacing: 14) {
+                AudioDetailModeSwitcher(selection: $selectedTab, hasSummary: item.summary != nil, meeting: true)
+                switch selectedTab {
+                case .transcript: AudioTranscriptEditorView(controller: controller, item: item)
+                case .notes: AudioMeetingNotesView(controller: controller, item: item)
+                case .ask: AudioMeetingAskView(controller: controller, item: item)
+                }
             }
         }
     }
@@ -293,17 +322,22 @@ struct AudioItemDetailView: View {
 struct AudioDetailModeSwitcher: View {
     @Binding var selection: AudioItemDetailView.DetailViewTab
     let hasSummary: Bool
+    /// A meeting shows the user's notes beside this switcher, so its second
+    /// pill is only the generated summary.
+    var meeting = false
 
     var body: some View {
-        AppPillPicker(
+        var items = [
+            AppPillItem(value: AudioItemDetailView.DetailViewTab.transcript, label: Text("Transcript", bundle: .module)),
+            AppPillItem(
+                value: .notes,
+                label: meeting ? Text("Summary", bundle: .module) : Text("Notes & Summary", bundle: .module),
+                systemImage: hasSummary ? "checkmark.circle.fill" : nil),
+        ]
+        if meeting { items.append(AppPillItem(value: .ask, label: Text("Ask", bundle: .module), systemImage: "bubble.left.and.text.bubble.right")) }
+        return AppPillPicker(
             selection: $selection,
-            items: [
-                AppPillItem(value: .transcript, label: Text("Transcript", bundle: .module)),
-                AppPillItem(
-                    value: .notes,
-                    label: Text("Notes & Summary", bundle: .module),
-                    systemImage: hasSummary ? "checkmark.circle.fill" : nil),
-            ],
+            items: items,
             label: Text("Detail View", bundle: .module)
         )
     }

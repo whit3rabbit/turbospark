@@ -265,6 +265,10 @@ Generate, and the take near its waveform and transcript.
   selected source so the user can confirm what the Mac is hearing. Show
   missing permission beside the affected source with its next action, using
   the shared recording access flow.
+- A Meeting take puts the user's notes beside Transcript, Summary and Ask
+  (`AudioMeetingColumns`), during the recording as well as after it, and
+  stacks them when the scaled columns do not fit. Generated text never
+  replaces what the user typed.
 - Put a compact player above the take's transcript. Draw its waveform
   from the take's audio and use the playhead for scrubbing. Keep an
   adjustable playback position with a spoken time value. Clicking a

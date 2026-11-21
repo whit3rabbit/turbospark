@@ -61,9 +61,13 @@ public final class AppModel: ObservableObject {
         workspace.summaryAvailable = { [weak self] in
             self?.canSummarizeAudio == true || (self?.loadableModels.contains(where: { $0.modality == "text" }) == true)
         }
-        workspace.summaryHandler = { [weak self] item, targetModel in
+        workspace.summaryHandler = { [weak self] item, targetModel, progress in
             guard let self else { throw CancellationError() }
-            return try await self.summarizeAudioTranscript(item, targetModel: targetModel)
+            return try await self.summarizeAudioTranscript(item, targetModel: targetModel, progress: progress)
+        }
+        workspace.promptHandler = { [weak self] system, user, targetModel, progress in
+            guard let self else { throw CancellationError() }
+            return try await self.runAudioPrompt(system: system, user: user, targetModel: targetModel, progress: progress)
         }
         forwardAudioUnloadChanges(from: workspace)
         return workspace
