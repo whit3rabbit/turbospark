@@ -59,7 +59,7 @@ kernel void moe_phase1_gate_up_act_##NAME(                                      
     const ExpertOffsets re = routed_offsets;                                             \
     const float g = ROWFN(base + re.gate_W_off + f * row_bytes, x, DD, lane);            \
     const float u = ROWFN(base + re.up_W_off + f * row_bytes, x, DD, lane);              \
-    if (lane == 0) acts[slot * FF + f] = half(moe_hidden_activation(g) * u);             \
+    if (lane == 0) acts[slot * FF + f] = half(moe_gguf_glu(g, u, base, re));             \
 }
 
 #define MOE_PHASE2(NAME, BLOCK_ELEMS, BLOCK_BYTES, ROWFN)                                \
@@ -86,10 +86,10 @@ kernel void moe_phase2_down_reduce_k8_##NAME(                                   
     device const half* act_slot = acts + sg_idx * FF;                                    \
     const ulong row_bytes = ulong(FF / BLOCK_ELEMS) * BLOCK_BYTES;                       \
     const float value = ROWFN(base + re.down_W_off + d * row_bytes, act_slot, FF, lane); \
-    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * value;                   \
+    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * moe_gguf_down(value, base, re); \
     threadgroup_barrier(mem_flags::mem_threadgroup);                                     \
     if (sg_idx == 0 && lane == 0) {                                                      \
-        float acc = float(residual[d]);                                                  \
+        float acc = moe_gguf_residual(residual, d);                                      \
         acc += partial[0]; acc += partial[1]; acc += partial[2]; acc += partial[3];      \
         acc += partial[4]; acc += partial[5]; acc += partial[6]; acc += partial[7];      \
         y[d] = half(acc);                                                                \

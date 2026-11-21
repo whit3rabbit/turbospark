@@ -142,7 +142,7 @@ impl MoeExtType {
     // `moe_phase2_down_reduce_k8_<suffix>`, generated in `moe_gguf_ext.metal`
     // or hand-written in `moe_gguf.metal`. The names are literals because the
     // pipeline cache keys on the `&'static str`'s address.
-    fn phase1_kernel(self) -> &'static str {
+    pub(crate) fn phase1_kernel(self) -> &'static str {
         match self {
             MoeExtType::Q4_0 => "moe_phase1_gate_up_act_q4_0",
             MoeExtType::Q4_1 => "moe_phase1_gate_up_act_q4_1",
@@ -172,7 +172,7 @@ impl MoeExtType {
         }
     }
 
-    fn phase2_kernel(self) -> &'static str {
+    pub(crate) fn phase2_kernel(self) -> &'static str {
         match self {
             MoeExtType::Q4_0 => "moe_phase2_down_reduce_k8_q4_0",
             MoeExtType::Q4_1 => "moe_phase2_down_reduce_k8_q4_1",

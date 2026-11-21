@@ -120,8 +120,6 @@ mod hyper_connection;
 #[cfg(target_os = "macos")]
 mod inkling2_ops;
 #[cfg(target_os = "macos")]
-mod lamq;
-#[cfg(target_os = "macos")]
 mod kv_cache;
 #[cfg(target_os = "macos")]
 mod kv_cache_mem;
@@ -129,6 +127,8 @@ mod kv_cache_mem;
 mod kv_quant_tables;
 #[cfg(target_os = "macos")]
 mod kv_quantize;
+#[cfg(target_os = "macos")]
+mod lamq;
 #[cfg(target_os = "macos")]
 mod logit_softmax;
 #[cfg(target_os = "macos")]
@@ -368,11 +368,6 @@ pub use hadamard::{
 #[cfg(target_os = "macos")]
 pub use hyper_connection::{encode_hc_inject_add, encode_hc_mix};
 #[cfg(target_os = "macos")]
-pub use lamq::{
-    encode_lamq_decode_row, encode_lamq_gemv, encode_lamq_rht, encode_lamq_scatter, LamqMatrixView,
-    LamqRhtDir, LamqRhtFactor, LAMQ_MAX_N, LAMQ_MAX_TABLE,
-};
-#[cfg(target_os = "macos")]
 pub use inkling2_ops::{
     encode_inkling2_attention_decode, encode_inkling2_bf16_gemv_multi,
     encode_inkling2_control_combine, encode_inkling2_copy_half, encode_inkling2_depth_mix,
@@ -387,6 +382,11 @@ pub use kv_cache::{KvCacheManager, LayerKind};
 pub use kv_quant_tables::{KvQuantTables, TqSideTables};
 #[cfg(target_os = "macos")]
 pub use kv_quantize::encode_kv_quantize_tq;
+#[cfg(target_os = "macos")]
+pub use lamq::{
+    encode_lamq_decode_row, encode_lamq_gemv, encode_lamq_rht, encode_lamq_scatter, LamqMatrixView,
+    LamqRhtDir, LamqRhtFactor, LAMQ_MAX_N, LAMQ_MAX_TABLE,
+};
 #[cfg(target_os = "macos")]
 pub use logit_softmax::{encode_logit_softcap_softmax, logit_softcap_softmax};
 #[cfg(target_os = "macos")]
@@ -403,13 +403,14 @@ pub use moe_decode::{
 };
 #[cfg(target_os = "macos")]
 pub use moe_gguf::{
-    encode_moe_phase1_ext, encode_moe_phase1_iq1_m, encode_moe_phase1_iq2_s,
-    encode_moe_phase1_iq2_xxs, encode_moe_phase1_iq3_xxs, encode_moe_phase1_iq4_xs,
-    encode_moe_phase1_mxfp4, encode_moe_phase1_q2_0, encode_moe_phase1_q4_k,
-    encode_moe_phase1_q8_0, encode_moe_phase2_ext, encode_moe_phase2_iq4_nl,
-    encode_moe_phase2_mxfp4, encode_moe_phase2_q2_0_top10, encode_moe_phase2_q4_k,
-    encode_moe_phase2_q6_k, encode_moe_phase2_q8_0, moe_gguf_source, mxfp4_row_bytes, MoeExtType,
-    Mxfp4Activation, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS, PHASE2_FIXED_SLOTS,
+    encode_inkling2_gguf_phase1, encode_inkling2_gguf_phase2, encode_moe_phase1_ext,
+    encode_moe_phase1_iq1_m, encode_moe_phase1_iq2_s, encode_moe_phase1_iq2_xxs,
+    encode_moe_phase1_iq3_xxs, encode_moe_phase1_iq4_xs, encode_moe_phase1_mxfp4,
+    encode_moe_phase1_q2_0, encode_moe_phase1_q4_k, encode_moe_phase1_q8_0, encode_moe_phase2_ext,
+    encode_moe_phase2_iq4_nl, encode_moe_phase2_mxfp4, encode_moe_phase2_q2_0_top10,
+    encode_moe_phase2_q4_k, encode_moe_phase2_q6_k, encode_moe_phase2_q8_0, moe_gguf_source,
+    mxfp4_row_bytes, Inkling2GgufExpertType, MoeExtType, Mxfp4Activation, MXFP4_BLOCK_BYTES,
+    MXFP4_BLOCK_ELEMS, PHASE2_FIXED_SLOTS,
 };
 #[cfg(target_os = "macos")]
 pub use moe_inkling2::{

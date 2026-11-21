@@ -14,7 +14,8 @@
 
 use half::f16;
 use turbospark_gpu::{
-    encode_moe_phase1_ext, encode_moe_phase2_ext, MetalContext, MoeExpertOffsets, MoeExtType,
+    encode_inkling2_gguf_phase1, encode_inkling2_gguf_phase2, encode_moe_phase1_ext,
+    encode_moe_phase2_ext, Inkling2GgufExpertType, MetalContext, MoeExpertOffsets, MoeExtType,
     RoutedBlobsBuffer, MAX_STREAMED_EXPERTS,
 };
 
@@ -402,4 +403,266 @@ fn mixed_layouts_decode_independently() {
 #[should_panic]
 fn nine_slots_panics_rather_than_silently_truncating() {
     run_case(MoeExtType::Q4_0, MoeExtType::Q4_0, false, FIXED_SLOTS + 1);
+}
+
+// ---------------------------------------------------------------------------
+// Inkling 2's mode over the same kernels (function constants 112-114): outer
+// scales from a record at the front of each blob, the softcapped SwiGLU, an
+// outer-scaled down value, and NO residual. The residual slot is bound to the
+// acts buffer by the API, so a kernel that still added it would be off by an
+// acts row, and the cases below would fail.
+// ---------------------------------------------------------------------------
+
+type Ink = Inkling2GgufExpertType;
+
+fn ink_row(kind: Ink, cols: usize, seed: u32) -> Vec<u8> {
+    match kind {
+        Ink::Q8_0 => turbospark_compute::quantize_q8_0(&smooth(cols, seed)),
+        Ink::Q4K => turbospark_compute::quantize_q4_k(&smooth(cols, seed)),
+        Ink::Ext(e) => row(e, cols, seed),
+    }
+}
+
+fn ink_decode(kind: Ink, bytes: &[u8], n: usize) -> Vec<f32> {
+    match kind {
+        Ink::Q8_0 => turbospark_compute::dequantize_q8_0(bytes, n),
+        Ink::Q4K => turbospark_compute::dequantize_q4_k(bytes, n),
+        Ink::Ext(e) => decode(e, bytes, n),
+    }
+}
+
+fn ink_gemv(kind: Ink, rows: &[Vec<u8>], x: &[f32], n: usize) -> Vec<f32> {
+    rows.iter()
+        .map(|r| {
+            ink_decode(kind, r, n)
+                .iter()
+                .zip(x)
+                .map(|(w, x)| w * x)
+                .sum()
+        })
+        .collect()
+}
+
+fn run_inkling_case(gate_up: Ink, down: Ink, top_k: usize) {
+    let mut context = MetalContext::new().expect("Metal device");
+    let (d_dim, f_dim) = DIMS;
+    let (gate_cap, up_cap) = (4.0f32, 25.0f32);
+    let rows = |kind: Ink, n: usize, cols: usize, seed: u32| -> Vec<Vec<u8>> {
+        (0..n)
+            .map(|r| ink_row(kind, cols, seed + r as u32 * 97))
+            .collect()
+    };
+    // Outer scales differ per expert and per projection, so a kernel that
+    // read the wrong field, or none, is off.
+    let outers: Vec<[f32; 3]> = (0..top_k)
+        .map(|e| {
+            [
+                1.5 + 0.25 * e as f32,
+                0.75 + 0.125 * e as f32,
+                0.5 + 0.0625 * e as f32,
+            ]
+        })
+        .collect();
+    let experts: Vec<Expert> = (0..top_k)
+        .map(|e| {
+            let seed = 7000 + 100 * e as u32;
+            (
+                rows(gate_up, f_dim, d_dim, seed + 1),
+                rows(gate_up, f_dim, d_dim, seed + 2),
+                rows(down, d_dim, f_dim, seed + 3),
+            )
+        })
+        .collect();
+    let x32: Vec<f32> = (0..d_dim)
+        .map(|i| ((i as f32) * 0.21).sin() * 2.0)
+        .collect();
+    let x16: Vec<f16> = x32.iter().map(|&v| f16::from_f32(v)).collect();
+    let xr: Vec<f32> = x16.iter().map(|v| v.to_f32()).collect();
+    let weights: Vec<f32> = (0..top_k)
+        .map(|e| 0.9 - 0.5 * e as f32 / top_k as f32)
+        .collect();
+
+    let mut expected = vec![0.0f32; d_dim];
+    for (e, (g, u, d)) in experts.iter().enumerate() {
+        let o = outers[e];
+        let go = ink_gemv(gate_up, g, &xr, d_dim);
+        let uo = ink_gemv(gate_up, u, &xr, d_dim);
+        let acts: Vec<f32> = go
+            .iter()
+            .zip(&uo)
+            .map(|(&g, &u)| {
+                f16::from_f32(turbospark_compute::inkling2::situ(
+                    g * o[0],
+                    u * o[1],
+                    gate_cap,
+                    up_cap,
+                ))
+                .to_f32()
+            })
+            .collect();
+        let out = ink_gemv(down, d, &acts, f_dim);
+        for (dst, v) in expected.iter_mut().zip(&out) {
+            *dst += f16::from_f32(weights[e]).to_f32() * v * o[2];
+        }
+    }
+
+    let mut blobs = Vec::new();
+    let mut offsets = None;
+    for ((g, u, d), o) in experts.iter().zip(&outers) {
+        let mut blob: Vec<u8> = o
+            .iter()
+            .chain(&[0.0f32])
+            .flat_map(|v| v.to_le_bytes())
+            .collect();
+        let mut at = [0u32; 3];
+        for (i, set) in [g, u, d].into_iter().enumerate() {
+            at[i] = blob.len() as u32;
+            for r in set {
+                blob.extend_from_slice(r);
+            }
+        }
+        offsets.get_or_insert(MoeExpertOffsets {
+            gate_w: at[0],
+            gate_s: 0,
+            gate_b: 0,
+            up_w: at[1],
+            up_s: 4,
+            up_b: 0,
+            down_w: at[2],
+            down_s: 8,
+            down_b: 0,
+        });
+        blobs.push(context.new_buffer_with_data(&blob));
+    }
+    // Phase 2 reduces all eight slots: pad with the last blob, zero weight.
+    while blobs.len() < FIXED_SLOTS {
+        let last = blobs.last().unwrap().clone();
+        blobs.push(last);
+    }
+    let offsets = offsets.unwrap();
+    let x_buf = context.new_buffer_with_data(&to_le(&x16));
+    // Nonzero acts past top_k: a reduce that read them unweighted would show.
+    let mut acts_init = vec![0u8; MAX_STREAMED_EXPERTS * f_dim * 2];
+    for b in acts_init.chunks_exact_mut(2).skip(top_k * f_dim) {
+        b.copy_from_slice(&f16::from_f32(0.5).to_bits().to_le_bytes());
+    }
+    let acts_buf = context.new_buffer_with_data(&acts_init);
+    let y_buf = context.new_output_buffer((d_dim * 2) as u64);
+    let mut routing = vec![f16::from_f32(0.0); MAX_STREAMED_EXPERTS];
+    for (slot, &w) in weights.iter().enumerate() {
+        routing[slot] = f16::from_f32(w);
+    }
+    let routing_buf = context.new_buffer_with_data(&to_le(&routing));
+    let routed = RoutedBlobsBuffer::new_for(
+        &mut context,
+        turbospark_gpu::moe_gguf_source(),
+        "moe_phase1_gate_up_act_q8_0",
+        false,
+    )
+    .expect("arg buffer");
+    let refs: Vec<(&metal::Buffer, u64)> = blobs.iter().map(|b| (b, 0u64)).collect();
+    routed
+        .bind_for(
+            &mut context,
+            turbospark_gpu::moe_gguf_source(),
+            "moe_phase1_gate_up_act_q8_0",
+            false,
+            &refs,
+        )
+        .expect("bind");
+
+    let pass = context.begin_pass();
+    for blob in &blobs {
+        pass.use_read_buffer(blob);
+    }
+    encode_inkling2_gguf_phase1(
+        &mut context,
+        &pass,
+        gate_up,
+        &routed,
+        &offsets,
+        (&x_buf, 0),
+        (&acts_buf, 0),
+        d_dim as u32,
+        f_dim as u32,
+        top_k as u32,
+        gate_cap,
+        up_cap,
+    )
+    .expect("phase1");
+    encode_inkling2_gguf_phase2(
+        &mut context,
+        &pass,
+        down,
+        &routed,
+        &offsets,
+        (&acts_buf, 0),
+        (&routing_buf, 0),
+        (&y_buf, 0),
+        d_dim as u32,
+        f_dim as u32,
+        top_k as u32,
+    )
+    .expect("phase2");
+    pass.commit_and_wait();
+
+    let got = read_f16(&y_buf, d_dim);
+    let mut peak = 0f32;
+    for d in 0..d_dim {
+        let want = expected[d];
+        peak = peak.max(want.abs());
+        let tol = 5e-2_f32.max(want.abs() * 3e-2);
+        assert!(
+            (got[d] - want).abs() <= tol,
+            "inkling {gate_up:?}/{down:?} top_k={top_k} d={d}: got {} want {want}",
+            got[d]
+        );
+    }
+    assert!(
+        peak > 0.1,
+        "inkling {gate_up:?}/{down:?}: expected output too small to prove anything: {peak}"
+    );
+}
+
+fn ink_all() -> Vec<Ink> {
+    let mut v = vec![Ink::Q8_0, Ink::Q4K];
+    v.extend(MoeExtType::ALL.iter().map(|&e| Ink::Ext(e)));
+    v
+}
+
+#[test]
+fn inkling_mode_matches_the_reference_for_every_type() {
+    for kind in ink_all() {
+        // Phase 2 needs the expert width tiled by the block: types with
+        // 256-element blocks run phase 2 at 256 here (DIMS), as phase 1 does.
+        run_inkling_case(kind, kind, 2);
+    }
+}
+
+#[test]
+fn inkling_mode_reduces_all_eight_slots() {
+    for kind in [
+        Ink::Q8_0,
+        Ink::Ext(MoeExtType::Iq4Nl),
+        Ink::Ext(MoeExtType::Nvfp4),
+        Ink::Ext(MoeExtType::Q2_0),
+    ] {
+        run_inkling_case(kind, kind, FIXED_SLOTS);
+    }
+}
+
+/// The combinations the published Inkling GGUFs ship (gate-up / down).
+#[test]
+fn inkling_mode_published_mixes() {
+    use MoeExtType as E;
+    for (g, d) in [
+        (Ink::Ext(E::Iq2Xxs), Ink::Ext(E::Iq4Nl)),
+        (Ink::Ext(E::Iq2Xxs), Ink::Ext(E::Q2_0)),
+        (Ink::Ext(E::Iq1S), Ink::Ext(E::Nvfp4)),
+        (Ink::Ext(E::Iq3Xxs), Ink::Ext(E::Nvfp4)),
+        (Ink::Q4K, Ink::Ext(E::Q5_0)),
+        (Ink::Ext(E::Nvfp4), Ink::Q8_0),
+    ] {
+        run_inkling_case(g, d, 3);
+    }
 }

@@ -373,6 +373,28 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   the converter (not the source bytes) or re-quantized types (Q8_0 in the
   ggml-org Q8_0 file, Q5_K/Q8_0 on the MXFP8 layers of unsloth's), which the
   Inkling MoE kernels do not read.
+- DONE (2026-11-21): GGUF expert kernels. Header inventory of the published
+  files (ggml-org Q8_0 and IQ4_NL, `inkling2_loop`, 704 tensors; eight
+  unsloth UD mixes, the older `inkling2`, 734 tensors with per-expert F32
+  `.scale` on 20 layers): gate-up (the fused `ffn_gate_up_exps`) ships Q8_0,
+  NVFP4, IQ4_NL, IQ4_XS, IQ3_XXS, IQ3_S, IQ2_S, IQ2_XS, IQ2_XXS, IQ1_S, Q3_K,
+  Q4_K or Q5_K; down ships Q8_0, NVFP4, IQ4_NL, Q2_0, MXFP4 or Q5_0 (the
+  expert width 1152 is not a multiple of 256, so no 256-block type can be a
+  down); attention, embedding and head use Q4_K to Q8_0, IQ3_XXS, IQ3_S and
+  IQ4_XS, which `encode_gemv_any` already runs. The GGUF routed pairs
+  (`moe_gguf.metal`, `moe_gguf_ext.metal`) gained an Inkling mode behind
+  function constants 112-114 (`moe.metal`: outer scales from a record at
+  `gate_s`/`up_s`/`down_s`, the softcapped SwiGLU, an outer-scaled down
+  value, no residual), reached through `gpu::encode_inkling2_gguf_phase{1,2}`
+  for Q8_0, Q4_K and every `MoeExtType`. Unset, the helpers are the exact
+  previous expressions. Parity (`moe_gguf_ext_parity.rs`): all 27 types in
+  the mode, eight slots with poisoned unused acts, the six published mixes.
+  Four Inkling-branch mutants fail only the Inkling cases (the 27
+  `moe_gguf_parity` cases still pass), and two default-branch mutants fail
+  both suites. MXFP4 is refused in the mode (its pair binds a bias plane and
+  bakes `top_k`); one layer of one UD file uses it. Not done: the intake
+  (fused gate-up split, `.scale` into the outer record, F32 1-D tensors to
+  BF16), the runtime wiring, a gate against llama.cpp.
 - MEASURED (2026-11-21): DSpark drafter acceptance, offline. The drafter is
   the bundled `mtp.safetensors` of `mlx-community/Inkling-2-Mini-oQ4e-mtp`
   (BF16, 3 layers, block 8; the same weights unsloth ships as a GGUF). The
