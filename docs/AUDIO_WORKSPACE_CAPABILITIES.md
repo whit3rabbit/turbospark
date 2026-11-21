@@ -1,6 +1,6 @@
 # Native Audio capability audit
 
-This inventory covers 58 families, including local Mel-RoFormer,
+This inventory covers 60 families, including local Mel-RoFormer,
 MossFormer2, SAM-Audio, and DialogueSidon additions. A declared portable method
 is not a qualified Metal workflow. `audio_families.json` carries the same discovery
 records returned by `ts_audio_capabilities_json`; pinned installation profiles

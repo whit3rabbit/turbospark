@@ -3,9 +3,9 @@
 //! Token tensors are row-major `[sequences, length, width]` f32. A dual-path
 //! block reads the `[bands, frames, width]` grid as `bands` sequences along
 //! time, then transposes it to `[frames, bands, width]` for the pass across
-//! bands. Linear projections and non-causal attention dispatch to the
-//! optional device backend ([`Exec`]); every other operation, the selective
-//! scan included, runs on the host.
+//! bands. Linear projections above a size threshold, non-causal attention
+//! and the selective scan dispatch to the optional device backend
+//! ([`Exec`]); every other operation runs on the host.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;

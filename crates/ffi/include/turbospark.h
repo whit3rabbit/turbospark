@@ -2123,8 +2123,9 @@ typedef struct TsAudioJob TsAudioJob;
  * 100) explicitly: an omitted steps means the request type's 30, not the
  * model's default of 16 (8, 16 and 32 are the app's Fast, Balanced and Best).
  *
- * SPEECH ENHANCEMENT (task "enhancement", family "mossformer2_se", portable
- * CPU, mono 48 kHz out). input_sample_rate is required. The run returns the
+ * SPEECH ENHANCEMENT (task "enhancement", families "voice_isolator" on Metal
+ * and "mossformer2_se" on the CPU, mono 48 kHz out). input_sample_rate is
+ * required. The run returns the
  * cleaned voice as kind 2 PCM, as long as the input resampled to 48 kHz and
  * at most 661 seconds of it; the removed part is input minus voice at 48 kHz.
  * Progress is kind 1 {"stage":"enhance","completed":n,"total":m}, one step

@@ -26,7 +26,8 @@ USAGE:
     turbospark-enhance --model MODEL --input WAV --output WAV \\
         [--task enhance|separate] [--background WAV] [--wav-format pcm16|float32]
 
---model is an installed audio alias (mossformer2-se-48k-fp16, or
+--model is an installed audio alias (voice-isolator-v1,
+voice-isolator-v1-realtime or mossformer2-se-48k-fp16, or
 mel-roformer-vocals-v1 for --task separate) or a model directory. --input is
 any WAV at any rate from 8 kHz to 192 kHz.
 
@@ -39,7 +40,8 @@ mixed to mono) and writes the vocals as stereo 44.1 kHz; --background gets
 the instrumental (input as stereo 44.1 kHz, minus the vocals). At most 360
 seconds of output, and about 326 seconds of stereo 44.1 kHz input.
 
-CPU only for now.
+The voice isolator runs on Metal (TURBOSPARK_VOICE_ISOLATOR_DEVICE=cpu keeps
+it on the CPU); MossFormer2 SE and Mel-RoFormer run on the CPU.
 ";
 
 #[derive(Debug, Clone, PartialEq)]

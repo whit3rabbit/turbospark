@@ -2,9 +2,10 @@
 //!
 //! With [`Device::Metal`] the network's projections (every linear layer, the
 //! bulk of its arithmetic) and its non-causal attention (the offline time
-//! attention and every band attention) run on `gpu::Music3Device` in F32;
-//! the selective scans, norms, the causal stream attention and the STFT stay
-//! on the CPU. With [`Device::Cpu`] it is the portable f32 port throughout.
+//! attention and every band attention) and the Mamba selective scans run on
+//! `gpu::Music3Device` in F32; norms, the causal stream attention, small
+//! per-band projections and the STFT stay on the CPU. With [`Device::Cpu`]
+//! it is the portable f32 port throughout.
 
 use std::path::Path;
 use std::rc::Rc;
