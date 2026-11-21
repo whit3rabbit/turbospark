@@ -29,35 +29,6 @@
 constant constexpr uint kInkRowsPerTG = 8;
 constant constexpr uint kInkMaxSlots = 8;
 
-// E4M3FN, bias 7, no infinities. 0x7F / 0xFF (NaN) never reach this function.
-static inline float ink_e4m3(uint b) {
-    const uint e = (b >> 3) & 15u;
-    const uint m = b & 7u;
-    const float mag = (e == 0u) ? float(m) * 0.001953125f   // m * 2^-9
-                                : ldexp(1.0f + float(m) * 0.125f, int(e) - 7);
-    return (b & 0x80u) ? -mag : mag;
-}
-
-// ldexp on the element, not a separately formed 2^(e-127): small exponents
-// would make that factor subnormal, and fast math may flush it to zero.
-static inline float mxfp8_elem(device const uint8_t* blk, uint e) {
-    return ldexp(ink_e4m3(blk[1u + e]), int(blk[0]) - 127);
-}
-
-#define INK_ROW(NAME, BLOCK_ELEMS, BLOCK_BYTES, ELEM)                                    \
-static inline float ink_##NAME##_row(                                                    \
-    device const uint8_t* row, device const half* x, uint n, uint lane) {                \
-    const uint n_blocks = n / BLOCK_ELEMS;                                               \
-    float acc = 0.0f;                                                                    \
-    for (uint b = 0; b < n_blocks; ++b) {                                                \
-        device const uint8_t* blk = row + b * BLOCK_BYTES;                               \
-        for (uint e = lane; e < BLOCK_ELEMS; e += 32) {                                  \
-            acc = fma(ELEM(blk, e), float(x[b * BLOCK_ELEMS + e]), acc);                 \
-        }                                                                                \
-    }                                                                                    \
-    return simd_sum(acc);                                                                \
-}
-
 static inline float ink_outer(device const uint8_t* base, uint off) {
     return *(device const float*)(base + off);
 }
@@ -131,7 +102,87 @@ kernel void moe_inkling2_phase2_##NAME(                                         
     }                                                                                    \
 }
 
-INK_ROW(nvfp4, 64, 36, nvfp4_elem)
-INK_ROW(mxfp8, 32, 33, mxfp8_elem)
+// E2M1 by code; index 8 is -0, which adds nothing either way.
+constant constexpr float kInkE2M1[16] = {
+    0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f,
+    -0.0f, -0.5f, -1.0f, -1.5f, -2.0f, -3.0f, -4.0f, -6.0f};
+
+// NVFP4 row dot, one 16-element sub-block per lane per step. The earlier
+// per-element form (a lane per element, `nvfp4_elem`) re-decoded the
+// sub-block scale and did a byte load per element, and ran at ~50 GB/s on
+// the Mini's experts (dispatch profile, 2026-11-21). Here a
+// lane loads the sub-block's 8 code bytes as two words, decodes its scale
+// once, and multiplies the scale into the 16-term sum. Values are the same as
+// `nvfp4_elem`'s; only the summation order differs.
+//
+// Sub-block j of the row is block j / 4, sub-block j % 4: scale byte
+// blk[s], codes blk[4 + 8 s .. 12 + 8 s], element r in the low nibble of
+// byte r (r < 8) or the high nibble of byte r - 8. Its x elements are
+// x[16 j .. 16 j + 16]. REQUIRES a 4-byte-aligned row (36-byte blocks keep
+// it once the row start is aligned; the runtime refuses unaligned offsets).
+static inline float ink_nvfp4_row(
+    device const uint8_t* row, device const half* x, uint n, uint lane) {
+    const uint n_sub = n / 16u;
+    float acc = 0.0f;
+    for (uint j = lane; j < n_sub; j += 32u) {
+        device const uint8_t* blk = row + (j >> 2) * 36u;
+        const uint s = j & 3u;
+        device const uint* q = (device const uint*)(blk + 4u + s * 8u);
+        const uint q0 = q[0];
+        const uint q1 = q[1];
+        device const half4* xv = (device const half4*)(x + j * 16u);
+        const float4 x0 = float4(xv[0]);
+        const float4 x1 = float4(xv[1]);
+        const float4 x2 = float4(xv[2]);
+        const float4 x3 = float4(xv[3]);
+        const float4 w0 = float4(kInkE2M1[q0 & 15u], kInkE2M1[(q0 >> 8) & 15u],
+                                 kInkE2M1[(q0 >> 16) & 15u], kInkE2M1[(q0 >> 24) & 15u]);
+        const float4 w1 = float4(kInkE2M1[q1 & 15u], kInkE2M1[(q1 >> 8) & 15u],
+                                 kInkE2M1[(q1 >> 16) & 15u], kInkE2M1[(q1 >> 24) & 15u]);
+        const float4 w2 = float4(kInkE2M1[(q0 >> 4) & 15u], kInkE2M1[(q0 >> 12) & 15u],
+                                 kInkE2M1[(q0 >> 20) & 15u], kInkE2M1[q0 >> 28]);
+        const float4 w3 = float4(kInkE2M1[(q1 >> 4) & 15u], kInkE2M1[(q1 >> 12) & 15u],
+                                 kInkE2M1[(q1 >> 20) & 15u], kInkE2M1[q1 >> 28]);
+        const float sum = dot(w0, x0) + dot(w1, x1) + dot(w2, x2) + dot(w3, x3);
+        acc = fma(nvfp4_scale(blk[s]), sum, acc);
+    }
+    return simd_sum(acc);
+}
+
+// E4M3FN (bias 7, no infinities) without a branch: a normal code builds
+// its fp32 bits directly (exponent e - 7 + 127, mantissa m << 20), a
+// subnormal is m * 2^-9. NaN codes never reach here (the repack refuses them).
+static inline float ink_e4m3_fast(uint b) {
+    const uint e = (b >> 3) & 15u;
+    const uint m = b & 7u;
+    const float norm = as_type<float>(((e + 120u) << 23) | (m << 20));
+    const float mag = (e == 0u) ? float(m) * 0.001953125f : norm;
+    return as_type<float>(as_type<uint>(mag) | ((b & 0x80u) << 24));
+}
+
+// MXFP8 row dot, one 33-byte block (32 elements) per lane per step: the 32
+// codes as eight unaligned 4-byte loads, the block exponent applied once to
+// the block sum. `ldexp` on the sum, not a separately formed 2^(e-127):
+// small exponents would make that factor subnormal, and fast math may flush
+// it to zero.
+static inline float ink_mxfp8_row(
+    device const uint8_t* row, device const half* x, uint n, uint lane) {
+    const uint n_blocks = n / 32u;
+    float acc = 0.0f;
+    for (uint b = lane; b < n_blocks; b += 32u) {
+        device const uint8_t* blk = row + b * 33u;
+        device const packed_uchar4* q = (device const packed_uchar4*)(blk + 1u);
+        device const half4* xv = (device const half4*)(x + b * 32u);
+        float sum = 0.0f;
+        for (uint i = 0; i < 8u; ++i) {
+            const uchar4 c = uchar4(q[i]);
+            const float4 w = float4(ink_e4m3_fast(c.x), ink_e4m3_fast(c.y),
+                                    ink_e4m3_fast(c.z), ink_e4m3_fast(c.w));
+            sum += dot(w, float4(xv[i]));
+        }
+        acc += ldexp(sum, int(blk[0]) - 127);
+    }
+    return simd_sum(acc);
+}
 INK_PAIR(nvfp4, 64, 36)
 INK_PAIR(mxfp8, 32, 33)

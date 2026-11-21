@@ -303,6 +303,7 @@ impl RealForwardRunner {
                 &self.slot_buffers,
                 slot,
                 ip,
+                tr,
             )?;
             tr.encode_ms += (t1 - t0).as_secs_f64() * 1e3;
             tr.wait_ms += (t2 - t1).as_secs_f64() * 1e3;
@@ -767,7 +768,9 @@ fn layer_moe(
     slot_buffers: &[Vec<gpu::MetalBuffer>],
     slot: usize,
     ip: usize,
+    tr: &mut TokenTrace,
 ) -> Result<(usize, usize), RealForwardError> {
+    let t0 = std::time::Instant::now();
     let g = RealForwardError::Gpu;
     let (h, ffn, experts, top_k) = (
         c.h,
@@ -782,6 +785,7 @@ fn layer_moe(
         top_k,
         arch.routed_scaling_factor as f32,
     );
+    let t1 = std::time::Instant::now();
     let streamer = streamers
         .get_mut(ip)
         .and_then(Option::as_mut)
@@ -792,6 +796,9 @@ fn layer_moe(
     let cache_slots = streamer
         .execute_expert_cache_plan(&plan)
         .map_err(|e| RealForwardError::Unsupported(format!("expert stream: {e}")))?;
+    let t2 = std::time::Instant::now();
+    tr.route_ms += (t1 - t0).as_secs_f64() * 1e3;
+    tr.stream_ms += (t2 - t1).as_secs_f64() * 1e3;
     let mut routing16 = [f16::from_f32(0.0); gpu::MAX_STREAMED_EXPERTS];
     for (i, &w) in weights.iter().enumerate() {
         routing16[i] = f16::from_f32(w);
@@ -882,6 +889,10 @@ struct TokenTrace {
     wait_ms: f64,
     /// Host routing, expert plan, reads and MoE encoding.
     moe_host_ms: f64,
+    /// Of `moe_host_ms`: router readback and host top-k.
+    route_ms: f64,
+    /// Of `moe_host_ms`: expert cache plan and the pread of misses.
+    stream_ms: f64,
     /// Summed GPU execution of every command buffer of the token.
     gpu_ms: f64,
     hits: usize,
@@ -892,8 +903,16 @@ impl TokenTrace {
     fn report(&self, position: usize, wall_ms: f64) {
         eprintln!(
             "inkling2 trace pos {position} wall {wall_ms:.1} ms: gpu {:.1}, wait {:.1}, \
-             encode {:.1}, moe host {:.1} ms; experts {} hit / {} read",
-            self.gpu_ms, self.wait_ms, self.encode_ms, self.moe_host_ms, self.hits, self.misses
+             encode {:.1}, moe host {:.1} (route {:.1}, stream {:.1}) ms; \
+             experts {} hit / {} read",
+            self.gpu_ms,
+            self.wait_ms,
+            self.encode_ms,
+            self.moe_host_ms,
+            self.route_ms,
+            self.stream_ms,
+            self.hits,
+            self.misses
         );
     }
 }

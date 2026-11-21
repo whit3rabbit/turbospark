@@ -353,6 +353,22 @@ Stage A: reachable and correct (decode only)
    gates, then a catalog row.
 
 Stage B: speed and memory (after A's gates, each with a kill switch)
+- DONE (2026-11-21): vectorized expert rows. `TURBOSPARK_DISPATCH_PROFILE=1`
+  on `inkling2_logits` (48 warm tokens, 32 slots) ranked the NVFP4 pair at
+  42% of GPU time, about 50 GB/s: the row loop decoded one element per lane
+  with a byte load and a scale decode each. NVFP4 now takes a 16-element
+  sub-block per lane (two word loads, one scale); MXFP8 a 33-byte block per
+  lane with a branchless E4M3 decode. Profile rows: NVFP4 phase 1 18.6 to
+  6.5 ms, phase 2 9.2 to 3.7 ms per token (profile mode inflates absolutes;
+  rank only). The trace's GPU time went 51 to 43 ms per token on a host with
+  18 GB of swap in use, so that is not a protocol number. Same dequantized
+  values, different summation order: 19/19 and 265/265 top-1 against
+  llama.cpp, mean KL 4.9e-4 and 5.7e-4, unchanged. No kill switch: it is
+  the same math, and the old kernel is in git history. NVFP4 rows must be
+  4-byte aligned, and open refuses an install where they are not.
+  Next GPU costs by the same profile: 634 BF16 GEMVs per token (about half
+  of GPU time, many tiny: sinks, gates, conv projections) and about 11 ms
+  per token of wait above GPU time from the 48 commit round trips.
 - The router round trip: 48 GPU-to-CPU syncs per token. Every family pays one
   per MoE layer today. The routed pipeline overlaps the next layer; measure
   before designing past it.

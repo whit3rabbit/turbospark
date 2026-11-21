@@ -341,6 +341,14 @@ impl RealInkling2State {
                     "layer {l}: experts disagree on sub-tensor offsets"
                 )));
             }
+            // The NVFP4 kernel loads code bytes as 32-bit words.
+            if kind == gpu::Inkling2ExpertType::Nvfp4
+                && [gate, up, down].iter().any(|s| s.offset % 4 != 0)
+            {
+                return Err(unsupported(format!(
+                    "layer {l}: NVFP4 expert rows are not 4-byte aligned"
+                )));
+            }
             let o = outer.offset as u32;
             offsets.push(gpu::MoeExpertOffsets {
                 gate_w: gate.offset as u32,
