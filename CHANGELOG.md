@@ -57,6 +57,10 @@ when this file gets updated relative to the version bump and the tag.
   models now follows that answer instead of the model's name, so a headless or
   Q3_K GGUF named "MTP" is no longer badged, and the Hub detail shows the badge
   for a file that would speculate.
+- Meetings: your own notes sit beside the transcript, generated notes
+  stream in as they are written, and Ask answers questions across meetings.
+  Generated notes only fill `item.summary`; transcript segments are never
+  changed (`swift/docs/SWIFT_AUDIO_MEETING_NOTES.md`).
 
 ### Changed
 - Rust API, source-breaking for struct literals: `catalog::ProbeReport` gains
