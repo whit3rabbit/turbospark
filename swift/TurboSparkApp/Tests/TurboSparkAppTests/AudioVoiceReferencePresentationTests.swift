@@ -109,16 +109,26 @@ final class AudioVoiceReferencePresentationTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let vault = ProfileVaultStore(rootProvider: { root }, profileIDProvider: { "voice-presentation" }, migrateLegacyData: false)
         _ = try vault.prepareForLaunch()
+        // An empty catalog, never the Mac's real installs: each test sets its own profiles.
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let empty = try decoder.decode(AudioInstalledReport.self, from: Data(
+            #"{"installed":[],"needs_adoption":[],"incompatible":[],"other_audio":[],"not_connected":[]}"#.utf8))
         let controller = AudioWorkspaceController(library: AudioLibraryStore(repository: ProfileRepository(store: vault)),
-                                                  assets: ManagedAssetStore(vault: vault))
+                                                  assets: ManagedAssetStore(vault: vault),
+                                                  catalogReader: { AudioCatalogSnapshot(profiles: [], installed: empty, capabilities: []) })
         defer { controller.shutdown() }
         while controller.isRefreshingModels { try await Task.sleep(for: .milliseconds(10)) }
         try await body(controller)
     }
 
+    private static let curatedAlias = ["megatts3": "megatts3-f32", "qwen3_tts": "qwen3-tts-12hz-17b-base-8bit"]
+
     private func profile(family: String, operations: [String], repository: String) -> AudioProfile {
         AudioProfile(
-            identity: AudioProfileIdentity(task: .textToSpeech, alias: family + "-test", repository: repository,
+            // A curated clone alias: the Voice Cloning page lists only those
+            // (`curatedCloneAliases`), so a made-up alias would never reach it.
+            identity: AudioProfileIdentity(task: .textToSpeech, alias: Self.curatedAlias[family] ?? family + "-test", repository: repository,
                                            revision: String(repeating: "0", count: 40), assetFingerprint: family),
             family: family, displayName: family,
             capabilities: AudioCapabilities(languages: ["en"], operations: operations, backend: "portable_cpu",
@@ -178,7 +188,7 @@ final class AudioVoiceReferencePresentationTests: XCTestCase {
     @MainActor func testStepsFollowTheSelectedEngine() async throws {
         try await withController { controller in
             let mega = profile(family: "megatts3", operations: ["synthesize", "voice_clone"], repository: "someone/megatts3")
-            let qwen = profile(family: "qwen3_tts", operations: ["synthesize"], repository: "Qwen/Qwen3-TTS-12Hz-0.6B-Base-x")
+            let qwen = profile(family: "qwen3_tts", operations: ["synthesize"], repository: "Qwen/Qwen3-TTS-12Hz-1.7B-Base-x")
             controller.profiles = [mega, qwen]
             controller.selectPage(.voiceClone)
             controller.selectModel(nil)

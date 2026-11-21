@@ -16,7 +16,10 @@ final class AudioVoiceCloneWorkspaceTests: XCTestCase {
 
     private func profile(family: String, operations: [String]) -> AudioProfile {
         AudioProfile(
-            identity: AudioProfileIdentity(task: .textToSpeech, alias: family + "-test", repository: "someone/" + family + "-Base-",
+            // A curated clone alias: the Voice Cloning page lists only those
+            // (`curatedCloneAliases`), so a made-up alias would never reach it.
+            identity: AudioProfileIdentity(task: .textToSpeech, alias: family == "megatts3" ? "megatts3-f32" : family + "-test",
+                                           repository: "someone/" + family + "-Base-",
                                            revision: String(repeating: "0", count: 40), assetFingerprint: family),
             family: family, displayName: family,
             capabilities: AudioCapabilities(languages: ["en"], operations: operations, backend: "portable_cpu",
@@ -30,11 +33,18 @@ final class AudioVoiceCloneWorkspaceTests: XCTestCase {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let vault = ProfileVaultStore(rootProvider: { self.root }, profileIDProvider: { "voice-clone-workspace" }, migrateLegacyData: false)
         _ = try vault.prepareForLaunch()
+        let mega = profile(family: "megatts3", operations: ["synthesize", "voice_clone"])
+        // The catalog is this fixture, never the Mac's real installs, so a
+        // model installed here cannot change what the page lists.
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let empty = try decoder.decode(AudioInstalledReport.self, from: Data(
+            #"{"installed":[],"needs_adoption":[],"incompatible":[],"other_audio":[],"not_connected":[]}"#.utf8))
         let controller = AudioWorkspaceController(library: AudioLibraryStore(repository: ProfileRepository(store: vault)),
-                                                  assets: ManagedAssetStore(vault: vault))
+                                                  assets: ManagedAssetStore(vault: vault),
+                                                  catalogReader: { AudioCatalogSnapshot(profiles: [mega], installed: empty, capabilities: []) })
         controller.liveTranscription = false
         while controller.isRefreshingModels { try await Task.sleep(for: .milliseconds(10)) }
-        let mega = profile(family: "megatts3", operations: ["synthesize", "voice_clone"])
         controller.profiles = [mega]
         controller.selectPage(.voiceClone)
         controller.selectModel(mega.identity.alias)
