@@ -73,11 +73,10 @@ const VARIANTS: [Variant; 6] = [
 ];
 
 fn binary_path() -> PathBuf {
-    let mut path = std::env::current_exe().expect("test binary path");
-    path.pop();
-    path.pop();
-    path.push("turbospark-model");
-    path
+    // Cargo's own path for this crate's binary. Popping two directories off
+    // the test binary assumed target/<profile>/deps/<test>, which newer
+    // cargo's build-dir layout (build/<pkg>/<hash>/out/<test>) breaks.
+    PathBuf::from(env!("CARGO_BIN_EXE_turbospark-model"))
 }
 
 fn directory_bytes(root: &Path) -> u64 {

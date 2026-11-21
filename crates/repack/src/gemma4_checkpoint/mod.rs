@@ -682,6 +682,27 @@ pub fn write_qwen2_dense_install_streamed(
     write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
 }
 
+/// Dense Llama / Mistral install write through the shared MLX checkpoint
+/// walk. Dense only: routed experts have no safetensors writer on the llama
+/// flow, and `parse_llama_config` refuses them, so this guards both.
+pub fn write_llama_dense_install_streamed(
+    dir: &Path,
+    arch: &ArchConfig,
+    model_id: &str,
+    shards: &Gemma4Shards<'_>,
+    quant: &Gemma4Quant,
+    progress: impl FnMut(&str),
+) -> Result<(), Box<dyn std::error::Error>> {
+    if arch.family != ModelFamily::Llama || arch.num_experts != 0 {
+        return Err(Box::new(Gemma4Error::Config(format!(
+            "write_llama_dense_install_streamed needs a dense llama arch, got {} with {} experts",
+            arch.family.as_str(),
+            arch.num_experts
+        ))));
+    }
+    write_gemma4_install_streamed(dir, arch, model_id, shards, quant, progress)
+}
+
 /// DeepSeek-VL2 (`deepseek2` family, plain-attention trunk) install write
 /// through the shared MLX checkpoint walk. The caller must have run
 /// `canonicalize_deepseek_vl2_header` on every shard header first (the

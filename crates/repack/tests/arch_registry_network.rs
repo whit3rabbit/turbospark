@@ -172,6 +172,7 @@ fn swift_qwen38_q2_0_shards_derive_the_supported_qwen4exp_architecture() {
             GgufMapping::Routed { .. } | GgufMapping::RoutedFusedGateUp { .. } => "routed",
             GgufMapping::Ignored { .. }
             | GgufMapping::ZeroTailRopeFreqs
+            | GgufMapping::LlamaRopeFreqFactors
             | GgufMapping::MuseQkNorm { .. } => "ignored",
         };
         *by_role.entry((role, kind)).or_insert(0usize) += 1;

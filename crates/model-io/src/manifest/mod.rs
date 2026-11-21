@@ -32,7 +32,19 @@ pub const MANIFEST_VERSION_MAJOR: i64 = 1;
 /// Minor 1: `model_weights.bin`'s index region ends with the format
 /// trailer (`resident_index::INDEX_MAGIC`). Minor 0 installs have none and
 /// still load.
-pub const MANIFEST_VERSION_MINOR: i64 = 1;
+///
+/// Minor 2: `arch.ropeFreqFactors` (Llama 3.x per-pair rope divisors).
+/// Unlike minor 1 this is NOT something an older reader may skip: it would
+/// decode with unscaled frequencies, fluent and wrong. So the writer stamps
+/// minor 2 ONLY on an install that carries the field
+/// ([`MANIFEST_VERSION_MINOR_BASE`] otherwise), and a pre-minor-2 reader
+/// refuses exactly those installs by version while every other install it
+/// can read stays readable.
+pub const MANIFEST_VERSION_MINOR: i64 = 2;
+
+/// The minor the writer stamps on an install that needs nothing past
+/// minor 1. See [`MANIFEST_VERSION_MINOR`].
+pub const MANIFEST_VERSION_MINOR_BASE: i64 = 1;
 
 /// Required file entries (relative to `model.gturbo/`).
 pub const REQUIRED_FILES: [&str; 2] = ["model_weights.bin", "packed_experts/layout.json"];

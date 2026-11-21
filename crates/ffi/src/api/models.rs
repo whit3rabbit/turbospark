@@ -558,6 +558,31 @@ pub unsafe extern "C" fn ts_expert_residency_for_install_json(
     })
 }
 
+/// Whether a session opened on the install at `path` with default options
+/// would speculate, without opening it or loading weights. See
+/// `turbospark.h` for the JSON shape. Always unavailable off macOS.
+#[no_mangle]
+pub unsafe extern "C" fn ts_install_speculation_json(
+    path: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let path =
+            strings::required(path, "path").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        #[cfg(target_os = "macos")]
+        let json = models::install_speculation_json(path)
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        #[cfg(not(target_os = "macos"))]
+        let json = {
+            let _ = path;
+            models::speculation_preflight_json(Some(
+                "speculative decoding runs only on macOS".to_string(),
+            ))
+        };
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
 /// Returns 1 if the host chip is an Apple Silicon M4 or newer capable of ANE prefill,
 /// 0 otherwise.
 #[no_mangle]

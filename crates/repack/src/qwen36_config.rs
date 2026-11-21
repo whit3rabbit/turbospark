@@ -1126,6 +1126,7 @@ fn parse_qwen_family_config(json: &str, family: ModelFamily) -> Result<ArchConfi
         // then has to satisfy rather than a claim it might contradict.
         ple,
         short_conv_kernel_size: 0,
+        rope_freq_factors: Vec::new(),
     })
 }
 

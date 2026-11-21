@@ -16,6 +16,7 @@ The GGUF repack walk: takes a parsed `GgufHeader` plus a `RangeSource` and produ
 - `minimax_gguf_sizing` / `MiniMaxSizing` [sizing.rs:minimax_gguf_sizing]: header-only storage and KV sizing for MiniMax M2
 - `verify_plan` / `zero_tail_pattern` [rope_freqs.rs:zero_tail_pattern]: pure check of the LFM3 `rope_freqs.weight` zero-tail encoding
 - `qwen4exp_tensor_is_transcoded` [transcode.rs:qwen4exp_tensor_is_transcoded]: whether Qwen4Exp converts a resident tensor to BF16 (shared with catalog probe)
+- `gguf_speculation` / `GgufSpeculation` [speculation.rs:gguf_speculation]: whether a dense `qwen35` file's install would speculate, from the header and `classify`, with the runtime gate's rules (`model_io::mtp_verify`); `None` for other families. Its per-tensor dtype prediction is held against the walk by `predicted_dtypes_match_the_walk`
 - Internal: `plan::classify`, `expert_stride`, `plan_one_layer`, `plan_one_layer_shape`, `layer_file_bytes` [plan.rs]; `resident_entries`, `transcode_f32` [transcode.rs]; `apply_source_convention(_bytes)` [conventions.rs]; `write_gguf_ngram_table` [ngram.rs]
 
 ## Invariants
@@ -23,7 +24,8 @@ The GGUF repack walk: takes a parsed `GgufHeader` plus a `RangeSource` and produ
 - Blobs are numbered by position: routed layer must equal `seq + num_dense_leading_layers`, else refused [mod.rs:write_gguf_install_streamed_resumable]
 - Leftover `layer_NN.bin` is adopted only if provenance matches the stored record AND the file size equals the header-derived expected size [mod.rs:write_gguf_install_streamed_resumable] [plan.rs:layer_file_bytes]. On a provenance mismatch leftovers are deleted [resume.rs:prepare]; on a size mismatch with matching provenance the layer is rewritten, not deleted
 - Only a full 40-hex commit counts as a source identity; a branch name yields `None` and no resume [resume.rs:ResumeProvenance::new]
-- Blocks at or above `num_layers` (multi-token-prediction head) are ignored, not mapped into the trunk [plan.rs:head_block_index]
+- Blocks at or above `num_layers` (multi-token-prediction head) are never mapped into the trunk [plan.rs:head_block_index]. For dense `qwen35` only, block `num_layers` is ingested under `mtp.*` when it holds exactly the 15 mapped tensors, else it is ignored whole; deeper blocks and other families are ignored [plan.rs:classify] [gguf_names/qwen.rs:map_qwen_gdn_dense_mtp_head]
+- The dense `qwen35` head's seven norms lose llama.cpp's `+1`; the trunk's keep it [conventions.rs:is_qwen_gdn_mtp_head_norm]
 - Routed weight shapes must exactly match arch hidden/expert dims; rank-2 only for F32 bias roles [plan.rs:routed_body_dims]
 - Header-derived byte sums use checked arithmetic; overflow is a refusal, not a wrapped stride [plan.rs:expert_stride] [plan.rs:per_expert_blob_bytes]
 - Expert stride is the page-aligned max per-expert blob over all routed layers, known from the header alone [plan.rs:expert_stride]

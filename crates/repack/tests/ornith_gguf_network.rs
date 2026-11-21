@@ -317,8 +317,11 @@ fn the_dense_header_derives_the_published_9b_shape() {
     }
 }
 
-/// **WHY Q8_0 IS THE INSTALLABLE QUANTIZATION AND `Q4_K_M` IS NOT**, asserted
-/// off the real headers rather than argued in prose.
+/// **WHY Q8_0 IS THE BYTE-COPY QUANTIZATION AND `Q4_K_M` IS NOT**, asserted
+/// off the real headers rather than argued in prose. (Update: the walk no
+/// longer refuses the Q4_K_M; it dequantizes `ssm_out`, restores the V-head
+/// order and re-encodes it as Q8_0, `gdn_out_proj_needs_q8_0_requant`. The
+/// header facts below, and Q8_0 being the lossless choice, still hold.)
 ///
 /// `linear_attn.out_proj` is the one tensor whose V-head de-interleave runs on
 /// COLUMNS, so a 128-column head must be a whole number of blocks

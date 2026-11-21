@@ -231,6 +231,67 @@ just equal size) to the one the full network re-stream wrote earlier the
 same day. `turbospark-check` opens it and speculative decoding auto-enables
 exactly as it does for the fully-streamed install.
 
+### From a GGUF (dense `qwen35` only)
+
+llama.cpp's converter (`conversion/qwen.py`, `_QwenMtpMixin`) writes the head
+as one more `blk.<num_layers>.` block: `mtp.fc`, `pre_fc_norm_embedding`,
+`pre_fc_norm_hidden` and `norm` become `nextn.{eh_proj,enorm,hnorm,
+shared_head_norm}`, and `mtp.layers.0.*` takes ordinary trunk suffixes. The
+GGUF walk maps that block back to `mtp.*` (`plan::classify`,
+`gguf_names::map_qwen_gdn_dense_mtp_head`) only when it holds exactly the
+fifteen tensors `MtpState::REQUIRED` binds. Otherwise the head is skipped
+whole and the trunk installs as before. Deeper head blocks and every other
+family are still skipped.
+
+**The converter adds 1 to the head's norms too.** Its `+1` rule matches every
+name ending `norm.weight` except `linear_attn.norm`, and the rename runs
+first, so all seven head norms arrive shifted. The runtime reads the head
+centered (the norm convention section above), so the walk subtracts 1 from
+those seven only. The trunk's norms keep the shift, as mlx-vlm's do.
+
+Verifying on a K-quant trunk needs batched Q4_K, Q5_K, Q6_K and Q8_0 GEMMs
+(`crates/gpu/src/shaders/dequant_kquant_batch.metal`). They are held
+bit-identical to the GEMVs a K-quant trunk decodes with
+(`dequant_kquant_gemm_parity.rs`), and `speculation_blocker` admits dtypes 6,
+7, 8 and 13. A K-quant `ssm_out` cannot keep its blocks (its V-head columns
+must be reordered and a 256-element block spans two heads), so the walk
+re-encodes it to Q8_0. Q4_K_M and Q6_K files ship `ssm_alpha`/`ssm_beta` as F32, which the
+walk narrows to BF16 (1), and the batched GDN verify sends `in_proj_a`/
+`in_proj_b` through `encode_gemm_any`, so a batched BF16 GEMM
+(`gemv_bf16_batch.metal`, `gemv_bf16_gemm_parity.rs`) is part of the set too.
+On a GGUF trunk the gate also scans every projection the verify dispatches,
+because these files mix block types per tensor, and a matrix of any other
+type (Q3_K, an IQ type) anywhere refuses at open.
+
+**What is verified, and what is not.** A synthetic Q4_K_M-shaped `qwen35`
+GGUF (`build_synthetic_qwen35_dense_gguf`) installs with its head, opens with
+speculation enabled, drafts, and gives a batched pass bit-identical to
+sequential produce (`crates/runtime/tests/gguf_qwen35_mtp.rs`).
+
+On a real file, `unsloth/Qwen3.5-2B-MTP-GGUF` (2026-11-19): its head block
+carries exactly the fifteen mapped names. The Q8_0, Q6_K, Q4_K_M and Q4_K_S
+files install with the head and speculate, and greedy output was
+byte-identical to `--speculative off` on three chat prompts for each. On
+Q8_0 the accept-length probe read 0.94 / 0.87 per-position acceptance at
+block 2, which says the head works and the norm unshift is right. On Q4_K_S
+(Q5_K on `attn_qkv`, `attn_v` and `ffn_down`) the probe is lossless under the
+default lazy tape at blocks 2, 4, 8 and 15, sequential and batched, with
+0.86 / 0.84 at block 2. The probe ends a batched round as the product loop
+does since 2026-11-19; before that it skipped `commit_pending` and diverged
+under the lazy tape for reasons unrelated to the dtype.
+
+On the 27B, `netprojects/Qwen3.8-27B-pi-adapted-GGUF` Q4_K_M (a LoRA-adapted
+trunk whose llama.cpp head block is the base model's): Q4_K/Q6_K trunk, Q4_K
+`ssm_out` re-encoded to Q8_0, all fifteen head tensors ingested. Greedy chat
+output was byte-identical with speculation on and off on three prompts, and
+the accept-length probe was lossless at blocks 2, 4, 8 and 15 under the
+default lazy tape, with 1.00 / 0.94 per-position acceptance and 1.94
+accepted per round at block 2. An adapted trunk did not cost the base head
+its acceptance on this prompt. The probe's block-2 batched arm measured
+2.23x against its own reference, whose 9.18 tok/s is low for this machine,
+so the host was likely loaded. Every timing here was a single unwarmed run,
+so none of it is a benchmark row.
+
 ## Measured results
 
 **Weights.** The installed head against the published BF16 shard,
@@ -381,6 +442,28 @@ What is UNMEASURED is different from what is deviating, and two things are:
 there is no cross-engine KL for the head against mlx-vlm's drafter (the bisect
 compares stage by stage on one step, which is not the same claim), and the
 chain's death around position 8 has a plausible cause and no evidence for it.
+
+## GGUF installs and the head
+
+Published GGUFs of this architecture can carry the head (for example
+`netprojects/Qwen3.8-27B-pi-adapted-GGUF`: `blk.64.nextn.eh_proj`, `enorm`,
+`hnorm`, `shared_head_norm` and a full attention and FFN block, in Q4_K/Q6_K).
+The GGUF walk excludes it from the trunk (`nextn_predict_layers` is subtracted
+from `block_count`) and reports the tensors as ignored, so a GGUF install has no
+head. **Two things are missing, and only one is in the repack.**
+
+1. Intake: mapping `blk.N.nextn.*` and the head block onto the `mtp.layers.0.*`
+   names `REQUIRED` lists. Small, and the head's types already have resident
+   GEMV kernels.
+2. The batched verify: `BATCHED_GEMM_DTYPES` is `[4, 15, 16]`, so a trunk whose
+   `q_proj` is Q4_K (dtype 7) resolves speculation to off with "the batched
+   verify covers INT4-affine...". Lifting that needs batched Q4_K, Q6_K and Q8_0
+   GEMM kernels with their own parity, performance and quality gates.
+
+Until (2) lands, ingesting the head changes nothing a user sees. The MLX route
+(`qwen38-27b-mtp`) is the way to speculate today. A head grafted onto a trunk it
+was not trained with, such as a LoRA-merged one, should draft with lower
+acceptance; that is unmeasured.
 
 ## Instruments
 

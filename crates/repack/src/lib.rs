@@ -33,6 +33,8 @@ mod gturbo_writer;
 mod hf_checkpoint;
 mod install_verifier;
 mod lfm3_config;
+mod llama_config;
+pub mod lora_merge;
 mod manifest_peek;
 mod museglimmer_config;
 pub mod quantize_on_install;
@@ -93,37 +95,38 @@ pub use gemma4_checkpoint::{
     read_pixtral_vision_entries, read_siglip_vision_entries, read_vision_entries,
     read_vision_entries_quantized, vision_arch_for_manifest, vision_should_ingest,
     write_deepseek_vl2_install_streamed, write_flint_install_streamed, write_gemma4_install,
-    write_gemma4_install_streamed, write_lfm3_install_streamed, write_muse_glimmer_install,
-    write_muse_glimmer_install_streamed, write_ngram_table, write_qwen2_dense_install_streamed,
-    write_qwen3_dense_install_streamed, write_qwen3_vl_install_streamed,
-    write_qwen4_exp_install_streamed, write_qwen_gdn_dense_install,
-    write_qwen_gdn_dense_install_streamed, write_qwen_gdn_dense_install_streamed_with_hadamard,
-    write_qwen_gdn_moe_install, write_qwen_gdn_moe_install_streamed,
-    write_unlimited_ocr2_install_streamed, write_vision_sidecar, ConvertedFp16, Gemma4Bucket,
-    Gemma4Error, Gemma4Quant, Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, NgramPlan,
-    NgramTableSpec, NgramTableWriter, PrismHadamard, QuantMode, VisionRead, AFFINE_1BIT_GROUP_SIZE,
-    AFFINE_2BIT_GROUP_SIZE, AFFINE_GROUP_SIZE, CLIP_MODEL_PREFIX, CLIP_PROJECTOR_PREFIX,
-    CLIP_RESIDENT_TENSORS, CLIP_SOURCE_PREFIXES, DEEPSEEK_OCR_IMAGE_TOKEN_ID,
-    DEEPSEEK_OCR_MODEL_TYPE, DEEPSEEK_VL2_IMAGE_TOKEN_ID, DEEPSEEK_VL2_MODEL_TYPE, DFLASH_PREFIX,
-    EMBED_VISION_PREFIX, GEMMA4_BLOCK_ROLES, GEMMA4_PROJECTOR_INSTALL_NAME,
-    GEMMA4_RESIDENT_TENSORS, GTURBO_PAGE_BYTES, LLAVA_MODEL_TYPE, MINICPM_BLOCK_ROLES,
-    MINICPM_MERGER, MINICPM_MERGER_PREFIX, MINICPM_SOURCE_PREFIXES, MINICPM_TOWER_RESIDENT,
-    MINICPM_VIT_MERGER, MINICPM_VIT_MERGER_PREFIX, MTP_PREFIX, MUSE_BLOCK_SOURCES,
-    MUSE_RESIDENT_TENSORS, MUSE_SOURCE_PREFIXES, OCR_SAM_PREFIX, OCR_SOURCE_PREFIXES,
-    ONEVISION_MODEL_TYPE, ONEVISION_NEWLINE, ONEVISION_RESIDENT_TENSORS, ONEVISION_SOURCE_PREFIXES,
-    PIXTRAL_BLOCK_ROLES, PIXTRAL_MODEL_TYPE, PIXTRAL_PROJECTOR_PREFIX, PIXTRAL_RESIDENT_TENSORS,
-    PIXTRAL_SOURCE_PREFIXES, PIXTRAL_TOWER_PREFIX, SIGLIP_MODEL_PREFIX, SIGLIP_PROJECTOR_PREFIX,
-    SIGLIP_RESIDENT_TENSORS, SIGLIP_SOURCE_PREFIXES, UNLIMITED_OCR_MODEL_TYPE, VISION_BLOCK_ROLES,
-    VISION_DEEPSTACK_MERGER_PREFIX, VISION_DEEPSTACK_MERGER_SUFFIXES, VISION_INSTALL_PREFIX,
-    VISION_PREFIX, VISION_QWEN25_BLOCK_ROLES, VISION_QWEN25_RESIDENT_TENSORS,
-    VISION_RESIDENT_TENSORS, VISION_SOURCE_PREFIXES,
+    write_gemma4_install_streamed, write_lfm3_install_streamed, write_llama_dense_install_streamed,
+    write_muse_glimmer_install, write_muse_glimmer_install_streamed, write_ngram_table,
+    write_qwen2_dense_install_streamed, write_qwen3_dense_install_streamed,
+    write_qwen3_vl_install_streamed, write_qwen4_exp_install_streamed,
+    write_qwen_gdn_dense_install, write_qwen_gdn_dense_install_streamed,
+    write_qwen_gdn_dense_install_streamed_with_hadamard, write_qwen_gdn_moe_install,
+    write_qwen_gdn_moe_install_streamed, write_unlimited_ocr2_install_streamed,
+    write_vision_sidecar, ConvertedFp16, Gemma4Bucket, Gemma4Error, Gemma4Quant,
+    Gemma4RepackOutput, Gemma4Shards, NarrowedRaw, NgramPlan, NgramTableSpec, NgramTableWriter,
+    PrismHadamard, QuantMode, VisionRead, AFFINE_1BIT_GROUP_SIZE, AFFINE_2BIT_GROUP_SIZE,
+    AFFINE_GROUP_SIZE, CLIP_MODEL_PREFIX, CLIP_PROJECTOR_PREFIX, CLIP_RESIDENT_TENSORS,
+    CLIP_SOURCE_PREFIXES, DEEPSEEK_OCR_IMAGE_TOKEN_ID, DEEPSEEK_OCR_MODEL_TYPE,
+    DEEPSEEK_VL2_IMAGE_TOKEN_ID, DEEPSEEK_VL2_MODEL_TYPE, DFLASH_PREFIX, EMBED_VISION_PREFIX,
+    GEMMA4_BLOCK_ROLES, GEMMA4_PROJECTOR_INSTALL_NAME, GEMMA4_RESIDENT_TENSORS, GTURBO_PAGE_BYTES,
+    LLAVA_MODEL_TYPE, MINICPM_BLOCK_ROLES, MINICPM_MERGER, MINICPM_MERGER_PREFIX,
+    MINICPM_SOURCE_PREFIXES, MINICPM_TOWER_RESIDENT, MINICPM_VIT_MERGER, MINICPM_VIT_MERGER_PREFIX,
+    MTP_PREFIX, MUSE_BLOCK_SOURCES, MUSE_RESIDENT_TENSORS, MUSE_SOURCE_PREFIXES, OCR_SAM_PREFIX,
+    OCR_SOURCE_PREFIXES, ONEVISION_MODEL_TYPE, ONEVISION_NEWLINE, ONEVISION_RESIDENT_TENSORS,
+    ONEVISION_SOURCE_PREFIXES, PIXTRAL_BLOCK_ROLES, PIXTRAL_MODEL_TYPE, PIXTRAL_PROJECTOR_PREFIX,
+    PIXTRAL_RESIDENT_TENSORS, PIXTRAL_SOURCE_PREFIXES, PIXTRAL_TOWER_PREFIX, SIGLIP_MODEL_PREFIX,
+    SIGLIP_PROJECTOR_PREFIX, SIGLIP_RESIDENT_TENSORS, SIGLIP_SOURCE_PREFIXES,
+    UNLIMITED_OCR_MODEL_TYPE, VISION_BLOCK_ROLES, VISION_DEEPSTACK_MERGER_PREFIX,
+    VISION_DEEPSTACK_MERGER_SUFFIXES, VISION_INSTALL_PREFIX, VISION_PREFIX,
+    VISION_QWEN25_BLOCK_ROLES, VISION_QWEN25_RESIDENT_TENSORS, VISION_RESIDENT_TENSORS,
+    VISION_SOURCE_PREFIXES,
 };
 pub use gguf_checkpoint::{
-    dtype_tag_for_ggml_type, gemma3_tensor_is_transcoded, gguf_manifest_quant,
-    lfm3_rope_freqs_are_zero_tail, muse_qk_norm_is_constant, orchestrate_gguf_checkpoint,
-    qwen4exp_tensor_is_transcoded, write_gguf_install_streamed,
-    write_gguf_install_streamed_resumable, GgufRepackError, GgufRepackOutput, ResumeProvenance,
-    FUSED_GATE_FIRST,
+    dtype_tag_for_ggml_type, gdn_out_proj_needs_q8_0_requant, gemma3_tensor_is_transcoded,
+    gguf_manifest_quant, gguf_speculation, lfm3_rope_freqs_are_zero_tail, muse_qk_norm_is_constant,
+    orchestrate_gguf_checkpoint, qwen4exp_tensor_is_transcoded, write_gguf_install_streamed,
+    write_gguf_install_streamed_resumable, GgufRepackError, GgufRepackOutput, GgufSpeculation,
+    ResumeProvenance, FUSED_GATE_FIRST,
 };
 pub use gguf_config::{arch_from_gguf, GgufConfigError};
 pub use gguf_header::{
@@ -143,6 +146,7 @@ pub use gturbo_writer::{
 pub use hf_checkpoint::{orchestrate_llama_checkpoint, LlamaCheckpointDims, OrchestrateError};
 pub use install_verifier::verify_install_full_sha256;
 pub use lfm3_config::parse_lfm3_config;
+pub use llama_config::parse_llama_config;
 pub use manifest_peek::peek_manifest_arch;
 pub use museglimmer_config::{
     muse_glimmer_mask, parse_muse_glimmer_config, parse_muse_glimmer_scalars, MuseGlimmerScalars,
@@ -178,7 +182,9 @@ pub use synthetic_flint::{
 };
 pub use synthetic_gguf::{
     build_synthetic_gemma4_gguf, build_synthetic_gpt_oss_gguf, build_synthetic_qwen2_gguf,
-    GgufBuilder, GgufFileAndRanges, QuantMix, SyntheticGgufShape, SyntheticGptOssShape,
+    build_synthetic_qwen35_dense_gguf, GgufBuilder, GgufFileAndRanges, QuantMix,
+    SyntheticGgufShape, SyntheticGptOssShape, QWEN35_GGUF_HIDDEN, QWEN35_GGUF_LAYERS,
+    QWEN35_GGUF_VOCAB,
 };
 pub use synthetic_lfm3::{
     build_synthetic_lfm3_install, build_synthetic_lfm3_install_with_rope_freqs,

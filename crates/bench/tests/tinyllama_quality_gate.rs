@@ -31,19 +31,30 @@
 
 mod quality_common;
 
-/// Per-chip rows, MOST SPECIFIC SUBSTRING FIRST. Frozen 2026-09-16 from
-/// the first run on this machine (two fresh processes agreeing), then
-/// re-run to ASSERT. 17.6084 is high for the reasons the module header
-/// gives -- a 1.1B 2023 checkpoint on the frozen protocol's Gemma-shaped
-/// corpus -- and is a sentinel against this install's own past, not a
-/// ranking. The constrained arm's digest is byte-identical (dense, no
-/// expert cache).
+/// Per-chip rows, MOST SPECIFIC SUBSTRING FIRST. A sentinel against this
+/// install's own past, not a ranking. The constrained arm's digest is
+/// byte-identical (dense, no expert cache).
+///
+/// RE-FROZEN 2026-11-18 because the first row recorded a bug. The
+/// 2026-09-16 row (17.6084, greedy `0f4d46c3...`, sampled `3a0bc65a...`)
+/// was taken while GGUF intake left a `llama` install's `attention_scale` at
+/// the Mixtral baseline's 128^-0.5, so this 64-wide head attended at 0.71x
+/// the right scale. Its high perplexity was put down to the corpus at the
+/// time. Evidence for the new row, all on this machine on AC power:
+/// - against llama.cpp on the same Q6_K bytes, the old scale reads 0.339
+///   mean nats at 73.3% top-1 (perplexity 17.61 against llama.cpp's 12.52),
+///   and the fixed scale reads 6.0e-6 at 99.55% (12.519), under a 1.8e-3
+///   backend floor (`docs/verification/tinyllama-q6k-attention-scale-*`);
+/// - the old scale, restored by hand on the same install, reproduces the
+///   old row exactly (perplexity and both digests);
+/// - three fresh processes on the fixed install agree byte for byte, and
+///   greedy chat output is coherent.
 const BASELINES: &[quality_common::ChipQuality] = &[quality_common::ChipQuality {
     brand_substr: "Apple M4 Max",
-    perplexity: 17.6084,
-    greedy_digest: "0f4d46c395249d53373d172d63200814c0ec6713d78576cb33bd7268f186f474",
-    sampled_digest: "3a0bc65a0ffb5ed557c080b46b7238c0d7c4b4f64a2fc2ae86bb47188c365a4b",
-    source: "this port, 2026-09-16, Apple M4 Max, 16 slots",
+    perplexity: 12.5191,
+    greedy_digest: "93e1519d01a2e94e82b073165347b74f2678bd1ae224188df9678759684e6a48",
+    sampled_digest: "d080acc0a3b0acfb1127e2642bafca5de2cf7e3d3334b15d23bdd66806bafb0a",
+    source: "this port, 2026-11-18, Apple M4 Max, 16 slots",
 }];
 
 fn install_dir() -> Option<std::path::PathBuf> {

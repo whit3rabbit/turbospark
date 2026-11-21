@@ -415,15 +415,13 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
             routingDetails = "Full Resident Weights"
         }
 
-        // 5. Speculative Drafter
-        let drafter: SpeculativeDrafterType
-        if combined.contains("dflash") || combined.contains("sloth") {
-            drafter = .dynamicSloth
-        } else if combined.contains("mtp") || lAlias.contains("qwen38") {
-            drafter = .mtp
-        } else {
-            drafter = .none
-        }
+        // 5. Speculative Drafter: the engine's answer for an install, the
+        // name only when there is no install to ask
+        // (`InstallSpeculationCache.swift`).
+        let drafter = Self.speculativeDrafter(
+            combinedText: combined,
+            alias: lAlias,
+            engineAnswer: path.isEmpty ? nil : InstallSpeculationCache.answer(forInstallPath: path))
 
         // 6. Special capabilities
         //

@@ -9,11 +9,10 @@
 use std::process::Command;
 
 fn bin() -> Command {
-    let mut path = std::env::current_exe().expect("test binary path");
-    path.pop(); // deps/
-    path.pop();
-    path.push("turbospark-model");
-    let mut command = Command::new(path);
+    // Cargo's own path for this crate's binary. Popping two directories off
+    // the test binary assumed target/<profile>/deps/<test>, which newer
+    // cargo's build-dir layout (build/<pkg>/<hash>/out/<test>) breaks.
+    let mut command = Command::new(env!("CARGO_BIN_EXE_turbospark-model"));
     // A store of its own, so a developer's real installs cannot make this
     // pass or fail.
     command.env(

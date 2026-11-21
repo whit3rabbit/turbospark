@@ -370,6 +370,7 @@ fn text_repo() -> (FixtureRepo, InstallPlan) {
         status: "unlisted".to_string(),
         mtp: None,
         reuse_trunk_from: None,
+        adapter: None,
         vision_only: false,
         vision_file: None,
         quantize_bits: None,

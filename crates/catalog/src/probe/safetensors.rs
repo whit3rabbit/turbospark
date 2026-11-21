@@ -71,6 +71,8 @@ pub fn evaluate_config(
         sidecars_missing: Vec::new(),
         chat_template: None,
         verdict: Verdict::Runnable,
+        adapter: None,
+        speculation: None,
         warnings: Vec::new(),
     };
 
@@ -112,6 +114,7 @@ pub fn evaluate_config(
         ModelFamily::Qwen3Dense => {
             repack::parse_qwen3_config(config_text).map_err(|e| e.to_string())
         }
+        ModelFamily::Llama => repack::parse_llama_config(config_text).map_err(|e| e.to_string()),
         ModelFamily::Qwen3Vl => {
             repack::parse_qwen3_vl_config(config_text).map_err(|e| e.to_string())
         }

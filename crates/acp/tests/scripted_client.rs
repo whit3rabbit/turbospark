@@ -13,13 +13,19 @@ use serde_json::json;
 use std::process::Command;
 use std::time::Duration;
 
-/// `cargo test` builds examples next to the test binaries:
-/// target/<profile>/deps/<test> -> target/<profile>/examples/scripted_agent.
+/// `cargo test` builds examples into target/<profile>/examples. The test
+/// binary's own depth under <profile> depends on the cargo version: the
+/// classic layout puts it at <profile>/deps/<test>, the newer build-dir
+/// layout at <profile>/build/<pkg>/<hash>/out/<test> (CI's floating stable
+/// switched to it). Walk up from the test binary instead of assuming a depth.
 fn agent_cmd() -> Command {
     let exe = std::env::current_exe().unwrap();
-    let profile = exe.parent().unwrap().parent().unwrap();
-    let path = profile.join("examples").join("scripted_agent");
-    assert!(path.exists(), "build examples first: {path:?}");
+    let path = exe
+        .ancestors()
+        .skip(1)
+        .map(|dir| dir.join("examples").join("scripted_agent"))
+        .find(|candidate| candidate.exists());
+    let path = path.unwrap_or_else(|| panic!("build examples first: none above {exe:?}"));
     Command::new(path)
 }
 

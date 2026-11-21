@@ -210,10 +210,9 @@ fn run_block(
         //    stops at the first rejection, and a fully-accepted batched pass
         //    fed exactly the committed tokens. Only a batched pass with a
         //    REJECTION has absorbed positions that are about to be dropped,
-        //    and only that case pays a rollback. The trunk's `rollback` is
-        //    the expensive half -- `checkpoint` copies the whole gated-
-        //    DeltaNet state, because a recurrent layer cannot be rewound
-        //    incrementally the way a KV cursor can.
+        //    and only that case pays a rollback: the retaining form, which
+        //    replays the kept rows' recurrent state from the verify's tape
+        //    rather than re-running them, exactly as the product loop does.
         let mut accepted = 0usize;
         let bonus;
         match verify {
@@ -250,7 +249,10 @@ fn run_block(
                 let feed: Vec<i32> = std::iter::once(next)
                     .chain(proposals.iter().copied())
                     .collect();
-                let point = runner.checkpoint();
+                // The ROUND checkpoint, as `speculative.rs` takes it: the
+                // verify below records the tape this checkpoint names, which
+                // is what `rollback_retaining` replays.
+                let point = runner.checkpoint_round();
                 runner
                     .produce_batched(&feed, base, &mut batch_logits[..feed.len() * vocab])
                     .expect("batched verify");
@@ -264,14 +266,28 @@ fn run_block(
                     accepted += 1;
                 }
                 bonus = argmax(&batch_logits[accepted * vocab..(accepted + 1) * vocab]);
+                // THE PRODUCT LOOP'S ROUND END (`speculative.rs`), not a
+                // rollback-and-replay of its own. Under the lazy tape
+                // (`TURBOSPARK_GDN_LAZY_TAPE`, default on) the verify leaves
+                // the recurrent state at the block START and records rank-1
+                // updates, so EVERY round, full acceptance included, must
+                // end with `commit_pending` or the state falls behind the
+                // committed stream. This probe skipped it until 2026-11-19
+                // and diverged into repetition on the first real lazy-tape
+                // run, while the product loop stayed byte-identical. A
+                // partial round first drops the rejected rows with the
+                // retaining rollback, which replays the kept rows from the
+                // tape with no second forward pass.
+                let keep = accepted + 1;
                 if accepted < proposals.len() {
                     stats.rollbacks += 1;
-                    runner.rollback(&point);
-                    let keep = accepted + 1;
                     runner
-                        .produce_batched(&feed[..keep], base, &mut batch_logits[..keep * vocab])
-                        .expect("replay the accepted prefix");
+                        .rollback_retaining(&point, keep)
+                        .expect("retaining rollback to the accepted prefix");
                 }
+                runner
+                    .commit_pending(keep)
+                    .expect("round-end commit of the kept rows");
             }
         }
         stats.accepted += accepted;

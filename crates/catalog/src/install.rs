@@ -101,6 +101,10 @@ pub struct InstallPlan {
     /// this struct does not validate that itself, since it has no `Store` to
     /// check against.
     pub reuse_trunk_from: Option<PathBuf>,
+    /// A PEFT LoRA adapter repository to merge into `weights` (the base)
+    /// while streaming. `Some` forces quantize-on-install, because the base
+    /// ships unquantized. See `repack::lora_merge`.
+    pub adapter: Option<RepoRef>,
     /// True for a vision-tower-ONLY install (vision memory sidecar, part
     /// A5): no tokenizer to verify, no weight-file walk, the sidecar writer
     /// instead of a family writer, and [`crate::install::gate`]'s probe
@@ -140,6 +144,7 @@ impl InstallPlan {
                 .as_ref()
                 .map(|m| RepoRef::new(&m.repo, &m.revision)),
             reuse_trunk_from: None,
+            adapter: None,
             vision_only: entry.kind == EntryKind::VisionTower,
             vision_file: None,
             quantize_bits: None,
@@ -150,6 +155,14 @@ impl InstallPlan {
     /// has rather than a list carried over from a sibling checkpoint, which
     /// is the whole point of having probed.
     pub fn from_probe(alias: &str, report: &ProbeReport, sidecars: RepoRef) -> Self {
+        // An adapter's tokenizer files live in the ADAPTER repo (its chat
+        // template differs from the base's), while `report.repo` names the
+        // base. A caller that defaulted the sidecars to the report's repo
+        // gets the adapter instead.
+        let sidecars = match &report.adapter {
+            Some(adapter) if sidecars == report.repo => adapter.clone(),
+            _ => sidecars,
+        };
         Self {
             alias: alias.to_string(),
             weights: report.repo.clone(),
@@ -165,6 +178,7 @@ impl InstallPlan {
             install_bytes: report.download_bytes.unwrap_or(0),
             status: "unlisted".to_string(),
             reuse_trunk_from: None,
+            adapter: report.adapter.clone(),
             // A probe has no catalog row to read a curated pairing off, and
             // inventing one from a bare `--repo` argument would guess at a
             // second repository nobody named.
@@ -194,6 +208,7 @@ impl InstallPlan {
             status: "unlisted".to_string(),
             mtp: None,
             reuse_trunk_from: None,
+            adapter: None,
             vision_only: true,
             vision_file,
             quantize_bits: None,
@@ -784,6 +799,8 @@ fn vision_tower_stub_report(plan: &InstallPlan) -> ProbeReport {
         sidecars_missing: Vec::new(),
         chat_template: None,
         verdict: Verdict::Runnable,
+        adapter: None,
+        speculation: None,
         warnings: vec![
             "vision-tower install: the trunk probe was skipped by design (see `gate`'s doc)"
                 .to_string(),

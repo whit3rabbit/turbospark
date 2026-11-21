@@ -991,11 +991,64 @@ pub(crate) fn encode_gemm_any(
             gpu::encode_dequant_int2_gemm_resident(context, pass, &w, x, y, batch)
                 .map_err(RealForwardError::Gpu)
         }
+        // The GGUF block types a K-quant trunk's verify dispatches (Q4_K_M:
+        // Q4_K and Q6_K matrices, Q8_0 for a re-encoded GDN `ssm_out`; Q4_K_S
+        // and Q5_K_M add Q5_K). Each
+        // batched kernel is bit-exact against the GEMV `encode_gemv_any`
+        // runs for the same dtype (`dequant_kquant_gemm_parity.rs`), which
+        // is what keeps a K-quant verify lossless against plain decode. The
+        // size check is the GEMV arms' dtype-versus-byte-count guard.
+        dtype @ (DTYPE_GGUF_Q4_K | DTYPE_GGUF_Q5_K | DTYPE_GGUF_Q6_K | DTYPE_GGUF_Q8_0) => {
+            let kind = match dtype {
+                DTYPE_GGUF_Q4_K => gpu::KQuantBatchType::Q4K,
+                DTYPE_GGUF_Q5_K => gpu::KQuantBatchType::Q5K,
+                DTYPE_GGUF_Q6_K => gpu::KQuantBatchType::Q6K,
+                _ => gpu::KQuantBatchType::Q8_0,
+            };
+            let expected = kind.row_bytes(cols) * rows;
+            if e.size_bytes as usize != expected {
+                return Err(RealForwardError::Unsupported(format!(
+                    "tensor {name}: {kind:?} packed size {} does not match {rows}x{cols} \
+                     ({expected})",
+                    e.size_bytes
+                )));
+            }
+            let w = gpu::KQuantResidentMatrix {
+                buffer: weights.buffer(),
+                weights_offset: weights.gpu_offset(e.file_offset - base),
+                rows,
+                cols,
+                kind,
+            };
+            gpu::encode_dequant_kquant_gemm_resident(context, pass, &w, x, y, batch)
+                .map_err(RealForwardError::Gpu)
+        }
+        // A resident BF16 matrix: a GGUF `qwen35`'s F32 `ssm_alpha`/`ssm_beta`
+        // narrowed at repack. Bit-exact against the GEMV arm in
+        // `encode_gemv_any` (`gemv_bf16_gemm_parity.rs`); same size guard.
+        DTYPE_RAW_BF16 => {
+            let expected = rows * cols * 2;
+            if e.size_bytes as usize != expected {
+                return Err(RealForwardError::Unsupported(format!(
+                    "tensor {name}: BF16 size {} does not match {rows}x{cols} ({expected})",
+                    e.size_bytes
+                )));
+            }
+            let w = gpu::Bf16ResidentMatrix {
+                buffer: weights.buffer(),
+                weights_offset: weights.gpu_offset(e.file_offset - base),
+                rows,
+                cols,
+            };
+            gpu::encode_bf16_gemm_resident(context, pass, &w, x, y, batch)
+                .map_err(RealForwardError::Gpu)
+        }
         other => Err(RealForwardError::Unsupported(format!(
-            "tensor {name}: dtype {other} has no BATCHED kernel; INT4-affine (4), \
-             INT8-affine (5), 1-bit affine (15) and 2-bit affine (16) do. Refused \
-             rather than looped: a sequential fallback here is numerically \
-             identical and would silently measure the unbatched engine"
+            "tensor {name}: dtype {other} has no BATCHED kernel; raw BF16 (1), \
+             INT4-affine (4), INT8-affine (5), 1-bit affine (15), 2-bit affine (16) \
+             and GGUF Q8_0 (6), Q4_K (7), Q6_K (8) and Q5_K (13) do. Refused rather than \
+             looped: a sequential fallback here is numerically identical and would \
+             silently measure the unbatched engine"
         ))),
     }
 }

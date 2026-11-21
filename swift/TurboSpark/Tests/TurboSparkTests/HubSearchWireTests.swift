@@ -90,6 +90,30 @@ final class HubSearchWireTests: XCTestCase {
         XCTAssertFalse(check.variants[1].executable)
         XCTAssertNil(check.variants[1].bytes, "unknown size is nil, never 0")
         XCTAssertNil(check.fit, "no shape read is nil, never a zeroed fit")
+        XCTAssertNil(check.speculation, "a library older than the field decodes to nil")
+    }
+
+    /// `speculation` as hub.rs and probe.rs emit it (`speculation_json`), and
+    /// as `ts_install_speculation_json` does, with its `drafter`.
+    func testSpeculationPreflightDecodesFromACheckAndAnInstall() throws {
+        let check = try decode(
+            HubCheck.self,
+            #"""
+            {"repo":"o/gguf","revision":"main","state":"runnable","reason":null,
+             "kind":"gguf","file":"m-Q3_K_M.gguf","architecture":"qwen35","family":"qwen_gdn_dense",
+             "downloadBytes":1,"trainedContext":null,"chatTemplate":null,
+             "warnings":[],"sidecarsMissing":[],"sidecarRepo":null,
+             "speculation":{"available":false,"reason":"blk.2.ffn_up.weight is Q3_K, which the batched verify has no kernel for"},
+             "variants":[],"shardedSkipped":0,"fit":null}
+            """#)
+        XCTAssertEqual(check.speculation?.available, false)
+        XCTAssertNil(check.speculation?.drafter)
+        XCTAssertTrue(check.speculation?.reason?.contains("Q3_K") == true)
+
+        let install = try decode(
+            SpeculationPreflight.self,
+            #"{"available":true,"drafter":"mtp","reason":null}"#)
+        XCTAssertEqual(install, SpeculationPreflight(available: true, drafter: "mtp", reason: nil))
     }
 
     func testCheckStatesThatAreNotVerdictsCarryAReasonAndNoReport() throws {
