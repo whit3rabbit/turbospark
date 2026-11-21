@@ -261,6 +261,7 @@ fn open_accepts_exactly_the_runnable_task_names() {
         "music",
         "diarization",
         "enhancement",
+        "separation",
     ] {
         let why = reason(task);
         assert!(
@@ -269,7 +270,6 @@ fn open_accepts_exactly_the_runnable_task_names() {
         );
     }
     for task in [
-        "separation",
         "alignment",
         "speech_detection",
         "codec",
