@@ -19,26 +19,27 @@ final class AppModelVoiceCallPort: VoiceCallChatPort {
         self.model = model
         busy = Self.isBusy(model)
 
+        // The same three cards as `hasPendingVoiceCallApproval`: a tool
+        // approval, a question, and a plan parked in the ExitPlanMode gate.
+        let approvalOpen = Publishers.CombineLatest3(
+            model.$pendingToolCall.map { $0 != nil }.removeDuplicates(),
+            model.$pendingUserQuestions.map { $0 != nil }.removeDuplicates(),
+            model.$pendingPlanApproval.map { $0 != nil }.removeDuplicates()
+        )
+        .map { $0 || $1 || $2 }
+        .removeDuplicates()
+
         // A turn is busy while it generates, while a submission awaits its
         // hook, and while an approval card is open (`generating` is lowered
         // on purpose while a call waits for a human).
-        Publishers.CombineLatest4(
-            model.$generating, model.$submitting,
-            model.$pendingToolCall.map { $0 != nil }.removeDuplicates(),
-            model.$pendingUserQuestions.map { $0 != nil }.removeDuplicates()
-        )
-        .map { $0 || $1 || $2 || $3 }
+        Publishers.CombineLatest3(model.$generating, model.$submitting, approvalOpen)
+        .map { $0 || $1 || $2 }
         .removeDuplicates()
         .dropFirst()
         .sink { [weak self] nowBusy in self?.busyChanged(nowBusy) }
         .store(in: &cancellables)
 
-        Publishers.CombineLatest(
-            model.$pendingToolCall.map { $0 != nil }.removeDuplicates(),
-            model.$pendingUserQuestions.map { $0 != nil }.removeDuplicates()
-        )
-        .map { $0 || $1 }
-        .removeDuplicates()
+        approvalOpen
         .dropFirst()
         .sink { [weak self] raised in
             if raised { self?.onEvent?(.approvalRaised) }
@@ -61,12 +62,12 @@ final class AppModelVoiceCallPort: VoiceCallChatPort {
     }
 
     private static func isBusy(_ model: AppModel) -> Bool {
-        model.generating || model.submitting || model.pendingToolCall != nil || model.pendingUserQuestions != nil
+        model.generating || model.submitting || model.hasPendingVoiceCallApproval
     }
 
     var selectedChatID: UUID { model.selectedChatID }
     var isTurnBusy: Bool { Self.isBusy(model) }
-    var hasPendingApproval: Bool { model.pendingToolCall != nil || model.pendingUserQuestions != nil }
+    var hasPendingApproval: Bool { model.hasPendingVoiceCallApproval }
     var draft: String {
         get { model.promptText }
         set { model.promptText = newValue }
@@ -217,6 +218,13 @@ extension AppModel {
         syncVoiceCallDecider()
     }
 
+    /// A card is waiting for the user: a tool approval, a question, or a
+    /// plan parked in the blocking ExitPlanMode gate. The call pauses on any
+    /// of them and never auto-sends over one.
+    var hasPendingVoiceCallApproval: Bool {
+        pendingToolCall != nil || pendingUserQuestions != nil || pendingPlanApproval != nil
+    }
+
     /// Brings the second session in line with the setting, the call and the
     /// choice. It is wanted only while a call is active with auto-send on.
     func syncVoiceCallDecider() {
@@ -230,8 +238,7 @@ extension AppModel {
         let host = VoiceCallDeciderHost()
         host.turnBusy = { [weak self] in
             guard let self else { return true }
-            return self.generating || self.submitting || self.pendingToolCall != nil
-                || self.pendingUserQuestions != nil
+            return self.generating || self.submitting || self.hasPendingVoiceCallApproval
         }
         host.open = { [weak self] path in
             // Same resource policy as the chat session and Humanize, read on
@@ -263,7 +270,7 @@ extension AppModel {
             callEnabled: voiceCallEnabled,
             decision: decision,
             sameChat: selectedChatID == chatID,
-            approvalPending: pendingToolCall != nil || pendingUserQuestions != nil,
+            approvalPending: hasPendingVoiceCallApproval,
             turnBusy: generating || submitting,
             canRun: canRun && !imageModeEnabled,
             text: text,

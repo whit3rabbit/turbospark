@@ -4,8 +4,9 @@ import SwiftUI
 // Isolated explicitly: only `body` is isolated by the protocol on the
 // macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
 /// Read-only view of a file a Read tool call read, with the lines it read
-/// highlighted (component audit, source-viewer). It never edits, attaches,
-/// or sends anything to the model; the only side effect is Copy Range.
+/// highlighted (component audit, source-viewer), or of a whole file from a
+/// turn's file tree (no range). It never edits, attaches, or sends anything
+/// to the model; the only side effect is Copy Range.
 @MainActor
 struct SourceLineViewerSheet: View {
     @Environment(\.appTheme) private var theme
@@ -14,13 +15,15 @@ struct SourceLineViewerSheet: View {
     /// The path as the call spelled it, shown in the header.
     let displayPath: String
     let resolution: SourceLineViewer.Resolution
-    let requested: ClosedRange<Int>
+    /// Nil shows the file from the top with nothing highlighted.
+    let requested: ClosedRange<Int>?
     /// When the tool finished reading, to tell whether the file moved on.
-    let readAt: Date
+    /// Nil when there was no read to compare against.
+    let readAt: Date?
 
     private enum Phase: Equatable {
         case loading
-        case loaded(SourceLineViewer.Loaded, range: ClosedRange<Int>, window: ClosedRange<Int>)
+        case loaded(SourceLineViewer.Loaded, range: ClosedRange<Int>?, window: ClosedRange<Int>)
         case failed(Failure)
     }
 
@@ -64,14 +67,16 @@ struct SourceLineViewerSheet: View {
 
             HStack(spacing: 8) {
                 Text("Read-only", bundle: .module)
-                if case .loaded(let loaded, let range, _) = phase {
-                    Text("Lines \(range.lowerBound)-\(range.upperBound) of \(loaded.lines.count)", bundle: .module)
+                if case .loaded(let loaded, let range, let window) = phase {
+                    // Without a range, the span drawn (capped from the top).
+                    let shown = range ?? window
+                    Text("Lines \(shown.lowerBound)-\(shown.upperBound) of \(loaded.lines.count)", bundle: .module)
                 }
             }
             .themedFont(.small)
             .foregroundStyle(.appSecondary)
 
-            if case .loaded(let loaded, _, _) = phase,
+            if case .loaded(let loaded, _, _) = phase, let readAt,
                 SourceLineViewer.mayHaveChanged(modifiedAt: loaded.modifiedAt, readAt: readAt)
             {
                 // Glyph plus words: the warning never rests on color alone.
@@ -111,14 +116,14 @@ struct SourceLineViewerSheet: View {
         }
     }
 
-    private func lines(_ all: [String], range: ClosedRange<Int>, window: ClosedRange<Int>) -> some View {
+    private func lines(_ all: [String], range: ClosedRange<Int>?, window: ClosedRange<Int>) -> some View {
         // Width of the largest number in the window, so the gutter aligns.
         let gutterDigits = String(window.upperBound).count
         return ScrollViewReader { proxy in
             ScrollView([.vertical, .horizontal]) {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(Array(window), id: \.self) { number in
-                        let isMarked = range.contains(number)
+                        let isMarked = range?.contains(number) ?? false
                         HStack(spacing: 6) {
                             Text(verbatim: String(number).leftPadded(to: gutterDigits))
                                 .font(theme.code(.small))
@@ -147,7 +152,7 @@ struct SourceLineViewerSheet: View {
                 .padding(12)
             }
             // Jump, never animate: honors Reduce Motion with nothing to gate.
-            .onAppear { proxy.scrollTo(range.lowerBound, anchor: .top) }
+            .onAppear { if let range { proxy.scrollTo(range.lowerBound, anchor: .top) } }
         }
     }
 
@@ -175,7 +180,7 @@ struct SourceLineViewerSheet: View {
     private var footer: some View {
         HStack {
             Spacer()
-            if case .loaded(let loaded, let range, _) = phase {
+            if case .loaded(let loaded, let range?, _) = phase {
                 Button { copy(loaded.lines, range: range) } label: {
                     Label { Text("Copy Range", bundle: .module) } icon: { Image(systemName: "doc.on.doc") }
                 }
@@ -214,6 +219,12 @@ struct SourceLineViewerSheet: View {
             case .notText: phase = .failed(.notText)
             }
         case .success(let loaded):
+            guard let requested else {
+                phase = .loaded(
+                    loaded, range: nil,
+                    window: SourceLineViewer.wholeFileWindow(lineCount: loaded.lines.count))
+                return
+            }
             guard let range = SourceLineViewer.clamp(requested, lineCount: loaded.lines.count) else {
                 phase = .failed(.endsBefore(requested.lowerBound))
                 return

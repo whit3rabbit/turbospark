@@ -39,6 +39,12 @@ struct ArtifactPanelView: View {
     @State private var viewedVersion: ArtifactVersion?
     @State private var viewedText: String?
     @State private var viewedReadFailed = false
+    /// Compare with Current: a read-only line diff of the earlier version on
+    /// screen against the file now. `nil` rows while computing; `diffTooLong`
+    /// when either side is past `ArtifactVersionDiff.maxLines`.
+    @State private var isComparing = false
+    @State private var diffRows: [ArtifactVersionDiff.Row]?
+    @State private var diffTooLong = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -62,6 +68,7 @@ struct ArtifactPanelView: View {
         .task(id: identityKey) { loadSourceText() }
         .task(id: identityKey) { await loadHistory() }
         .task(id: viewedVersion?.id) { await loadViewedText() }
+        .task(id: compareKey) { await loadDiff() }
     }
 
     // MARK: - Resolution
@@ -292,6 +299,16 @@ struct ArtifactPanelView: View {
                 .help(Text("Scroll the transcript to the turn that changed this file", bundle: .module))
             }
             Button {
+                isComparing.toggle()
+            } label: {
+                isComparing ? Text("Hide Comparison", bundle: .module) : Text("Compare with Current", bundle: .module)
+            }
+            .appAction(.quiet, size: .mini)
+            .disabled(sourceText == nil)
+            .help(sourceText == nil
+                ? Text("The source could not be read as text.", bundle: .module)
+                : Text("Show the lines that differ between this version and the current file", bundle: .module))
+            Button {
                 showCurrent()
             } label: {
                 Text("Back to Current", bundle: .module)
@@ -341,7 +358,9 @@ struct ArtifactPanelView: View {
 
     @ViewBuilder
     private var content: some View {
-        if viewMode == .source {
+        if isComparing, viewedVersion != nil {
+            compareView
+        } else if viewMode == .source {
             sourceView
         } else if let artifact = resolvedArtifact {
             artifactPreview(artifact)
@@ -443,6 +462,85 @@ struct ArtifactPanelView: View {
         }
     }
 
+    // MARK: - Compare
+
+    @ViewBuilder
+    private var compareView: some View {
+        if viewedReadFailed {
+            unavailableView("This version could not be read as text.")
+        } else if diffTooLong {
+            unavailableView("This file is too long to compare line by line.")
+        } else if let diffRows {
+            if ArtifactVersionDiff.hasChanges(diffRows) {
+                ScrollView([.vertical, .horizontal]) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(diffRows.enumerated()), id: \.offset) { _, row in
+                            diffRow(row)
+                        }
+                    }
+                    .padding(.vertical, 6)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                unavailableView("No differences from the current version.")
+            }
+        } else {
+            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// One diff line. The +/- marker carries the kind, so it never rests on
+    /// the tint alone; colors follow `WorktreeDiffView`'s rows.
+    @ViewBuilder
+    private func diffRow(_ row: ArtifactVersionDiff.Row) -> some View {
+        switch row {
+        case .skipped(let count):
+            Text("\(count) unmodified lines", bundle: .module)
+                .font(theme.code(.small, weight: .medium))
+                .foregroundStyle(.appSecondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.appElevated)
+        case .line(let line):
+            let marker: String = line.kind == .added ? "+" : (line.kind == .removed ? "-" : " ")
+            let number = (line.newNumber ?? line.oldNumber).map(String.init) ?? ""
+            HStack(spacing: 8) {
+                Text(verbatim: "\(number) \(marker)")
+                    .font(theme.code(.small))
+                    .foregroundStyle(.appSecondary)
+                    .frame(minWidth: 54 * AppMetrics.textScale(theme), alignment: .trailing)
+                    .accessibilityHidden(true)
+                Text(verbatim: line.text.isEmpty ? " " : line.text)
+                    .font(theme.code(.small))
+                    .foregroundStyle(line.kind == .removed ? AnyShapeStyle(.appSecondary) : AnyShapeStyle(.appText))
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 1)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(diffBackground(line.kind))
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(diffAccessibilityLabel(line, number: number))
+        }
+    }
+
+    private func diffBackground(_ kind: ArtifactVersionDiff.Kind) -> Color {
+        switch kind {
+        case .added: return theme.accent.opacity(0.10)
+        case .removed: return theme.warning.opacity(0.10)
+        case .unchanged: return .clear
+        }
+    }
+
+    private func diffAccessibilityLabel(_ line: ArtifactVersionDiff.Line, number: String) -> Text {
+        switch line.kind {
+        case .added: return Text("Added line \(number): \(line.text)", bundle: .module)
+        case .removed: return Text("Removed line \(number): \(line.text)", bundle: .module)
+        case .unchanged: return Text(verbatim: "\(number) \(line.text)")
+        }
+    }
+
     private var readFailedReason: LocalizedStringKey {
         viewedVersion == nil ? "The source could not be read as text." : "This version could not be read as text."
     }
@@ -523,6 +621,7 @@ struct ArtifactPanelView: View {
         viewedVersion = nil
         viewedText = nil
         viewedReadFailed = false
+        isComparing = false
         viewMode = .preview
         isBannerDismissed = false
         sourceReadFailed = false
@@ -598,6 +697,7 @@ struct ArtifactPanelView: View {
         guard version.unavailable == nil, !version.isCurrent else { return }
         viewedText = nil
         viewedReadFailed = false
+        isComparing = false
         viewedVersion = version
     }
 
@@ -605,6 +705,26 @@ struct ArtifactPanelView: View {
         viewedVersion = nil
         viewedText = nil
         viewedReadFailed = false
+        isComparing = false
+    }
+
+    /// Recomputes whenever either side's text or the toggle changes; nil
+    /// (no work) while not comparing.
+    private var compareKey: String? {
+        guard isComparing, let id = viewedVersion?.id else { return nil }
+        return "\(id)#\(viewedText?.count ?? -1)#\(sourceText?.count ?? -1)#\(identityKey)"
+    }
+
+    private func loadDiff() async {
+        diffRows = nil
+        diffTooLong = false
+        guard compareKey != nil, let old = viewedText, let new = sourceText else { return }
+        let rows = await Task.detached(priority: .userInitiated) { () -> [ArtifactVersionDiff.Row]? in
+            ArtifactVersionDiff.lines(old: old, new: new).map { ArtifactVersionDiff.rows($0) }
+        }.value
+        guard !Task.isCancelled else { return }
+        diffRows = rows
+        diffTooLong = rows == nil
     }
 
     /// Scrolls the transcript to the turn's prompt; its checkpoint row sits

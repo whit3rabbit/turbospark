@@ -134,50 +134,9 @@ struct MessageRowView: View {
             artifact.toolCallID.map(callIDs.contains) == true
         }
         ForEach(rows) { artifact in
-            Button {
+            ArtifactOpenChip(artifact: artifact) {
                 model.openArtifact(id: artifact.id)
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: artifact.symbolName)
-                        .themedFont(.tiny, weight: .semibold)
-                        .foregroundStyle(.appAccent)
-                        .accessibilityHidden(true)
-                    Text(artifact.fileName)
-                        .themedFont(.tiny, weight: .medium)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Text(artifact.formatLabel)
-                        .themedCode(.tiny)
-                        .foregroundStyle(.appSecondary)
-                    if let revision = ArtifactChipState.revisionBadge(revision: artifact.revision) {
-                        Text("v\(revision)", bundle: .module)
-                            .themedCode(.tiny)
-                            .monospacedDigit()
-                            .foregroundStyle(.appSecondary)
-                            .accessibilityHidden(true)
-                    }
-                    Spacer(minLength: 4)
-                    Image(systemName: "sidebar.right")
-                        .themedFont(.micro)
-                        .foregroundStyle(.appSecondary)
-                        .accessibilityHidden(true)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(.appSurface)
-                .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
-                        .stroke(.appBorder, lineWidth: 1)
-                )
-                .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .help(Text("Open \(artifact.fileName) in the artifact panel", bundle: .module))
-            .accessibilityLabel(Text("Open artifact \(artifact.fileName)", bundle: .module))
-            .accessibilityValue(
-                ArtifactChipState.revisionBadge(revision: artifact.revision)
-                    .map { Text("Version \($0)", bundle: .module) } ?? Text(verbatim: ""))
         }
         // A call still executing has no artifact row yet; the real chip
         // replaces this one when `registerProducedArtifacts` anchors on it.

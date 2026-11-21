@@ -39,6 +39,9 @@ struct TurnFileTree: Equatable {
         var origin: TurnSourceOrigin
 
         var id: String { path }
+
+        /// Whether "View file" is offered. A delete left nothing to show.
+        var canViewFile: Bool { change != .deleted }
     }
 
     enum Row: Equatable {

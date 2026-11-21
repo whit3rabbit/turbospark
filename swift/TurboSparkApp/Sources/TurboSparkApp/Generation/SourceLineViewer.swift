@@ -59,6 +59,13 @@ enum SourceLineViewer {
         return lower...max(lower, upper)
     }
 
+    /// The lines a whole-file view draws (a file-tree row's "View file"):
+    /// from the top, capped like a range window. Never empty, since even an
+    /// empty file splits into one empty line.
+    static func wholeFileWindow(lineCount: Int) -> ClosedRange<Int> {
+        1...max(1, min(lineCount, maxRenderedLines))
+    }
+
     enum Resolution: Equatable {
         case file(URL)
         /// No project is selected, so there is no root to contain the read.

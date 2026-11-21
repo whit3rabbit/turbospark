@@ -3,13 +3,16 @@ import SwiftUI
 /// The collapsed card at the end of a turn listing the files it touched
 /// (component audit, file-tree). The model is `TurnFileTree`; this view only
 /// draws it. A file row reveals the tool card of the call behind it, the
-/// same path the sources popover uses, so no new way to open files is added.
+/// same path the sources popover uses. "View file" opens the Read card's
+/// read-only `SourceLineViewerSheet`, through the same project-root,
+/// sensitive-path and size gates, so no new way to read files is added.
 struct TurnFileTreeCardView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject private var appearance = AppearanceManager.shared
     @ObservedObject var model: AppModel
     let tree: TurnFileTree
     @State private var isExpanded = false
+    @State private var viewingFile: TurnFileTree.Entry?
 
     private var indentStep: CGFloat { (14 * AppMetrics.textScale(theme)).rounded() }
 
@@ -27,6 +30,14 @@ struct TurnFileTreeCardView: View {
         .appCardSurface(padding: 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityElement(children: .contain)
+        .sheet(item: $viewingFile) { entry in
+            SourceLineViewerSheet(
+                displayPath: entry.path,
+                resolution: SourceLineViewer.resolve(
+                    path: entry.path, projectRoot: model.selectedProject?.rootDirectoryURL),
+                requested: nil,
+                readAt: nil)
+        }
     }
 
     private var header: some View {
@@ -84,8 +95,18 @@ struct TurnFileTreeCardView: View {
             .accessibilityLabel(Text(verbatim: name))
             .accessibilityValue(Text("Folder", bundle: .module))
         case .file(let entry, let name, let depth):
-            fileRow(entry, name: name)
-                .padding(.leading, CGFloat(depth) * indentStep)
+            HStack(spacing: 4) {
+                fileRow(entry, name: name)
+                if entry.canViewFile {
+                    AppIconButton("doc.text.magnifyingglass", label: Text("View \(entry.path) read-only", bundle: .module)) {
+                        viewingFile = entry
+                    }
+                    .buttonStyle(.plain)
+                    .themedFont(.tiny)
+                    .foregroundStyle(.appSecondary)
+                }
+            }
+            .padding(.leading, CGFloat(depth) * indentStep)
         }
     }
 
@@ -125,6 +146,11 @@ struct TurnFileTreeCardView: View {
         .accessibilityLabel(rowLabel(entry, name: name))
         .accessibilityHint(Text("Show the tool call for \(entry.path)", bundle: .module))
         .accessibilityAddTraits(.isButton)
+        .contextMenu {
+            if entry.canViewFile {
+                Button { viewingFile = entry } label: { Text("View file", bundle: .module) }
+            }
+        }
     }
 
     private func rowLabel(_ entry: TurnFileTree.Entry, name: String) -> Text {
