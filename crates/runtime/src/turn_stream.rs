@@ -130,6 +130,9 @@ impl<'a> TurnSplitter<'a> {
                     // model opens `<think>` itself on every turn, so the
                     // split runs at every effort.
                     | ChatDialect::Flint
+                    // Inkling 2 opens a `<|content_thinking|>` segment itself;
+                    // splitting on that id is a no-op on a turn without one.
+                    | ChatDialect::Inkling2
             )
             // Spark joins the reasoning-on arm on ChatML's grounds: its
             // template FORCES the think frame open in the generation prompt

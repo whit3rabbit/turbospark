@@ -109,6 +109,20 @@ pub(crate) const GLM_SOP_MARK: &str = "<sop>";
 pub(crate) const FLINT_BOS_MARK: &str = "<|begin_of_text|>";
 pub(crate) const FLINT_EOS_MARK: &str = "<|end_of_text|>";
 pub(crate) const FLINT_DEVELOPER_MARK: &str = "<|developer|>";
+/// Inkling 2, read off `thinkingmachines/inkling-2-mini`'s `tokenizer.json`
+/// (2026-11-21): `<|endoftext|>` 199999 (PAD), `<|message_user|>` 200000,
+/// `<|message_model|>` 200001, `<|content_text|>` 200004,
+/// `<|content_model_end_sampling|>` 200006 (EOS), `<|content_thinking|>`
+/// 200008, `<|end_message|>` 200010, `<|begin_of_text|>` 200028, all
+/// special. No other table here spells any of these.
+pub(crate) const INKLING2_USER_MARK: &str = "<|message_user|>";
+pub(crate) const INKLING2_MODEL_MARK: &str = "<|message_model|>";
+pub(crate) const INKLING2_TEXT_MARK: &str = "<|content_text|>";
+pub(crate) const INKLING2_END_SAMPLING_MARK: &str = "<|content_model_end_sampling|>";
+pub(crate) const INKLING2_THINKING_MARK: &str = "<|content_thinking|>";
+pub(crate) const INKLING2_END_MESSAGE_MARK: &str = "<|end_message|>";
+pub(crate) const INKLING2_PAD_MARK: &str = "<|endoftext|>";
+pub(crate) const INKLING2_BOS_MARK: &str = "<|begin_of_text|>";
 /// Kimi K2. The witness for these names is `moonshotai/Kimi-K2.5`'s
 /// `tokenizer_config.json` (read 2026-09-19; the K2 line ships no
 /// `tokenizer.json` at all -- the whole line is tiktoken): `[EOS]` 163585
@@ -221,6 +235,18 @@ pub(crate) fn detect_dialect(tokenizer: &Tokenizer) -> ChatDialect {
         // `resolve_flint` requires (Gotcha 52), and `<|developer|>` plus
         // `<|end_of_text|>` are the two no GLM table carries.
         ChatDialect::Flint
+    } else if special_token_id(tokenizer, INKLING2_USER_MARK).is_some()
+        && special_token_id(tokenizer, INKLING2_MODEL_MARK).is_some()
+        && special_token_id(tokenizer, INKLING2_TEXT_MARK).is_some()
+        && special_token_id(tokenizer, INKLING2_END_SAMPLING_MARK).is_some()
+        && special_token_id(tokenizer, INKLING2_THINKING_MARK).is_some()
+        && special_token_id(tokenizer, INKLING2_END_MESSAGE_MARK).is_some()
+    {
+        // Inkling 2. These names collide with no other table, so the order
+        // against the arms around it is free; it must come before the Gemma
+        // FALLBACK, where this table died on a missing `<bos>`. The six are
+        // the markers `resolve_inkling2` requires.
+        ChatDialect::Inkling2
     } else if special_token_id(tokenizer, GLM_OBSERVATION_MARK).is_some()
         && special_token_id(tokenizer, GLM_ASSISTANT_MARK).is_some()
     {
@@ -314,8 +340,8 @@ pub(crate) fn detect_dialect(tokenizer: &Tokenizer) -> ChatDialect {
 
 use super::resolvers::{
     resolve_chatml, resolve_deepseek, resolve_deepseek_v2, resolve_flint, resolve_gemma,
-    resolve_gemma3, resolve_glm, resolve_harmony, resolve_kimi, resolve_llama3, resolve_mistral,
-    resolve_muse_glimmer, resolve_spark,
+    resolve_gemma3, resolve_glm, resolve_harmony, resolve_inkling2, resolve_kimi, resolve_llama3,
+    resolve_mistral, resolve_muse_glimmer, resolve_spark,
 };
 
 pub(crate) fn resolve_dialect(
@@ -337,6 +363,7 @@ pub(crate) fn resolve_dialect(
         ChatDialect::MiniMax => super::minimax::resolve(tokenizer),
         ChatDialect::Glm => resolve_glm(tokenizer),
         ChatDialect::Flint => resolve_flint(tokenizer),
+        ChatDialect::Inkling2 => resolve_inkling2(tokenizer),
         ChatDialect::Kimi => resolve_kimi(tokenizer),
     }
 }

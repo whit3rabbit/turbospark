@@ -403,6 +403,11 @@ impl MfTokenizer {
                  chat_template.jinja (or tokenizer_config.json's chat_template key)"
                     .to_string(),
             )),
+            ChatDialect::Inkling2 => Err(TokenizerError::UnsupportedForDialect(
+                "Inkling 2 has no fallback renderer; the install must carry its own \
+                 chat_template.jinja (or tokenizer_config.json's chat_template key)"
+                    .to_string(),
+            )),
             ChatDialect::Flint => Err(TokenizerError::UnsupportedForDialect(
                 "Flint has no fallback renderer; the install must carry its own \
                  chat_template.jinja (or tokenizer_config.json's chat_template key)"
@@ -489,6 +494,13 @@ impl MfTokenizer {
             // checkpoint's own template: `<|user|>content<|assistant|>`, with
             // no BOS, no turn terminator and no forced think frame.
             ChatDialect::Flint => format!("<|user|>{content}<|assistant|>"),
+            // One user turn as the checkpoint's template renders it at its
+            // default effort (0.9): the effort header comes first, and there
+            // is no generation prompt (the model writes `<|message_model|>`).
+            ChatDialect::Inkling2 => format!(
+                "<|message_system|><|content_text|>Thinking effort level: 0.9<|end_message|>\
+                 <|message_user|><|content_text|>{content}<|end_message|>"
+            ),
             ChatDialect::Kimi => format!(
                 "{KIMI_IM_USER_MARK}user{KIMI_IM_MIDDLE_MARK}{content}{KIMI_IM_END_MARK}\
                  {KIMI_IM_ASSISTANT_MARK}assistant{KIMI_IM_MIDDLE_MARK}<think>"
