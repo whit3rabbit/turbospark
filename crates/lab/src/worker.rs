@@ -709,6 +709,7 @@ fn open(
         Residency::Auto => runtime::ExpertResidency::Auto,
         Residency::Streamed => runtime::ExpertResidency::Streamed,
         Residency::Mapped => runtime::ExpertResidency::Mapped,
+        Residency::Resident => runtime::ExpertResidency::Resident,
     };
     let policies = match &req.arm.effective_speculation(&req.workload) {
         None => runtime::DraftPolicies::off(),

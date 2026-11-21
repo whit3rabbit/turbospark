@@ -118,7 +118,7 @@
   ],
   "open_questions": [
     "resident experts against streamed has no paired verdict: tslab pairs only arms in the same page-cache class, and the two modes never are",
-    "resident experts as a default needs a memory policy (19 GB peak on a 36 GB machine) and a quality gate at its own exactness; both are human decisions",
+    "auto now resolves resident experts where the resident weights, the table and the 10 GiB reserve fit Metal's working set (the 36 GB M4 Max does): measure with an explicit @N/streamed arm, since a bare auto arm is resident there; a quality gate at resident exactness is still owed",
     "the CPU reference matched llama.cpp (top-1 19/19, mean KL 4.2e-4 on 19 tokens), a correctness check, not a lab measurement (docs/INKLING2_PHASE0.md)"
   ],
   "traps": [

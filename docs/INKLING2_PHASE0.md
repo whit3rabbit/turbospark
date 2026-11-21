@@ -427,7 +427,12 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   host `exp` round differently, so 19/19 tokens are identical but 262/265
   top-1 against llama.cpp on the 265-token prompt (the 3 misses are top-2
   swaps at llama.cpp margins 0.04 to 0.19), mean KL 5.6e-4 against 7.5e-4.
-  Off by default: a default needs a memory policy and a quality gate.
+  Since 2026-11-21 it is the `resident` expert residency mode
+  (`--expert-residency resident`, the app's Engine settings): `auto` takes it
+  where the resident weights, the table and the 10 GiB reserve fit Metal's
+  working set (yes on a 36 GB M4 Max, no below about 30 GB of working set),
+  so `auto` opens of this family are resident there and no longer bit-exact
+  with the host-routed path. A quality gate at its exactness is still owed.
 - The router round trip: 48 GPU-to-CPU syncs per token. Every family pays one
   per MoE layer today. The routed pipeline overlaps the next layer; measure
   before designing past it.

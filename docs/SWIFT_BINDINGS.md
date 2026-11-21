@@ -1770,9 +1770,14 @@ no floor.
 `steeringLayers` accepts `"START:END"` (0-based inclusive layer range).
 `steeringTarget` and `steeringGate` accept finite numbers.
 
-`expertResidency` accepts `"auto"`, `"streamed"`, `"mapped"`, `null` or absence
-(auto). Auto maps the routed experts only when the minimum streamed cache
-cannot fit the measured headroom; the mode the session actually opened with is
+`expertResidency` accepts `"auto"`, `"streamed"`, `"mapped"`, `"resident"`,
+`null` or absence (auto). Auto maps the routed experts only when the minimum
+streamed cache cannot fit the measured headroom, and picks resident (every
+expert in GPU memory, routed on the GPU) on a family with a resident flow when
+the resident weights, the expert table and a 10 GiB reserve fit Metal's
+working set. `TurboSparkCapabilities.expertResidency(forInstallAt:requested:)`
+reports `residentBytes` and `workingSetBytes` for such a family, and
+`FamilyCapabilities.residentResidencySupported` names the families; the mode the session actually opened with is
 `sessionInfo.expertResidency`. A misspelling is refused before the install is
 opened. `expertCacheSlots` as a number must be one of 8, 16, 24, 32, 48, 64,
 96, 128, 192, 256 (`foundation::runtime_config::ALLOWED_CACHE_SLOTS`);

@@ -416,6 +416,20 @@ because the collapse depends on load the open cannot see.
   reaches real pressure (a bigger machine's workload or a lower reserve)
   and a doc update saying so.
 
+## Resident experts (2026-11-21)
+
+A third mode, `resident`: the family copies every expert into its own GPU
+buffers at open, routes on the GPU and reads the selected experts in place,
+so a token needs no host round trip per layer. Only Inkling 2
+(`runtime::resident_residency_supported`) has the flow; other families refuse
+an explicit request by name. `auto` picks it there when the resident weights,
+the whole expert table and the mapped reserve fit Metal's working set
+(`model_io::mapped_residency_fits`, the same wiring bound; the Mini needs
+3.0 + 14.6 + 10 GiB of a 36 GB M4 Max's 28.1 GiB), and otherwise falls to
+the streamed rule. The streamer is still opened, at top-k slots, and never
+read. Measurements and the exactness caveat are in
+`docs/INKLING2_PHASE0.md` and `crates/lab/families/inkling2_loop.json`.
+
 ## Not done
 
 - `auto` resolving UP against machine memory. The eviction probe above is

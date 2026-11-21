@@ -336,6 +336,9 @@ pub fn resolve_expert_residency(
     match requested {
         ExpertResidency::Mapped => ResolvedExpertResidency::Mapped,
         ExpertResidency::Streamed => ResolvedExpertResidency::Streamed,
+        // Decided before this resolver by `resident_experts_decision`; a
+        // caller that skipped it still gets the mode it asked for.
+        ExpertResidency::Resident => ResolvedExpertResidency::Resident,
         ExpertResidency::Auto => {
             let should_map = mapped_residency_requested()
                 || (mapped_supported
@@ -374,6 +377,9 @@ pub fn resolve_expert_residency_for_install(
     )
     .map(|layout| expert_table_bytes(&layout))
     .unwrap_or((0, 0));
+    if resident_experts_for(requested, family, resident_bytes, table_bytes)? {
+        return Ok(model_io::ResolvedExpertResidency::Resident);
+    }
     let resolved = resolve_expert_residency(
         requested,
         physical_bytes,
@@ -429,7 +435,7 @@ fn mapped_explicitly(requested: model_io::ExpertResidency) -> bool {
     match requested {
         model_io::ExpertResidency::Mapped => true,
         model_io::ExpertResidency::Auto => mapped_residency_requested(),
-        model_io::ExpertResidency::Streamed => false,
+        model_io::ExpertResidency::Streamed | model_io::ExpertResidency::Resident => false,
     }
 }
 
@@ -527,6 +533,103 @@ pub fn mapped_residency_refusal(family: model_io::ModelFamily) -> Result<(), Rea
     )))
 }
 
+/// Whether `family` has a resident-expert flow: every routed expert in GPU
+/// memory, routing and the MoE on the GPU, one command buffer per token. The
+/// one flow is `families/inkling2`; widening it is that family's own arm plus
+/// this list.
+pub fn resident_residency_supported(family: model_io::ModelFamily) -> bool {
+    matches!(family, model_io::ModelFamily::Inkling2Loop)
+}
+
+/// Whether a measuring arm or a script asked for resident experts through
+/// the environment: `TURBOSPARK_EXPERT_RESIDENCY=resident`, or the
+/// `TURBOSPARK_INKLING2_RESIDENT_EXPERTS=1` seam the first tslab findings
+/// were recorded under. Either one counts as an explicit request.
+fn resident_residency_env_requested() -> bool {
+    std::env::var("TURBOSPARK_EXPERT_RESIDENCY").is_ok_and(|v| v.eq_ignore_ascii_case("resident"))
+        || std::env::var("TURBOSPARK_INKLING2_RESIDENT_EXPERTS").as_deref() == Ok("1")
+}
+
+/// The resident-expert decision, pure so it is testable without a device.
+///
+/// The fit rule is mapped residency's (`model_io::mapped_residency_fits`):
+/// the resident weights plus the whole expert table plus the measured 10 GiB
+/// reserve within Metal's recommended working set. Resident copies wire the
+/// same bytes a mapping would, so the same bound applies; on the Inkling 2
+/// Mini that is 3.0 + 14.6 + 10 = 27.6 GiB against a 36 GB M4 Max's
+/// 28.1 GiB.
+///
+/// - `Resident` (or the env request): refused by name on a family without a
+///   resident flow, and refused with the numbers when it does not fit.
+/// - `Auto`: resident when the family has the flow and it fits, unless the
+///   mapped seam is set; otherwise the caller's mapped/streamed rule runs.
+/// - `Streamed` and `Mapped`: never resident.
+pub fn resident_experts_decision(
+    requested: model_io::ExpertResidency,
+    env_requested: bool,
+    supported: bool,
+    family_name: &str,
+    working_set_bytes: u64,
+    resident_bytes: u64,
+    table_bytes: u64,
+) -> Result<bool, String> {
+    use model_io::ExpertResidency;
+    let explicit = match requested {
+        ExpertResidency::Resident => true,
+        ExpertResidency::Auto if env_requested => true,
+        ExpertResidency::Auto => false,
+        ExpertResidency::Streamed | ExpertResidency::Mapped => return Ok(false),
+    };
+    let fits = model_io::mapped_residency_fits(working_set_bytes, resident_bytes, table_bytes);
+    if !explicit {
+        return Ok(supported && fits && !mapped_residency_requested());
+    }
+    if !supported {
+        return Err(format!(
+            "resident expert residency is not wired for {family_name}; ask for streamed or auto"
+        ));
+    }
+    if !fits {
+        let gib = |b: u64| b as f64 / (1u64 << 30) as f64;
+        return Err(format!(
+            "resident expert residency refused: the {:.2} GiB expert table and the {:.2} GiB \
+             resident weights, with {:.0} GiB kept for the rest of the process and the machine, \
+             exceed Metal's {:.2} GiB recommended working set. Use streamed or auto",
+            gib(table_bytes),
+            gib(resident_bytes),
+            gib(model_io::MAPPED_WIRED_RESERVE_BYTES),
+            gib(working_set_bytes)
+        ));
+    }
+    Ok(true)
+}
+
+/// [`resident_experts_decision`] with this process's env and device. The
+/// device is only asked when the family has a resident flow.
+#[cfg(target_os = "macos")]
+fn resident_experts_for(
+    requested: model_io::ExpertResidency,
+    family: model_io::ModelFamily,
+    resident_bytes: u64,
+    table_bytes: u64,
+) -> Result<bool, String> {
+    let supported = resident_residency_supported(family);
+    let working_set = if supported {
+        gpu::recommended_max_working_set().map_or(0, |(bytes, _)| bytes)
+    } else {
+        0
+    };
+    resident_experts_decision(
+        requested,
+        resident_residency_env_requested(),
+        supported,
+        family.as_str(),
+        working_set,
+        resident_bytes,
+        table_bytes,
+    )
+}
+
 pub(crate) fn open_expert_streamers(
     dir: &Path,
     expecting: &ArchConfig,
@@ -591,6 +694,19 @@ fn open_expert_streamers_with(
         table_bytes,
     )
     .map_err(RealForwardError::Unsupported)?;
+    // Resident experts: the family copies every expert into its own GPU
+    // buffers and routes on the GPU, so the streamer below only has to exist.
+    // It is sized at the routing minimum (top_k slots) and never read.
+    let resident = resident_experts_for(residency, expecting.family, resident_bytes, table_bytes)
+        .map_err(RealForwardError::Unsupported)?;
+    let (expert_cache_slots, resolved_residency) = if resident {
+        (
+            ExpertCacheSlots::Fixed(expecting.top_k_experts.max(1) as usize),
+            model_io::ResolvedExpertResidency::Resident,
+        )
+    } else {
+        (expert_cache_slots, resolved_residency)
+    };
 
     // THE SLOT CACHE IS SIZED `slots x layers x expert_stride`, AND THAT
     // PRODUCT IS A PROPERTY OF THE MODEL'S EXPERT GRANULARITY, NOT OF ITS
@@ -1009,6 +1125,46 @@ mod tests {
     #[test]
     fn negative_full_head_dim_is_refused_before_gpu_allocation() {
         assert_invalid_kv_dimension("full_head_dim", -1, |arch| arch.full_head_dim = -1);
+    }
+
+    /// The resident decision on the Inkling 2 Mini's numbers: 3.01 GiB
+    /// resident weights and a 14.62 GiB table against a 36 GB M4 Max's
+    /// 28.08 GiB working set (fits with the 10 GiB reserve) and a 24 GB
+    /// machine's 16 GiB (does not).
+    #[test]
+    fn resident_experts_auto_takes_it_only_where_it_fits_and_explicit_refuses_by_name() {
+        use model_io::ExpertResidency as R;
+        let gib = |g: f64| (g * (1u64 << 30) as f64) as u64;
+        let (weights, table) = (gib(3.01), gib(14.62));
+        let (big, small) = (gib(28.08), gib(16.0));
+        let d = |req, env, supported, ws| {
+            super::resident_experts_decision(req, env, supported, "f", ws, weights, table)
+        };
+        // Auto: resident where the family has the flow and it fits.
+        assert_eq!(d(R::Auto, false, true, big), Ok(true));
+        assert_eq!(d(R::Auto, false, true, small), Ok(false));
+        assert_eq!(d(R::Auto, false, false, big), Ok(false));
+        // An unknown working set (0) never fits.
+        assert_eq!(d(R::Auto, false, true, 0), Ok(false));
+        // Explicit: refused by name, never silently streamed.
+        assert_eq!(d(R::Resident, false, true, big), Ok(true));
+        assert!(d(R::Resident, false, true, small)
+            .unwrap_err()
+            .contains("working set"));
+        assert!(d(R::Resident, false, false, big)
+            .unwrap_err()
+            .contains("not wired for f"));
+        // The env request is explicit too.
+        assert!(d(R::Auto, true, false, big).is_err());
+        // Streamed and mapped are never resident, whatever fits.
+        assert_eq!(d(R::Streamed, true, true, big), Ok(false));
+        assert_eq!(d(R::Mapped, true, true, big), Ok(false));
+        assert!(super::resident_residency_supported(
+            model_io::ModelFamily::Inkling2Loop
+        ));
+        assert!(!super::resident_residency_supported(
+            model_io::ModelFamily::Gemma4
+        ));
     }
 
     #[test]

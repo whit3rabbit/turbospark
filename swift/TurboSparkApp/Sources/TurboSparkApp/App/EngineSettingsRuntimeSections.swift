@@ -249,6 +249,8 @@ extension EngineSettingsPaneView {
                 model.persistSettingsDebounced()
             }
 
+            ExpertResidencyDetectionRow(path: model.selected?.path)
+
             // The same engine-owned value set the Inspector offers
             // (`AppRuntimeOptions.allowedSlotCounts`).
             Picker(selection: $model.runtimeOptions.expertCacheSlots) {
@@ -282,7 +284,17 @@ extension EngineSettingsPaneView {
             Text("Where the experts of mixture-of-experts models live while they run. Streamed copies them into a cache in memory, sized by Cache Slots. Mapped reads them in place from the model file, which uses less memory, on models that support it and fit; other models open as Auto. Auto chooses per model. Takes effect on the next model load.", bundle: .module)
             .themedFont(.tiny)
             .foregroundStyle(.appSecondary)
+            Text("Resident copies every expert into GPU memory and routes on the GPU: the fastest choice where a model supports it and the Mac has the memory, and Auto picks it there. Other models open as Auto.", bundle: .module)
+            .themedFont(.tiny)
+            .foregroundStyle(.appSecondary)
         }
+    }
+
+    /// Which request fell back, as the setting names it now.
+    private var unavailableLabel: Text {
+        model.runtimeOptions.expertResidency == .resident
+            ? Text("Resident unavailable", bundle: .module)
+            : Text("Mapped unavailable", bundle: .module)
     }
 
     /// The loaded model's residency, why a Mapped request opened as Auto, and
@@ -295,6 +307,8 @@ extension EngineSettingsPaneView {
         return HStack(spacing: 4) {
             if resolved == "mapped" {
                 Text("Mapped", bundle: .module)
+            } else if resolved == "resident" {
+                Text("Resident", bundle: .module)
             } else {
                 Text("Streamed", bundle: .module)
             }
@@ -302,9 +316,9 @@ extension EngineSettingsPaneView {
             case .noRoutedExperts?:
                 Text(verbatim: "(") + Text("No routed experts", bundle: .module) + Text(verbatim: ")")
             case .unreadable?:
-                Text(verbatim: "(") + Text("Mapped unavailable", bundle: .module) + Text(verbatim: ")")
+                Text(verbatim: "(") + unavailableLabel + Text(verbatim: ")")
             case .refused(let reason)?:
-                Text(verbatim: "(") + Text("Mapped unavailable", bundle: .module)
+                Text(verbatim: "(") + unavailableLabel
                     + Text(verbatim: reason.map { ": \($0))" } ?? ")")
             case nil:
                 EmptyView()

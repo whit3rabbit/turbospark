@@ -586,6 +586,7 @@ impl RealForwardRunner {
                     &runner.arch,
                     &runner.install_dir,
                     max_ctx,
+                    runner.resolved_residency == model_io::ResolvedExpertResidency::Resident,
                 )?);
             }
             // Its own flow: short-conv layers, zero-tail per-class rope and

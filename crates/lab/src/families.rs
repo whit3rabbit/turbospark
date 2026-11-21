@@ -218,7 +218,7 @@ pub fn facts(f: ModelFamily) -> FamilyFacts {
             notes: &[
                 "24 physical layers run as 48 applications (layers 6-17 loop three times)",
                 "phase buckets are not filled; TURBOSPARK_INKLING2_TRACE=1 prints a per-token split",
-                "TURBOSPARK_INKLING2_RESIDENT_EXPERTS=1 keeps every expert resident (about 15.7 GB) and runs a token as one command buffer",
+                "residency resident keeps every expert in GPU memory (about 15.7 GB) and runs a token as one command buffer; auto picks it where it fits, so streamed needs an explicit @N/streamed arm",
             ],
         },
         Flint => FamilyFacts {

@@ -656196,6 +656196,530 @@
           }
         }
       }
+    },
+    "Auto keeps this model's experts streamed: Resident needs %@ plus a %@ reserve, and this Mac's GPU can use %@.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يُبقي «تلقائي» خبراء هذا النموذج «مبثوث»: يحتاج «مقيم في الذاكرة» إلى %@ مع احتياطي قدره %@، بينما يمكن لوحدة GPU في هذا الـMac استخدام %@."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatisch lässt die Experten dieses Modells gestreamt: Resident braucht %@ plus %@ Reserve, und die GPU dieses Mac kann %@ nutzen."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auto keeps this model's experts streamed: Resident needs %@ plus a %@ reserve, and this Mac's GPU can use %@."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automático mantiene transmitidos los expertos de este modelo: Residente necesita %@ más una reserva de %@, y la GPU de este Mac puede usar %@."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auto garde les experts de ce modèle en diffusion continue : Résident nécessite %@ plus une réserve de %@, et le GPU de ce Mac peut utiliser %@."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "אוטומטי משאיר את המומחים של המודל הזה במצב משודר בזרימה: תושב זיכרון צריך %@ ועוד רזרבה של %@, וה-GPU של ה-Mac הזה יכול להשתמש ב-%@."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "स्वतः इस मॉडल के एक्सपर्ट को स्ट्रीम किया गया रखता है: रेजिडेंट को %@ और %@ का रिज़र्व चाहिए, जबकि इस Mac का GPU %@ इस्तेमाल कर सकता है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Otomatis tetap men-streaming pakar model ini: Residen memerlukan %@ ditambah cadangan %@, dan GPU Mac ini dapat memakai %@."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatico mantiene in streaming gli esperti di questo modello: Residente richiede %@ più una riserva di %@, e la GPU di questo Mac può usare %@."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「自動」はこのモデルのエキスパートをストリーミングのままにします。常駐には %@ と %@ の予備が必要ですが、この Mac の GPU が使えるのは %@ です。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "자동은 이 모델의 전문가를 스트리밍 상태로 유지합니다. 상주에는 %@와 %@의 예비 용량이 필요하며, 이 Mac의 GPU가 사용할 수 있는 용량은 %@입니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatisch houdt de experts van dit model gestreamd: Resident heeft %@ nodig plus %@ reserve, en de GPU van deze Mac kan %@ gebruiken."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatycznie pozostawia ekspertów tego modelu jako strumieniowane: Rezydentny potrzebuje %@ plus %@ rezerwy, a GPU tego Maca może używać %@."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automático mantém os especialistas deste modelo transmitidos: Residente precisa de %@ mais uma reserva de %@, e a GPU deste Mac pode usar %@."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«Авто» оставляет экспертов этой модели в режиме потоковой передачи: «В памяти» требуется %@ плюс резерв %@, а GPU этого Mac может использовать %@."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatisk låter den här modellens experter vara strömmade: Resident behöver %@ plus %@ i reserv, och den här Macens GPU kan använda %@."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Otomatik bu modelin uzmanlarını akışla bırakır: Yerleşik için %@ ve %@ yedek gerekir, bu Mac'in GPU'su ise %@ kullanabilir."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«Авто» залишає експертів цієї моделі в режимі потокової передачі: «В пам'яті» потрібно %@ плюс резерв %@, а GPU цього Mac може використовувати %@."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tự động giữ chuyên gia của mô hình này ở chế độ truyền trực tiếp: Thường trú cần %@ cộng phần dự phòng %@, còn GPU của máy Mac này có thể dùng %@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "“自动”让此模型的专家保持流式：常驻内存需要 %@，外加 %@ 预留，而此 Mac 的 GPU 可用 %@。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「自動」讓此模型的專家維持串流：常駐需要 %@，外加 %@ 預留，而這台 Mac 的 GPU 可使用 %@。"
+          }
+        }
+      }
+    },
+    "Auto runs this model with Resident experts: they need %@ of the %@ this Mac's GPU can use.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يشغّل «تلقائي» هذا النموذج بخبراء «مقيم في الذاكرة»: يحتاجون إلى %@ من أصل %@ يمكن لوحدة GPU في هذا الـMac استخدامها."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatisch führt dieses Modell mit residenten Experten aus: Sie brauchen %@ der %@, die die GPU dieses Mac nutzen kann."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auto runs this model with Resident experts: they need %@ of the %@ this Mac's GPU can use."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automático ejecuta este modelo con expertos residentes: necesitan %@ de los %@ que puede usar la GPU de este Mac."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Auto exécute ce modèle avec des experts résidents : ils occupent %@ des %@ que le GPU de ce Mac peut utiliser."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "אוטומטי מריץ את המודל הזה עם מומחים בתושב זיכרון: הם צריכים %@ מתוך %@ שה-GPU של ה-Mac הזה יכול להשתמש בהם."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "स्वतः इस मॉडल को रेजिडेंट एक्सपर्ट के साथ चलाता है: उन्हें %@ चाहिए, जबकि इस Mac का GPU %@ तक इस्तेमाल कर सकता है।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Otomatis menjalankan model ini dengan pakar Residen: pakar memerlukan %@ dari %@ yang dapat dipakai GPU Mac ini."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatico esegue questo modello con esperti residenti: richiedono %@ dei %@ che la GPU di questo Mac può usare."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「自動」はこのモデルをエキスパート常駐で実行します。必要なのは %@ で、この Mac の GPU が使えるのは %@ です。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "자동은 이 모델을 상주 전문가로 실행합니다. 필요한 용량은 %@이고, 이 Mac의 GPU가 사용할 수 있는 용량은 %@입니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatisch draait dit model met residente experts: ze hebben %@ nodig van de %@ die de GPU van deze Mac kan gebruiken."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatycznie uruchamia ten model z ekspertami rezydentnymi: potrzebują %@ z %@, których może używać GPU tego Maca."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automático executa este modelo com especialistas residentes: eles precisam de %@ dos %@ que a GPU deste Mac pode usar."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«Авто» запускает эту модель с экспертами «В памяти»: им нужно %@ из %@, доступных GPU этого Mac."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Automatisk kör den här modellen med residenta experter: de behöver %@ av de %@ som den här Macens GPU kan använda."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Otomatik bu modeli Yerleşik uzmanlarla çalıştırır: uzmanlar %@ gerektirir, bu Mac'in GPU'su ise %@ kullanabilir."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«Авто» запускає цю модель з експертами «В пам'яті»: їм потрібно %@ із %@, доступних GPU цього Mac."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tự động chạy mô hình này với chuyên gia Thường trú: chúng cần %@ trên tổng %@ mà GPU của máy Mac này có thể dùng."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "“自动”以常驻内存的专家运行此模型：它们需要 %@，此 Mac 的 GPU 可用 %@。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「自動」以常駐的專家執行此模型：它們需要 %@，這台 Mac 的 GPU 可使用 %@。"
+          }
+        }
+      }
+    },
+    "Resident copies every expert into GPU memory and routes on the GPU: the fastest choice where a model supports it and the Mac has the memory, and Auto picks it there. Other models open as Auto.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«مقيم في الذاكرة» ينسخ كل الخبراء إلى ذاكرة GPU ويوجّه على وحدة GPU: الخيار الأسرع حيث يدعمه النموذج وتتوفر الذاكرة في الـMac، ويختاره «تلقائي» هناك. تُفتح النماذج الأخرى على «تلقائي»."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resident kopiert alle Experten in den GPU-Speicher und routet auf der GPU: die schnellste Wahl, wo ein Modell das unterstützt und der Mac genug Speicher hat, und Automatisch wählt es dort. Andere Modelle öffnen mit Automatisch."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resident copies every expert into GPU memory and routes on the GPU: the fastest choice where a model supports it and the Mac has the memory, and Auto picks it there. Other models open as Auto."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Residente copia todos los expertos en la memoria de la GPU y enruta en la GPU: la opción más rápida donde un modelo lo admite y el Mac tiene la memoria, y Automático la elige allí. Los demás modelos se abren en Automático."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Résident copie tous les experts dans la mémoire du GPU et effectue le routage sur le GPU : le choix le plus rapide quand un modèle le prend en charge et que le Mac a la mémoire nécessaire, et Auto le choisit alors. Les autres modèles s'ouvrent en Auto."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "תושב זיכרון מעתיק כל מומחה לזיכרון ה-GPU ומנתב על ה-GPU: הבחירה המהירה ביותר כשהמודל תומך בכך ול-Mac יש מספיק זיכרון, ואוטומטי בוחר בה במקרה כזה. מודלים אחרים נפתחים במצב אוטומטי."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "रेजिडेंट हर एक्सपर्ट को GPU मेमोरी में कॉपी करता है और GPU पर रूट करता है: जहाँ मॉडल इसे सपोर्ट करता है और Mac में पर्याप्त मेमोरी है, वहाँ यह सबसे तेज़ विकल्प है, और स्वतः वहाँ इसे चुनता है। बाकी मॉडल स्वतः में खुलते हैं।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Residen menyalin setiap pakar ke memori GPU dan merutekan di GPU: pilihan tercepat jika model mendukungnya dan Mac memiliki memorinya, dan Otomatis memilihnya di sana. Model lain dibuka sebagai Otomatis."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Residente copia ogni esperto nella memoria della GPU e instrada sulla GPU: la scelta più veloce dove un modello lo supporta e il Mac ha la memoria, e Automatico la sceglie lì. Gli altri modelli si aprono in Automatico."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「常駐」はすべてのエキスパートを GPU メモリにコピーし、GPU 上でルーティングします。対応するモデルで Mac のメモリが足りる場合に最も高速な選択で、「自動」はその場合にこれを選びます。それ以外のモデルは自動で開きます。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "상주는 모든 전문가를 GPU 메모리에 복사하고 GPU에서 라우팅합니다. 모델이 지원하고 Mac의 메모리가 충분할 때 가장 빠른 선택이며, 자동은 그런 경우 이를 선택합니다. 다른 모델은 자동으로 열립니다."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resident kopieert elke expert naar het GPU-geheugen en routeert op de GPU: de snelste keuze waar een model dat ondersteunt en de Mac het geheugen heeft, en Automatisch kiest het daar. Andere modellen openen als Automatisch."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rezydentny kopiuje każdego eksperta do pamięci GPU i wykonuje routing na GPU: to najszybszy wybór tam, gdzie model to obsługuje, a Mac ma dość pamięci, i Automatycznie wybiera go w takim przypadku. Pozostałe modele otwierają się w trybie Automatycznie."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Residente copia todos os especialistas para a memória da GPU e faz o roteamento na GPU: a opção mais rápida quando o modelo oferece suporte e o Mac tem a memória, e Automático a escolhe nesse caso. Os outros modelos abrem como Automático."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«В памяти» копирует всех экспертов в память GPU и выполняет маршрутизацию на GPU: самый быстрый вариант там, где модель это поддерживает и у Mac хватает памяти, и «Авто» выбирает его в таком случае. Остальные модели открываются в режиме «Авто»."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resident kopierar varje expert till GPU-minnet och routar på GPU:n: det snabbaste valet där en modell stöder det och Macen har minnet, och Automatisk väljer det där. Andra modeller öppnas som Automatisk."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yerleşik her uzmanı GPU belleğine kopyalar ve yönlendirmeyi GPU'da yapar: bir model destekliyorsa ve Mac'in belleği yetiyorsa en hızlı seçenektir ve Otomatik orada bunu seçer. Diğer modeller Otomatik olarak açılır."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«В пам'яті» копіює всіх експертів у пам'ять GPU і виконує маршрутизацію на GPU: найшвидший варіант там, де модель це підтримує і Mac має достатньо пам'яті, і «Авто» вибирає його в такому разі. Інші моделі відкриваються в режимі «Авто»."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Thường trú sao chép mọi chuyên gia vào bộ nhớ GPU và định tuyến trên GPU: lựa chọn nhanh nhất khi mô hình hỗ trợ và máy Mac đủ bộ nhớ, và Tự động sẽ chọn nó trong trường hợp đó. Các mô hình khác mở ở chế độ Tự động."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "“常驻内存”将所有专家复制到 GPU 内存并在 GPU 上路由：在模型支持且 Mac 内存足够时是最快的选择，“自动”会在这种情况下选择它。其他模型以“自动”打开。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "「常駐」將所有專家複製到 GPU 記憶體並在 GPU 上路由：在模型支援且 Mac 記憶體足夠時是最快的選擇，「自動」會在此情況下選擇它。其他模型以「自動」開啟。"
+          }
+        }
+      }
+    },
+    "Resident unavailable": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "المقيم في الذاكرة غير متاح"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resident nicht verfügbar"
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resident unavailable"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Residente no disponible"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Résident indisponible"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "תושב זיכרון לא זמין"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "रेजिडेंट उपलब्ध नहीं"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Residen tidak tersedia"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Residente non disponibile"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "常駐は利用できません"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "상주 사용 불가"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resident niet beschikbaar"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rezydentny niedostępny"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Residente indisponível"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«В памяти» недоступно"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Resident är inte tillgänglig"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Yerleşik kullanılamıyor"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "«В пам'яті» недоступне"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Không thể dùng Thường trú"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "常驻内存不可用"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "常駐無法使用"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

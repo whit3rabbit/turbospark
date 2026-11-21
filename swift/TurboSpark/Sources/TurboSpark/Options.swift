@@ -30,11 +30,15 @@ public struct OpenOptions: Encodable, Sendable {
     }
 
     /// Routed-expert storage policy. `auto` maps only when the minimum
-    /// streamed cache cannot fit the measured memory headroom.
+    /// streamed cache cannot fit the measured memory headroom, and picks
+    /// `resident` on a family with a resident flow when it fits Metal's
+    /// working set with the reserve.
     public enum ExpertResidency: String, Encodable, Sendable {
         case auto
         case streamed
         case mapped
+        /// Every expert copied into GPU memory and routed on the GPU.
+        case resident
     }
 
     /// Whether and how far this session drafts ahead.

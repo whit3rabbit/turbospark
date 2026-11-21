@@ -47,9 +47,9 @@ pub(crate) struct RealInkling2State {
     pub(crate) offsets: Vec<gpu::MoeExpertOffsets>,
     pub(crate) kinds: Vec<gpu::Inkling2ExpertType>,
     pub(crate) routed: gpu::RoutedBlobsBuffer,
-    /// Off unless `TURBOSPARK_INKLING2_RESIDENT_EXPERTS=1`: every expert of
-    /// every layer resident, so routing and the MoE run on the GPU and a token
-    /// is one command buffer (`mod.rs`).
+    /// Set when the open resolved `ResolvedExpertResidency::Resident`: every
+    /// expert of every layer resident, so routing and the MoE run on the GPU
+    /// and a token is one command buffer (`mod.rs`).
     pub(crate) resident: Option<ResidentExperts>,
     /// Per physical layer, host copies of the F32 router bias.
     pub(crate) router_bias: Vec<Vec<f32>>,
@@ -140,6 +140,7 @@ impl RealInkling2State {
         arch: &ArchConfig,
         install_dir: &std::path::Path,
         max_ctx: usize,
+        resident_experts: bool,
     ) -> Result<Self, RealForwardError> {
         let unsupported = RealForwardError::Unsupported;
         if arch.family != ModelFamily::Inkling2Loop {
@@ -367,7 +368,7 @@ impl RealInkling2State {
             });
             kinds.push(kind);
         }
-        let resident = if resident_experts_requested() {
+        let resident = if resident_experts {
             Some(ResidentExperts::load(
                 context,
                 install_dir,
@@ -465,10 +466,6 @@ impl RealInkling2State {
             cfg,
         })
     }
-}
-
-fn resident_experts_requested() -> bool {
-    std::env::var("TURBOSPARK_INKLING2_RESIDENT_EXPERTS").as_deref() == Ok("1")
 }
 
 /// Every routed expert resident in one GPU buffer per physical layer, copied
