@@ -258,10 +258,17 @@ modules and internal codecs are not presented as runnable jobs.
   speaker, so a voice that is silent in the shared span can appear twice (merge
   it in Name the Speakers), but voices are never joined on weaker evidence.
   The sheet says how many parts were used. See [Core ML models](COREML.md).
-- Enhancement, separation, alignment, speech detection, codecs, the CPU
-  diarization families (Sortformer, Nemotron), and other transcription families
-  stay unavailable until their native adapters and model gates exist. Their
-  source implementations alone do not enable controls.
+- Speech enhancement runs the pinned MossFormer2 SE 48 kHz fp16 profile
+  (`mossformer2-se-48k-fp16`, portable CPU) from the Clean Up page's "Enhance
+  speech". The take is read at 48 kHz mono, at most 600 seconds, and the
+  cleaned voice is saved as a new take; the source take is never changed.
+  The same engine runs from the command line as `turbospark enhance`. Quality
+  is not yet gated beyond reference parity (`crates/audio/src/sts/mossformer2_se/README.md`).
+- Separation, alignment, speech detection, codecs, the other enhancement
+  families (DeepFilterNet), the CPU diarization families (Sortformer,
+  Nemotron), and other transcription families stay unavailable until their
+  native adapters and model gates exist. Their source implementations alone
+  do not enable controls.
 
 Downloads use the existing shared queue. Native text/audio and Swift MLX image
 execution share one heavyweight permit. An active operation retains the permit

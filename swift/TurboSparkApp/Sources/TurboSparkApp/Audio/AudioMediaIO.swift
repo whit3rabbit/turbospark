@@ -109,6 +109,25 @@ enum AudioMediaIO {
         return samples
     }
 
+    /// A whole take at 48 kHz mono for enhancement, read in 30 s windows like
+    /// `readMono16kTake`. 48 kHz is the engine's rate, so the runtime
+    /// does not resample it.
+    static func readMono48kTake(_ clips: [AudioLibraryClip], store: ManagedAssetStore, duration: Double, limit: Double, cancel: () throws -> Void = {}) throws -> [Float] {
+        guard duration.isFinite, duration > 0, duration <= limit else { throw MediaError.tooLong }
+        var output: [Float] = []
+        output.reserveCapacity(Int(ceil(duration * 48_000)))
+        var read = 0.0
+        while read < duration {
+            try cancel()
+            let window = min(30, duration - read)
+            try streamMix(clips, resolve: store.materializedURL(for:), sampleRate: 48_000, channels: 1, start: read, duration: window, cancel: cancel) {
+                output.append(contentsOf: $0)
+            }
+            read += 30
+        }
+        return output
+    }
+
     /// A playback overview uses the same timeline and mix as playback. Bound the
     /// preview's materialization cost so browsing a long meeting stays cheap.
     static func waveformPeaks(_ clips: [AudioLibraryClip], duration: Double, count: Int,

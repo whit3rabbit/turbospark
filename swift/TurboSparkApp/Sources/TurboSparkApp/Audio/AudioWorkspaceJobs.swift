@@ -31,7 +31,9 @@ extension AudioWorkspaceController {
     /// passes its reference as PCM (`runClonesNatively`), or speaks with no
     /// reference.
     static func runRequest(_ recipe: AudioRecipe, task: AudioTask, profile: AudioProfile) -> AudioRequest {
-        let base = request(from: recipe, task: task)
+        var base = request(from: recipe, task: task)
+        // The Clean Up page reads the take at 48 kHz (`readMono48kTake`).
+        if task == .enhancement { base.inputSampleRate = 48_000 }
         guard task == .textToSpeech, clonesNatively(profile) else { return base }
         return runClonesNatively(profile, speech: recipe.speech)
             ? nativeCloneRequest(base, family: profile.family, speech: recipe.speech)
@@ -231,6 +233,9 @@ extension AudioWorkspaceController {
                         if currentTask == .diarization {
                             let limit = Double(profile.capabilities.maxInputSeconds ?? 30)
                             pcm = try await Task.detached { try AudioMediaIO.readMono16kTake(selected.clips, store: assets, duration: selected.duration, limit: limit, cancel: lifetime.check) }.value
+                        } else if currentTask == .enhancement {
+                            let limit = Double(profile.capabilities.maxInputSeconds ?? 30)
+                            pcm = try await Task.detached { try AudioMediaIO.readMono48kTake(selected.clips, store: assets, duration: selected.duration, limit: limit, cancel: lifetime.check) }.value
                         } else {
                             pcm = try await Task.detached { try AudioMediaIO.readMono16k(selected.clips, store: assets, start: 0, duration: selected.duration, cancel: lifetime.check) }.value
                         }

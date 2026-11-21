@@ -415,7 +415,7 @@ Speech-to-speech and audio processing. [Pinned source directory](https://github.
 | `mel_roformer` | Source | None | Default task-qualified family | [Flat port](src/sts/mel_roformer/mod.rs) |
 | `mimo_audio` | README | 51 | Base/Instruct; STS / TTS / STT / understanding | None |
 | `moshi` | Source | None | Alias `moshiko` | None |
-| `mossformer2_se` | README | 47 | Enhancement; alias `mossformer2` | [Flat port](src/sts/mossformer2_se/mod.rs) |
+| `mossformer2_se` | README | 47 | Enhancement; alias `mossformer2`; catalog `mossformer2-se-48k-fp16` runs through the runtime `enhancement` session (portable CPU) | [Flat port](src/sts/mossformer2_se/mod.rs) |
 | `nemotron_voicechat` | README | 52 | Full-duplex STS / transcription / function calling | None |
 | `sam_audio` | README | 48 | Text-guided source separation; alias `samaudio` | [Flat port](src/sts/sam_audio/mod.rs) |
 

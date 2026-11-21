@@ -774,6 +774,16 @@ impl MossFormerMaskNet {
 }
 
 /// The loaded MossFormer2 SE model: network plus the DSP front end.
+/// Weight file names [`MossFormer2Se::open`] accepts, in lookup order. The
+/// upstream MLX repository publishes one file per precision and no
+/// `model.safetensors`.
+pub const WEIGHT_FILES: [&str; 4] = [
+    "model.safetensors",
+    "model_fp32.safetensors",
+    "model_fp16.safetensors",
+    "model_int8.safetensors",
+];
+
 pub struct MossFormer2Se {
     pub config: MossFormer2SeConfig,
     masknet: MossFormerMaskNet,
@@ -781,9 +791,11 @@ pub struct MossFormer2Se {
 }
 
 impl MossFormer2Se {
-    /// Loads from a checkpoint directory holding `model.safetensors`
-    /// and an optional `config.json` (defaults apply when absent, which
-    /// matches the reference repository that ships no config file).
+    /// Loads from a checkpoint directory holding `model.safetensors` (or
+    /// one of the published `model_fp32` / `model_fp16` / `model_int8`
+    /// files, first found wins in that order) and an optional
+    /// `config.json` (defaults apply when absent, which matches the
+    /// reference repository that ships no config file).
     pub fn open(dir: &Path) -> Result<Self> {
         let config_path = dir.join("config.json");
         let config = if config_path.exists() {
@@ -792,12 +804,16 @@ impl MossFormer2Se {
         } else {
             MossFormer2SeConfig::default()
         };
-        let file =
-            turbospark_model_io::safetensors::SafetensorsFile::open(&dir.join("model.safetensors"))
-                .map_err(|e| SpeechError::BadConfig {
-                    field: "model.safetensors".to_string(),
-                    why: e.to_string(),
-                })?;
+        let name = WEIGHT_FILES
+            .iter()
+            .copied()
+            .find(|name| dir.join(name).is_file())
+            .unwrap_or(WEIGHT_FILES[0]);
+        let file = turbospark_model_io::safetensors::SafetensorsFile::open(&dir.join(name))
+            .map_err(|e| SpeechError::BadConfig {
+                field: name.to_string(),
+                why: e.to_string(),
+            })?;
         Self::load(config, &file)
     }
 
@@ -1342,6 +1358,20 @@ impl MossFormer2Se {
     /// (`Some(true)` forces the chunked path (>= 60 s by default) regardless of
     /// duration, `Some(false)` disables it).
     pub fn enhance_with_mode(&self, audio: &[f32], chunked: Option<bool>) -> Result<Vec<f32>> {
+        self.enhance_controlled(audio, chunked, &mut |_, _| true)
+    }
+
+    /// As [`enhance_with_mode`](Self::enhance_with_mode), calling
+    /// `progress(done, total)` before each model pass and once after the
+    /// last. Returning false stops before the next pass with
+    /// [`SpeechError::Input`]. The hook runs only between passes, so the
+    /// output is identical to the uncontrolled call.
+    pub fn enhance_controlled(
+        &self,
+        audio: &[f32],
+        chunked: Option<bool>,
+        progress: &mut dyn FnMut(usize, usize) -> bool,
+    ) -> Result<Vec<f32>> {
         let original_len = audio.len();
         let scaled: Vec<f32> = audio.iter().map(|&v| v * MAX_WAV_VALUE).collect();
         let use_chunked = chunked.unwrap_or_else(|| {
@@ -1349,9 +1379,9 @@ impl MossFormer2Se {
                 >= self.config.auto_chunk_threshold
         });
         let mut out = if use_chunked {
-            self.decode_chunked(&scaled)?
+            self.decode_chunked(&scaled, progress)?
         } else {
-            self.decode_one_audio(&scaled)?
+            self.decode_one_audio(&scaled, progress)?
         };
         out.truncate(original_len);
         for value in out.iter_mut() {
@@ -1360,17 +1390,28 @@ impl MossFormer2Se {
         Ok(out)
     }
 
-    fn decode_one_audio(&self, scaled: &[f32]) -> Result<Vec<f32>> {
+    fn decode_one_audio(
+        &self,
+        scaled: &[f32],
+        progress: &mut dyn FnMut(usize, usize) -> bool,
+    ) -> Result<Vec<f32>> {
         let limit = self.config.sample_rate * self.config.one_time_decode_length;
         if scaled.len() > limit {
-            return self.decode_segmented(scaled);
+            return self.decode_segmented(scaled, progress);
         }
-        self.process_chunk(scaled)
+        step(progress, 0, 1)?;
+        let out = self.process_chunk(scaled)?;
+        step(progress, 1, 1)?;
+        Ok(out)
     }
 
     /// Reference segmented path: 4 s windows at 75 % stride, discarding
     /// `(window - stride) / 2` samples at each segment edge.
-    fn decode_segmented(&self, scaled: &[f32]) -> Result<Vec<f32>> {
+    fn decode_segmented(
+        &self,
+        scaled: &[f32],
+        progress: &mut dyn FnMut(usize, usize) -> bool,
+    ) -> Result<Vec<f32>> {
         let window_size = self.config.sample_rate * self.config.decode_window;
         let stride = window_size * 3 / 4;
         let mut audio = scaled.to_vec();
@@ -1385,8 +1426,13 @@ impl MossFormer2Se {
         let give_up = (window_size - stride) / 2;
         let mut output = vec![0.0f32; total];
         let mut current = 0usize;
+        // Padding above guarantees total >= window_size + stride.
+        let passes = (total - window_size) / stride + 1;
+        let mut done = 0usize;
         while current + window_size <= total {
+            step(progress, done, passes)?;
             let segment = self.process_chunk(&audio[current..current + window_size])?;
+            done += 1;
             let (start, end) = if current == 0 {
                 (current, current + window_size - give_up)
             } else {
@@ -1395,27 +1441,39 @@ impl MossFormer2Se {
             output[start..end].copy_from_slice(&segment[start - current..end - current]);
             current += stride;
         }
+        step(progress, done, passes)?;
         output.truncate(scaled.len());
         Ok(output)
     }
 
     /// Reference chunked path: 4 s chunks at 25 % overlap with
     /// discard-edges reassembly.
-    fn decode_chunked(&self, scaled: &[f32]) -> Result<Vec<f32>> {
+    fn decode_chunked(
+        &self,
+        scaled: &[f32],
+        progress: &mut dyn FnMut(usize, usize) -> bool,
+    ) -> Result<Vec<f32>> {
         let chunk_samples = (self.config.sample_rate as f32 * self.config.chunk_seconds) as usize;
         let overlap_samples = (chunk_samples as f32 * self.config.chunk_overlap) as usize;
         let stride = chunk_samples - overlap_samples;
         let give_up = overlap_samples / 2;
         let original_len = scaled.len();
         if original_len <= chunk_samples {
-            return self.process_chunk(scaled);
+            step(progress, 0, 1)?;
+            let out = self.process_chunk(scaled)?;
+            step(progress, 1, 1)?;
+            return Ok(out);
         }
         let mut output = vec![0.0f32; original_len];
         let mut current = 0usize;
         let mut is_first = true;
+        let passes = original_len.div_ceil(stride);
+        let mut done = 0usize;
         while current < original_len {
+            step(progress, done, passes)?;
             let end = (current + chunk_samples).min(original_len);
             let segment = self.process_chunk(&scaled[current..end])?;
+            done += 1;
             let chunk_len = segment.len();
             let is_last = current + chunk_samples >= original_len;
             let (keep_start, keep_end) = if is_last && chunk_len < chunk_samples {
@@ -1433,7 +1491,19 @@ impl MossFormer2Se {
             is_first = false;
             current += stride;
         }
+        step(progress, done, passes)?;
         Ok(output)
+    }
+}
+
+/// Reports one progress step; false from the hook stops the enhancement.
+fn step(progress: &mut dyn FnMut(usize, usize) -> bool, done: usize, total: usize) -> Result<()> {
+    if progress(done, total) {
+        Ok(())
+    } else {
+        Err(SpeechError::Input {
+            why: "enhancement cancelled".into(),
+        })
     }
 }
 

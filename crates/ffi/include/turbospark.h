@@ -2099,23 +2099,34 @@ typedef struct TsAudioJob TsAudioJob;
  * is 16 kHz mono f32. For a voice-cloning text_to_speech model (family
  * "megatts3" or "fish_drama3") the appended PCM is the mono reference voice
  * at the request's reference_sample_rate, 1 to 30 seconds. Drama 3 also
- * speaks without a reference, so appending nothing is valid there. One append
+ * speaks without a reference, so appending nothing is valid there. For
+ * "enhancement" the appended PCM is mono at the request's input_sample_rate
+ * (8,000 to 192,000 Hz), which the runtime resamples to the model's 48 kHz.
+ * One append
  * carries at most 32,000
  * samples and the whole job at most 30 minutes. Appends after run has started
  * are refused.
  *
- * Tasks the runtime can open are "speech_to_text", "text_to_speech" and
- * "music". Any other task name (the catalog describes more families than the
+ * Tasks the runtime can open are "speech_to_text", "text_to_speech",
+ * "music", "diarization" and "enhancement". Any other task name (the catalog describes more families than the
  * runtime has session entry points for) is refused at open as an unknown
  * variant. Request keys: task, language, text, voice, speed, caption, lyrics,
  * duration_seconds, steps, seed, instruction, reference_text, p_w, t_w,
- * temperature, top_p, top_k, max_frames, reference_sample_rate, consent; an
+ * temperature, top_p, top_k, max_frames, reference_sample_rate,
+ * input_sample_rate, consent; an
  * unrecognised key is refused. Voice
  * cloning requires consent: true (the caller has the right to use the
  * reference voice), reference_sample_rate, and English text; p_w (0.1 to 5)
  * and t_w (0.1 to 10) weigh intelligibility and similarity. Send steps (1 to
  * 100) explicitly: an omitted steps means the request type's 30, not the
  * model's default of 16 (8, 16 and 32 are the app's Fast, Balanced and Best).
+ *
+ * SPEECH ENHANCEMENT (task "enhancement", family "mossformer2_se", portable
+ * CPU, mono 48 kHz out). input_sample_rate is required. The run returns the
+ * cleaned voice as kind 2 PCM, as long as the input resampled to 48 kHz and
+ * at most 661 seconds of it; the removed part is input minus voice at 48 kHz.
+ * Progress is kind 1 {"stage":"enhance","completed":n,"total":m}, one step
+ * per model pass, and cancel is honoured between passes.
  *
  * FISH AUDIO DRAMA 3 (family "fish_drama3", Metal only, mono 44.1 kHz). Text
  * is at most 32,768 bytes and may carry inline cues such as [whispers] and

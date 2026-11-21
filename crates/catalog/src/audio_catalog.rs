@@ -640,6 +640,12 @@ impl AudioCatalog {
                         .ok_or("audio weight size overflow")?;
                     (compiled.saturating_mul(3).saturating_add(16_000*1800*4).saturating_add(768<<20),"measured 858 MB peak footprint on a 30-minute input (M4 Max, Neural Engine embedding, compile cached); estimate: three times compiled weights, 30-minute PCM, and 768 MiB working reserve")
                 }
+                // f32 weights widened from fp16, the 48 kHz input and output,
+                // the STFT spectra and mask, and a working reserve.
+                AudioTask::Enhancement if family == "mossformer2_se" => {
+                    let pcm = 48_000u64 * 4 * u64::from(capabilities.max_input_seconds.unwrap_or(0));
+                    (weight_bytes.saturating_mul(2).saturating_add(pcm.saturating_mul(6)).saturating_add(512<<20),"estimate: f32-widened fp16 weights, six times the longest 48 kHz input for PCM, spectra and mask, and 512 MiB working reserve; not measured")
+                }
                 AudioTask::SpeechToText => (weight_bytes.saturating_mul(2).saturating_add(16_000*1800*4).saturating_add(256<<20),"estimate: twice checkpoint weights, 30-minute PCM, and 256 MiB working reserve"),
                 AudioTask::TextToSpeech => (weight_bytes.saturating_mul(2).saturating_add(256<<20),"estimate: twice checkpoint weights and 256 MiB voice/working reserve"),
                 AudioTask::Music => (weight_bytes.saturating_add(2<<30),"estimate: packed checkpoint weights and 2 GiB working reserve; full duration peak unqualified"),
@@ -2081,6 +2087,7 @@ fn require_library_audio_dirs(root: &Path, path: &Path) -> Result<(), String> {
 const REVIEWED_ADAPTERS: &[&str] = &[
     "fish_drama3",
     "megatts3",
+    "mossformer2_se",
     "omnivoice",
     "parakeet_tdt",
     "parakeet_unified",
@@ -2252,6 +2259,27 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             // The int8 encoder carries the run and loads with CPU+Neural
             // Engine units (`UnifiedOptions::default`), held by a server test.
             compute: Some("ane".into()),
+            http_api: true,
+            ..Default::default()
+        };
+    }
+    if family == "mossformer2_se" {
+        // 48 kHz mono speech enhancement on the portable f32 CPU path (no
+        // Metal offload yet). The runtime resamples the host's PCM to 48 kHz
+        // and returns the enhanced voice. A Rust session runs it (CLI and
+        // app), so it is not app-only, though no HTTP route serves it yet.
+        return AudioCapabilities {
+            languages: vec![],
+            voices: vec![],
+            max_input_seconds: None,
+            supports_lyrics: false,
+            operations: vec!["enhance".into()],
+            timing: None,
+            backend: "portable_cpu".into(),
+            cancellation: "chunk".into(),
+            can_run: true,
+            unavailable_reason: None,
+            compute: None,
             http_api: true,
             ..Default::default()
         };
@@ -3451,7 +3479,7 @@ mod tests {
     #[test]
     fn initial_audio_profiles_have_exact_complete_pins_and_wire_metadata() {
         let catalog = AudioCatalog::embedded().unwrap();
-        assert_eq!(catalog.entries().count(), 22);
+        assert_eq!(catalog.entries().count(), 23);
         for (task, alias, repo, revision, rate, channels) in [
             (
                 AudioTask::TextToSpeech,
@@ -3531,6 +3559,14 @@ mod tests {
                 "FluidInference/speaker-diarization-coreml",
                 "7eab74f3463c736418d0eb10296261ae581146c9",
                 16000,
+                1,
+            ),
+            (
+                AudioTask::Enhancement,
+                "mossformer2-se-48k-fp16",
+                "starkdmi/MossFormer2_SE_48K_MLX",
+                "ccd0ded00e26f38e9f5b0ba21608aa6a0bcd6434",
+                48000,
                 1,
             ),
         ] {

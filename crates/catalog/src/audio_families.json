@@ -541,11 +541,11 @@
       "forward"
     ],
     "backend": "portable_cpu",
-    "can_run": false,
+    "can_run": true,
     "component": false,
-    "unavailable_reason": "No native runtime, admission, cancellation and Swift adapter has been qualified for this family",
+    "unavailable_reason": null,
     "source": "crates/audio/src/sts/mossformer2_se/mod.rs",
-    "evidence": "crates/audio/src/sts/mossformer2_se/README.md; historical evidence only, not rerun by capability discovery"
+    "evidence": "crates/audio/src/sts/mossformer2_se/README.md; runtime session adapter in crates/runtime/src/native_audio.rs; historical evidence only, not rerun by capability discovery"
   },
   {
     "family": "sts/sam_audio",

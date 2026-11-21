@@ -154,6 +154,9 @@ enum Cmd {
     /// Speak in a cloned voice; needs --consent (turbospark clone --help)
     #[command(disable_help_flag = true)]
     Clone(Passthrough),
+    /// Clean speech in a recording (turbospark enhance --help)
+    #[command(disable_help_flag = true)]
+    Enhance(Passthrough),
     /// Page images to text with Core ML, macOS 15+ (turbospark ocr --help)
     #[command(disable_help_flag = true)]
     Ocr(Passthrough),
@@ -331,6 +334,7 @@ fn root_help() -> String {
                 ("music", "generate music"),
                 ("speak", "text to speech"),
                 ("clone", "speech in a cloned voice (needs --consent)"),
+                ("enhance", "clean speech in a recording"),
                 ("ocr PAGE...", "page images to text"),
                 ("humanize MODEL DRAFT", "rewrite a draft to read as human"),
             ],
@@ -662,6 +666,7 @@ fn main() -> ExitCode {
         Cmd::Music(p) => peer("turbospark-music", &models::rewrite_model_flags(&p.args)),
         Cmd::Speak(p) => peer("turbospark-speak", &models::rewrite_model_flags(&p.args)),
         Cmd::Clone(p) => peer("turbospark-clone", &models::rewrite_model_flags(&p.args)),
+        Cmd::Enhance(p) => peer("turbospark-enhance", &models::rewrite_model_flags(&p.args)),
         Cmd::Ocr(p) => peer("turbospark-ocr", &models::rewrite_model_flags(&p.args)),
         Cmd::Humanize(p) => handle_humanize(&p.args),
         Cmd::Steer(p) => peer("turbospark-steer", &models::rewrite_model_flags(&p.args)),

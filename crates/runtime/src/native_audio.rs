@@ -29,6 +29,10 @@ pub enum AudioTask {
     Music,
     /// Who spoke when: speaker turns as transcript segments with empty text.
     Diarization,
+    /// Speech enhancement: the job's PCM at `input_sample_rate` in, the
+    /// cleaned voice out as PCM at the model's rate. The removed part is
+    /// `input - voice` at that rate, which a host computes when it wants it.
+    Enhancement,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -64,6 +68,9 @@ pub struct AudioRequest {
     pub context_size: Option<usize>,
     /// Rate of the reference audio carried as the job's PCM when cloning.
     pub reference_sample_rate: Option<u32>,
+    /// Enhancement: rate of the job's mono PCM. The runtime resamples it to
+    /// the model's rate, so a host sends a take at its own rate.
+    pub input_sample_rate: Option<u32>,
     /// The caller states it has the right to use the reference voice.
     /// Required for every cloning request.
     pub consent: bool,
@@ -91,6 +98,7 @@ impl Default for AudioRequest {
             max_frames: None,
             context_size: None,
             reference_sample_rate: None,
+            input_sample_rate: None,
             consent: false,
         }
     }
@@ -422,6 +430,10 @@ pub const FISH_DRAMA3_FAMILY: &str = "fish_drama3";
 pub const OMNIVOICE_FAMILY: &str = "omnivoice";
 /// Persisted family string of the MiniMax Music 3 engine.
 pub const MUSIC3_FAMILY: &str = "minimax_music3";
+/// Persisted family string of the MossFormer2 SE 48 kHz enhancement engine.
+pub const MOSSFORMER2_SE_FAMILY: &str = "mossformer2_se";
+/// Input rates an enhancement job accepts, as for cloning references.
+const ENHANCEMENT_INPUT_RATES: std::ops::RangeInclusive<u32> = 8_000..=192_000;
 /// Reference audio bounds for cloning: shorter clips align poorly, and the
 /// pipeline uses at most 28 s.
 const CLONE_REFERENCE_SECONDS: std::ops::RangeInclusive<f64> = 1.0..=30.0;
@@ -491,6 +503,9 @@ pub fn validate_request(
                 );
             }
         }
+        AudioTask::Enhancement => {
+            enhancement_input(request, samples)?;
+        }
         AudioTask::Music => {
             if !samples.is_empty() {
                 return Err("music generation does not accept PCM".into());
@@ -502,6 +517,35 @@ pub fn validate_request(
     }
     Ok(())
 }
+/// Checks an enhancement job and returns its input rate. Output is the input
+/// resampled to 48 kHz (every enhancement family runs there), so its length
+/// is bounded by the output limit as well as the input limit.
+fn enhancement_input(r: &AudioRequest, samples: &[f32]) -> Result<u32, String> {
+    let rate = r
+        .input_sample_rate
+        .ok_or("enhancement needs input_sample_rate for the job's PCM")?;
+    if !ENHANCEMENT_INPUT_RATES.contains(&rate) {
+        return Err(format!(
+            "input_sample_rate must be {} through {} Hz",
+            ENHANCEMENT_INPUT_RATES.start(),
+            ENHANCEMENT_INPUT_RATES.end()
+        ));
+    }
+    let resampled = (samples.len() as u64 * u64::from(ENHANCEMENT_RATE)).div_ceil(u64::from(rate));
+    if samples.is_empty()
+        || samples.len() > MAX_INPUT_SAMPLES
+        || resampled > MAX_OUTPUT_SAMPLES as u64
+        || samples.iter().any(|v| !v.is_finite())
+    {
+        return Err(format!(
+            "enhancement needs finite mono PCM, at most {} seconds at 48 kHz",
+            MAX_OUTPUT_SAMPLES / ENHANCEMENT_RATE as usize
+        ));
+    }
+    Ok(rate)
+}
+/// The rate every enhancement engine runs and returns at.
+const ENHANCEMENT_RATE: u32 = 48_000;
 /// Validates a cloning request and maps it onto the pipeline's parameters.
 /// `voice` is ignored: the voice comes from the reference audio.
 fn megatts3_request<'a>(
@@ -760,6 +804,7 @@ enum Engine {
     FishDrama3(std::cell::RefCell<Box<crate::fish_drama3::FishDrama3Runner>>),
     OmniVoice(std::cell::RefCell<Box<crate::omnivoice::OmniVoiceRunner>>),
     Music(Box<crate::Music3Runner>),
+    MossFormer2Se(Box<audio::sts::mossformer2_se::MossFormer2Se>),
 }
 // The observer owns an event sender, so it must be removed even if a backend panics.
 #[cfg(test)]
@@ -782,6 +827,7 @@ impl Engine {
             Self::FishDrama3(_) => FISH_DRAMA3_FAMILY,
             Self::OmniVoice(_) => OMNIVOICE_FAMILY,
             Self::Music(_) => MUSIC3_FAMILY,
+            Self::MossFormer2Se(_) => MOSSFORMER2_SE_FAMILY,
         }
     }
     fn open(
@@ -891,6 +937,14 @@ impl Engine {
                 crate::coreml::DiarizationCoreMl::open(path, &opts)
                     .map(|m| Self::DiarizationCoreMl(Box::new(m)))
             }
+            AudioTask::Enhancement => match enhancement_family(path)? {
+                // Portable f32 CPU is the only path; no Metal offload exists
+                // to prefer, so it needs no portable opt-in.
+                MOSSFORMER2_SE_FAMILY => audio::sts::mossformer2_se::MossFormer2Se::open(path)
+                    .map(|m| Self::MossFormer2Se(Box::new(m)))
+                    .map_err(|e| e.to_string()),
+                family => Err(format!("unsupported enhancement family {family:?}")),
+            },
         }
     }
     fn estimate_run_bytes(&self, r: &AudioRequest, samples: &[f32]) -> Result<u64, String> {
@@ -1211,9 +1265,70 @@ impl Engine {
                 });
                 result.seed = Some(r.seed.unwrap_or(0));
             }
+            Self::MossFormer2Se(model) => {
+                let input = enhancement_pcm(r, samples)?;
+                let mut voice = model
+                    .enhance_controlled(&input, None, &mut |done, total| {
+                        events
+                            .send(AudioEvent::Progress(AudioProgress {
+                                stage: "enhance".into(),
+                                completed: done,
+                                total: Some(total),
+                            }))
+                            .is_ok()
+                            && !cancel.is_cancelled()
+                    })
+                    .map_err(|e| e.to_string())?;
+                // The reference iSTFT stops at the last whole frame, up to one
+                // hop short of the input. The voice is the input's length so
+                // input minus voice lines up; the short tail is silence.
+                if voice.len() > input.len() {
+                    return Err("enhancement returned more samples than it was given".into());
+                }
+                voice.resize(input.len(), 0.0);
+                emit_pcm(&voice, cancel, events, &mut result.sample_count)?;
+                result.pcm_format = Some(AudioPcmFormat {
+                    sample_rate: ENHANCEMENT_RATE,
+                    channels: 1,
+                    interleaved: true,
+                });
+            }
         }
         Ok(result)
     }
+}
+/// An enhancement job's PCM at the engine rate, exactly as the engine sees
+/// it, so a host can compute the removed part as this minus the voice.
+pub fn enhancement_pcm(r: &AudioRequest, samples: &[f32]) -> Result<Vec<f32>, String> {
+    let rate = enhancement_input(r, samples)?;
+    if rate == ENHANCEMENT_RATE {
+        return Ok(samples.to_vec());
+    }
+    audio::resample::resample_mono_sinc_hann(
+        samples,
+        rate,
+        ENHANCEMENT_RATE,
+        &audio::resample::SincHannOptions::default(),
+    )
+    .map_err(|e| e.to_string())
+}
+/// The enhancement family of an install, from its declared `model_type`
+/// or, for repositories that ship no config, from the weight files the
+/// upstream repository publishes.
+fn enhancement_family(path: &Path) -> Result<&'static str, String> {
+    match tts_model_type(path).as_deref() {
+        Some(MOSSFORMER2_SE_FAMILY) => return Ok(MOSSFORMER2_SE_FAMILY),
+        Some(other) => return Err(format!("unsupported enhancement model_type {other:?}")),
+        None => {}
+    }
+    if audio::sts::mossformer2_se::WEIGHT_FILES
+        .iter()
+        .skip(1)
+        .any(|name| path.join(name).is_file())
+    {
+        return Ok(MOSSFORMER2_SE_FAMILY);
+    }
+    Err("unsupported enhancement model: expected a MossFormer2 SE 48K checkpoint (model_fp16.safetensors) or a config.json declaring model_type".into())
 }
 fn kokoro_request(r: &AudioRequest) -> Result<audio::tts::kokoro::SynthesisRequest, String> {
     let mut request = audio::tts::kokoro::SynthesisRequest::new(r.text.clone());
@@ -1600,6 +1715,11 @@ fn estimate_run_bytes(request: &AudioRequest) -> u64 {
         AudioTask::TextToSpeech => 512 << 20,
         // Conservative duration-scaled reserve until full checkpoint peaks are qualified.
         AudioTask::Diarization => (MAX_INPUT_SAMPLES as u64 * 4).saturating_add(512 << 20),
+        // The 48 kHz input, the output, and the STFT spectra and mask of
+        // the longest admitted job. Not measured.
+        AudioTask::Enhancement => (MAX_OUTPUT_SAMPLES as u64 * 4)
+            .saturating_mul(6)
+            .saturating_add(512 << 20),
         AudioTask::Music => {
             let seconds = request
                 .duration_seconds
@@ -2643,5 +2763,130 @@ mod tests {
             .segments
             .iter()
             .all(|s| s.text.is_empty() && s.words.is_none()));
+    }
+    fn enhancement_request(rate: Option<u32>) -> AudioRequest {
+        AudioRequest {
+            task: AudioTask::Enhancement,
+            input_sample_rate: rate,
+            ..AudioRequest::default()
+        }
+    }
+    #[test]
+    fn enhancement_validation_bounds_rate_length_and_values() {
+        let f = MOSSFORMER2_SE_FAMILY;
+        let one_second = vec![0.1f32; 16_000];
+        assert!(validate_request(f, &enhancement_request(Some(16_000)), &one_second).is_ok());
+        let missing = validate_request(f, &enhancement_request(None), &one_second).unwrap_err();
+        assert!(missing.contains("input_sample_rate"), "{missing}");
+        for rate in [7_999, 192_001] {
+            let err =
+                validate_request(f, &enhancement_request(Some(rate)), &one_second).unwrap_err();
+            assert!(err.contains("8000 through 192000"), "{rate}: {err}");
+        }
+        assert!(validate_request(f, &enhancement_request(Some(48_000)), &[]).is_err());
+        assert!(validate_request(f, &enhancement_request(Some(48_000)), &[0.0, f32::NAN]).is_err());
+        // The output bound applies after resampling to 48 kHz: the most
+        // input that fits at 8 kHz is a sixth of the 48 kHz output limit.
+        let fits = vec![0.0f32; MAX_OUTPUT_SAMPLES / 6];
+        assert!(validate_request(f, &enhancement_request(Some(8_000)), &fits).is_ok());
+        let over = vec![0.0f32; MAX_OUTPUT_SAMPLES / 6 + 1];
+        assert!(validate_request(f, &enhancement_request(Some(8_000)), &over).is_err());
+        // A Drama 3 sampler field is still refused.
+        let mut sampled = enhancement_request(Some(16_000));
+        sampled.temperature = Some(0.5);
+        assert!(validate_request(f, &sampled, &one_second).is_err());
+    }
+    #[test]
+    fn enhancement_family_comes_from_model_type_or_the_published_weight_file() {
+        let dir = std::env::temp_dir().join(format!("ts-enhance-sniff-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(
+            enhancement_family(&dir).is_err(),
+            "an empty directory is no model"
+        );
+        // A bare model.safetensors names nothing: other families use it too.
+        std::fs::write(dir.join("model.safetensors"), b"x").unwrap();
+        assert!(enhancement_family(&dir).is_err());
+        std::fs::write(dir.join("model_fp16.safetensors"), b"x").unwrap();
+        assert_eq!(enhancement_family(&dir).unwrap(), MOSSFORMER2_SE_FAMILY);
+        // A declared family wins over the file names, and an unknown one
+        // is refused rather than guessed.
+        std::fs::write(dir.join("config.json"), r#"{"model_type":"deepfilternet"}"#).unwrap();
+        assert!(enhancement_family(&dir)
+            .unwrap_err()
+            .contains("deepfilternet"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+    /// The session path on the tiny seeded fixture: a 48 kHz job matches the
+    /// model's own output exactly, a 16 kHz job comes back resampled to
+    /// 48 kHz, and progress reaches its total.
+    #[test]
+    fn enhancement_session_runs_the_fixture_and_resamples_input() {
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../audio/testdata/mossformer2_se");
+        let dir = std::env::temp_dir().join(format!("ts-enhance-session-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::copy(fixture.join("config.json"), dir.join("config.json")).unwrap();
+        std::fs::copy(
+            fixture.join("tiny_weights.safetensors"),
+            dir.join("model_fp32.safetensors"),
+        )
+        .unwrap();
+        let _serial = crate::heavy::serial_test_lock();
+        let session = AudioSession::open(dir.clone(), AudioTask::Enhancement, false).unwrap();
+        assert_eq!(session.family(), MOSSFORMER2_SE_FAMILY);
+        let model = audio::sts::mossformer2_se::MossFormer2Se::open(&dir).unwrap();
+        let run = |rate: u32, input: Vec<f32>| {
+            let mut pcm = Vec::new();
+            let mut last = None;
+            let result = session
+                .execute(
+                    enhancement_request(Some(rate)),
+                    input,
+                    AudioCancel::default(),
+                    |event| match event {
+                        AudioEvent::Pcm(chunk) => pcm.extend(chunk),
+                        AudioEvent::Progress(p) if p.stage == "enhance" => last = Some(p),
+                        AudioEvent::Progress(_) => {}
+                    },
+                )
+                .unwrap();
+            assert_eq!(result.sample_count, pcm.len());
+            let format = result.pcm_format.unwrap();
+            assert_eq!((format.sample_rate, format.channels), (48_000, 1));
+            let last = last.unwrap();
+            assert_eq!(Some(last.completed), last.total);
+            pcm
+        };
+        let tone = |rate: u32, n: usize| -> Vec<f32> {
+            (0..n)
+                .map(|i| (i as f32 * 220.0 * std::f32::consts::TAU / rate as f32).sin() * 0.2)
+                .collect()
+        };
+        let native = tone(48_000, 48_000);
+        assert_eq!(run(48_000, native.clone()), model.enhance(&native).unwrap());
+        // Not a hop multiple: the model returns less than a hop short, and
+        // the session pads the tail with silence to the input's length.
+        let ragged = tone(48_000, 48_000 + 100);
+        let direct = model.enhance(&ragged).unwrap();
+        assert!(
+            direct.len() < ragged.len(),
+            "the fixture must exercise the pad"
+        );
+        let padded = run(48_000, ragged.clone());
+        assert_eq!(padded.len(), ragged.len());
+        assert_eq!(&padded[..direct.len()], &direct[..]);
+        assert!(padded[direct.len()..].iter().all(|&v| v == 0.0));
+        let low = tone(16_000, 16_000);
+        let expected = model
+            .enhance(&enhancement_pcm(&enhancement_request(Some(16_000)), &low).unwrap())
+            .unwrap();
+        let resampled = run(16_000, low);
+        assert_eq!(resampled.len(), 48_000);
+        assert_eq!(&resampled[..expected.len()], &expected[..]);
+        drop(session);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

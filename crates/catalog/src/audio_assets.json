@@ -2539,6 +2539,39 @@
         "max_input_seconds": null,
         "install_subdir": "Models/pocket-tts"
       }
+    },
+    {
+      "alias": "mossformer2-se-48k-fp16",
+      "assets": [
+        {
+          "path": "README.md",
+          "sha256": "38ea1a7dd9057e20229c6807f0c6856977e750bed167930314e983c0047df8ed",
+          "size": 279
+        },
+        {
+          "path": "model_fp16.safetensors",
+          "sha256": "61e63484df9c2be7e1111ca0346d431422a98b263331021a67c2d7ddb2f67a85",
+          "size": 110652628
+        }
+      ],
+      "source": {
+        "repository": "starkdmi/MossFormer2_SE_48K_MLX",
+        "revision": "ccd0ded00e26f38e9f5b0ba21608aa6a0bcd6434"
+      },
+      "metadata": {
+        "task": "enhancement",
+        "family": "mossformer2_se",
+        "display_name": "MossFormer2 SE 48 kHz FP16",
+        "required_files": [
+          "README.md",
+          "model_fp16.safetensors"
+        ],
+        "sample_rate": 48000,
+        "channels": 1,
+        "languages": [],
+        "voices": [],
+        "max_input_seconds": 600
+      }
     }
   ]
 }
