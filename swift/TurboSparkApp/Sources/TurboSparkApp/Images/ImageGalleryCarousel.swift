@@ -78,6 +78,20 @@ struct ImageGalleryCarousel: View {
                     .appAction(.secondary)
                     .disabled(index + 1 >= artifacts.count).keyboardShortcut(.rightArrow, modifiers: [])
                     Spacer()
+                    // Same path as the actions menu: re-renders the saved
+                    // request, its seed included. Starting it closes this
+                    // sheet so the progress card is visible.
+                    Button { model.regenerateImage(from: artifact) } label: {
+                        Label { Text("Regenerate", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
+                    }
+                    .appAction(.secondary)
+                    .disabled(!model.canRegenerateImage(from: artifact))
+                    Button { model.varyImage(from: artifact) } label: {
+                        Label { Text("Vary", bundle: .module) } icon: { Image(systemName: "shuffle") }
+                    }
+                    .appAction(.secondary)
+                    .help(Text("Same prompt and settings with a new random seed", bundle: .module))
+                    .disabled(!model.canRegenerateImage(from: artifact))
                     Button { reuse(artifact); dismiss() } label: { Text("Use prompt", bundle: .module) }
                         .appAction(.primary)
                 }

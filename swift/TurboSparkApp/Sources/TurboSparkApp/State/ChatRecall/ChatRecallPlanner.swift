@@ -171,13 +171,18 @@ enum ChatRecallPlanner {
     /// the prompt (no evidence is even requested), when the person's message
     /// was itself dropped, when there is no room, or when the result would
     /// not fit. The window is never exceeded: the final prompt is counted.
+    ///
+    /// `report` hears what happened once recall was needed (a recorded turn
+    /// is outside the prompt and the person's message is in it), for the
+    /// in-memory retrieval inspector. It never changes the result.
     static func applyConversationRecall(
         fitted: Fit,
         inputs: Inputs,
         refit: (_ maxTokens: Int) async -> Fit?,
         countTokens: ([ChatMessage]) async -> Int?,
         evidence: (_ keptTurns: Int, _ budget: Int) async -> String?,
-        policy: String
+        policy: String,
+        report: (RecallInspection.Outcome) -> Void = { _ in }
     ) async -> Fit {
         guard let question = inputs.question, !inputs.turns.isEmpty else { return fitted }
 
@@ -196,7 +201,10 @@ enum ChatRecallPlanner {
         if inputs.promptBudget - 1 - fitted.measuredTokens < reserve {
             guard let tighter = await refit(inputs.promptBudget - reserve),
                   tighter.hasRoomForGeneration, tighter.retained.contains(question)
-            else { return fitted }
+            else {
+                report(.dropped(.noRoom))
+                return fitted
+            }
             base = tighter
         }
 
@@ -204,19 +212,30 @@ enum ChatRecallPlanner {
         let policyOverhead = policy.utf8.count / 3 + 16
         let headroom = inputs.promptBudget - 1 - base.measuredTokens - policyOverhead
         let budget = min(reserve, headroom)
-        guard budget >= minEvidenceTokens else { return fitted }
+        guard budget >= minEvidenceTokens else {
+            report(.dropped(.noRoom))
+            return fitted
+        }
 
         let kept = outside(base).kept
         guard let text = await evidence(kept, budget),
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let target = base.retained.lastIndex(of: question)
-        else { return fitted }
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            report(.dropped(.nothingFound))
+            return fitted
+        }
+        guard let target = base.retained.lastIndex(of: question) else {
+            report(.dropped(.unavailable))
+            return fitted
+        }
 
         var retained = base.retained
         retained[target] = inject(evidence: text, policy: policy, into: question)
         guard let measured = await countTokens(retained), measured < inputs.promptBudget else {
+            report(.dropped(.overBudget))
             return fitted
         }
+        report(.injected)
         return Fit(
             retained: retained, measuredTokens: measured,
             removedTurnCount: base.removedTurnCount, hasRoomForGeneration: true)

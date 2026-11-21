@@ -5,7 +5,8 @@ struct ErrorBanner: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        if let error = model.error {
+        // A failed load shows in ModelLoadFailureBannerView; skip the same text here.
+        if let error = model.error, model.modelLoadFailure?.covers(error: error) != true {
             HStack(spacing: 8) {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")

@@ -61,6 +61,7 @@ extension AppModel {
         let activated = versions.remove(at: target)
         message.content = activated.content
         message.reasoning = activated.reasoning
+        message.reasoningSeconds = activated.reasoningSeconds
         message.stopReason = activated.stopReason
         message.toolCalls = activated.toolCalls
         message.toolResults = activated.toolResults

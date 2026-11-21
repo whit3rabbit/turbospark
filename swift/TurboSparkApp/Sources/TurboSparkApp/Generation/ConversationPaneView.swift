@@ -3,6 +3,10 @@ import SwiftUI
 @MainActor
 struct ConversationPaneView: View {
     @ObservedObject var model: AppModel
+    /// Held here, not in the strip: the strip's body is empty while hidden,
+    /// and a modifier on an empty view never runs, so it could not notice a
+    /// resource recovering (which is what clears a dismissal).
+    @State private var resourceDismissals: [ResourceWarning.Kind: ResourceWarning.Level] = [:]
 
     var body: some View {
         paneContent
@@ -32,7 +36,11 @@ struct ConversationPaneView: View {
     private var conversationChrome: some View {
         VStack(spacing: 8) {
             StallRecoveryBannerView(model: model)
+            ModelLoadFailureBannerView(model: model)
             ErrorBanner(model: model)
+            // Last of the strips and hidden while any above is up
+            // (`ResourceWarning.notice`), so at most one asks for attention.
+            ResourceWarningStripView(model: model, dismissed: $resourceDismissals)
             if model.showsNoModelInstalledBanner {
                 NoModelInstalledBanner(model: model)
             }
@@ -43,6 +51,9 @@ struct ConversationPaneView: View {
         .padding(.top, 8)
         .padding(.bottom, 12)
         .background(.appPage)
+        .onChange(of: ResourceWarningStripView.levels(for: model)) { _, fresh in
+            resourceDismissals = ResourceWarning.prunedDismissals(resourceDismissals, levels: fresh)
+        }
     }
 }
 

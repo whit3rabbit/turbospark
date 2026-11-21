@@ -10,6 +10,11 @@ import SwiftUI
 /// `onSendToChat`. A caller with no composer to attach to omits the callback
 /// and the Send action does not appear.
 ///
+/// Point-and-ask (`onAsk`) is offered only when the caller passes it, and
+/// callers pass it only while the loaded model takes images
+/// (`AppModel.visionIsActive`). It attaches a marked copy and drafts a
+/// question; the user still presses Send.
+///
 /// Pan is the scroll view, zoom is `AnnotationViewport.zoom` (buttons or
 /// pinch), and the image is always laid out at natural pixel size times
 /// `scale`, so there is no resampling to lose quality at any zoom.
@@ -17,6 +22,9 @@ import SwiftUI
 struct ImagePreviewView: View {
     let image: NSImage
     var onSendToChat: ((Data) -> Void)?
+    /// Receives the flattened PNG (with the asked region boxed) and the
+    /// drafted question. Nil hides every Ask control.
+    var onAsk: ((Data, String) -> Void)?
 
     @Environment(\.appTheme) private var theme
     @State private var session: ImageAnnotationSession
@@ -24,8 +32,12 @@ struct ImagePreviewView: View {
     @State private var exportError: String?
     private let cgImage: CGImage?
 
-    init(image: NSImage, onSendToChat: ((Data) -> Void)? = nil) {
+    init(
+        image: NSImage, onAsk: ((Data, String) -> Void)? = nil,
+        onSendToChat: ((Data) -> Void)? = nil
+    ) {
         self.image = image
+        self.onAsk = onAsk
         self.onSendToChat = onSendToChat
         let source = AnnotationExporter.sourceCGImage(of: image)
         cgImage = source
@@ -55,12 +67,29 @@ struct ImagePreviewView: View {
                 .padding(.bottom, 6)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+            if session.tool == .ask, onAsk != nil {
+                Label {
+                    Text("Click a spot or drag a region to ask about it.", bundle: .module)
+                        .themedFont(.small)
+                } icon: {
+                    Image(systemName: "questionmark.bubble")
+                }
+                .foregroundStyle(theme.secondaryText)
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
             Divider()
             GeometryReader { proxy in
                 canvasArea(container: proxy.size)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // The model can unload while the preview is open; Ask mode must not
+        // outlive the gate that offered it.
+        .onChange(of: onAsk == nil) {
+            if onAsk == nil, session.tool == .ask { session.tool = .select }
+        }
     }
 
     // MARK: - Image area
@@ -82,7 +111,9 @@ struct ImagePreviewView: View {
                     .interpolation(.high)
                     .frame(width: content.width, height: content.height)
                     .accessibilityHidden(true)
-                AnnotationLayerView(session: $session)
+                AnnotationLayerView(
+                    session: $session,
+                    onAskRegion: onAsk == nil ? nil : { ask(region: $0) })
             }
             .frame(width: content.width, height: content.height)
             .frame(
@@ -152,6 +183,9 @@ struct ImagePreviewView: View {
             session.viewport.resetZoom()
         }
         .disabled(session.viewport.zoom == 1)
+        if onAsk != nil {
+            askControls
+        }
         if onSendToChat != nil {
             sendButton
         }
@@ -172,16 +206,68 @@ struct ImagePreviewView: View {
     }
 
     private func send() {
-        guard let cgImage, let onSendToChat else { return }
+        guard let onSendToChat, let png = flattened(session.history.annotations) else { return }
+        onSendToChat(png)
+    }
+
+    /// The image plus `annotations` as PNG, or nil after showing and
+    /// announcing why it failed.
+    private func flattened(_ annotations: [ImageAnnotation]) -> Data? {
+        guard let cgImage else { return nil }
         do {
-            let png = try AnnotationExporter.flatten(
-                cgImage, annotations: session.history.annotations)
+            let png = try AnnotationExporter.flatten(cgImage, annotations: annotations)
             exportError = nil
-            onSendToChat(png)
+            return png
         } catch {
             let message = error.localizedDescription
             exportError = message
             AccessibilityNotification.Announcement(message).post()
+            return nil
         }
+    }
+
+    // MARK: - Point-and-ask
+
+    /// The pointer path (Ask mode) and the non-pointer path (Ask about image,
+    /// reachable by keyboard and VoiceOver) side by side.
+    @ViewBuilder
+    private var askControls: some View {
+        let asking = session.tool == .ask
+        AppChip(Text("Ask", bundle: .module), systemImage: "questionmark.bubble", isOn: asking) {
+            session.tool = asking ? .select : .ask
+        }
+        .accessibilityAddTraits(asking ? .isSelected : [])
+        .accessibilityHint(Text("Click a spot or drag a region to ask about it.", bundle: .module))
+        AppIconButton("text.bubble", label: Text("Ask about image", bundle: .module)) {
+            ask(region: nil)
+        }
+    }
+
+    /// Attaches a copy with every existing mark plus, for a region, a box
+    /// around it, and hands the drafted question to the caller. The box joins
+    /// the history so what stays on screen is what the model was sent, and
+    /// Undo removes it.
+    private func ask(region: CGRect?) {
+        guard let onAsk else { return }
+        var marks = session.history.annotations
+        var box: ImageAnnotation?
+        let question: String
+        if let region {
+            let mark = ImageAnnotation(kind: .box(region))
+            marks.append(mark)
+            box = mark
+            question = PointAndAsk.question(region: region, imageSize: session.viewport.imageSize)
+        } else {
+            question = PointAndAsk.wholeImageQuestion()
+        }
+        guard let png = flattened(marks) else { return }
+        if let box {
+            session.history.add(box)
+            session.selectedID = box.id
+            // One ask per gesture: staying in Ask mode would attach another
+            // copy on the next stray click.
+            session.tool = .select
+        }
+        onAsk(png, question)
     }
 }

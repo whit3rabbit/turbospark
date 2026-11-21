@@ -15,22 +15,11 @@ struct ComposerSuggestionPopup: View {
     let onPick: () -> Void
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    if let hint = controller.hint {
-                        hintRow(hint)
-                    }
-                    ForEach(Array(controller.suggestions.enumerated()), id: \.element.id) {
-                        index, suggestion in
-                        row(suggestion, index: index)
-                    }
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            if !controller.slashFilterGroups.isEmpty {
+                slashFilterChips
             }
-            .onChange(of: controller.selectedIndex) { _, newIndex in
-                guard controller.suggestions.indices.contains(newIndex) else { return }
-                proxy.scrollTo(controller.suggestions[newIndex].id, anchor: .center)
-            }
+            suggestionList
         }
         .frame(maxHeight: 260)
         .background(.appElevated)
@@ -42,6 +31,69 @@ struct ComposerSuggestionPopup: View {
         .shadow(color: .black.opacity(0.16), radius: 8, y: 2)
         .accessibilityLabel(Text("Suggestions", bundle: .module))
         .accessibilityHint(Text("Use the up and down arrows to choose, Return to accept, Escape to dismiss.", bundle: .module))
+    }
+
+    /// The `/` menu's kind filter. Pinned above the scrolling rows so it
+    /// stays reachable; the arrows keep walking the rows it narrows.
+    private var slashFilterChips: some View {
+        HStack(spacing: 6) {
+            AppChip(Text("All", bundle: .module), isOn: controller.slashFilter == nil) {
+                controller.setSlashFilter(nil)
+            }
+            ForEach(controller.slashFilterGroups, id: \.self) { group in
+                // Every group title is fixed English and a catalog key.
+                AppChip(
+                    Text(LocalizedStringKey(group.title), bundle: .module),
+                    isOn: controller.slashFilter == group
+                ) {
+                    controller.setSlashFilter(group)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 7)
+        .padding(.bottom, 3)
+        .accessibilityElement(children: .contain)
+    }
+
+    private var suggestionList: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if let hint = controller.hint {
+                        hintRow(hint)
+                    }
+                    if controller.showsGroupHeaders {
+                        // Grouped `@` menu. `suggestions` is stored in this
+                        // same order, so startIndex + offset is the row's
+                        // selectedIndex and the arrows cross groups in
+                        // reading order.
+                        ForEach(controller.sections, id: \.group) { section in
+                            VStack(alignment: .leading, spacing: 0) {
+                                groupHeader(section.group)
+                                ForEach(Array(section.rows.enumerated()), id: \.element.id) {
+                                    offset, suggestion in
+                                    row(suggestion, index: section.startIndex + offset)
+                                }
+                            }
+                            .accessibilityElement(children: .contain)
+                            .accessibilityLabel(
+                                Text(LocalizedStringKey(section.group.title), bundle: .module))
+                        }
+                    } else {
+                        ForEach(Array(controller.suggestions.enumerated()), id: \.element.id) {
+                            index, suggestion in
+                            row(suggestion, index: index)
+                        }
+                    }
+                }
+            }
+            .onChange(of: controller.selectedIndex) { _, newIndex in
+                guard controller.suggestions.indices.contains(newIndex) else { return }
+                proxy.scrollTo(controller.suggestions[newIndex].id, anchor: .center)
+            }
+        }
     }
 
     private func hintRow(_ text: String) -> some View {
@@ -59,6 +111,31 @@ struct ComposerSuggestionPopup: View {
         .accessibilityElement(children: .combine)
     }
 
+    private func groupHeader(_ group: ComposerSuggestionGroup) -> some View {
+        // Every group title is fixed English and a catalog key.
+        Text(LocalizedStringKey(group.title), bundle: .module)
+            .themedFont(.tiny)
+            .fontWeight(.medium)
+            .foregroundStyle(.appSecondary)
+            .padding(.horizontal, 10)
+            .padding(.top, 7)
+            .padding(.bottom, 2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityAddTraits(.isHeader)
+    }
+
+    /// Glyph tint by kind. Secondary signal only: the glyph shape and the
+    /// group header word carry the kind. Typed references (`@diff`,
+    /// `@git:`) take the accent because they are not paths in the tree;
+    /// files, folders, commands and skills stay neutral, told apart by
+    /// glyph. No status color: a kind is not a state.
+    private static func glyphStyle(_ kind: ComposerSuggestion.Kind) -> AnyShapeStyle {
+        switch kind {
+        case .reference: return AnyShapeStyle(.appAccentText)
+        case .file, .folder, .builtInCommand, .skill: return AnyShapeStyle(.appSecondary)
+        }
+    }
+
     private func row(_ suggestion: ComposerSuggestion, index: Int) -> some View {
         let isSelected = index == controller.selectedIndex
         return Button {
@@ -71,7 +148,7 @@ struct ComposerSuggestionPopup: View {
             HStack(spacing: 8) {
                 Image(systemName: suggestion.iconName)
                     .frame(width: 16)
-                    .foregroundStyle(.appSecondary)
+                    .foregroundStyle(Self.glyphStyle(suggestion.kind))
                 VStack(alignment: .leading, spacing: 1) {
                     Text(suggestion.title)
                         .lineLimit(1)

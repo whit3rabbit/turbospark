@@ -5,21 +5,80 @@ struct PromptAttachmentsView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 6) {
-                ForEach(model.promptAttachments) { attachment in
-                    PromptAttachmentChipView(
-                        attachment: attachment,
-                        isPreviewing: model.previewAttachmentID == attachment.id,
-                        isRunning: model.isRunning,
-                        onPreview: { model.showPreview(attachmentID: attachment.id) },
-                        onRemove: { model.removePromptAttachment(id: attachment.id) }
-                    )
+        VStack(alignment: .leading, spacing: 4) {
+            ScrollView(.horizontal) {
+                HStack(spacing: 6) {
+                    ForEach(model.promptAttachments) { attachment in
+                        PromptAttachmentChipView(
+                            attachment: attachment,
+                            isPreviewing: model.previewAttachmentID == attachment.id,
+                            isRunning: model.isRunning,
+                            onPreview: { model.showPreview(attachmentID: attachment.id) },
+                            onRemove: { model.removePromptAttachment(id: attachment.id) }
+                        )
+                    }
                 }
+                .padding(.bottom, 2)
             }
-            .padding(.bottom, 2)
+            .scrollIndicators(.hidden)
+            if let budget {
+                PromptAttachmentsBudgetLine(
+                    attachmentTokens: budget.tokens, reading: budget.reading)
+            }
         }
-        .scrollIndicators(.hidden)
+    }
+
+    /// The tray's budget, local chats with a loaded session only: before a
+    /// load the window is a placeholder (`resolvedContextTokens` falls back
+    /// to 4096), and a remote chat's window is the provider's. The same
+    /// gate as the context strip (`ResourceWarningStripView.contextFraction`).
+    private var budget: (tokens: Int, reading: AttachmentContextBudget.Reading)? {
+        guard model.session != nil,
+              model.remoteContextReading(chatID: model.selectedChatID) == nil,
+              let tokens = AttachmentContextBudget.totalTokens(model.promptAttachments),
+              let reading = AttachmentContextBudget.reading(
+                  attachmentTokens: tokens,
+                  otherPromptTokens: model.estimatedPromptTokens,
+                  windowTokens: model.resolvedContextTokens,
+                  reservedForReplyTokens: model.maxNewTokens)
+        else { return nil }
+        return (tokens, reading)
+    }
+}
+
+/// One line under the chips: what the attachments weigh, or a warning when
+/// they bring the prompt near or past the usable window. Glyph plus words,
+/// never the color alone (StatusLabel guide).
+struct PromptAttachmentsBudgetLine: View {
+    let attachmentTokens: Int
+    let reading: AttachmentContextBudget.Reading
+
+    var body: some View {
+        let tokens = attachmentTokens.formatted(.number.notation(.compactName))
+        switch reading.level {
+        case .fits:
+            Text("Attachments use about \(tokens) tokens, \(reading.attachmentPercent)% of the context window", bundle: .module)
+                .themedFont(.micro)
+                .foregroundStyle(.appSecondary)
+        case .nearLimit:
+            Label {
+                Text("Attachments bring this prompt to \(reading.totalPercent)% of the context window", bundle: .module)
+            } icon: {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .accessibilityHidden(true)
+            }
+            .themedFont(.micro, weight: .medium)
+            .foregroundStyle(.appWarning)
+        case .overLimit:
+            Label {
+                Text("Attachments push this prompt past the context window. Remove one to make room.", bundle: .module)
+            } icon: {
+                Image(systemName: "exclamationmark.octagon.fill")
+                    .accessibilityHidden(true)
+            }
+            .themedFont(.micro, weight: .medium)
+            .foregroundStyle(.appDanger)
+        }
     }
 }
 
@@ -49,9 +108,17 @@ struct PromptAttachmentChipView: View {
                             .themedFont(.tiny, weight: .medium)
                             .lineLimit(1)
                             .truncationMode(.middle)
-                        Text(detailText)
-                            .themedFont(.micro)
-                            .foregroundStyle(.appSecondary)
+                        HStack(spacing: 6) {
+                            Text(detailText)
+                            if let tokenText {
+                                // Kept whole: the char count truncates first.
+                                Text("~\(tokenText) tokens", bundle: .module)
+                                    .layoutPriority(1)
+                            }
+                        }
+                        .lineLimit(1)
+                        .themedFont(.micro)
+                        .foregroundStyle(.appSecondary)
                     }
                 }
                 .contentShape(Rectangle())
@@ -59,7 +126,7 @@ struct PromptAttachmentChipView: View {
             .buttonStyle(.plain)
             .help(Text("Preview \(attachment.fileName)", bundle: .module))
             .accessibilityLabel(Text("Preview \(attachment.fileName)", bundle: .module))
-            .accessibilityValue(detailText)
+            .accessibilityValue(accessibilityDetail)
             .accessibilityHint(Text("Opens this document in the preview pane", bundle: .module))
 
             AppIconButton("xmark", label: Text("Remove \(attachment.fileName)", bundle: .module)) {
@@ -94,4 +161,16 @@ struct PromptAttachmentChipView: View {
     // The subtitle is a VALUE on the attachment, not assembled here, so it
     // can be tested without a view (`swift/CLAUDE.md` Gotcha 26).
     private var detailText: String { attachment.detailText }
+
+    /// Nil for images: no known vision token cost, so no figure at all.
+    private var tokenText: String? {
+        AttachmentContextBudget.tokens(for: attachment)
+            .map { $0.formatted(.number.notation(.compactName)) }
+    }
+
+    /// "about" rather than "~", which VoiceOver reads as "tilde".
+    private var accessibilityDetail: Text {
+        guard let tokenText else { return Text(verbatim: detailText) }
+        return Text("\(detailText), about \(tokenText) tokens", bundle: .module)
+    }
 }
