@@ -26,6 +26,7 @@ use std::path::Path;
 
 use crate::families::qwen::{
     install_has_dflash, install_has_mtp_head, DflashDraftPolicy, DraftPolicies, MtpDraftPolicy,
+    MtpState,
 };
 use crate::speculative::DEFAULT_SPECULATION_BLOCK;
 
@@ -357,6 +358,41 @@ pub fn resolve_speculation(
             }
             Ok(SpeculationPlan::Enabled { block: n as usize })
         }
+    }
+}
+
+/// Why a session opened on this install with default options (`auto`
+/// speculation, `auto` drafter) would NOT speculate, or `None` if it would.
+///
+/// The same three decisions a front end's open makes (`resolve_drafter`, the
+/// engine blocker, `resolve_speculation`), read from the resident index
+/// alone: kilobytes, no weights, no GPU. It exists so a host can label an
+/// install by what the engine will do rather than by its name. `arch` is the
+/// manifest's (`repack::peek_manifest_arch`); open checks the arch again
+/// after attaching a vision sidecar, which this does not model.
+pub fn install_speculation_blocker(
+    model_dir: &Path,
+    arch: &model_io::ArchConfig,
+) -> Option<String> {
+    let index = match model_io::load_resident_index(&model_dir.join("model_weights.bin")) {
+        Ok(index) => index,
+        Err(e) => return Some(format!("the resident index could not be read: {e}")),
+    };
+    let choice = resolve_drafter(SpeculativeDrafter::Auto, model_dir);
+    // `auto` only ever resolves to the MTP drafter (a DFlash2-only install
+    // gets MTP plus a note saying DFlash2 is opt-in), so the MTP blocker is
+    // the one open would consult.
+    debug_assert_eq!(choice.drafter, SpeculativeDrafter::Mtp);
+    let blocker = choice
+        .note
+        .clone()
+        .or_else(|| MtpState::speculation_blocker(&index, arch, install_has_mtp_head(&index)));
+    match resolve_speculation(Speculation::Auto, choice.drafter, blocker, true) {
+        Ok(SpeculationPlan::Enabled { .. }) => None,
+        Ok(SpeculationPlan::Disabled { reason }) => {
+            Some(reason.unwrap_or_else(|| "speculation resolved to off".to_string()))
+        }
+        Err(e) => Some(e),
     }
 }
 

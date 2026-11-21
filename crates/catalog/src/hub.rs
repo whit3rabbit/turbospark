@@ -161,6 +161,11 @@ pub struct HubQuery {
     pub limit: u32,
     pub sort: HubSort,
     pub format: HubFormat,
+    /// Also list `image-text-to-text` repositories (Qwen3.8, Gemma 4 and
+    /// their MLX conversions, LoRA adapters on them): this port runs their
+    /// text trunk but the Hub files them apart from `text-generation`. Off
+    /// by default because it is a second request per search.
+    pub vision_language: bool,
 }
 
 impl HubQuery {
@@ -170,7 +175,13 @@ impl HubQuery {
             limit: DEFAULT_TRENDING_LIMIT,
             sort: HubSort::Trending,
             format: HubFormat::Any,
+            vision_language: false,
         }
+    }
+
+    pub fn with_vision_language(mut self, on: bool) -> Self {
+        self.vision_language = on;
+        self
     }
 
     pub fn with_format(mut self, format: HubFormat) -> Self {
@@ -541,7 +552,48 @@ impl<'a> HubClient<'a> {
         }
 
         let url = models_url(Some(&query.text), query.sort, query.limit, query.format)?;
-        let fetched = self.fetch_list(&url, CacheKind::Search, refresh)?;
+        let mut fetched = self.fetch_list(&url, CacheKind::Search, refresh)?;
+        // GGUF repos are filed under text-generation; MLX and safetensors
+        // checkpoints of vision-language families are not, so a second
+        // listing finds them. Best effort: the first page already answered,
+        // and a failure here must not turn it into an error.
+        if query.vision_language && query.format != HubFormat::Gguf {
+            let vlm_url = models_url_for(
+                Some(&query.text),
+                query.sort,
+                query.limit,
+                query.format,
+                VLM_PIPELINE_TAG,
+            )?;
+            if let Ok(extra) = self.fetch_list(&vlm_url, CacheKind::Search, refresh) {
+                let known: std::collections::HashSet<String> = fetched
+                    .entries
+                    .iter()
+                    .map(|e| e.repo_id.to_ascii_lowercase())
+                    .collect();
+                // Interleave rather than append: each list is already in the
+                // requested sort order, and truncating an appended list
+                // below would drop every vision-language row.
+                let extra_entries: Vec<_> = extra
+                    .entries
+                    .into_iter()
+                    .filter(|e| !known.contains(&e.repo_id.to_ascii_lowercase()))
+                    .collect();
+                let mut merged = Vec::new();
+                let mut a = std::mem::take(&mut fetched.entries).into_iter();
+                let mut b = extra_entries.into_iter();
+                loop {
+                    match (a.next(), b.next()) {
+                        (None, None) => break,
+                        (x, y) => merged.extend(x.into_iter().chain(y)),
+                    }
+                }
+                fetched.entries = merged;
+                fetched.rejected.extend(extra.rejected);
+                fetched.from_cache &= extra.from_cache;
+            }
+        }
+        fetched.entries.truncate(query.limit as usize);
         let local_matches = self.catalog.find(&query.text);
         Ok(self.compose(fetched, local_matches))
     }
@@ -1571,6 +1623,21 @@ fn models_url(
     limit: u32,
     format: HubFormat,
 ) -> Result<String, HubError> {
+    models_url_for(search, sort, limit, format, "text-generation")
+}
+
+/// The Hub files vision-language checkpoints (Qwen3.8, Gemma 4) under
+/// `image-text-to-text`, which a `text-generation` query never returns, though
+/// this port runs their text trunk. The query is otherwise identical.
+const VLM_PIPELINE_TAG: &str = "image-text-to-text";
+
+fn models_url_for(
+    search: Option<&str>,
+    sort: HubSort,
+    limit: u32,
+    format: HubFormat,
+    pipeline_tag: &str,
+) -> Result<String, HubError> {
     let base = hf_endpoint();
     let mut url = reqwest::Url::parse(&format!("{}/api/models", base.trim_end_matches('/')))
         .map_err(|error| HubError::Network(format!("invalid HF endpoint {base:?}: {error}")))?;
@@ -1581,7 +1648,7 @@ fn models_url(
         }
         // Text models only: image, audio and embedding repositories have their
         // own pinned catalogs and no arbitrary-repository probe.
-        query.append_pair("pipeline_tag", "text-generation");
+        query.append_pair("pipeline_tag", pipeline_tag);
         if let Some(tag) = format.filter_tag() {
             query.append_pair("filter", tag);
         }

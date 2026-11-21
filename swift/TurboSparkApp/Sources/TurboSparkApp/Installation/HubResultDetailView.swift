@@ -204,6 +204,13 @@ struct HubResultDetailView: View {
             switch check.state {
             case .runnable:
                 runnableHeader(check)
+                // The engine's verdict for the picked file (`currentCheck`
+                // is re-run per variant), on its own line so the header row
+                // keeps its width. The installed row's badge asks the
+                // install the same question (`InstallSpeculationCache`).
+                if check.speculation?.available == true {
+                    ModelFeatureBadgeView.mtp(style: .regular)
+                }
                 identityRows(check)
             case .refused:
                 verdictLabel(Text("Would not run here", bundle: .module), ok: false)

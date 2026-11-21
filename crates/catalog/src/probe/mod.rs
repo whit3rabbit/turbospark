@@ -80,6 +80,8 @@ pub fn probe(
             ));
         }
         probe_gguf(client, repo, ggufs[0])?
+    } else if is_peft_adapter(&files) {
+        probe_adapter(client, repo)?
     } else if has_safetensors {
         probe_safetensors(client, repo, &files)?
     } else {
@@ -103,6 +105,56 @@ pub fn probe(
         client,
         sidecar_repo.unwrap_or(repo),
     );
+    Ok(report)
+}
+
+/// A PEFT adapter repository: the adapter files and no `config.json` of its
+/// own (a merged checkpoint carries one).
+pub(crate) fn is_peft_adapter(files: &[String]) -> bool {
+    let has = |n: &str| files.iter().any(|f| f == n);
+    has("adapter_config.json") && has("adapter_model.safetensors") && !has("config.json")
+}
+
+/// Probe a LoRA adapter by probing the BASE it names and adding the merge.
+///
+/// The base must be a family quantize-on-install admits (the merge happens
+/// in BF16, then the result is quantized as it streams), and the adapter must
+/// use only features `repack::lora_merge` reproduces exactly. Whether every
+/// targeted module exists in the base is checked by the install itself,
+/// against the shard headers it fetches anyway.
+fn probe_adapter(client: &Client, repo: &RepoRef) -> Result<ProbeReport, String> {
+    let text = String::from_utf8(client.get(&repo.file_url("adapter_config.json"))?)
+        .map_err(|e| format!("adapter_config.json of {repo} is not UTF-8: {e}"))?;
+    let cfg =
+        repack::lora_merge::parse_adapter_config(&text).map_err(|e| format!("{repo}: {e}"))?;
+    let base = cfg.base_model.clone().ok_or_else(|| {
+        format!("{repo}: adapter_config.json names no base_model_name_or_path to merge into")
+    })?;
+    let base = RepoRef::parse(&base).map_err(|e| format!("{repo}: base model {base:?}: {e}"))?;
+    let base_files = client.file_list(&base)?;
+    let mut report = probe_safetensors(client, &base, &base_files)?;
+    let adapter_bytes = client
+        .content_length(&repo.file_url("adapter_model.safetensors"))
+        .ok()
+        .flatten()
+        .unwrap_or(0);
+    if let Some(family) = report.family {
+        if !repack::quantize_on_install::family_admits_quantize_on_install(family) {
+            report.refuse(format!(
+                "{repo} is a LoRA adapter on {base}, a {} model; merging adapters is only \
+                 wired for families that quantize on install",
+                family.as_str()
+            ));
+        }
+    }
+    report.download_bytes = report.download_bytes.map(|b| b + adapter_bytes);
+    report.warnings.push(format!(
+        "{repo} is a LoRA adapter (r={}, alpha={}): the install downloads the BASE {base} in \
+         full precision, merges the adapter, and quantizes to 4-bit while streaming. The \
+         adapter's own files are {adapter_bytes} bytes of the download total.",
+        cfg.rank, cfg.alpha
+    ));
+    report.adapter = Some(repo.clone());
     Ok(report)
 }
 
@@ -252,6 +304,8 @@ mod chat_template_resolution_tests {
             sidecars_missing: Vec::new(),
             chat_template: None,
             verdict: Verdict::Runnable,
+            adapter: None,
+            speculation: None,
             warnings: Vec::new(),
         }
     }

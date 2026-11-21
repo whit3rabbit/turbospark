@@ -14,20 +14,82 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- PEFT LoRA adapter repositories install by merging into their base while it
+  streams (`repack::lora_merge`, `docs/LORA_MERGE.md`):
+  `harness-hub/Qwen3.8-27B-pi-adapted` probes runnable and merges into
+  `Qwen/Qwen3.8-27B`, then quantizes to INT4. Merge parity with
+  `tozuo/Qwen3.8-27B-pi-adapted-MLX-4bit` is byte-exact on sampled rows.
+- Catalog row `qwen38-27b-pi` (`tozuo/Qwen3.8-27B-pi-adapted-MLX-4bit`, status
+  `runs`).
+- Hugging Face search also lists `image-text-to-text` repositories (Qwen3.8,
+  Gemma 4, their MLX builds and adapters), which a `text-generation` query
+  never returned. FFI/app searches opt in with `HubQuery::with_vision_language`.
 - Catalog rows can carry `featured_rank`. Only a `verified` model row may be
   featured, and the embedded table must feature at least one row with
   distinct ranks. Eight rows are featured, from LFM3 1.7B to Qwen 3.6 35B.
 - The app's Discover section opens on a Featured tab: the featured rows that
   are not too large for this Mac, grouped by fit and ordered by rank. It
   replaces the Recommended tab; every other row is under All models.
+- Speculative decoding on K-quant GGUF trunks. New batched Q4_K, Q5_K, Q6_K,
+  Q8_0 and raw BF16 GEMM kernels serve the MTP verify, held bit-identical to
+  the GEMVs at every batch width 1..16. BF16 covers the F32 `ssm_alpha`/
+  `ssm_beta` that Q4_K_M and Q6_K `qwen35` files ship. The MTP gate admits
+  dtypes 1, 6, 7, 8 and 13 and, on a GGUF trunk, refuses at open when any
+  verify projection has another block type (Q3_K, for example).
+- Dense `qwen35` GGUFs ingest llama.cpp's `blk.<n>.nextn.*` MTP head under
+  `mtp.*` when all 15 tensors are present, removing the converter's `+1` from
+  the head's seven norms. A partial or unrecognized head is skipped whole, as
+  before. On `unsloth/Qwen3.5-2B-MTP-GGUF`, the Q8_0, Q6_K, Q4_K_M and Q4_K_S
+  files speculate with greedy output identical to non-speculative decode, and
+  the accept-length probe is lossless at blocks 2 to 15 on Q4_K_S. Single
+  unwarmed runs, not benchmark rows (`docs/MTP.md`).
+- `mtp_accept_length_probe` now ends each batched round the way the product
+  loop does (round checkpoint, retaining rollback, `commit_pending`). Under
+  the default lazy GDN tape it previously never committed and diverged.
+- Speculation is known before a model loads. The GGUF probe and Hub check
+  report whether a dense `qwen35` file's install would speculate, read off its
+  header with the open-time gate's rules (`repack::gguf_speculation`; the
+  verify list and batched dtype set now live in `model_io::mtp_verify`, shared
+  with the runtime). `ts_install_speculation_json` /
+  `TurboSparkCapabilities.speculation(forInstallAt:)` answers the same for an
+  install from its resident index, with no weights loaded
+  (`runtime::install_speculation_blocker`). The app's MTP badge on installed
+  models now follows that answer instead of the model's name, so a headless or
+  Q3_K GGUF named "MTP" is no longer badged, and the Hub detail shows the badge
+  for a file that would speculate.
 
 ### Changed
+- Rust API, source-breaking for struct literals: `catalog::ProbeReport` gains
+  `speculation: Option<repack::GgufSpeculation>` (add `speculation: None`).
+  FFI/Swift: the probe and Hub check JSON gain `speculation`
+  (`{available, reason}` or null), exposed as `speculation:
+  SpeculationPreflight?`. Existing keys are unchanged.
+- Rust API, source-breaking for code that builds these with struct literals
+  (neither is `#[non_exhaustive]`): `catalog::ProbeReport` and
+  `catalog::InstallPlan` gain a public `adapter: Option<RepoRef>`, and
+  `catalog::HubQuery` gains `vision_language: bool` (default false, set with
+  `with_vision_language`). Add `adapter: None` to literals. New public items:
+  `repack::lora_merge` and `repack::gdn_out_proj_needs_q8_0_requant`.
+- FFI/Swift: the probe and Hub check JSON carry `adapterBaseRepo` (null unless
+  the repository is a LoRA adapter); the Swift types expose it as
+  `adapterBaseRepo: String?`. Existing keys are unchanged.
 - Discover and Installed draw their accents, selection and badges from the
   theme instead of system colors, so custom themes and light mode apply.
   Badge labels use the theme text color for contrast.
 - Discover's search box says Search, a search with no catalog match leads
   with the Hugging Face search, and the header badge reads Tested on Mac
   instead of Online catalog (the catalog ships with the app).
+
+### Fixed
+- A standard llama.cpp K-quant GGUF of a Qwen gated-DeltaNet model (Q4_K_M and
+  friends store `ssm_out` at Q4_K/Q6_K) no longer fails mid-install with "a
+  128-column V head is not a whole number of 256-element blocks". The walk
+  dequantizes that one tensor, restores the V-head order and stores it as Q8_0
+  (counted as lossy), and the probe warns about it. Checked on a real
+  `netprojects/Qwen3.8-27B-pi-adapted-GGUF` Q4_K_M install (coherent chat
+  decode, and with speculation on, greedy output identical to plain decode)
+  and on the 2B MTP Q4_K_M and Q4_K_S (Q5_K `ssm_out`). Q3_K, Q6_K and IQ
+  `ssm_out` take the same path and have no real-file run yet.
 
 ## [0.9.0] - 2026-11-15
 

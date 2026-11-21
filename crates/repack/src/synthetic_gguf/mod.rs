@@ -28,3 +28,8 @@ pub use minimax::build_synthetic_minimax_gguf;
 
 mod qwen2;
 pub use qwen2::build_synthetic_qwen2_gguf;
+
+mod qwen35;
+pub use qwen35::{
+    build_synthetic_qwen35_dense_gguf, QWEN35_GGUF_HIDDEN, QWEN35_GGUF_LAYERS, QWEN35_GGUF_VOCAB,
+};

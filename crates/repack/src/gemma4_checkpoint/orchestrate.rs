@@ -393,7 +393,7 @@ pub fn read_resident_entries_from_shards(
             // DeepSeek-VL2 conversion both ship them that way).
             let (entry, companion_loss) = if matches!(
                 arch.family,
-                ModelFamily::Qwen2Dense | ModelFamily::Deepseek2
+                ModelFamily::Qwen2Dense | ModelFamily::Deepseek2 | ModelFamily::Llama
             ) {
                 super::narrow::pass_through_packed_qwen2_with_loss(shards, name, quant)?
             } else {

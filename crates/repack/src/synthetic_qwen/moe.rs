@@ -95,6 +95,7 @@ pub fn tiny_qwen_gdn_moe_arch(vocab_size: i64, num_layers: i64, num_experts: i64
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
         short_conv_kernel_size: 0,
+        rope_freq_factors: Vec::new(),
         ple: PleConfig::NONE,
     }
 }

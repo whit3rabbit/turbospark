@@ -71,6 +71,32 @@ final class ModelManagerTests: XCTestCase {
         XCTAssertEqual(mtpDesc.speculativeDrafter, .mtp)
     }
 
+    /// The engine's install answer outranks the name: a GGUF named "MTP"
+    /// whose head was skipped, or whose trunk is Q3_K, gets no MTP badge, and
+    /// a speculating install named nothing in particular gets one.
+    func testEngineSpeculationAnswerDecidesTheMtpBadge() {
+        let no = SpeculationPreflight(available: false, drafter: nil, reason: "no head")
+        let yes = SpeculationPreflight(available: true, drafter: "mtp", reason: nil)
+        XCTAssertEqual(
+            ModelFeatureDescriptor.speculativeDrafter(
+                combinedText: "qwen3.5-2b-mtp-q3_k_m", alias: "qwen3.5-2b-mtp", engineAnswer: no),
+            .none)
+        XCTAssertEqual(
+            ModelFeatureDescriptor.speculativeDrafter(
+                combinedText: "pi q4_k_m", alias: "pi", engineAnswer: yes),
+            .mtp)
+        // No install to ask: the name decides, as before.
+        XCTAssertEqual(
+            ModelFeatureDescriptor.speculativeDrafter(
+                combinedText: "qwen38-27b", alias: "qwen38-27b", engineAnswer: nil),
+            .mtp)
+        // DFlash2 keeps its badge whatever `auto` would do.
+        XCTAssertEqual(
+            ModelFeatureDescriptor.speculativeDrafter(
+                combinedText: "qwen38-27b-dflash2", alias: "qwen38-27b-dflash2", engineAnswer: no),
+            .dynamicSloth)
+    }
+
     func testModelFeatureDescriptorQuantFormats() {
         let ternaryModel = InstalledModel(
             alias: "ternary-bonsai-27b",

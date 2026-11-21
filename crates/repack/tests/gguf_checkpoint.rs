@@ -537,6 +537,91 @@ fn qwens_gated_deltanet_parameters_are_rewritten_into_the_mlx_convention() {
     assert_eq!(out.lossy_narrowing, vec![("blk.0.ssm_a".to_string(), 3)]);
 }
 
+/// A standard llama.cpp Q4_K_M stores `ssm_out` as Q4_K, whose 256-element
+/// block is wider than one V head, so the column de-interleave cannot move
+/// bytes. The walk must dequantize, permute, and store Q8_0 rather than
+/// refuse after the download (the real Qwen3.8-27B pi-adapted Q4_K_M did).
+/// Here the heads are 64 wide (a quarter block) and the oracle is built
+/// independently: dequantize the SOURCE, place head `h` at `V_HEAD_MAP[h]`,
+/// quantize each row with the reference Q8_0 quantizer.
+#[test]
+fn a_k_quant_ssm_out_narrower_than_a_block_is_requantized_to_q8_0_in_v_head_order() {
+    const Q4_K: u32 = 12;
+    const HEAD: usize = 64;
+    const ROWS: usize = 64;
+    let mut source = Vec::new();
+    for r in 0..ROWS {
+        // One Q4_K superblock per row (256 columns): d, dmin (finite f16),
+        // 12 scale bytes, 128 nibble bytes, all varying with the row so a
+        // moved row or head cannot hide behind a constant.
+        source.extend_from_slice(&0x211Eu16.to_le_bytes());
+        source.extend_from_slice(&0x1D1Eu16.to_le_bytes());
+        source.extend((0..12).map(|i| ((r * 7 + i * 13) % 61 + 1) as u8));
+        source.extend((0..128).map(|i| ((r * 31 + i * 17) % 251) as u8));
+    }
+    assert_eq!(source.len(), ROWS * 144);
+
+    let (bytes, _) = GgufBuilder::new()
+        .metadata_str("general.architecture", "qwen35moe")
+        .metadata_u32("qwen35moe.block_count", 1)
+        .metadata_u32("qwen35moe.embedding_length", 64)
+        .metadata_u32("qwen35moe.attention.head_count", 4)
+        .metadata_u32("qwen35moe.attention.head_count_kv", 2)
+        .metadata_u32("qwen35moe.expert_count", 4)
+        .metadata_u32("qwen35moe.expert_used_count", 2)
+        .metadata_u32("qwen35moe.expert_feed_forward_length", 16)
+        .metadata_u32("qwen35moe.full_attention_interval", 4)
+        .metadata_u32("qwen35moe.ssm.group_count", 2)
+        .metadata_u32("qwen35moe.ssm.time_step_rank", 4)
+        .metadata_u32("qwen35moe.ssm.state_size", HEAD as u32)
+        .metadata_u32("qwen35moe.ssm.inner_size", (4 * HEAD) as u32)
+        .metadata_u32("qwen35moe.ssm.conv_kernel", 2)
+        .q8_0_tensor("token_embd.weight", &[64, 128], 1)
+        .tensor(
+            "blk.0.ssm_out.weight",
+            Q4_K,
+            &[(4 * HEAD) as u64, ROWS as u64],
+            source.clone(),
+        )
+        .build();
+    let header = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let out = orchestrate_gguf_checkpoint(&header, &MemoryRangeSource::new(&bytes)).expect("walk");
+
+    let got = out
+        .resident
+        .iter()
+        .find_map(|e| match e {
+            ResidentEntrySpec::Raw(r)
+                if r.name == "language_model.model.layers.0.linear_attn.out_proj.weight" =>
+            {
+                Some(r)
+            }
+            _ => None,
+        })
+        .expect("out_proj entry");
+    assert_eq!(got.dtype, DTYPE_GGUF_Q8_0);
+
+    let cols = 4 * HEAD;
+    let dequant = compute::quant_gguf::dequantize_q4_k(&source, ROWS * cols);
+    let mut want = Vec::new();
+    for r in 0..ROWS {
+        let mut row = vec![0f32; cols];
+        for (h, &to) in V_HEAD_MAP.iter().enumerate() {
+            row[to * HEAD..(to + 1) * HEAD]
+                .copy_from_slice(&dequant[r * cols + h * HEAD..r * cols + (h + 1) * HEAD]);
+        }
+        want.extend_from_slice(&compute::quant_gguf::quantize_q8_0(&row));
+    }
+    assert_eq!(got.bytes, want, "rows must be in grouped V-head order");
+    assert!(
+        out.lossy_narrowing
+            .iter()
+            .any(|(n, c)| n == "blk.0.ssm_out.weight" && *c == ROWS * cols),
+        "the re-encode is not byte-lossless and must be counted: {:?}",
+        out.lossy_narrowing
+    );
+}
+
 /// `ssm_a` is `-exp(A_log)`, so a non-negative value means the tensor is not
 /// what this walk thinks it is. Loud beats a NaN reaching the install: a
 /// silent `ln` of a negative number would decode as gibberish 19 GB later.
@@ -1081,4 +1166,149 @@ fn a_gpt_oss_gguf_installs_with_its_biases_sinks_and_untied_head() {
     // times too short here and a wrong softmax denominator on the real file.
     let sinks = &index.entries["language_model.model.layers.0.self_attn.sinks.weight"];
     assert_eq!(sinks.size_bytes as u64, shape.num_heads * 2);
+}
+
+/// A dense Llama 3.x GGUF: the dense fixture above plus `rope_freqs.weight`,
+/// the per-pair divisor vector llama.cpp's converter writes from
+/// `rope_scaling.rope_type == "llama3"`. Head dim 64, so 32 divisors.
+fn dense_llama3_gguf(rope_freqs: &[f32]) -> Vec<u8> {
+    const HIDDEN: u64 = 256;
+    const HEADS: u32 = 4;
+    const KV_HEADS: u32 = 2;
+    const FFN: u64 = 256;
+    let kv = HIDDEN * KV_HEADS as u64 / HEADS as u64;
+    let freq_bytes: Vec<u8> = rope_freqs.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let (bytes, _) = turbospark_repack::GgufBuilder::new()
+        .metadata_str("general.architecture", "llama")
+        .metadata_u32("llama.block_count", 1)
+        .metadata_u32("llama.embedding_length", HIDDEN as u32)
+        .metadata_u32("llama.feed_forward_length", FFN as u32)
+        .metadata_u32("llama.attention.head_count", HEADS)
+        .metadata_u32("llama.attention.head_count_kv", KV_HEADS)
+        .metadata_f32("llama.rope.freq_base", 500000.0)
+        .metadata_f32("llama.attention.layer_norm_rms_epsilon", 1e-5)
+        .q4_k_tensor("token_embd.weight", &[HIDDEN, 512], 1)
+        .q6_k_tensor("output.weight", &[HIDDEN, 512], 2)
+        .f32_upcast_bf16_tensor("output_norm.weight", &[HIDDEN], 3)
+        .tensor(
+            "rope_freqs.weight",
+            0,
+            &[rope_freqs.len() as u64],
+            freq_bytes,
+        )
+        .f32_upcast_bf16_tensor("blk.0.attn_norm.weight", &[HIDDEN], 4)
+        .f32_upcast_bf16_tensor("blk.0.ffn_norm.weight", &[HIDDEN], 5)
+        .q4_k_tensor("blk.0.attn_q.weight", &[HIDDEN, HIDDEN], 6)
+        .q4_k_tensor("blk.0.attn_k.weight", &[HIDDEN, kv], 7)
+        .q4_k_tensor("blk.0.attn_v.weight", &[HIDDEN, kv], 8)
+        .q4_k_tensor("blk.0.attn_output.weight", &[HIDDEN, HIDDEN], 9)
+        .q4_k_tensor("blk.0.ffn_gate.weight", &[HIDDEN, FFN], 10)
+        .q4_k_tensor("blk.0.ffn_up.weight", &[HIDDEN, FFN], 11)
+        .q4_k_tensor("blk.0.ffn_down.weight", &[FFN, HIDDEN], 12)
+        .build();
+    bytes
+}
+
+/// Llama 3.x's `rope_freqs.weight` was refused by name for every family
+/// until the llama flow could bind a per-pair frequency table. It is now
+/// read by VALUE into `arch.ropeFreqFactors`, written at manifest minor 2
+/// (so an older reader refuses the install instead of decoding with
+/// unscaled frequencies), and read back unchanged.
+#[test]
+fn a_llama3_gguf_carries_its_rope_divisors_into_the_manifest() {
+    let factors =
+        compute::llama3_rope_factors(64, 500000.0, 8.0, 1.0, 4.0, 8192.0).expect("llama3 factors");
+    let bytes = dense_llama3_gguf(&factors);
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let dir = tempdir();
+    let arch =
+        write_gguf_install_streamed(&dir, &h, &MemoryRangeSource::new(&bytes), "llama3", |_| {})
+            .expect("a llama3 install writes");
+    assert_eq!(arch.rope_freq_factors, factors);
+
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["versionMinor"], model_io::MANIFEST_VERSION_MINOR);
+    assert_eq!(model_io::MANIFEST_VERSION_MINOR, 2);
+    assert_eq!(
+        manifest["arch"]["ropeFreqFactors"]
+            .as_array()
+            .map(|a| a.len()),
+        Some(32)
+    );
+
+    let peeked = turbospark_repack::peek_manifest_arch(&dir).expect("peek");
+    assert_eq!(
+        peeked.rope_freq_factors, factors,
+        "f32 survives the JSON trip"
+    );
+    model_io::load_manifest(&dir, &peeked, model_io::DEFAULT_MAX_BYTES)
+        .expect("the llama3 manifest validates against its own read-back");
+
+    // An arch that forgot the factors must not validate against the install.
+    let mut forgot = peeked.clone();
+    forgot.rope_freq_factors.clear();
+    assert!(model_io::load_manifest(&dir, &forgot, model_io::DEFAULT_MAX_BYTES).is_err());
+}
+
+#[test]
+fn a_llama3_gguf_with_malformed_rope_divisors_is_refused() {
+    // One short of head_dim / 2.
+    let bytes = dense_llama3_gguf(&[1.0; 31]);
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let err = orchestrate_gguf_checkpoint(&h, &MemoryRangeSource::new(&bytes))
+        .err()
+        .expect("a short divisor vector must be refused");
+    assert!(err.to_string().contains("rope_freqs.weight"), "{err}");
+
+    let mut zero = vec![1.0f32; 32];
+    zero[7] = 0.0;
+    let bytes = dense_llama3_gguf(&zero);
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    assert!(orchestrate_gguf_checkpoint(&h, &MemoryRangeSource::new(&bytes)).is_err());
+}
+
+/// A llama file WITHOUT the tensor (Llama 2, Mistral, TinyLlama) keeps an
+/// empty table and the base manifest minor, so it stays readable by every
+/// reader that could read it before.
+#[test]
+fn a_llama_gguf_without_rope_freqs_keeps_the_base_minor() {
+    let dir = tempdir();
+    let (bytes, _) = turbospark_repack::GgufBuilder::new()
+        .metadata_str("general.architecture", "llama")
+        .metadata_u32("llama.block_count", 1)
+        .metadata_u32("llama.embedding_length", 256)
+        .metadata_u32("llama.feed_forward_length", 256)
+        .metadata_u32("llama.attention.head_count", 4)
+        .metadata_u32("llama.attention.head_count_kv", 2)
+        .metadata_f32("llama.rope.freq_base", 10000.0)
+        .metadata_f32("llama.attention.layer_norm_rms_epsilon", 1e-5)
+        .q4_k_tensor("token_embd.weight", &[256, 512], 1)
+        .q6_k_tensor("output.weight", &[256, 512], 2)
+        .f32_upcast_bf16_tensor("output_norm.weight", &[256], 3)
+        .f32_upcast_bf16_tensor("blk.0.attn_norm.weight", &[256], 4)
+        .f32_upcast_bf16_tensor("blk.0.ffn_norm.weight", &[256], 5)
+        .q4_k_tensor("blk.0.attn_q.weight", &[256, 256], 6)
+        .q4_k_tensor("blk.0.attn_k.weight", &[256, 128], 7)
+        .q4_k_tensor("blk.0.attn_v.weight", &[256, 128], 8)
+        .q4_k_tensor("blk.0.attn_output.weight", &[256, 256], 9)
+        .q4_k_tensor("blk.0.ffn_gate.weight", &[256, 256], 10)
+        .q4_k_tensor("blk.0.ffn_up.weight", &[256, 256], 11)
+        .q4_k_tensor("blk.0.ffn_down.weight", &[256, 256], 12)
+        .build();
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let arch = write_gguf_install_streamed(&dir, &h, &MemoryRangeSource::new(&bytes), "l2", |_| {})
+        .expect("writes");
+    assert!(arch.rope_freq_factors.is_empty());
+    // 256 hidden over 4 heads is a 64-wide head, so the score scale is
+    // 64^-0.5, not the Mixtral baseline's 128^-0.5.
+    assert_eq!(arch.full_head_dim, 64);
+    assert_eq!(arch.attention_scale, 0.125);
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(
+        manifest["versionMinor"],
+        model_io::MANIFEST_VERSION_MINOR_BASE
+    );
+    assert!(manifest["arch"].get("ropeFreqFactors").is_none());
 }

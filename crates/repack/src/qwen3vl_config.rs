@@ -221,6 +221,7 @@ pub fn parse_qwen3_vl_config(json: &str) -> Result<ArchConfig, Gemma4Error> {
         rope_scaling: RopeScalingConfig::NONE,
         vision: VisionConfig::NONE,
         short_conv_kernel_size: 0,
+        rope_freq_factors: Vec::new(),
         ple: PleConfig::NONE,
     })
 }

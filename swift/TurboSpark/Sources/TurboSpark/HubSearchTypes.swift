@@ -126,10 +126,16 @@ public struct HubCheck: Decodable, Sendable, Equatable {
     public let chatTemplate: String?
     public let warnings: [String]
     public let sidecarsMissing: [String]
+    /// Set for a PEFT LoRA adapter repository: the base the install downloads
+    /// and merges the adapter into. `nil` for an ordinary checkpoint.
+    public let adapterBaseRepo: String?
     /// Set only when the weights repository had no `tokenizer.json` and the
     /// hint supplied one that does. **An install of this result must pass the
     /// same repository as `sidecarRepo`.**
     public let sidecarRepo: String?
+    /// GGUF only: whether `file`'s install would speculate. Describes the
+    /// representative file, so check the user's pick before showing it.
+    public let speculation: SpeculationPreflight?
     /// Every pickable `.gguf`, best quality first. Empty for safetensors.
     public let variants: [RepoVariant]
     public let shardedSkipped: Int

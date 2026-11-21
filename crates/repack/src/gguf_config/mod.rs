@@ -509,6 +509,17 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         }
     }
 
+    // THE SAME BUG CLASS AS THE HEAD DIM ABOVE, one field further along. The
+    // llama flow scales scores by `attention_scale`, and the baseline's is
+    // Mixtral's 128^-0.5. A 64-wide head (Llama 3.2 1B, SmolLM2, TinyLlama)
+    // kept it and attended at 0.71x the right scale: exact at position 0,
+    // where there is one key, and 0.59 nats from llama.cpp on the same
+    // Q8_0 bytes everywhere after. Recomputed from THIS model's head;
+    // Granite overrides it below with its own published scale.
+    if family == ModelFamily::Llama {
+        arch.attention_scale = (arch.full_head_dim as f64).powf(-0.5);
+    }
+
     // Granite (`ibm-granite/granite-4.x`) rides the Llama flow, which reads
     // `attention_scale` and nothing else of IBM's four scalars: the other
     // three must be the identity, and a file that says otherwise is refused

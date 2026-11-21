@@ -507,6 +507,7 @@ mod cancel_tests {
             status: "unlisted".to_string(),
             mtp: None,
             reuse_trunk_from: None,
+            adapter: None,
             vision_only: false,
             vision_file: None,
             // A cancelled-at-entry walk reads no weights, so the tower

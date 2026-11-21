@@ -26,6 +26,11 @@ pub(crate) struct RealLlamaState {
     /// Rotated pairs per head. MiniMax rotates only the first 64 elements;
     /// the other families use the full head width.
     pub(crate) rotated_pairs: u32,
+    /// Llama 3.x's per-pair angle table (`rotated_pairs` f32s), built once
+    /// at open from `ArchConfig::rope_freq_factors`. `None` is unscaled
+    /// RoPE, which every other install of this flow takes, and which keeps
+    /// the scalar-theta kernels on exactly the path they ran before.
+    pub(crate) rope_frequencies: Option<gpu::MetalBuffer>,
     /// Family-selected Q/K normalization before RoPE. MiniMax spans the
     /// entire projection; Qwen3 uses independent heads. Never inferred from whether
     /// the tensors happen to be present: a name probe cannot tell a model
@@ -275,6 +280,61 @@ impl RealLlamaState {
         // the FAMILY rather than sniffed, per Gotcha 12's rule: two
         // architectures that share a tensor-name contract cannot be told
         // apart by their tensor names.
+        // LLAMA 3.x ROPE SCALING. One divisor per rotated pair, bound as a
+        // precomputed angle table (`rope_neox_freqs`, the kernel gpt-oss's
+        // YaRN already runs). Refused in every combination the flow has not
+        // been checked under, rather than half-applied: each is a model that
+        // loads and decodes fluently with the wrong angles.
+        let rope_frequencies = if arch.rope_freq_factors.is_empty() {
+            None
+        } else {
+            if arch.family != ModelFamily::Llama {
+                return unsupported(format!(
+                    "ropeFreqFactors is a llama (Llama 3.x) field; {} does not take it",
+                    arch.family.as_str()
+                ));
+            }
+            if arch.rope_scaling.is_active() {
+                return unsupported(
+                    "an install declaring both YaRN and per-pair rope divisors is ambiguous"
+                        .to_string(),
+                );
+            }
+            if arch.rope_neox_subdim
+                || arch.vision.depth != 0
+                || arch.vision.mrope_section != [0; 3]
+                || arch.partial_rotary_factor != 1.0
+            {
+                return unsupported(
+                    "per-pair rope divisors are wired only for a fully rotated text-only head \
+                     (no ropeNeoxSubdim, no mRoPE tower, partial_rotary_factor 1.0)"
+                        .to_string(),
+                );
+            }
+            if arch.rope_freq_factors.len() != rotated_pairs as usize {
+                return unsupported(format!(
+                    "{} rope divisors for {rotated_pairs} rotated pairs",
+                    arch.rope_freq_factors.len()
+                ));
+            }
+            if arch
+                .rope_freq_factors
+                .iter()
+                .any(|v| !(v.is_finite() && *v > 0.0))
+            {
+                return unsupported("every rope divisor must be finite and positive".to_string());
+            }
+            let table = compute::rope_frequencies_with_factors(
+                head_dim as usize,
+                arch.full_rope_theta as f32,
+                &arch.rope_freq_factors,
+            );
+            let bytes: Vec<u8> = table.iter().flat_map(|f| f.to_le_bytes()).collect();
+            let buffer = context.new_output_buffer(bytes.len() as u64);
+            gpu::write_buffer_bytes(&buffer, 0, &bytes);
+            Some(buffer)
+        };
+
         let qk_norm = match arch.family {
             ModelFamily::MiniMaxM2 => QkNorm::Projection,
             // `qwen3_vl` norms q and k per head exactly as dense `qwen3`
@@ -400,6 +460,7 @@ impl RealLlamaState {
         let halfs = |n: usize| context.new_output_buffer((n.max(1) * 2) as u64);
         Ok(Self {
             rotated_pairs: rotated_pairs as u32,
+            rope_frequencies,
             qk_norm,
             qkv_bias,
             rms_eps,

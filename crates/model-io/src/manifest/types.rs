@@ -221,6 +221,10 @@ pub struct ManifestArch {
     /// Gated short-convolution taps (`lfm3`), 0 when absent.
     #[serde(default)]
     pub short_conv_kernel_size: Option<i64>,
+    /// Per-pair rope divisors (`ArchConfig::rope_freq_factors`). Absent
+    /// means none. Written only when non-empty, alongside manifest minor 2.
+    #[serde(default)]
+    pub rope_freq_factors: Option<Vec<f32>>,
     /// Hash-routed leading MoE layer count.
     #[serde(default)]
     pub num_hash_routed_layers: Option<i64>,
