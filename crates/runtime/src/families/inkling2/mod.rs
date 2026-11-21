@@ -231,6 +231,17 @@ impl Ctx<'_> {
 }
 
 impl RealForwardRunner {
+    /// The last token's DSpark context taps, `DSPARK_TAP_ROWS x hidden`, when
+    /// the install opened as Inkling 2 with `TURBOSPARK_INKLING2_TAPS=1`.
+    pub fn inkling2_taps(&self) -> Option<Vec<f16>> {
+        let st = self.real_inkling2.as_ref()?;
+        let t = st.taps.as_ref()?;
+        let n = DSPARK_TAP_ROWS * self.arch.hidden_size as usize;
+        let mut out = vec![f16::ZERO; n];
+        gpu::read_buffer_f16_into(t, 0, &mut out);
+        Some(out)
+    }
+
     pub(crate) fn produce_real_inkling2(
         &mut self,
         token: i32,
@@ -357,8 +368,23 @@ impl RealForwardRunner {
             Ok(())
         };
 
+        // DSpark context taps: the stream entering applications 5, 23 and 41,
+        // then the final-norm output (`dspark_tap_row`). Off unless
+        // `TURBOSPARK_INKLING2_TAPS=1` allocated the buffer.
+        let tap = |c: &mut Ctx<'_>,
+                   pass: &gpu::PassEncoder,
+                   st: &RealInkling2State,
+                   visit: usize| {
+            match (st.taps.as_ref(), dspark_tap_row(visit)) {
+                (Some(t), Some(row)) => c.copy(pass, (&st.cur, 0), (t, (row * h * 2) as u64), h),
+                _ => Ok(()),
+            }
+        };
+        let mut visit = 0usize;
         for ip in 0..core_start {
+            tap(&mut c, &pass, st, visit)?;
             apply(&mut c, &mut pass, st, &mut n_blocks, ip, ip, &mut tr, false)?;
+            visit += 1;
         }
         c.copy(&pass, (&st.cur, 0), (&st.prelude, 0), h)?;
         let prelude_blocks = n_blocks;
@@ -402,6 +428,7 @@ impl RealForwardRunner {
                     )
                     .map_err(RealForwardError::Gpu)?;
                 }
+                tap(&mut c, &pass, st, visit)?;
                 apply(
                     &mut c,
                     &mut pass,
@@ -412,16 +439,27 @@ impl RealForwardRunner {
                     &mut tr,
                     p > 0,
                 )?;
+                visit += 1;
             }
         }
         for ip in core_end..layers {
+            tap(&mut c, &pass, st, visit)?;
             apply(&mut c, &mut pass, st, &mut n_blocks, ip, ip, &mut tr, false)?;
+            visit += 1;
         }
 
         if !self.skip_head {
             let q = view(c.weights, c.index, "model.llm.attn_res.output_query")?;
             c.mix(&pass, &st.states, n_blocks, (&st.cur, 0), q, 1, (&st.m, 0))?;
             c.norm(&pass, (&st.m, 0), "model.llm.norm.weight", (&st.mn, 0))?;
+            if let Some(t) = st.taps.as_ref() {
+                c.copy(
+                    &pass,
+                    (&st.mn, 0),
+                    (t, (DSPARK_TAPS_MIDDLE * h * 2) as u64),
+                    h,
+                )?;
+            }
             c.gemv(
                 &pass,
                 "model.llm.unembed.weight",
@@ -887,6 +925,17 @@ fn layer_moe(
     .map_err(g)?;
     moe_tail(c, pass, st, arch, slot, ip)?;
     Ok((plan.hits, plan.misses.len()))
+}
+
+/// The DSpark drafter's target visits, `mtp_config.target_layer_ids` minus the
+/// last (48, the final-norm output, stored as the row after these).
+const DSPARK_TAP_VISITS: [usize; 3] = [5, 23, 41];
+const DSPARK_TAPS_MIDDLE: usize = DSPARK_TAP_VISITS.len();
+/// Rows of the per-token tap buffer: the three visits and the final norm.
+pub(crate) const DSPARK_TAP_ROWS: usize = DSPARK_TAPS_MIDDLE + 1;
+
+fn dspark_tap_row(visit: usize) -> Option<usize> {
+    DSPARK_TAP_VISITS.iter().position(|&v| v == visit)
 }
 
 /// The expert sum's short conv and the residual add, after either MoE form.

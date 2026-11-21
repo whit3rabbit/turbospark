@@ -54,6 +54,9 @@ pub(crate) struct RealInkling2State {
     /// expert of every layer resident, so routing and the MoE run on the GPU
     /// and a token is one command buffer (`mod.rs`).
     pub(crate) resident: Option<ResidentExperts>,
+    /// `[DSPARK_TAP_ROWS, hidden]` f16, the last token's DSpark context taps
+    /// (`TURBOSPARK_INKLING2_TAPS=1`; `RealForwardRunner::inkling2_taps`).
+    pub(crate) taps: Option<gpu::MetalBuffer>,
     /// Per physical layer, host copies of the F32 router bias.
     pub(crate) router_bias: Vec<Vec<f32>>,
     /// Per core layer, the four message queries [Q, K, V, FFN] as F32 rows.
@@ -449,7 +452,10 @@ impl RealInkling2State {
                 }
             })
             .collect();
+        let tap_buffer = (std::env::var("TURBOSPARK_INKLING2_TAPS").as_deref() == Ok("1"))
+            .then(|| context.new_buffer_with_data(&vec![0u8; super::DSPARK_TAP_ROWS * h * 2]));
         Ok(RealInkling2State {
+            taps: tap_buffer,
             resident,
             max_ctx,
             slots,

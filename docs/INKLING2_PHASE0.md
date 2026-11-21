@@ -356,6 +356,21 @@ Stage A: reachable and correct (decode only)
    gates, then a catalog row.
 
 Stage B: speed and memory (after A's gates, each with a kill switch)
+- MEASURED (2026-11-21): DSpark drafter acceptance, offline. The drafter is
+  the bundled `mtp.safetensors` of `mlx-community/Inkling-2-Mini-oQ4e-mtp`
+  (BF16, 3 layers, block 8; the same weights unsloth ships as a GGUF). The
+  flow records each position's context taps under `TURBOSPARK_INKLING2_TAPS=1`
+  (the stream entering applications 5, 23, 41 and the final-norm output;
+  logits unchanged), and `examples/inkling2_dspark_accept.rs` runs a CPU
+  reference of the drafter (ollama `draft.go` / oMLX `dspark.py`) at every
+  generated position against the target's own greedy continuation. On the
+  265-token prose prompt, 96 greedy tokens, 88 rounds: mean accepted 4.30 of
+  7 (5.30 tokens per verify), per-position 0.84, 0.77, 0.67, 0.61, 0.53, 0.48,
+  0.39; 34 rounds accepted all 7. One prompt, so not a rate to quote broadly.
+  What a real speedup still needs: a batched multi-row target forward (every
+  Inkling kernel in a multi-row form), rollback of the per-slot conv tails,
+  an SWA ring with block slack (a rejected row must not overwrite a row the
+  window still needs), the Metal drafter, and the `SpeculativeProducer` arms.
 - DONE (2026-11-21): MLX intake. `Inkling2MlxSource` (`crates/repack/src/inkling2_mlx.rs`)
   reads an mlx-lm PR 2086 conversion (`mlx-community/Inkling-2-Mini-4bit`)
   under the HF names by inverting its `sanitize`: renames, the attention-input
