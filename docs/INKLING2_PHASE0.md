@@ -395,6 +395,17 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   remaining levers trade something: a keep-alive arm costs power, and fewer
   reads cost memory (more slots) or need mapped residency, which this 36 GB
   machine refuses.
+- TRIED, not kept (2026-11-21): a GPU keep-alive, the arm the routing notes
+  projected but never ran. A capped ALU spin (1 or 8 threadgroups of 32,
+  ~1 ms cap, plus a stop flag) on a second command queue, started after each
+  per-application wait and stopped at the next commit. Interleaved A/B, 2
+  rounds of off / 1 / 8, 48 warm tokens, 32 slots: GPU time 29.6 to 29.9 ms
+  per token in every arm, logits identical, wall time following the expert
+  reads only. So at this family's gaps (~0.4 ms per sync) either the clock
+  is not falling or a light spin does not hold it; GPU clock was not read
+  directly (powermetrics needs root). Side finding: the GPU saw the host's
+  stop-flag write about 17 ms late, so a flag alone cannot end such a spin
+  promptly; a cap is required.
 - The router round trip: 48 GPU-to-CPU syncs per token. Every family pays one
   per MoE layer today. The routed pipeline overlaps the next layer; measure
   before designing past it.
