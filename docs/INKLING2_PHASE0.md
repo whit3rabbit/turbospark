@@ -356,6 +356,22 @@ Stage A: reachable and correct (decode only)
    gates, then a catalog row.
 
 Stage B: speed and memory (after A's gates, each with a kill switch)
+- DONE (2026-11-21): MLX intake. `Inkling2MlxSource` (`crates/repack/src/inkling2_mlx.rs`)
+  reads an mlx-lm PR 2086 conversion (`mlx-community/Inkling-2-Mini-4bit`)
+  under the HF names by inverting its `sanitize`: renames, the attention-input
+  index shift, the merged cross-pass queries, widened router and gate planes
+  (narrowed back, refused unless exact), and NVFP4 `global_scale` read as the
+  outer scale times 2688. Experts keep their source bytes; dense projections,
+  the embedding and the head stay MLX affine 4-bit (resident tags 4/5), and the
+  flow runs them through `encode_gemv_any` / `encode_embed_any`. Checked against
+  the HF install: the same 646 resident names and dtypes, expert rows byte-
+  identical, outer scales equal, and dequantized affine matrices at cosine
+  0.994 to 0.996 with their BF16 counterparts. Logits vs llama.cpp BF16:
+  18/19 and 262/265 top-1 (every miss is the reference's second choice, margins
+  0.02 to 0.43), mean KL 7.7e-3 and 6.9e-3, the size 4-bit dense weights cost.
+  tslab profile (3 of 3 clean, unpaired, swap 7 GB): 46.4 tok/s against 36.3
+  for the BF16 install, both resident. Not compared against mlx-lm itself
+  (that needs the unmerged PR installed).
 - DONE (2026-11-21): vectorized expert rows. `TURBOSPARK_DISPATCH_PROFILE=1`
   on `inkling2_logits` (48 warm tokens, 32 slots) ranked the NVFP4 pair at
   42% of GPU time, about 50 GB/s: the row loop decoded one element per lane

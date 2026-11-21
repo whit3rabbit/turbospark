@@ -243,22 +243,70 @@ impl Scheme {
     }
 }
 
+/// One tensor as the intake reads it: safetensors dtype string, shape, bytes.
+pub type SourceTensor<'a> = (String, Vec<usize>, std::borrow::Cow<'a, [u8]>);
+
+/// An MLX affine-quantized dense matrix (`weight` packed u32, BF16 `scales`
+/// and `biases` per group of 64), passed through to the install as is.
+pub struct AffineTensor<'a> {
+    pub bits: u8,
+    pub rows: usize,
+    /// Logical columns (packed u32 words x 32 / bits).
+    pub cols: usize,
+    pub packed: &'a [u8],
+    pub scales: &'a [u8],
+    pub biases: &'a [u8],
+}
+
+/// Where the intake reads tensors from, always by their HF checkpoint names
+/// (`model.llm.*`) and in the HF dtypes and shapes. The HF checkpoint is one
+/// safetensors file read directly; an MLX conversion is presented under the
+/// same names by `inkling2_mlx` so everything below has one path.
+pub trait Inkling2Source {
+    fn tensor_names(&self) -> Vec<String>;
+    fn contains_tensor(&self, name: &str) -> bool;
+    fn tensor(&self, name: &str) -> Result<SourceTensor<'_>, Inkling2RepackError>;
+    /// A dense matrix the source holds affine-quantized, which the intake
+    /// writes as an INT4/INT8 resident entry instead of reading `tensor`.
+    fn affine(&self, _name: &str) -> Option<AffineTensor<'_>> {
+        None
+    }
+}
+
+impl Inkling2Source for SafetensorsFile {
+    fn tensor_names(&self) -> Vec<String> {
+        SafetensorsFile::tensor_names(self)
+            .map(str::to_string)
+            .collect()
+    }
+    fn contains_tensor(&self, name: &str) -> bool {
+        SafetensorsFile::contains_tensor(self, name)
+    }
+    fn tensor(&self, name: &str) -> Result<SourceTensor<'_>, Inkling2RepackError> {
+        let d = self
+            .descriptor(name)
+            .ok_or_else(|| Inkling2RepackError(format!("missing tensor {name}")))?;
+        let bytes = self
+            .raw_bytes(name)
+            .map_err(|e| Inkling2RepackError(format!("{name}: {e}")))?;
+        Ok((
+            d.dtype.clone(),
+            d.shape.clone(),
+            std::borrow::Cow::Borrowed(bytes),
+        ))
+    }
+}
+
 /// One tensor's dtype, shape and bytes, checked.
 fn tensor<'a>(
-    src: &'a SafetensorsFile,
+    src: &'a dyn Inkling2Source,
     name: &str,
-) -> Result<(&'a str, &'a [usize], &'a [u8]), Inkling2RepackError> {
-    let d = src
-        .descriptor(name)
-        .ok_or_else(|| Inkling2RepackError(format!("missing tensor {name}")))?;
-    let bytes = src
-        .raw_bytes(name)
-        .map_err(|e| Inkling2RepackError(format!("{name}: {e}")))?;
-    Ok((d.dtype.as_str(), d.shape.as_slice(), bytes))
+) -> Result<SourceTensor<'a>, Inkling2RepackError> {
+    src.tensor(name)
 }
 
 fn f32_scalars(
-    src: &SafetensorsFile,
+    src: &dyn Inkling2Source,
     name: &str,
     n: usize,
 ) -> Result<Vec<f32>, Inkling2RepackError> {
@@ -280,10 +328,10 @@ fn expert_blob_bytes(scheme: Scheme, hidden: usize, ffn: usize) -> usize {
         + hidden * scheme.row_bytes(ffn)
 }
 
-fn layer_scheme(src: &SafetensorsFile, layer: usize) -> Result<Scheme, Inkling2RepackError> {
+fn layer_scheme(src: &dyn Inkling2Source, layer: usize) -> Result<Scheme, Inkling2RepackError> {
     let name = format!("model.llm.layers.{layer}.mlp.experts.w13_weight");
     let (dt, _, _) = tensor(src, &name)?;
-    match dt {
+    match dt.as_str() {
         "U8" => Ok(Scheme::Nvfp4),
         "F8_E4M3" => Ok(Scheme::Mxfp8),
         other => err(format!(
@@ -294,7 +342,7 @@ fn layer_scheme(src: &SafetensorsFile, layer: usize) -> Result<Scheme, Inkling2R
 
 /// Builds one layer's 128 expert blobs.
 fn build_layer(
-    src: &SafetensorsFile,
+    src: &dyn Inkling2Source,
     layer: usize,
     experts: usize,
     hidden: usize,
@@ -304,16 +352,18 @@ fn build_layer(
     let p = format!("model.llm.layers.{layer}.mlp.experts");
     let (w13_rb, s13_rb) = scheme.src_bytes(hidden);
     let (w2_rb, s2_rb) = scheme.src_bytes(ffn);
-    let check =
-        |name: &str, want_dt: &str, want: [usize; 3]| -> Result<&[u8], Inkling2RepackError> {
-            let (dt, shape, b) = tensor(src, name)?;
-            if dt != want_dt || shape != want {
-                return err(format!(
-                    "{name}: expected {want_dt} {want:?}, got {dt} {shape:?}"
-                ));
-            }
-            Ok(b)
-        };
+    let check = |name: &str,
+                 want_dt: &str,
+                 want: [usize; 3]|
+     -> Result<std::borrow::Cow<'_, [u8]>, Inkling2RepackError> {
+        let (dt, shape, b) = tensor(src, name)?;
+        if dt != want_dt || shape != want {
+            return err(format!(
+                "{name}: expected {want_dt} {want:?}, got {dt} {shape:?}"
+            ));
+        }
+        Ok(b)
+    };
     let (wdt, sdt) = match scheme {
         Scheme::Nvfp4 => ("U8", "F8_E4M3"),
         Scheme::Mxfp8 => ("F8_E4M3", "U8"),
@@ -476,17 +526,24 @@ fn is_routed_expert(name: &str) -> bool {
 /// The resident entries: every `model.llm.*` tensor that is not a routed
 /// expert, with the router widened and `static_w` rewritten.
 fn resident_entries(
-    src: &SafetensorsFile,
+    src: &dyn Inkling2Source,
     taps: usize,
 ) -> Result<Vec<ResidentEntrySpec>, Inkling2RepackError> {
-    let mut names: Vec<&str> = src
+    let mut names: Vec<String> = src
         .tensor_names()
+        .into_iter()
         .filter(|n| n.starts_with("model.llm.") && !is_routed_expert(n))
         .collect();
     names.sort_unstable();
     let mut out = Vec::with_capacity(names.len());
-    for name in names {
+    for name in &names {
+        let name = name.as_str();
+        if let Some(a) = src.affine(name) {
+            out.push(affine_entry(name, &a)?);
+            continue;
+        }
         let (dt, shape, bytes) = tensor(src, name)?;
+        let (dt, shape) = (dt.as_str(), shape.as_slice());
         let raw = |name: String, dtype: u8, bytes: Vec<u8>, shape: &[usize]| {
             Ok::<_, Inkling2RepackError>(ResidentEntrySpec::Raw(RawTensorSpec {
                 name,
@@ -543,6 +600,43 @@ fn resident_entries(
     Ok(out)
 }
 
+/// An affine resident entry, checked against the reader's contract (logical
+/// columns a multiple of 64, BF16 companions of `rows * cols / 64`).
+fn affine_entry(
+    name: &str,
+    a: &AffineTensor<'_>,
+) -> Result<ResidentEntrySpec, Inkling2RepackError> {
+    let groups = a.rows * a.cols / 64;
+    if a.cols % 64 != 0
+        || a.packed.len() != a.rows * a.cols * a.bits as usize / 8
+        || a.scales.len() != groups * 2
+        || a.biases.len() != groups * 2
+    {
+        return err(format!(
+            "{name}: affine {}-bit [{}, {}] does not match its packed and companion sizes",
+            a.bits, a.rows, a.cols
+        ));
+    }
+    let u16s = |b: &[u8]| -> Vec<u16> {
+        b.chunks_exact(2)
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .collect()
+    };
+    let spec = crate::resident_writer::ResidentTensorSpec {
+        name: name.to_string(),
+        packed: a.packed.to_vec(),
+        scales: u16s(a.scales),
+        biases: u16s(a.biases),
+        rows: a.rows as u32,
+        cols: a.cols as u32,
+    };
+    match a.bits {
+        4 => Ok(ResidentEntrySpec::Int4(spec)),
+        8 => Ok(ResidentEntrySpec::Int8(spec)),
+        b => err(format!("{name}: affine {b}-bit is not supported")),
+    }
+}
+
 /// The `manifest.quant` section: raw BF16 embedding and attention, the raw
 /// F32 router, no shared expert (mirrors attention, i.e. defaulted), and the
 /// Inkling routed scheme.
@@ -579,6 +673,27 @@ pub fn write_inkling2_install(
     config_json: &str,
     out: &Path,
     model_id: &str,
+    progress: impl FnMut(&str),
+) -> Result<Inkling2InstallReport, Inkling2RepackError> {
+    write_inkling2_install_from(
+        src,
+        config_json,
+        out,
+        model_id,
+        inkling2_manifest_quant(),
+        progress,
+    )
+}
+
+/// [`write_inkling2_install`] from any source, with the manifest's quant
+/// section given (an MLX conversion declares its affine attention and
+/// embedding there).
+pub fn write_inkling2_install_from(
+    src: &dyn Inkling2Source,
+    config_json: &str,
+    out: &Path,
+    model_id: &str,
+    quant: Value,
     mut progress: impl FnMut(&str),
 ) -> Result<Inkling2InstallReport, Inkling2RepackError> {
     let (arch, side) = parse_inkling2_config(config_json)?;
@@ -603,7 +718,7 @@ pub fn write_inkling2_install(
     let resident = resident_entries(src, arch.short_conv_kernel_size as usize)?;
     let io = |e: crate::gturbo_writer::WriterError| Inkling2RepackError(e.to_string());
     let mut writer = StreamingGturboWriter::new(out, stride, experts).map_err(io)?;
-    writer.set_quant(inkling2_manifest_quant());
+    writer.set_quant(quant);
     for (l, scheme) in schemes.iter().enumerate() {
         let blobs = build_layer(src, l, experts, hidden, ffn)?;
         writer.write_layer(&blobs).map_err(io)?;

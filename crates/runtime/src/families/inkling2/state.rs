@@ -17,6 +17,9 @@ use crate::real_forward_utils::entry;
 /// Resident dtype tags this flow reads (`repack::resident_writer`).
 pub(crate) const TAG_BF16: u8 = 1;
 pub(crate) const TAG_F32: u8 = 3;
+/// MLX affine 4-bit and 8-bit at group 64 (`resident_writer` tags 4 and 5).
+pub(crate) const TAG_INT4_AFFINE: u8 = 4;
+pub(crate) const TAG_INT8_AFFINE: u8 = 5;
 
 /// The most block states a depth mix sees (blocks plus the current state).
 pub(crate) const MAX_STATES: usize = gpu::INKLING2_DEPTH_MAX_STATES;
@@ -132,6 +135,31 @@ pub(crate) fn require(
     Ok(())
 }
 
+/// A dense matrix the flow runs a GEMV over (or looks rows up in): raw BF16,
+/// or MLX affine 4/8-bit at group 64 (an MLX-sourced install), checked
+/// against its logical `rows x cols`.
+pub(crate) fn require_matrix(
+    index: &ResidentIndex,
+    name: &str,
+    rows: usize,
+    cols: usize,
+) -> Result<(), RealForwardError> {
+    let e = entry(index, name)?;
+    match e.dtype {
+        TAG_BF16 => require(index, name, TAG_BF16, rows * cols),
+        TAG_INT4_AFFINE | TAG_INT8_AFFINE
+            if (e.shape.0 as usize, e.shape.1 as usize) == (rows, cols) && cols % 64 == 0 =>
+        {
+            Ok(())
+        }
+        other => Err(RealForwardError::Unsupported(format!(
+            "{name}: expected a BF16 or affine 4/8-bit [{rows}, {cols}] matrix, found dtype \
+             {other} shaped {:?}",
+            (e.shape.0, e.shape.1)
+        ))),
+    }
+}
+
 impl RealInkling2State {
     pub(crate) fn build(
         context: &mut gpu::MetalContext,
@@ -180,17 +208,12 @@ impl RealInkling2State {
         }
 
         // Every tensor the flow reads, checked once.
-        require(
-            index,
-            "model.llm.embed.weight",
-            TAG_BF16,
-            arch.vocab_size as usize * h,
-        )?;
-        require(
+        require_matrix(index, "model.llm.embed.weight", arch.vocab_size as usize, h)?;
+        require_matrix(
             index,
             "model.llm.unembed.weight",
-            TAG_BF16,
-            arch.vocab_size as usize * h,
+            arch.vocab_size as usize,
+            h,
         )?;
         require(index, "model.llm.embed_norm.weight", TAG_BF16, h)?;
         require(index, "model.llm.norm.weight", TAG_BF16, h)?;
@@ -204,14 +227,18 @@ impl RealInkling2State {
         {
             let full = mask == 1;
             let a = |s: &str| name(l, &format!("attn.{s}"));
+            for (s, rows, cols) in [
+                ("wq_du.weight", heads * hd, h),
+                ("wk_dv.weight", kvd, h),
+                ("wv_dv.weight", kvd, h),
+                ("wr_du.weight", heads * d_rel, h),
+                ("wo_ud.weight", h, heads * hd),
+                ("gate_attn.weight", heads * hd, h),
+                ("attn_sink_proj.weight", heads, h),
+            ] {
+                require_matrix(index, &a(s), rows, cols)?;
+            }
             for (s, n) in [
-                ("wq_du.weight", heads * hd * h),
-                ("wk_dv.weight", kvd * h),
-                ("wv_dv.weight", kvd * h),
-                ("wr_du.weight", heads * d_rel * h),
-                ("wo_ud.weight", h * heads * hd),
-                ("gate_attn.weight", heads * hd * h),
-                ("attn_sink_proj.weight", heads * h),
                 ("q_l2_clip.scale", heads * hd),
                 ("rel_l2_clip.scale", heads * d_rel),
                 ("rel_logits_proj.proj", d_rel * extent),
@@ -222,7 +249,7 @@ impl RealInkling2State {
             }
             if full {
                 for s in ["k_sconv.weight_proj", "v_sconv.weight_proj"] {
-                    require(index, &a(s), TAG_BF16, kvh * taps * h)?;
+                    require_matrix(index, &a(s), kvh * taps, h)?;
                 }
                 for s in ["q_input_norm", "k_input_norm", "v_input_norm"] {
                     require(index, &name(l, &format!("{s}.weight")), TAG_BF16, h)?;

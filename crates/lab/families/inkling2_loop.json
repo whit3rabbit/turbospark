@@ -11,6 +11,13 @@
       "machine": "Apple M4 Max 36 GB",
       "drafters": [],
       "note": "18 GB install: 15.7 GB packed experts, about 3.5 GB resident"
+    },
+    {
+      "name": "inkling2-mini-mlx4-gturbo",
+      "quant": "MLX conversion (mlx-community/Inkling-2-Mini-4bit, mlx-lm PR 2086): native NVFP4/MXFP8 experts, affine 4-bit g64 attention, embedding and head",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [],
+      "note": "16 GB install via repack examples/inkling2_mlx_install; not bit-exact with the BF16 install (4-bit dense weights)"
     }
   ],
   "recommended": [],

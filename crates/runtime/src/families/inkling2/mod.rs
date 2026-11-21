@@ -67,8 +67,10 @@ impl Ctx<'_> {
         self.gemv_group(pass, &[x], &[(name, rows, cols, 0, y)])
     }
 
-    /// Several BF16 GEMVs in one dispatch (`gpu::encode_inkling2_bf16_gemv_multi`):
-    /// each entry is `(weight, rows, cols, input index into xs, output)`.
+    /// Several GEMVs: the BF16 ones in one dispatch
+    /// (`gpu::encode_inkling2_bf16_gemv_multi`), each MLX affine one through
+    /// the shared resident dispatcher (`encode_gemv_any`, tags 4 and 5). Each
+    /// entry is `(weight, rows, cols, input index into xs, output)`.
     fn gemv_group(
         &mut self,
         pass: &gpu::PassEncoder,
@@ -77,6 +79,20 @@ impl Ctx<'_> {
     ) -> Result<(), RealForwardError> {
         let mut v = Vec::with_capacity(segs.len());
         for &(name, rows, cols, x, y) in segs {
+            if entry(self.index, name)?.dtype != state::TAG_BF16 {
+                crate::real_forward_dispatch::encode_gemv_any(
+                    self.context,
+                    pass,
+                    self.weights,
+                    self.index,
+                    name,
+                    rows,
+                    cols,
+                    xs[x],
+                    y,
+                )?;
+                continue;
+            }
             let (_, o) = view(self.weights, self.index, name)?;
             v.push(gpu::Inkling2GemvSegment {
                 w_offset: o,
@@ -85,6 +101,9 @@ impl Ctx<'_> {
                 x,
                 y,
             });
+        }
+        if v.is_empty() {
+            return Ok(());
         }
         gpu::encode_inkling2_bf16_gemv_multi(self.context, pass, self.weights.buffer(), xs, &v)
             .map_err(RealForwardError::Gpu)
@@ -265,17 +284,19 @@ impl RealForwardRunner {
             eps: cfg.rms_eps,
         };
         let mut pass = c.context.begin_pass_labeled("inkling2 attn+router");
-        let table = view(c.weights, c.index, "model.llm.embed.weight")?;
-        gpu::encode_embed_lookup_bf16(
+        // BF16, or MLX affine 4/8-bit on an MLX-sourced install.
+        crate::real_forward_dispatch::encode_embed_any(
             c.context,
             &pass,
-            table,
+            c.weights,
+            c.index,
+            "model.llm.embed.weight",
             (&st.y, 0),
             token as u32,
             h as u32,
+            vocab,
             1.0,
-        )
-        .map_err(RealForwardError::Gpu)?;
+        )?;
         c.norm(
             &pass,
             (&st.y, 0),
