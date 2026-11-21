@@ -588,6 +588,13 @@ impl RealForwardRunner {
                     max_ctx,
                     runner.resolved_residency == model_io::ResolvedExpertResidency::Resident,
                 )?);
+                // The DSpark drafter builds only when a caller NAMED it (a
+                // fixed block); `Auto` never opens it, so a plain open is
+                // byte- and footprint-identical with or without a drafter
+                // directory beside the install.
+                if let crate::families::qwen::DflashDraftPolicy::Fixed(block) = speculation.dflash {
+                    runner.inkling2_open_dspark(block)?;
+                }
             }
             // Its own flow: short-conv layers, zero-tail per-class rope and
             // sandwich norms are each inside the layer, and a neighbour's flow

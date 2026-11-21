@@ -18,14 +18,23 @@
 //!
 //! The forward follows ollama `mlxrunner/model/inkling2/draft.go` and oMLX
 //! `patches/inkling2/dspark.py`: per-layer softmax tap mixes, context K/V with
-//! `k_norm_ctx` and NeoX RoPE, a bidirectional block over context plus block,
-//! BF16-rounded residuals, the target LM head, and the RNN Markov head.
+//! `k_norm_ctx` and NeoX RoPE, a bidirectional block over context plus block
+//! (the local layers see the last `window` context rows, the others all of
+//! them, as ollama), BF16-rounded residuals, the target LM head, and the RNN
+//! Markov head.
+//!
+//! With `TURBOSPARK_INKLING2_DSPARK=<drafter dir>` the target also opens the
+//! Metal drafter (`families/inkling2/dspark.rs`) and drafts at every generated
+//! position from the same taps; the report then compares its proposals with
+//! the CPU reference's (the drafter's parity gate) and gives both
+//! acceptances. `<prompt ids>` may be a `.txt` file of prose instead, which is
+//! tokenized without a template.
 
 use std::collections::HashMap;
 use std::path::Path;
 
 use half::{bf16, f16};
-use turbospark_runtime::{LogitProducer, RealForwardRunner};
+use turbospark_runtime::{LogitProducer, RealForwardRunner, SpeculativeProducer};
 
 #[link(name = "Accelerate", kind = "framework")]
 extern "C" {
@@ -183,26 +192,74 @@ fn main() {
     };
     let block = m["block_size"].as_u64().unwrap() as usize;
     let window = m["sliding_window_size"].as_u64().unwrap() as usize;
-    let n_gen: usize = args[5].parse().unwrap();
-    let prompt: Vec<i32> = std::fs::read_to_string(&args[4])
+    let local_ids: Vec<u64> = m["local_layer_ids"]
+        .as_array()
         .unwrap()
-        .split_whitespace()
-        .map(|t| t.parse().unwrap())
+        .iter()
+        .map(|v| v.as_u64().unwrap())
         .collect();
+    let local: Vec<bool> = (0..c.layers as u64).map(|l| local_ids.contains(&l)).collect();
+    let n_gen: usize = args[5].parse().unwrap();
+    let raw = std::fs::read_to_string(&args[4]).unwrap();
+    let prompt: Vec<i32> = if args[4].ends_with(".chat.txt") {
+        // One user turn through the checkpoint's template.
+        tokenizer::MfTokenizer::load_from_dir(install)
+            .expect("tokenizer")
+            .encode_text_continuation(&raw)
+    } else if args[4].ends_with(".txt") {
+        tokenizer::MfTokenizer::load_from_dir(install)
+            .expect("tokenizer")
+            .encode(&raw, false)
+    } else {
+        raw.split_whitespace().map(|t| t.parse().unwrap()).collect()
+    };
+    let metal = std::env::var_os("TURBOSPARK_INKLING2_DSPARK").is_some();
 
     // 1. Target: greedy decode with taps.
     let arch = model_io::inkling2_mini();
-    let mut runner =
-        RealForwardRunner::open_with_max_context(install, arch.clone(), 4096).expect("open target");
+    let mut runner = if metal {
+        RealForwardRunner::open_with_residency(
+            install,
+            arch.clone(),
+            4096,
+            turbospark_runtime::ExpertCacheSlots::Auto,
+            turbospark_runtime::DraftPolicies {
+                mtp: turbospark_runtime::MtpDraftPolicy::Off,
+                dflash: turbospark_runtime::DflashDraftPolicy::Fixed(block - 1),
+            },
+            turbospark_runtime::SteeringPolicy::off(),
+            1,
+            turbospark_runtime::KvQuant::Off,
+            turbospark_runtime::ExpertResidency::Resident,
+        )
+        .expect("open target with the Metal drafter")
+    } else {
+        RealForwardRunner::open_with_max_context(install, arch.clone(), 4096).expect("open target")
+    };
     let mut tokens = prompt.clone();
     let mut taps: Vec<Vec<f32>> = Vec::new();
     let mut logits = vec![f16::ZERO; arch.vocab_size as usize];
+    // Metal proposals per drafted position.
+    let mut metal_props: std::collections::HashMap<usize, Vec<i32>> = Default::default();
+    let mut metal_ms = 0f64;
     let t0 = std::time::Instant::now();
     let mut pos = 0usize;
     while pos < prompt.len() + n_gen {
+        if metal && pos >= prompt.len() {
+            let mut props = Vec::new();
+            let t = std::time::Instant::now();
+            runner
+                .draft_block(tokens[pos], pos, block - 1, &mut props)
+                .expect("metal draft");
+            metal_ms += t.elapsed().as_secs_f64() * 1e3;
+            metal_props.insert(pos, props);
+        }
         runner
             .produce(tokens[pos], pos, &mut logits)
             .expect("produce");
+        if metal && pos + 1 < prompt.len() {
+            runner.prime_drafter(tokens[pos + 1], pos).expect("prime");
+        }
         let t = runner.inkling2_taps().expect("taps enabled");
         taps.push(t.iter().map(|v| v.to_f32()).collect());
         if pos + 1 >= tokens.len() {
@@ -299,6 +356,9 @@ fn main() {
     let mut per_pos = vec![0usize; block - 1];
     let mut rounds = 0usize;
     let mut built = 0usize;
+    let mut agree_prefix = vec![0usize; block];
+    let mut agree_pos = 0usize;
+    let mut metal_hist = vec![0usize; block];
     let t1 = std::time::Instant::now();
     for t in p..(p + n_gen).saturating_sub(block) {
         while built < t {
@@ -346,8 +406,9 @@ fn main() {
                 );
                 rope(&mut k[r * kvd..(r + 1) * kvd], c.hd, t + r, c.theta);
             }
-            // Context rows inside the window, then the block, all visible.
-            let n_ctx = t.min(window);
+            // Context rows inside the window (local layers) or all of them,
+            // then the block, all visible.
+            let n_ctx = if local[i] { t.min(window) } else { t };
             let first = t - n_ctx;
             let keys: Vec<&[f32]> = (first..t)
                 .map(|j| &ctx_k[i][j * kvd..(j + 1) * kvd])
@@ -427,6 +488,7 @@ fn main() {
         let mut last = anchor;
         let mut accepted = 0usize;
         let mut still = true;
+        let mut cpu_props: Vec<i32> = Vec::with_capacity(block - 1);
         for i in 0..block - 1 {
             let mut input = state.clone();
             input.extend_from_slice(&w1[last * c.rank..(last + 1) * c.rank]);
@@ -456,6 +518,18 @@ fn main() {
                 still = false;
             }
             last = best;
+            cpu_props.push(best as i32);
+        }
+        if let Some(mp) = metal_props.get(&t) {
+            let same = mp.iter().zip(&cpu_props).take_while(|(a, b)| a == b).count();
+            agree_prefix[same] += 1;
+            agree_pos += mp.iter().zip(&cpu_props).filter(|(a, b)| a == b).count();
+            let acc = mp
+                .iter()
+                .enumerate()
+                .take_while(|(i, &p)| p == tokens[t + 1 + i])
+                .count();
+            metal_hist[acc] += 1;
         }
         let _ = c.vocab;
         accepted_hist[accepted] += 1;
@@ -474,6 +548,27 @@ fn main() {
         mean + 1.0
     );
     eprintln!("accepted-length histogram: {accepted_hist:?}");
+    if metal {
+        let mr: usize = metal_hist.iter().sum();
+        let mmean = metal_hist
+            .iter()
+            .enumerate()
+            .map(|(k, &n)| (k * n) as f64)
+            .sum::<f64>()
+            / mr.max(1) as f64;
+        eprintln!(
+            "metal drafter: {mr} rounds, {:.2} ms per draft; mean accepted {mmean:.2} of {} \
+             (tokens per verify {:.2}); histogram {metal_hist:?}",
+            metal_ms / metal_props.len().max(1) as f64,
+            block - 1,
+            mmean + 1.0
+        );
+        eprintln!(
+            "metal vs cpu proposals: {agree_pos} of {} positions equal; agreeing-prefix \
+             histogram {agree_prefix:?}",
+            mr * (block - 1)
+        );
+    }
     eprintln!(
         "per-position acceptance: {:?}",
         per_pos

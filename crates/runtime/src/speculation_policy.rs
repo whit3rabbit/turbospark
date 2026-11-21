@@ -150,7 +150,11 @@ pub enum SpeculationPlan {
 pub fn resolve_drafter(requested: SpeculativeDrafter, model_dir: &Path) -> DrafterChoice {
     let index = model_io::load_resident_index(&model_dir.join("model_weights.bin")).ok();
     let install_has_mtp_head = index.as_ref().map(install_has_mtp_head);
-    let install_has_dflash = index.as_ref().map(install_has_dflash);
+    // An Inkling 2 install's block drafter (DSpark) sits beside it rather
+    // than in its index (`families/inkling2/dspark.rs`).
+    let install_has_dflash = index.as_ref().map(|ix| {
+        install_has_dflash(ix) || crate::families::inkling2::inkling2_dspark_dir(model_dir).is_some()
+    });
     let plain = |drafter| DrafterChoice {
         drafter,
         install_has_mtp_head,

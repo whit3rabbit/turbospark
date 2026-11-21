@@ -92,6 +92,20 @@ impl Inkling2ExpertType {
             Inkling2ExpertType::Mxfp8 => "moe_inkling2_phase2_idx_mxfp8",
         }
     }
+
+    fn phase1_idx_rows_kernel(self) -> &'static str {
+        match self {
+            Inkling2ExpertType::Nvfp4 => "moe_inkling2_phase1_idx_rows_nvfp4",
+            Inkling2ExpertType::Mxfp8 => "moe_inkling2_phase1_idx_rows_mxfp8",
+        }
+    }
+
+    fn phase2_idx_rows_kernel(self) -> &'static str {
+        match self {
+            Inkling2ExpertType::Nvfp4 => "moe_inkling2_phase2_idx_rows_nvfp4",
+            Inkling2ExpertType::Mxfp8 => "moe_inkling2_phase2_idx_rows_mxfp8",
+        }
+    }
 }
 
 /// This module's compiled library, for reflecting its `RoutedBlobs` layout
@@ -345,6 +359,126 @@ pub fn encode_inkling2_moe_phase2_indexed(
         ],
         u64::from(d_dim),
         THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
+/// Rows the multi-row indexed pair serves (the verify block).
+pub const INKLING2_MOE_MAX_ROWS: u32 = 8;
+
+/// [`encode_inkling2_moe_phase1_indexed`] over `n_rows` token rows: row `r`
+/// reads `x + r * x_stride` halfs and its selection at `sel + r * 8` u32s,
+/// and writes `acts + r * top_k * f_dim` halfs. Row `r` computes what the
+/// single-row kernel computes for that row.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_inkling2_moe_phase1_indexed_rows(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    kind: Inkling2ExpertType,
+    layer: &Inkling2ResidentLayer<'_>,
+    offsets: &MoeExpertOffsets,
+    x: (&metal::Buffer, u64),
+    x_stride: u32,
+    acts: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+    gate_cap: f32,
+    up_cap: f32,
+    n_rows: u32,
+) -> Result<(), GpuError> {
+    check(kind, "d_dim", d_dim, top_k)?;
+    check_resident(kind, layer)?;
+    if f_dim == 0 || n_rows == 0 || n_rows > INKLING2_MOE_MAX_ROWS || x_stride < d_dim {
+        return Err(GpuError::InvalidInput(format!(
+            "inkling2 moe rows: f_dim {f_dim}, rows {n_rows} (1..={INKLING2_MOE_MAX_ROWS}), \
+             x stride {x_stride} >= d_dim {d_dim}"
+        )));
+    }
+    let pipeline = context.pipeline(
+        SOURCE,
+        kind.phase1_idx_rows_kernel(),
+        &moe_function_constants(false),
+        &constants_key(false),
+    )?;
+    let mut caps = [0u8; 8];
+    caps[..4].copy_from_slice(&gate_cap.to_le_bytes());
+    caps[4..].copy_from_slice(&up_cap.to_le_bytes());
+    let rows = u64::from(top_k) * u64::from(f_dim);
+    pass.encode_threadgroups_3d(
+        &pipeline,
+        &[
+            (layer.buffer, 0, 0),
+            (x.0, 2, x.1),
+            (acts.0, 3, acts.1),
+            (layer.sel.0, 8, layer.sel.1),
+        ],
+        &[
+            (&offsets.bytes(), 1),
+            (u32_bytes(&d_dim), 4),
+            (u32_bytes(&f_dim), 5),
+            (u32_bytes(&top_k), 6),
+            (&caps, 7),
+            (&layer.stride.to_le_bytes(), 9),
+            (u32_bytes(&layer.n_experts), 10),
+            (u32_bytes(&x_stride), 11),
+        ],
+        (rows.div_ceil(ROWS_PER_THREADGROUP), u64::from(n_rows), 1),
+        (THREADS_PER_GROUP, 1, 1),
+    );
+    Ok(())
+}
+
+/// [`encode_inkling2_moe_phase2_indexed`] over `n_rows` token rows: row `r`
+/// reads `acts + r * top_k * f_dim`, `routing_w + r * 8` and `sel + r * 8`,
+/// and writes `y + r * d_dim`.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_inkling2_moe_phase2_indexed_rows(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    kind: Inkling2ExpertType,
+    layer: &Inkling2ResidentLayer<'_>,
+    offsets: &MoeExpertOffsets,
+    acts: (&metal::Buffer, u64),
+    routing_w: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+    n_rows: u32,
+) -> Result<(), GpuError> {
+    check(kind, "f_dim", f_dim, top_k)?;
+    check_resident(kind, layer)?;
+    if d_dim == 0 || n_rows == 0 || n_rows > INKLING2_MOE_MAX_ROWS {
+        return Err(GpuError::InvalidInput(format!(
+            "inkling2 moe rows: d_dim {d_dim}, rows {n_rows} (1..={INKLING2_MOE_MAX_ROWS})"
+        )));
+    }
+    let pipeline = context.pipeline(
+        SOURCE,
+        kind.phase2_idx_rows_kernel(),
+        &moe_function_constants(false),
+        &constants_key(false),
+    )?;
+    pass.encode_threadgroups_3d(
+        &pipeline,
+        &[
+            (layer.buffer, 0, 0),
+            (acts.0, 2, acts.1),
+            (routing_w.0, 3, routing_w.1),
+            (y.0, 4, y.1),
+            (layer.sel.0, 8, layer.sel.1),
+        ],
+        &[
+            (&offsets.bytes(), 1),
+            (u32_bytes(&d_dim), 5),
+            (u32_bytes(&f_dim), 6),
+            (u32_bytes(&top_k), 7),
+            (&layer.stride.to_le_bytes(), 9),
+            (u32_bytes(&layer.n_experts), 10),
+        ],
+        (u64::from(d_dim), u64::from(n_rows), 1),
+        (THREADS_PER_GROUP, 1, 1),
     );
     Ok(())
 }

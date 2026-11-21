@@ -54,6 +54,15 @@ impl KvCacheManager {
         self.position -= count;
     }
 
+    /// Moves only the cursor back `count` tokens, with no ring-slack check.
+    /// For a flow that owns its own KV and conv state and uses this manager
+    /// for the position alone (Inkling 2, whose window slots carry their own
+    /// verify slack), so this manager's rings hold nothing that could be read.
+    pub fn rewind_cursor(&mut self, count: usize) {
+        assert!(count <= self.position, "rewind below position 0");
+        self.position -= count;
+    }
+
     /// Drops all cached positions and returns physical pages to the OS via
     /// `MADV_DONTNEED`, so a finished generation does not keep its KV
     /// resident into the next turn.

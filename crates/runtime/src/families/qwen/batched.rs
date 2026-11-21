@@ -108,6 +108,10 @@ impl RealForwardRunner {
                 "batched forward needs at least one token".to_string(),
             ));
         }
+        // Inkling 2 has its own multi-row forward (`families/inkling2/verify.rs`).
+        if self.real_inkling2.is_some() {
+            return self.verify_real_inkling2(tokens, start_position, logits);
+        }
         // THE VISION-BLIND REFUSAL, and the defense-in-depth half of the
         // blockers' vision arm: this pass embeds every row from the token
         // table and rotates at the raw position, so a vision prompt would be

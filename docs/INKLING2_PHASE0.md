@@ -494,6 +494,43 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
 - Quantizing the BF16 attention weights would cut the dominant decode bytes,
   at a quality cost to measure. Not a default without its own gate.
 
+- PARTLY DONE (2026-11-21): DSpark speculative decoding, greedy only.
+  - Stage 1, batched verify (`families/inkling2/verify.rs`, kernels in
+    `gpu/src/shaders/inkling2_batch.metal` and the `_idx_rows_` MoE pair):
+    up to 8 rows in one command buffer, resident residency only (streamed is
+    refused by name). Kernel gate `crates/gpu/tests/inkling2_batch_parity.rs`:
+    10 tests, every multi-row kernel bit-identical to 8 single-row calls
+    (mutants on the conv snapshot and attention position fail). Model gate
+    `crates/runtime/tests/real_forward_inkling2_verify.rs` (BF16 install, M4
+    Max): 56 of 56 verify rows bit-identical to sequential decode, blocks at
+    16, 1020, 1028 (across the 1,031-row ring wrap) and after rollbacks.
+  - Stage 2, rollback: per-slot conv tails keep 9 snapshots per verify
+    (block start, then after each row); SWA rings hold window + 7 rows;
+    cursor via `KvCacheManager::rewind_cursor`. Same gate: 1,025 of 1,025
+    later sequential rows bit-identical after rollbacks keeping 1, 2, 3, 5
+    rows. Mutant (restore snapshot k+1): 8 of 56 exact, yet 55 of 56 top-1,
+    so this class of bug reads as fluent output.
+  - Fixed on the way: `reset()` never zeroed the conv tails (a second
+    generation inherited the first's conv state), and `try_reuse_prefix`
+    could rewind the cursor under in-place tails (now pure continuation only).
+  - Stage 3, Metal drafter (`families/inkling2/dspark.rs`,
+    `shaders/inkling2_dspark.metal`): one command buffer per draft, 9.3 to
+    9.5 ms. Layer 1 sees the full context and layers 0 and 2 the last 1024
+    rows (ollama `draft.go`; the CPU reference now does the same). Parity vs
+    the CPU reference in `examples/inkling2_dspark_accept.rs`: 615 of 616
+    and 1,063 of 1,064 proposals equal (raw prose, chat story).
+  - Acceptance (CPU and Metal agree): raw story continuation 0.86 of 7
+    (1.86 tokens per verify), chat-templated story 1.88 of 7 (2.88). Far
+    below the 4.30 recorded earlier on the 265-token prompt; why is open.
+  - Stage 4 wired: `DflashDraftPolicy::Fixed(n)` at open builds the drafter
+    from `<install>/dspark/` or `TURBOSPARK_INKLING2_DSPARK`; `Auto` never
+    does. `dflash_speculation_blocker` has an Inkling arm (no MoE refusal).
+    The loop's existing block-drafter sampling refusal applies.
+  - NOT yet run: `tests/real_forward_inkling2_speculative.rs` (plain vs
+    speculative streams on prose, code, long context), plain-decode
+    bit-identity against the pre-change build, the MLX install, and any
+    tslab measurement. No speed number exists yet.
+
 Stage C: drafter and comparisons
 - `mtp.safetensors` is a DSpark block drafter, not a next-token head: block 8,
   `mask_embed`, context K/V projections (`k_proj_ctx`, `v_proj_ctx`) fed from

@@ -57,6 +57,15 @@ pub(crate) struct RealInkling2State {
     /// `[DSPARK_TAP_ROWS, hidden]` f16, the last token's DSpark context taps
     /// (`TURBOSPARK_INKLING2_TAPS=1`; `RealForwardRunner::inkling2_taps`).
     pub(crate) taps: Option<gpu::MetalBuffer>,
+    /// The speculative verify's per-row scratch, allocated by the first
+    /// verify (`verify.rs`), so plain decode allocates none of it.
+    pub(crate) batch: Option<super::verify::BatchScratch>,
+    /// What the last verify fed, for its rollback; cleared by every
+    /// single-token pass.
+    pub(crate) verify: Option<super::verify::InklingVerifyRecord>,
+    /// The DSpark block drafter, open only when a caller asked for it
+    /// (`DflashDraftPolicy::Fixed` at open, `dspark.rs`).
+    pub(crate) dspark: Option<super::dspark::DsparkState>,
     /// Per physical layer, host copies of the F32 router bias.
     pub(crate) router_bias: Vec<Vec<f32>>,
     /// Per core layer, the four message queries [Q, K, V, FFN] as F32 rows.
@@ -436,10 +445,14 @@ impl RealInkling2State {
                     cfg.core_start as usize,
                     cfg.core_end as usize,
                 );
+                // A window slot keeps `window + VERIFY_SLACK` rows so the rows
+                // of a speculative verify block never overwrite a position an
+                // earlier row of the block still reads. Attention reads row
+                // `p % rows`, so decode is the same with or without the slack.
                 let rows = if arch.full_attention_layer_mask[ip] == 1 {
                     max_ctx
                 } else {
-                    max_ctx.min(window)
+                    max_ctx.min(window + super::verify::VERIFY_SLACK)
                 };
                 SlotState {
                     rows,
@@ -456,6 +469,9 @@ impl RealInkling2State {
             .then(|| context.new_buffer_with_data(&vec![0u8; super::DSPARK_TAP_ROWS * h * 2]));
         Ok(RealInkling2State {
             taps: tap_buffer,
+            batch: None,
+            verify: None,
+            dspark: None,
             resident,
             max_ctx,
             slots,
@@ -498,6 +514,24 @@ impl RealInkling2State {
             y2: half(context, h),
             cfg,
         })
+    }
+}
+
+impl RealInkling2State {
+    /// Zeroes every slot's conv tails and drops the verify record: a new
+    /// generation starts from an empty context. KV rows need no clearing
+    /// (attention never reads past the cursor).
+    pub(crate) fn reset(&mut self) {
+        for s in &self.slots {
+            for t in [&s.tail_k, &s.tail_v, &s.tail_o, &s.tail_f] {
+                gpu::write_buffer_bytes(t, 0, &vec![0u8; t.length() as usize]);
+            }
+        }
+        self.verify = None;
+        self.bank_states = 0;
+        if let Some(d) = self.dspark.as_mut() {
+            d.reset();
+        }
     }
 }
 

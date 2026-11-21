@@ -118,6 +118,10 @@ mod hadamard;
 #[cfg(target_os = "macos")]
 mod hyper_connection;
 #[cfg(target_os = "macos")]
+mod inkling2_batch;
+#[cfg(target_os = "macos")]
+mod inkling2_dspark;
+#[cfg(target_os = "macos")]
 mod inkling2_ops;
 #[cfg(target_os = "macos")]
 mod kv_cache;
@@ -364,6 +368,24 @@ pub use hadamard::{
 #[cfg(target_os = "macos")]
 pub use hyper_connection::{encode_hc_inject_add, encode_hc_mix};
 #[cfg(target_os = "macos")]
+pub use inkling2_dspark::{
+    encode_dspark_attention, encode_dspark_bf16_to_half, encode_dspark_ctx_store,
+    encode_dspark_init_x, encode_dspark_markov_argmax, encode_dspark_markov_gate,
+    encode_dspark_markov_input, encode_dspark_markov_logits, encode_dspark_residual,
+    encode_dspark_rms_f32, encode_dspark_rope_rows, encode_dspark_silu_mul,
+    encode_dspark_tap_mix_norm, encode_dspark_transpose_bf16, DsparkAttnShape,
+    DSPARK_LOGITS_PER_GROUP, DSPARK_MAX_RANK,
+};
+#[cfg(target_os = "macos")]
+pub use inkling2_batch::{
+    encode_inkling2_attention_rows, encode_inkling2_bf16_gemv_rows,
+    encode_inkling2_control_combine_rows, encode_inkling2_copy_rows,
+    encode_inkling2_depth_mix_rows, encode_inkling2_l2_clip_rows, encode_inkling2_rel_table_rows,
+    encode_inkling2_rms_rows, encode_inkling2_router_rows, encode_inkling2_router_select_rows,
+    encode_inkling2_short_conv_rows, Inkling2GemvRowsSegment, Inkling2Rows,
+    INKLING2_BATCH_MAX_ROWS,
+};
+#[cfg(target_os = "macos")]
 pub use inkling2_ops::{
     encode_inkling2_attention_decode, encode_inkling2_bf16_gemv_multi,
     encode_inkling2_control_combine, encode_inkling2_copy_half, encode_inkling2_depth_mix,
@@ -404,8 +426,10 @@ pub use moe_gguf::{
 };
 #[cfg(target_os = "macos")]
 pub use moe_inkling2::{
-    encode_inkling2_moe_phase1, encode_inkling2_moe_phase1_indexed, encode_inkling2_moe_phase2,
-    encode_inkling2_moe_phase2_indexed, moe_inkling2_source, Inkling2ExpertType,
+    encode_inkling2_moe_phase1, encode_inkling2_moe_phase1_indexed,
+    encode_inkling2_moe_phase1_indexed_rows, encode_inkling2_moe_phase2,
+    encode_inkling2_moe_phase2_indexed, encode_inkling2_moe_phase2_indexed_rows,
+    moe_inkling2_source, INKLING2_MOE_MAX_ROWS, Inkling2ExpertType,
     Inkling2ResidentLayer, INKLING2_MAX_SLOTS, INKLING2_OUTER_SCALE_BYTES,
     MOE_INKLING2_REFLECT_FUNCTION,
 };
