@@ -336,8 +336,11 @@ The intake must check every offset bound and every sha256.
    OPEN: the authors report `free_KL` 0.0895 and 89.2% top-1 for this file
    (English/chat/code windows against the BF16 teacher, their harness). The
    protocols differ, so the gap is not a measured defect, but it is not
-   explained either. First suspect: the BF16 rounding of the F32 steering
-   above (the authors' runtime precision for it is not stated). Not yet run:
+   explained either. RULED OUT (2026-11-21): the BF16 rounding of the F32
+   steering. Rounding every narrowed value to the OTHER BF16 neighbour (0.5
+   to 1 ulp, max relative change 7.8e-3, about 3x the nearest-even error)
+   moved prose KL from 0.1543 to 0.1556 and top-1 from 182 to 181, and the two
+   installs differ from each other by mean KL 1.5e-3. Not yet run:
    the 8.9 GB release, the memory oracle, a tslab profile, sampled
    generation. No catalog row.
 6. Workstream B: Inkling 2 GGUF intake for the published ggml-org and unsloth
