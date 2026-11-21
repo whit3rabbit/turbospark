@@ -472,6 +472,10 @@ pub fn family_dispatches_steering(family: model_io::ModelFamily) -> bool {
         // kernels are unported, so it is refused at open before any decode
         // flow -- there is no layer loop for a hook to sit in.
         F::DeepseekV4Flash => false,
+        // No decode flow yet, so no layer loop for a hook to sit in. When it
+        // lands, a looped layer joins the residual stream three times per
+        // token, so the hook needs a per-application decision first.
+        F::Inkling2Loop => false,
         // The flow carries the hooks (both of its joins are one-stream
         // residual adds like the muse/spark shape, and
         // `families/deepseek2/mod.rs` encodes at each), but the gate stays

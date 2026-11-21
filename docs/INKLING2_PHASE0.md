@@ -241,12 +241,19 @@ context; 40 SWA slots ring at 1024.
 ## Remaining work, in dependency order
 
 Stage A: reachable and correct (decode only)
-1. Family: `ModelFamily::Inkling2Loop` (persisted `inkling2_loop`), an
-   `ArchConfig` sub-config (loop core and passes, gate rank, sconv taps, d_rel
-   and extent, clips, log scale, softcaps, res block, full-layer mask),
-   baseline, validation. `num_layers` stays 24 (physical): the expert
-   streamer opens one layout entry per checkpoint layer, and the flow maps
-   each of the 48 applications back to its physical layer.
+1. DONE: `ModelFamily::Inkling2Loop` (persisted `inkling2_loop`) and the
+   `inkling2_mini()` baseline. Every exhaustive match answers it: GGUF intake
+   refuses it, runtime open refuses it ("no decode flow yet"), steering and
+   mapped residency are off, and lab and bench have provisional rows.
+   `num_layers` is 24 (physical): the expert streamer opens one layout entry
+   per checkpoint layer, and the flow maps each of the 48 applications back
+   to its physical layer. DECIDED: the Inkling-only values (loop core and
+   passes, gate rank, d_rel and extent, clips, log scale, MLP softcaps, res
+   block, unpadded vocab) go in an `inkling2.json` sidecar beside the
+   manifest, not in `ArchConfig`, which has about 50 constructor sites. The
+   generic fields (softcap, window, mask, sconv taps, route scale, router
+   function) are in `ArchConfig`. Swift's per-family UI lists
+   (`ModelFeatureDescriptor`, `ModelFamilyVisuals`) wait for the catalog row.
 2. Repack (safetensors): config parser checked against the baseline in one
    equality; tensor map; experts written as `packed_experts/layer_NN.bin` in
    the blob contract above (16-byte outer record, then gate, up, down after

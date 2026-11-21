@@ -32,6 +32,7 @@ fn arch_for(f: ModelFamily) -> ArchConfig {
         ModelFamily::Lfm3 => r::tiny_lfm3_arch(512, 4),
         ModelFamily::UnlimitedOcr2 => model_io::unlimited_ocr2_12l(),
         ModelFamily::Gemma3 => model_io::gemma3_1b(),
+        ModelFamily::Inkling2Loop => model_io::inkling2_mini(),
     };
     a.family = f;
     a

@@ -242,7 +242,10 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
             // converter's tower naming is unparsed here. This port ingests
             // its MLX safetensors, so unmapped until the whole file has a
             // table.
-            ModelFamily::DeepseekV4Flash | ModelFamily::Flint | ModelFamily::UnlimitedOcr2 => None,
+            ModelFamily::DeepseekV4Flash
+            | ModelFamily::Flint
+            | ModelFamily::UnlimitedOcr2
+            | ModelFamily::Inkling2Loop => None,
         }
         .ok_or_else(unmapped);
     }
@@ -345,7 +348,11 @@ pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
         // published Q4_1 is not an executable block type here.
         | ModelFamily::Flint
         // No GGUF conversion exists, and llama.cpp has no DASH attention.
-        | ModelFamily::UnlimitedOcr2 => None,
+        | ModelFamily::UnlimitedOcr2
+        // GGUFs exist, but this port ingests the HF safetensors (the GGUF
+        // walk refuses it at `gguf_config`), so recognizing one would claim
+        // support that is not there.
+        | ModelFamily::Inkling2Loop => None,
     }
 }
 

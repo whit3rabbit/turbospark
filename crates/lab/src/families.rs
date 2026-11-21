@@ -204,6 +204,19 @@ pub fn facts(f: ModelFamily) -> FamilyFacts {
             probe_and_standin: false,
             notes: &["open refuses it: only kernel benches at its shapes can run"],
         },
+        Inkling2Loop => FamilyFacts {
+            flow: "none",
+            chunked_prefill: Support::No("no decode flow yet; open refuses the family".into()),
+            drafters: &[],
+            steel_prefill: false,
+            decode_attention: "none",
+            phase_buckets: "none",
+            probe_and_standin: false,
+            notes: &[
+                "open refuses it: only kernel benches at its shapes can run",
+                "24 physical layers run as 48 applications (layers 6-17 loop three times)",
+            ],
+        },
         Flint => FamilyFacts {
             flow: "flint",
             chunked_prefill: Support::Yes,

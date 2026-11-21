@@ -155,6 +155,8 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
         | ModelFamily::Flint
         // MLX-safetensors intake only, the same way.
         | ModelFamily::UnlimitedOcr2
+        // No GGUF intake (`gguf_config` refuses it), so unreachable.
+        | ModelFamily::Inkling2Loop
         // `lfm3` is DENSE like spark: no router, no shared-expert gate, and
         // its headwise `attn_gate` takes the BF16 default.
         | ModelFamily::Lfm3 => &[],

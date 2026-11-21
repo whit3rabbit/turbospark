@@ -1,0 +1,24 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "inkling2_loop",
+  "kind": "text",
+  "title": "Inkling 2 Mini: 24-layer MoE (128 experts, top 8) looped to 48 applications, relative-bias attention with per-token sinks, NVFP4 and MXFP8 experts; no decode flow yet",
+  "flow": "none",
+  "installs": [],
+  "recommended": [],
+  "sweeps": [],
+  "findings": [],
+  "open_questions": [
+    "no install and no decode flow yet; the Metal kernels exist and are parity-tested in isolation",
+    "the CPU reference matched llama.cpp (top-1 19/19, mean KL 4.2e-4 on 19 tokens), which is a correctness check, not a lab measurement (docs/INKLING2_PHASE0.md)",
+    "decode bytes per token are an estimate (about 5 GB, BF16 attention dominant), not a measurement"
+  ],
+  "traps": [
+    "layers 6-17 run three times per token: per-layer stats, prefetch keyed on layer + 1, and the router histogram all assume one application per layer",
+    "MXFP8 is layers 20-23, not the full-attention layers 5, 11, 17, 23",
+    "the router logits must be F32: llama.cpp runs this router in F32, and FP16 can flip a near-tie"
+  ],
+  "docs": [
+    "docs/INKLING2_PHASE0.md"
+  ]
+}

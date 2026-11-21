@@ -77,6 +77,10 @@ const EMBEDDED: &[(&str, &str)] = &[
     ("gemma3", include_str!("../families/gemma3.json")),
     ("gemma4", include_str!("../families/gemma4.json")),
     ("gptOss", include_str!("../families/gptOss.json")),
+    (
+        "inkling2_loop",
+        include_str!("../families/inkling2_loop.json"),
+    ),
     ("kokoro", include_str!("../families/kokoro.json")),
     ("lfm3", include_str!("../families/lfm3.json")),
     ("llama", include_str!("../families/llama.json")),

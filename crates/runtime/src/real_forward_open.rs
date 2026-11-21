@@ -556,6 +556,14 @@ impl RealForwardRunner {
                     "the DeepSeek-V4-Flash family has no decode flow yet".to_string(),
                 ));
             }
+            // Its kernels and CPU reference exist (`docs/INKLING2_PHASE0.md`),
+            // but the decode flow does not. Refused at open, never routed to a
+            // neighbour's flow, which would decode fluently and wrongly.
+            model_io::ModelFamily::Inkling2Loop => {
+                return Err(RealForwardError::Unsupported(
+                    "the Inkling 2 (inkling2_loop) family has no decode flow yet".to_string(),
+                ));
+            }
             // Its own flow: short-conv layers, zero-tail per-class rope and
             // sandwich norms are each inside the layer, and a neighbour's flow
             // would decode fluently and wrongly (`docs/LFM3_PHASE0.md`).
