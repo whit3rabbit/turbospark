@@ -2693,7 +2693,7 @@
         "channels": 2,
         "languages": [],
         "voices": [],
-        "max_input_seconds": 360
+        "max_input_seconds": 326
       }
     }
   ]
