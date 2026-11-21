@@ -18,6 +18,8 @@
 //! * Short convolutions finish with `(conv + residual) / sqrt(K + 1)`, or
 //!   `sqrt(2K + 1)` for the dynamic (full-attention K/V) variant.
 
+pub mod forward;
+
 /// E2M1 (FP4) codebook, index = 4-bit code.
 pub const E2M1: [f32; 16] = [
     0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0,
@@ -69,6 +71,115 @@ pub fn dequant_mxfp8_row(bytes: &[u8], scales: &[u8], out: &mut [f32]) {
         };
         out[i] = e4m3_to_f32(b) * scale;
     }
+}
+
+/// Elements in one transcoded NVFP4 block (ggml `block_nvfp4`).
+pub const NVFP4_BLOCK_ELEMS: usize = 64;
+/// Bytes in one transcoded NVFP4 block: 4 E4M3 scales, then 32 code bytes.
+pub const NVFP4_BLOCK_BYTES: usize = 36;
+/// Elements in one transcoded MXFP8 block.
+pub const MXFP8_BLOCK_ELEMS: usize = 32;
+/// Bytes in one transcoded MXFP8 block: the E8M0 exponent, then 32 E4M3 bytes.
+pub const MXFP8_BLOCK_BYTES: usize = 33;
+
+/// Repacks one HF NVFP4 row into ggml `block_nvfp4` blocks, so the routed
+/// expert kernels reuse the GGUF NVFP4 decoder (`crate::dequantize_nvfp4`).
+///
+/// Lossless: the codes and scale bytes are moved, never re-rounded. Only the
+/// nibble order changes (HF packs element `2i` low / `2i+1` high in byte `i`;
+/// ggml packs `s*16 + j` low / `s*16 + j + 8` high in `qs[s*8 + j]`). The HF
+/// code 8 (-0) becomes ggml's +0, which is the same value in any dot product.
+/// The per-expert outer scale is NOT folded in: it is stored beside the row,
+/// because folding it into the E4M3 scales would re-round them.
+///
+/// Refuses a scale byte with the sign bit set or the E4M3 NaN code: ggml's
+/// decoder ignores bit 7 and reads `0x7F` as zero, so either would silently
+/// change the weight rather than fail.
+pub fn nvfp4_row_to_blocks(packed: &[u8], block_scales: &[u8]) -> Result<Vec<u8>, String> {
+    let n = packed.len() * 2;
+    if n % NVFP4_BLOCK_ELEMS != 0 {
+        return Err(format!(
+            "NVFP4 row of {n} elements is not a multiple of {NVFP4_BLOCK_ELEMS}"
+        ));
+    }
+    if block_scales.len() != n / 16 {
+        return Err(format!(
+            "NVFP4 row of {n} elements needs {} scales, got {}",
+            n / 16,
+            block_scales.len()
+        ));
+    }
+    let nibble = |e: usize| (packed[e / 2] >> (4 * (e % 2))) & 15;
+    let mut out = Vec::with_capacity(n / NVFP4_BLOCK_ELEMS * NVFP4_BLOCK_BYTES);
+    for b in 0..n / NVFP4_BLOCK_ELEMS {
+        for s in 0..4 {
+            let i = b * 4 + s;
+            let byte = block_scales[i];
+            if byte & 0x80 != 0 || byte == 0x7F {
+                return Err(format!("NVFP4 scale {i} is 0x{byte:02x} (negative or NaN)"));
+            }
+            out.push(byte);
+        }
+        for s in 0..4 {
+            for j in 0..8 {
+                let lo = b * NVFP4_BLOCK_ELEMS + s * 16 + j;
+                out.push(nibble(lo) | (nibble(lo + 8) << 4));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Repacks one MXFP8 row into 33-byte blocks (exponent byte first, then the
+/// block's 32 E4M3 bytes), so a routed row is one contiguous run the way the
+/// GGUF blobs are. Lossless. Refuses the E8M0 NaN exponent (255) and E4M3 NaN
+/// codes: a NaN weight is a corrupt checkpoint, not something to stream.
+pub fn mxfp8_row_to_blocks(bytes: &[u8], scales: &[u8]) -> Result<Vec<u8>, String> {
+    let n = bytes.len();
+    if n % MXFP8_BLOCK_ELEMS != 0 {
+        return Err(format!(
+            "MXFP8 row of {n} elements is not a multiple of {MXFP8_BLOCK_ELEMS}"
+        ));
+    }
+    if scales.len() != n / MXFP8_BLOCK_ELEMS {
+        return Err(format!(
+            "MXFP8 row of {n} elements needs {} scales, got {}",
+            n / MXFP8_BLOCK_ELEMS,
+            scales.len()
+        ));
+    }
+    let mut out = Vec::with_capacity(n / MXFP8_BLOCK_ELEMS * MXFP8_BLOCK_BYTES);
+    for (b, (block, &e)) in bytes
+        .chunks_exact(MXFP8_BLOCK_ELEMS)
+        .zip(scales)
+        .enumerate()
+    {
+        if e == 255 {
+            return Err(format!("MXFP8 scale {b} is the E8M0 NaN code"));
+        }
+        if let Some(k) = block.iter().position(|&c| c & 0x7F == 0x7F) {
+            return Err(format!(
+                "MXFP8 element {} is an E4M3 NaN code",
+                b * MXFP8_BLOCK_ELEMS + k
+            ));
+        }
+        out.push(e);
+        out.extend_from_slice(block);
+    }
+    Ok(out)
+}
+
+/// Decodes `n` elements of [`mxfp8_row_to_blocks`] output: the CPU reference
+/// for the transcoded layout the GPU reads.
+pub fn dequantize_mxfp8_blocks(blocks: &[u8], n: usize) -> Vec<f32> {
+    assert_eq!(n % MXFP8_BLOCK_ELEMS, 0);
+    assert_eq!(blocks.len(), n / MXFP8_BLOCK_ELEMS * MXFP8_BLOCK_BYTES);
+    let mut out = Vec::with_capacity(n);
+    for block in blocks.chunks_exact(MXFP8_BLOCK_BYTES) {
+        let scale = 2f32.powi(i32::from(block[0]) - 127);
+        out.extend(block[1..].iter().map(|&c| e4m3_to_f32(c) * scale));
+    }
+    out
 }
 
 /// Splits interleaved `w13` rows into `(gate_rows, up_rows)` row indices.
@@ -126,6 +237,88 @@ pub fn relative_bias(r: &[f32], proj: &[f32], extent: usize, distance: isize) ->
         .enumerate()
         .map(|(i, ri)| ri * proj[i * extent + d])
         .sum()
+}
+
+/// The relative-bias table for one query: `table[h * extent + d] = r_h .
+/// proj[:, d]`, with `r` `[heads, d_rel]` (already clipped, and times `tau` on
+/// full layers) and `proj` `[d_rel, extent]` row-major.
+pub fn rel_bias_table(
+    r: &[f32],
+    proj: &[f32],
+    heads: usize,
+    d_rel: usize,
+    extent: usize,
+) -> Vec<f32> {
+    assert_eq!(r.len(), heads * d_rel);
+    assert_eq!(proj.len(), d_rel * extent);
+    let mut t = vec![0.0f32; heads * extent];
+    for h in 0..heads {
+        for d in 0..extent {
+            t[h * extent + d] = (0..d_rel)
+                .map(|i| r[h * d_rel + i] * proj[i * extent + d])
+                .sum();
+        }
+    }
+    t
+}
+
+/// One query's attention over cached positions `first..=pos`. `k` and `v` are
+/// `[n_pos, kv_heads * head_dim]` from position 0; `table` is
+/// [`rel_bias_table`]'s output (distance `d >= extent` gets no bias); `sinks`
+/// holds the per-head sink logit, which joins the softmax denominator with a
+/// zero value. Scale `1/sqrt(head_dim)`, query head `h` reads kv head
+/// `h / (heads / kv_heads)`. Returns `[heads, head_dim]`.
+#[allow(clippy::too_many_arguments)]
+pub fn attention_decode(
+    q: &[f32],
+    k: &[f32],
+    v: &[f32],
+    table: &[f32],
+    sinks: &[f32],
+    first: usize,
+    pos: usize,
+    heads: usize,
+    kv_heads: usize,
+    head_dim: usize,
+    extent: usize,
+) -> Vec<f32> {
+    let kvd = kv_heads * head_dim;
+    let group = heads / kv_heads;
+    let scale = 1.0 / (head_dim as f32).sqrt();
+    let mut o = vec![0.0f32; heads * head_dim];
+    for h in 0..heads {
+        let kvh = h / group;
+        let qh = &q[h * head_dim..(h + 1) * head_dim];
+        let logits: Vec<f32> = (first..=pos)
+            .map(|kp| {
+                let kk = &k[kp * kvd + kvh * head_dim..kp * kvd + (kvh + 1) * head_dim];
+                let d = pos - kp;
+                let bias = if d < extent {
+                    table[h * extent + d]
+                } else {
+                    0.0
+                };
+                qh.iter().zip(kk).map(|(a, b)| a * b).sum::<f32>() * scale + bias
+            })
+            .collect();
+        let t = sinks[h];
+        let m = logits.iter().copied().fold(t, f32::max);
+        let mut z = (t - m).exp();
+        let oh = &mut o[h * head_dim..(h + 1) * head_dim];
+        for (j, &l) in logits.iter().enumerate() {
+            let w = (l - m).exp();
+            z += w;
+            let kp = first + j;
+            let vv = &v[kp * kvd + kvh * head_dim..kp * kvd + (kvh + 1) * head_dim];
+            for (x, y) in oh.iter_mut().zip(vv) {
+                *x += w * y;
+            }
+        }
+        for x in oh.iter_mut() {
+            *x /= z;
+        }
+    }
+    o
 }
 
 fn softcap(x: f32, cap: f32) -> f32 {
@@ -324,6 +517,77 @@ mod tests {
         dequant_nvfp4_row(&packed, &scales, 1.0, &mut out);
         assert_eq!(out[15], 6.0);
         assert_eq!(out[16], 12.0);
+    }
+
+    /// Every valid scale byte (0x00..=0x7E) and every code, in every one of a
+    /// block's four 16-element sub-blocks, decodes to the same value through
+    /// the transcoded ggml layout as through the HF reference.
+    #[test]
+    fn nvfp4_transcode_is_lossless_for_every_scale_and_code() {
+        let n_scales = 0x7Fusize; // 0x00..=0x7E
+        let blocks = n_scales.div_ceil(4) * 4; // whole blocks of four scales
+        let n = blocks / 4 * NVFP4_BLOCK_ELEMS * 4;
+        let scales: Vec<u8> = (0..n / 16).map(|i| (i % n_scales) as u8).collect();
+        // Codes run through 0..16 at a stride coprime to 16 so every
+        // sub-block holds every code in a different position.
+        let packed: Vec<u8> = (0..n / 2)
+            .map(|i| ((2 * i * 7) % 16) as u8 | ((((2 * i + 1) * 7 + 3) % 16) as u8) << 4)
+            .collect();
+        let mut want = vec![0.0; n];
+        dequant_nvfp4_row(&packed, &scales, 1.0, &mut want);
+        let got = crate::dequantize_nvfp4(&nvfp4_row_to_blocks(&packed, &scales).unwrap(), n);
+        for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+            assert!(g == w, "element {i}: transcoded {g} vs reference {w}");
+        }
+        assert!(want.iter().any(|v| *v != 0.0));
+    }
+
+    #[test]
+    fn nvfp4_transcode_refuses_negative_and_nan_scales() {
+        let packed = vec![0x11u8; 32];
+        for bad in [0x7Fu8, 0x80, 0xB8] {
+            let mut scales = vec![0x38u8; 4];
+            scales[2] = bad;
+            assert!(
+                nvfp4_row_to_blocks(&packed, &scales).is_err(),
+                "0x{bad:02x}"
+            );
+        }
+        assert!(nvfp4_row_to_blocks(&packed[..16], &[0x38; 2]).is_err());
+        assert!(nvfp4_row_to_blocks(&packed, &[0x38; 3]).is_err());
+    }
+
+    /// Every non-NaN E4M3 code under a spread of exponents, bit-exact.
+    #[test]
+    fn mxfp8_transcode_is_lossless_for_every_code() {
+        let codes: Vec<u8> = (0..=255u8).filter(|c| c & 0x7F != 0x7F).collect();
+        let mut bytes = Vec::new();
+        let mut scales = Vec::new();
+        for (b, e) in [0u8, 1, 100, 127, 130, 200, 254].into_iter().enumerate() {
+            for k in 0..MXFP8_BLOCK_ELEMS {
+                bytes.push(codes[(b * MXFP8_BLOCK_ELEMS + k * 5) % codes.len()]);
+            }
+            scales.push(e);
+        }
+        let n = bytes.len();
+        let mut want = vec![0.0; n];
+        dequant_mxfp8_row(&bytes, &scales, &mut want);
+        let got = dequantize_mxfp8_blocks(&mxfp8_row_to_blocks(&bytes, &scales).unwrap(), n);
+        for (i, (g, w)) in got.iter().zip(&want).enumerate() {
+            assert!(g.to_bits() == w.to_bits(), "element {i}: {g} vs {w}");
+        }
+    }
+
+    #[test]
+    fn mxfp8_transcode_refuses_nan() {
+        let ok = vec![0x38u8; 32];
+        assert!(mxfp8_row_to_blocks(&ok, &[255]).is_err());
+        for bad in [0x7Fu8, 0xFF] {
+            let mut bytes = ok.clone();
+            bytes[9] = bad;
+            assert!(mxfp8_row_to_blocks(&bytes, &[127]).is_err(), "0x{bad:02x}");
+        }
+        assert!(mxfp8_row_to_blocks(&ok[..16], &[127]).is_err());
     }
 
     #[test]

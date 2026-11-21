@@ -134,6 +134,10 @@ mod moe_decode;
 #[cfg(target_os = "macos")]
 mod moe_gguf;
 #[cfg(target_os = "macos")]
+mod inkling2_ops;
+#[cfg(target_os = "macos")]
+mod moe_inkling2;
+#[cfg(target_os = "macos")]
 mod moe_prefill_batch;
 #[cfg(target_os = "macos")]
 mod moe_prefill_batch_gguf;
@@ -388,6 +392,19 @@ pub use moe_gguf::{
     encode_moe_phase2_mxfp4, encode_moe_phase2_q2_0_top10, encode_moe_phase2_q4_k,
     encode_moe_phase2_q6_k, encode_moe_phase2_q8_0, moe_gguf_source, mxfp4_row_bytes, MoeExtType,
     Mxfp4Activation, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS, PHASE2_FIXED_SLOTS,
+};
+#[cfg(target_os = "macos")]
+pub use inkling2_ops::{
+    encode_inkling2_attention_decode, encode_inkling2_depth_mix, encode_inkling2_l2_clip,
+    encode_inkling2_rel_table, encode_inkling2_router_select, encode_inkling2_short_conv_decode,
+    Inkling2AttnShape, INKLING2_ATTN_MAX_HEAD_DIM, INKLING2_DEPTH_MAX_STATES,
+    INKLING2_ROUTER_MAX_EXPERTS, INKLING2_ROUTER_TOP_K,
+};
+#[cfg(target_os = "macos")]
+pub use moe_inkling2::{
+    encode_inkling2_moe_phase1, encode_inkling2_moe_phase2, moe_inkling2_source,
+    Inkling2ExpertType, INKLING2_MAX_SLOTS, INKLING2_OUTER_SCALE_BYTES,
+    MOE_INKLING2_REFLECT_FUNCTION,
 };
 #[cfg(target_os = "macos")]
 pub use moe_prefill_batch::{

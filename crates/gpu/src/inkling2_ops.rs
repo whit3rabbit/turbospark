@@ -1,0 +1,312 @@
+//! Host-side dispatch for `shaders/inkling2_ops.metal`: the Inkling 2 router
+//! selection, L2 clip, short convolution (decode) and depth mix.
+//!
+//! PORT-LOCAL. The math and layouts are in the shader header; the CPU contract
+//! is `turbospark_compute::inkling2`, held by `tests/inkling2_ops_parity.rs`.
+//! Every entry point checks its shape against the kernel's fixed limits and
+//! refuses rather than dispatching out of contract, because each of these
+//! kernels would otherwise read or write out of bounds silently.
+
+use crate::bytes::u32_bytes;
+use crate::{GpuError, MetalContext, PassEncoder};
+use metal::FunctionConstantValues;
+
+const SOURCE: &str = concat!(
+    include_str!("shaders/moe.metal"),
+    include_str!("shaders/inkling2_ops.metal")
+);
+
+/// Experts the router kernel can rank (32 lanes x 8 per lane).
+pub const INKLING2_ROUTER_MAX_EXPERTS: usize = 256;
+/// Experts the router selects; the Mini's `num_experts_per_tok`.
+pub const INKLING2_ROUTER_TOP_K: usize = 8;
+/// States the depth mix accepts (block outputs plus the current state).
+pub const INKLING2_DEPTH_MAX_STATES: usize = 16;
+
+fn invalid(msg: String) -> GpuError {
+    GpuError::InvalidInput(msg)
+}
+
+fn f32_bytes(v: &f32) -> [u8; 4] {
+    v.to_le_bytes()
+}
+
+fn pipeline(
+    context: &mut MetalContext,
+    kernel: &'static str,
+) -> Result<metal::ComputePipelineState, GpuError> {
+    context.pipeline(SOURCE, kernel, &FunctionConstantValues::new(), b"")
+}
+
+/// Sigmoid router selection: `out_indices[0..8]` / `out_weights[0..8]` in rank
+/// order from FP32 `logits[num_experts]` and FP32 `correction_bias`.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_inkling2_router_select(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    logits: (&metal::Buffer, u64),
+    correction_bias: (&metal::Buffer, u64),
+    out_indices: (&metal::Buffer, u64),
+    out_weights: (&metal::Buffer, u64),
+    num_experts: u32,
+    route_scale: f32,
+) -> Result<(), GpuError> {
+    let ne = num_experts as usize;
+    if !(INKLING2_ROUTER_TOP_K..=INKLING2_ROUTER_MAX_EXPERTS).contains(&ne) {
+        return Err(invalid(format!(
+            "Inkling 2 router needs {INKLING2_ROUTER_TOP_K}..={INKLING2_ROUTER_MAX_EXPERTS} experts, got {ne}"
+        )));
+    }
+    let p = pipeline(context, "inkling2_router_select_k8")?;
+    pass.encode_threadgroups(
+        &p,
+        &[
+            (logits.0, 0, logits.1),
+            (correction_bias.0, 1, correction_bias.1),
+            (out_indices.0, 2, out_indices.1),
+            (out_weights.0, 3, out_weights.1),
+        ],
+        &[(u32_bytes(&num_experts), 4), (&f32_bytes(&route_scale), 5)],
+        1,
+        32,
+    );
+    Ok(())
+}
+
+/// Per-vector L2 clip in place over FP16 `x[n_vec, dim]`. `scale` is an
+/// optional BF16 per-channel scale and its stride (0 = one `[dim]` scale for
+/// every vector, `dim` = one per vector). `post_scale` multiplies after the
+/// clip (the full-attention `tau(pos)`; pass 1.0 otherwise).
+#[allow(clippy::too_many_arguments)]
+pub fn encode_inkling2_l2_clip(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    x: (&metal::Buffer, u64),
+    scale: Option<((&metal::Buffer, u64), u32)>,
+    n_vec: u32,
+    dim: u32,
+    threshold: f32,
+    post_scale: f32,
+) -> Result<(), GpuError> {
+    if n_vec == 0 || dim == 0 {
+        return Err(invalid("L2 clip needs n_vec and dim > 0".into()));
+    }
+    let (scale_buf, stride, has) = match scale {
+        Some((buf, stride)) => {
+            if stride != 0 && stride != dim {
+                return Err(invalid(format!(
+                    "L2 clip scale stride must be 0 or dim ({dim}), got {stride}"
+                )));
+            }
+            (buf, stride, 1u32)
+        }
+        // Unread when has_scale is 0; bound so the argument table is complete.
+        None => (x, 0, 0u32),
+    };
+    let p = pipeline(context, "inkling2_l2_clip")?;
+    pass.encode_threadgroups(
+        &p,
+        &[(x.0, 0, x.1), (scale_buf.0, 1, scale_buf.1)],
+        &[
+            (u32_bytes(&n_vec), 2),
+            (u32_bytes(&dim), 3),
+            (u32_bytes(&stride), 4),
+            (u32_bytes(&has), 5),
+            (&f32_bytes(&threshold), 6),
+            (&f32_bytes(&post_scale), 7),
+        ],
+        u64::from(n_vec).div_ceil(8),
+        256,
+    );
+    Ok(())
+}
+
+/// One decode row of the causal short convolution with residual. `tail`
+/// (FP16 `[taps - 1, ch]`, oldest first) is advanced in place. `dynamic` is
+/// the full-attention K/V variant's per-head taps (FP16 `[heads, taps]`, lag
+/// 0 = current row) and its head count; `None` is the static conv.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_inkling2_short_conv_decode(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    x: (&metal::Buffer, u64),
+    tail: (&metal::Buffer, u64),
+    weight: (&metal::Buffer, u64),
+    dynamic: Option<((&metal::Buffer, u64), u32)>,
+    out: (&metal::Buffer, u64),
+    ch: u32,
+    taps: u32,
+) -> Result<(), GpuError> {
+    if ch == 0 || taps < 2 {
+        return Err(invalid(format!(
+            "short conv needs ch > 0 and taps >= 2, got ch {ch} taps {taps}"
+        )));
+    }
+    let (dyn_buf, heads) = match dynamic {
+        Some((buf, heads)) => {
+            if heads == 0 || ch % heads != 0 {
+                return Err(invalid(format!(
+                    "short conv heads ({heads}) must divide ch ({ch})"
+                )));
+            }
+            (buf, heads)
+        }
+        // Unread when heads is 0.
+        None => (weight, 0),
+    };
+    let p = pipeline(context, "inkling2_short_conv_decode")?;
+    pass.encode_threadgroups(
+        &p,
+        &[
+            (x.0, 0, x.1),
+            (tail.0, 1, tail.1),
+            (weight.0, 2, weight.1),
+            (dyn_buf.0, 3, dyn_buf.1),
+            (out.0, 4, out.1),
+        ],
+        &[
+            (u32_bytes(&ch), 5),
+            (u32_bytes(&taps), 6),
+            (u32_bytes(&heads), 7),
+        ],
+        u64::from(ch).div_ceil(256),
+        256,
+    );
+    Ok(())
+}
+
+/// Depth mix: for each of `n_q` BF16 queries `[n_q, h]`, the softmax-weighted
+/// sum of the RMS-normed FP16 `states[n_states, h]` (current state last).
+#[allow(clippy::too_many_arguments)]
+pub fn encode_inkling2_depth_mix(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    states: (&metal::Buffer, u64),
+    queries: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    n_states: u32,
+    n_q: u32,
+    h: u32,
+) -> Result<(), GpuError> {
+    let n = n_states as usize;
+    if n == 0 || n > INKLING2_DEPTH_MAX_STATES || n_q == 0 || h == 0 {
+        return Err(invalid(format!(
+            "depth mix needs 1..={INKLING2_DEPTH_MAX_STATES} states, n_q > 0, h > 0; got {n}, {n_q}, {h}"
+        )));
+    }
+    let p = pipeline(context, "inkling2_depth_mix")?;
+    pass.encode_threadgroups(
+        &p,
+        &[
+            (states.0, 0, states.1),
+            (queries.0, 1, queries.1),
+            (out.0, 2, out.1),
+        ],
+        &[(u32_bytes(&n_states), 3), (u32_bytes(&h), 4)],
+        u64::from(n_q),
+        256,
+    );
+    Ok(())
+}
+
+/// Relative-bias table: FP32 `table[heads, extent]` from FP16 `r[heads, d_rel]`
+/// and BF16 `proj[d_rel, extent]`.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_inkling2_rel_table(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    r: (&metal::Buffer, u64),
+    proj: (&metal::Buffer, u64),
+    table: (&metal::Buffer, u64),
+    heads: u32,
+    d_rel: u32,
+    extent: u32,
+) -> Result<(), GpuError> {
+    if heads == 0 || d_rel == 0 || extent == 0 {
+        return Err(invalid(
+            "rel table needs heads, d_rel and extent > 0".into(),
+        ));
+    }
+    let p = pipeline(context, "inkling2_rel_table")?;
+    pass.encode_threadgroups(
+        &p,
+        &[(r.0, 0, r.1), (proj.0, 1, proj.1), (table.0, 2, table.1)],
+        &[
+            (u32_bytes(&heads), 3),
+            (u32_bytes(&d_rel), 4),
+            (u32_bytes(&extent), 5),
+        ],
+        (u64::from(heads) * u64::from(extent)).div_ceil(256),
+        256,
+    );
+    Ok(())
+}
+
+/// Shape of one Inkling decode-attention dispatch.
+#[derive(Debug, Clone, Copy)]
+pub struct Inkling2AttnShape {
+    pub heads: u32,
+    pub kv_heads: u32,
+    pub head_dim: u32,
+    pub extent: u32,
+}
+
+/// The largest head the decode attention serves (4 channels per lane).
+pub const INKLING2_ATTN_MAX_HEAD_DIM: u32 = 128;
+
+/// Decode attention for the query at `pos` over cached positions
+/// `first..=pos`, with the relative-bias `table` (from
+/// [`encode_inkling2_rel_table`]) and FP32 per-head `sinks`. `q` FP16
+/// `[heads, head_dim]`; `k`, `v` FP16 `[n_pos, kv_heads, head_dim]`.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_inkling2_attention_decode(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    q: (&metal::Buffer, u64),
+    k: (&metal::Buffer, u64),
+    v: (&metal::Buffer, u64),
+    table: (&metal::Buffer, u64),
+    sinks: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    first: u32,
+    pos: u32,
+    shape: Inkling2AttnShape,
+) -> Result<(), GpuError> {
+    let s = shape;
+    if s.kv_heads == 0
+        || s.heads % s.kv_heads != 0
+        || s.head_dim == 0
+        || s.head_dim % 32 != 0
+        || s.head_dim > INKLING2_ATTN_MAX_HEAD_DIM
+        || s.extent == 0
+        || first > pos
+    {
+        return Err(invalid(format!(
+            "Inkling 2 attention: unsupported shape {s:?} or range {first}..={pos}"
+        )));
+    }
+    let group = s.heads / s.kv_heads;
+    let p = pipeline(context, "inkling2_attention_decode")?;
+    pass.encode_threadgroups(
+        &p,
+        &[
+            (q.0, 0, q.1),
+            (k.0, 1, k.1),
+            (v.0, 2, v.1),
+            (table.0, 3, table.1),
+            (sinks.0, 4, sinks.1),
+            (out.0, 5, out.1),
+        ],
+        &[
+            (u32_bytes(&first), 6),
+            (u32_bytes(&pos), 7),
+            (u32_bytes(&s.kv_heads), 8),
+            (u32_bytes(&group), 9),
+            (u32_bytes(&s.head_dim), 10),
+            (u32_bytes(&s.extent), 11),
+        ],
+        u64::from(s.heads),
+        256,
+    );
+    Ok(())
+}
