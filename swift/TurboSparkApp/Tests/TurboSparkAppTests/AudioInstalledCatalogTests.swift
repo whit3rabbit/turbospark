@@ -34,7 +34,7 @@ final class AudioInstalledCatalogTests: XCTestCase {
         let profiles = [
             profile("installed-model"), profile("adopt-me"), profile("broken"), profile("downloadable"),
             profile("music-model", task: .music), profile("cannot-run-here"), profile("no-revision", revision: ""),
-            profile("separator", task: .separation),
+            profile("aligner", task: .alignment),
         ]
         let installed = [try decode(AudioInstalledRecord.self, record("installed-model"))]
         let adoption = [try decode(AudioLegacyInstall.self, #"{"record":\#(record("adopt-me")),"identity":\#(identity("adopt-me"))}"#)]

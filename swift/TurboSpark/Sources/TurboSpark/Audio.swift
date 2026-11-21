@@ -10,18 +10,21 @@ extension AudioTask {
     /// Whether the native runtime can open a session for this task.
     ///
     /// `ts_audio_session_open` deserializes the runtime's own task enum
-    /// (`crates/runtime/src/native_audio.rs`), which has exactly these five
+    /// (`crates/runtime/src/native_audio.rs`), which has exactly these six
     /// variants. Diarization returns speaker turns as transcript segments
     /// with empty text and speakers `S1`, `S2`, ... Enhancement takes mono
     /// PCM at the request's `inputSampleRate` and returns the cleaned voice
-    /// as 48 kHz mono PCM of the input's resampled length. The other cases exist in Swift for catalog and capability
+    /// as 48 kHz mono PCM of the input's resampled length. Separation takes
+    /// `inputChannels` (1 or 2, interleaved) at `inputSampleRate` and returns
+    /// the vocals as interleaved 44.1 kHz stereo; the instrumental is the
+    /// input at that rate minus the vocals. The other cases exist in Swift for catalog and capability
     /// rows that describe model families the engine has code for but no
     /// session entry point yet; opening one is refused by name. A host should
     /// not offer a control for a task that is not runnable.
     public var isRunnable: Bool {
         switch self {
-        case .speechToText, .textToSpeech, .music, .diarization, .enhancement: return true
-        case .separation, .alignment, .speechDetection,
+        case .speechToText, .textToSpeech, .music, .diarization, .enhancement, .separation: return true
+        case .alignment, .speechDetection,
             .codec, .languageIdentification:
             return false
         }
@@ -343,8 +346,11 @@ public struct AudioRequest: Codable, Sendable, Equatable {
     public var tW: Float?
     /// Rate of the reference voice passed as the job's PCM when cloning.
     public var referenceSampleRate: UInt32?
-    /// Enhancement: rate of the job's mono PCM; the engine resamples it.
+    /// Enhancement and separation: rate of the job's PCM; the engine
+    /// resamples it.
     public var inputSampleRate: UInt32?
+    /// Separation: channels of the job's interleaved PCM, 1 or 2.
+    public var inputChannels: UInt8?
     /// The user confirmed the right to use the reference voice. Required to clone.
     public var consent = false
 
