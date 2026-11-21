@@ -31,6 +31,7 @@ mod gguf_names;
 pub mod gguf_quantize;
 mod gturbo_writer;
 mod hf_checkpoint;
+mod inkling2_checkpoint;
 mod install_verifier;
 mod lfm3_config;
 mod llama_config;
@@ -144,6 +145,11 @@ pub use gturbo_writer::{
     LayerBlobs, StreamingGturboWriter, SubTensor, WriterError,
 };
 pub use hf_checkpoint::{orchestrate_llama_checkpoint, LlamaCheckpointDims, OrchestrateError};
+pub use inkling2_checkpoint::{
+    copy_inkling2_tokenizer_files, inkling2_manifest_quant, parse_inkling2_config,
+    write_inkling2_install, Inkling2InstallReport, Inkling2RepackError, INKLING2_MXFP8_DTYPE,
+    INKLING2_NVFP4_DTYPE, INKLING2_OUTER_RECORD_BYTES, INKLING2_TOKENIZER_FILES,
+};
 pub use install_verifier::verify_install_full_sha256;
 pub use lfm3_config::parse_lfm3_config;
 pub use llama_config::parse_llama_config;

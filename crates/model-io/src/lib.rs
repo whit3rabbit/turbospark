@@ -22,6 +22,7 @@ mod disk_space;
 pub mod encoder_config;
 mod error;
 mod expert_cache_policy;
+pub mod inkling2_config;
 mod install_receipt;
 mod kv_quant;
 mod load_guard;
@@ -89,8 +90,8 @@ pub use manifest::{
     known_flags, load as load_manifest, peek_family, validate as validate_manifest, Manifest,
     ManifestArch, ManifestFileEntry, ManifestHadamard, ManifestHadamardSigns, ManifestProducer,
     ManifestQuant, ManifestQuantSlot, DEFAULT_MAX_BYTES, EXECUTABLE_GGUF_TYPES,
-    MANIFEST_VERSION_MAJOR, MANIFEST_VERSION_MINOR, MANIFEST_VERSION_MINOR_BASE, REQUIRED_FILES,
-    RESIDENT_ONLY_GGUF_TYPES,
+    INKLING2_ROUTED_SCHEME, MANIFEST_VERSION_MAJOR, MANIFEST_VERSION_MINOR,
+    MANIFEST_VERSION_MINOR_BASE, REQUIRED_FILES, RESIDENT_ONLY_GGUF_TYPES,
 };
 pub use mtp_verify::{MTP_BATCHED_GEMM_DTYPES, MTP_GGUF_BATCHED_DTYPES, MTP_VERIFY_PROJECTIONS};
 pub use ngram_hash::{

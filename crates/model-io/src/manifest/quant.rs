@@ -131,6 +131,10 @@ pub const RESIDENT_ONLY_GGUF_TYPES: [&str; 0] = [];
 /// really did carry 1-bit routed experts passes here and fails at the routed
 /// dispatch, by name -- the same weaker footing Q6_K and the IQ types stand
 /// on, stated in [`EXECUTABLE_GGUF_TYPES`]'s doc.
+/// `manifest.quant.routedExpert.scheme` of an Inkling 2 install: per-layer
+/// NVFP4 or MXFP8 expert blobs in the `moe_inkling2` layout.
+pub const INKLING2_ROUTED_SCHEME: &str = "inkling2_nvfp4_mxfp8";
+
 pub(crate) fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
     // Embedding and attention admit 8 as well as 4: the INT8 affine GEMV is
     // kernel-backed (`crates/gpu`'s `dequant_int8_gemv`, group 64, BF16
@@ -229,7 +233,27 @@ pub(crate) fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
             && slot.scale_type == "none"
             && slot.bias_type == "none"
             && slot.group_size == 0;
-        if !(affine || affine_1bit || affine_2bit || gguf || raw_router || raw_bf16) {
+        // Inkling 2's routed experts in their trained NVFP4 (ggml block_nvfp4
+        // rows plus a per-expert F32 outer-scale record) or MXFP8 (33-byte
+        // blocks) layouts, read by `gpu::moe_inkling2`. Each layer's format is
+        // in its `packed_experts/layout.json` entry (the `gate` sub-tensor's
+        // dtype), so the slot names only the scheme. Its own scheme string,
+        // not `gguf`: GGUF NVFP4 blobs carry no outer-scale record and run
+        // different kernels, and confusing the two decodes wrongly.
+        let inkling2_routed = name == "routedExpert"
+            && slot.scheme == INKLING2_ROUTED_SCHEME
+            && slot.weight_bits == 0
+            && slot.scale_type == "none"
+            && slot.bias_type == "none"
+            && slot.group_size == 0;
+        if !(affine
+            || affine_1bit
+            || affine_2bit
+            || gguf
+            || raw_router
+            || raw_bf16
+            || inkling2_routed)
+        {
             let detail = match slot.scheme.to_lowercase().as_str() {
                 // An affine slot has four fields that can each be wrong and a
                 // bare "unsupported" names none of them. It matters most on

@@ -254,13 +254,35 @@ Stage A: reachable and correct (decode only)
    generic fields (softcap, window, mask, sconv taps, route scale, router
    function) are in `ArchConfig`. Swift's per-family UI lists
    (`ModelFeatureDescriptor`, `ModelFamilyVisuals`) wait for the catalog row.
-2. Repack (safetensors): config parser checked against the baseline in one
-   equality; tensor map; experts written as `packed_experts/layer_NN.bin` in
-   the blob contract above (16-byte outer record, then gate, up, down after
-   the w13 deinterleave), NVFP4 and MXFP8 per layer; the F32 queries and
-   router bias kept F32 (or narrowed, with a test); `static_w` flipped;
-   a manifest quant shape for the two native routed schemes. A synthetic
-   install builder for CI.
+2. DONE: repack (`crates/repack/src/inkling2_checkpoint.rs`,
+   `examples/inkling2_local_install.rs`). `parse_inkling2_config` turns the real
+   `config.json` (fixture) into exactly `inkling2_mini()` plus
+   `Inkling2Config::mini()` (`model_io::inkling2_config`, the `inkling2.json`
+   sidecar). It refuses biases, a shared expert, a V norm with a gamma, a
+   variable loop and SWA heads that differ. Experts go to
+   `packed_experts/layer_NN.bin` in the blob contract above, with sub-tensors
+   `outer` (F32 [4]), `gate`, `up` and `down` (dtype `inkling2_nvfp4` or
+   `inkling2_mxfp8`). The resident region holds every other `model.llm.*`
+   tensor: the router is widened to F32, `static_w` is rewritten to
+   `{k,v}_sconv.weight` [ch, 1, taps], and vision and MTP are left out.
+   `manifest.quant.routedExpert.scheme` is `inkling2_nvfp4_mxfp8`
+   (`model_io::INKLING2_ROUTED_SCHEME`, admitted by `validate_quant`).
+
+   Found on the way: the manifest writer never wrote `routedScalingFactor`,
+   though validation reads it (the `swigluLimit` gotcha again), so an install
+   whose route scale was not 1.0 could never validate. It is written now. And
+   `1/sqrt(128)` is 2 ULP from the `128^-0.5` literal the other baselines use,
+   so the parser uses `powf(-0.5)`.
+
+   Real intake (2026-11-20, M4 Max, local snapshot): 97 s, 9.3 GB peak RSS,
+   18 GB install (3.23 GB resident; 575 MB per NVFP4 layer file, 1.05 GB per
+   MXFP8 one). The example decodes 60 gate, up and down rows over 5 layers
+   (NVFP4 and MXFP8) from the blobs, and each equals the HF reference decode
+   bit for bit. The outer records match `amax / denominator`. Unit tests cover
+   a synthetic checkpoint read back through the loaders, plus refusals.
+   Mutants (gate on the odd rows, no `static_w` flip, w13's outer scale on
+   down) each fail. Not yet: a synthetic install that opens through
+   `RealForwardRunner::open` (open refuses the family until step 3).
 3. Decode flow (`crates/runtime/src/families/inkling2/`): composed from the
    existing BF16 GEMV, embed, RMS norm, sigmoid gate and softcap kernels plus
    `inkling2_ops` and `moe_inkling2`. Per-slot KV (8 full slots unbounded, 40
