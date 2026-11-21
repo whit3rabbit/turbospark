@@ -32,8 +32,14 @@ extension AudioWorkspaceController {
     /// reference.
     static func runRequest(_ recipe: AudioRecipe, task: AudioTask, profile: AudioProfile) -> AudioRequest {
         var base = request(from: recipe, task: task)
-        // The Clean Up page reads the take at 48 kHz (`readMono48kTake`).
+        // The Clean Up page reads the take at 48 kHz mono (`readMono48kTake`)
+        // to enhance it and at 44.1 kHz stereo (`readStereo44kTake`) to
+        // separate it.
         if task == .enhancement { base.inputSampleRate = 48_000 }
+        if task == .separation {
+            base.inputSampleRate = 44_100
+            base.inputChannels = 2
+        }
         guard task == .textToSpeech, clonesNatively(profile) else { return base }
         return runClonesNatively(profile, speech: recipe.speech)
             ? nativeCloneRequest(base, family: profile.family, speech: recipe.speech)
@@ -236,6 +242,9 @@ extension AudioWorkspaceController {
                         } else if currentTask == .enhancement {
                             let limit = Double(profile.capabilities.maxInputSeconds ?? 30)
                             pcm = try await Task.detached { try AudioMediaIO.readMono48kTake(selected.clips, store: assets, duration: selected.duration, limit: limit, cancel: lifetime.check) }.value
+                        } else if currentTask == .separation {
+                            let limit = Double(profile.capabilities.maxInputSeconds ?? 30)
+                            pcm = try await Task.detached { try AudioMediaIO.readStereo44kTake(selected.clips, store: assets, duration: selected.duration, limit: limit, cancel: lifetime.check) }.value
                         } else {
                             pcm = try await Task.detached { try AudioMediaIO.readMono16k(selected.clips, store: assets, start: 0, duration: selected.duration, cancel: lifetime.check) }.value
                         }

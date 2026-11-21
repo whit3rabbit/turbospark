@@ -654,6 +654,14 @@ impl AudioCatalog {
                     let pcm = 48_000u64 * 4 * u64::from(capabilities.max_input_seconds.unwrap_or(0));
                     (weight_bytes.saturating_mul(2).saturating_add(pcm.saturating_mul(3)).saturating_add(2<<30),"estimate: f32 weights on host and device, three times the longest 48 kHz input, and 2 GiB for one 8 s window's activations; not measured")
                 }
+                // f32 weights widened from fp16, the 44.1 kHz stereo input,
+                // its planar copy, the padded overlap-add sums and output,
+                // and one 8 s chunk's activations (60 bands x 690 frames,
+                // the 4x feed-forward the largest).
+                AudioTask::Separation if family == "mel_roformer" => {
+                    let pcm = 44_100u64 * 2 * 4 * u64::from(capabilities.max_input_seconds.unwrap_or(0));
+                    (weight_bytes.saturating_mul(2).saturating_add(pcm.saturating_mul(8)).saturating_add(1<<30),"estimate: f32-widened fp16 weights, eight times the longest 44.1 kHz stereo input, and 1 GiB for one 8 s chunk's activations; not measured")
+                }
                 AudioTask::SpeechToText => (weight_bytes.saturating_mul(2).saturating_add(16_000*1800*4).saturating_add(256<<20),"estimate: twice checkpoint weights, 30-minute PCM, and 256 MiB working reserve"),
                 AudioTask::TextToSpeech => (weight_bytes.saturating_mul(2).saturating_add(256<<20),"estimate: twice checkpoint weights and 256 MiB voice/working reserve"),
                 AudioTask::Music => (weight_bytes.saturating_add(2<<30),"estimate: packed checkpoint weights and 2 GiB working reserve; full duration peak unqualified"),
@@ -2095,6 +2103,7 @@ fn require_library_audio_dirs(root: &Path, path: &Path) -> Result<(), String> {
 const REVIEWED_ADAPTERS: &[&str] = &[
     "fish_drama3",
     "megatts3",
+    "mel_roformer",
     "mossformer2_se",
     "omnivoice",
     "parakeet_tdt",
@@ -2268,6 +2277,27 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             // The int8 encoder carries the run and loads with CPU+Neural
             // Engine units (`UnifiedOptions::default`), held by a server test.
             compute: Some("ane".into()),
+            http_api: true,
+            ..Default::default()
+        };
+    }
+    if family == "mel_roformer" {
+        // Mel-Band RoFormer vocal separation on the portable f32 CPU path
+        // (no Metal offload yet). The runtime resamples the host's mono or
+        // stereo PCM to 44.1 kHz stereo and returns the vocal stem, one
+        // model pass per 8 s chunk at 50% overlap.
+        return AudioCapabilities {
+            languages: vec![],
+            voices: vec![],
+            max_input_seconds: None,
+            supports_lyrics: false,
+            operations: vec!["separate".into()],
+            timing: None,
+            backend: "portable_cpu".into(),
+            cancellation: "chunk".into(),
+            can_run: true,
+            unavailable_reason: None,
+            compute: None,
             http_api: true,
             ..Default::default()
         };
@@ -3508,7 +3538,7 @@ mod tests {
     #[test]
     fn initial_audio_profiles_have_exact_complete_pins_and_wire_metadata() {
         let catalog = AudioCatalog::embedded().unwrap();
-        assert_eq!(catalog.entries().count(), 25);
+        assert_eq!(catalog.entries().count(), 26);
         for (task, alias, repo, revision, rate, channels) in [
             (
                 AudioTask::TextToSpeech,
@@ -3613,6 +3643,14 @@ mod tests {
                 "ccd0ded00e26f38e9f5b0ba21608aa6a0bcd6434",
                 48000,
                 1,
+            ),
+            (
+                AudioTask::Separation,
+                "mel-roformer-vocals-v1",
+                "mlx-community/mel-roformer-zfturbo-vocals-v1-mlx",
+                "01bef2daebedf39937f552d6da68340fc979c9a0",
+                44100,
+                2,
             ),
         ] {
             let profile = catalog.get(alias).unwrap();

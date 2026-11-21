@@ -630,6 +630,7 @@ mod native {
     /// Appends mono f32 samples, 1..32000 per call, at most 28,800,000 total
     /// (30 minutes at 16 kHz). Transcription and diarization take 16 kHz,
     /// cloning the request's reference_sample_rate, enhancement its
+    /// input_sample_rate, separation its input_channels interleaved at its
     /// input_sample_rate.
     #[no_mangle]
     pub unsafe extern "C" fn ts_audio_job_append(

@@ -181,7 +181,7 @@ fn separation_matches_reference() {
     let peak = golden.iter().fold(0.0f32, |a, &v| a.max(v.abs())).max(1e-6);
     let diff = max_diff(&separated, &golden);
     eprintln!("separated diff {diff} peak {peak}");
-    assert!(diff < 5e-3, "separated diff {diff} peak {peak}");
+    assert!(diff < 1e-5, "separated diff {diff} peak {peak}");
     assert!(separated.iter().all(|v| v.is_finite()));
 }
 
@@ -280,4 +280,249 @@ fn unsupported_filterbank_geometry_is_an_error_not_a_panic() {
     let config =
         MelRoFormerConfig::from_json(&serde_json::json!({ "sample_rate": 1_000_000 })).unwrap();
     assert!(super::BandGeometry::build(&config).is_err());
+}
+
+#[test]
+fn sanitize_maps_pytorch_names_and_keeps_mlx_names() {
+    use super::sanitize_key;
+    let cases = [
+        (
+            "band_split.to_features.3.0.gamma",
+            "band_split.to_features.3.0.weight",
+        ),
+        (
+            "layers.0.1.layers.0.0.to_out.0.weight",
+            "layers.0.1.layers.0.0.to_out.weight",
+        ),
+        (
+            "mask_estimators.0.to_freqs.7.0.0.bias",
+            "mask_estimators.0.to_freqs.7.0.0.bias",
+        ),
+        (
+            "mask_estimators.0.to_freqs.7.0.2.weight",
+            "mask_estimators.0.to_freqs.7.1.0.weight",
+        ),
+        (
+            "mask_estimators.0.to_freqs.7.0.4.weight",
+            "mask_estimators.0.to_freqs.7.2.0.weight",
+        ),
+        // Already sanitized names are left alone.
+        (
+            "mask_estimators.0.to_freqs.7.1.0.weight",
+            "mask_estimators.0.to_freqs.7.1.0.weight",
+        ),
+        ("layers.0.0.norm.weight", "layers.0.0.norm.weight"),
+    ];
+    for (raw, want) in cases {
+        assert_eq!(sanitize_key(raw).as_deref(), Some(want), "{raw}");
+    }
+    assert_eq!(
+        sanitize_key("layers.0.0.layers.0.0.rotary_embed.freqs"),
+        None
+    );
+}
+
+/// The PyTorch-named layout the published conversions ship (`gamma`,
+/// `to_out.0`, Sequential mask indices, stored RoPE freqs) loads into the
+/// same model as the sanitized fixture: identical output bits.
+#[test]
+fn pytorch_named_checkpoint_loads_like_the_sanitized_one() {
+    let file = SafetensorsFile::open(&testdata("tiny_weights.safetensors")).unwrap();
+    let mut tensors = Vec::new();
+    for name in file.tensor_names() {
+        let shape = file.descriptor(name).unwrap().shape.clone();
+        let data = file.load_as_f32(name).unwrap();
+        let parts: Vec<&str> = name.split('.').collect();
+        let renamed = if shape.len() == 1 && name.ends_with(".weight") {
+            format!("{}.gamma", name.strip_suffix(".weight").unwrap())
+        } else if let Some(prefix) = name.strip_suffix("to_out.weight") {
+            format!("{prefix}to_out.0.weight")
+        } else if parts.len() == 7 && parts[0] == "mask_estimators" {
+            let item: usize = parts[4].parse().unwrap();
+            format!(
+                "mask_estimators.{}.to_freqs.{}.0.{}.{}",
+                parts[1],
+                parts[3],
+                item * 2,
+                parts[6]
+            )
+        } else {
+            name.to_string()
+        };
+        tensors.push((renamed, shape, data));
+    }
+    tensors.push((
+        "layers.0.0.layers.0.0.rotary_embed.freqs".into(),
+        vec![8],
+        vec![1.0; 8],
+    ));
+    let dir = std::env::temp_dir().join(format!("ts-melrof-pt-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("model.safetensors");
+    write_safetensors(&path, &tensors);
+    let renamed = SafetensorsFile::open(&path).unwrap();
+    assert!(!renamed.contains_tensor("layers.0.0.norm.weight"));
+    assert!(renamed.contains_tensor("mask_estimators.0.to_freqs.0.0.2.weight"));
+    let config = MelRoFormerConfig::from_json(&read_json("config.json")).unwrap();
+    let model = MelRoFormer::load(config, &renamed).unwrap();
+    let (_, wave) = read_npy("wave.npy");
+    assert_eq!(
+        model.forward(&wave).unwrap(),
+        load_model().forward(&wave).unwrap()
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+fn write_safetensors(path: &Path, tensors: &[(String, Vec<usize>, Vec<f32>)]) {
+    let mut header = serde_json::Map::new();
+    let mut offset = 0usize;
+    for (name, shape, data) in tensors {
+        let end = offset + data.len() * 4;
+        header.insert(
+            name.clone(),
+            serde_json::json!({"dtype": "F32", "shape": shape, "data_offsets": [offset, end]}),
+        );
+        offset = end;
+    }
+    let mut text = serde_json::to_string(&header).unwrap();
+    while (8 + text.len()) % 8 != 0 {
+        text.push(' ');
+    }
+    let mut bytes = (text.len() as u64).to_le_bytes().to_vec();
+    bytes.extend_from_slice(text.as_bytes());
+    for (_, _, data) in tensors {
+        bytes.extend(data.iter().flat_map(|v| v.to_le_bytes()));
+    }
+    std::fs::write(path, bytes).unwrap();
+}
+
+/// The tiny fixture with a short chunk so every demix branch runs quickly:
+/// chunk 4096, step 2048, border 2048, fade 409.
+fn chunked_model() -> MelRoFormer {
+    let mut config = MelRoFormerConfig::from_json(&read_json("config.json")).unwrap();
+    config.chunk_size = 4096;
+    let file = SafetensorsFile::open(&testdata("tiny_weights.safetensors")).unwrap();
+    MelRoFormer::load(config, &file).unwrap()
+}
+
+/// Planar stereo: a 220 Hz left channel and a 330 Hz right channel.
+fn stereo_tone(samples: usize) -> Vec<f32> {
+    [220.0f32, 330.0]
+        .iter()
+        .flat_map(|&hz| {
+            (0..samples)
+                .map(move |i| (i as f32 * hz * std::f32::consts::TAU / 44_100.0).sin() * 0.3)
+        })
+        .collect()
+}
+
+/// A track no longer than one step is one zero-padded pass whose window is
+/// 1 over the track, so the stem is the forward pass's head bit for bit.
+#[test]
+fn short_track_is_one_zero_padded_pass() {
+    let model = chunked_model();
+    let n = 1500;
+    let audio = stereo_tone(n);
+    let mut padded = Vec::new();
+    for c in 0..2 {
+        padded.extend_from_slice(&audio[c * n..(c + 1) * n]);
+        padded.resize((c + 1) * 4096, 0.0);
+    }
+    let pass = model.forward(&padded).unwrap();
+    let expected: Vec<f32> = (0..2)
+        .flat_map(|c| pass[c * 4096..c * 4096 + n].to_vec())
+        .collect();
+    assert_eq!(model.separate(&audio).unwrap(), expected);
+}
+
+/// The controlled entry is the plain one plus a hook between chunks: same
+/// bits, progress that counts every chunk, and a false return that stops
+/// before the next chunk. Lengths cover one pass, an unpadded two-border
+/// track and a reflect-padded track with a short zero-padded tail.
+#[test]
+fn controlled_separate_reports_progress_and_stops() {
+    let model = chunked_model();
+    for (n, passes) in [(1500usize, 1usize), (4096, 2), (9001, 7)] {
+        let audio = stereo_tone(n);
+        let plain = model.separate(&audio).unwrap();
+        assert_eq!(plain.len(), audio.len());
+        assert!(plain.iter().all(|v| v.is_finite()));
+        let mut seen = Vec::new();
+        let controlled = model
+            .separate_controlled(&audio, &mut |done, total| {
+                seen.push((done, total));
+                true
+            })
+            .unwrap();
+        assert_eq!(plain, controlled);
+        assert_eq!(seen.len(), passes + 1, "{n}: {seen:?}");
+        assert!(seen
+            .iter()
+            .enumerate()
+            .all(|(i, &(d, t))| d == i && t == passes));
+        let mut calls = 0;
+        let stopped = model.separate_controlled(&audio, &mut |_, _| {
+            calls += 1;
+            false
+        });
+        assert!(matches!(stopped, Err(crate::SpeechError::Input { .. })));
+        assert_eq!(calls, 1);
+    }
+    assert!(model.separate(&[]).is_err());
+    assert!(model.separate(&[0.0, f32::NAN]).is_err());
+}
+
+/// Real-checkpoint gate: `TURBOSPARK_MEL_ROFORMER_MODEL` names a directory
+/// with config.json, model.safetensors and the `real_*.npy` references made
+/// by `tools/gen_mel_roformer_real_reference.py`. Skips when unset.
+#[test]
+fn real_checkpoint_gate() {
+    let Ok(dir) = std::env::var("TURBOSPARK_MEL_ROFORMER_MODEL") else {
+        eprintln!("skipping: TURBOSPARK_MEL_ROFORMER_MODEL not set");
+        return;
+    };
+    let dir = PathBuf::from(dir);
+    let npy = |name: &str| {
+        let bytes = std::fs::read(dir.join(name)).expect(name);
+        let header_len = u16::from_le_bytes([bytes[8], bytes[9]]) as usize;
+        bytes[10 + header_len..]
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect::<Vec<f32>>()
+    };
+    let model = MelRoFormer::open(&dir).unwrap();
+    let clip = npy("real_clip.npy");
+    let n = clip.len() / 2;
+    let chunk = model.config.chunk_size.min(n);
+    let head: Vec<f32> = (0..2)
+        .flat_map(|c| clip[c * n..c * n + chunk].to_vec())
+        .collect();
+    let started = std::time::Instant::now();
+    let pass = model.forward(&head).unwrap();
+    let pass_seconds = started.elapsed().as_secs_f64();
+    let golden = npy("real_chunk_vocals.npy");
+    let peak = golden.iter().fold(0.0f32, |a, &v| a.max(v.abs()));
+    let diff = max_diff(&pass, &golden);
+    eprintln!("one pass: diff {diff} peak {peak}, {pass_seconds:.2} s for {chunk} samples");
+    assert!(diff < 1e-3, "chunk diff {diff}");
+    let started = std::time::Instant::now();
+    let vocals = model.separate(&clip).unwrap();
+    let seconds = started.elapsed().as_secs_f64();
+    let golden = npy("real_vocals.npy");
+    let peak = golden.iter().fold(0.0f32, |a, &v| a.max(v.abs()));
+    let diff = max_diff(&vocals, &golden);
+    let audio_seconds = n as f64 / model.config.sample_rate as f64;
+    let energy =
+        |x: &mut dyn Iterator<Item = f32>| x.map(|v| f64::from(v) * f64::from(v)).sum::<f64>();
+    let snr = 10.0
+        * (energy(&mut golden.iter().copied())
+            / energy(&mut vocals.iter().zip(&golden).map(|(a, b)| a - b)))
+        .log10();
+    eprintln!(
+        "demix: diff {diff} peak {peak} ({snr:.1} dB SNR to the reference), \
+         {seconds:.2} s for {audio_seconds:.2} s (RTF {:.3})",
+        seconds / audio_seconds
+    );
+    assert!(diff < 1e-3, "demix diff {diff}");
 }

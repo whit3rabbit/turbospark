@@ -2102,18 +2102,20 @@ typedef struct TsAudioJob TsAudioJob;
  * speaks without a reference, so appending nothing is valid there. For
  * "enhancement" the appended PCM is mono at the request's input_sample_rate
  * (8,000 to 192,000 Hz), which the runtime resamples to the model's 48 kHz.
+ * For "separation" it is input_channels (1 or 2) interleaved at the request's
+ * input_sample_rate, resampled to the model's 44.1 kHz stereo.
  * One append
  * carries at most 32,000
  * samples and the whole job at most 30 minutes. Appends after run has started
  * are refused.
  *
  * Tasks the runtime can open are "speech_to_text", "text_to_speech",
- * "music", "diarization" and "enhancement". Any other task name (the catalog describes more families than the
+ * "music", "diarization", "enhancement" and "separation". Any other task name (the catalog describes more families than the
  * runtime has session entry points for) is refused at open as an unknown
  * variant. Request keys: task, language, text, voice, speed, caption, lyrics,
  * duration_seconds, steps, seed, instruction, reference_text, p_w, t_w,
  * temperature, top_p, top_k, max_frames, reference_sample_rate,
- * input_sample_rate, consent; an
+ * input_sample_rate, input_channels, consent; an
  * unrecognised key is refused. Voice
  * cloning requires consent: true (the caller has the right to use the
  * reference voice), reference_sample_rate, and English text; p_w (0.1 to 5)
@@ -2127,6 +2129,16 @@ typedef struct TsAudioJob TsAudioJob;
  * at most 661 seconds of it; the removed part is input minus voice at 48 kHz.
  * Progress is kind 1 {"stage":"enhance","completed":n,"total":m}, one step
  * per model pass, and cancel is honoured between passes.
+ *
+ * VOCAL SEPARATION (task "separation", family "mel_roformer", portable CPU,
+ * interleaved stereo 44.1 kHz out). input_sample_rate and input_channels
+ * are required; mono input is duplicated to both channels. The run returns
+ * the vocal stem as kind 2 PCM, as many frames as the input resampled to
+ * 44.1 kHz and at most 360 seconds of them (the 30-minute append limit caps
+ * stereo 44.1 kHz input near 326 seconds). The instrumental is input minus
+ * vocals at 44.1 kHz stereo. Progress is kind 1
+ * {"stage":"separate","completed":n,"total":m}, one step per 8 s chunk (50%
+ * overlap), and cancel is honoured between chunks.
  *
  * FISH AUDIO DRAMA 3 (family "fish_drama3", Metal only, mono 44.1 kHz). Text
  * is at most 32,768 bytes and may carry inline cues such as [whispers] and

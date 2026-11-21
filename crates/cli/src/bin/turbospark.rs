@@ -154,7 +154,7 @@ enum Cmd {
     /// Speak in a cloned voice; needs --consent (turbospark clone --help)
     #[command(disable_help_flag = true)]
     Clone(Passthrough),
-    /// Clean speech in a recording (turbospark enhance --help)
+    /// Clean speech, or separate vocals from music (turbospark enhance --help)
     #[command(disable_help_flag = true)]
     Enhance(Passthrough),
     /// Page images to text with Core ML, macOS 15+ (turbospark ocr --help)
@@ -334,7 +334,7 @@ fn root_help() -> String {
                 ("music", "generate music"),
                 ("speak", "text to speech"),
                 ("clone", "speech in a cloned voice (needs --consent)"),
-                ("enhance", "clean speech in a recording"),
+                ("enhance", "clean speech, or --task separate vocals"),
                 ("ocr PAGE...", "page images to text"),
                 ("humanize MODEL DRAFT", "rewrite a draft to read as human"),
             ],

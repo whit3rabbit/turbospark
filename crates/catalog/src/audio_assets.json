@@ -2650,6 +2650,51 @@
         "voices": [],
         "max_input_seconds": 600
       }
+    },
+    {
+      "alias": "mel-roformer-vocals-v1",
+      "assets": [
+        {
+          "path": "LICENSE",
+          "sha256": "2b55ae02dcfe9ac8454c41c5e235175512db7429ee7275bab4c4e566b3f80597",
+          "size": 1779
+        },
+        {
+          "path": "README.md",
+          "sha256": "6efa3a80deb2f4faed6d737b3737bfff4350529c9af360be35f1e4657b6d97d2",
+          "size": 11603
+        },
+        {
+          "path": "config.json",
+          "sha256": "d110ed4713b403d27e2ae6c7796b1a864576232de4a2070e9762108ca197caa6",
+          "size": 1016
+        },
+        {
+          "path": "model.safetensors",
+          "sha256": "ef4aa052845a868cfaff93611477bd8f54d8081bc32f2742a9b3c738f0821191",
+          "size": 67402202
+        }
+      ],
+      "source": {
+        "repository": "mlx-community/mel-roformer-zfturbo-vocals-v1-mlx",
+        "revision": "01bef2daebedf39937f552d6da68340fc979c9a0"
+      },
+      "metadata": {
+        "task": "separation",
+        "family": "mel_roformer",
+        "display_name": "Mel-Band RoFormer Vocals v1",
+        "required_files": [
+          "LICENSE",
+          "README.md",
+          "config.json",
+          "model.safetensors"
+        ],
+        "sample_rate": 44100,
+        "channels": 2,
+        "languages": [],
+        "voices": [],
+        "max_input_seconds": 326
+      }
     }
   ]
 }

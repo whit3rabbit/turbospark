@@ -22,6 +22,16 @@ overlap averaging, complex masking, and overlap-add iSTFT. Ported from
   undeclared), ZFTurbo MSS-Training release assets (MIT). License posture
   is documented in the reference config presets; this port ships no
   weights and no default config.
+- Pinned checkpoint (catalog `mel-roformer-vocals-v1`):
+  https://huggingface.co/mlx-community/mel-roformer-zfturbo-vocals-v1-mlx
+  at `01bef2daebedf39937f552d6da68340fc979c9a0`, an fp16 conversion of
+  ZFTurbo's v1.0.0 release asset `model_vocals_mel_band_roformer_sdr_8.42.ckpt`
+  (preset `zfturbo_vocals_v1`: dim 192, depth 8, hop 512, mask estimator
+  depth 1, about 33M parameters, 67 MB). License MIT, by inheritance from
+  the MSS-Training repository; the model card notes the LICENSE file was
+  added a year after that release. Caveat: neither the model card nor the
+  release states the training data, so the weight license alone does not
+  settle what the training data permits.
 
 ## Verified stages and evidence
 
@@ -35,7 +45,7 @@ cd ../mlx-audio
     ../turbospark/crates/audio/tools/gen_mel_roformer_fixtures.py
 ```
 
-Measured parity, Rust vs the Python reference (2026-10-07,
+Measured parity, Rust vs the Python reference (2026-10-07, end-to-end row 2026-11-20,
 `cargo test -p turbospark-audio --lib mel_roformer`):
 
 | Stage | Max abs diff |
@@ -45,11 +55,34 @@ Measured parity, Rust vs the Python reference (2026-10-07,
 | Band split [T, bands, dim] | 1.9e-6 |
 | Dual-axis transformer out | 1.9e-6 |
 | Per-band masks / merged mask | 1.0e-7 |
-| End-to-end separated audio | 2.3e-3 on peak 0.038 (6e-5 relative, iSTFT) |
+| End-to-end separated audio | 3.0e-8 on peak 0.038 (2026-11-20, after the irfft fix below) |
 
-Not yet verified: real-checkpoint gate (no preset checkpoint installed;
-weights carry restrictive or undeclared licenses), task quality (SDR),
-Metal offload, runtime, catalog, FFI, Swift gates.
+The end-to-end row was 2.3e-3 until 2026-11-20: the crate's inverse
+real FFT folded the imaginary part of the DC and Nyquist bins (which the
+complex mask creates) into every sample, where irfft discards it. The
+iSTFT now zeroes them; the fixture test bound is 1e-5, and restoring the
+old behavior fails it.
+
+Real checkpoint (2026-11-20, M4 Max, `real_checkpoint_gate` with
+`TURBOSPARK_MEL_ROFORMER_MODEL` set, release build): the pinned
+`mel-roformer-vocals-v1` against the reference on the MLX CPU device with
+the weights cast to f32, on 20 s of a commercial pop recording (local
+only, not committed). References come from
+`tools/gen_mel_roformer_real_reference.py`:
+
+| Stage | Max abs diff |
+|---|---|
+| One 8 s pass (`forward`) | 2.0e-4 on peak 0.18 |
+| Whole clip through the demix overlap-add | 4.6e-4 on peak 0.22 (64.4 dB SNR to the reference) |
+
+CPU speed (portable f32, 16 cores): 8.6 to 12.2 s per 8 s pass, and RTF
+2.3 to 4.0 for whole clips (54 to 79 s for 20 s, 69 s for 30 s through the
+CLI), varying with host load. 30 s of stereo peaked at 1.39 GB footprint
+through `turbospark-enhance --task separate`. Metal offload has not been
+tried; the CPU path is slow but runs, so it is the shipped path for now.
+
+Not yet verified: task quality (SDR on a labeled set), Metal offload,
+memory on the longest admitted input.
 
 ## Architecture
 
@@ -87,8 +120,30 @@ Metal offload, runtime, catalog, FFI, Swift gates.
   to_v, `.gamma` renamed to `.weight`, mask-MLP Sequential indices
   remapped). Packed `to_qkv` keys are refused with a pointer to the
   reference `sanitize`/convert step.
-- `chunk_size`/`num_overlap` are caller-level streaming parameters in
-  the reference; this port is single-pass like the reference `__call__`.
+- `chunk_size`/`num_overlap` are caller-level parameters in the
+  reference, whose `__call__` is single pass and whose README leaves
+  chunking to the caller. `forward` is that single pass; `separate` (and
+  `separate_controlled`, bit-identical with progress and cancel between
+  chunks) is the ZFTurbo MSS-Training `demix` generic path with batch
+  size 1: `chunk_size` windows every `chunk_size / num_overlap` samples,
+  linear fades of `chunk_size / 10` (none at the track's own edges), a
+  reflect pad of the border when the track is longer than two borders,
+  short tails zero-padded and long tails reflect-padded, then
+  `result / counter` with NaN set to 0.
+- Published conversions keep the PyTorch names (`gamma`, `to_out.0`,
+  Sequential mask indices, stored `rotary_embed.freqs`) and rely on the
+  reference `sanitize` at load time. `load` applies the same renaming, so
+  both layouts load; packed `to_qkv` is still refused.
+
+## Runtime
+
+The runtime `separation` task (`crates/runtime/src/native_audio.rs`) takes
+the job's PCM at `input_sample_rate` with `input_channels` 1 or 2
+(interleaved), duplicates mono, resamples each channel to 44.1 kHz and
+returns the vocals as interleaved 44.1 kHz stereo. The instrumental is
+`separation_pcm(request) - vocals`; the host computes it. Progress stage
+`separate`, one step per chunk. Bounds: the PCM append limit (about 326 s of
+stereo 44.1 kHz input) and 360 s of output.
 
 ## Documented divergences
 
