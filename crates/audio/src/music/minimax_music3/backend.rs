@@ -395,7 +395,11 @@ pub trait ComputeBackend {
     /// The Mamba1 selective scan (`ScanShape` documents the layout).
     /// Returns `y` and the last state. Backends without a device kernel
     /// refuse, and the caller scans on the host.
-    fn selective_scan(&self, _inputs: ScanInputs<'_>, _shape: ScanShape) -> Result<(Vec<f32>, Vec<f32>)> {
+    fn selective_scan(
+        &self,
+        _inputs: ScanInputs<'_>,
+        _shape: ScanShape,
+    ) -> Result<(Vec<f32>, Vec<f32>)> {
         Err(SpeechError::Unsupported {
             why: "backend does not implement the selective scan".into(),
         })

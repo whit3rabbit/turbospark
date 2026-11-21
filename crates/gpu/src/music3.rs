@@ -594,7 +594,8 @@ impl Music3Device {
         {
             return Err(bad("selective scan geometry mismatch"));
         }
-        let to_u32 = |v: usize| u32::try_from(v).map_err(|_| bad("selective scan dimension exceeds u32"));
+        let to_u32 =
+            |v: usize| u32::try_from(v).map_err(|_| bad("selective scan dimension exceeds u32"));
         let p: Vec<u8> = [
             to_u32(seqs)?,
             to_u32(len)?,
@@ -643,7 +644,10 @@ impl Music3Device {
                 threads,
             );
             pass.commit_and_wait_checked()?;
-            Ok((finite_output(&y, elements)?, finite_output(&last, state_count)?))
+            Ok((
+                finite_output(&y, elements)?,
+                finite_output(&last, state_count)?,
+            ))
         })
     }
     /// Rows are stored contiguously; `columns` retains the pre-materialization mean layout.
