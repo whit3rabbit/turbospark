@@ -98,6 +98,9 @@ struct ChatActivityLine: View {
     /// The mark breathes and the elapsed time ticks only while live.
     var isLive = false
     var label: Text?
+    /// A soft sweep over the label while live (the "Thinking..." state),
+    /// static under Reduce Motion or in a background window.
+    var labelShimmers = false
     var tone: Tone = .normal
     /// One truncated line after the label. Model output or a tool id, so it
     /// renders verbatim.
@@ -158,6 +161,7 @@ struct ChatActivityLine: View {
                 }
                 label
                     .themedFont(.small, weight: .medium)
+                    .appShimmer(active: isLive && labelShimmers, tint: theme.accent.opacity(0.6))
                     .foregroundStyle(labelStyle)
                     .lineLimit(1)
                     .layoutPriority(2)
@@ -215,21 +219,76 @@ struct ChatActivityLine: View {
     }
 }
 
-/// The reasoning trace a reply's activity line reveals.
+/// The reasoning trace a reply's activity line reveals, on a thin rail.
+///
+/// `folded` is the live preview: the newest lines of the trace, bottom
+/// anchored in a 72 pt window whose top fades out, so the transcript shows
+/// that the model is thinking without the whole trace pushing the answer
+/// down. The fade is an alpha mask, so it follows every theme. The preview
+/// never animates its scroll: new text simply replaces the bottom lines,
+/// which is also what Reduce Motion asks for.
 struct ReasoningTraceView: View {
     @Environment(\.appTheme) private var theme
     let reasoning: String
+    var folded = false
+
+    /// Height of the folded preview (the Rail variant's preview height).
+    static let foldedHeight: CGFloat = 72
 
     var body: some View {
-        Text(reasoning)
+        HStack(alignment: .top, spacing: 10) {
+            Rectangle()
+                .fill(.appBorder)
+                .frame(width: 2)
+                .accessibilityHidden(true)
+            if folded {
+                foldedPreview
+            } else {
+                traceText(reasoning)
+                    .textSelection(.enabled)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .transition(.opacity)
+    }
+
+    private func traceText(_ text: String) -> some View {
+        Text(verbatim: text)
             .font(theme.code(.large))
             .foregroundStyle(theme.metadataForeground)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.appElevated)
-            .clipShape(RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
-            .textSelection(.enabled)
-            .transition(.opacity)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// A short trace shows whole with no fade; a long one is clipped to the
+    /// newest lines and faded at the top. Only the tail is laid out, so a
+    /// long trace costs the same per streamed token as a short one.
+    private var foldedPreview: some View {
+        let tail = ReasoningPreview.tail(of: reasoning)
+        let height = Self.foldedHeight * AppMetrics.textScale(theme)
+        return ViewThatFits(in: .vertical) {
+            traceText(tail)
+            traceText(tail)
+                .frame(height: height, alignment: .bottom)
+                .clipped()
+                .mask {
+                    // A mask reads only alpha. The theme's opaque foreground
+                    // stands in for "fully shown" (metadataForeground is
+                    // translucent and would dim the whole preview).
+                    LinearGradient(
+                        stops: [
+                            .init(color: theme.foreground.opacity(0), location: 0),
+                            .init(color: theme.foreground, location: 0.55),
+                        ],
+                        startPoint: .top, endPoint: .bottom)
+                }
+        }
+        .frame(maxHeight: height, alignment: .bottom)
+        // VoiceOver hears one stable element, not a block that rewrites
+        // itself on every token; the full trace is behind the chevron.
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text("Latest reasoning", bundle: .module))
+        .accessibilityValue(Text(verbatim: ChatActivityStatus.latestLine(of: reasoning) ?? ""))
     }
 }

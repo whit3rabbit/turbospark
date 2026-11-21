@@ -251,7 +251,14 @@ struct AudioCaptureSourcePickers: View {
     private var form: some View {
         VStack(alignment: .leading, spacing: 12) {
             Toggle(isOn: $controller.captureMicrophone) { Text("Microphone", bundle: .module) }
-            if controller.captureMicrophone { microphonePicker.labelsHidden() }
+            if controller.captureMicrophone {
+                microphonePicker.labelsHidden()
+                // Lets the user hear-check the chosen input before a take.
+                // Shown only once access is granted; the warning below and
+                // Check devices cover the rest.
+                MicrophoneTestMeter(deviceID: controller.microphoneID.flatMap(UInt32.init),
+                                    blocked: controller.hasRecordingActivity)
+            }
             Toggle(isOn: $controller.captureSystemAudio) { Text("App or system audio", bundle: .module) }
             if controller.captureSystemAudio {
                 applicationPicker

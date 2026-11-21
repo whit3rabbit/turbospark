@@ -317,6 +317,17 @@ struct GeneralSettingsPaneView: View {
             .font(theme.ui(.small))
             .foregroundStyle(.appSecondary)
 
+            Toggle(isOn: controls.followUpSuggestionsEnabled) {
+                Text("Show follow-up suggestions", bundle: .module)
+            }
+            .settingsControl("Show follow-up suggestions", pane: .general, timing: .immediate)
+            Text(
+                "Shows a few fixed follow-up asks under the newest reply. Clicking one only fills the message box. Nothing is sent, and the model is never asked to write suggestions.",
+                bundle: .module
+            )
+            .font(theme.ui(.small))
+            .foregroundStyle(.appSecondary)
+
             Toggle(isOn: controls.microcompactEnabled) {
                 Text("Compact older tool results", bundle: .module)
             }

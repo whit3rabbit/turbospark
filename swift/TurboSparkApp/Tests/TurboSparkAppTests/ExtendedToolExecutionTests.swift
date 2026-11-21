@@ -12,6 +12,8 @@ final class ExtendedToolExecutionTests: XCTestCase {
         // which would route this suite's question calls into a dead model
         // instead of the immediate-record path these assertions read.
         AskUserQuestionExecutor.answerWaiter = nil
+        // The plan gate is the same kind of static hook.
+        PlanModeExecutor.decisionWaiter = nil
         tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         project = AppProject(name: "test-proj", rootDirectoryPath: tempDir.path)

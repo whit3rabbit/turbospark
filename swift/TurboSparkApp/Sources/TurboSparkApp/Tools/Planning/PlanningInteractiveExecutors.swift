@@ -232,6 +232,109 @@ public enum PlanModeExecutor {
         }
         return "Exited plan mode. Ready to proceed with execution."
     }
+
+    // MARK: Blocking plan gate
+
+    /// What the user decided on a submitted plan. `cancelled` covers Stop,
+    /// app quit and a superseded gate: no decision was made.
+    public enum Decision: Equatable, Sendable {
+        case approved
+        case changesRequested(String)
+        case cancelled
+    }
+
+    /// Tool-result texts. The post-turn plan card reads the first two to
+    /// know the plan was already decided in the gate (`PlanCardActions`).
+    public static let approvedResult = "The user approved the plan. Proceed."
+    public static let changesRequestedPrefix = "The user requested changes: "
+    public static let cancelledResult =
+        "The user did not decide on the plan before the turn was stopped. Plan mode is still active."
+
+    /// The app-side decision surface, installed at startup like
+    /// `AskUserQuestionExecutor.answerWaiter`. Nil (tests, subagents) keeps
+    /// the old non-blocking `exit`. Arguments: chat id, plan text, tool-call id.
+    public static var decisionWaiter: (@Sendable (UUID?, String?, UUID?) async -> Decision)?
+
+    /// One parked gate per chat and tool call. `submitDecision` resumes it;
+    /// cancellation resumes it with `.cancelled`.
+    private static var decisionContinuations: [String: CheckedContinuation<Decision, Never>] = [:]
+    /// Cancellations that arrived before `waitForDecision` parked, the same
+    /// race `AskUserQuestionExecutor.earlyDismissals` closes.
+    private static var earlyCancellations: Set<String> = []
+
+    private static func gateKey(chatID: UUID?, toolCallID: UUID?) -> String {
+        (chatID?.uuidString ?? "default") + "|" + (toolCallID?.uuidString ?? "none")
+    }
+
+    /// The blocking ExitPlanMode: the tool result does not exist until the
+    /// user approves, asks for changes, or the turn is cancelled. Plan mode
+    /// ends only on approval; every other outcome leaves it as it was.
+    public static func exitAwaitingDecision(
+        arguments: [String: String], chatID: UUID?, toolCallID: UUID?
+    ) async -> String {
+        guard let waiter = decisionWaiter else {
+            return exit(arguments: arguments, chatID: chatID)
+        }
+        let key = chatID?.uuidString ?? "default"
+        let gate = gateKey(chatID: chatID, toolCallID: toolCallID)
+        let plan = arguments["plan"] ?? arguments["summary"] ?? arguments["content"]
+        lock.withLock {
+            if let plan { savedPlans[key] = plan }
+            // A cancel left over from an earlier, finished gate must not
+            // cancel this one.
+            earlyCancellations.remove(gate)
+        }
+
+        let decision = await withTaskCancellationHandler {
+            await waiter(chatID, plan, toolCallID)
+        } onCancel: {
+            // Stop during a parked gate cancels it: the loop must never wait
+            // on a card the user stopped.
+            submitDecision(chatID: chatID, toolCallID: toolCallID, decision: .cancelled)
+        }
+        lock.withLock { _ = earlyCancellations.remove(gate) }
+
+        switch decision {
+        case .approved:
+            lock.withLock { _ = activePlanModes.remove(key) }
+            onPlanModeChanged?(chatID, false, plan)
+            return approvedResult
+        case .changesRequested(let text):
+            return changesRequestedPrefix + text
+        case .cancelled:
+            return cancelledResult
+        }
+    }
+
+    /// Delivers the user's decision to the parked gate. Idempotent: with no
+    /// parked continuation it is a no-op, so a double click or a Stop race
+    /// cannot resume twice.
+    public static func submitDecision(chatID: UUID?, toolCallID: UUID?, decision: Decision) {
+        let gate = gateKey(chatID: chatID, toolCallID: toolCallID)
+        lock.lock()
+        let continuation = decisionContinuations.removeValue(forKey: gate)
+        if continuation == nil, decision == .cancelled { earlyCancellations.insert(gate) }
+        lock.unlock()
+        continuation?.resume(returning: decision)
+    }
+
+    /// Parks the calling task until `submitDecision` fires for this gate.
+    public static func waitForDecision(
+        chatID: UUID?, toolCallID: UUID?, continuation: CheckedContinuation<Decision, Never>
+    ) {
+        let gate = gateKey(chatID: chatID, toolCallID: toolCallID)
+        lock.lock()
+        if earlyCancellations.remove(gate) != nil {
+            lock.unlock()
+            continuation.resume(returning: .cancelled)
+            return
+        }
+        let previous = decisionContinuations.updateValue(continuation, forKey: gate)
+        lock.unlock()
+        // A stale continuation for the same gate was never retired; resuming
+        // it keeps its task from leaking.
+        previous?.resume(returning: .cancelled)
+    }
 }
 
 // MARK: - ReportFindings Executor

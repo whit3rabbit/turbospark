@@ -4,6 +4,7 @@ import SwiftUI
 @MainActor
 struct ChatTranscriptView: View {
     @ObservedObject var model: AppModel
+    @Environment(\.appTheme) private var theme
     /// The chat this view was built for. The parent keys the view by chat, so
     /// on teardown this is still the chat being left, not the new selection.
     let chatID: UUID
@@ -29,6 +30,21 @@ struct ChatTranscriptView: View {
     /// Id of the newest row the human wrote, so a send re-pins the transcript.
     private var lastHumanMessageID: UUID? {
         model.selectedTurnMessages.last { $0.role == .user && !$0.isSynthetic }?.id
+    }
+
+    /// The one row whose action bar stays visible without hover.
+    private var pinnedActionsID: UUID? {
+        MessageActionBarPin.pinnedMessageID(in: model.selectedTurnMessages, isRunning: model.isRunning)
+    }
+
+    /// The row that shows the opt-in follow-up chips, if any. Busy also
+    /// covers a pending approval or submission, where a drafted ask would
+    /// land behind the card the user must answer first.
+    private var followUpRowID: UUID? {
+        FollowUpSuggestions.rowID(
+            in: model.selectedTurnMessages,
+            isBusy: model.isRunning || !model.isIdleForPlanCard,
+            isEnabled: model.followUpSuggestionsEnabled)
     }
 
     /// Transcript turns (qwen-code collapse parity): a user prompt anchors
@@ -61,9 +77,11 @@ struct ChatTranscriptView: View {
                     }
                     let turns = transcriptTurns
                     let byID = messagesByID
+                    let pinnedID = pinnedActionsID
+                    let followUpID = followUpRowID
                     ForEach(turns, id: \.offset) { index, turn in
                         if index > 0 { ConversationDivider().padding(.vertical, 8) }
-                        turnRows(turn, byID: byID)
+                        turnRows(turn, byID: byID, pinnedID: pinnedID, followUpID: followUpID)
                     }
 
                     if let event = model.selectedCompactionBoundaryEvent {
@@ -97,6 +115,19 @@ struct ChatTranscriptView: View {
                         InteractiveQuestionCardView(
                             model: model,
                             questions: pendingQuestions.items)
+                    }
+
+                    // The parked ExitPlanMode gate, placed and scoped like the
+                    // question card for the same reason: its tool row does
+                    // not exist until the user decides.
+                    if let pendingPlan = model.pendingPlanApproval,
+                        pendingPlan.chatID == nil
+                            || pendingPlan.chatID == model.selectedChatID
+                    {
+                        PlanCardView(
+                            model: model, plan: pendingPlan.plan,
+                            isOffered: false, isAwaitingDecision: true)
+                            .id(pendingPlan.id)
                     }
 
                     // The live buffer belongs to the running turn's chat
@@ -135,6 +166,9 @@ struct ChatTranscriptView: View {
                     .padding(.bottom, 12)
                     .transition(.opacity)
                 }
+            }
+            .overlay(alignment: .trailing) {
+                scrollRail(proxy)
             }
             .tsAnimation(TSMotion.hover, value: follower.isPinned)
             .onChange(of: model.outputText) {
@@ -177,6 +211,16 @@ struct ChatTranscriptView: View {
                     TSMotion.animate(TSMotion.pane) {
                         followBottom(proxy, force: true)
                     }
+                }
+            }
+            // The plan gate is announced and revealed the same way: the turn
+            // waits on it.
+            .onChange(of: model.pendingPlanApproval) { _, pending in
+                guard pending != nil else { return }
+                _ = AccessibilityNotification.Announcement.post(.init(
+                    AppStrings.localized("Assistant is waiting for your decision on the plan.")))
+                TSMotion.animate(TSMotion.pane) {
+                    followBottom(proxy, force: true)
                 }
             }
             .onAppear {
@@ -228,12 +272,53 @@ struct ChatTranscriptView: View {
         }
     }
 
+    /// scroll-rail: tick per human prompt along the trailing edge, shown only
+    /// with 3+ prompts and a gutter beside the reading column. The current
+    /// tick is the last jump target; nothing here measures rows.
+    @ViewBuilder
+    private func scrollRail(_ proxy: ScrollViewProxy) -> some View {
+        let items = TranscriptScrollRail.items(in: model.selectedTurnMessages)
+        if !items.isEmpty {
+            GeometryReader { geometry in
+                let column = (ConversationLayout.readingWidth * AppMetrics.textScale(theme)).rounded()
+                if TranscriptScrollRail.fitsBeside(columnWidth: column, containerWidth: geometry.size.width) {
+                    TranscriptScrollRailView(
+                        items: items,
+                        currentIndex: TranscriptScrollRail.currentIndex(
+                            of: model.turnNavigationTargetID, in: items)
+                    ) { id, animated in
+                        jumpToTurn(id, proxy: proxy, animated: animated)
+                    }
+                    .frame(height: min(TranscriptScrollRail.maxHeight, max(0, geometry.size.height - 96)))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                    .padding(.trailing, TranscriptScrollRail.edgeInset)
+                }
+            }
+        }
+    }
+
+    /// A rail jump is the reader moving away from the bottom, so it unpins
+    /// (a streaming reply then stops pulling the viewport back) and cancels a
+    /// pending scroll restore. Recording the target keeps Previous/Next Turn
+    /// stepping from here. Landing at the bottom re-pins through the probe.
+    private func jumpToTurn(_ id: UUID, proxy: ScrollViewProxy, animated: Bool) {
+        follower.cancelRestore()
+        follower.unpin()
+        model.turnNavigationTargetID = id
+        if animated {
+            TSMotion.animate(TSMotion.pane) { proxy.scrollTo(id, anchor: .top) }
+        } else {
+            proxy.scrollTo(id, anchor: .top)
+        }
+    }
+
     /// The rows of one turn: every message when expanded, prompt + toggle +
     /// final answer when collapsed. A collapse that would hide nothing
     /// renders expanded.
     @ViewBuilder
     private func turnRows(
-        _ turn: TurnCollapseModel.Turn, byID: [UUID: AppChatMessage]
+        _ turn: TurnCollapseModel.Turn, byID: [UUID: AppChatMessage], pinnedID: UUID?,
+        followUpID: UUID?
     ) -> some View {
         let hidden = TurnCollapseModel.hiddenCount(for: turn, messagesByID: byID)
         let isCollapsed = turn.isCollapsible && hidden > 0
@@ -247,12 +332,34 @@ struct ChatTranscriptView: View {
         let turnSources = TurnSources.hasWebCall(in: turnMessages)
             ? TurnSources.collect(in: turnMessages) : TurnSources()
         let sourcesRowID = turnSources.isEmpty ? nil : TurnSources.replyRowID(in: turnMessages)
+        // file-tree: same reply row, and only for a turn that changed a file.
+        let touchedFiles = TurnFileTree.hasFileChange(in: turnMessages)
+            ? TurnFileTree.make(messages: turnMessages, rootPath: model.selectedProject?.rootDirectoryURL?.path)
+            : nil
+        let filesRowID = touchedFiles == nil ? nil : TurnSources.replyRowID(in: turnMessages)
+        // retrieval-inspector: in memory only, keyed by the person's message
+        // that opens the turn, on the same reply row.
+        let recallInspection = turn.anchorID.flatMap {
+            model.recallInspection(forTurnAnchor: $0, chatID: chatID)
+        }
+        let recallRowID = recallInspection == nil ? nil : TurnSources.replyRowID(in: turnMessages)
         VStack(alignment: .leading, spacing: 18) {
+            // checkpoint: above the prompt, keyed by it; renders nothing for
+            // a turn that changed no files.
+            if let anchor = turn.anchorID {
+                TurnCheckpointDividerSlot(
+                    index: model.turnCheckpoints, model: model, chatID: chatID, turnID: anchor,
+                    isRunning: model.isRunning)
+            }
             ForEach(visibleIDs, id: \.self) { messageID in
                 if let message = byID[messageID] {
                     MessageRowView(
                         model: model, message: message,
-                        sources: messageID == sourcesRowID ? turnSources : nil)
+                        sources: messageID == sourcesRowID ? turnSources : nil,
+                        touchedFiles: messageID == filesRowID ? touchedFiles : nil,
+                        recallInspection: messageID == recallRowID ? recallInspection : nil,
+                        pinsActions: messageID == pinnedID,
+                        showsFollowUps: messageID == followUpID)
                         .id(message.id)
                     if messageID == turn.anchorID && hidden > 0 && !model.isRunning {
                         TurnActivityDisclosure(count: hidden, isExpanded: !isCollapsed) {

@@ -48,6 +48,7 @@ public struct ChatSystemPromptSheet: View {
                     // The editor is the only thing that sizes this sheet's width.
                     .frame(minWidth: 460)
                     .appEditorSurface(minHeight: 220)
+                InstructionTokenCaptionView(model: model, text: text)
                 effectiveSourceDescription
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)

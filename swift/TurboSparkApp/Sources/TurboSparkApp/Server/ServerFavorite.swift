@@ -295,9 +295,7 @@ extension AppModel {
                         ServerFavoriteModel.notConnectedMessage(model: model, library: libraryName),
                         style: .warning)
                 case .missing(let name):
-                    // Not localized, as before this task; the sentence is not
-                    // part of requirement 8.2.
-                    showToast("Model is no longer installed: \(name)", style: .warning)
+                    showToast(AppStrings.localized("Model is no longer installed: \(name)"), style: .warning)
                 }
             }
         }

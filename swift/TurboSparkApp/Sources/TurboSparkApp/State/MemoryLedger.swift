@@ -36,6 +36,12 @@ public struct MemoryClaim: Codable, Equatable, Sendable, Identifiable {
     public var projectTopicName: String?
     public var legacySourceText: String?
     public var requestedForgetID: UUID?
+    /// The `memory` tool call that staged this proposal, so its transcript
+    /// note can address this exact claim (`MemoryProposalNote.resolution`).
+    /// Ledger-only: the model never sees it. Nil for every other origin and
+    /// every ledger written before the field (synthesized Codable decodes a
+    /// missing optional key as nil).
+    public var sourceToolCallID: UUID?
 
     public init(
         id: UUID = UUID(), scope: String, kind: String, text: String,
@@ -54,6 +60,7 @@ public struct MemoryClaim: Codable, Equatable, Sendable, Identifiable {
         self.projectTopicName = projectTopicName
         legacySourceText = nil
         requestedForgetID = nil
+        sourceToolCallID = nil
     }
 }
 
@@ -157,7 +164,17 @@ public final class MemoryLedgerStore: @unchecked Sendable {
         return fallbackState
     }
 
+    /// Posted after every committed `update`, on the writer's thread. Views
+    /// that show one claim's state (the transcript proposal note) re-read on
+    /// it, so a decision made in Settings shows up without a reload.
+    public static let didChangeNotification = Notification.Name("MemoryLedgerStore.didChange")
+
     public func update(_ change: (inout MemoryLedgerState) throws -> Void) throws {
+        try commit(change)
+        NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
+    }
+
+    private func commit(_ change: (inout MemoryLedgerState) throws -> Void) throws {
         lock.lock(); defer { lock.unlock() }
         let stateData: Data?
         if fallbackURL == nil, ProfileRepository.shared.isAvailable {

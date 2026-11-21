@@ -188,9 +188,13 @@ struct OutputPaneView: View {
     }
 
     private var transcript: some View {
-        ChatTranscriptView(model: model, chatID: model.selectedChatID)
-            .id(model.selectedChatID)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        VStack(spacing: 0) {
+            // Draws nothing for the default profile, so most chats are unchanged.
+            ChatAgentStripView(model: model)
+            ChatTranscriptView(model: model, chatID: model.selectedChatID)
+                .id(model.selectedChatID)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 
     private func copy(_ text: String) {

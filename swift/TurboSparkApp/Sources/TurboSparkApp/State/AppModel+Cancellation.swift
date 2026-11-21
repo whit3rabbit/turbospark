@@ -66,6 +66,7 @@ extension AppModel {
                         retriesUsed: previousRetries,
                         alternates: parkedVariants,
                         toolCallLabel: toolCallLabel)
+                    self.reasoningClock.stamp(&payload.messages, chatID: targetID)
                     if let preservation {
                         payload.recoveryAnchor = preservation.anchor
                     }
@@ -81,6 +82,7 @@ extension AppModel {
                     retriesUsed: previousRetries,
                     alternates: parkedVariants,
                     toolCallLabel: toolCallLabel)
+                reasoningClock.stamp(&messages, chatID: targetID)
                 if let preservation {
                     chats[index].messages = messages
                     chats[index].recoveryAnchor = preservation.anchor

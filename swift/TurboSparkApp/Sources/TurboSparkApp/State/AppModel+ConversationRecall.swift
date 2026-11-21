@@ -50,6 +50,17 @@ extension AppModel {
         Self.recallReconcileTasks[chatID]?.cancel()
         Self.recallReconcileTasks[chatID] = nil
         ChatRecallStore.shared.forget(chatID: chatID)
+        recallInspections.removeAll(chatID: chatID)
+    }
+
+    /// The retrieval inspection for the turn `messageID` opens, or nil.
+    /// Re-checks eligibility on read, so turning recall off or protecting
+    /// the profile hides what an earlier turn recorded.
+    func recallInspection(forTurnAnchor messageID: UUID, chatID: UUID) -> RecallInspection? {
+        guard let inspection = recallInspections[messageID],
+              conversationRecallEligible(chatID: chatID)
+        else { return nil }
+        return inspection
     }
 
     /// Adds recalled evidence to the fitted request when turns of this chat
@@ -82,6 +93,10 @@ extension AppModel {
         let questionText = ChatRecallPlanner.normalize(transcript[questionRow].content)
         let pinIndex = projection.instructionPinBlockIndex
         let modelPath = session.info.modelPath
+        // Filled by the evidence request below, read once the planner has
+        // decided; both run before this function returns.
+        var retrieval: RecallInspection.Retrieval?
+        var outcome: RecallInspection.Outcome?
 
         let result = await ChatRecallPlanner.applyConversationRecall(
             fitted: ChatRecallPlanner.Fit(
@@ -110,13 +125,22 @@ extension AppModel {
                 try? await session.countTokens(messages, reasoning: reasoning, tools: tools)
             },
             evidence: { keptTurns, budget in
-                await Self.recallValue(within: .milliseconds(1_500)) {
-                    await ChatRecallStore.shared.evidence(
+                let retrieved = await Self.recallValue(within: .milliseconds(1_500)) {
+                    await ChatRecallStore.shared.retrieve(
                         chatID: chatID, question: questionText, keptTurns: keptTurns,
                         budget: budget, modelPath: modelPath)
                 }
+                retrieval = retrieved?.retrieval
+                return retrieved?.text
             },
-            policy: SyntextContextEngine.evidencePolicy)
+            policy: SyntextContextEngine.evidencePolicy,
+            report: { outcome = $0 })
+
+        if let outcome, conversationRecallEligible(chatID: chatID) {
+            recallInspections.record(
+                RecallInspection.make(outcome: outcome, retrieval: retrieval),
+                messageID: transcript[questionRow].id, chatID: chatID)
+        }
 
         return AppChatInstructionPin.FitOutcome(
             retained: result.retained, measuredTokens: result.measuredTokens,
@@ -129,9 +153,9 @@ extension AppModel {
     /// be interrupted, and a task group would wait for it anyway. The turn
     /// then runs without recall rather than stalling behind a long
     /// reconcile.
-    nonisolated static func recallValue(
-        within limit: Duration, _ work: @escaping @Sendable () async -> String?
-    ) async -> String? {
+    nonisolated static func recallValue<Value: Sendable>(
+        within limit: Duration, _ work: @escaping @Sendable () async -> Value?
+    ) async -> Value? {
         let once = RecallResumeOnce()
         return await withCheckedContinuation { continuation in
             Task.detached {

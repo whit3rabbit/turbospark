@@ -54,9 +54,27 @@ extension AppModel {
     /// selected chat's transcript any more (compacted away or a stale source).
     @discardableResult
     func revealToolCard(for source: TurnSource) -> Bool {
+        guard let origin = source.origin else {
+            showToast(AppStrings.localized("That tool call is no longer in the transcript."), style: .warning)
+            return false
+        }
+        return revealToolCard(
+            at: origin,
+            announcement: AppStrings.localized("Showing the tool call that found this source."))
+    }
+
+    /// The same reveal for a file of the end-of-turn file card (component
+    /// audit, file-tree): the call that last changed (or read) the file.
+    @discardableResult
+    func revealToolCard(for entry: TurnFileTree.Entry) -> Bool {
+        revealToolCard(
+            at: entry.origin,
+            announcement: AppStrings.localized("Showing the tool call for this file."))
+    }
+
+    private func revealToolCard(at origin: TurnSourceOrigin, announcement: String) -> Bool {
         let messages = selectedTurnMessages
-        guard let origin = source.origin,
-              messages.contains(where: { message in
+        guard messages.contains(where: { message in
                   message.id == origin.messageID
                       && message.toolCalls.contains { $0.id == origin.callID }
               })
@@ -72,8 +90,7 @@ extension AppModel {
             callID: origin.callID,
             token: (toolCardReveal?.token ?? 0) + 1)
         // The popover closes and focus does not move, so say where we went.
-        _ = AccessibilityNotification.Announcement.post(
-            .init(AppStrings.localized("Showing the tool call that found this source.")))
+        _ = AccessibilityNotification.Announcement.post(.init(announcement))
         return true
     }
 

@@ -19,6 +19,11 @@ struct ImagesSectionView: View {
     /// default (requirement 2.2). Per install: not remembered across launches.
     @State private var downloadDestination: String?
     @State private var confirmingTrashSelection = false
+    /// Runs the user answered with "Keep all", by their newest image. Per
+    /// launch on purpose: the run row is a prompt to pick, not saved state.
+    @State private var keptRuns: Set<UUID> = []
+    /// The image chosen with "Keep this one", awaiting the trash confirmation.
+    @State private var keeping: AppArtifact?
 
     /// The mode lives on the model because the panel beside the rail switches
     /// it (`ImagesSidebarPanel`); this pane has no switcher of its own.
@@ -150,6 +155,7 @@ struct ImagesSectionView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     if !organizing { unsavedResult }
+                    if let run = latestRun { runRow(run) }
                     ForEach(dayGroups, id: \.day) { group in
                         VStack(alignment: .leading, spacing: 14) {
                             Text(group.day, format: .dateTime.month(.wide).day().year())
@@ -219,7 +225,11 @@ struct ImagesSectionView: View {
     }
 
     private var dayGroups: [(day: Date, images: [AppArtifact])] {
-        Dictionary(grouping: artifacts) { Calendar.current.startOfDay(for: $0.createdAt) }
+        // The run row shows its images; listing them again below repeats them.
+        let inRun = Set(latestRun?.map(\.id) ?? [])
+        return Dictionary(grouping: artifacts.filter { !inRun.contains($0.id) }) {
+            Calendar.current.startOfDay(for: $0.createdAt)
+        }
             .map { (day: $0.key, images: $0.value) }
             .sorted { $0.day > $1.day }
     }
@@ -235,7 +245,15 @@ struct ImagesSectionView: View {
             HStack(spacing: 10) {
                 AppProgressBar(value: model.imageProgressFraction, label: progressStageLabel)
                     .frame(minWidth: 160, idealWidth: 280, maxWidth: 320)
-                if let job = model.imageJob, job.total > 0 {
+                // Denoise steps read as words; other counted stages (model
+                // download) keep the bare count, which is not a step.
+                if let job = model.imageJob,
+                   let denoise = ImageDenoiseProgress(stage: job.stage, completed: job.completed, total: job.total) {
+                    Text("Step \(denoise.step) of \(denoise.total)", bundle: .module)
+                        .themedFont(.tiny)
+                        .monospacedDigit()
+                        .foregroundStyle(.appSecondary)
+                } else if let job = model.imageJob, job.total > 0 {
                     Text(verbatim: "\(job.completed)/\(job.total)")
                         .themedFont(.tiny)
                         .monospacedDigit()
@@ -287,6 +305,77 @@ struct ImagesSectionView: View {
                 }
                 .disabled(model.imageGenerationTask != nil)
             }
+        }
+    }
+
+    /// The latest multi-image request, while it waits for a pick. Create mode
+    /// only, and not while rendering, so a half-finished run is not offered.
+    private var latestRun: [AppArtifact]? {
+        guard !organizing, model.imageGenerationTask == nil,
+              let run = ImageResultRun.latest(in: model.savedImageArtifacts),
+              let newest = run.last, !keptRuns.contains(newest.id) else { return nil }
+        return run
+    }
+
+    private func runRow(_ run: [AppArtifact]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: AppMetrics.actionSpacing) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Latest run", bundle: .module)
+                        .themedFont(.small, weight: .medium)
+                        .accessibilityAddTraits(.isHeader)
+                    Text("Pick the image to keep. The others move to the Trash.", bundle: .module)
+                        .themedFont(.tiny).foregroundStyle(.appSecondary)
+                }
+                Spacer()
+                Button { if let newest = run.last { keptRuns.insert(newest.id) } } label: {
+                    Text("Keep all", bundle: .module)
+                }
+                .appAction(.secondary, size: .small)
+            }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 230), spacing: 14)], spacing: 20) {
+                ForEach(Array(run.enumerated()), id: \.element.id) { index, artifact in
+                    VStack(alignment: .leading, spacing: 8) {
+                        ImageGalleryCard(
+                            model: model, artifact: artifact, compact: false,
+                            selecting: false, selected: false,
+                            open: { preview = artifact }, reuse: { reusePrompt(artifact) })
+                        HStack {
+                            Text("Image \(index + 1) of \(run.count)", bundle: .module)
+                                .themedFont(.tiny).foregroundStyle(.appSecondary)
+                            Spacer()
+                            Button { keeping = artifact } label: {
+                                Label { Text("Keep this one", bundle: .module) } icon: { Image(systemName: "checkmark") }
+                            }
+                            .appAction(.secondary, size: .small)
+                        }
+                    }
+                    .accessibilityElement(children: .contain)
+                }
+            }
+        }
+        .padding(14)
+        .background(.appSurface, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous).stroke(.appBorder, lineWidth: 0.75)
+        }
+        .confirmationDialog(
+            Text("Keep this one", bundle: .module),
+            isPresented: Binding(get: { keeping != nil }, set: { if !$0 { keeping = nil } })
+        ) {
+            Button(role: .destructive) {
+                // `run` is read at confirm time; if it changed while the dialog
+                // was open and no longer holds the kept image, trash nothing.
+                if let kept = keeping, run.contains(where: { $0.id == kept.id }) {
+                    model.trashGeneratedImages(ids: Set(run.map(\.id)).subtracting([kept.id]))
+                }
+                keeping = nil
+            } label: {
+                Text("Move to Trash", bundle: .module)
+            }
+            Button(role: .cancel) { keeping = nil } label: { Text("Cancel", bundle: .module) }
+        } message: {
+            Text("The other images from this run move to the Trash.", bundle: .module)
         }
     }
 

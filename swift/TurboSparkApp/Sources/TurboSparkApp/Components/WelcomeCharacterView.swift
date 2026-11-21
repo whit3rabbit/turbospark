@@ -52,6 +52,7 @@ public struct WelcomeHeroView: View {
 
             VStack(spacing: 12) {
                 PromptComposerView(model: model)
+                ModelLoadFailureBannerView(model: model)
                 ErrorBanner(model: model)
                 // Appended in both chat hosts rather than placed at a fixed
                 // index: the two order the error banner differently, and last
@@ -62,6 +63,12 @@ public struct WelcomeHeroView: View {
             }
             .frame(maxWidth: 700)
             .tsEntrance(delay: 0.08)
+
+            // Below the chrome, not between composer and loader: the
+            // composer stays the first thing under the greeting.
+            EmptyChatHomeView(model: model)
+                .frame(maxWidth: 700)
+                .tsEntrance(delay: 0.16)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 28)
