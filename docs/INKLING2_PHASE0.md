@@ -383,6 +383,18 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   each differs from llama.cpp, and the new run is closer at 131 of 265
   positions, which reads as reduction-order noise over 48 applications; a
   judgement, not a proof.
+- TRIED, not kept (2026-11-21): spin-waiting each per-application sync on
+  the command buffer status instead of `waitUntilCompleted`. Per token the
+  waits exceed GPU time by only 3.4 to 4.4 ms (about 80 us per sync), and an
+  interleaved A/B (2 pairs, 48 warm tokens, a busy host: load 10 to 13 and
+  another session's Swift build) did not shrink that gap. Logits were
+  identical. The round trips cost more through what they cause than through
+  the wake-up: the GPU idles during expert reads and host encoding (wall
+  minus GPU was about 19 ms of 45), and the routing notes
+  (`docs/EXPERT_ROUTING.md`, E2) found that idle lowers the GPU clock. Both
+  remaining levers trade something: a keep-alive arm costs power, and fewer
+  reads cost memory (more slots) or need mapped residency, which this 36 GB
+  machine refuses.
 - The router round trip: 48 GPU-to-CPU syncs per token. Every family pays one
   per MoE layer today. The routed pipeline overlaps the next layer; measure
   before designing past it.
