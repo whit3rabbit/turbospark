@@ -33,6 +33,11 @@ pub enum AudioTask {
     /// cleaned voice out as PCM at the model's rate. The removed part is
     /// `input - voice` at that rate, which a host computes when it wants it.
     Enhancement,
+    /// Vocal separation: the job's PCM at `input_sample_rate` with
+    /// `input_channels` (1 or 2, interleaved) in, the vocal stem out as
+    /// interleaved stereo at 44.1 kHz. The instrumental is `input - vocals`
+    /// at that rate and layout ([`separation_pcm`]), which a host computes.
+    Separation,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -71,6 +76,9 @@ pub struct AudioRequest {
     /// Enhancement: rate of the job's mono PCM. The runtime resamples it to
     /// the model's rate, so a host sends a take at its own rate.
     pub input_sample_rate: Option<u32>,
+    /// Separation: channels of the job's PCM, 1 or 2 (interleaved). Mono
+    /// is duplicated to both model channels.
+    pub input_channels: Option<u8>,
     /// The caller states it has the right to use the reference voice.
     /// Required for every cloning request.
     pub consent: bool,
@@ -99,6 +107,7 @@ impl Default for AudioRequest {
             context_size: None,
             reference_sample_rate: None,
             input_sample_rate: None,
+            input_channels: None,
             consent: false,
         }
     }
@@ -434,6 +443,10 @@ pub const MUSIC3_FAMILY: &str = "minimax_music3";
 pub const MOSSFORMER2_SE_FAMILY: &str = "mossformer2_se";
 /// Persisted family string of the inworld Voice Isolator engine.
 pub const VOICE_ISOLATOR_FAMILY: &str = "voice_isolator";
+/// Persisted family string of the Mel-Band RoFormer separation engine.
+pub const MEL_ROFORMER_FAMILY: &str = "mel_roformer";
+/// The rate every separation engine runs and returns at.
+const SEPARATION_RATE: u32 = 44_100;
 /// Input rates an enhancement job accepts, as for cloning references.
 const ENHANCEMENT_INPUT_RATES: std::ops::RangeInclusive<u32> = 8_000..=192_000;
 /// Reference audio bounds for cloning: shorter clips align poorly, and the
@@ -508,6 +521,9 @@ pub fn validate_request(
         AudioTask::Enhancement => {
             enhancement_input(request, samples)?;
         }
+        AudioTask::Separation => {
+            separation_input(request, samples)?;
+        }
         AudioTask::Music => {
             if !samples.is_empty() {
                 return Err("music generation does not accept PCM".into());
@@ -548,6 +564,41 @@ fn enhancement_input(r: &AudioRequest, samples: &[f32]) -> Result<u32, String> {
 }
 /// The rate every enhancement engine runs and returns at.
 const ENHANCEMENT_RATE: u32 = 48_000;
+/// Checks a separation job and returns its input rate and channel count.
+/// The output is stereo at 44.1 kHz, so the resampled frame count is
+/// bounded by the output limit (6 minutes) as well as the input limit.
+fn separation_input(r: &AudioRequest, samples: &[f32]) -> Result<(u32, usize), String> {
+    let rate = r
+        .input_sample_rate
+        .ok_or("separation needs input_sample_rate for the job's PCM")?;
+    if !ENHANCEMENT_INPUT_RATES.contains(&rate) {
+        return Err(format!(
+            "input_sample_rate must be {} through {} Hz",
+            ENHANCEMENT_INPUT_RATES.start(),
+            ENHANCEMENT_INPUT_RATES.end()
+        ));
+    }
+    let channels = match r.input_channels {
+        Some(1) => 1usize,
+        Some(2) => 2,
+        Some(other) => return Err(format!("input_channels must be 1 or 2, got {other}")),
+        None => return Err("separation needs input_channels (1 or 2) for the job's PCM".into()),
+    };
+    let frames = samples.len() / channels;
+    let resampled = (frames as u64 * u64::from(SEPARATION_RATE)).div_ceil(u64::from(rate));
+    if samples.is_empty()
+        || samples.len() % channels != 0
+        || samples.len() > MAX_INPUT_SAMPLES
+        || resampled.saturating_mul(2) > MAX_OUTPUT_SAMPLES as u64
+        || samples.iter().any(|v| !v.is_finite())
+    {
+        return Err(format!(
+            "separation needs finite whole-frame PCM, at most {} seconds at 44.1 kHz",
+            MAX_OUTPUT_SAMPLES / (2 * SEPARATION_RATE as usize)
+        ));
+    }
+    Ok((rate, channels))
+}
 /// Validates a cloning request and maps it onto the pipeline's parameters.
 /// `voice` is ignored: the voice comes from the reference audio.
 fn megatts3_request<'a>(
@@ -808,6 +859,7 @@ enum Engine {
     Music(Box<crate::Music3Runner>),
     MossFormer2Se(Box<audio::sts::mossformer2_se::MossFormer2Se>),
     VoiceIsolator(Box<audio::sts::VoiceIsolator>),
+    MelRoFormer(Box<audio::sts::mel_roformer::MelRoFormer>),
 }
 // The observer owns an event sender, so it must be removed even if a backend panics.
 #[cfg(test)]
@@ -832,6 +884,7 @@ impl Engine {
             Self::Music(_) => MUSIC3_FAMILY,
             Self::MossFormer2Se(_) => MOSSFORMER2_SE_FAMILY,
             Self::VoiceIsolator(_) => VOICE_ISOLATOR_FAMILY,
+            Self::MelRoFormer(_) => MEL_ROFORMER_FAMILY,
         }
     }
     fn open(
@@ -951,6 +1004,23 @@ impl Engine {
                     .map(|m| Self::VoiceIsolator(Box::new(m)))
                     .map_err(|e| e.to_string()),
                 family => Err(format!("unsupported enhancement family {family:?}")),
+            },
+            // Portable f32 CPU only, as for enhancement.
+            AudioTask::Separation => match tts_model_type(path).as_deref() {
+                Some("mel_band_roformer" | MEL_ROFORMER_FAMILY) => {
+                    let model = audio::sts::mel_roformer::MelRoFormer::open(path)
+                        .map_err(|e| e.to_string())?;
+                    if model.config.sample_rate != SEPARATION_RATE as usize {
+                        return Err(format!(
+                            "separation runs at 44.1 kHz; this checkpoint declares {} Hz",
+                            model.config.sample_rate
+                        ));
+                    }
+                    Ok(Self::MelRoFormer(Box::new(model)))
+                }
+                other => Err(format!(
+                    "unsupported separation model: expected a config.json declaring model_type \"mel_band_roformer\", got {other:?}"
+                )),
             },
         }
     }
@@ -1306,6 +1376,37 @@ impl Engine {
                     interleaved: true,
                 });
             }
+            Self::MelRoFormer(model) => {
+                let input = separation_pcm(r, samples)?;
+                let frames = input.len() / 2;
+                let planar: Vec<f32> = (0..2)
+                    .flat_map(|c| input.iter().skip(c).step_by(2).copied())
+                    .collect();
+                let vocals = model
+                    .separate_controlled(&planar, &mut |done, total| {
+                        events
+                            .send(AudioEvent::Progress(AudioProgress {
+                                stage: "separate".into(),
+                                completed: done,
+                                total: Some(total),
+                            }))
+                            .is_ok()
+                            && !cancel.is_cancelled()
+                    })
+                    .map_err(|e| e.to_string())?;
+                if vocals.len() != planar.len() {
+                    return Err("separation returned a different length than its input".into());
+                }
+                let interleaved: Vec<f32> = (0..frames)
+                    .flat_map(|i| [vocals[i], vocals[frames + i]])
+                    .collect();
+                emit_pcm(&interleaved, cancel, events, &mut result.sample_count)?;
+                result.pcm_format = Some(AudioPcmFormat {
+                    sample_rate: SEPARATION_RATE,
+                    channels: 2,
+                    interleaved: true,
+                });
+            }
         }
         Ok(result)
     }
@@ -1324,6 +1425,34 @@ pub fn enhancement_pcm(r: &AudioRequest, samples: &[f32]) -> Result<Vec<f32>, St
         &audio::resample::SincHannOptions::default(),
     )
     .map_err(|e| e.to_string())
+}
+/// A separation job's PCM as interleaved stereo at 44.1 kHz, exactly as the
+/// engine sees it, so a host can compute the instrumental as this minus the
+/// vocals. Mono input is duplicated to both channels; each channel is
+/// resampled on its own (sinc-Hann).
+pub fn separation_pcm(r: &AudioRequest, samples: &[f32]) -> Result<Vec<f32>, String> {
+    let (rate, channels) = separation_input(r, samples)?;
+    let planes: Vec<Vec<f32>> = (0..channels)
+        .map(|c| {
+            let plane: Vec<f32> = samples.iter().skip(c).step_by(channels).copied().collect();
+            if rate == SEPARATION_RATE {
+                return Ok(plane);
+            }
+            audio::resample::resample_mono_sinc_hann(
+                &plane,
+                rate,
+                SEPARATION_RATE,
+                &audio::resample::SincHannOptions::default(),
+            )
+            .map_err(|e| e.to_string())
+        })
+        .collect::<Result<_, String>>()?;
+    let right = &planes[channels - 1];
+    Ok(planes[0]
+        .iter()
+        .zip(right)
+        .flat_map(|(&l, &r)| [l, r])
+        .collect())
 }
 /// The enhancement family of an install, from its declared `model_type`
 /// or, for repositories that ship no config, from the weight files the
@@ -1742,6 +1871,12 @@ fn estimate_run_bytes(request: &AudioRequest) -> u64 {
         AudioTask::Enhancement => (MAX_OUTPUT_SAMPLES as u64 * 4)
             .saturating_mul(6)
             .saturating_add(512 << 20),
+        // The stereo input, its planar copy, the padded overlap-add sums and
+        // the output for the longest admitted job, plus one chunk's
+        // activations (8 s at dim 192 is under 1 GiB). Not measured.
+        AudioTask::Separation => (MAX_OUTPUT_SAMPLES as u64 * 4)
+            .saturating_mul(8)
+            .saturating_add(1 << 30),
         AudioTask::Music => {
             let seconds = request
                 .duration_seconds
@@ -2908,6 +3043,133 @@ mod tests {
         let resampled = run(16_000, low);
         assert_eq!(resampled.len(), 48_000);
         assert_eq!(&resampled[..expected.len()], &expected[..]);
+        drop(session);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+    fn separation_request(rate: Option<u32>, channels: Option<u8>) -> AudioRequest {
+        AudioRequest {
+            task: AudioTask::Separation,
+            input_sample_rate: rate,
+            input_channels: channels,
+            ..AudioRequest::default()
+        }
+    }
+    #[test]
+    fn separation_validation_bounds_rate_channels_length_and_values() {
+        let f = MEL_ROFORMER_FAMILY;
+        let stereo = vec![0.1f32; 2 * 44_100];
+        let ok = |r: AudioRequest, s: &[f32]| validate_request(f, &r, s);
+        assert!(ok(separation_request(Some(44_100), Some(2)), &stereo).is_ok());
+        assert!(ok(separation_request(Some(48_000), Some(1)), &stereo).is_ok());
+        let missing = ok(separation_request(None, Some(2)), &stereo).unwrap_err();
+        assert!(missing.contains("input_sample_rate"), "{missing}");
+        let missing = ok(separation_request(Some(44_100), None), &stereo).unwrap_err();
+        assert!(missing.contains("input_channels"), "{missing}");
+        for channels in [0u8, 3] {
+            let err = ok(separation_request(Some(44_100), Some(channels)), &stereo).unwrap_err();
+            assert!(err.contains("1 or 2"), "{channels}: {err}");
+        }
+        assert!(ok(separation_request(Some(7_999), Some(2)), &stereo).is_err());
+        // A stereo job must hold whole frames.
+        assert!(ok(separation_request(Some(44_100), Some(2)), &[0.0; 3]).is_err());
+        assert!(ok(separation_request(Some(44_100), Some(2)), &[]).is_err());
+        assert!(ok(
+            separation_request(Some(44_100), Some(1)),
+            &[0.0, f32::INFINITY]
+        )
+        .is_err());
+        // The output bound is 6 minutes of 44.1 kHz stereo after resampling:
+        // mono at 22.05 kHz fits a quarter of the output limit in samples.
+        let fits = vec![0.0f32; MAX_OUTPUT_SAMPLES / 4];
+        assert!(ok(separation_request(Some(22_050), Some(1)), &fits).is_ok());
+        let over = vec![0.0f32; MAX_OUTPUT_SAMPLES / 4 + 1];
+        assert!(ok(separation_request(Some(22_050), Some(1)), &over).is_err());
+        // The input bound applies first: stereo 44.1 kHz input is capped by
+        // the PCM append limit before the 6-minute output limit.
+        let long = vec![0.0f32; MAX_INPUT_SAMPLES + 2];
+        assert!(ok(separation_request(Some(192_000), Some(2)), &long).is_err());
+    }
+    /// The session path on the tiny seeded fixture: 44.1 kHz stereo matches
+    /// the model's own overlap-add exactly (interleaved), mono input is
+    /// duplicated and resampled, and progress reaches its total.
+    #[test]
+    fn separation_session_runs_the_fixture_and_converts_input() {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../audio/testdata/mel_roformer");
+        let dir = std::env::temp_dir().join(format!("ts-separate-session-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // A short chunk keeps the fixture fast; the family comes from the
+        // declared model_type, as in the published config.
+        let mut config: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(fixture.join("config.json")).unwrap()).unwrap();
+        config["chunk_size"] = 4096.into();
+        std::fs::write(dir.join("config.json"), config.to_string()).unwrap();
+        std::fs::copy(
+            fixture.join("tiny_weights.safetensors"),
+            dir.join("model.safetensors"),
+        )
+        .unwrap();
+        let _serial = crate::heavy::serial_test_lock();
+        assert!(
+            AudioSession::open(dir.clone(), AudioTask::Separation, false).is_err(),
+            "a config without model_type is refused"
+        );
+        config["model_type"] = "mel_band_roformer".into();
+        std::fs::write(dir.join("config.json"), config.to_string()).unwrap();
+        let session = AudioSession::open(dir.clone(), AudioTask::Separation, false).unwrap();
+        assert_eq!(session.family(), MEL_ROFORMER_FAMILY);
+        let model = audio::sts::mel_roformer::MelRoFormer::open(&dir).unwrap();
+        let run = |rate: u32, channels: u8, input: Vec<f32>| {
+            let mut pcm = Vec::new();
+            let mut last = None;
+            let result = session
+                .execute(
+                    separation_request(Some(rate), Some(channels)),
+                    input,
+                    AudioCancel::default(),
+                    |event| match event {
+                        AudioEvent::Pcm(chunk) => pcm.extend(chunk),
+                        AudioEvent::Progress(p) if p.stage == "separate" => last = Some(p),
+                        AudioEvent::Progress(_) => {}
+                    },
+                )
+                .unwrap();
+            assert_eq!(result.sample_count, pcm.len());
+            let format = result.pcm_format.unwrap();
+            assert_eq!((format.sample_rate, format.channels), (44_100, 2));
+            assert!(format.interleaved);
+            let last = last.unwrap();
+            assert_eq!(Some(last.completed), last.total);
+            pcm
+        };
+        let tone = |rate: u32, hz: f32, n: usize| -> Vec<f32> {
+            (0..n)
+                .map(|i| (i as f32 * hz * std::f32::consts::TAU / rate as f32).sin() * 0.2)
+                .collect()
+        };
+        let planar = |interleaved: &[f32]| -> Vec<f32> {
+            (0..2)
+                .flat_map(|c| interleaved.iter().skip(c).step_by(2).copied())
+                .collect::<Vec<f32>>()
+        };
+        let (left, right) = (tone(44_100, 220.0, 9_001), tone(44_100, 330.0, 9_001));
+        let stereo: Vec<f32> = left
+            .iter()
+            .zip(&right)
+            .flat_map(|(&l, &r)| [l, r])
+            .collect();
+        let vocals = run(44_100, 2, stereo.clone());
+        assert_eq!(vocals.len(), stereo.len());
+        assert_eq!(planar(&vocals), model.separate(&planar(&stereo)).unwrap());
+        let mono = tone(22_050, 220.0, 4_000);
+        let input = separation_pcm(&separation_request(Some(22_050), Some(1)), &mono).unwrap();
+        assert_eq!(input.len(), 2 * 8_000);
+        assert!(
+            input.chunks_exact(2).all(|f| f[0] == f[1]),
+            "mono is duplicated"
+        );
+        let vocals = run(22_050, 1, mono);
+        assert_eq!(planar(&vocals), model.separate(&planar(&input)).unwrap());
         drop(session);
         std::fs::remove_dir_all(&dir).unwrap();
     }
