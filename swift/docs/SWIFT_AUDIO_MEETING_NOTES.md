@@ -70,6 +70,28 @@ Microphone input (`AVAudioEngine`) and system audio (`CATapDescription` or
 3. Pause intervals are excised cleanly from the persistent timeline, ensuring
    recording markers and transcript offsets correspond strictly to active audio.
 
+### Live background-noise reduction
+
+"Reduce background noise" (`AudioWorkspacePreferences.reduceLiveNoise`, off
+by default, shown beside the live text model only when the
+`voice-isolator-v1-realtime` install is present and can run) cleans the
+microphone for live text only (`Audio/AudioLiveVoiceCleaner.swift`):
+- On the transcriber's queue, microphone packets from the live feed are
+  converted to 48 kHz mono, pushed through `AudioEnhanceStream`, and the
+  released voice goes to the mixer, which resamples it to 16 kHz. The system
+  audio tap is never cleaned. Capture persists its own copy of every packet,
+  so the saved recording and the final pass are the original audio.
+- Timing: the stream's output is sample-aligned with its input and released
+  about 63 ms (plus compute) later. Each released sample is placed back at
+  its input's timeline offset, so live word times stay on the recording
+  timeline; words only appear that much later.
+- Until the stream opens, the microphone passes raw. If pushes report `late`
+  for more than 1 s of audio in a row, the feed dropped packets, or more than
+  2 s of microphone audio waits in one drain, the tail is flushed, cleaning
+  stops for the rest of the take, live text hears the raw microphone, and
+  `AudioLiveText.cleaningStatus` shows one line. A failed open or push does
+  the same. Tests: `AudioLiveNoiseReductionTests`.
+
 ---
 
 ## 3. Phase 4: Speaker Intelligence & Memory

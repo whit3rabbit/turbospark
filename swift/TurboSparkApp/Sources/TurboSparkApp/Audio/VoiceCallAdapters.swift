@@ -172,7 +172,8 @@ final class VoiceCallLiveTranscriber: VoiceCallTranscribing {
             switch event {
             case .ready: Task { @MainActor in onEvent(.ready) }
             case .stopped(let reason): Task { @MainActor in onEvent(.stopped(reason)) }
-            case .preparing, .update: break
+            // A call opens no voice cleaner, so cleaning never stops here.
+            case .preparing, .update, .cleaningStopped: break
             }
         }
         transcriber.start()

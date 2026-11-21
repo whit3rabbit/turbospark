@@ -10,6 +10,9 @@ final class AudioLiveText: ObservableObject {
     @Published private(set) var openWord: String?
     /// One user-facing line: preparing, or why live text stopped.
     @Published var status: String?
+    /// Why background noise reduction stopped for this take, if it did.
+    /// Kept apart from `status`, which the first words clear.
+    @Published var cleaningStatus: String?
     @Published private(set) var isStreaming = false
     private(set) var itemID: UUID?
     var transcriber: AudioLiveTranscriber?
@@ -20,7 +23,7 @@ final class AudioLiveText: ObservableObject {
 
     func begin(itemID: UUID, transcriber: AudioLiveTranscriber) {
         self.itemID = itemID; self.transcriber = transcriber
-        text = ""; openWord = nil; status = nil; isStreaming = true
+        text = ""; openWord = nil; status = nil; cleaningStatus = nil; isStreaming = true
         revisionID = UUID(); lastSaved = .distantPast; committedThrough = 0
     }
     func apply(_ update: AudioStreamUpdate) {
@@ -30,7 +33,7 @@ final class AudioLiveText: ObservableObject {
     }
     /// Streaming has ended for this take; its text stays on screen.
     func end() { isStreaming = false; transcriber = nil; openWord = nil }
-    func clear() { end(); itemID = nil; text = ""; status = nil }
+    func clear() { end(); itemID = nil; text = ""; status = nil; cleaningStatus = nil }
 }
 
 extension AudioWorkspaceController {
@@ -102,7 +105,13 @@ extension AudioWorkspaceController {
         let feed = AudioLiveFeed()
         capture.attachLiveFeed(feed)
         let token = epoch
-        let transcriber = AudioLiveTranscriber(feed: feed, open: { try AudioStreamSession(modelPath: path) }) { [weak self] event in
+        // Cleans only what live text hears; capture saves the original.
+        let cleanerPath = reducesLiveNoise ? liveNoiseReductionPath : nil
+        let openCleaner: (@Sendable () throws -> AudioLiveEnhancing)? = cleanerPath.map { path in
+            { try AudioEnhanceStream(path: path) }
+        }
+        let transcriber = AudioLiveTranscriber(feed: feed, openCleaner: openCleaner,
+                                               open: { try AudioStreamSession(modelPath: path) }) { [weak self] event in
             Task { @MainActor [weak self] in self?.receiveLive(event, itemID: itemID, token: token) }
         }
         live.begin(itemID: itemID, transcriber: transcriber)
@@ -121,6 +130,8 @@ extension AudioWorkspaceController {
             live.status = nil
             live.apply(update)
             if Date().timeIntervalSince(live.lastSaved) >= 5 { persistLiveDraft(itemID) }
+        case .cleaningStopped(let reason):
+            live.cleaningStatus = reason
         case .stopped(let reason):
             live.status = reason
             persistLiveDraft(itemID)
