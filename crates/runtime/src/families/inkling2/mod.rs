@@ -1,0 +1,837 @@
+//! Inkling 2 (`inkling2_loop`) Metal decode flow. PORT-LOCAL.
+//!
+//! The graph is llama.cpp `src/models/inkling2.cpp` + `inkling2-loop.cpp` at
+//! `29b52d398` (plus #32704), and the CPU oracle is
+//! `compute::inkling2::forward`; `docs/INKLING2_PHASE0.md` lists every
+//! convention. Per token: embed + `embed_norm`; layers 0..core_start once;
+//! the core three times, each later pass restarting from the prelude output
+//! with messages mixed from the previous pass's bank; the final layers once;
+//! output depth mix, final norm, unembed, softcap 30.
+//!
+//! Each layer APPLICATION (48 per token) is: depth-mixed attention inputs,
+//! loop controllers (later passes), norms, projections, short convs into the
+//! slot's KV, L2 clips, relative-bias + sink attention, output gate, o-proj
+//! and its conv, the block-residual step, the MoE input mix, then the F32
+//! router GEMV. The host reads the router logits (one GPU-to-CPU sync per
+//! application, the same as every family here), selects with
+//! `route_sigmoid`, streams the experts for the PHYSICAL layer (so all
+//! passes share one slot cache), and the routed pair plus `mlp_sconv` close
+//! the layer.
+//!
+//! Exactness class: KL-bounded against the CPU reference (FP16 activations,
+//! FP32 accumulation, FP32 router). Prefill is this decode path per token.
+
+mod state;
+
+use half::f16;
+use model_io::ResidentIndex;
+
+use crate::real_forward::{RealForwardError, RealForwardRunner};
+use crate::real_forward_utils::entry;
+use foundation::LogitValue;
+pub(crate) use state::RealInkling2State;
+use state::{name, MAX_STATES};
+
+type Buf<'a> = (&'a gpu::MetalBuffer, u64);
+
+fn view<'a>(
+    weights: &'a gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    name: &str,
+) -> Result<Buf<'a>, RealForwardError> {
+    let e = entry(index, name)?;
+    Ok((
+        weights.buffer(),
+        weights.gpu_offset(e.file_offset - index.header.index_size),
+    ))
+}
+
+struct Ctx<'a> {
+    context: &'a mut gpu::MetalContext,
+    weights: &'a gpu::ResidentGpuWeights,
+    index: &'a ResidentIndex,
+    h: usize,
+    eps: f32,
+}
+
+impl Ctx<'_> {
+    fn gemv(
+        &mut self,
+        pass: &gpu::PassEncoder,
+        name: &str,
+        rows: usize,
+        cols: usize,
+        x: Buf<'_>,
+        y: Buf<'_>,
+    ) -> Result<(), RealForwardError> {
+        let (b, o) = view(self.weights, self.index, name)?;
+        let m = gpu::Bf16ResidentMatrix {
+            buffer: b,
+            weights_offset: o,
+            rows,
+            cols,
+        };
+        gpu::encode_bf16_gemv_resident(self.context, pass, &m, x, y).map_err(RealForwardError::Gpu)
+    }
+
+    fn norm(
+        &mut self,
+        pass: &gpu::PassEncoder,
+        x: Buf<'_>,
+        weight: &str,
+        out: Buf<'_>,
+    ) -> Result<(), RealForwardError> {
+        let w = view(self.weights, self.index, weight)?;
+        gpu::encode_rms_norm_bf16w(self.context, pass, x, w, out, self.h as u32, self.eps)
+            .map_err(RealForwardError::Gpu)
+    }
+
+    fn copy(
+        &mut self,
+        pass: &gpu::PassEncoder,
+        src: Buf<'_>,
+        dst: Buf<'_>,
+        n: usize,
+    ) -> Result<(), RealForwardError> {
+        gpu::encode_inkling2_copy_half(self.context, pass, src, dst, n as u32)
+            .map_err(RealForwardError::Gpu)
+    }
+
+    /// Depth mix of `states[0..n_blocks]` plus `cur` (copied into row
+    /// `n_blocks`) with `n_q` F32 query rows.
+    #[allow(clippy::too_many_arguments)]
+    fn mix(
+        &mut self,
+        pass: &gpu::PassEncoder,
+        states: &gpu::MetalBuffer,
+        n_blocks: usize,
+        cur: Buf<'_>,
+        query: Buf<'_>,
+        n_q: usize,
+        out: Buf<'_>,
+    ) -> Result<(), RealForwardError> {
+        if n_blocks + 1 > MAX_STATES {
+            return Err(RealForwardError::Unsupported(format!(
+                "depth mix over {} states exceeds {MAX_STATES}",
+                n_blocks + 1
+            )));
+        }
+        let h = self.h;
+        self.copy(pass, cur, (states, (n_blocks * h * 2) as u64), h)?;
+        gpu::encode_inkling2_depth_mix(
+            self.context,
+            pass,
+            (states, 0),
+            query,
+            out,
+            (n_blocks + 1) as u32,
+            n_q as u32,
+            h as u32,
+        )
+        .map_err(RealForwardError::Gpu)
+    }
+
+    /// Loop controller `ctrl` of core layer `layer` on `input` with `msg`.
+    #[allow(clippy::too_many_arguments)]
+    fn control(
+        &mut self,
+        pass: &gpu::PassEncoder,
+        st: &RealInkling2State,
+        layer: usize,
+        ctrl: &str,
+        input: Buf<'_>,
+        msg: Buf<'_>,
+        out: Buf<'_>,
+    ) -> Result<(), RealForwardError> {
+        let (h, rank) = (self.h, st.cfg.gate_rank as usize);
+        let p = name(layer, &format!("controllers.{ctrl}"));
+        let g = RealForwardError::Gpu;
+        gpu::encode_rms_norm_no_scale(self.context, pass, input, (&st.cat, 0), h as u32, 1e-6)
+            .map_err(g)?;
+        gpu::encode_rms_norm_no_scale(
+            self.context,
+            pass,
+            msg,
+            (&st.cat, (h * 2) as u64),
+            h as u32,
+            1e-6,
+        )
+        .map_err(g)?;
+        self.gemv(
+            pass,
+            &format!("{p}.down_weight"),
+            rank,
+            2 * h,
+            (&st.cat, 0),
+            (&st.gate_r, 0),
+        )?;
+        self.gemv(
+            pass,
+            &format!("{p}.gain_weight"),
+            h,
+            rank,
+            (&st.gate_r, 0),
+            (&st.gain, 0),
+        )?;
+        self.gemv(
+            pass,
+            &format!("{p}.forget_weight"),
+            h,
+            rank,
+            (&st.gate_r, 0),
+            (&st.forget, 0),
+        )?;
+        gpu::encode_inkling2_control_combine(
+            self.context,
+            pass,
+            input,
+            msg,
+            (&st.gain, 0),
+            (&st.forget, 0),
+            out,
+            h as u32,
+        )
+        .map_err(RealForwardError::Gpu)
+    }
+}
+
+impl RealForwardRunner {
+    pub(crate) fn produce_real_inkling2(
+        &mut self,
+        token: i32,
+        position: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), RealForwardError> {
+        let started = std::time::Instant::now();
+        // The state is taken out for the token so its buffers can be borrowed
+        // beside `self.context` and the streamers, and always put back.
+        let mut st = self.real_inkling2.take().expect("caller checked is_some");
+        let result = self.produce_real_inkling2_inner(&mut st, token, position, logits);
+        self.real_inkling2 = Some(st);
+        self.phases.calls += 1;
+        self.phases.total_nanos += started.elapsed().as_nanos() as u64;
+        result
+    }
+
+    fn produce_real_inkling2_inner(
+        &mut self,
+        st: &mut RealInkling2State,
+        token: i32,
+        position: usize,
+        logits: &mut [LogitValue],
+    ) -> Result<(), RealForwardError> {
+        let arch = self.arch.clone();
+        let cfg = st.cfg.clone();
+        let (h, vocab) = (arch.hidden_size as usize, arch.vocab_size as usize);
+        if position != self.kv.position() {
+            return Err(RealForwardError::Unsupported(format!(
+                "non-sequential position {position}; KV cache is at {}",
+                self.kv.position()
+            )));
+        }
+        if position >= st.max_ctx {
+            return Err(RealForwardError::Unsupported(format!(
+                "position {position} is past the {}-token Inkling 2 cache",
+                st.max_ctx
+            )));
+        }
+        if token < 0 || token as u32 >= cfg.unpadded_vocab {
+            return Err(RealForwardError::Unsupported(format!(
+                "token id {token} outside vocab {}",
+                cfg.unpadded_vocab
+            )));
+        }
+        let mut c = Ctx {
+            context: &mut self.context,
+            weights: &self.weights,
+            index: &self.index,
+            h,
+            eps: cfg.rms_eps,
+        };
+        let mut pass = c.context.begin_pass_labeled("inkling2 attn+router");
+        let table = view(c.weights, c.index, "model.llm.embed.weight")?;
+        gpu::encode_embed_lookup_bf16(
+            c.context,
+            &pass,
+            table,
+            (&st.y, 0),
+            token as u32,
+            h as u32,
+            1.0,
+        )
+        .map_err(RealForwardError::Gpu)?;
+        c.norm(
+            &pass,
+            (&st.y, 0),
+            "model.llm.embed_norm.weight",
+            (&st.cur, 0),
+        )?;
+
+        let (core_start, core_end, layers) = (
+            cfg.core_start as usize,
+            cfg.core_end as usize,
+            arch.num_layers as usize,
+        );
+        let core = core_end - core_start;
+        let mut n_blocks = 0usize;
+        let mut apply = |c: &mut Ctx<'_>,
+                         pass: &mut gpu::PassEncoder,
+                         st: &mut RealInkling2State,
+                         n_blocks: &mut usize,
+                         slot: usize,
+                         ip: usize,
+                         msgs: bool|
+         -> Result<(), RealForwardError> {
+            layer_attention(c, pass, st, &arch, &cfg, n_blocks, slot, ip, msgs, position)?;
+            let committed =
+                std::mem::replace(pass, c.context.begin_pass_labeled("inkling2 routed")).commit();
+            committed.wait_with_gpu_time();
+            layer_moe(
+                c,
+                pass,
+                st,
+                &arch,
+                &cfg,
+                &mut self.streamers,
+                &self.slot_buffers,
+                slot,
+                ip,
+            )
+        };
+
+        for ip in 0..core_start {
+            apply(&mut c, &mut pass, st, &mut n_blocks, ip, ip, false)?;
+        }
+        c.copy(&pass, (&st.cur, 0), (&st.prelude, 0), h)?;
+        let prelude_blocks = n_blocks;
+        for p in 0..cfg.passes as usize {
+            if p > 0 {
+                // The previous pass's bank: its blocks after the first core
+                // block, then its output. Taken before the reset overwrites
+                // those rows.
+                let first = prelude_blocks + 1;
+                let k = n_blocks.saturating_sub(first);
+                if k > 0 {
+                    c.copy(
+                        &pass,
+                        (&st.states, (first * h * 2) as u64),
+                        (&st.bank, 0),
+                        k * h,
+                    )?;
+                }
+                c.copy(&pass, (&st.cur, 0), (&st.bank, (k * h * 2) as u64), h)?;
+                c.copy(&pass, (&st.prelude, 0), (&st.cur, 0), h)?;
+                n_blocks = prelude_blocks;
+                st.bank_states = k + 1;
+            }
+            for ip in core_start..core_end {
+                let i = ip - core_start;
+                let slot = if p == 0 {
+                    ip
+                } else {
+                    layers + (p - 1) * core + i
+                };
+                if p > 0 {
+                    gpu::encode_inkling2_depth_mix(
+                        c.context,
+                        &pass,
+                        (&st.bank, 0),
+                        (&st.msg_queries[i], 0),
+                        (&st.msgs, 0),
+                        st.bank_states as u32,
+                        4,
+                        h as u32,
+                    )
+                    .map_err(RealForwardError::Gpu)?;
+                }
+                apply(&mut c, &mut pass, st, &mut n_blocks, slot, ip, p > 0)?;
+            }
+        }
+        for ip in core_end..layers {
+            apply(&mut c, &mut pass, st, &mut n_blocks, ip, ip, false)?;
+        }
+
+        if !self.skip_head {
+            let q = view(c.weights, c.index, "model.llm.attn_res.output_query")?;
+            c.mix(&pass, &st.states, n_blocks, (&st.cur, 0), q, 1, (&st.m, 0))?;
+            c.norm(&pass, (&st.m, 0), "model.llm.norm.weight", (&st.mn, 0))?;
+            c.gemv(
+                &pass,
+                "model.llm.unembed.weight",
+                vocab,
+                h,
+                (&st.mn, 0),
+                (&self.scratch.logits, 0),
+            )?;
+            gpu::encode_logit_softcap(
+                c.context,
+                &pass,
+                (&self.scratch.logits, 0),
+                arch.final_logit_softcap as f32,
+                vocab as u32,
+            )
+            .map_err(RealForwardError::Gpu)?;
+        }
+        pass.commit_and_wait_with_gpu_time();
+        self.kv.advance();
+        if self.skip_head {
+            return Ok(());
+        }
+        if vocab != logits.len() {
+            return Err(RealForwardError::Unsupported(format!(
+                "vocab mismatch: model has {vocab}, caller expected {}",
+                logits.len()
+            )));
+        }
+        gpu::read_buffer_f16_into(&self.scratch.logits, 0, logits);
+        // Padding rows past the real vocabulary can never be sampled.
+        for l in &mut logits[cfg.unpadded_vocab as usize..] {
+            *l = f16::NEG_INFINITY;
+        }
+        Ok(())
+    }
+}
+
+/// The attention half of one layer application, through the router GEMV.
+#[allow(clippy::too_many_arguments)]
+fn layer_attention(
+    c: &mut Ctx<'_>,
+    pass: &gpu::PassEncoder,
+    st: &mut RealInkling2State,
+    arch: &model_io::ArchConfig,
+    cfg: &model_io::inkling2_config::Inkling2Config,
+    n_blocks: &mut usize,
+    slot: usize,
+    ip: usize,
+    msgs: bool,
+    position: usize,
+) -> Result<(), RealForwardError> {
+    let g = RealForwardError::Gpu;
+    let h = c.h;
+    let (heads, kvh, hd) = (
+        arch.num_heads as usize,
+        arch.num_kv_heads as usize,
+        arch.head_dim as usize,
+    );
+    let (kvd, taps, d_rel, extent) = (
+        kvh * hd,
+        arch.short_conv_kernel_size as u32,
+        cfg.d_rel as usize,
+        cfg.rel_extent,
+    );
+    let full = arch.full_attention_layer_mask[ip] == 1;
+    let row = |b: &gpu::MetalBuffer, j: usize| -> (gpu::MetalBuffer, u64) {
+        (b.clone(), (j * h * 2) as u64)
+    };
+
+    // Attention inputs: the depth mix (1 query on SWA, 3 on full layers), or
+    // the stream itself on layer 0.
+    let n_q = if full { 3 } else { 1 };
+    let sources: [(gpu::MetalBuffer, u64); 3] = if ip > 0 {
+        let q = view(
+            c.weights,
+            c.index,
+            &format!("model.llm.attn_res.attn_queries.{}", ip - 1),
+        )?;
+        c.mix(
+            pass,
+            &st.states,
+            *n_blocks,
+            (&st.cur, 0),
+            q,
+            n_q,
+            (&st.mixed, 0),
+        )?;
+        [0, 1, 2].map(|j| row(&st.mixed, if full { j } else { 0 }))
+    } else {
+        [0, 1, 2].map(|_| (st.cur.clone(), 0))
+    };
+    let mut inputs = sources;
+    if msgs {
+        for (j, ctrl) in ["attn", "k", "v"].iter().enumerate() {
+            let (sb, so) = inputs[j].clone();
+            c.control(
+                pass,
+                st,
+                ip,
+                ctrl,
+                (&sb, so),
+                (&st.msgs, (j * h * 2) as u64),
+                (&st.inputs, (j * h * 2) as u64),
+            )?;
+            inputs[j] = row(&st.inputs, j);
+        }
+    }
+    // Norms: SWA with messages norms each input; SWA without one norm feeds
+    // all three; full layers have their own q/k/v input norms.
+    let normed: [(gpu::MetalBuffer, u64); 3] = if !full && !msgs {
+        let (b, o) = inputs[0].clone();
+        c.norm(
+            pass,
+            (&b, o),
+            &name(ip, "attn_norm.weight"),
+            (&st.normed, 0),
+        )?;
+        [0, 1, 2].map(|_| row(&st.normed, 0))
+    } else {
+        for (j, which) in ["q", "k", "v"].iter().enumerate() {
+            let w = if full {
+                name(ip, &format!("{which}_input_norm.weight"))
+            } else {
+                name(ip, "attn_norm.weight")
+            };
+            let (b, o) = inputs[j].clone();
+            c.norm(pass, (&b, o), &w, (&st.normed, (j * h * 2) as u64))?;
+        }
+        [0, 1, 2].map(|j| row(&st.normed, j))
+    };
+    let n = |j: usize| (&normed[j].0, normed[j].1);
+    let a = |s: &str| name(ip, &format!("attn.{s}"));
+
+    c.gemv(pass, &a("wq_du.weight"), heads * hd, h, n(0), (&st.q, 0))?;
+    c.gemv(pass, &a("wk_dv.weight"), kvd, h, n(1), (&st.k_pre, 0))?;
+    c.gemv(pass, &a("wv_dv.weight"), kvd, h, n(2), (&st.v_pre, 0))?;
+    c.gemv(pass, &a("wr_du.weight"), heads * d_rel, h, n(0), (&st.r, 0))?;
+    c.gemv(
+        pass,
+        &a("attn_sink_proj.weight"),
+        heads,
+        h,
+        n(0),
+        (&st.sinks, 0),
+    )?;
+    c.gemv(
+        pass,
+        &a("gate_attn.weight"),
+        heads * hd,
+        h,
+        n(0),
+        (&st.gate_attn, 0),
+    )?;
+    if full {
+        c.gemv(
+            pass,
+            &a("k_sconv.weight_proj"),
+            kvh * taps as usize,
+            h,
+            n(1),
+            (&st.dk, 0),
+        )?;
+        c.gemv(
+            pass,
+            &a("v_sconv.weight_proj"),
+            kvh * taps as usize,
+            h,
+            n(2),
+            (&st.dv, 0),
+        )?;
+    }
+
+    // Convs write straight into this slot's KV row at `position`.
+    let s = &st.slots[slot];
+    let row_off = (position * kvd * 2) as u64;
+    let kw = view(c.weights, c.index, &a("k_sconv.weight"))?;
+    let vw = view(c.weights, c.index, &a("v_sconv.weight"))?;
+    let dyn_k = full.then_some(((&st.dk, 0u64), kvh as u32));
+    let dyn_v = full.then_some(((&st.dv, 0u64), kvh as u32));
+    gpu::encode_inkling2_short_conv_decode(
+        c.context,
+        pass,
+        (&st.k_pre, 0),
+        (&s.tail_k, 0),
+        kw,
+        dyn_k,
+        (&s.k, row_off),
+        kvd as u32,
+        taps,
+    )
+    .map_err(g)?;
+    gpu::encode_inkling2_short_conv_decode(
+        c.context,
+        pass,
+        (&st.v_pre, 0),
+        (&s.tail_v, 0),
+        vw,
+        dyn_v,
+        (&s.v, row_off),
+        kvd as u32,
+        taps,
+    )
+    .map_err(g)?;
+
+    let tau = if full {
+        compute::inkling2::log_scale_tau(position, cfg.log_floor, cfg.log_alpha)
+    } else {
+        1.0
+    };
+    let qs = view(c.weights, c.index, &a("q_l2_clip.scale"))?;
+    let rs = view(c.weights, c.index, &a("rel_l2_clip.scale"))?;
+    gpu::encode_inkling2_l2_clip(
+        c.context,
+        pass,
+        (&st.q, 0),
+        Some((qs, hd as u32)),
+        heads as u32,
+        hd as u32,
+        cfg.qk_clip,
+        tau,
+    )
+    .map_err(g)?;
+    gpu::encode_inkling2_l2_clip(
+        c.context,
+        pass,
+        (&s.k, row_off),
+        None,
+        kvh as u32,
+        hd as u32,
+        cfg.qk_clip,
+        1.0,
+    )
+    .map_err(g)?;
+    gpu::encode_rms_norm_no_scale_perhead(
+        c.context,
+        pass,
+        (&s.v, row_off),
+        (&s.v, row_off),
+        kvh as u32,
+        hd as u32,
+        cfg.rms_eps,
+    )
+    .map_err(g)?;
+    gpu::encode_inkling2_l2_clip(
+        c.context,
+        pass,
+        (&st.r, 0),
+        Some((rs, d_rel as u32)),
+        heads as u32,
+        d_rel as u32,
+        cfg.rel_clip,
+        tau,
+    )
+    .map_err(g)?;
+
+    let proj = view(c.weights, c.index, &a("rel_logits_proj.proj"))?;
+    gpu::encode_inkling2_rel_table(
+        c.context,
+        pass,
+        (&st.r, 0),
+        proj,
+        (&st.table, 0),
+        heads as u32,
+        d_rel as u32,
+        extent,
+    )
+    .map_err(g)?;
+    let first = if full {
+        0
+    } else {
+        (position + 1).saturating_sub(arch.sliding_window as usize)
+    };
+    let shape = gpu::Inkling2AttnShape {
+        heads: heads as u32,
+        kv_heads: kvh as u32,
+        head_dim: hd as u32,
+        extent,
+    };
+    gpu::encode_inkling2_attention_decode(
+        c.context,
+        pass,
+        (&st.q, 0),
+        (&s.k, 0),
+        (&s.v, 0),
+        (&st.table, 0),
+        (&st.sinks, 0),
+        (&st.attn_o, 0),
+        first as u32,
+        position as u32,
+        shape,
+    )
+    .map_err(g)?;
+    gpu::encode_sigmoid_gate_mul(
+        c.context,
+        pass,
+        (&st.attn_o, 0),
+        (&st.gate_attn, 0),
+        (heads * hd) as u32,
+    )
+    .map_err(g)?;
+    c.gemv(
+        pass,
+        &a("wo_ud.weight"),
+        h,
+        heads * hd,
+        (&st.attn_o, 0),
+        (&st.o2, 0),
+    )?;
+    let ow = view(c.weights, c.index, &name(ip, "attn_sconv.weight"))?;
+    gpu::encode_inkling2_short_conv_decode(
+        c.context,
+        pass,
+        (&st.o2, 0),
+        (&s.tail_o, 0),
+        ow,
+        None,
+        (&st.attn_out, 0),
+        h as u32,
+        taps,
+    )
+    .map_err(g)?;
+
+    // The first layer of a block starts a new stream; its input joins the
+    // blocks. Otherwise the attention output is a residual.
+    if ip % cfg.res_block as usize == 0 {
+        c.copy(
+            pass,
+            (&st.cur, 0),
+            (&st.states, (*n_blocks * h * 2) as u64),
+            h,
+        )?;
+        *n_blocks += 1;
+        c.copy(pass, (&st.attn_out, 0), (&st.cur, 0), h)?;
+    } else {
+        gpu::encode_residual_add(c.context, pass, (&st.cur, 0), (&st.attn_out, 0), h as u32)
+            .map_err(g)?;
+    }
+
+    // MoE input: depth mix, the FFN controller on later passes, the norm,
+    // then the F32 router GEMV.
+    let q = view(
+        c.weights,
+        c.index,
+        &format!("model.llm.attn_res.mlp_queries.{ip}"),
+    )?;
+    c.mix(pass, &st.states, *n_blocks, (&st.cur, 0), q, 1, (&st.m, 0))?;
+    if msgs {
+        c.control(
+            pass,
+            st,
+            ip,
+            "mlp",
+            (&st.m, 0),
+            (&st.msgs, (3 * h * 2) as u64),
+            (&st.y, 0),
+        )?;
+        c.copy(pass, (&st.y, 0), (&st.m, 0), h)?;
+    }
+    c.norm(pass, (&st.m, 0), &name(ip, "mlp_norm.weight"), (&st.mn, 0))?;
+    let router = view(c.weights, c.index, &name(ip, "mlp.gate.weight"))?;
+    gpu::encode_minimax_router(
+        c.context,
+        pass,
+        router,
+        (&st.mn, 0),
+        (&st.router_logits, 0),
+        arch.num_experts as u32,
+        h as u32,
+    )
+    .map_err(g)
+}
+
+/// The routed half of one layer application, after the router sync.
+#[allow(clippy::too_many_arguments)]
+fn layer_moe(
+    c: &mut Ctx<'_>,
+    pass: &gpu::PassEncoder,
+    st: &mut RealInkling2State,
+    arch: &model_io::ArchConfig,
+    cfg: &model_io::inkling2_config::Inkling2Config,
+    streamers: &mut [Option<streaming::PreadExpertStreamer>],
+    slot_buffers: &[Vec<gpu::MetalBuffer>],
+    slot: usize,
+    ip: usize,
+) -> Result<(), RealForwardError> {
+    let g = RealForwardError::Gpu;
+    let (h, ffn, experts, top_k) = (
+        c.h,
+        arch.moe_intermediate_size as usize,
+        arch.num_experts as usize,
+        arch.top_k_experts as usize,
+    );
+    let logits = gpu::read_f32_buffer_at(&st.router_logits, 0, experts);
+    let (selected, weights) = compute::inkling2::route_sigmoid(
+        &logits,
+        &st.router_bias[ip],
+        top_k,
+        arch.routed_scaling_factor as f32,
+    );
+    let streamer = streamers
+        .get_mut(ip)
+        .and_then(Option::as_mut)
+        .ok_or_else(|| {
+            RealForwardError::Unsupported(format!("layer {ip} has no expert streamer"))
+        })?;
+    let plan = streamer.plan_experts_cached(&selected, &std::collections::HashSet::new());
+    let cache_slots = streamer
+        .execute_expert_cache_plan(&plan)
+        .map_err(|e| RealForwardError::Unsupported(format!("expert stream: {e}")))?;
+    let mut routing16 = [f16::from_f32(0.0); gpu::MAX_STREAMED_EXPERTS];
+    for (i, &w) in weights.iter().enumerate() {
+        routing16[i] = f16::from_f32(w);
+    }
+    let bytes: Vec<u8> = routing16
+        .iter()
+        .flat_map(|v| v.to_bits().to_le_bytes())
+        .collect();
+    gpu::write_buffer_bytes(&st.routing_w, 0, &bytes);
+    let blobs: Vec<(&gpu::MetalBuffer, u64)> = cache_slots
+        .iter()
+        .map(|&s| (&slot_buffers[ip][s], 0u64))
+        .collect();
+    st.routed
+        .bind_for(
+            c.context,
+            gpu::moe_inkling2_source(),
+            gpu::MOE_INKLING2_REFLECT_FUNCTION,
+            false,
+            &blobs,
+        )
+        .map_err(g)?;
+    for &(b, _) in &blobs {
+        pass.use_read_buffer(b);
+    }
+    let kind = st.kinds[ip];
+    gpu::encode_inkling2_moe_phase1(
+        c.context,
+        pass,
+        kind,
+        &st.routed,
+        &st.offsets[ip],
+        (&st.mn, 0),
+        (&st.acts, 0),
+        h as u32,
+        ffn as u32,
+        top_k as u32,
+        cfg.gate_softcap,
+        cfg.up_softcap,
+    )
+    .map_err(g)?;
+    gpu::encode_inkling2_moe_phase2(
+        c.context,
+        pass,
+        kind,
+        &st.routed,
+        &st.offsets[ip],
+        (&st.acts, 0),
+        (&st.routing_w, 0),
+        (&st.y, 0),
+        h as u32,
+        ffn as u32,
+        top_k as u32,
+    )
+    .map_err(g)?;
+    let fw = view(c.weights, c.index, &name(ip, "mlp_sconv.weight"))?;
+    let s = &st.slots[slot];
+    gpu::encode_inkling2_short_conv_decode(
+        c.context,
+        pass,
+        (&st.y, 0),
+        (&s.tail_f, 0),
+        fw,
+        None,
+        (&st.y2, 0),
+        h as u32,
+        arch.short_conv_kernel_size as u32,
+    )
+    .map_err(g)?;
+    gpu::encode_residual_add(c.context, pass, (&st.cur, 0), (&st.y2, 0), h as u32).map_err(g)
+}

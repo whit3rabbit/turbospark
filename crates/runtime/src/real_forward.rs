@@ -233,6 +233,7 @@ pub struct RealForwardRunner {
     /// mask, per-head QK norm, a sigmoid router, an ungated shared expert and
     /// a dense lead are each inside the layer. `docs/FLINT_PHASE0.md`.
     pub(crate) real_flint: Option<crate::families::flint::RealFlintState>,
+    pub(crate) real_inkling2: Option<crate::families::inkling2::RealInkling2State>,
     /// Present for a `gpt-oss` install (ROADMAP M5). Its own state rather
     /// than a flag on `real_llama` because all four of this architecture's
     /// differences are inside the layer: a YaRN frequency table, the

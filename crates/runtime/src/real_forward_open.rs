@@ -209,6 +209,11 @@ impl RealForwardRunner {
                     && !(expecting.family == model_io::ModelFamily::MiniMaxM2
                         && e.dtype == 3
                         && crate::families::llama::router::fp32_tensor(&e.name))
+                    // Inkling's F32 tensors (router, its bias, every depth-mix
+                    // query, the expert-free scalars) are read as F32 by name,
+                    // each checked by dtype and size at build
+                    // (`families/inkling2/state.rs`).
+                    && !(expecting.family == model_io::ModelFamily::Inkling2Loop && e.dtype == 3)
             })
             .min_by_key(|e| &e.name)
         {
@@ -269,6 +274,12 @@ impl RealForwardRunner {
         let use_silu = expecting.hidden_activation.contains("silu");
         let (moe_offsets, routed_layouts, routed_blobs, routed_blobs_banks) = match &experts_layout
         {
+            // Inkling's blobs (an outer-scale record, then NVFP4 or MXFP8
+            // rows) are read by `gpu::moe_inkling2`, not the GGUF or affine
+            // pairs, so its state builds its own offsets and blob buffer.
+            Some(_) if expecting.family == model_io::ModelFamily::Inkling2Loop => {
+                (Vec::new(), Vec::new(), None, Vec::new())
+            }
             Some(layout) => {
                 let offsets = moe_offsets_from_layout(layout)?;
                 let layouts = routed_layouts_from_layout(layout, expecting.family)?;
@@ -355,6 +366,7 @@ impl RealForwardRunner {
             real_deepseek2: None,
             real_unlimited_ocr2: None,
             real_flint: None,
+            real_inkling2: None,
             real_gpt_oss: None,
             real_muse: None,
             real_qwen4: None,
@@ -559,10 +571,25 @@ impl RealForwardRunner {
             // Its kernels and CPU reference exist (`docs/INKLING2_PHASE0.md`),
             // but the decode flow does not. Refused at open, never routed to a
             // neighbour's flow, which would decode fluently and wrongly.
+            // Its own flow (`families/inkling2/`): 48 layer applications per
+            // token over 24 physical layers, so it owns its KV and conv state
+            // per cache slot and uses the shared manager for the position.
             model_io::ModelFamily::Inkling2Loop => {
-                return Err(RealForwardError::Unsupported(
-                    "the Inkling 2 (inkling2_loop) family has no decode flow yet".to_string(),
-                ));
+                let full_layer = runner
+                    .arch
+                    .full_attention_layer_mask
+                    .iter()
+                    .position(|&m| m == 1)
+                    .unwrap_or(0);
+                let max_ctx = runner.kv.capacity(full_layer);
+                runner.real_inkling2 = Some(crate::families::inkling2::RealInkling2State::build(
+                    &mut runner.context,
+                    &runner.weights,
+                    &runner.index,
+                    &runner.arch,
+                    &runner.install_dir,
+                    max_ctx,
+                )?);
             }
             // Its own flow: short-conv layers, zero-tail per-class rope and
             // sandwich norms are each inside the layer, and a neighbour's flow

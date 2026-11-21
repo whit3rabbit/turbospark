@@ -283,14 +283,39 @@ Stage A: reachable and correct (decode only)
    Mutants (gate on the odd rows, no `static_w` flip, w13's outer scale on
    down) each fail. Not yet: a synthetic install that opens through
    `RealForwardRunner::open` (open refuses the family until step 3).
-3. Decode flow (`crates/runtime/src/families/inkling2/`): composed from the
-   existing BF16 GEMV, embed, RMS norm, sigmoid gate and softcap kernels plus
-   `inkling2_ops` and `moe_inkling2`. Per-slot KV (8 full slots unbounded, 40
-   SWA rings of 1024) and conv state. Routed experts through the existing
-   `PreadExpertStreamer`, keyed by PHYSICAL layer, so the three passes share
-   one slot cache. Router logits must be F32 (llama.cpp's
-   `expert_router_f32`), not the FP16 GEMV output. Gate: greedy logits within
-   KL of the CPU reference (`inkling2::forward`), then of llama.cpp.
+3. DONE (decode, greedy-checked): `crates/runtime/src/families/inkling2/`.
+   `RealInkling2State` owns 48 cache slots of KV and conv tails (the shared
+   `KvCacheManager` is per physical layer and is used only for the position),
+   the per-layer expert offsets rebuilt from `packed_experts/layout.json`
+   (`gate_s` / `up_s` / `down_s` point into the outer record), and its own
+   `RoutedBlobsBuffer` reflected from `moe_inkling2`. Open skips the generic
+   routed-layout setup for this family and admits its F32 resident tensors by
+   family, each checked by dtype and size at build. Per application: depth
+   mix, controllers, norms, projections, convs straight into the slot's KV
+   row, L2 clips with tau, rel-bias plus sink attention, output gate, o-proj
+   conv, block-residual step, MoE input mix, then the F32 router GEMV
+   (`minimax_router`). The host selects with `compute::inkling2::route_sigmoid`
+   (the reference's own selection) and streams the experts for the PHYSICAL
+   layer through the existing `PreadExpertStreamer`. Prefill is the decode
+   path per token; chunked prefill is refused by name.
+
+   Gate (2026-11-20, M4 Max, the 18 GB install, the 19-token prompt above;
+   `crates/runtime/examples/inkling2_logits.rs`):
+
+   | comparison | top-1 | mean KL | max KL |
+   |---|---|---|---|
+   | Metal vs CPU reference | 19/19 | 1.2e-4 | 5.1e-4 |
+   | Metal vs llama.cpp | 19/19 | 4.9e-4 | 1.9e-3 |
+
+   The run reproduces its logits bit for bit. Rough per-token times on this
+   run were 5.4 s for the first token (pipeline compiles, cold expert reads),
+   then 120 to 730 ms as the slot cache and page cache warmed, about 7 tok/s
+   at the end. That is an observation from one dirty run (other sessions
+   active), not a protocol measurement. NOT yet: a synthetic-install test
+   that opens through `RealForwardRunner::open` in CI (the gate above needs
+   the real install), the long-context paths (tau, distances past the extent,
+   the SWA cut, and caches past 4,096 positions: no SWA ring yet), sampled
+   generation, and the chat template.
 4. Tokenizer dialect and `probe/safetensors.rs` arm; CLI reachability.
 5. Long-context check (tau, distances past the extent, the SWA cut), memory
    oracle, quality gates, then a catalog row.

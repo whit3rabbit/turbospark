@@ -346,20 +346,20 @@ fn depth_mix_matches_reference() {
         .collect();
     let queries: Vec<Vec<f32>> = (0..n_q)
         .map(|_| {
-            let v: Vec<f32> = (0..h).map(|_| unit(&mut s) * 0.15).collect();
-            bf16s(&v).iter().map(|x| x.to_f32()).collect()
+            // F32, the checkpoint's own query dtype.
+            (0..h).map(|_| unit(&mut s) * 0.15).collect::<Vec<f32>>()
         })
         .collect();
     // Bias query 0 toward state 1 so its softmax is peaked, not uniform.
     let mut queries = queries;
     for (q, st) in queries[0].iter_mut().zip(&states[1]) {
-        *q = bf16::from_f32(*q + st / 0.65 * 0.5).to_f32();
+        *q += st / 0.65 * 0.5;
     }
     let want: Vec<f32> = block_attn_res_mix(&states, &queries).concat();
 
     let mut context = MetalContext::new().expect("Metal device");
     let st_buf = context.new_buffer_with_data(&le16(&f16s(&states.concat())));
-    let q_buf = context.new_buffer_with_data(&leb16(&bf16s(&queries.concat())));
+    let q_buf = context.new_buffer_with_data(&le32(&queries.concat()));
     let out_buf = context.new_output_buffer((n_q * h * 2) as u64);
     let pass = context.begin_pass();
     encode_inkling2_depth_mix(
@@ -441,9 +441,13 @@ fn run_attention(n_pos: usize, first: usize, extent: usize, sink_scale: f32) {
             .map(|_| unit(&mut s))
             .collect::<Vec<_>>(),
     );
-    let sinks: Vec<f32> = (0..heads)
-        .map(|h| sink_scale * (h as f32 / heads as f32 - 0.3))
-        .collect();
+    // FP16, as the BF16 sink-projection GEMV writes them.
+    let sinks16 = f16s(
+        &(0..heads)
+            .map(|h| sink_scale * (h as f32 / heads as f32 - 0.3))
+            .collect::<Vec<_>>(),
+    );
+    let sinks: Vec<f32> = sinks16.iter().map(|x| x.to_f32()).collect();
     let f = |v: &[f16]| v.iter().map(|x| x.to_f32()).collect::<Vec<f32>>();
     let proj_r: Vec<f32> = proj.iter().map(|x| x.to_f32()).collect();
     let table = rel_bias_table(&f(&r16), &proj_r, heads, d_rel, extent);
@@ -468,7 +472,7 @@ fn run_attention(n_pos: usize, first: usize, extent: usize, sink_scale: f32) {
     let q_buf = context.new_buffer_with_data(&le16(&q16));
     let k_buf = context.new_buffer_with_data(&le16(&k16));
     let v_buf = context.new_buffer_with_data(&le16(&v16));
-    let s_buf = context.new_buffer_with_data(&le32(&sinks));
+    let s_buf = context.new_buffer_with_data(&le16(&sinks16));
     let o_buf = context.new_output_buffer((heads * hd * 2) as u64);
     let shape = Inkling2AttnShape {
         heads: heads as u32,
@@ -544,4 +548,144 @@ fn attention_with_fewer_positions_than_groups() {
 #[test]
 fn attention_dominant_sink() {
     run_attention(12, 0, 16, 12.0);
+}
+
+// --- Loop controller, composed from the flow's own kernels --------------------
+
+use turbospark_compute::inkling2::loop_control;
+use turbospark_gpu::{
+    encode_bf16_gemv_resident, encode_inkling2_control_combine, encode_inkling2_copy_half,
+    encode_rms_norm_no_scale, Bf16ResidentMatrix,
+};
+
+/// The controller exactly as the decode flow composes it: two no-scale RMS
+/// norms into one [cur; msg] buffer, the rank-r down GEMV, the gain and forget
+/// GEMVs, then the combine. Held to `loop_control`, so a wrong half of the
+/// concat, a swapped gain/forget or a missing tanh all fail.
+#[test]
+fn controller_composition_matches_loop_control() {
+    let (h, rank) = (256usize, 16usize);
+    let mut s = 77u32;
+    let cur16 = f16s(&(0..h).map(|_| unit(&mut s) * 2.0).collect::<Vec<_>>());
+    let msg16 = f16s(&(0..h).map(|_| unit(&mut s) * 0.5).collect::<Vec<_>>());
+    let down = bf16s(
+        &(0..rank * 2 * h)
+            .map(|_| unit(&mut s) * 0.08)
+            .collect::<Vec<_>>(),
+    );
+    let gain = bf16s(
+        &(0..h * rank)
+            .map(|_| unit(&mut s) * 0.4)
+            .collect::<Vec<_>>(),
+    );
+    let forget = bf16s(
+        &(0..h * rank)
+            .map(|_| unit(&mut s) * 0.4)
+            .collect::<Vec<_>>(),
+    );
+    let f = |v: &[f16]| v.iter().map(|x| x.to_f32()).collect::<Vec<f32>>();
+    let fb = |v: &[bf16]| v.iter().map(|x| x.to_f32()).collect::<Vec<f32>>();
+    let want = loop_control(
+        &f(&cur16),
+        &f(&msg16),
+        &fb(&down),
+        &fb(&gain),
+        &fb(&forget),
+        rank,
+    );
+
+    let mut context = MetalContext::new().expect("Metal device");
+    let cur = context.new_buffer_with_data(&le16(&cur16));
+    let msg = context.new_buffer_with_data(&le16(&msg16));
+    let w_down = context.new_buffer_with_data(&leb16(&down));
+    let w_gain = context.new_buffer_with_data(&leb16(&gain));
+    let w_forget = context.new_buffer_with_data(&leb16(&forget));
+    let cat = context.new_output_buffer((2 * h * 2) as u64);
+    let gate = context.new_output_buffer((rank * 2) as u64);
+    let g = context.new_output_buffer((h * 2) as u64);
+    let fo = context.new_output_buffer((h * 2) as u64);
+    let out = context.new_output_buffer((h * 2) as u64);
+    let pass = context.begin_pass();
+    encode_rms_norm_no_scale(&mut context, &pass, (&cur, 0), (&cat, 0), h as u32, 1e-6).unwrap();
+    encode_rms_norm_no_scale(
+        &mut context,
+        &pass,
+        (&msg, 0),
+        (&cat, (h * 2) as u64),
+        h as u32,
+        1e-6,
+    )
+    .unwrap();
+    fn m(b: &metal::Buffer, rows: usize, cols: usize) -> Bf16ResidentMatrix<'_> {
+        Bf16ResidentMatrix {
+            buffer: b,
+            weights_offset: 0,
+            rows,
+            cols,
+        }
+    }
+    encode_bf16_gemv_resident(
+        &mut context,
+        &pass,
+        &m(&w_down, rank, 2 * h),
+        (&cat, 0),
+        (&gate, 0),
+    )
+    .unwrap();
+    encode_bf16_gemv_resident(
+        &mut context,
+        &pass,
+        &m(&w_gain, h, rank),
+        (&gate, 0),
+        (&g, 0),
+    )
+    .unwrap();
+    encode_bf16_gemv_resident(
+        &mut context,
+        &pass,
+        &m(&w_forget, h, rank),
+        (&gate, 0),
+        (&fo, 0),
+    )
+    .unwrap();
+    encode_inkling2_control_combine(
+        &mut context,
+        &pass,
+        (&cur, 0),
+        (&msg, 0),
+        (&g, 0),
+        (&fo, 0),
+        (&out, 0),
+        h as u32,
+    )
+    .unwrap();
+    pass.commit_and_wait();
+    assert_close(&read_f16(&out, h), &want, 1e-2, 1e-2, "controller");
+    // The controller must actually move the state, or the test proves nothing.
+    let moved = want
+        .iter()
+        .zip(f(&cur16))
+        .map(|(a, b)| (a - b).abs())
+        .fold(0f32, f32::max);
+    assert!(
+        moved > 0.1,
+        "fixture: controller barely changes cur ({moved})"
+    );
+}
+
+#[test]
+fn copy_half_copies_a_row_into_an_offset() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let src16 = f16s(&(0..300).map(|i| i as f32 * 0.5).collect::<Vec<_>>());
+    let src = context.new_buffer_with_data(&le16(&src16));
+    let dst = context.new_buffer_with_data(&le16(&vec![f16::from_f32(-1.0); 800]));
+    let pass = context.begin_pass();
+    encode_inkling2_copy_half(&mut context, &pass, (&src, 0), (&dst, 200 * 2), 300).unwrap();
+    pass.commit_and_wait();
+    let got = read_f16(&dst, 800);
+    assert!(got[..200].iter().all(|&v| v == -1.0) && got[500..].iter().all(|&v| v == -1.0));
+    assert_eq!(&got[200..500], &f(&src16)[..]);
+    fn f(v: &[f16]) -> Vec<f32> {
+        v.iter().map(|x| x.to_f32()).collect()
+    }
 }

@@ -805,6 +805,12 @@ impl RealForwardRunner {
                     .to_string(),
             );
         }
+        if self.real_inkling2.is_some() {
+            return Err(
+                "inkling2_loop does not support chunked prefill; the sequential path serves it"
+                    .to_string(),
+            );
+        }
         if self.real_flint.is_some() {
             // Always a chunk driver; the layer-batched one is the default and
             // `TURBOSPARK_FLINT_CHUNKED_PREFILL=0` restores the per-token loop.

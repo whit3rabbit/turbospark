@@ -144,8 +144,8 @@ kernel void inkling2_short_conv_decode(
 // --- Block attention residual ("depth attention") ---------------------------
 //
 // `states` is FP16 `[n_states, h]`: the earlier block outputs, then the
-// current partial state LAST. For each query (one threadgroup each, BF16
-// `[n_q, h]`): score_s = rinv_s * (state_s . q) / sqrt(h) with rinv_s the
+// current partial state LAST. For each query (one threadgroup each, F32
+// `[n_q, h]`, the checkpoint's own dtype): score_s = rinv_s * (state_s . q) / sqrt(h) with rinv_s the
 // no-gamma RMS-norm factor (eps 1e-6), softmax over s, and out = sum_s w_s *
 // rinv_s * state_s, i.e. the weighted sum of the NORMED states. One pass over
 // the states computes both the sum of squares and the dot product.
@@ -153,7 +153,7 @@ constant constexpr uint kInkMaxDepthStates = 16;
 
 kernel void inkling2_depth_mix(
     device const half*    states   [[buffer(0)]],
-    device const bfloat*  queries  [[buffer(1)]],
+    device const float*   queries  [[buffer(1)]],
     device half*          out      [[buffer(2)]],
     constant uint&        n_states [[buffer(3)]],
     constant uint&        h        [[buffer(4)]],
@@ -165,7 +165,7 @@ kernel void inkling2_depth_mix(
     threadgroup float part_ss[kInkMaxDepthStates][8];
     threadgroup float part_dq[kInkMaxDepthStates][8];
     threadgroup float w_s[kInkMaxDepthStates];
-    device const bfloat* q = queries + ulong(q_idx) * h;
+    device const float* q = queries + ulong(q_idx) * h;
     for (uint s = 0; s < n_states; ++s) {
         device const half* st = states + ulong(s) * h;
         float ss = 0.0f;
@@ -258,7 +258,7 @@ kernel void inkling2_attention_decode(
     device const half*   k        [[buffer(1)]],
     device const half*   v        [[buffer(2)]],
     device const float*  table    [[buffer(3)]],
-    device const float*  sinks    [[buffer(4)]],
+    device const half*   sinks    [[buffer(4)]],
     device half*         out      [[buffer(5)]],
     constant uint&       first    [[buffer(6)]],
     constant uint&       pos      [[buffer(7)]],
@@ -306,7 +306,7 @@ kernel void inkling2_attention_decode(
     threadgroup_barrier(mem_flags::mem_threadgroup);
     if (sg_idx != 0u) return;
 
-    const float t = sinks[h];
+    const float t = float(sinks[h]);
     float M = t;
     for (uint g = 0; g < 8u; ++g) M = max(M, tg_m[g]);
     float denom = precise::exp(t - M);
@@ -322,4 +322,36 @@ kernel void inkling2_attention_decode(
         for (uint g = 0; g < 8u; ++g) o = fma(tg_acc[g][c], f[g], o);
         out[h * head_dim + c] = half(o / denom);
     }
+}
+
+// --- Loop controller combine -------------------------------------------------
+//
+// out = cur - tanh(f) * cur + tanh(g) * msg, elementwise, where g and f are the
+// pre-tanh gain and forget projections (`gain_weight @ gate`, `forget_weight @
+// gate`). The rank-64 gate and both projections are ordinary BF16 GEMVs; this
+// is the only op of the controller no other kernel computes.
+kernel void inkling2_control_combine(
+    device const half* cur    [[buffer(0)]],
+    device const half* msg    [[buffer(1)]],
+    device const half* gain   [[buffer(2)]],
+    device const half* forget [[buffer(3)]],
+    device half*       out    [[buffer(4)]],
+    constant uint&     n      [[buffer(5)]],
+    uint               i      [[thread_position_in_grid]]
+) {
+    if (i >= n) return;
+    const float c = float(cur[i]);
+    const float f = precise::tanh(float(forget[i]));
+    const float g = precise::tanh(float(gain[i]));
+    out[i] = half(c - f * c + g * float(msg[i]));
+}
+
+// --- FP16 copy ---------------------------------------------------------------
+kernel void inkling2_copy_half(
+    device const half* src [[buffer(0)]],
+    device half*       dst [[buffer(1)]],
+    constant uint&     n   [[buffer(2)]],
+    uint               i   [[thread_position_in_grid]]
+) {
+    if (i < n) dst[i] = src[i];
 }

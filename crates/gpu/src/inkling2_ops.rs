@@ -175,7 +175,7 @@ pub fn encode_inkling2_short_conv_decode(
     Ok(())
 }
 
-/// Depth mix: for each of `n_q` BF16 queries `[n_q, h]`, the softmax-weighted
+/// Depth mix: for each of `n_q` F32 queries `[n_q, h]`, the softmax-weighted
 /// sum of the RMS-normed FP16 `states[n_states, h]` (current state last).
 #[allow(clippy::too_many_arguments)]
 pub fn encode_inkling2_depth_mix(
@@ -256,7 +256,7 @@ pub const INKLING2_ATTN_MAX_HEAD_DIM: u32 = 128;
 
 /// Decode attention for the query at `pos` over cached positions
 /// `first..=pos`, with the relative-bias `table` (from
-/// [`encode_inkling2_rel_table`]) and FP32 per-head `sinks`. `q` FP16
+/// [`encode_inkling2_rel_table`]) and FP16 per-head `sinks`. `q` FP16
 /// `[heads, head_dim]`; `k`, `v` FP16 `[n_pos, kv_heads, head_dim]`.
 #[allow(clippy::too_many_arguments)]
 pub fn encode_inkling2_attention_decode(
@@ -306,6 +306,61 @@ pub fn encode_inkling2_attention_decode(
             (u32_bytes(&s.extent), 11),
         ],
         u64::from(s.heads),
+        256,
+    );
+    Ok(())
+}
+
+/// Loop controller combine: `out = cur - tanh(forget) * cur + tanh(gain) *
+/// msg` over `n` FP16 elements; `gain` and `forget` are pre-tanh.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_inkling2_control_combine(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    cur: (&metal::Buffer, u64),
+    msg: (&metal::Buffer, u64),
+    gain: (&metal::Buffer, u64),
+    forget: (&metal::Buffer, u64),
+    out: (&metal::Buffer, u64),
+    n: u32,
+) -> Result<(), GpuError> {
+    if n == 0 {
+        return Err(invalid("control combine needs n > 0".into()));
+    }
+    let p = pipeline(context, "inkling2_control_combine")?;
+    pass.encode_threadgroups(
+        &p,
+        &[
+            (cur.0, 0, cur.1),
+            (msg.0, 1, msg.1),
+            (gain.0, 2, gain.1),
+            (forget.0, 3, forget.1),
+            (out.0, 4, out.1),
+        ],
+        &[(u32_bytes(&n), 5)],
+        u64::from(n).div_ceil(256),
+        256,
+    );
+    Ok(())
+}
+
+/// `dst[0..n] = src[0..n]` over FP16. The ranges must not overlap.
+pub fn encode_inkling2_copy_half(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    src: (&metal::Buffer, u64),
+    dst: (&metal::Buffer, u64),
+    n: u32,
+) -> Result<(), GpuError> {
+    if n == 0 {
+        return Ok(());
+    }
+    let p = pipeline(context, "inkling2_copy_half")?;
+    pass.encode_threadgroups(
+        &p,
+        &[(src.0, 0, src.1), (dst.0, 1, dst.1)],
+        &[(u32_bytes(&n), 2)],
+        u64::from(n).div_ceil(256),
         256,
     );
     Ok(())

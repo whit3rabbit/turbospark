@@ -395,7 +395,8 @@ pub use moe_gguf::{
 };
 #[cfg(target_os = "macos")]
 pub use inkling2_ops::{
-    encode_inkling2_attention_decode, encode_inkling2_depth_mix, encode_inkling2_l2_clip,
+    encode_inkling2_attention_decode, encode_inkling2_control_combine, encode_inkling2_copy_half,
+    encode_inkling2_depth_mix, encode_inkling2_l2_clip,
     encode_inkling2_rel_table, encode_inkling2_router_select, encode_inkling2_short_conv_decode,
     Inkling2AttnShape, INKLING2_ATTN_MAX_HEAD_DIM, INKLING2_DEPTH_MAX_STATES,
     INKLING2_ROUTER_MAX_EXPERTS, INKLING2_ROUTER_TOP_K,
