@@ -10,12 +10,15 @@ import Foundation
 // zoom never resamples or moves an annotation, and the exporter can replay the
 // same list at natural size. Nothing here touches the source file.
 
-/// The tools in the palette. `select` picks, moves and deletes.
+/// The tools in the palette. `select` picks, moves and deletes. `ask` marks a
+/// region and hands it to point-and-ask (`PointAndAsk`); the palette shows it
+/// only when the loaded model takes images.
 enum AnnotationTool: String, CaseIterable, Identifiable, Hashable {
     case select
     case box
     case arrow
     case text
+    case ask
 
     var id: String { rawValue }
 }

@@ -254,6 +254,14 @@ public struct CronSchedule: Equatable, Sendable {
         }
     }
 
+    /// `localizedDescription()` without its "Custom schedule" fallback: nil
+    /// for a shape with no plain-language name, so a caller can show the
+    /// raw expression instead of a label that says nothing.
+    public func localizedNamedDescription() -> String? {
+        if case .custom = shape { return nil }
+        return localizedDescription()
+    }
+
     private func weekdayName(_ value: Int) -> String {
         let names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
         return names[value % 7]
@@ -595,10 +603,20 @@ public final class CronScheduler: @unchecked Sendable {
     // leaving a job in the singleton's file for every later case and every
     // later run to trip over (see `fileURL`).
 
+    /// How `executeCreate` reads its arguments, shared with the tool card
+    /// so the card summarizes the schedule that will actually be created.
+    static func createCronArgument(_ arguments: [String: String]) -> String? {
+        arguments["cron"] ?? arguments["expression"] ?? arguments["schedule"]
+    }
+
+    static func createRecurringArgument(_ arguments: [String: String]) -> Bool {
+        (arguments["recurring"].map { $0.lowercased() != "false" && $0 != "0" }) ?? true
+    }
+
     public static func executeCreate(
         arguments: [String: String], chatID: UUID?, scheduler: CronScheduler = .shared
     ) throws -> String {
-        guard let cron = arguments["cron"] ?? arguments["expression"] ?? arguments["schedule"] else {
+        guard let cron = createCronArgument(arguments) else {
             throw NSError(domain: "TurboSparkTool", code: 60, userInfo: [
                 NSLocalizedDescriptionKey: "Missing 'cron' argument for CronCreate."
             ])
@@ -608,7 +626,7 @@ public final class CronScheduler: @unchecked Sendable {
                 NSLocalizedDescriptionKey: "Missing 'prompt' argument for CronCreate."
             ])
         }
-        let recurring = (arguments["recurring"].map { $0.lowercased() != "false" && $0 != "0" }) ?? true
+        let recurring = createRecurringArgument(arguments)
         guard let chatID else {
             throw NSError(domain: "TurboSparkTool", code: 62, userInfo: [
                 NSLocalizedDescriptionKey:

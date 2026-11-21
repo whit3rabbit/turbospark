@@ -103,11 +103,22 @@ public struct AppToolCall: Identifiable, Codable, Equatable, Sendable {
     /// types intact (`arguments` flattens everything to strings). Kept so a
     /// native call can be replayed to the template as what the model sent.
     public var nativeArgumentsJSON: String?
+    /// How the user (or the replayed policy) answered this call's approval
+    /// card, for the transcript's one-line record. Nil for every call that
+    /// never showed a card and every archive written before the field.
+    public var approvalRecord: ToolApprovalRecord?
+    /// The model's command when the user edited it on the approval card
+    /// (`ToolCallCommandEdit`); nil for every call the model wrote itself
+    /// and every archive written before the field. Set only on the NEW call
+    /// an edit creates: it keeps that call once-only and tells the model
+    /// what it had proposed.
+    public var editedFromCommand: String?
 
     private enum CodingKeys: String, CodingKey {
         case id, approvalID, name, arguments, rawInvocation, status, category
         case riskAssessment, autoApprovedBy, createdAt
         case nativeCallID, nativeArgumentsJSON
+        case approvalRecord, editedFromCommand
     }
 
     public init(
@@ -123,8 +134,10 @@ public struct AppToolCall: Identifiable, Codable, Equatable, Sendable {
         createdAt: Date = Date(),
         typedArguments: TransientTypedArguments? = nil,
         nativeCallID: String? = nil,
-        nativeArgumentsJSON: String? = nil
+        nativeArgumentsJSON: String? = nil,
+        editedFromCommand: String? = nil
     ) {
+        self.editedFromCommand = editedFromCommand
         self.typedArguments = typedArguments
         self.nativeCallID = nativeCallID
         self.nativeArgumentsJSON = nativeArgumentsJSON
@@ -165,6 +178,10 @@ public struct AppToolCall: Identifiable, Codable, Equatable, Sendable {
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         nativeCallID = try container.decodeIfPresent(String.self, forKey: .nativeCallID)
         nativeArgumentsJSON = try container.decodeIfPresent(String.self, forKey: .nativeArgumentsJSON)
+        // `try?`: a decision a newer build wrote must drop the record, not
+        // throw and take the whole chat with it.
+        approvalRecord = (try? container.decodeIfPresent(ToolApprovalRecord.self, forKey: .approvalRecord)) ?? nil
+        editedFromCommand = (try? container.decodeIfPresent(String.self, forKey: .editedFromCommand)) ?? nil
     }
 
     /// Single line summary of call arguments for display.

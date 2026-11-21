@@ -14,6 +14,7 @@ struct McpServerCard: View {
     let server: McpServerConfig
     @Binding var isExpanded: Bool
     let isTesting: Bool
+    let status: McpServerRuntimeStatus
     let result: (message: String, isError: Bool)?
     let onTest: () -> Void
     let onEdit: () -> Void
@@ -44,10 +45,13 @@ struct McpServerCard: View {
                         }
                     }
 
-                    Text(server.commandSummary)
+                    // Args often carry the same token as the env block.
+                    Text(McpEnvMasking.scrub(server.commandSummary, secrets: server.envSecretValues))
                         .themedCode(.small)
                         .foregroundStyle(.appSecondary)
                         .lineLimit(1)
+
+                    McpServerStatusLabel(status: status, showsReason: result == nil)
                 }
 
                 Spacer()
@@ -194,6 +198,66 @@ struct McpServerCard: View {
             .padding(8)
             .background(.appSurface)
             .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius))
+        }
+    }
+}
+
+/// One server's connection status as a glyph plus a word (StatusLabel guide),
+/// with the failure reason under it. The reason is hidden while the test
+/// result banner is showing, since that banner already carries the same error.
+struct McpServerStatusLabel: View {
+    let status: McpServerRuntimeStatus
+    let showsReason: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Label {
+                word
+            } icon: {
+                Image(systemName: glyph)
+            }
+            .themedFont(.tiny, weight: .medium)
+            .foregroundStyle(tint)
+
+            if showsReason, case .failed(let reason) = status, !reason.isEmpty {
+                // Verbatim: the server or transport wrote it, not the app.
+                Text(verbatim: reason)
+                    .themedFont(.tiny)
+                    .foregroundStyle(.appSecondary)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .help(Text(verbatim: reason))
+                    .textSelection(.enabled)
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var word: Text {
+        switch status {
+        case .disabled: return Text("Disabled", bundle: .module)
+        case .connecting: return Text("Connecting...", bundle: .module)
+        case .connected: return Text("Connected", bundle: .module)
+        case .failed: return Text("Failed", bundle: .module)
+        case .notConnected: return Text("Not connected", bundle: .module)
+        }
+    }
+
+    private var glyph: String {
+        switch status {
+        case .disabled: return "pause.circle"
+        case .connecting: return "arrow.triangle.2.circlepath"
+        case .connected: return "checkmark.circle.fill"
+        case .failed: return "xmark.octagon.fill"
+        case .notConnected: return "circle.dashed"
+        }
+    }
+
+    private var tint: AnyShapeStyle {
+        switch status {
+        case .connected: return AnyShapeStyle(.appSuccess)
+        case .failed: return AnyShapeStyle(.appDanger)
+        case .disabled, .connecting, .notConnected: return AnyShapeStyle(.appSecondary)
         }
     }
 }

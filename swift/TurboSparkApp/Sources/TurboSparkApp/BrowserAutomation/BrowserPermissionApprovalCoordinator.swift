@@ -138,7 +138,8 @@ extension AppModel {
         }
 
         browserPermissionApprovalCoordinator.authorizeOnce(request)
-        approvePendingToolCall(id: id, alwaysAllowSession: false)
+        approvePendingToolCall(
+            id: id, alwaysAllowSession: false, recordAs: alwaysAllowOrigin ? .allowedAlways : .allowedOnce)
         return .approved
     }
 

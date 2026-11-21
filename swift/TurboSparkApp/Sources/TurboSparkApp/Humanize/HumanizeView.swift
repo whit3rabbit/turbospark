@@ -14,6 +14,9 @@ struct HumanizeView: View {
     @AppStorage("TurboSpark.humanizeAdvancedVisible") private var showAdvanced = false
     @State private var showChanges = true
     @State private var difference: HumanizeDiff?
+    /// Indices into `difference.changes` the user put back to the draft's
+    /// wording. Reset with every new comparison, since indices are per diff.
+    @State private var rejected: Set<Int> = []
     /// The draft card shows what the rewrite cut until the user goes back to
     /// editing.
     @State private var reviewing = false
@@ -71,6 +74,7 @@ struct HumanizeView: View {
         .task(id: DiffKey(source: controller.sourceDraft, output: controller.rewrite,
                           segments: controller.segments, busy: controller.isBusy)) {
             difference = nil
+            rejected = []
             copied = false
             guard !controller.isBusy, !controller.segments.isEmpty else { return }
             let source = controller.sourceDraft, output = controller.rewrite
@@ -84,6 +88,8 @@ struct HumanizeView: View {
                 reviewing = true
             }
         }
+        // "Copied" described the text sent before the choice changed.
+        .onChange(of: rejected) { copied = false }
         .confirmationDialog(Text("Delete Model", bundle: .module), isPresented: $confirmingDelete) {
             Button(role: .destructive) {
                 if let installedModel { model.deleteModel(installedModel) }
@@ -264,6 +270,12 @@ struct HumanizeView: View {
                         .contentTransition(.opacity)
                         .accessibilityLabel(Text("Rewrite", bundle: .module))
                         .accessibilityIdentifier("humanize.rewrite")
+                    if showChanges, !controller.isBusy, let difference, !difference.changes.isEmpty {
+                        Divider().opacity(theme.isHighContrast ? 1 : 0.6)
+                        HumanizeChangeReview(source: controller.sourceDraft, rewrite: controller.rewrite,
+                                             changes: difference.changes, rejected: $rejected)
+                            .padding(.horizontal, 21).padding(.vertical, 14)
+                    }
                 }
                 .transition(.opacity)
             }
@@ -286,7 +298,7 @@ struct HumanizeView: View {
             AppChip(copied ? Text("Copied", bundle: .module) : Text("Copy", bundle: .module),
                     systemImage: copied ? "checkmark" : "doc.on.doc", isOn: copied) {
                 NSPasteboard.general.clearContents()
-                copied = NSPasteboard.general.setString(controller.rewrite, forType: .string)
+                copied = NSPasteboard.general.setString(copyText, forType: .string)
             }
             .disabled(controller.rewrite.isEmpty || controller.isBusy)
             // Last, so it sits at the card's outer edge like Clear Draft does
@@ -298,6 +310,15 @@ struct HumanizeView: View {
             .accessibilityIdentifier("humanize.clearRewrite")
         }
         .tsAnimation(TSMotion.hover, value: controller.rewrite.isEmpty)
+    }
+
+    /// The rewrite, with any rejected change put back to the draft's wording.
+    private var copyText: String {
+        guard !rejected.isEmpty, let difference else { return controller.rewrite }
+        // The changes were verified against both texts when compared, so nil
+        // is not expected; the whole rewrite is the safe fallback.
+        return HumanizeDiff.compose(source: controller.sourceDraft, rewrite: controller.rewrite,
+                                    changes: difference.changes, rejected: rejected) ?? controller.rewrite
     }
 
     @ViewBuilder private var rewriteStats: some View {
@@ -400,6 +421,17 @@ struct HumanizeView: View {
                 text[marked].backgroundColor = theme.accent.opacity(0.2)
                 // Underlining keeps additions distinguishable without color.
                 text[marked].underlineStyle = Text.LineStyle(pattern: .solid, color: theme.accent)
+            }
+            // A rejected change is struck through, not only recolored: Copy
+            // sends the draft's wording there instead.
+            for index in rejected where difference.changes.indices.contains(index) {
+                let range = difference.changes[index].rewrite
+                guard range.length > 0, let bounds = Range(range, in: output),
+                      let marked = Range(bounds, in: text) else { continue }
+                text[marked].backgroundColor = nil
+                text[marked].underlineStyle = nil
+                text[marked].foregroundColor = theme.secondaryText
+                text[marked].strikethroughStyle = Text.LineStyle(pattern: .solid, color: theme.danger)
             }
         }
         // Words to avoid show whether or not changes are highlighted: they are

@@ -103,9 +103,14 @@ extension Theme {
                 }
         }
         .codeBlock { configuration in
+            // MarkdownUI's "language" is the whole fence info string; split
+            // off a file title and marked lines when they parse cleanly.
+            let info = CodeFenceInfo.parse(configuration.language)
             CodeBlockContainer(
-                language: configuration.language,
+                language: info.language,
                 code: configuration.content,
+                title: info.title,
+                markedLines: info.markedLines,
                 onPreviewHTML: onPreviewHTML
             ) {
                 configuration.label
@@ -175,11 +180,24 @@ extension AppFontDescriptor {
 struct CodeBlockContainer<Content: View>: View {
     let language: String?
     let code: String
+    /// A file name from the fence info string (`title="Foo.swift"`).
+    var title: String?
+    /// One-based lines the fence asked to highlight (`{3,5-7}`).
+    var markedLines: IndexSet?
     var onPreviewHTML: ((String) -> Void)?
     @ViewBuilder let content: () -> Content
     @Environment(\.appTheme) private var theme
 
     @State private var isCopied = false
+    /// A natively drawn chart can flip back to its JSON source.
+    @State private var showsChartSource = false
+
+    /// A chart fence in the simple subset draws natively and offline; nil
+    /// (anything richer, or a body still streaming) keeps the code view and
+    /// the web Preview.
+    private var nativeChart: ChatChartSpec? {
+        ChatChartSpec.parse(language: language, code: code)
+    }
 
     /// Which language tags the Preview button offers. Only a complete HTML
     /// document is worth a panel; a fragment renders, which is acceptable,
@@ -262,6 +280,7 @@ struct CodeBlockContainer<Content: View>: View {
     }
 
     var body: some View {
+        let spec = nativeChart
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 if let language, !language.isEmpty {
@@ -272,6 +291,16 @@ struct CodeBlockContainer<Content: View>: View {
                     Text("code", bundle: .module)
                         .themedCode(.tiny, weight: .semibold)
                         .foregroundStyle(theme.secondaryText)
+                }
+                if let title {
+                    // Model-authored path, so verbatim; middle truncation
+                    // keeps both the folder hint and the file name.
+                    Text(verbatim: title)
+                        .themedCode(.tiny)
+                        .foregroundStyle(theme.foreground)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(Text(verbatim: title))
                 }
                 Spacer()
                 if isPreviewableHTML {
@@ -307,6 +336,21 @@ struct CodeBlockContainer<Content: View>: View {
                     .accessibilityLabel(Text("Preview \(language ?? "chart") block", bundle: .module))
                     .accessibilityHint(Text("Renders the block as a chart in the preview panel", bundle: .module))
                 }
+                if spec != nil {
+                    Button {
+                        showsChartSource.toggle()
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: showsChartSource ? "chart.bar" : "curlybraces")
+                                .accessibilityHidden(true)
+                            showsChartSource ? Text("Chart", bundle: .module) : Text("Code", bundle: .module)
+                        }
+                        .themedFont(.tiny, weight: .medium)
+                        .foregroundStyle(theme.secondaryText)
+                    }
+                    .buttonStyle(.plain)
+                    .help(Text("Switch between the chart and its source", bundle: .module))
+                }
                 Button {
                     copyCode()
                 } label: {
@@ -329,23 +373,12 @@ struct CodeBlockContainer<Content: View>: View {
 
             Divider()
 
-            ScrollView(.horizontal, showsIndicators: true) {
-                // Highlighted when the language is one the native scanner
-                // knows and the block is small enough; the MarkdownUI
-                // rendering otherwise (which is also the streaming path for
-                // big fences, keeping per-token re-renders cheap).
-                if let highlighted = CodeSyntaxHighlighter.highlight(code, language: language) {
-                    Text(highlighted)
-                        .font(theme.code(.base))
-                        // MarkdownUI's code block uses .em(0.225); at the
-                        // base code size that is about three points.
-                        .lineSpacing(3)
-                        .textSelection(.enabled)
-                } else {
-                    content()
-                }
+            if let spec, !showsChartSource {
+                ChatChartView(spec: spec)
+                    .padding(12)
+            } else {
+                codeBody
             }
-            .padding(12)
         }
         .background(theme.elevatedSurface)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -354,6 +387,59 @@ struct CodeBlockContainer<Content: View>: View {
                 .stroke(theme.border, lineWidth: 0.5)
         )
         .markdownMargin(top: 8, bottom: 12)
+    }
+
+    private var codeBody: some View {
+        ScrollView(.horizontal, showsIndicators: true) {
+            // Highlighted when the language is one the native scanner
+            // knows and the block is small enough; the MarkdownUI
+            // rendering otherwise (which is also the streaming path for
+            // big fences, keeping per-token re-renders cheap).
+            if let markedLines, !markedLines.isEmpty {
+                markedCode(
+                    CodeSyntaxHighlighter.highlight(code, language: language) ?? AttributedString(code),
+                    marks: markedLines)
+            } else if let highlighted = CodeSyntaxHighlighter.highlight(code, language: language) {
+                Text(highlighted)
+                    .font(theme.code(.base))
+                    // MarkdownUI's code block uses .em(0.225); at the
+                    // base code size that is about three points.
+                    .lineSpacing(3)
+                    .textSelection(.enabled)
+            } else {
+                content()
+            }
+        }
+        .padding(12)
+    }
+
+    /// One Text per line so a marked line can carry its own band. Only
+    /// used when the fence asks for marks: per-line Texts lose selection
+    /// across lines, which the plain path keeps. The leading bar marks the
+    /// line by shape as well as tint, and VoiceOver hears it as a value.
+    private func markedCode(_ text: AttributedString, marks: IndexSet) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(Array(CodeFenceInfo.lines(of: text).enumerated()), id: \.offset) { index, line in
+                let isMarked = marks.contains(index + 1)
+                HStack(spacing: 6) {
+                    Rectangle()
+                        .fill(isMarked ? theme.accent : Color.clear)
+                        .frame(width: 2)
+                        .accessibilityHidden(true)
+                    // An empty Text has no height; a space keeps blank lines.
+                    Text(line.characters.isEmpty ? AttributedString(" ") : line)
+                        .font(theme.code(.base))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(isMarked ? theme.accent.opacity(0.12) : Color.clear)
+                .accessibilityElement(children: .combine)
+                .accessibilityValue(isMarked ? Text("Highlighted line", bundle: .module) : Text(verbatim: ""))
+            }
+        }
+        // Equal-width rows inside the horizontal scroll, so every band
+        // spans the widest line rather than its own text.
+        .fixedSize(horizontal: true, vertical: false)
+        .textSelection(.enabled)
     }
 
     private func copyCode() {

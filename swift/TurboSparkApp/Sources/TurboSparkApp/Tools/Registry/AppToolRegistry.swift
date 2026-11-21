@@ -123,6 +123,14 @@ public enum AppToolRegistry {
         // read it.
         let rootURL = resolvedRoot ?? URL(fileURLWithPath: "/dev/null")
 
+        // Checkpoint: snapshot what this call is about to change, here
+        // because every route (direct, batch child, subagent) reaches it.
+        if let resolvedRoot, let chatID, let capturer = turnCheckpointCapturer,
+           TurnCheckpointPolicy.isFileChangingTool(lowerName)
+        {
+            await capturer(call, resolvedRoot, chatID)
+        }
+
         do {
             var output: String = ""
             var archivalOutput: String?
@@ -704,7 +712,8 @@ public enum AppToolRegistry {
                 output = res.output
 
             case "memory", "remember":
-                output = try MemoryToolExecutor.execute(arguments: call.arguments, project: project)
+                output = try MemoryToolExecutor.execute(
+                    arguments: call.arguments, project: project, toolCallID: call.id)
 
             case "memory_search":
                 output = try MemoryToolExecutor.searchClaims(arguments: call.arguments, project: project)
@@ -922,7 +931,12 @@ public enum AppToolRegistry {
                 output = PlanModeExecutor.enter(arguments: call.arguments, chatID: chatID)
 
             case "exitplanmode", "exit_plan_mode":
-                output = PlanModeExecutor.exit(arguments: call.arguments, chatID: chatID)
+                // Blocking when the app installed the gate: the result waits
+                // for the user's Start or Request changes on the plan card.
+                // This is not a tool approval; the permission mode and every
+                // other tool's approval are untouched.
+                output = await PlanModeExecutor.exitAwaitingDecision(
+                    arguments: call.arguments, chatID: chatID, toolCallID: call.id)
 
             case "reportfindings", "report_findings", "findings":
                 output = try ReportFindingsExecutor.execute(arguments: call.arguments)

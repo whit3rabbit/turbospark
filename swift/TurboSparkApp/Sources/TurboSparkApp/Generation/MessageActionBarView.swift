@@ -27,6 +27,10 @@ struct MessageActionBarView: View {
     /// Pins an eligible user message as a standing instruction.
     var standingInstructionAction: (() -> Void)? = nil
     var isStandingInstruction: Bool = false
+    /// Appends the message to the composer as a blockquote. Not greyed by
+    /// `actionsDisabled`: it only edits the draft, which stays editable
+    /// while a turn runs.
+    var quoteAction: (() -> Void)? = nil
     /// Greyed while a turn runs; the model-side guards refuse anyway, this
     /// is the affordance half.
     var actionsDisabled: Bool = false
@@ -53,6 +57,15 @@ struct MessageActionBarView: View {
             if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 MessageShareButton(text: text)
                 MessageSpeechButton(text: text, messageID: messageID)
+            }
+
+            if let quoteAction {
+                MessageIconActionButton(
+                    icon: "text.quote",
+                    name: "Quote in reply",
+                    hint: "Add this message to your reply as a quote",
+                    disabled: false, action: quoteAction)
+                    .accessibilityIdentifier("message-quote-in-reply")
             }
 
             if let editAction {

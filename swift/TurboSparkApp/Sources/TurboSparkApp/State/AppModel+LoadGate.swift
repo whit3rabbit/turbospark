@@ -118,6 +118,11 @@ extension AppModel {
         switch LoadDecision.decide(gate: gate, isResident: resident, confirmed: confirmed) {
         case .refuse(let gate):
             announceCannotLoad(gate)
+            // A chat load that cannot start leaves the strip above the
+            // composer, so Send is not just disabled with no stated reason.
+            if purpose != .serverAttach, let kind = ModelLoadFailure.Kind(gate: gate) {
+                modelLoadFailure = ModelLoadFailure(model: model, kind: kind, detail: "")
+            }
             return .refused(gate)
         case .confirm(let warning):
             pendingLoadConfirmation = PendingLoadConfirmation(model: model, warning: warning, purpose: purpose)

@@ -15,6 +15,7 @@ struct FilesSectionView: View {
     @State private var isImporting = false
     @State private var isExtracting = false
     @State private var importError: String?
+    @StateObject private var ingestQueue = SourceIngestQueue()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,6 +23,13 @@ struct FilesSectionView: View {
             Divider()
             if let importError {
                 errorRow(importError)
+                Divider()
+            }
+            if !ingestQueue.entries.isEmpty {
+                SourceIngestStagingView(
+                    queue: ingestQueue,
+                    canImport: !isExtracting && !model.isRunning,
+                    onRetry: retryImport)
                 Divider()
             }
             if rows.isEmpty {
@@ -181,14 +189,30 @@ struct FilesSectionView: View {
         isExtracting = true
         importError = nil
         Task {
-            let outcome = await AttachmentImporter.importDocuments(urls, into: model, chatID: chatID)
-            importError = outcome.errorText
+            // Per-file failures now show in the staging list with Retry, so
+            // the joined error row is kept only for picker errors.
+            let outcome = await ingestQueue.run(urls, into: model, chatID: chatID)
             isExtracting = false
-            if outcome.importedCount > 0 {
-                model.showToast(
-                    AppStrings.localized("Documents attached to this chat: \(outcome.importedCount)"),
-                    style: .success)
+            announce(outcome)
+        }
+    }
+
+    private func retryImport(_ id: UUID) {
+        isExtracting = true
+        importError = nil
+        Task {
+            if let outcome = await ingestQueue.retry(id, into: model) {
+                announce(outcome)
             }
+            isExtracting = false
+        }
+    }
+
+    private func announce(_ outcome: AttachmentImporter.Outcome) {
+        if outcome.importedCount > 0 {
+            model.showToast(
+                AppStrings.localized("Documents attached to this chat: \(outcome.importedCount)"),
+                style: .success)
         }
     }
 }

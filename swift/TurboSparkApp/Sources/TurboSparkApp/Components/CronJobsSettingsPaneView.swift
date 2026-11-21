@@ -123,6 +123,21 @@ struct CronJobsSettingsPaneView: View {
         return AppStrings.localized("Last run \(relative). Runs recorded: \(job.recentRuns.count)")
     }
 
+    /// Glyph plus word, so the outcome never rests on color alone.
+    private func lastRunResult(_ result: CronLastRunResult) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: result == .delivered ? "checkmark.circle" : "xmark.circle")
+                .accessibilityHidden(true)
+            if result == .delivered {
+                Text("delivered", bundle: .module)
+            } else {
+                Text("chat missing", bundle: .module)
+            }
+        }
+        .themedFont(.tiny)
+        .foregroundStyle(result == .delivered ? AnyShapeStyle(.appAccent) : AnyShapeStyle(AppAttention.color))
+    }
+
     private func jobRow(_ job: AppCronJob) -> some View {
         // A one-shot wakeup's cron field is a placeholder; only
         // `localizedHumanSchedule` knows to read `fireAt` instead.
@@ -186,10 +201,17 @@ struct CronJobsSettingsPaneView: View {
             Button {
                 expandedJobID = expandedJobID == job.id ? nil : job.id
             } label: {
-                Text(verbatim: runSummary(of: job))
-                    .themedFont(.tiny)
-                    .foregroundStyle(job.recentRuns.contains(where: { $0.status == "missed" })
-                        ? AnyShapeStyle(AppAttention.color) : AnyShapeStyle(.appSecondary))
+                HStack(spacing: 6) {
+                    Text(verbatim: runSummary(of: job))
+                        .themedFont(.tiny)
+                        .foregroundStyle(job.recentRuns.contains(where: { $0.status == "missed" })
+                            ? AnyShapeStyle(AppAttention.color) : AnyShapeStyle(.appSecondary))
+                    // The newest run's outcome beside "Last run", so a
+                    // failure is visible without opening the history.
+                    if let result = CronLastRunResult(job.recentRuns.first) {
+                        lastRunResult(result)
+                    }
+                }
             }
             .buttonStyle(.plain)
             .help(Text("Show run history", bundle: .module))
@@ -230,5 +252,22 @@ struct CronJobsSettingsPaneView: View {
             }
         }
         .appCardSurface(padding: 12)
+    }
+}
+
+/// The outcome of a job's newest recorded run, as the row's summary shows
+/// it. Read from the run history the scheduler already keeps; nil when
+/// there is no run or the status is one this build does not know, so an
+/// unknown state shows nothing rather than a wrong word.
+enum CronLastRunResult: Equatable {
+    case delivered
+    case missed
+
+    init?(_ run: AppCronJob.CronRunRecord?) {
+        switch run?.status {
+        case "fired": self = .delivered
+        case "missed": self = .missed
+        default: return nil
+        }
     }
 }

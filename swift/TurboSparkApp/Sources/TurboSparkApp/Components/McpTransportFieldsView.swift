@@ -35,8 +35,10 @@ struct McpStdioTransportFields: View {
                 monospacedEditor(text: $argsText, minHeight: 60, name: Text("Arguments (one per line or space-separated)", bundle: .module))
             }
 
-            labelledField(Text("Environment Variables (KEY=VALUE per line)", bundle: .module)) {
-                monospacedEditor(text: $envText, minHeight: 60, name: Text("Environment Variables (KEY=VALUE per line)", bundle: .module))
+            labelledField(Text("Environment Variables", bundle: .module)) {
+                // Rows rather than a text editor so each value can stay
+                // masked: env values are where API keys go.
+                McpEnvRowsEditor(text: $envText)
             }
 
             workingDirectoryField

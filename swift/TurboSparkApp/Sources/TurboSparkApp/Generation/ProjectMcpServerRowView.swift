@@ -35,7 +35,8 @@ struct ProjectMcpServerRowView: View {
                                 .clipShape(Capsule())
                         }
                     }
-                    Text(server.commandSummary)
+                    // Env values can appear in the command line; mask them here too.
+                    Text(McpEnvMasking.scrub(server.commandSummary, secrets: server.envSecretValues))
                         .themedCode(.small)
                         .foregroundStyle(.appSecondary)
                         .lineLimit(1)

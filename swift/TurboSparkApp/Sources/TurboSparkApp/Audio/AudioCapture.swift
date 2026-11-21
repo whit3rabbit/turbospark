@@ -40,7 +40,7 @@ final class AudioCaptureBudget: @unchecked Sendable {
 /// Capture owns no UI or model state. The sink must commit each chunk synchronously
 /// and must never wait for MainActor, so profile lock can safely drain it.
 final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
-    struct Microphone: Identifiable, Sendable { var id: UInt32; var name: String }
+    struct Microphone: Identifiable, Sendable { var id: UInt32; var name: String; var uid: String = "" }
     struct Application: Identifiable, Sendable { var id: Int32; var name: String }
     enum SystemSource: Equatable, Sendable { case none, all, application(Int32) }
     enum InputSource: String, CaseIterable, Sendable { case microphone, system }
@@ -152,7 +152,14 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
             var name: Unmanaged<CFString>?
             bytes = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
             guard AudioObjectGetPropertyData(id, &property, 0, nil, &bytes, &name) == noErr, let name else { return nil }
-            return Microphone(id: id, name: name.takeUnretainedValue() as String)
+            // The UID is what settings store: the object id changes across
+            // reboots and replugs. Reading HAL properties opens no input and
+            // shows no prompt.
+            var uidProperty = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDeviceUID, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+            var uid: Unmanaged<CFString>?
+            bytes = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+            let uidText = AudioObjectGetPropertyData(id, &uidProperty, 0, nil, &bytes, &uid) == noErr ? (uid?.takeUnretainedValue() as String?) ?? "" : ""
+            return Microphone(id: id, name: name.takeUnretainedValue() as String, uid: uidText)
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 

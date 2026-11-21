@@ -409,7 +409,13 @@ extension AppModel {
     }
 
     /// User approval action for a pending tool call, with optional session-level persistence.
-    public func approvePendingToolCall(id: UUID, alwaysAllowSession: Bool = false) {
+    ///
+    /// `recordAs` only labels the transcript record (a caller that persisted
+    /// a rule first passes `.allowedAlways`); what runs and what is granted
+    /// still follow `alwaysAllowSession` alone.
+    public func approvePendingToolCall(
+        id: UUID, alwaysAllowSession: Bool = false, recordAs: ToolApprovalDecision? = nil
+    ) {
         // **NOT WHILE A TURN IS ALREADY RUNNING** (state#76). The card is
         // reachable whenever it is on screen, and `generating` is lowered
         // while it waits (state#9) -- so if anything else raised it since
@@ -419,7 +425,16 @@ extension AppModel {
         // reach it.
         guard !generating, !submitting else { return }
         guard var call = pendingToolCall, call.id == id else { return }
+        // **AN EDITED COMMAND IS APPROVED ONCE** (`ToolCallCommandEdit`). The
+        // card offers no standing grant for it; this keeps a stray caller
+        // from granting the user's text as a session or persisted rule.
+        let isEdited = !ToolCallCommandEdit.allowsStandingGrant(call)
+        let alwaysAllowSession = alwaysAllowSession && !isEdited
+        let recordAs = isEdited ? nil : recordAs
         call.status = .running
+        let record = ToolApprovalRecord(
+            decision: recordAs ?? (alwaysAllowSession ? .allowedForChat : .allowedOnce), actor: .user)
+        call.approvalRecord = record
         // Captured before clearing: the chat the call was PROPOSED in, the
         // step it was proposed AT, and the PROJECT it was evaluated against --
         // never whatever `selectedChatID` / loop position / `selectedProject`
@@ -432,7 +447,12 @@ extension AppModel {
         let chatID = pendingToolCallChatID ?? selectedChatID
         let originStep = pendingToolCallStep
         let project = pendingToolCallProject ?? selectedProject
-        let batchCalls = pendingBatchCalls
+        // One verdict covers a parked batch, so every member carries it.
+        let batchCalls = pendingBatchCalls?.map { member -> AppToolCall in
+            var member = member
+            member.approvalRecord = record
+            return member
+        }
         let pendingValidation = pendingValidationCall
         clearPendingToolCall()
 
@@ -507,7 +527,9 @@ extension AppModel {
                 call, project: project, chatID: chatID, preMutationFingerprints: fingerprints,
                 webToolsEnabled: webSearchEnabled)
             call = executed.call
-            var result = executed.result
+            // Both commands ride on an edited call's result, so the model
+            // does not read the output as its own command's.
+            var result = ToolCallCommandEdit.annotate(executed.result, for: call)
             self.appendToolExecutionTurn(call: call, result: result, chatID: chatID)
             if executed.stopReason == nil {
                 let boundaryResult = await self.compactAtTodoBoundaryIfNeeded(
@@ -542,6 +564,8 @@ extension AppModel {
         guard !generating, !submitting else { return }
         guard var call = pendingToolCall, call.id == id else { return }
         call.status = .denied
+        let record = ToolApprovalRecord(decision: .denied, actor: policyReason == nil ? .user : .policy)
+        call.approvalRecord = record
         let chatID = pendingToolCallChatID ?? selectedChatID
         let originStep = pendingToolCallStep
         let project = pendingToolCallProject ?? selectedProject
@@ -557,6 +581,7 @@ extension AppModel {
         if let batchCalls, batchCalls.count > 1 {
             for var batchCall in batchCalls {
                 batchCall.status = .denied
+                batchCall.approvalRecord = record
                 self.appendToolExecutionTurn(
                     call: batchCall,
                     result: AppToolResult(
@@ -565,12 +590,14 @@ extension AppModel {
                     chatID: chatID)
             }
         } else {
-            let result = AppToolResult(
-                callID: call.id,
-                output: rejectionOutput,
-                isError: true,
-                durationSeconds: 0.0
-            )
+            let result = ToolCallCommandEdit.annotate(
+                AppToolResult(
+                    callID: call.id,
+                    output: rejectionOutput,
+                    isError: true,
+                    durationSeconds: 0.0
+                ),
+                for: call)
             self.appendToolExecutionTurn(call: call, result: result, chatID: chatID)
         }
 

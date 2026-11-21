@@ -130,7 +130,8 @@ enum ComposerAutocompleteEngine {
     static func slashCandidates(
         prefix: String,
         skills: [AppSkill],
-        builtIns: [BuiltInSlashCommand] = BuiltInSlashCommand.all
+        builtIns: [BuiltInSlashCommand] = BuiltInSlashCommand.all,
+        limit: Int = maxSuggestions
     ) -> [ComposerSuggestion] {
         let clean = prefix.lowercased()
         let commandRows = builtIns.map { ComposerSuggestion(builtIn: $0) }
@@ -151,7 +152,7 @@ enum ComposerAutocompleteEngine {
             .sorted {
                 $0.bucket != $1.bucket ? $0.bucket < $1.bucket : $0.suggestion.title < $1.suggestion.title
             }
-            .prefix(maxSuggestions)
+            .prefix(max(0, limit))
             .map(\.suggestion)
     }
 

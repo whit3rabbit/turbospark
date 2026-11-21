@@ -12,6 +12,7 @@ struct ChatRuntimeSettingsBindings {
     let instructionPinningEnabled: Binding<Bool>
     let microcompactMinimumSavingsTokens: Binding<Int>
     let instructionPinTokenCeiling: Binding<Int>
+    let followUpSuggestionsEnabled: Binding<Bool>
 
     init(model: AppModel) {
         chatToolsEnabled = Binding(
@@ -69,6 +70,13 @@ struct ChatRuntimeSettingsBindings {
             set: { value in
                 model.instructionPinTokenCeiling = MacAppSettings
                     .clampInstructionPinTokenCeiling(value)
+                model.persistSettingsDebounced()
+            }
+        )
+        followUpSuggestionsEnabled = Binding(
+            get: { model.followUpSuggestionsEnabled },
+            set: { value in
+                model.followUpSuggestionsEnabled = value
                 model.persistSettingsDebounced()
             }
         )

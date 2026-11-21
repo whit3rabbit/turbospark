@@ -128,9 +128,13 @@ extension AppModel {
     ) {
         guard let index = chats.firstIndex(where: { $0.id == chatID }) else { return }
         if chats[index].isGhost {
-            mutateGhostPayload(for: chatID) { change(&$0.messages) }
+            mutateGhostPayload(for: chatID) {
+                change(&$0.messages)
+                self.reasoningClock.stamp(&$0.messages, chatID: chatID)
+            }
         } else {
             change(&chats[index].messages)
+            reasoningClock.stamp(&chats[index].messages, chatID: chatID)
             chats[index].updatedAt = Date()
             persistChats()
             try? MemoryLedgerStore.shared.invalidateEvidence(
@@ -151,6 +155,7 @@ extension AppModel {
                 var messages = payload.messages
                 var anchor = payload.recoveryAnchor
                 change(&messages, &anchor)
+                self.reasoningClock.stamp(&messages, chatID: chatID)
                 payload.messages = messages
                 payload.recoveryAnchor = anchor
             }
@@ -158,6 +163,7 @@ extension AppModel {
             var messages = chats[index].messages
             var anchor = chats[index].recoveryAnchor
             change(&messages, &anchor)
+            reasoningClock.stamp(&messages, chatID: chatID)
             chats[index].messages = messages
             chats[index].recoveryAnchor = anchor
             chats[index].updatedAt = Date()
