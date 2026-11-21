@@ -2,21 +2,130 @@
   "schema": "turbospark.lab.family/1",
   "family": "inkling2_loop",
   "kind": "text",
-  "title": "Inkling 2 Mini: 24-layer MoE (128 experts, top 8) looped to 48 applications, relative-bias attention with per-token sinks, NVFP4 and MXFP8 experts; no decode flow yet",
-  "flow": "none",
-  "installs": [],
+  "title": "Inkling 2 Mini: 24-layer MoE (128 experts, top 8) looped to 48 applications, relative-bias attention with per-token sinks, NVFP4 and MXFP8 experts",
+  "flow": "inkling2",
+  "installs": [
+    {
+      "name": "inkling2-mini-gturbo",
+      "quant": "native NVFP4 (layers 0-19) and MXFP8 (20-23) experts, BF16 resident weights (thinkingmachines/inkling-2-mini, repacked)",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [],
+      "note": "18 GB install: 15.7 GB packed experts, about 3.5 GB resident"
+    }
+  ],
   "recommended": [],
   "sweeps": [],
-  "findings": [],
+  "findings": [
+    {
+      "id": "inkling2_loop.null-decode-2026-11-21",
+      "date": "2026-11-21",
+      "install": "inkling2-mini-gturbo",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "707915c2",
+      "workload": "tslab ab --null: protocol short-explanation, 64 decode, chunk off, default slots (48, streamed); 3 clean pairs",
+      "arms": {
+        "baseline": {},
+        "baseline-again": {}
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "median_improvement": -0.0404,
+        "null_floor": 0.007
+      },
+      "verdict": "loss",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "ink2-speed",
+        "record": "1795273072115-52129-16"
+      },
+      "conditions": "swap about 5 GB used; identical arms read a 4% order effect on 3 pairs, so a sub-5% verdict on this workload is not settled by 3 pairs",
+      "note": "the MAD floor (0.70%) is far below the identical-arm spread; read later verdicts against the spread"
+    },
+    {
+      "id": "inkling2_loop.slots-sweep-2026-11-21",
+      "date": "2026-11-21",
+      "install": "inkling2-mini-gturbo",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "707915c2",
+      "workload": "tslab sweep: protocol short-explanation, 64 decode, chunk off; s48@48/streamed against s96@96/streamed and s128@128/streamed; 3 clean pairs each",
+      "arms": {
+        "s48": {
+          "slots": "48",
+          "residency": "streamed"
+        },
+        "s128": {
+          "slots": "128",
+          "residency": "streamed"
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "median_improvement": 0.0346,
+        "ci": [
+          0.0327,
+          0.0349
+        ],
+        "s96_median_improvement": 0.0185
+      },
+      "verdict": "win",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "ink2-speed",
+        "record": "1795273309694-65257-31"
+      },
+      "conditions": "same session as the null above; s96 is noise (record 1795273309689-65257-30); 128 slots costs about 10 GiB more slot memory and prefill read slower",
+      "note": "with every expert cached there are no reads, yet decode moved 3.5%: the per-application idle gaps are submit and wake latency at the 48 host syncs, not expert copies"
+    },
+    {
+      "id": "inkling2_loop.resident-experts-2026-11-21",
+      "date": "2026-11-21",
+      "install": "inkling2-mini-gturbo",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "63b5e87a",
+      "workload": "tslab ab: protocol short-explanation, 64 decode, chunk off; s48@48/streamed against resident@8/streamed:TURBOSPARK_INKLING2_RESIDENT_EXPERTS=1; 7 eligible runs per arm, 0 clean pairs",
+      "arms": {
+        "s48": {
+          "slots": "48",
+          "residency": "streamed"
+        },
+        "resident": {
+          "slots": "8",
+          "residency": "streamed",
+          "env": {
+            "TURBOSPARK_INKLING2_RESIDENT_EXPERTS": "1"
+          }
+        }
+      },
+      "metric": "decode_tok_s",
+      "values": {
+        "s48_median_tok_s": 21.6,
+        "resident_median_tok_s": 36.8,
+        "s48_peak_gb": 6.57,
+        "resident_peak_gb": 19.0
+      },
+      "verdict": "inconclusive",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "ink2-speed",
+        "record": "1795274057444-99249-28"
+      },
+      "conditions": "every pair excluded by rule: the resident arm reads no experts (no_reads) and the streamed arm does, so the page-cache classes always differ; the medians are per-arm run records, not a paired verdict; swap 8.6 GB used; built from the working tree before the resident commit, on top of 63b5e87a",
+      "note": "resident mode is not bit-exact with the host-routed path: GPU and host exp round differently, 19/19 tokens identical but 262/265 top-1 against llama.cpp on a 265-token prompt (the 3 misses are top-2 swaps at llama.cpp margins 0.04 to 0.19); mean KL 5.6e-4 against 7.5e-4 for the host path"
+    }
+  ],
   "open_questions": [
-    "no install and no decode flow yet; the Metal kernels exist and are parity-tested in isolation",
-    "the CPU reference matched llama.cpp (top-1 19/19, mean KL 4.2e-4 on 19 tokens), which is a correctness check, not a lab measurement (docs/INKLING2_PHASE0.md)",
-    "decode bytes per token are an estimate (about 5 GB, BF16 attention dominant), not a measurement"
+    "resident experts against streamed has no paired verdict: tslab pairs only arms in the same page-cache class, and the two modes never are",
+    "resident experts as a default needs a memory policy (19 GB peak on a 36 GB machine) and a quality gate at its own exactness; both are human decisions",
+    "the CPU reference matched llama.cpp (top-1 19/19, mean KL 4.2e-4 on 19 tokens), a correctness check, not a lab measurement (docs/INKLING2_PHASE0.md)"
   ],
   "traps": [
     "layers 6-17 run three times per token: per-layer stats, prefetch keyed on layer + 1, and the router histogram all assume one application per layer",
     "MXFP8 is layers 20-23, not the full-attention layers 5, 11, 17, 23",
-    "the router logits must be F32: llama.cpp runs this router in F32, and FP16 can flip a near-tie"
+    "the router logits must be F32: llama.cpp runs this router in F32, and FP16 can flip a near-tie",
+    "an A/B between resident experts and any streamed arm is excluded pair by pair (page-cache class), so it always reads inconclusive"
   ],
   "docs": [
     "docs/INKLING2_PHASE0.md"

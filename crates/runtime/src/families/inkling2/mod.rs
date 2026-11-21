@@ -304,6 +304,13 @@ impl RealForwardRunner {
          -> Result<(), RealForwardError> {
             let t0 = std::time::Instant::now();
             layer_attention(c, pass, st, &arch, &cfg, n_blocks, slot, ip, msgs, position)?;
+            if st.resident.is_some() {
+                // Every expert is resident and the router runs on the GPU,
+                // so the application stays in this pass: no commit, no wait.
+                layer_moe_resident(c, pass, st, &arch, &cfg, slot, ip)?;
+                tr.encode_ms += t0.elapsed().as_secs_f64() * 1e3;
+                return Ok(());
+            }
             let committed =
                 std::mem::replace(pass, c.context.begin_pass_labeled("inkling2 routed")).commit();
             let t1 = std::time::Instant::now();
@@ -857,6 +864,21 @@ fn layer_moe(
         top_k as u32,
     )
     .map_err(g)?;
+    moe_tail(c, pass, st, arch, slot, ip)?;
+    Ok((plan.hits, plan.misses.len()))
+}
+
+/// The expert sum's short conv and the residual add, after either MoE form.
+fn moe_tail(
+    c: &mut Ctx<'_>,
+    pass: &gpu::PassEncoder,
+    st: &RealInkling2State,
+    arch: &model_io::ArchConfig,
+    slot: usize,
+    ip: usize,
+) -> Result<(), RealForwardError> {
+    let g = RealForwardError::Gpu;
+    let h = c.h;
     let fw = view(c.weights, c.index, &name(ip, "mlp_sconv.weight"))?;
     let s = &st.slots[slot];
     gpu::encode_inkling2_short_conv_decode(
@@ -871,8 +893,84 @@ fn layer_moe(
         arch.short_conv_kernel_size as u32,
     )
     .map_err(g)?;
-    gpu::encode_residual_add(c.context, pass, (&st.cur, 0), (&st.y2, 0), h as u32).map_err(g)?;
-    Ok((plan.hits, plan.misses.len()))
+    gpu::encode_residual_add(c.context, pass, (&st.cur, 0), (&st.y2, 0), h as u32).map_err(g)
+}
+
+/// The routed half with every expert resident: the GPU router writes the
+/// ranked ids and weights the indexed MoE pair reads, inside the same pass.
+/// Same selection rule as `route_sigmoid` (`inkling2_router_select_k8`,
+/// parity-tested against it in `inkling2_ops_parity.rs`).
+#[allow(clippy::too_many_arguments)]
+fn layer_moe_resident(
+    c: &mut Ctx<'_>,
+    pass: &gpu::PassEncoder,
+    st: &RealInkling2State,
+    arch: &model_io::ArchConfig,
+    cfg: &model_io::inkling2_config::Inkling2Config,
+    slot: usize,
+    ip: usize,
+) -> Result<(), RealForwardError> {
+    let g = RealForwardError::Gpu;
+    let (h, ffn, top_k) = (
+        c.h,
+        arch.moe_intermediate_size as usize,
+        arch.top_k_experts as usize,
+    );
+    if top_k != gpu::INKLING2_ROUTER_TOP_K {
+        return Err(RealForwardError::Unsupported(format!(
+            "resident experts route top-{} on the GPU; this install selects {top_k}",
+            gpu::INKLING2_ROUTER_TOP_K
+        )));
+    }
+    let r = st.resident.as_ref().expect("caller checked resident");
+    gpu::encode_inkling2_router_select(
+        c.context,
+        pass,
+        (&st.router_logits, 0),
+        (&r.bias[ip], 0),
+        (&r.sel, 0),
+        (&st.routing_w, 0),
+        r.n_experts,
+        arch.routed_scaling_factor as f32,
+    )
+    .map_err(g)?;
+    let layer = gpu::Inkling2ResidentLayer {
+        buffer: &r.layers[ip],
+        stride: r.strides[ip],
+        n_experts: r.n_experts,
+        sel: (&r.sel, 0),
+    };
+    let kind = st.kinds[ip];
+    gpu::encode_inkling2_moe_phase1_indexed(
+        c.context,
+        pass,
+        kind,
+        &layer,
+        &st.offsets[ip],
+        (&st.mn, 0),
+        (&st.acts, 0),
+        h as u32,
+        ffn as u32,
+        top_k as u32,
+        cfg.gate_softcap,
+        cfg.up_softcap,
+    )
+    .map_err(g)?;
+    gpu::encode_inkling2_moe_phase2_indexed(
+        c.context,
+        pass,
+        kind,
+        &layer,
+        &st.offsets[ip],
+        (&st.acts, 0),
+        (&st.routing_w, 0),
+        (&st.y, 0),
+        h as u32,
+        ffn as u32,
+        top_k as u32,
+    )
+    .map_err(g)?;
+    moe_tail(c, pass, st, arch, slot, ip)
 }
 
 /// `TURBOSPARK_INKLING2_TRACE=1` prints one line per token: where the

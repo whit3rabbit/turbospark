@@ -205,16 +205,20 @@ pub fn facts(f: ModelFamily) -> FamilyFacts {
             notes: &["open refuses it: only kernel benches at its shapes can run"],
         },
         Inkling2Loop => FamilyFacts {
-            flow: "none",
-            chunked_prefill: Support::No("no decode flow yet; open refuses the family".into()),
+            flow: "inkling2",
+            chunked_prefill: Support::No(
+                "prefill is the decode path one token at a time; chunked prefill is refused by name"
+                    .into(),
+            ),
             drafters: &[],
             steel_prefill: false,
-            decode_attention: "none",
+            decode_attention: "inkling2_rel_bias",
             phase_buckets: "none",
             probe_and_standin: false,
             notes: &[
-                "open refuses it: only kernel benches at its shapes can run",
                 "24 physical layers run as 48 applications (layers 6-17 loop three times)",
+                "phase buckets are not filled; TURBOSPARK_INKLING2_TRACE=1 prints a per-token split",
+                "TURBOSPARK_INKLING2_RESIDENT_EXPERTS=1 keeps every expert resident (about 15.7 GB) and runs a token as one command buffer",
             ],
         },
         Flint => FamilyFacts {

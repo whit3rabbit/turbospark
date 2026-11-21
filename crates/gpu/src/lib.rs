@@ -404,8 +404,9 @@ pub use moe_gguf::{
 };
 #[cfg(target_os = "macos")]
 pub use moe_inkling2::{
-    encode_inkling2_moe_phase1, encode_inkling2_moe_phase2, moe_inkling2_source,
-    Inkling2ExpertType, INKLING2_MAX_SLOTS, INKLING2_OUTER_SCALE_BYTES,
+    encode_inkling2_moe_phase1, encode_inkling2_moe_phase1_indexed, encode_inkling2_moe_phase2,
+    encode_inkling2_moe_phase2_indexed, moe_inkling2_source, Inkling2ExpertType,
+    Inkling2ResidentLayer, INKLING2_MAX_SLOTS, INKLING2_OUTER_SCALE_BYTES,
     MOE_INKLING2_REFLECT_FUNCTION,
 };
 #[cfg(target_os = "macos")]

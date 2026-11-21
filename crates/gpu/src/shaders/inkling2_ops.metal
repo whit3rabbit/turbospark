@@ -50,10 +50,12 @@ kernel void inkling2_router_select_k8(
         scores[i] = 1.0f / (1.0f + precise::exp(-logits[top_idx[i]]));
         sum += scores[i];
     }
-    const float inv = route_scale / (sum + 1e-20f);
+    // `scores / sum * scale`, in that order: `route_sigmoid`'s rounding, so
+    // the resident-expert path routes with the host path's exact weights.
+    const float denom = sum + 1e-20f;
     for (uint i = 0; i < 8; ++i) {
         out_indices[i] = top_idx[i];
-        out_weights[i] = half(scores[i] * inv);
+        out_weights[i] = half(scores[i] / denom * route_scale);
     }
 }
 

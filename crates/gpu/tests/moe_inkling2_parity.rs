@@ -15,8 +15,9 @@ use turbospark_compute::inkling2::{
     dequant_mxfp8_row, dequant_nvfp4_row, mxfp8_row_to_blocks, nvfp4_row_to_blocks, situ,
 };
 use turbospark_gpu::{
-    encode_inkling2_moe_phase1, encode_inkling2_moe_phase2, moe_inkling2_source,
-    Inkling2ExpertType, MetalContext, MoeExpertOffsets, RoutedBlobsBuffer, INKLING2_MAX_SLOTS,
+    encode_inkling2_moe_phase1, encode_inkling2_moe_phase1_indexed, encode_inkling2_moe_phase2,
+    encode_inkling2_moe_phase2_indexed, moe_inkling2_source, Inkling2ExpertType,
+    Inkling2ResidentLayer, MetalContext, MoeExpertOffsets, RoutedBlobsBuffer, INKLING2_MAX_SLOTS,
     INKLING2_OUTER_SCALE_BYTES, MAX_STREAMED_EXPERTS, MOE_INKLING2_REFLECT_FUNCTION,
 };
 
@@ -256,6 +257,73 @@ fn run_case(c: &Case) {
     pass.commit_and_wait();
 
     let got = read_f16(&y_buf, d_dim);
+
+    // The indexed pair over the same experts: one layer buffer holding a
+    // decoy expert (all 0xFF, which no `sel` entry names) and then the case's
+    // experts in REVERSE order, so slot `i` must read expert `len - i`. Same
+    // experts, same slot order: the output must match the blob pair bit for
+    // bit.
+    let stride = blobs[0].length() as usize;
+    let mut layer = vec![0xFFu8; stride];
+    for blob in blobs.iter().rev() {
+        let bytes = unsafe { std::slice::from_raw_parts(blob.contents() as *const u8, stride) };
+        layer.extend_from_slice(bytes);
+    }
+    let n_experts = (blobs.len() + 1) as u32;
+    let sel: Vec<u32> = (0..c.top_k).map(|i| (blobs.len() - i) as u32).collect();
+    let sel_bytes: Vec<u8> = sel.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let layer_buf = context.new_buffer_with_data(&layer);
+    let sel_buf = context.new_buffer_with_data(&sel_bytes);
+    let acts2 = context.new_buffer_with_data(&to_le(&vec![nan; MAX_STREAMED_EXPERTS * f_dim]));
+    let y2 = context.new_output_buffer((d_dim * 2) as u64);
+    let resident = Inkling2ResidentLayer {
+        buffer: &layer_buf,
+        stride: stride as u64,
+        n_experts,
+        sel: (&sel_buf, 0),
+    };
+    let pass = context.begin_pass();
+    encode_inkling2_moe_phase1_indexed(
+        &mut context,
+        &pass,
+        c.gate_up,
+        &resident,
+        &offsets,
+        (&x_buf, 0),
+        (&acts2, 0),
+        d_dim as u32,
+        f_dim as u32,
+        c.top_k as u32,
+        c.caps.0,
+        c.caps.1,
+    )
+    .expect("indexed phase1");
+    encode_inkling2_moe_phase2_indexed(
+        &mut context,
+        &pass,
+        c.down,
+        &resident,
+        &offsets,
+        (&acts2, 0),
+        (&routing_buf, 0),
+        (&y2, 0),
+        d_dim as u32,
+        f_dim as u32,
+        c.top_k as u32,
+    )
+    .expect("indexed phase2");
+    pass.commit_and_wait();
+    let got2 = read_f16(&y2, d_dim);
+    assert!(
+        got.iter()
+            .zip(&got2)
+            .all(|(a, b)| a.to_bits() == b.to_bits()),
+        "{:?}/{:?} dims={:?} top_k={}: the indexed pair differs from the blob pair",
+        c.gate_up,
+        c.down,
+        c.dims,
+        c.top_k
+    );
     let mut peak = 0f32;
     for d in 0..d_dim {
         let want = expected[d];

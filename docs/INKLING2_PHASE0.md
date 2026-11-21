@@ -348,7 +348,10 @@ Stage A: reachable and correct (decode only)
    `llama_context_params.op_offload = false` for a CPU-only reference.
    Reproduce with `inkling2_logits <install> <ids> <out> <max ctx> 64` and a
    sparse dumper that writes the same rows.
-4. Tokenizer dialect and `probe/safetensors.rs` arm; CLI reachability.
+4. PARTLY DONE: tokenizer dialect (`ChatDialect::Inkling2`, 2026-11-21:
+   no BOS, stop `<|content_model_end_sampling|>`, thought span
+   `<|content_thinking|>` to the next `<|end_message|>`; tslab now opens the
+   install). Remaining: `probe/safetensors.rs` arm and CLI reachability.
 5. DONE: long-context check (above). Remaining: memory oracle, quality
    gates, then a catalog row.
 
@@ -406,6 +409,25 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   directly (powermetrics needs root). Side finding: the GPU saw the host's
   stop-flag write about 17 ms late, so a flag alone cannot end such a spin
   promptly; a cap is required.
+- OPT-IN (2026-11-21): resident experts, `TURBOSPARK_INKLING2_RESIDENT_EXPERTS=1`.
+  tslab found the per-application idle gaps (trace: GPU busy 46.8%, idle gap
+  p50 405 us) are not expert copies: 128 cache slots remove every read and
+  moved decode only +3.46% (ledger `ink2-speed` 1795273309694-65257-31,
+  against a null that read a 4% order effect). The gaps are submit and wake
+  latency at the 48 host syncs. With every expert resident (one GPU buffer
+  per layer, read from the packed layer file at open, expert `e` at
+  `e * stride`), routing runs on the GPU (`inkling2_router_select_k8`) and
+  the indexed MoE pair reads the selected experts in place, so a token is
+  one command buffer. Per-arm run records (no paired verdict: tslab excludes
+  pairs whose page-cache classes differ, and resident reads nothing): 48
+  streamed slots 21.6 tok/s median of 7, resident 36.8 of 7, peak 6.6 to
+  19.0 GB, swap 8.6 GB used (record 1795274057444-99249-28). The indexed pair
+  is bit-identical to the blob pair on the same experts (parity test, slot
+  mutant fails). The mode is NOT bit-exact with the host-routed path: GPU and
+  host `exp` round differently, so 19/19 tokens are identical but 262/265
+  top-1 against llama.cpp on the 265-token prompt (the 3 misses are top-2
+  swaps at llama.cpp margins 0.04 to 0.19), mean KL 5.6e-4 against 7.5e-4.
+  Off by default: a default needs a memory policy and a quality gate.
 - The router round trip: 48 GPU-to-CPU syncs per token. Every family pays one
   per MoE layer today. The routed pipeline overlaps the next layer; measure
   before designing past it.

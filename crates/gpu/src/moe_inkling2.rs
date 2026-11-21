@@ -78,6 +78,20 @@ impl Inkling2ExpertType {
             Inkling2ExpertType::Mxfp8 => "moe_inkling2_phase2_mxfp8",
         }
     }
+
+    fn phase1_idx_kernel(self) -> &'static str {
+        match self {
+            Inkling2ExpertType::Nvfp4 => "moe_inkling2_phase1_idx_nvfp4",
+            Inkling2ExpertType::Mxfp8 => "moe_inkling2_phase1_idx_mxfp8",
+        }
+    }
+
+    fn phase2_idx_kernel(self) -> &'static str {
+        match self {
+            Inkling2ExpertType::Nvfp4 => "moe_inkling2_phase2_idx_nvfp4",
+            Inkling2ExpertType::Mxfp8 => "moe_inkling2_phase2_idx_mxfp8",
+        }
+    }
 }
 
 /// This module's compiled library, for reflecting its `RoutedBlobs` layout
@@ -194,6 +208,140 @@ pub fn encode_inkling2_moe_phase2(
             (u32_bytes(&d_dim), 5),
             (u32_bytes(&f_dim), 6),
             (u32_bytes(&top_k), 7),
+        ],
+        u64::from(d_dim),
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
+/// One layer's experts resident in a single buffer, as the packed layer file
+/// lays them out: expert `e` at byte `e * stride`, `n_experts` of them. The
+/// indexed pair reads the slots' experts through a GPU-side `sel` list
+/// (`u32[top_k]`, router ranking order) instead of host-bound blobs.
+#[derive(Clone, Copy)]
+pub struct Inkling2ResidentLayer<'a> {
+    pub buffer: &'a metal::Buffer,
+    pub stride: u64,
+    pub n_experts: u32,
+    pub sel: (&'a metal::Buffer, u64),
+}
+
+fn check_resident(kind: Inkling2ExpertType, l: &Inkling2ResidentLayer<'_>) -> Result<(), GpuError> {
+    // NVFP4 rows are read as 32-bit words; a stride that is not a multiple
+    // of 4 would misalign every expert past the first.
+    if l.n_experts == 0
+        || l.stride == 0
+        || (kind == Inkling2ExpertType::Nvfp4 && l.stride % 4 != 0)
+        || l.buffer.length() < l.stride * u64::from(l.n_experts)
+    {
+        return Err(GpuError::InvalidInput(format!(
+            "resident expert layer: stride {} x {} experts does not fit a {} B buffer \
+             (NVFP4 needs a 4-byte stride)",
+            l.stride,
+            l.n_experts,
+            l.buffer.length()
+        )));
+    }
+    Ok(())
+}
+
+/// [`encode_inkling2_moe_phase1`] over a resident layer and a GPU `sel` list.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_inkling2_moe_phase1_indexed(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    kind: Inkling2ExpertType,
+    layer: &Inkling2ResidentLayer<'_>,
+    offsets: &MoeExpertOffsets,
+    x: (&metal::Buffer, u64),
+    acts: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+    gate_cap: f32,
+    up_cap: f32,
+) -> Result<(), GpuError> {
+    check(kind, "d_dim", d_dim, top_k)?;
+    check_resident(kind, layer)?;
+    if f_dim == 0 {
+        return Err(GpuError::InvalidInput("f_dim must be positive".into()));
+    }
+    let pipeline = context.pipeline(
+        SOURCE,
+        kind.phase1_idx_kernel(),
+        &moe_function_constants(false),
+        &constants_key(false),
+    )?;
+    let mut caps = [0u8; 8];
+    caps[..4].copy_from_slice(&gate_cap.to_le_bytes());
+    caps[4..].copy_from_slice(&up_cap.to_le_bytes());
+    let rows = u64::from(top_k) * u64::from(f_dim);
+    pass.encode_threadgroups(
+        &pipeline,
+        &[
+            (layer.buffer, 0, 0),
+            (x.0, 2, x.1),
+            (acts.0, 3, acts.1),
+            (layer.sel.0, 8, layer.sel.1),
+        ],
+        &[
+            (&offsets.bytes(), 1),
+            (u32_bytes(&d_dim), 4),
+            (u32_bytes(&f_dim), 5),
+            (u32_bytes(&top_k), 6),
+            (&caps, 7),
+            (&layer.stride.to_le_bytes(), 9),
+            (u32_bytes(&layer.n_experts), 10),
+        ],
+        rows.div_ceil(ROWS_PER_THREADGROUP),
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
+/// [`encode_inkling2_moe_phase2`] over a resident layer and a GPU `sel` list.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_inkling2_moe_phase2_indexed(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    kind: Inkling2ExpertType,
+    layer: &Inkling2ResidentLayer<'_>,
+    offsets: &MoeExpertOffsets,
+    acts: (&metal::Buffer, u64),
+    routing_w: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+) -> Result<(), GpuError> {
+    check(kind, "f_dim", f_dim, top_k)?;
+    check_resident(kind, layer)?;
+    if d_dim == 0 {
+        return Err(GpuError::InvalidInput("d_dim must be positive".into()));
+    }
+    let pipeline = context.pipeline(
+        SOURCE,
+        kind.phase2_idx_kernel(),
+        &moe_function_constants(false),
+        &constants_key(false),
+    )?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[
+            (layer.buffer, 0, 0),
+            (acts.0, 2, acts.1),
+            (routing_w.0, 3, routing_w.1),
+            (y.0, 4, y.1),
+            (layer.sel.0, 8, layer.sel.1),
+        ],
+        &[
+            (&offsets.bytes(), 1),
+            (u32_bytes(&d_dim), 5),
+            (u32_bytes(&f_dim), 6),
+            (u32_bytes(&top_k), 7),
+            (&layer.stride.to_le_bytes(), 9),
+            (u32_bytes(&layer.n_experts), 10),
         ],
         u64::from(d_dim),
         THREADS_PER_GROUP,

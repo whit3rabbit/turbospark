@@ -47,6 +47,10 @@ pub(crate) struct RealInkling2State {
     pub(crate) offsets: Vec<gpu::MoeExpertOffsets>,
     pub(crate) kinds: Vec<gpu::Inkling2ExpertType>,
     pub(crate) routed: gpu::RoutedBlobsBuffer,
+    /// Off unless `TURBOSPARK_INKLING2_RESIDENT_EXPERTS=1`: every expert of
+    /// every layer resident, so routing and the MoE run on the GPU and a token
+    /// is one command buffer (`mod.rs`).
+    pub(crate) resident: Option<ResidentExperts>,
     /// Per physical layer, host copies of the F32 router bias.
     pub(crate) router_bias: Vec<Vec<f32>>,
     /// Per core layer, the four message queries [Q, K, V, FFN] as F32 rows.
@@ -363,6 +367,17 @@ impl RealInkling2State {
             });
             kinds.push(kind);
         }
+        let resident = if resident_experts_requested() {
+            Some(ResidentExperts::load(
+                context,
+                install_dir,
+                &layout,
+                &router_bias,
+                experts,
+            )?)
+        } else {
+            None
+        };
         let routed = gpu::RoutedBlobsBuffer::new_for(
             context,
             gpu::moe_inkling2_source(),
@@ -407,6 +422,7 @@ impl RealInkling2State {
             })
             .collect();
         Ok(RealInkling2State {
+            resident,
             max_ctx,
             slots,
             offsets,
@@ -447,6 +463,84 @@ impl RealInkling2State {
             y: half(context, h),
             y2: half(context, h),
             cfg,
+        })
+    }
+}
+
+fn resident_experts_requested() -> bool {
+    std::env::var("TURBOSPARK_INKLING2_RESIDENT_EXPERTS").as_deref() == Ok("1")
+}
+
+/// Every routed expert resident in one GPU buffer per physical layer, copied
+/// from the packed layer file as written (expert `e` at `e * stride`), plus
+/// the router biases on the GPU and the selection the router writes. About
+/// 15.7 GB on the Mini, on top of whatever slot cache the open allocated.
+pub(crate) struct ResidentExperts {
+    pub(crate) layers: Vec<gpu::MetalBuffer>,
+    pub(crate) strides: Vec<u64>,
+    pub(crate) bias: Vec<gpu::MetalBuffer>,
+    /// `u32[top_k]` ranked expert ids, written by the GPU router each
+    /// application and read by the indexed MoE pair in the same buffer.
+    pub(crate) sel: gpu::MetalBuffer,
+    pub(crate) n_experts: u32,
+}
+
+impl ResidentExperts {
+    fn load(
+        context: &mut gpu::MetalContext,
+        install_dir: &std::path::Path,
+        layout: &model_io::PackedExpertsLayout,
+        router_bias: &[Vec<f32>],
+        experts: usize,
+    ) -> Result<Self, RealForwardError> {
+        let unsupported = RealForwardError::Unsupported;
+        let mut layers = Vec::with_capacity(layout.layers.len());
+        let mut strides = Vec::with_capacity(layout.layers.len());
+        for (l, ll) in layout.layers.iter().enumerate() {
+            let stride = ll.expert_stride;
+            // The kernels address expert `e` at `e * stride`: refuse a layer
+            // file that does not lay its experts out that way.
+            if ll.experts.len() != experts
+                || ll
+                    .experts
+                    .iter()
+                    .enumerate()
+                    .any(|(i, e)| e.expert != i || e.offset != i as u64 * stride)
+            {
+                return Err(unsupported(format!(
+                    "resident experts: layer {l} does not place expert e at e * {stride}"
+                )));
+            }
+            let path = install_dir.join("packed_experts").join(&ll.file);
+            let mut bytes = std::fs::read(&path).map_err(|e| {
+                unsupported(format!("resident experts: read {}: {e}", path.display()))
+            })?;
+            let want = stride as usize * experts;
+            if bytes.len() < want {
+                return Err(unsupported(format!(
+                    "resident experts: {} is {} B, expected {want}",
+                    path.display(),
+                    bytes.len()
+                )));
+            }
+            bytes.truncate(want);
+            layers.push(context.new_buffer_with_data(&bytes));
+            strides.push(stride);
+        }
+        let bias = router_bias
+            .iter()
+            .map(|b| {
+                let bytes: Vec<u8> = b.iter().flat_map(|v| v.to_le_bytes()).collect();
+                context.new_buffer_with_data(&bytes)
+            })
+            .collect();
+        let sel = context.new_buffer_with_data(&[0u8; 4 * gpu::INKLING2_ROUTER_TOP_K]);
+        Ok(Self {
+            layers,
+            strides,
+            bias,
+            sel,
+            n_experts: experts as u32,
         })
     }
 }
