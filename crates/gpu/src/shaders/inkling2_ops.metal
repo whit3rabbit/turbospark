@@ -250,7 +250,9 @@ kernel void inkling2_rel_table(
 // threadgroup memory together with the sink: the sink logit t joins the
 // denominator with a zero value, so out = sum e^(s-M) v / (e^(t-M) + sum
 // e^(s-M)). logit = q.k / sqrt(head_dim) + table[h, pos - kpos] (no bias at
-// distance >= extent). K and V are FP16 `[n_pos, kv_heads, head_dim]`.
+// distance >= extent). K and V are FP16 `[ring, kv_heads, head_dim]`, position
+// kp at row kp % ring: a sliding-window slot keeps a window-sized ring, a full
+// slot passes ring >= pos + 1 so the index is the position.
 constant constexpr uint kInkAttnMaxPerLane = 4;   // head_dim <= 128
 
 kernel void inkling2_attention_decode(
@@ -266,6 +268,7 @@ kernel void inkling2_attention_decode(
     constant uint&       group    [[buffer(9)]],
     constant uint&       head_dim [[buffer(10)]],
     constant uint&       extent   [[buffer(11)]],
+    constant uint&       ring     [[buffer(12)]],
     uint                 h        [[threadgroup_position_in_grid]],
     uint                 sg_idx   [[simdgroup_index_in_threadgroup]],
     uint                 lane     [[thread_index_in_simdgroup]]
@@ -284,7 +287,8 @@ kernel void inkling2_attention_decode(
     float l = 0.0f;
     float acc[kInkAttnMaxPerLane] = {0.0f, 0.0f, 0.0f, 0.0f};
     for (uint kp = first + sg_idx; kp <= pos; kp += 8u) {
-        device const half* kr = k + ulong(kp) * kvd + kvh * head_dim + lane * per;
+        const ulong row = ulong(kp % ring) * kvd + kvh * head_dim + lane * per;
+        device const half* kr = k + row;
         float s = 0.0f;
         for (uint j = 0; j < per; ++j) s = fma(qv[j], float(kr[j]), s);
         s = simd_sum(s) * scale;
@@ -294,7 +298,7 @@ kernel void inkling2_attention_decode(
         const float corr = precise::exp(m - m_new);
         const float w = precise::exp(s - m_new);
         l = l * corr + w;
-        device const half* vr = v + ulong(kp) * kvd + kvh * head_dim + lane * per;
+        device const half* vr = v + row;
         for (uint j = 0; j < per; ++j) acc[j] = fma(w, float(vr[j]), acc[j] * corr);
         m = m_new;
     }

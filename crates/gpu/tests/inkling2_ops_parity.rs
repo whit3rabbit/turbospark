@@ -416,6 +416,14 @@ fn read_f32(buffer: &metal::Buffer, n: usize) -> Vec<f32> {
 /// One query at `pos` over `first..=pos`, Mini head shapes. `sink_scale`
 /// sets how much the sink competes with the positions.
 fn run_attention(n_pos: usize, first: usize, extent: usize, sink_scale: f32) {
+    run_attention_ring(n_pos, first, extent, sink_scale, n_pos);
+}
+
+/// [`run_attention`] with the K/V rows stored in a `ring`-row buffer
+/// (position `kp` at row `kp % ring`), as a sliding-window slot keeps them.
+/// Rows outside the window hold a large poison value, so reading one of them
+/// instead of the window's row moves the output far past the tolerance.
+fn run_attention_ring(n_pos: usize, first: usize, extent: usize, sink_scale: f32, ring: usize) {
     let (heads, kv_heads, hd, d_rel) = (24usize, 8usize, 128usize, 16usize);
     let pos = n_pos - 1;
     let mut s = 1234u32 + n_pos as u32;
@@ -470,8 +478,17 @@ fn run_attention(n_pos: usize, first: usize, extent: usize, sink_scale: f32) {
     let p_buf = context.new_buffer_with_data(&leb16(&proj));
     let t_buf = context.new_output_buffer((heads * extent * 4) as u64);
     let q_buf = context.new_buffer_with_data(&le16(&q16));
-    let k_buf = context.new_buffer_with_data(&le16(&k16));
-    let v_buf = context.new_buffer_with_data(&le16(&v16));
+    let kvd = kv_heads * hd;
+    let to_ring = |x: &[f16]| {
+        let mut r = vec![f16::from_f32(30.0); ring * kvd];
+        for kp in first..=pos {
+            r[(kp % ring) * kvd..(kp % ring + 1) * kvd]
+                .copy_from_slice(&x[kp * kvd..(kp + 1) * kvd]);
+        }
+        r
+    };
+    let k_buf = context.new_buffer_with_data(&le16(&to_ring(&k16)));
+    let v_buf = context.new_buffer_with_data(&le16(&to_ring(&v16)));
     let s_buf = context.new_buffer_with_data(&le16(&sinks16));
     let o_buf = context.new_output_buffer((heads * hd * 2) as u64);
     let shape = Inkling2AttnShape {
@@ -479,6 +496,7 @@ fn run_attention(n_pos: usize, first: usize, extent: usize, sink_scale: f32) {
         kv_heads: kv_heads as u32,
         head_dim: hd as u32,
         extent: extent as u32,
+        ring: ring as u32,
     };
     let pass = context.begin_pass();
     encode_inkling2_rel_table(
@@ -533,6 +551,20 @@ fn attention_full_with_positions_past_the_extent() {
 #[test]
 fn attention_sliding_window() {
     run_attention(70, 30, 64, 2.0);
+}
+
+/// A sliding-window slot past its first wrap: the Mini's 1024-row ring at
+/// position 2600, so the window `1577..=2600` straddles the ring's end.
+#[test]
+fn attention_sliding_window_ring_after_wrapping() {
+    run_attention_ring(2601, 2601 - 1024, 1024, 2.0, 1024);
+}
+
+/// A full slot at a long position: 1500 positions against the Mini's
+/// 1024-distance bias extent, so the oldest 476 get no bias.
+#[test]
+fn attention_full_long_context_past_the_mini_extent() {
+    run_attention(1500, 0, 1024, 2.0);
 }
 
 /// Fewer positions than SIMD groups (the first token among them): the empty

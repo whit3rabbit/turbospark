@@ -274,19 +274,26 @@ impl RealForwardRunner {
         );
         let core = core_end - core_start;
         let mut n_blocks = 0usize;
+        let trace = trace_enabled();
+        let t_token = std::time::Instant::now();
+        let mut tr = TokenTrace::default();
         let mut apply = |c: &mut Ctx<'_>,
                          pass: &mut gpu::PassEncoder,
                          st: &mut RealInkling2State,
                          n_blocks: &mut usize,
                          slot: usize,
                          ip: usize,
+                         tr: &mut TokenTrace,
                          msgs: bool|
          -> Result<(), RealForwardError> {
+            let t0 = std::time::Instant::now();
             layer_attention(c, pass, st, &arch, &cfg, n_blocks, slot, ip, msgs, position)?;
             let committed =
                 std::mem::replace(pass, c.context.begin_pass_labeled("inkling2 routed")).commit();
-            committed.wait_with_gpu_time();
-            layer_moe(
+            let t1 = std::time::Instant::now();
+            tr.gpu_ms += committed.wait_with_gpu_time() * 1e3;
+            let t2 = std::time::Instant::now();
+            let (hits, misses) = layer_moe(
                 c,
                 pass,
                 st,
@@ -296,11 +303,17 @@ impl RealForwardRunner {
                 &self.slot_buffers,
                 slot,
                 ip,
-            )
+            )?;
+            tr.encode_ms += (t1 - t0).as_secs_f64() * 1e3;
+            tr.wait_ms += (t2 - t1).as_secs_f64() * 1e3;
+            tr.moe_host_ms += t2.elapsed().as_secs_f64() * 1e3;
+            tr.hits += hits;
+            tr.misses += misses;
+            Ok(())
         };
 
         for ip in 0..core_start {
-            apply(&mut c, &mut pass, st, &mut n_blocks, ip, ip, false)?;
+            apply(&mut c, &mut pass, st, &mut n_blocks, ip, ip, &mut tr, false)?;
         }
         c.copy(&pass, (&st.cur, 0), (&st.prelude, 0), h)?;
         let prelude_blocks = n_blocks;
@@ -344,11 +357,20 @@ impl RealForwardRunner {
                     )
                     .map_err(RealForwardError::Gpu)?;
                 }
-                apply(&mut c, &mut pass, st, &mut n_blocks, slot, ip, p > 0)?;
+                apply(
+                    &mut c,
+                    &mut pass,
+                    st,
+                    &mut n_blocks,
+                    slot,
+                    ip,
+                    &mut tr,
+                    p > 0,
+                )?;
             }
         }
         for ip in core_end..layers {
-            apply(&mut c, &mut pass, st, &mut n_blocks, ip, ip, false)?;
+            apply(&mut c, &mut pass, st, &mut n_blocks, ip, ip, &mut tr, false)?;
         }
 
         if !self.skip_head {
@@ -372,7 +394,10 @@ impl RealForwardRunner {
             )
             .map_err(RealForwardError::Gpu)?;
         }
-        pass.commit_and_wait_with_gpu_time();
+        tr.gpu_ms += pass.commit_and_wait_with_gpu_time() * 1e3;
+        if trace {
+            tr.report(position, t_token.elapsed().as_secs_f64() * 1e3);
+        }
         self.kv.advance();
         if self.skip_head {
             return Ok(());
@@ -527,9 +552,11 @@ fn layer_attention(
         )?;
     }
 
-    // Convs write straight into this slot's KV row at `position`.
+    // Convs write straight into this slot's KV row for `position` (a ring
+    // row on a sliding-window slot, which overwrites the position that just
+    // left the window).
     let s = &st.slots[slot];
-    let row_off = (position * kvd * 2) as u64;
+    let row_off = ((position % s.rows) * kvd * 2) as u64;
     let kw = view(c.weights, c.index, &a("k_sconv.weight"))?;
     let vw = view(c.weights, c.index, &a("v_sconv.weight"))?;
     let dyn_k = full.then_some(((&st.dk, 0u64), kvh as u32));
@@ -632,6 +659,7 @@ fn layer_attention(
         kv_heads: kvh as u32,
         head_dim: hd as u32,
         extent,
+        ring: s.rows as u32,
     };
     gpu::encode_inkling2_attention_decode(
         c.context,
@@ -739,7 +767,7 @@ fn layer_moe(
     slot_buffers: &[Vec<gpu::MetalBuffer>],
     slot: usize,
     ip: usize,
-) -> Result<(), RealForwardError> {
+) -> Result<(usize, usize), RealForwardError> {
     let g = RealForwardError::Gpu;
     let (h, ffn, experts, top_k) = (
         c.h,
@@ -833,5 +861,39 @@ fn layer_moe(
         arch.short_conv_kernel_size as u32,
     )
     .map_err(g)?;
-    gpu::encode_residual_add(c.context, pass, (&st.cur, 0), (&st.y2, 0), h as u32).map_err(g)
+    gpu::encode_residual_add(c.context, pass, (&st.cur, 0), (&st.y2, 0), h as u32).map_err(g)?;
+    Ok((plan.hits, plan.misses.len()))
+}
+
+/// `TURBOSPARK_INKLING2_TRACE=1` prints one line per token: where the
+/// wall time goes between host encoding, the 48 commit-and-wait round trips,
+/// the host routing and expert reads, and GPU execution. A diagnostic, not a
+/// benchmark: it adds no syncs, but the host timers include scheduler noise.
+fn trace_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TURBOSPARK_INKLING2_TRACE").as_deref() == Ok("1"))
+}
+
+#[derive(Default)]
+struct TokenTrace {
+    /// Host time encoding each application's attention half.
+    encode_ms: f64,
+    /// Host time blocked in the per-application wait.
+    wait_ms: f64,
+    /// Host routing, expert plan, reads and MoE encoding.
+    moe_host_ms: f64,
+    /// Summed GPU execution of every command buffer of the token.
+    gpu_ms: f64,
+    hits: usize,
+    misses: usize,
+}
+
+impl TokenTrace {
+    fn report(&self, position: usize, wall_ms: f64) {
+        eprintln!(
+            "inkling2 trace pos {position} wall {wall_ms:.1} ms: gpu {:.1}, wait {:.1}, \
+             encode {:.1}, moe host {:.1} ms; experts {} hit / {} read",
+            self.gpu_ms, self.wait_ms, self.encode_ms, self.moe_host_ms, self.hits, self.misses
+        );
+    }
 }

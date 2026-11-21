@@ -249,6 +249,9 @@ pub struct Inkling2AttnShape {
     pub kv_heads: u32,
     pub head_dim: u32,
     pub extent: u32,
+    /// Rows in the K/V buffers: position `kp` lives at row `kp % ring`. A
+    /// sliding-window slot passes its window, a full slot its capacity.
+    pub ring: u32,
 }
 
 /// The largest head the decode attention serves (4 channels per lane).
@@ -257,7 +260,8 @@ pub const INKLING2_ATTN_MAX_HEAD_DIM: u32 = 128;
 /// Decode attention for the query at `pos` over cached positions
 /// `first..=pos`, with the relative-bias `table` (from
 /// [`encode_inkling2_rel_table`]) and FP16 per-head `sinks`. `q` FP16
-/// `[heads, head_dim]`; `k`, `v` FP16 `[n_pos, kv_heads, head_dim]`.
+/// `[heads, head_dim]`; `k`, `v` FP16 `[shape.ring, kv_heads, head_dim]`,
+/// position `kp` at row `kp % ring`, so `pos - first < ring`.
 #[allow(clippy::too_many_arguments)]
 pub fn encode_inkling2_attention_decode(
     context: &mut MetalContext,
@@ -280,6 +284,8 @@ pub fn encode_inkling2_attention_decode(
         || s.head_dim > INKLING2_ATTN_MAX_HEAD_DIM
         || s.extent == 0
         || first > pos
+        || s.ring == 0
+        || pos - first >= s.ring
     {
         return Err(invalid(format!(
             "Inkling 2 attention: unsupported shape {s:?} or range {first}..={pos}"
@@ -304,6 +310,7 @@ pub fn encode_inkling2_attention_decode(
             (u32_bytes(&group), 9),
             (u32_bytes(&s.head_dim), 10),
             (u32_bytes(&s.extent), 11),
+            (u32_bytes(&s.ring), 12),
         ],
         u64::from(s.heads),
         256,

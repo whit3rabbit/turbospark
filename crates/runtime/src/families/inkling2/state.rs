@@ -27,6 +27,9 @@ pub(crate) fn name(layer: usize, suffix: &str) -> String {
 
 /// One cache slot's KV and conv state.
 pub(crate) struct SlotState {
+    /// K/V rows: position `p` lives at row `p % rows`. A sliding-window slot
+    /// keeps a window-sized ring; a full slot keeps every position.
+    pub(crate) rows: usize,
     pub(crate) k: gpu::MetalBuffer,
     pub(crate) v: gpu::MetalBuffer,
     pub(crate) tail_k: gpu::MetalBuffer,
@@ -367,14 +370,32 @@ impl RealInkling2State {
             context.new_buffer_with_data(&vec![0u8; n * 2])
         };
         let n_slots = cfg.slots(layers as u32) as usize;
+        let window = arch.sliding_window as usize;
+        if window == 0 {
+            return Err(unsupported("zero sliding window".into()));
+        }
         let slots = (0..n_slots)
-            .map(|_| SlotState {
-                k: half(context, max_ctx * kvd),
-                v: half(context, max_ctx * kvd),
-                tail_k: zeros(context, (taps - 1) * kvd),
-                tail_v: zeros(context, (taps - 1) * kvd),
-                tail_o: zeros(context, (taps - 1) * h),
-                tail_f: zeros(context, (taps - 1) * h),
+            .map(|slot| {
+                let ip = compute::inkling2::layer_phys(
+                    slot,
+                    layers,
+                    cfg.core_start as usize,
+                    cfg.core_end as usize,
+                );
+                let rows = if arch.full_attention_layer_mask[ip] == 1 {
+                    max_ctx
+                } else {
+                    max_ctx.min(window)
+                };
+                SlotState {
+                    rows,
+                    k: half(context, rows * kvd),
+                    v: half(context, rows * kvd),
+                    tail_k: zeros(context, (taps - 1) * kvd),
+                    tail_v: zeros(context, (taps - 1) * kvd),
+                    tail_o: zeros(context, (taps - 1) * h),
+                    tail_f: zeros(context, (taps - 1) * h),
+                }
             })
             .collect();
         Ok(RealInkling2State {

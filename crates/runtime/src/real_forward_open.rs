@@ -568,9 +568,6 @@ impl RealForwardRunner {
                     "the DeepSeek-V4-Flash family has no decode flow yet".to_string(),
                 ));
             }
-            // Its kernels and CPU reference exist (`docs/INKLING2_PHASE0.md`),
-            // but the decode flow does not. Refused at open, never routed to a
-            // neighbour's flow, which would decode fluently and wrongly.
             // Its own flow (`families/inkling2/`): 48 layer applications per
             // token over 24 physical layers, so it owns its KV and conv state
             // per cache slot and uses the shared manager for the position.

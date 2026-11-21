@@ -107,8 +107,8 @@ values sit at high-entropy positions (after a period or newline), which looks
 like rounding, not a wiring error. That is a judgement, not a proof.
 
 NOT exercised by 19 tokens: `tau` (exactly 1 below position 8191), distances
-past the 1024 bias extent, and the sliding-window cut. A long-context
-comparison must cover all three before they count as verified.
+past the 1024 bias extent, and the sliding-window cut. The 12,550-token
+Metal gate under step 3 below covers all three.
 
 Reproduce: `crates/repack/examples/inkling2_reference_logits.rs` for ours,
 and a 60-line `llama_get_logits_ith` dumper against the llama.cpp build.
@@ -236,7 +236,9 @@ the BF16 attention weights, not the experts, set the decode ceiling.
 Conv state per slot: (2 x 1024 + 2 x 2304) x 3 rows. KV:
 8 heads x 128 x 2 x 2 B = 4 KiB per token per slot; 8 full-attention slots
 (layers 5, 23 once, 11 and 17 three times) = 32 KiB per token, 32 GiB at 1M
-context; 40 SWA slots ring at 1024.
+context; 40 SWA slots ring at 1024 rows (~160 MB fixed). The shared
+`KvCacheManager` still allocates its own 24-layer cache that this family
+never reads; dropping it is open work.
 
 ## Remaining work, in dependency order
 
@@ -313,12 +315,42 @@ Stage A: reachable and correct (decode only)
    at the end. That is an observation from one dirty run (other sessions
    active), not a protocol measurement. NOT yet: a synthetic-install test
    that opens through `RealForwardRunner::open` in CI (the gate above needs
-   the real install), the long-context paths (tau, distances past the extent,
-   the SWA cut, and caches past 4,096 positions: no SWA ring yet), sampled
-   generation, and the chat template.
+   the real install), sampled generation, and the chat template.
+
+   SWA ring: the 40 sliding-window slots hold `min(max_ctx, 1024)` rows and
+   position p sits at row `p % rows`; the 8 full slots hold `max_ctx` rows.
+   `inkling2_attention_decode` takes the ring size (buffer 12). The 19-token
+   logits are bit-identical before and after the ring. Kernel parity covers a
+   wrapped window (2,601 positions, ring 1024, poisoned unused rows) and a
+   full slot at 1,500 positions past the extent.
+
+   Long-context gate (2026-11-21, M4 Max, 12,550 tokens of prose, every 64th
+   position plus the last 16 kept, 211 rows): Metal vs llama.cpp CPU-only.
+   This covers tau (positions 8,192 and up), distances past the 1024 extent,
+   the SWA cut, and the ring after 12 wraps.
+
+   | comparison | top-1 | mean KL | max KL |
+   |---|---|---|---|
+   | Metal vs llama.cpp, 265 tokens | 265/265 | 5.7e-4 | 1.8e-2 |
+   | Metal vs llama.cpp, 12,550 tokens | 209/211 | 2.2e-3 | 2.3e-2 |
+
+   Both top-1 misses are top-2 swaps where llama.cpp's own margin is 0.12 and
+   0.085 logits. Mean KL by quarter of the context is 2.0e-3, 2.3e-3, 2.2e-3,
+   2.3e-3: no growth with length, so no drift from the ring or tau. There is
+   no step at the window edge either: rows below position 1024 average
+   1.2e-3 and rows from 1024 to 2,600 also 1.2e-3. The gap to the 265-token
+   mean is a different prompt, not a different code path; that reading is a
+   judgement.
+
+   llama.cpp trap: with `n_gpu_layers 0`, op offload still sends large-batch
+   `MUL_MAT_ID` to Metal, and every row came back NaN (first NaN at
+   `blk.9.ffn_gate_up_exps`, the second loop pass). Set
+   `llama_context_params.op_offload = false` for a CPU-only reference.
+   Reproduce with `inkling2_logits <install> <ids> <out> <max ctx> 64` and a
+   sparse dumper that writes the same rows.
 4. Tokenizer dialect and `probe/safetensors.rs` arm; CLI reachability.
-5. Long-context check (tau, distances past the extent, the SWA cut), memory
-   oracle, quality gates, then a catalog row.
+5. DONE: long-context check (above). Remaining: memory oracle, quality
+   gates, then a catalog row.
 
 Stage B: speed and memory (after A's gates, each with a kill switch)
 - The router round trip: 48 GPU-to-CPU syncs per token. Every family pays one
