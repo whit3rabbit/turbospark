@@ -507,9 +507,12 @@ impl RealForwardRunner {
             )));
         }
         gpu::read_buffer_f16_into(&self.scratch.logits, 0, logits);
-        // Padding rows past the real vocabulary can never be sampled.
+        // Padding rows past the real vocabulary can never be sampled. The most
+        // negative FINITE value, not -inf: the selector refuses non-finite
+        // scores, and a softcapped logit is within +-30, so -65504 neither wins
+        // nor carries probability.
         for l in &mut logits[cfg.unpadded_vocab as usize..] {
-            *l = f16::NEG_INFINITY;
+            *l = PAD_LOGIT;
         }
         Ok(())
     }
@@ -941,6 +944,9 @@ fn layer_moe(
     moe_tail(c, pass, st, arch, slot, ip)?;
     Ok((plan.hits, plan.misses.len()))
 }
+
+/// What the padding rows past `unpadded_vocab` read (see the decode readback).
+pub(crate) const PAD_LOGIT: f16 = f16::MIN;
 
 /// The DSpark drafter's target visits, `mtp_config.target_layer_ids` minus the
 /// last (48, the final-norm output, stored as the row after these).

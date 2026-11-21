@@ -526,10 +526,43 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
     from `<install>/dspark/` or `TURBOSPARK_INKLING2_DSPARK`; `Auto` never
     does. `dflash_speculation_blocker` has an Inkling arm (no MoE refusal).
     The loop's existing block-drafter sampling refusal applies.
-  - NOT yet run: `tests/real_forward_inkling2_speculative.rs` (plain vs
-    speculative streams on prose, code, long context), plain-decode
-    bit-identity against the pre-change build, the MLX install, and any
-    tslab measurement. No speed number exists yet.
+  - Fixed: the flow padded logits past `unpadded_vocab` with -inf, which the
+    selector refuses, so `run_raw_completion` (and so every front end and
+    tslab arm) could not commit a single Inkling token. Padding is now the
+    most negative finite FP16 (`PAD_LOGIT`); a softcapped logit is within
+    +-30, so a padding row never wins or carries probability.
+  - Stage 5a, losslessness (`tests/real_forward_inkling2_speculative.rs`,
+    2026-11-21, M4 Max, 256 greedy tokens per prompt, block 7): the
+    speculative loop commits exactly the plain greedy stream on every prompt
+    and both installs. Acceptance per round (TURBOSPARK_SPEC_STATS):
+
+    | install | prose (47-token chat) | code (50-token chat) | long (3,343 tokens) |
+    |---|---|---|---|
+    | BF16 | 1.36 of 7 | 3.06 of 7 | 3.40 of 7 |
+    | MLX 4-bit | 1.80 of 7 | 2.71 of 7 | 1.61 of 7 |
+
+    Per round: draft 12 to 22 ms, verify 94 to 118 ms (8 rows). In-test wall
+    tok/s came from a host that had just rebooted and had other sessions'
+    jobs at 400%+ CPU, so they are not quoted here; they only say the verify
+    costs about 3 to 4 plain tokens, so prose (about 2.4 tokens per round) is
+    expected to lose and code and long context may gain on BF16.
+  - MLX 4-bit install: the verify gate also passes there (56 of 56 verify rows
+    and 1,025 of 1,025 later rows bit-identical). Its affine projections run
+    once per row in the verify (`Ctx::gemv_rows`), so they are not
+    amortized; a batched affine GEMV that matches the per-row bits is the
+    missing piece for a speedup on that install.
+  - Stage 5b, speed: NOT measured. Two tslab attempts (experiment
+    `ink2-dspark`, code workload, `--chunk off`, decode_tok_s, 30-minute
+    quiet wait) got zero clean pairs: another session's Python job and
+    mediaanalysisd held the host over 90% CPU. The candidate arm was also
+    refused there because that worker predated the padding fix. Rerun on a
+    quiet host:
+    `tslab ab --model M --prompt messages:crates/lab/workloads/code.messages.json --decode 256 --chunk off --null --metric decode_tok_s --baseline plain@auto/resident`,
+    then the same with `--candidate d7@auto/resident~dflash:7`; the drafter
+    must sit at `<install>/dspark/`.
+  - Still not checked: plain-decode bits against the build before this work
+    (the only plain-path changes are the ring slack and the padding value;
+    the attention reads the same rows either way, but no run compared them).
 
 Stage C: drafter and comparisons
 - `mtp.safetensors` is a DSpark block drafter, not a next-token head: block 8,

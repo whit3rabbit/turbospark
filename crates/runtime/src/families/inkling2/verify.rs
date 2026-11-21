@@ -671,7 +671,7 @@ impl RealForwardRunner {
         gpu::read_buffer_f16_into(&b.logits, 0, logits);
         for row in logits.chunks_exact_mut(vocab) {
             for l in &mut row[cfg.unpadded_vocab as usize..] {
-                *l = f16::NEG_INFINITY;
+                *l = super::PAD_LOGIT;
             }
         }
         Ok(())
