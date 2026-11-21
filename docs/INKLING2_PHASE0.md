@@ -214,36 +214,83 @@ batched prefill for these types (decode only).
 
 ## Memory accounting (from shapes)
 
-Expert: NVFP4 3 x 1152 x 2304 / 2 = 3.8 MiB plus scales; MXFP8 7.6 MiB.
-Whole experts: ~6.8 GB NVFP4 + ~4.1 GB MXFP8. Resident BF16 attention
-+ embeddings ~ 9 GB. Conv state per slot: (2 x 1024 + 2 x 2304) x 3 rows. KV:
+Expert, scales included: NVFP4 (w13 2304 x 1152 B + 2304 x 144 B, w2 2304 x
+576 B + 2304 x 72 B) = 4.3 MiB; MXFP8 (2304 x 2304 + 2304 x 72, 2304 x 1152 +
+2304 x 36) = 7.8 MiB. Whole table: 20 x 128 x 4.3 + 4 x 128 x 7.8 = ~15 GiB.
+Resident BF16 (attention and conv ~54 MB per layer x 24, embed and unembed
+2 x 926 MB, router, controllers, queries) = ~3.5 GB. Those two add up to the
+19.5 GB shard. An earlier draft of this section said 6.8 + 4.1 GB of experts
+and 9 GB resident, both wrong.
+
+Expert residency (the existing streamer, `docs/EXPERT_RESIDENCY.md`): one
+cache slot across all 24 layers is ~117 MiB, so 16 slots pin ~1.9 GiB and 32
+pin ~3.7 GiB. Streamed, the Mini should fit in ~6-8 GB plus KV. Mapped
+residency needs resident + table + the 10 GiB reserve (~28.5 GiB) within
+Metal's working set (~27 GiB on a 36 GB Mac), so expect `auto` to refuse it
+here.
+
+Decode bytes per token (estimate): BF16 attention 54 MB x 48 applications =
+2.6 GB, experts 8 x 4.3 MiB x 48 = ~1.6 GB, unembed 0.93 GB. That is ~5 GB, so
+the BF16 attention weights, not the experts, set the decode ceiling.
+
+Conv state per slot: (2 x 1024 + 2 x 2304) x 3 rows. KV:
 8 heads x 128 x 2 x 2 B = 4 KiB per token per slot; 8 full-attention slots
 (layers 5, 23 once, 11 and 17 three times) = 32 KiB per token, 32 GiB at 1M
 context; 40 SWA slots ring at 1024.
 
 ## Remaining work, in dependency order
 
-1. `ModelFamily` variant, `ArchConfig` block (loop, sconv, rel, attn-res), baseline.
-2. Repack: config parser, tensor-name map (HF `wq_du` etc. to roles), the
-   expert blob writer (transcoders and blob contract above, w13 deinterleave),
-   and a `validate_quant` shape for the two native expert schemes.
-3. Kernels. DONE, each parity-tested on Metal against this file's CPU
-   reference and mutation-checked:
-   - NVFP4/MXFP8 routed decode pair (above).
-   - `crates/gpu/src/inkling2_ops.rs` and `tests/inkling2_ops_parity.rs`:
-     - sigmoid router selection with the correction bias (top 8, rank order,
-       through `moe.metal`'s shared SIMD argmax);
-     - L2 clip with an optional per-channel scale and a fused post-multiplier
-       for `tau(pos)`;
-     - short conv decode (static, and the dynamic full-attention K/V taps),
-       with an FP16 tail updated in place;
-     - depth mix.
+Stage A: reachable and correct (decode only)
+1. Family: `ModelFamily::Inkling2Loop` (persisted `inkling2_loop`), an
+   `ArchConfig` sub-config (loop core and passes, gate rank, sconv taps, d_rel
+   and extent, clips, log scale, softcaps, res block, full-layer mask),
+   baseline, validation. `num_layers` stays 24 (physical): the expert
+   streamer opens one layout entry per checkpoint layer, and the flow maps
+   each of the 48 applications back to its physical layer.
+2. Repack (safetensors): config parser checked against the baseline in one
+   equality; tensor map; experts written as `packed_experts/layer_NN.bin` in
+   the blob contract above (16-byte outer record, then gate, up, down after
+   the w13 deinterleave), NVFP4 and MXFP8 per layer; the F32 queries and
+   router bias kept F32 (or narrowed, with a test); `static_w` flipped;
+   a manifest quant shape for the two native routed schemes. A synthetic
+   install builder for CI.
+3. Decode flow (`crates/runtime/src/families/inkling2/`): composed from the
+   existing BF16 GEMV, embed, RMS norm, sigmoid gate and softcap kernels plus
+   `inkling2_ops` and `moe_inkling2`. Per-slot KV (8 full slots unbounded, 40
+   SWA rings of 1024) and conv state. Routed experts through the existing
+   `PreadExpertStreamer`, keyed by PHYSICAL layer, so the three passes share
+   one slot cache. Router logits must be F32 (llama.cpp's
+   `expert_router_f32`), not the FP16 GEMV output. Gate: greedy logits within
+   KL of the CPU reference (`inkling2::forward`), then of llama.cpp.
+4. Tokenizer dialect and `probe/safetensors.rs` arm; CLI reachability.
+5. Long-context check (tau, distances past the extent, the SWA cut), memory
+   oracle, quality gates, then a catalog row.
 
-   OPEN: batched prefill for all of these, the router and `weight_proj` GEMVs
-   (BF16, likely existing kernels), rel-bias + sink attention, loop control
-   (two rank-64 GEMVs plus an elementwise kernel), the softcapped output head.
-4. Decode flow with 48 cache slots and per-slot conv state; MTP/DSpark drafter
-   and the vision tower are out of scope for a first pass.
-5. Tokenizer dialect (`<|message_user|>`, `<|message_model|>`, `<|end_message|>`,
-   reasoning-effort system line, EOS 200006) and `probe/safetensors.rs` arm.
-6. Real-checkpoint greedy and sampled gates, memory oracle, then the catalog row.
+Stage B: speed and memory (after A's gates, each with a kill switch)
+- The router round trip: 48 GPU-to-CPU syncs per token. Every family pays one
+  per MoE layer today. The routed pipeline overlaps the next layer; measure
+  before designing past it.
+- Loop-aware stats and prefetch: `RouterHistogram` merges the three passes,
+  and the pilot probe and Qwen prefetcher assume layer `L + 1` follows `L`
+  (false at the 17-to-6 seam). Key them by application, or refuse them.
+- Batched prefill: multi-row forms of the `inkling2_ops` kernels and a BF16
+  GEMM for the dense projections. Then the ANE split
+  (`docs/SPEEDUP_PLAYBOOK.md`, "ANE+Steel prefill split"). Every Inkling dense
+  projection is BF16, which is the case the weightless Core ML programs serve.
+- Decode attention: the GQA-shared kernel's design (one K/V read per group of
+  3 q heads) for the rel-bias plus sink kernel.
+- Quantizing the BF16 attention weights would cut the dominant decode bytes,
+  at a quality cost to measure. Not a default without its own gate.
+
+Stage C: drafter and comparisons
+- `mtp.safetensors` is a DSpark block drafter, not a next-token head: block 8,
+  `mask_embed`, context K/V projections (`k_proj_ctx`, `v_proj_ctx`) fed from
+  trunk taps at `target_layer_ids` [5, 23, 41, 48] (cache-slot ids), a
+  `[4, 4]` `fuse_weight`, and an RNN `markov_head`. The DFlash2 machinery
+  (`docs/DFLASH2.md`) supplies verify, accept and rollback. The drafter
+  forward and selector are new; the reference is llama.cpp PR #32218
+  (open). Verify needs snapshot and rollback of every slot's conv tails.
+- MLX baseline: mlx-lm PR #2086 (open) and the `mlx-community` /
+  `nativ-community` MLX checkpoints, for a speed and quality comparison on
+  the same Mac.
+- Vision tower: out of scope until the text path ships.
