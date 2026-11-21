@@ -64,14 +64,30 @@ impl Ctx<'_> {
         x: Buf<'_>,
         y: Buf<'_>,
     ) -> Result<(), RealForwardError> {
-        let (b, o) = view(self.weights, self.index, name)?;
-        let m = gpu::Bf16ResidentMatrix {
-            buffer: b,
-            weights_offset: o,
-            rows,
-            cols,
-        };
-        gpu::encode_bf16_gemv_resident(self.context, pass, &m, x, y).map_err(RealForwardError::Gpu)
+        self.gemv_group(pass, &[x], &[(name, rows, cols, 0, y)])
+    }
+
+    /// Several BF16 GEMVs in one dispatch (`gpu::encode_inkling2_bf16_gemv_multi`):
+    /// each entry is `(weight, rows, cols, input index into xs, output)`.
+    fn gemv_group(
+        &mut self,
+        pass: &gpu::PassEncoder,
+        xs: &[Buf<'_>],
+        segs: &[(&str, usize, usize, usize, Buf<'_>)],
+    ) -> Result<(), RealForwardError> {
+        let mut v = Vec::with_capacity(segs.len());
+        for &(name, rows, cols, x, y) in segs {
+            let (_, o) = view(self.weights, self.index, name)?;
+            v.push(gpu::Inkling2GemvSegment {
+                w_offset: o,
+                rows: rows as u32,
+                cols: cols as u32,
+                x,
+                y,
+            });
+        }
+        gpu::encode_inkling2_bf16_gemv_multi(self.context, pass, self.weights.buffer(), xs, &v)
+            .map_err(RealForwardError::Gpu)
     }
 
     fn norm(
@@ -514,44 +530,31 @@ fn layer_attention(
     let n = |j: usize| (&normed[j].0, normed[j].1);
     let a = |s: &str| name(ip, &format!("attn.{s}"));
 
-    c.gemv(pass, &a("wq_du.weight"), heads * hd, h, n(0), (&st.q, 0))?;
-    c.gemv(pass, &a("wk_dv.weight"), kvd, h, n(1), (&st.k_pre, 0))?;
-    c.gemv(pass, &a("wv_dv.weight"), kvd, h, n(2), (&st.v_pre, 0))?;
-    c.gemv(pass, &a("wr_du.weight"), heads * d_rel, h, n(0), (&st.r, 0))?;
-    c.gemv(
-        pass,
-        &a("attn_sink_proj.weight"),
-        heads,
-        h,
-        n(0),
-        (&st.sinks, 0),
-    )?;
-    c.gemv(
-        pass,
-        &a("gate_attn.weight"),
-        heads * hd,
-        h,
-        n(0),
-        (&st.gate_attn, 0),
-    )?;
+    // Every projection of the attention input in one dispatch (the SWA
+    // layer without messages reads one normed row for all of them).
+    let names = [
+        a("wq_du.weight"),
+        a("wk_dv.weight"),
+        a("wv_dv.weight"),
+        a("wr_du.weight"),
+        a("attn_sink_proj.weight"),
+        a("gate_attn.weight"),
+        a("k_sconv.weight_proj"),
+        a("v_sconv.weight_proj"),
+    ];
+    let mut segs: Vec<(&str, usize, usize, usize, Buf<'_>)> = vec![
+        (&names[0], heads * hd, h, 0, (&st.q, 0)),
+        (&names[1], kvd, h, 1, (&st.k_pre, 0)),
+        (&names[2], kvd, h, 2, (&st.v_pre, 0)),
+        (&names[3], heads * d_rel, h, 0, (&st.r, 0)),
+        (&names[4], heads, h, 0, (&st.sinks, 0)),
+        (&names[5], heads * hd, h, 0, (&st.gate_attn, 0)),
+    ];
     if full {
-        c.gemv(
-            pass,
-            &a("k_sconv.weight_proj"),
-            kvh * taps as usize,
-            h,
-            n(1),
-            (&st.dk, 0),
-        )?;
-        c.gemv(
-            pass,
-            &a("v_sconv.weight_proj"),
-            kvh * taps as usize,
-            h,
-            n(2),
-            (&st.dv, 0),
-        )?;
+        segs.push((&names[6], kvh * taps as usize, h, 1, (&st.dk, 0)));
+        segs.push((&names[7], kvh * taps as usize, h, 2, (&st.dv, 0)));
     }
+    c.gemv_group(pass, &[n(0), n(1), n(2)], &segs)?;
 
     // Convs write straight into this slot's KV row for `position` (a ring
     // row on a sliding-window slot, which overwrites the position that just

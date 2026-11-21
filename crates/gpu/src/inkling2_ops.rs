@@ -372,3 +372,99 @@ pub fn encode_inkling2_copy_half(
     );
     Ok(())
 }
+
+/// Segments one [`encode_inkling2_bf16_gemv_multi`] dispatch can carry.
+pub const INKLING2_GEMV_MAX_SEGMENTS: usize = 8;
+
+/// One matrix of a multi-segment BF16 GEMV: `rows x cols` BF16 at byte
+/// `w_offset` of the weights buffer, reading input `x` (an index into the
+/// dispatch's inputs) and writing `rows` FP16 values to `y`.
+#[derive(Debug, Clone, Copy)]
+pub struct Inkling2GemvSegment<'a> {
+    pub w_offset: u64,
+    pub rows: u32,
+    pub cols: u32,
+    pub x: usize,
+    pub y: (&'a metal::Buffer, u64),
+}
+
+/// Up to eight resident BF16 GEMVs in one dispatch, all matrices in place in
+/// `weights` (bound at offset 0). `xs` holds one to three FP16 inputs. Refuses
+/// anything the kernel's vector loads cannot address: columns not a multiple
+/// of 4, a matrix, input or output that is not 8-byte aligned, or a bad input
+/// index.
+pub fn encode_inkling2_bf16_gemv_multi(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    weights: &metal::Buffer,
+    xs: &[(&metal::Buffer, u64)],
+    segments: &[Inkling2GemvSegment<'_>],
+) -> Result<(), GpuError> {
+    if segments.is_empty() || segments.len() > INKLING2_GEMV_MAX_SEGMENTS {
+        return Err(invalid(format!(
+            "bf16 gemv multi takes 1 to {INKLING2_GEMV_MAX_SEGMENTS} segments, got {}",
+            segments.len()
+        )));
+    }
+    if xs.is_empty() || xs.len() > 3 || xs.iter().any(|x| x.1 % 8 != 0) {
+        return Err(invalid(
+            "bf16 gemv multi takes 1 to 3 inputs at 8-byte-aligned offsets".into(),
+        ));
+    }
+    // The shader's `Inkling2GemvTable`: w_off[8] (u64), rows[8], cols[8],
+    // x_idx[8], tg_start[9], n_seg (u32), 200 bytes, little-endian.
+    let (mut w_off, mut rows, mut cols, mut x_idx) = ([0u64; 8], [0u32; 8], [0u32; 8], [0u32; 8]);
+    let mut tg_start = [0u32; 9];
+    let mut groups = 0u32;
+    for (i, s) in segments.iter().enumerate() {
+        if s.rows == 0
+            || s.cols == 0
+            || s.cols % 4 != 0
+            || s.w_offset % 8 != 0
+            || s.y.1 % 2 != 0
+            || s.x >= xs.len()
+        {
+            return Err(invalid(format!(
+                "bf16 gemv multi segment {i}: rows {} cols {} (multiple of 4), \
+                 w offset {} (8-aligned), input {} of {}",
+                s.rows,
+                s.cols,
+                s.w_offset,
+                s.x,
+                xs.len()
+            )));
+        }
+        w_off[i] = s.w_offset;
+        rows[i] = s.rows;
+        cols[i] = s.cols;
+        x_idx[i] = s.x as u32;
+        tg_start[i] = groups;
+        groups += s.rows.div_ceil(8);
+    }
+    for g in &mut tg_start[segments.len()..] {
+        *g = groups;
+    }
+    let mut bytes = Vec::with_capacity(200);
+    for v in w_off {
+        bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    for v in rows.iter().chain(&cols).chain(&x_idx).chain(&tg_start) {
+        bytes.extend_from_slice(&v.to_le_bytes());
+    }
+    bytes.extend_from_slice(&(segments.len() as u32).to_le_bytes());
+    debug_assert_eq!(bytes.len(), 200);
+    let p = pipeline(context, "inkling2_bf16_gemv_multi")?;
+    let mut buffers: Vec<(&metal::Buffer, u64, u64)> = vec![(weights, 0, 0)];
+    for i in 0..3 {
+        let x = xs[i.min(xs.len() - 1)];
+        buffers.push((x.0, 2 + i as u64, x.1));
+    }
+    // Unused output slots repeat the last segment's output; the kernel never
+    // writes them.
+    for i in 0..INKLING2_GEMV_MAX_SEGMENTS {
+        let y = segments[i.min(segments.len() - 1)].y;
+        buffers.push((y.0, 5 + i as u64, y.1));
+    }
+    pass.encode_threadgroups(&p, &buffers, &[(&bytes, 1)], u64::from(groups), 256);
+    Ok(())
+}

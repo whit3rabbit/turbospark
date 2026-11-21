@@ -359,3 +359,76 @@ kernel void inkling2_copy_half(
 ) {
     if (i < n) dst[i] = src[i];
 }
+
+// ============================================================================
+// inkling2_bf16_gemv_multi - up to 8 resident BF16 GEMVs in one dispatch.
+//
+// `y_s[r] = sum_c bf16(W_s[r, c]) * x_{x_idx[s]}[c]` for each segment s, every
+// matrix addressed in place in one weights buffer (buffer 0, bound at offset
+// 0; `w_off` are byte offsets into it). One simdgroup per output row, eight
+// rows per threadgroup, 8-byte loads, no threadgroup barrier. The shared
+// `bf16_gemv_rows` takes a 256-thread threadgroup per row with scalar loads
+// and a barrier, and its ~650 launches a token (most of them a few hundred
+// rows) were half of this family's GPU time in the dispatch profile.
+//
+// Threadgroups [tg_start[s], tg_start[s + 1]) belong to segment s. The host
+// checks cols % 4 == 0, 8-byte-aligned rows and inputs, and n_seg <= 8.
+// ============================================================================
+
+struct Inkling2GemvTable {
+    ulong w_off[8];
+    uint rows[8];
+    uint cols[8];
+    uint x_idx[8];
+    uint tg_start[9];
+    uint n_seg;
+};
+
+constant constexpr uint kInkGemvRowsPerTG = 8;
+
+kernel void inkling2_bf16_gemv_multi(
+    device const uchar*              W   [[buffer(0)]],
+    constant Inkling2GemvTable&      t   [[buffer(1)]],
+    device const half*               x0  [[buffer(2)]],
+    device const half*               x1  [[buffer(3)]],
+    device const half*               x2  [[buffer(4)]],
+    device half*                     y0  [[buffer(5)]],
+    device half*                     y1  [[buffer(6)]],
+    device half*                     y2  [[buffer(7)]],
+    device half*                     y3  [[buffer(8)]],
+    device half*                     y4  [[buffer(9)]],
+    device half*                     y5  [[buffer(10)]],
+    device half*                     y6  [[buffer(11)]],
+    device half*                     y7  [[buffer(12)]],
+    uint                             tg   [[threadgroup_position_in_grid]],
+    uint                             sg   [[simdgroup_index_in_threadgroup]],
+    uint                             lane [[thread_index_in_simdgroup]]
+) {
+    uint s = 0;
+    while (s + 1u < t.n_seg && tg >= t.tg_start[s + 1u]) ++s;
+    const uint row = (tg - t.tg_start[s]) * kInkGemvRowsPerTG + sg;
+    if (row >= t.rows[s]) return;
+    const uint xi = t.x_idx[s];
+    device const half* x = xi == 0u ? x0 : (xi == 1u ? x1 : x2);
+    const uint n4 = t.cols[s] / 4u;
+    device const bfloat4* w = (device const bfloat4*)(W + t.w_off[s]) + ulong(row) * n4;
+    device const half4* xv = (device const half4*)x;
+    float acc = 0.0f;
+    for (uint i = lane; i < n4; i += 32u) {
+        acc += dot(float4(w[i]), float4(xv[i]));
+    }
+    acc = simd_sum(acc);
+    if (lane != 0u) return;
+    device half* y;
+    switch (s) {
+        case 0: y = y0; break;
+        case 1: y = y1; break;
+        case 2: y = y2; break;
+        case 3: y = y3; break;
+        case 4: y = y4; break;
+        case 5: y = y5; break;
+        case 6: y = y6; break;
+        default: y = y7; break;
+    }
+    y[row] = half(acc);
+}

@@ -11,8 +11,9 @@
 use half::{bf16, f16};
 use turbospark_compute::inkling2::{block_attn_res_mix, l2_clip, route_sigmoid, short_conv};
 use turbospark_gpu::{
-    encode_inkling2_depth_mix, encode_inkling2_l2_clip, encode_inkling2_router_select,
-    encode_inkling2_short_conv_decode, MetalContext,
+    encode_inkling2_bf16_gemv_multi, encode_inkling2_depth_mix, encode_inkling2_l2_clip,
+    encode_inkling2_router_select, encode_inkling2_short_conv_decode, Inkling2GemvSegment,
+    MetalContext,
 };
 
 fn lcg(state: &mut u32) -> u32 {
@@ -720,4 +721,121 @@ fn copy_half_copies_a_row_into_an_offset() {
     fn f(v: &[f16]) -> Vec<f32> {
         v.iter().map(|x| x.to_f32()).collect()
     }
+}
+
+// --- Multi-segment BF16 GEMV ------------------------------------------------
+
+/// Three matrices of different shapes in one weights buffer at uneven (but
+/// 8-aligned) offsets, three inputs, outputs at a non-zero offset: each
+/// segment must read its own matrix and input and write only its own rows.
+#[test]
+fn bf16_gemv_multi_matches_reference_per_segment() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let mut seed = 99u32;
+    // (rows, cols, input): attention-input widths of the Mini, a tiny head
+    // count, and a wider o-proj-like input.
+    let shapes = [(37usize, 2304usize, 0usize), (5, 2304, 1), (300, 2048, 2)];
+    let col_max = 2304;
+    let xs: Vec<Vec<f16>> = (0..3)
+        .map(|_| {
+            f16s(
+                &(0..col_max)
+                    .map(|_| unit(&mut seed) - 0.5)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect();
+    let mut wbytes = vec![0u8; 24];
+    let mut mats = Vec::new();
+    for &(rows, cols, _) in &shapes {
+        let w = bf16s(
+            &(0..rows * cols)
+                .map(|_| unit(&mut seed) - 0.5)
+                .collect::<Vec<_>>(),
+        );
+        mats.push((wbytes.len() as u64, w.clone()));
+        wbytes.extend_from_slice(&leb16(&w));
+        wbytes.extend_from_slice(&[0u8; 8]);
+    }
+    let w_buf = context.new_buffer_with_data(&wbytes);
+    let x_bufs: Vec<_> = xs
+        .iter()
+        .map(|x| context.new_buffer_with_data(&le16(x)))
+        .collect();
+    // Outputs are NaN-filled so a skipped row cannot pass as zero.
+    let pad = 4usize;
+    let y_bufs: Vec<_> = shapes
+        .iter()
+        .map(|&(rows, _, _)| context.new_buffer_with_data(&le16(&vec![f16::NAN; rows + 2 * pad])))
+        .collect();
+    let segs: Vec<Inkling2GemvSegment<'_>> = shapes
+        .iter()
+        .enumerate()
+        .map(|(i, &(rows, cols, x))| Inkling2GemvSegment {
+            w_offset: mats[i].0,
+            rows: rows as u32,
+            cols: cols as u32,
+            x,
+            y: (&y_bufs[i], (pad * 2) as u64),
+        })
+        .collect();
+    let xs_bind: Vec<_> = x_bufs.iter().map(|b| (b, 0u64)).collect();
+    let pass = context.begin_pass();
+    encode_inkling2_bf16_gemv_multi(&mut context, &pass, &w_buf, &xs_bind, &segs).expect("encode");
+    pass.commit_and_wait();
+    for (i, &(rows, cols, x)) in shapes.iter().enumerate() {
+        let want: Vec<f32> = (0..rows)
+            .map(|r| {
+                (0..cols)
+                    .map(|c| mats[i].1[r * cols + c].to_f64() * xs[x][c].to_f64())
+                    .sum::<f64>() as f32
+            })
+            .collect();
+        let all = read_f16(&y_bufs[i], rows + 2 * pad);
+        assert_close(
+            &all[pad..pad + rows],
+            &want,
+            2e-3,
+            2e-3,
+            &format!("segment {i}"),
+        );
+        assert!(
+            all[..pad]
+                .iter()
+                .chain(&all[pad + rows..])
+                .all(|v| v.is_nan()),
+            "segment {i} wrote outside its rows"
+        );
+    }
+}
+
+#[test]
+fn bf16_gemv_multi_refuses_out_of_contract_shapes() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let w = context.new_buffer_with_data(&[0u8; 4096]);
+    let x = context.new_buffer_with_data(&[0u8; 4096]);
+    let y = context.new_buffer_with_data(&[0u8; 4096]);
+    let seg = |cols: u32, w_offset: u64, xi: usize| Inkling2GemvSegment {
+        w_offset,
+        rows: 4,
+        cols,
+        x: xi,
+        y: (&y, 0),
+    };
+    let pass = context.begin_pass();
+    let xs = [(&x, 0u64)];
+    for bad in [
+        vec![seg(6, 0, 0)],
+        vec![seg(8, 4, 0)],
+        vec![seg(8, 0, 1)],
+        vec![seg(8, 0, 0); 9],
+        vec![],
+    ] {
+        assert!(encode_inkling2_bf16_gemv_multi(&mut context, &pass, &w, &xs, &bad).is_err());
+    }
+    assert!(
+        encode_inkling2_bf16_gemv_multi(&mut context, &pass, &w, &[(&x, 2)], &[seg(8, 0, 0)])
+            .is_err()
+    );
+    pass.commit_and_wait();
 }

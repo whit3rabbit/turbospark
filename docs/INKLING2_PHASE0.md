@@ -369,6 +369,20 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   Next GPU costs by the same profile: 634 BF16 GEMVs per token (about half
   of GPU time, many tiny: sinks, gates, conv projections) and about 11 ms
   per token of wait above GPU time from the 48 commit round trips.
+- DONE (2026-11-21): family-local BF16 GEMV. The shared `bf16_gemv_rows`
+  runs a 256-thread threadgroup per output row with scalar loads and a
+  barrier. `inkling2_bf16_gemv_multi` runs a simdgroup per row with 8-byte
+  loads and takes up to 8 matrices per dispatch; every Inkling GEMV uses it,
+  and the 6 to 8 attention-input projections share one dispatch. Other
+  families keep the shared kernel. Profile: GEMV rows 29.1 to 13.6 ms per
+  token, 634 to 383 dispatches. Trace GPU time 42.6 to 25.9 ms per token
+  (wall 104 to 45 ms, but swap fell from 18.8 to 7.5 GB between those runs,
+  so the expert-read share of that drop is the host, not the kernel). Logits:
+  19/19 and 265/265 top-1 vs llama.cpp; mean KL 3.3e-4 and 7.5e-4 (was 4.9e-4
+  and 5.7e-4). Old and new Metal differ from each other by about as much as
+  each differs from llama.cpp, and the new run is closer at 131 of 265
+  positions, which reads as reduction-order noise over 48 applications; a
+  judgement, not a proof.
 - The router round trip: 48 GPU-to-CPU syncs per token. Every family pays one
   per MoE layer today. The routed pipeline overlaps the next layer; measure
   before designing past it.

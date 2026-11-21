@@ -118,6 +118,8 @@ mod hadamard;
 #[cfg(target_os = "macos")]
 mod hyper_connection;
 #[cfg(target_os = "macos")]
+mod inkling2_ops;
+#[cfg(target_os = "macos")]
 mod kv_cache;
 #[cfg(target_os = "macos")]
 mod kv_cache_mem;
@@ -133,8 +135,6 @@ mod mla;
 mod moe_decode;
 #[cfg(target_os = "macos")]
 mod moe_gguf;
-#[cfg(target_os = "macos")]
-mod inkling2_ops;
 #[cfg(target_os = "macos")]
 mod moe_inkling2;
 #[cfg(target_os = "macos")]
@@ -364,6 +364,15 @@ pub use hadamard::{
 #[cfg(target_os = "macos")]
 pub use hyper_connection::{encode_hc_inject_add, encode_hc_mix};
 #[cfg(target_os = "macos")]
+pub use inkling2_ops::{
+    encode_inkling2_attention_decode, encode_inkling2_bf16_gemv_multi,
+    encode_inkling2_control_combine, encode_inkling2_copy_half, encode_inkling2_depth_mix,
+    encode_inkling2_l2_clip, encode_inkling2_rel_table, encode_inkling2_router_select,
+    encode_inkling2_short_conv_decode, Inkling2AttnShape, Inkling2GemvSegment,
+    INKLING2_ATTN_MAX_HEAD_DIM, INKLING2_DEPTH_MAX_STATES, INKLING2_GEMV_MAX_SEGMENTS,
+    INKLING2_ROUTER_MAX_EXPERTS, INKLING2_ROUTER_TOP_K,
+};
+#[cfg(target_os = "macos")]
 pub use kv_cache::{KvCacheManager, LayerKind};
 #[cfg(target_os = "macos")]
 pub use kv_quant_tables::{KvQuantTables, TqSideTables};
@@ -392,14 +401,6 @@ pub use moe_gguf::{
     encode_moe_phase2_mxfp4, encode_moe_phase2_q2_0_top10, encode_moe_phase2_q4_k,
     encode_moe_phase2_q6_k, encode_moe_phase2_q8_0, moe_gguf_source, mxfp4_row_bytes, MoeExtType,
     Mxfp4Activation, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS, PHASE2_FIXED_SLOTS,
-};
-#[cfg(target_os = "macos")]
-pub use inkling2_ops::{
-    encode_inkling2_attention_decode, encode_inkling2_control_combine, encode_inkling2_copy_half,
-    encode_inkling2_depth_mix, encode_inkling2_l2_clip,
-    encode_inkling2_rel_table, encode_inkling2_router_select, encode_inkling2_short_conv_decode,
-    Inkling2AttnShape, INKLING2_ATTN_MAX_HEAD_DIM, INKLING2_DEPTH_MAX_STATES,
-    INKLING2_ROUTER_MAX_EXPERTS, INKLING2_ROUTER_TOP_K,
 };
 #[cfg(target_os = "macos")]
 pub use moe_inkling2::{
