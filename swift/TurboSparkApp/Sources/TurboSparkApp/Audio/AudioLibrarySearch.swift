@@ -98,6 +98,14 @@ final class AudioLibrarySearch: ObservableObject {
         }
     }
 
+    /// Meaning matches for a question, from the indexed transcript chunks.
+    /// Empty when no embedding model is installed: Ask then ranks by words.
+    func meaningHits(_ query: String, controller: AudioWorkspaceController) async -> [AudioSemanticHit] {
+        if semantic == nil { await refreshModel() }
+        guard let semantic, let index = controller.library.searchIndex() else { return [] }
+        return (try? await semantic.search(query, index: index))?.meaning ?? []
+    }
+
     /// Substring matches the index can miss: CJK text (unicode61 does not
     /// segment it) and a profile whose index schema did not open.
     nonisolated static func substringHits(_ items: [AudioLibraryItem], _ query: String) -> [AudioLexicalHit] {

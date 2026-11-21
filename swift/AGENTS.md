@@ -262,9 +262,10 @@ staging files changed.
   `AudioQwenLoadShutdownTests` pins both the refusal and the drain.
 - Audio meeting notes and summary isolation: Post-meeting summary and action
   item generation (`AudioMeetingNotesAdvisor`, `AudioMeetingNotesView`) strictly
-  mutates `item.summary` and never modifies or overwrites `item.transcripts` or
-  `item.transcriptText`. The raw timestamped transcript remains immutable
-  ground truth.
+  mutates `item.summary` and never modifies or overwrites `item.transcripts`,
+  `item.transcriptText` or `item.userNotes`. The raw timestamped transcript
+  remains immutable ground truth, and the user's notes are only ever written
+  by the user. Ask answers are session-only and never saved.
 - CoreAudio process tap vs ScreenCaptureKit: Meeting audio capture on macOS
   14.2+ uses native CoreAudio process tapping (`CATapDescription`) with
   `NSAudioCaptureUsageDescription` to isolate conference apps without

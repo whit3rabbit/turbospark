@@ -270,7 +270,8 @@ struct AudioWorkspaceStatusView: View {
                             .appAction(.secondary, size: .small)
                             .keyboardShortcut(".", modifiers: .command)
                     }
-                    if !controller.pendingSaves.isEmpty || !controller.pendingTranscriptEdits.isEmpty {
+                    if !controller.pendingSaves.isEmpty || !controller.pendingTranscriptEdits.isEmpty
+                        || (controller.error != nil && !controller.pendingUserNotes.isEmpty) {
                         Button { controller.retryAutosave() } label: { Text("Retry", bundle: .module) }
                             .appAction(.secondary, size: .small)
                     }
