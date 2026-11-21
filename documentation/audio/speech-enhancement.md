@@ -37,6 +37,7 @@ Input is any WAV from 8 kHz to 192 kHz. Enhancement mixes to mono and takes at m
 
 * **Clean Up, Enhance speech**: reads the take at 48 kHz mono (at most 600 seconds) and saves the cleaned voice as a new take.
 * **Clean Up, Separate stems**: reads the take at 44.1 kHz stereo (a mono take is upmixed, at most 326 seconds) and saves the vocals as a new take. The instrumental is not saved from the app; use `--background` on the command line.
+* **Voice Cloning, Clean reference**: appears when an enhancement model is installed. It cleans only the selected reference region, saves it as a new take and makes that take the reference. The source take is kept, and you confirm consent again for the cleaned reference.
 * **Reduce background noise** (live text, off by default): appears when the `voice-isolator-v1-realtime` install is present. It cleans only the microphone feed to live text; the saved recording and the final transcription pass use the original audio. If cleaning falls behind real time for more than a second, live text switches back to the raw microphone for the rest of the take.
 
 ## For Developers

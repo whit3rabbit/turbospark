@@ -219,7 +219,10 @@ staging files changed.
 - Voice cloning consent covers one exact reference region
   (`AudioCloneOptions.consentedReference`) and lapses on any retrim. A UI
   seam that sets the reference (drop, import, inline recording, reuse from a
-  take) never sets or copies consent. A voice reference recording captures
+  take, Clean reference) never sets or copies consent. Clean reference
+  enhances only the trimmed region into a new `.enhancement` take, leaves the
+  source take as it was, and clears consent when that take becomes the
+  reference (`AudioVoiceReferenceCleaningTests`). A voice reference recording captures
   the microphone through local flags and never writes the Record page's
   capture settings. `AudioVoiceCloneWorkspaceTests` pins all three. The
   reference transcript follows the region: choosing a take replaces it with

@@ -267,6 +267,13 @@ modules and internal codecs are not presented as runnable jobs.
   The same engines run from the command line as `turbospark enhance`. Quality
   is not yet gated beyond reference parity (family READMEs under
   `crates/audio/src/sts/`).
+- "Clean reference" on the Voice Cloning reference card runs the same
+  enhancement over only the trimmed reference region (best installed of
+  `voice-isolator-v1`, `voice-isolator-v1-realtime`,
+  `mossformer2-se-48k-fp16`; hidden when none is installed). The cleaned
+  region is saved as a new take that becomes the reference; the source take
+  is not changed. Consent is cleared, because consent covers one exact
+  region and the cleaned take is a new reference (`swift/AGENTS.md`).
 - Live voice isolation (`ts_audio_enhance_stream_*`) streams the realtime
   profile at 48 kHz with 63 ms algorithmic latency, on a stateful Core ML
   step when installed, else Metal. Every push reports whether it ran late;
