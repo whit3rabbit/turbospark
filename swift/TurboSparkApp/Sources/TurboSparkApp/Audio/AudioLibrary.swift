@@ -342,6 +342,9 @@ struct AudioWorkspacePreferences: Codable, Sendable {
     /// Each preset's collection name, localized once at first use and kept,
     /// so changing the app language does not split a collection.
     var presetCollections: [String: String]? = nil
+    /// Clean the microphone for live text while recording (the saved audio
+    /// is never cleaned). Optional so older profiles decode; nil is off.
+    var reduceLiveNoise: Bool? = nil
 }
 
 final class AudioLibraryStore: @unchecked Sendable {

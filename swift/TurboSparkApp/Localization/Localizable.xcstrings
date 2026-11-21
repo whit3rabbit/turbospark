@@ -702692,6 +702692,661 @@
           }
         }
       }
+    },
+    "Reduce background noise": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reduce background noise"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reducir el ruido de fondo"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Réduire le bruit de fond"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hintergrundgeräusche reduzieren"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Riduci il rumore di fondo"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reduzir ruído de fundo"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Achtergrondgeluid verminderen"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minska bakgrundsljud"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Redukuj szum tła"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arka plan gürültüsünü azalt"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Kurangi kebisingan latar"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подавлять фоновый шум"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Приглушувати фоновий шум"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Giảm tiếng ồn nền"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "背景ノイズを低減"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "배경 소음 줄이기"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "降低背景噪音"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "降低背景噪音"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تقليل ضوضاء الخلفية"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הפחתת רעשי רקע"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पृष्ठभूमि शोर कम करें"
+          }
+        }
+      }
+    },
+    "Live text hears your microphone with background noise reduced. The saved recording keeps the original audio.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live text hears your microphone with background noise reduced. The saved recording keeps the original audio."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "El texto en directo escucha tu micrófono con el ruido de fondo reducido. La grabación guardada conserva el audio original."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Le texte en direct entend votre micro avec le bruit de fond réduit. L'enregistrement sauvegardé conserve l'audio d'origine."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Der Live-Text hört Ihr Mikrofon mit reduzierten Hintergrundgeräuschen. Die gespeicherte Aufnahme behält das Originalaudio."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Il testo in diretta ascolta il microfono con il rumore di fondo ridotto. La registrazione salvata mantiene l'audio originale."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "O texto ao vivo ouve seu microfone com o ruído de fundo reduzido. A gravação salva mantém o áudio original."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Live tekst hoort je microfoon met minder achtergrondgeluid. De opgeslagen opname behoudt de originele audio."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Livetexten hör din mikrofon med minskat bakgrundsljud. Den sparade inspelningen behåller originalljudet."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tekst na żywo słyszy mikrofon ze zredukowanym szumem tła. Zapisane nagranie zachowuje oryginalny dźwięk."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Canlı metin mikrofonunuzu arka plan gürültüsü azaltılmış olarak duyar. Kaydedilen kayıt orijinal sesi korur."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Teks langsung mendengar mikrofon Anda dengan kebisingan latar dikurangi. Rekaman yang disimpan tetap memakai audio asli."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Живой текст слышит микрофон с подавленным фоновым шумом. Сохранённая запись остаётся исходной."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Живий текст чує мікрофон із приглушеним фоновим шумом. Збережений запис лишається оригінальним."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Văn bản trực tiếp nghe micrô của bạn với tiếng ồn nền đã giảm. Bản ghi đã lưu giữ nguyên âm thanh gốc."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "ライブテキストは背景ノイズを低減したマイク音声を聞き取ります。保存される録音は元の音声のままです。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "실시간 텍스트는 배경 소음을 줄인 마이크 소리를 듣습니다. 저장된 녹음은 원래 오디오를 유지합니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "实时文字听到的是降低背景噪音后的麦克风声音。保存的录音保留原始音频。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "即時文字聽到的是降低背景噪音後的麥克風聲音。儲存的錄音保留原始音訊。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "يسمع النص المباشر الميكروفون مع تقليل ضوضاء الخلفية. يحتفظ التسجيل المحفوظ بالصوت الأصلي."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הטקסט החי שומע את המיקרופון עם רעשי רקע מופחתים. ההקלטה השמורה שומרת על השמע המקורי."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "लाइव टेक्स्ट पृष्ठभूमि शोर घटाकर आपका माइक्रोफ़ोन सुनता है। सहेजी गई रिकॉर्डिंग मूल ऑडियो रखती है।"
+          }
+        }
+      }
+    },
+    "Change this before you start recording.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Change this before you start recording."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Cambia esto antes de empezar a grabar."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modifiez ce réglage avant de commencer l'enregistrement."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ändern Sie dies, bevor Sie die Aufnahme starten."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Modifica questa opzione prima di iniziare a registrare."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Altere isto antes de começar a gravar."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Wijzig dit voordat je begint met opnemen."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ändra detta innan du börjar spela in."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Zmień to przed rozpoczęciem nagrywania."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bunu kayda başlamadan önce değiştirin."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Ubah ini sebelum Anda mulai merekam."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Измените это до начала записи."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Змініть це до початку запису."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hãy thay đổi mục này trước khi bắt đầu ghi."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "録音を始める前に変更してください。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "녹음을 시작하기 전에 변경하세요."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "请在开始录音前更改此项。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "請在開始錄音前變更此項。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "غيّر هذا قبل بدء التسجيل."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "יש לשנות זאת לפני תחילת ההקלטה."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "रिकॉर्डिंग शुरू करने से पहले इसे बदलें।"
+          }
+        }
+      }
+    },
+    "Background noise reduction could not keep up and is off for the rest of this recording.": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Background noise reduction could not keep up and is off for the rest of this recording."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La reducción de ruido de fondo no pudo seguir el ritmo y está desactivada durante el resto de esta grabación."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La réduction du bruit de fond n'a pas pu suivre et reste désactivée pour le reste de cet enregistrement."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Reduzierung der Hintergrundgeräusche kam nicht mit und ist für den Rest dieser Aufnahme aus."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La riduzione del rumore di fondo non riusciva a stare al passo ed è disattivata per il resto di questa registrazione."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A redução de ruído de fundo não conseguiu acompanhar e está desativada no restante desta gravação."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Achtergrondgeluidvermindering kon het niet bijhouden en staat uit voor de rest van deze opname."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minskningen av bakgrundsljud hann inte med och är av under resten av inspelningen."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Redukcja szumu tła nie nadążała i jest wyłączona do końca tego nagrania."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arka plan gürültüsü azaltma yetişemedi ve bu kaydın geri kalanında kapalı."
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pengurangan kebisingan latar tidak dapat mengikuti dan dimatikan untuk sisa rekaman ini."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подавление фонового шума не успевало и отключено до конца этой записи."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Приглушення фонового шуму не встигало й вимкнене до кінця цього запису."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tính năng giảm tiếng ồn nền không theo kịp và đã tắt cho phần còn lại của bản ghi này."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "背景ノイズの低減が追いつかなかったため、この録音の残りではオフになっています。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "배경 소음 줄이기가 따라가지 못해 이 녹음의 나머지 부분에서는 꺼져 있습니다."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "背景降噪跟不上，本次录音的剩余部分已将其关闭。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "背景降噪跟不上，本次錄音的其餘部分已將其關閉。"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تعذّر على تقليل ضوضاء الخلفية مواكبة التسجيل، وهو متوقف لبقية هذا التسجيل."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הפחתת רעשי הרקע לא עמדה בקצב וכבויה לשארית ההקלטה הזו."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "पृष्ठभूमि शोर घटाना साथ नहीं रख पाया और इस रिकॉर्डिंग के बाकी हिस्से के लिए बंद है।"
+          }
+        }
+      }
+    },
+    "Background noise reduction is off for this recording: %@": {
+      "extractionState": "manual",
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Background noise reduction is off for this recording: %@"
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La reducción de ruido de fondo está desactivada en esta grabación: %@"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La réduction du bruit de fond est désactivée pour cet enregistrement : %@"
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Die Reduzierung der Hintergrundgeräusche ist für diese Aufnahme aus: %@"
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "La riduzione del rumore di fondo è disattivata per questa registrazione: %@"
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "A redução de ruído de fundo está desativada nesta gravação: %@"
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Achtergrondgeluidvermindering staat uit voor deze opname: %@"
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Minskningen av bakgrundsljud är av för den här inspelningen: %@"
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Redukcja szumu tła jest wyłączona dla tego nagrania: %@"
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Arka plan gürültüsü azaltma bu kayıt için kapalı: %@"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Pengurangan kebisingan latar dimatikan untuk rekaman ini: %@"
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Подавление фонового шума отключено для этой записи: %@"
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Приглушення фонового шуму вимкнене для цього запису: %@"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Giảm tiếng ồn nền đã tắt cho bản ghi này: %@"
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "この録音では背景ノイズの低減がオフです: %@"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "이 녹음에서는 배경 소음 줄이기가 꺼져 있습니다: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次录音的背景降噪已关闭：%@"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "本次錄音的背景降噪已關閉：%@"
+          }
+        },
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "تقليل ضوضاء الخلفية متوقف لهذا التسجيل: %@"
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "הפחתת רעשי הרקע כבויה בהקלטה הזו: %@"
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "इस रिकॉर्डिंग के लिए पृष्ठभूमि शोर घटाना बंद है: %@"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

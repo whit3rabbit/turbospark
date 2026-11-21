@@ -53,13 +53,23 @@ protocol AudioLiveResampling {
 }
 
 /// `AVAudioConverter` kept across packets, so the filter state carries over
-/// packet edges instead of clicking at each one.
+/// packet edges instead of clicking at each one. 16 kHz mono for live text;
+/// voice cleaning keeps one at 48 kHz (`AudioLiveVoiceCleaner`).
 struct AudioLiveConverter: AudioLiveResampling {
     private var converter: AVAudioConverter?
     private var inputRate: Double = 0
-    private let output = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!
+    private let output: AVAudioFormat
+
+    init(outputRate: Double = 16_000) {
+        output = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: outputRate, channels: 1, interleaved: false)!
+    }
 
     mutating func mono16k(_ interleaved: [Float], sampleRate: Double, channels: Int) -> [Float] {
+        mono(interleaved, sampleRate: sampleRate, channels: channels)
+    }
+
+    /// Mono at this converter's output rate.
+    mutating func mono(_ interleaved: [Float], sampleRate: Double, channels: Int) -> [Float] {
         let frames = interleaved.count / max(1, channels)
         guard frames > 0 else { return [] }
         // Average channels first: speech is the same in each, and mono is
@@ -70,7 +80,7 @@ struct AudioLiveConverter: AudioLiveResampling {
             for channel in 0..<channels { sum += interleaved[frame * channels + channel] }
             mono[frame] = sum / Float(channels)
         }
-        if sampleRate == 16_000 { return mono }
+        if sampleRate == output.sampleRate { return mono }
         if converter == nil || inputRate != sampleRate {
             guard let input = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false) else { return [] }
             converter = AVAudioConverter(from: input, to: output)
@@ -80,7 +90,7 @@ struct AudioLiveConverter: AudioLiveResampling {
               let source = AVAudioPCMBuffer(pcmFormat: converter.inputFormat, frameCapacity: AVAudioFrameCount(frames)) else { return [] }
         source.frameLength = AVAudioFrameCount(frames)
         mono.withUnsafeBufferPointer { source.floatChannelData![0].update(from: $0.baseAddress!, count: frames) }
-        let capacity = AVAudioFrameCount(Double(frames) * 16_000 / sampleRate) + 64
+        let capacity = AVAudioFrameCount(Double(frames) * output.sampleRate / sampleRate) + 64
         guard let target = AVAudioPCMBuffer(pcmFormat: output, frameCapacity: capacity) else { return [] }
         var fed = false
         var error: NSError?
