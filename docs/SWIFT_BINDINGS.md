@@ -186,6 +186,17 @@ never speculates**, and that fallback is silent by design (a per-turn warning
 would fire on the normal case). Read `info.speculation` for the
 session-level answer, once.
 
+To label a model before opening it, ask the same question without a
+session. `TurboSparkCapabilities.speculation(forInstallAt: path)`
+(`ts_install_speculation_json`) reads the install's manifest and resident
+index (no weights) and makes the same decisions an `.auto` open makes,
+returning `available`, `drafter` and the engine's `reason`, or nil when the
+install cannot be read. Before a download, `ProbeReport.speculation` and
+`HubCheck.speculation` give the same answer for one GGUF file, read off its
+header. They are set only for dense `qwen35`, the one GGUF family with a head
+intake, and a Hub check describes the file it checked, so re-check the
+variant the user picks.
+
 `.auto` also declines a DFlash2 drafter it FINDS, and says so in
 `info.speculation.reason`. That asymmetry is measured rather than stylistic:
 the checkpoint's own MTP head pays 1.44-1.66x, while DFlash2 at block 2 reads

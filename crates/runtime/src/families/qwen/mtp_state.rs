@@ -178,8 +178,51 @@ impl MtpState {
     /// catch-all binding rather than a comparison. 4 is INT4-affine; 15 and
     /// 16 are the 1-bit and 2-bit affine pair, whose batched kernels landed
     /// with ROADMAP P3.3 and are held bit-exact against their GEMVs by the
-    /// gpu crate's parity tests.
-    const BATCHED_GEMM_DTYPES: [u8; 3] = [4, 15, 16];
+    /// gpu crate's parity tests. 6, 7, 8 and 13 are GGUF Q8_0, Q4_K, Q6_K and
+    /// Q5_K, held bit-exact the same way (`dequant_kquant_gemm_parity.rs`). 1
+    /// is a resident BF16 matrix, which a GGUF `qwen35` carries for its F32
+    /// `ssm_alpha`/`ssm_beta` (`gemv_bf16_gemm_parity.rs`).
+    /// The list itself is `model_io::mtp_verify`'s, so the GGUF probe
+    /// predicts with the same set.
+    const BATCHED_GEMM_DTYPES: [u8; 8] = model_io::MTP_BATCHED_GEMM_DTYPES;
+
+    /// The GGUF members of [`Self::BATCHED_GEMM_DTYPES`]. A GGUF trunk is the
+    /// one kind of install that mixes block types by tensor (Q4_K_M puts
+    /// Q6_K on some layers, Q4_K_S puts Q5_K on others, and a low-bit mix
+    /// can carry Q3_K), so for these the single `q_proj` probe below is not
+    /// enough and every projection the verify dispatches is checked.
+    const GGUF_BATCHED_DTYPES: [u8; 4] = model_io::MTP_GGUF_BATCHED_DTYPES;
+
+    /// Every trunk projection `produce_batched` sends through
+    /// `encode_gemm_any`, per layer. Absent names are skipped: a linear
+    /// layer has no `self_attn.*` and a full one no `linear_attn.*`.
+    /// Shared with the GGUF probe (`model_io::mtp_verify`).
+    const VERIFY_PROJECTIONS: [&'static str; 12] = model_io::MTP_VERIFY_PROJECTIONS;
+
+    /// The first verify-dispatched matrix on a GGUF trunk whose dtype has no
+    /// batched kernel, as `(name, dtype)`. Includes the LM head the verify
+    /// runs (`encode_qwen_batched_head`'s choice of tied or untied).
+    fn first_unbatched_gguf_matrix(
+        index: &ResidentIndex,
+        arch: &ArchConfig,
+    ) -> Option<(String, u8)> {
+        let layers = (0..arch.num_layers as usize).flat_map(|l| {
+            Self::VERIFY_PROJECTIONS
+                .iter()
+                .map(move |s| prefixed_layer_tensor(TRUNK_PREFIX, l, s))
+        });
+        let head = if arch.tie_word_embeddings {
+            "language_model.model.embed_tokens.weight"
+        } else {
+            "language_model.lm_head.weight"
+        };
+        layers
+            .chain(std::iter::once(head.to_string()))
+            .find_map(|name| {
+                let e = index.entries.get(&name)?;
+                (!Self::BATCHED_GEMM_DTYPES.contains(&e.dtype)).then_some((name, e.dtype))
+            })
+    }
 
     /// Why a speculative round could not run on this install, or `None` if it
     /// can. Checked at OPEN, so a caller learns before generating rather than
@@ -271,17 +314,34 @@ impl MtpState {
             );
         };
         let probe = prefixed_layer_tensor(TRUNK_PREFIX, full, "self_attn.q_proj.weight");
+        // Scanned only when the probe is a GGUF block type, so an affine
+        // install keeps exactly the one-probe check it had.
+        let gguf_gap = index
+            .entries
+            .get(&probe)
+            .filter(|e| Self::GGUF_BATCHED_DTYPES.contains(&e.dtype))
+            .and_then(|_| Self::first_unbatched_gguf_matrix(index, arch));
         match index.entries.get(&probe) {
             None => Some(format!(
                 "cannot tell whether the batched verify can run: {probe} is not in \
                  the resident index"
             )),
             Some(e) if !Self::BATCHED_GEMM_DTYPES.contains(&e.dtype) => Some(format!(
-                "the batched verify covers INT4-affine (4) and the 1-bit (15) / 2-bit \
-                 (16) affine pair, and this install's {probe} is dtype {}; the model \
-                 decodes normally, only speculation is unavailable",
+                "the batched verify covers raw BF16 (1), INT4-affine (4), the 1-bit \
+                 (15) / 2-bit (16) affine pair and GGUF Q8_0 (6) / Q4_K (7) / Q6_K (8) \
+                 / Q5_K (13), and this \
+                 install's {probe} is dtype {}; the model decodes normally, only \
+                 speculation is unavailable",
                 e.dtype
             )),
+            Some(_) if gguf_gap.is_some() => {
+                let (name, dtype) = gguf_gap.unwrap_or_default();
+                Some(format!(
+                    "the batched verify covers raw BF16 (1) and GGUF Q8_0 (6) / Q4_K (7) \
+                     / Q6_K (8) / Q5_K (13), and this mixed-type install's {name} is dtype {dtype}; the model decodes \
+                     normally, only speculation is unavailable"
+                ))
+            }
             Some(_) => {
                 if !has_head {
                     // CARRIES THE POINTER `MtpState::build`'s open-time error
@@ -498,5 +558,109 @@ mod tests {
             !reason.contains("not in the resident index"),
             "the empty-index arm fired, so the vision arm is not first: {reason}"
         );
+    }
+
+    /// An index carrying every verify projection on every layer, plus both
+    /// LM head names, at `dtype`, with `overrides` applied by name.
+    fn index_at(arch: &ArchConfig, dtype: u8, overrides: &[(&str, u8)]) -> ResidentIndex {
+        let mut names: Vec<String> = (0..arch.num_layers as usize)
+            .flat_map(|l| {
+                MtpState::VERIFY_PROJECTIONS
+                    .iter()
+                    .map(move |s| prefixed_layer_tensor(TRUNK_PREFIX, l, s))
+            })
+            .collect();
+        names.push("language_model.lm_head.weight".to_string());
+        names.push("language_model.model.embed_tokens.weight".to_string());
+        let entries = names
+            .into_iter()
+            .map(|name| {
+                let dtype = overrides
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .map_or(dtype, |&(_, d)| d);
+                let e = model_io::ResidentIndexEntry {
+                    name: name.clone(),
+                    dtype,
+                    file_offset: 0,
+                    size_bytes: 0,
+                    shape: (0, 0, 0, 0),
+                    scale_offset: 0,
+                    scale_size: 0,
+                    bias_offset: 0,
+                    bias_size: 0,
+                };
+                (name, e)
+            })
+            .collect();
+        ResidentIndex {
+            header: model_io::ResidentIndexHeader {
+                index_size: 0,
+                resident_size: 0,
+                entry_count: 0,
+            },
+            entries,
+        }
+    }
+
+    /// A uniform K-quant trunk with a head speculates, at each batched type.
+    #[test]
+    fn a_kquant_trunk_with_a_head_can_speculate() {
+        let arch = turbospark_repack::tiny_qwen_gdn_dense_arch(256, 4);
+        for dtype in [6u8, 7, 8] {
+            let index = index_at(&arch, dtype, &[]);
+            assert_eq!(
+                MtpState::speculation_blocker(&index, &arch, true),
+                None,
+                "dtype {dtype}"
+            );
+        }
+    }
+
+    /// A Q4_K trunk whose `q_proj` probe passes but one projection elsewhere
+    /// is Q3_K (24) is refused at open, naming that tensor. The single probe
+    /// alone would have enabled speculation and failed at the first verify.
+    #[test]
+    fn a_mixed_kquant_trunk_names_the_unbatched_matrix() {
+        let arch = turbospark_repack::tiny_qwen_gdn_dense_arch(256, 4);
+        let odd = prefixed_layer_tensor(TRUNK_PREFIX, 1, "mlp.down_proj.weight");
+        let index = index_at(&arch, 7, &[(&odd, 24)]);
+        let reason = MtpState::speculation_blocker(&index, &arch, true)
+            .expect("a Q3_K projection has no batched kernel");
+        assert!(reason.contains(&odd), "{reason}");
+        assert!(reason.contains("dtype 24"), "{reason}");
+    }
+
+    /// A Q4_K_S trunk mixes Q5_K (13) into its Q4_K projections; Q5_K has a
+    /// batched kernel, so the scan passes it.
+    #[test]
+    fn a_q4_k_s_trunk_with_q5_k_projections_can_speculate() {
+        let arch = turbospark_repack::tiny_qwen_gdn_dense_arch(256, 4);
+        let down = prefixed_layer_tensor(TRUNK_PREFIX, 1, "mlp.down_proj.weight");
+        let v = prefixed_layer_tensor(TRUNK_PREFIX, 1, "self_attn.v_proj.weight");
+        let index = index_at(&arch, 7, &[(&down, 13), (&v, 13)]);
+        assert_eq!(MtpState::speculation_blocker(&index, &arch, true), None);
+    }
+
+    /// A Q4_K_M / Q6_K GGUF ships `ssm_alpha`/`ssm_beta` as F32, narrowed to
+    /// BF16 (1) at repack. Those have a batched kernel now, so the scan
+    /// passes them.
+    #[test]
+    fn a_kquant_trunk_with_bf16_gdn_gates_can_speculate() {
+        let arch = turbospark_repack::tiny_qwen_gdn_dense_arch(256, 4);
+        let a = prefixed_layer_tensor(TRUNK_PREFIX, 0, "linear_attn.in_proj_a.weight");
+        let b = prefixed_layer_tensor(TRUNK_PREFIX, 0, "linear_attn.in_proj_b.weight");
+        let index = index_at(&arch, 8, &[(&a, 1), (&b, 1)]);
+        assert_eq!(MtpState::speculation_blocker(&index, &arch, true), None);
+    }
+
+    /// The scan is GGUF-only: an INT4 trunk with an odd non-probe matrix
+    /// keeps the one-probe behavior it had before the K-quant arms.
+    #[test]
+    fn an_affine_trunk_keeps_the_single_probe_check() {
+        let arch = turbospark_repack::tiny_qwen_gdn_dense_arch(256, 4);
+        let odd = prefixed_layer_tensor(TRUNK_PREFIX, 1, "mlp.down_proj.weight");
+        let index = index_at(&arch, 4, &[(&odd, 24)]);
+        assert_eq!(MtpState::speculation_blocker(&index, &arch, true), None);
     }
 }

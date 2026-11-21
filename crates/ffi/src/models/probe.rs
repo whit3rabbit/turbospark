@@ -19,6 +19,17 @@ pub(super) fn parse_repo(spec: &str) -> Result<RepoRef, String> {
     Ok(RepoRef::new(repo, revision))
 }
 
+/// Whether the install of a probed GGUF would speculate:
+/// `{"available": bool, "reason": string|null}`, or null when the family has
+/// no GGUF speculation path (and for safetensors). Read off the header with
+/// the runtime gate's rules, so it is the open-time answer before a download.
+pub(super) fn speculation_json(report: &catalog::ProbeReport) -> serde_json::Value {
+    report.speculation.as_ref().map_or(
+        serde_json::Value::Null,
+        |s| json!({"available": s.is_available(), "reason": s.reason()}),
+    )
+}
+
 /// The header-only probe: what this engine makes of an arbitrary repository,
 /// reading kilobytes rather than gigabytes.
 ///
@@ -83,6 +94,7 @@ pub(crate) fn probe_json(
         // Set for a PEFT LoRA adapter: the base the install streams and
         // merges the adapter into. Null for an ordinary checkpoint.
         "adapterBaseRepo": report.adapter.as_ref().map(|_| report.repo.repo.clone()),
+        "speculation": speculation_json(&report),
         // Null when nothing could be read off the header, never a zeroed
         // object: an absent measurement is not a measurement of zero, and a
         // fit of 0 bytes reads as "it fits easily" -- the exact inverse.

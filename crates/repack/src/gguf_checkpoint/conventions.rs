@@ -188,6 +188,34 @@ fn is_gemma3_centered_norm(canonical: &str, arch: &ArchConfig) -> bool {
     arch.family == ModelFamily::Gemma3 && canonical.ends_with("norm.weight")
 }
 
+/// The dense `qwen35` multi-token-prediction head's seven norms. llama.cpp's
+/// converter adds 1 to every `*norm.weight` but `linear_attn.norm`
+/// (`Qwen3NextModel.modify_tensors`), and its rename to `blk.<n>.nextn.*`
+/// runs first, so the head's norms are shifted along with the trunk's. The
+/// runtime reads the TRUNK's plain (`x * w`, the shift is wanted) and the
+/// HEAD's centered (`x * (1 + w)`, `QkNormConvention::Centered` and
+/// `encode_rms_norm_bf16w_centered` in `families/qwen/mtp.rs`), because
+/// mlx-vlm leaves the head unshifted. So only the head gets the value back.
+/// Reading it shifted is not subtle: `docs/MTP.md` measured the true token
+/// at median rank 248,308 of 248,320.
+///
+/// AN EXPLICIT LIST, not a suffix test on the canonical name. llama.cpp's
+/// rule matches its OWN names (`enorm`, `hnorm`), and two of their canonical
+/// names (`pre_fc_norm_embedding`, `pre_fc_norm_hidden`) do not end in
+/// `norm.weight`, so a canonical suffix test silently skips them.
+fn is_qwen_gdn_mtp_head_norm(canonical: &str, arch: &ArchConfig) -> bool {
+    const HEAD_NORMS: [&str; 7] = [
+        "mtp.pre_fc_norm_embedding.weight",
+        "mtp.pre_fc_norm_hidden.weight",
+        "mtp.norm.weight",
+        "mtp.layers.0.input_layernorm.weight",
+        "mtp.layers.0.post_attention_layernorm.weight",
+        "mtp.layers.0.self_attn.q_norm.weight",
+        "mtp.layers.0.self_attn.k_norm.weight",
+    ];
+    arch.family == ModelFamily::QwenGdnDense && HEAD_NORMS.contains(&canonical)
+}
+
 fn unpermute_rotary_rows(
     name: &str,
     rows: usize,
@@ -229,7 +257,10 @@ pub(crate) fn apply_source_convention(
     cols: usize,
     values: &mut [f32],
 ) -> Result<(), GgufRepackError> {
-    if is_muse_centered_norm(canonical, arch) || is_gemma3_centered_norm(canonical, arch) {
+    if is_muse_centered_norm(canonical, arch)
+        || is_gemma3_centered_norm(canonical, arch)
+        || is_qwen_gdn_mtp_head_norm(canonical, arch)
+    {
         // Exact for the published file: the converter's `w + 1` is computed
         // in f32 on a BF16 weight, and the difference reproduces that weight
         // (measured against `mlx-community/Muse-Glimmer-30B-4bit`).
@@ -579,6 +610,37 @@ mod tests {
                     assert_eq!(bytes[head * head_dim + i], want, "{canonical} row {i}");
                 }
             }
+        }
+    }
+
+    /// The dense `qwen35` head's seven norms lose llama.cpp's `+1`; the
+    /// trunk's identically-named norms keep it, because the runtime reads the
+    /// trunk plain and the head centered.
+    #[test]
+    fn qwen35_dense_unshifts_only_the_mtp_head_norms() {
+        let arch = model_io::known_architecture(ModelFamily::QwenGdnDense);
+        for canonical in [
+            "mtp.pre_fc_norm_embedding.weight",
+            "mtp.pre_fc_norm_hidden.weight",
+            "mtp.norm.weight",
+            "mtp.layers.0.input_layernorm.weight",
+            "mtp.layers.0.post_attention_layernorm.weight",
+            "mtp.layers.0.self_attn.q_norm.weight",
+            "mtp.layers.0.self_attn.k_norm.weight",
+        ] {
+            let mut values = [1.0f32, 1.5, 0.25];
+            apply_source_convention("n", canonical, &arch, 1, &mut values).unwrap();
+            assert_eq!(values, [0.0, 0.5, -0.75], "{canonical}");
+        }
+        for canonical in [
+            "language_model.model.layers.3.input_layernorm.weight",
+            "language_model.model.layers.3.self_attn.q_norm.weight",
+            "language_model.model.norm.weight",
+            "mtp.fc.weight",
+        ] {
+            let mut values = [1.0f32, 1.5, 0.25];
+            apply_source_convention("n", canonical, &arch, 1, &mut values).unwrap();
+            assert_eq!(values, [1.0, 1.5, 0.25], "{canonical}");
         }
     }
 

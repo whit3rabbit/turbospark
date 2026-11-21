@@ -108,6 +108,29 @@ pub(crate) fn residency_preflight_json(
     })
 }
 
+/// Whether a session opened on the install at `path` with default options
+/// would speculate, without opening it (`runtime::install_speculation_blocker`,
+/// the same decisions the open makes, from the resident index alone).
+#[cfg(target_os = "macos")]
+pub(crate) fn install_speculation_json(path: &str) -> Result<String, String> {
+    let dir = std::path::Path::new(path);
+    let arch = repack::peek_manifest_arch(dir)?;
+    Ok(speculation_preflight_json(
+        runtime::install_speculation_blocker(dir, &arch),
+    ))
+}
+
+/// `{"available", "drafter", "reason"}`. `drafter` is "mtp" when available
+/// (`auto` never selects DFlash2), null otherwise.
+pub(crate) fn speculation_preflight_json(blocker: Option<String>) -> String {
+    serde_json::json!({
+        "available": blocker.is_none(),
+        "drafter": blocker.is_none().then_some("mtp"),
+        "reason": blocker,
+    })
+    .to_string()
+}
+
 /// `residency_preflight_json` for the install at `path`, with the same
 /// resolver and family rule the open uses. `requested` is parsed like the
 /// `expertResidency` open option, so a typo is refused by name.

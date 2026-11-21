@@ -85,6 +85,10 @@ pub struct ProbeReport {
     /// what the install streams; the adapter's own tokenizer files are
     /// the sidecar source.
     pub adapter: Option<RepoRef>,
+    /// GGUF only: whether the install would speculate, read off the header
+    /// with the runtime gate's rules (`repack::gguf_speculation`). `None`
+    /// when the family has no GGUF speculation path, or for safetensors.
+    pub speculation: Option<repack::GgufSpeculation>,
     /// Advisory lines that do not gate: expert-cache arithmetic, quantization
     /// surprises, anything a reader should see before committing a download.
     pub warnings: Vec<String>,

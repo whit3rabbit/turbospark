@@ -43,7 +43,32 @@ mod muse;
 mod qwen;
 mod spark;
 
+pub(crate) use qwen::{map_qwen_gdn_dense_mtp_head, QWEN_GDN_DENSE_MTP_HEAD_TENSORS};
+
 use model_io::ModelFamily;
+
+/// [`map_gguf_name`], plus the dense `qwen35` multi-token-prediction head
+/// block at index `num_layers`, which maps to `mtp.*` instead of a phantom
+/// trunk layer. Only for names `plan::classify` already placed in
+/// `Plan::resident`: classify decides whether a head is ingested at all, and
+/// this only has to agree with it on the canonical name.
+pub(crate) fn map_gguf_name_with_head(
+    name: &str,
+    family: ModelFamily,
+    num_layers: usize,
+) -> Result<GgufMapping, GgufNameError> {
+    if family == ModelFamily::QwenGdnDense {
+        let head = name
+            .strip_prefix("blk.")
+            .and_then(|rest| rest.split_once('.'))
+            .filter(|(idx, _)| idx.parse::<usize>().ok() == Some(num_layers))
+            .and_then(|(_, suffix)| map_qwen_gdn_dense_mtp_head(suffix));
+        if let Some(canonical) = head {
+            return Ok(GgufMapping::Resident(canonical));
+        }
+    }
+    map_gguf_name(name, family)
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GgufNameError {

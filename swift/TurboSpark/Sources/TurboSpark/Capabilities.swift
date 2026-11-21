@@ -43,6 +43,24 @@ public struct ExpertResidencyPreflight: Decodable, Sendable, Equatable {
     }
 }
 
+/// Whether an install, or a GGUF before its download, would speculate (MTP)
+/// under default options. Answered with the session open's own rules.
+public struct SpeculationPreflight: Decodable, Sendable, Equatable {
+    public let available: Bool
+    /// `"mtp"` when an installed model would speculate. Absent from a probe
+    /// or Hub check, which describe a file rather than an install.
+    public let drafter: String?
+    /// The engine's reason when unavailable, in its own (English) words: the
+    /// same text `SessionInfo.speculation.reason` would carry.
+    public let reason: String?
+
+    public init(available: Bool, drafter: String?, reason: String?) {
+        self.available = available
+        self.drafter = drafter
+        self.reason = reason
+    }
+}
+
 /// Capability predicates answered in Rust, so a host does not keep a second
 /// copy that is right only until the next family lands.
 public enum TurboSparkCapabilities {
@@ -76,6 +94,18 @@ public enum TurboSparkCapabilities {
             })
         else { return nil }
         return try? decode(ExpertResidencyPreflight.self, from: json)
+    }
+
+    /// Whether a session opened on the install at `path` with default
+    /// options would speculate, without opening it or loading weights. Nil
+    /// when the install's manifest or resident index cannot be read.
+    public static func speculation(forInstallAt path: String) -> SpeculationPreflight? {
+        guard
+            let json = try? takeString({ out in
+                path.withCString { ts_install_speculation_json($0, out) }
+            })
+        else { return nil }
+        return try? decode(SpeculationPreflight.self, from: json)
     }
 
     /// Whether the host chip is an Apple Silicon M4 or newer chip capable of ANE prefill.

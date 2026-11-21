@@ -13,7 +13,7 @@ use catalog::{
 use serde_json::json;
 
 use super::fit::{local_machine, probe_fit};
-use super::probe::{parse_repo, variant_json};
+use super::probe::{parse_repo, speculation_json, variant_json};
 use crate::wire::HubSearchOptions;
 
 const DEFAULT_LIMIT: u32 = 20;
@@ -206,6 +206,9 @@ pub(crate) fn hub_check_json(
         // Set for a PEFT LoRA adapter: the base the install merges it into.
         "adapterBaseRepo": report
             .and_then(|r| r.adapter.as_ref().map(|_| r.repo.repo.clone())),
+        // GGUF only; see `speculation_json`. Describes the representative
+        // `file`, so a host re-checks a different variant before trusting it.
+        "speculation": report.map_or(serde_json::Value::Null, speculation_json),
         "sidecarsMissing": report.map(|r| r.sidecars_missing.clone()).unwrap_or_default(),
         // Set only when the hint supplied the tokenizer. An install of this
         // result must pass the same repository as its sidecar.

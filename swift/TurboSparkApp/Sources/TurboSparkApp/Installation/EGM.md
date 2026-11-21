@@ -62,6 +62,7 @@ Steering (per-model detail pane):
 Model presentation (shared):
 - `ModelFeatureDescriptor.resolve(installedModel:catalogEntry:sessionInfo:)`, `isMoE`, `isKnownMoEFamily`, `isHuggingFaceRepo`, `supportsKvQuant(atInstallPath:)`, `supportsMoEPrefillBank(atInstallPath:)` [ModelFeatureDescriptor.swift:ModelFeatureDescriptor]
 - `ManifestFacts.parse(_:)`, `ManifestFactsCache.facts(forInstallPath:)` [ModelFeatureDescriptor.swift:ManifestFactsCache]
+- `InstallSpeculationCache.answer(forInstallPath:)`, `ModelFeatureDescriptor.speculativeDrafter(combinedText:alias:engineAnswer:)` [InstallSpeculationCache.swift]: the MTP badge follows the engine's install answer; the name decides only when there is no install to ask
 - `ModelFitPresentation.of(_:)`, `filterLabel(_:)`, `ModelFitVerdictPill` [ModelFitPresentation.swift:ModelFitPresentation]
 - `ModelFamilyVisuals.resolve(alias:family:name:)`, `formatLabel(alias:name:)` [ModelFamilyVisuals.swift:ModelFamilyVisuals]
 - `ModelFeatureBadgeView` and its presets [ModelFeatureBadgeView.swift:ModelFeatureBadgeView]
