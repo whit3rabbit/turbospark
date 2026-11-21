@@ -98,6 +98,7 @@ struct ContextUsageRingView: View {
 /// trigger is the one real limit this app has.
 struct ContextUsagePopoverView: View {
     @Environment(\.appTheme) private var theme
+    @Environment(\.dismiss) fileprivate var dismiss
     @ObservedObject var model: AppModel
 
     private var summary: ContextUsageSummary? { model.contextUsageSummary }
@@ -109,6 +110,7 @@ struct ContextUsagePopoverView: View {
             rows
             Divider()
             footer
+            actions
         }
         .padding(14)
         .frame(minWidth: 280, idealWidth: 320, maxWidth: 400, alignment: .leading)
@@ -232,6 +234,54 @@ struct ContextUsagePopoverView: View {
             .font(theme.ui(.tiny))
             .foregroundStyle(.appSecondary)
             .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+extension ContextUsagePopoverView {
+    /// What to do about a filling window, not just how full it is. Each
+    /// button calls an existing path: `/compact` (keeping the draft) and the
+    /// New Chat action `NewChatSuggestionBanner` offers. A refused button
+    /// stays visible and says why in its tooltip (Button guide).
+    fileprivate var actions: some View {
+        let compactBlocker = model.contextMeterCompactBlocker
+        let newChatBlocker = ContextMeterActions.newChatBlocker(generating: model.isRunning)
+        return HStack(spacing: 8) {
+            Button {
+                model.compactKeepingDraft()
+                dismiss()
+            } label: {
+                Label { Text("Compact now", bundle: .module) } icon: { Image(systemName: "rectangle.compress.vertical") }
+            }
+            .appAction(.quiet, size: .small)
+            .disabled(compactBlocker != nil)
+            .help(compactBlocker?.helpText
+                ?? Text("Summarize older messages now and keep recent turns verbatim", bundle: .module))
+            Button {
+                model.createChat(projectID: model.selectedProjectID)
+                dismiss()
+            } label: {
+                Label { Text("New chat", bundle: .module) } icon: { Image(systemName: "square.and.pencil") }
+            }
+            .appAction(.quiet, size: .small)
+            .disabled(newChatBlocker != nil)
+            .help(newChatBlocker != nil
+                ? Text("While running, a new chat cannot be created", bundle: .module)
+                : Text("Start a fresh conversation (Cmd+N)", bundle: .module))
+            .accessibilityLabel(Text("Start a new chat", bundle: .module))
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+}
+
+extension ContextMeterActions.Blocker {
+    /// Reuses the strings the typed `/compact` path already shows, so the
+    /// button and the command explain a refusal the same way.
+    var helpText: Text {
+        switch self {
+        case .noModel: return Text("Load a model before compacting.", bundle: .module)
+        case .turnRunning: return Text("A turn is already running. Wait for it to finish first.", bundle: .module)
+        case .compacting: return Text("Compacting conversation...", bundle: .module)
+        }
     }
 }
 

@@ -59,12 +59,12 @@ struct SystemPromptSettingsSection: View {
         }
         .settingsControl("System Prompt", pane: .engine, timing: .nextTurn)
         .sheet(isPresented: $showingAddSheet) {
-            SystemPromptEditorSheet(title: Text("Add System Prompt", bundle: .module)) { name, instructions in
+            SystemPromptEditorSheet(model: model, title: Text("Add System Prompt", bundle: .module)) { name, instructions in
                 model.addSystemPrompt(name: name, instructions: instructions)
             }
         }
         .sheet(item: $editingPrompt) { prompt in
-            SystemPromptEditorSheet(title: Text("Edit System Prompt", bundle: .module), prompt: prompt) { name, instructions in
+            SystemPromptEditorSheet(model: model, title: Text("Edit System Prompt", bundle: .module), prompt: prompt) { name, instructions in
                 model.updateSystemPrompt(id: prompt.id, name: name, instructions: instructions)
             }
         }
@@ -81,6 +81,7 @@ struct SystemPromptSettingsSection: View {
 @MainActor
 private struct SystemPromptEditorSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject var model: AppModel
     let title: Text
     let onSave: (String, String) -> Void
 
@@ -89,10 +90,12 @@ private struct SystemPromptEditorSheet: View {
     @FocusState private var isNameFocused: Bool
 
     init(
+        model: AppModel,
         title: Text,
         prompt: AppSystemPrompt? = nil,
         onSave: @escaping (String, String) -> Void
     ) {
+        self.model = model
         self.title = title
         self.onSave = onSave
         _name = State(initialValue: prompt?.name ?? "")
@@ -130,6 +133,7 @@ private struct SystemPromptEditorSheet: View {
                         .themedCode(.base)
                         .appEditorSurface(minHeight: 160)
                         .accessibilityLabel(Text("Instructions", bundle: .module))
+                    InstructionTokenCaptionView(model: model, text: instructions)
                 }
             }
             .formStyle(.grouped)

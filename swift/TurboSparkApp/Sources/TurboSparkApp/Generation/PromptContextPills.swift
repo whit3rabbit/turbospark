@@ -72,50 +72,65 @@ struct PromptModelSelectorPill: View {
 }
 
 /// Project context pill in the prompt composer showing project name, branch, and live git diff stats.
+/// Clicking it opens the read-only "What feeds this turn" list.
 struct PromptProjectContextPill: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
+    @State private var showingSources = false
 
     var body: some View {
         if let project = model.selectedProject {
-            HStack(spacing: 6) {
-                Image(systemName: project.agentType.systemImage)
-                    .font(theme.ui(.tiny, weight: .semibold))
-                    .foregroundStyle(.appAccent)
+            Button {
+                showingSources.toggle()
+            } label: {
+                pillContent(project)
+            }
+            .buttonStyle(.plain)
+            .help(Text("Active project: \(project.name)", bundle: .module))
+            .accessibilityLabel(Text("Active project: \(project.name)", bundle: .module))
+            .accessibilityHint(Text("Shows what the next message draws on", bundle: .module))
+            .popover(isPresented: $showingSources, arrowEdge: .top) {
+                TurnKnowledgeSourcesPopover(model: model)
+            }
+        }
+    }
 
-                Text(project.name)
-                    .font(theme.ui(.small, weight: .semibold))
-                    .lineLimit(1)
+    private func pillContent(_ project: AppProject) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: project.agentType.systemImage)
+                .font(theme.ui(.tiny, weight: .semibold))
+                .foregroundStyle(.appAccent)
 
-                if let worktree = model.worktree, worktree.isGitRepository {
-                    Text(worktree.currentBranch)
-                        .font(theme.code(.callout, weight: .medium))
-                        .foregroundStyle(.appSecondary)
+            Text(project.name)
+                .font(theme.ui(.small, weight: .semibold))
+                .lineLimit(1)
 
-                    if worktree.totalAdditions > 0 || worktree.totalDeletions > 0 {
-                        HStack(spacing: 2) {
-                            if worktree.totalAdditions > 0 {
-                                Text(verbatim: "+\(worktree.totalAdditions)")
-                                    .font(theme.ui(.tiny, weight: .bold).monospacedDigit())
-                                    .foregroundStyle(.appSuccess)
-                            }
-                            if worktree.totalDeletions > 0 {
-                                Text(verbatim: "-\(worktree.totalDeletions)")
-                                    .font(theme.ui(.tiny, weight: .bold).monospacedDigit())
-                                    .foregroundStyle(.appDanger)
-                            }
+            if let worktree = model.worktree, worktree.isGitRepository {
+                Text(worktree.currentBranch)
+                    .font(theme.code(.callout, weight: .medium))
+                    .foregroundStyle(.appSecondary)
+
+                if worktree.totalAdditions > 0 || worktree.totalDeletions > 0 {
+                    HStack(spacing: 2) {
+                        if worktree.totalAdditions > 0 {
+                            Text(verbatim: "+\(worktree.totalAdditions)")
+                                .font(theme.ui(.tiny, weight: .bold).monospacedDigit())
+                                .foregroundStyle(.appSuccess)
+                        }
+                        if worktree.totalDeletions > 0 {
+                            Text(verbatim: "-\(worktree.totalDeletions)")
+                                .font(theme.ui(.tiny, weight: .bold).monospacedDigit())
+                                .foregroundStyle(.appDanger)
                         }
                     }
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(.appElevated, in: Capsule())
-            .overlay(Capsule().stroke(.appBorder, lineWidth: 1))
-            .help(Text("Active project: \(project.name)", bundle: .module))
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(Text("Active project: \(project.name)", bundle: .module))
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(.appElevated, in: Capsule())
+        .overlay(Capsule().stroke(.appBorder, lineWidth: 1))
+        .contentShape(Capsule())
     }
 }
 

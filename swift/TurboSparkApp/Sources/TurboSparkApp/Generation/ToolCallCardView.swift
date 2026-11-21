@@ -20,6 +20,11 @@ struct ToolCallCardView: View {
     let result: AppToolResult?
 
     @State private var isExpanded: Bool = false
+    @State private var showsFailingTests: Bool = false
+    @State private var showsSourceViewer: Bool = false
+    /// Edit-before-run: the pending shell command is being edited in place.
+    @State private var isEditingCommand: Bool = false
+    @State private var commandDraft: String = ""
 
     private var browserCardPresentation: BrowserToolCardPresentation? {
         guard BrowserToolCardPresentation.isBrowserTool(call.name) else { return nil }
@@ -85,11 +90,54 @@ struct ToolCallCardView: View {
         ToolPresentation.resolve(call.name).icon == "terminal" ? call.shellCommand : nil
     }
 
+    /// Nil while running (the runner returns only at exit, so there is no
+    /// live output to tail) and for results it cannot read with certainty.
+    private var terminalSummary: TerminalResultSummary? {
+        guard terminalCommand != nil, !isPendingApproval, let result else { return nil }
+        return TerminalResultSummary.make(
+            output: result.output, isError: result.isError, durationSeconds: result.durationSeconds)
+    }
+
+    /// Counts and failing tests when the finished command was a `cargo test`
+    /// or `swift test` run the parser can vouch for, else nil (raw output
+    /// only). Gated on the terminal summary so a denial or a background
+    /// launch never parses.
+    private var testRunSummary: TestRunSummary? {
+        guard terminalSummary != nil, let result else { return nil }
+        return TestRunSummary.parse(result.output)
+    }
+
+    /// Hidden once the call failed: no job exists, and the error says why.
+    /// Shown while approval is pending, which is when the runs matter most.
+    private func cronSummary(now: Date) -> CronScheduleSummary? {
+        guard CronScheduleSummary.isCronCreate(call.name), result?.isError != true else { return nil }
+        return CronScheduleSummary.make(arguments: call.arguments, hasRun: result != nil, now: now)
+    }
+
     private var submittedPlan: String? {
         guard ["exitplanmode", "exit_plan_mode"].contains(call.name.lowercased()) else { return nil }
         let text = call.arguments["plan"] ?? call.arguments["summary"] ?? call.arguments["content"]
         guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         return text
+    }
+
+    /// Whether the agent stopped on this plan, so its card offers Start and
+    /// Request changes and holds itself open. Read from the selected chat:
+    /// the transcript only draws that chat's rows.
+    private var isOfferedPlan: Bool {
+        submittedPlan != nil
+            && PlanCardActions.isOffered(
+                callID: call.id, in: model.selectedChat.messages, isIdle: model.isIdleForPlanCard,
+                awaitingCallID: model.pendingPlanApproval?.toolCallID)
+    }
+
+    /// Whether the turn stopped on this failed call, so the card offers
+    /// Retry, Skip and Tell the model. The status check runs first so the
+    /// transcript scan happens only for failed cards.
+    private var isOfferedRecovery: Bool {
+        call.status == .failed
+            && RunRecoveryActions.isOffered(
+                callID: call.id, in: model.selectedChat.messages, isIdle: model.isIdleForPlanCard)
     }
 
     private var isTodoCall: Bool {
@@ -152,6 +200,40 @@ struct ToolCallCardView: View {
         ["multiedit", "multi_edit"].contains(call.name.lowercased())
     }
 
+    /// Arguments are parsed once the call exists in the transcript: the
+    /// agent loop appends a call only after the reply finished streaming,
+    /// so there is no live argument stream to tail here yet.
+    private var fileEditPeek: FileEditPeek? {
+        guard !isBrowserCall else { return nil }
+        let kind: FileEditPeek.ToolKind
+        if isMultiEditCall {
+            kind = .multiEdit
+        } else if isWriteCall {
+            kind = .write
+        } else if isEditCall {
+            kind = .edit
+        } else {
+            return nil
+        }
+        return FileEditPeek.make(kind, arguments: call.arguments)
+    }
+
+    /// Header counts. The summary's own for most tools; multiedit's summary
+    /// has none (its edits are a JSON list), so they come from the peek.
+    private var headerAdditions: Int? {
+        if summary.additions != nil || summary.deletions != nil || !isMultiEditCall {
+            return summary.additions
+        }
+        return fileEditPeek.flatMap { $0.additions > 0 ? $0.additions : nil }
+    }
+
+    private var headerDeletions: Int? {
+        if summary.additions != nil || summary.deletions != nil || !isMultiEditCall {
+            return summary.deletions
+        }
+        return fileEditPeek.flatMap { $0.deletions > 0 ? $0.deletions : nil }
+    }
+
     private var isHttpRequestCall: Bool {
         ["http_request", "httprequest"].contains(call.name.lowercased())
     }
@@ -184,6 +266,40 @@ struct ToolCallCardView: View {
         VStack(alignment: .leading, spacing: 6) {
             summaryHeaderButton
 
+            // Outside the expanded section on purpose: the record of how a
+            // card was answered stays visible on the collapsed row.
+            if !isPendingApproval, let record = call.approvalRecord {
+                approvalRecordLine(record)
+            }
+
+            // A finished command reads at a glance: the last lines while
+            // collapsed (the expanded section shows the full output), and
+            // the exit, duration, and line count either way.
+            if let terminalSummary {
+                terminalSummaryView(terminalSummary, showsTail: !isExpanded)
+            }
+
+            if let testRunSummary {
+                testRunSummaryView(testRunSummary)
+            }
+
+            // The first changed lines of an edit or write without expanding.
+            // Hidden once the card opens, where the full diff takes over.
+            if !isExpanded, !isPendingApproval, let fileEditPeek {
+                fileEditPeekView(fileEditPeek)
+            }
+
+            // A schedule reads in words with its next runs, on the collapsed
+            // row so it confirms what was set up without opening the card.
+            // The minute timeline keeps the runs from going stale on screen.
+            if CronScheduleSummary.isCronCreate(call.name) {
+                TimelineView(.everyMinute) { context in
+                    if let cronSummary = cronSummary(now: context.date) {
+                        cronSummaryView(cronSummary)
+                    }
+                }
+            }
+
             if let genUiSpec {
                 // Gen UI (ZP-06): a native card drawn from a validated closed
                 // schema. Its follow-up fills the composer draft, never sends.
@@ -194,13 +310,12 @@ struct ToolCallCardView: View {
                 .id(call.id)
             }
 
-            if isExpanded || isPendingApproval || isActiveQuestionSet {
+            if isExpanded || isPendingApproval || isActiveQuestionSet || isOfferedPlan {
                 VStack(alignment: .leading, spacing: 8) {
                     if isBrowserCall {
                         EmptyView()
                     } else if let submittedPlan {
-                        CollapsibleMessageContentView(text: submittedPlan, maxHeight: 260)
-                            .padding(6)
+                        PlanCardView(model: model, plan: submittedPlan, isOffered: isOfferedPlan)
                     } else if isTodoCall, let todos = parsedTodos, !todos.isEmpty {
                         todoChecklistPreview(todos)
                     } else if isQuestionCall, let questions = parsedQuestions, !questions.isEmpty {
@@ -218,12 +333,19 @@ struct ToolCallCardView: View {
                     } else if isStopAgentCall {
                         stopAgentPreview
                     } else if let cmd = terminalCommand {
-                        ToolCodeCellView(
-                            label: "command",
-                            code: cmd,
-                            language: "bash",
-                            downloadFilename: "command.sh"
-                        )
+                        if isEditingCommand, isPendingApproval {
+                            PendingCommandEditorView(
+                                text: $commandDraft,
+                                onSubmit: submitCommandEdit,
+                                onCancel: cancelCommandEdit)
+                        } else {
+                            ToolCodeCellView(
+                                label: "command",
+                                code: cmd,
+                                language: "bash",
+                                downloadFilename: "command.sh"
+                            )
+                        }
                     } else if isPatchCall {
                         patchPreview
                     } else if isWriteCall {
@@ -275,6 +397,12 @@ struct ToolCallCardView: View {
                 .padding(.top, 2)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
+
+            // Outside the expanded section, like the approval record: the
+            // way forward from a failure stays on the collapsed row.
+            if isOfferedRecovery {
+                recoveryFooter
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
@@ -322,13 +450,13 @@ struct ToolCallCardView: View {
                     BrowserToolCardView(presentation: browserCardPresentation)
                 }
 
-                if let additions = summary.additions {
+                if let additions = headerAdditions {
                     Text(verbatim: "+\(additions)")
                         .font(theme.code(.small, weight: .bold))
                         .foregroundStyle(diffAdditionColor)
                 }
 
-                if let deletions = summary.deletions {
+                if let deletions = headerDeletions {
                     Text(verbatim: "-\(deletions)")
                         .font(theme.code(.small, weight: .bold))
                         .foregroundStyle(diffDeletionColor)
@@ -910,10 +1038,37 @@ struct ToolCallCardView: View {
                     .background(.appSecondary.opacity(0.15), in: Capsule())
                     .foregroundStyle(.appSecondary)
             }
+
+            if let viewer = sourceViewerRequest {
+                Spacer(minLength: 0)
+                Button { showsSourceViewer = true } label: {
+                    Text("View lines \(viewer.range.lowerBound)-\(viewer.range.upperBound)", bundle: .module)
+                }
+                .appAction(.quiet, size: .small)
+                .sheet(isPresented: $showsSourceViewer) {
+                    SourceLineViewerSheet(
+                        displayPath: viewer.path,
+                        resolution: SourceLineViewer.resolve(
+                            path: viewer.path, projectRoot: model.selectedProject?.rootDirectoryURL),
+                        requested: viewer.range,
+                        readAt: viewer.readAt)
+                }
+            }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.appElevated, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous))
+    }
+
+    /// What the read-only source viewer needs, offered only after a read
+    /// that succeeded with a numeric range and one unambiguous path.
+    private var sourceViewerRequest: (path: String, range: ClosedRange<Int>, readAt: Date)? {
+        guard let result, !result.isError,
+            let range = SourceLineViewer.requestedRange(call.arguments)
+        else { return nil }
+        let resolved = ToolArgumentResolver.fileArguments(call.arguments, forRead: true)
+        guard resolved.conflict == nil, let path = resolved.path, !path.isEmpty else { return nil }
+        return (path, range, call.createdAt.addingTimeInterval(result.durationSeconds))
     }
 
     private var webFetchPreview: some View {
@@ -1091,8 +1246,409 @@ struct ToolCallCardView: View {
         )
     }
 
+    /// "Allowed once by you, 3:42 PM": glyph plus words, never color alone
+    /// (StatusLabel). The header above already shows the command, struck
+    /// through when denied.
+    private func approvalRecordLine(_ record: ToolApprovalRecord) -> some View {
+        let line = ToolApprovalRecordLine(record)
+        let time = record.decidedAt.formatted(
+            Calendar.current.isDateInToday(record.decidedAt)
+                ? .dateTime.hour().minute() : .dateTime.month(.abbreviated).day().hour().minute())
+        return HStack(spacing: 5) {
+            Image(systemName: line.isEdited ? "pencil.circle" : (line.isAllowed ? "checkmark.circle" : "xmark.octagon"))
+                .themedFont(.tiny, weight: .semibold)
+                .foregroundStyle(line.isEdited
+                    ? AppThemeColor.appSecondary
+                    : (line.isAllowed ? AppThemeColor.appSuccess : AppThemeColor.appDanger))
+                .accessibilityHidden(true)
+            Text(LocalizedStringKey(line.labelKey), bundle: .module)
+                .themedFont(.tiny, weight: .medium)
+                .foregroundStyle(.appText)
+            Text(verbatim: time)
+                .themedFont(.tiny)
+                .foregroundStyle(.appSecondary)
+        }
+        .lineLimit(1)
+        .padding(.leading, ConversationLayout.activityIconWidth + 7)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Retry and Skip send a reply, Tell the model drafts one; none runs the
+    /// call itself (`RunRecoveryActions`). No keyboard shortcut: Return
+    /// belongs to the composer, and inline strips must not steal it.
+    private var recoveryFooter: some View {
+        HStack(spacing: 8) {
+            Button {
+                model.retryFailedCallFromCard(call)
+            } label: {
+                Text("Retry", bundle: .module)
+            }
+            .appAction(.secondary, size: .small)
+            .help(Text(
+                "Sends a reply asking the agent to try this call again. The new call is approved like any other.",
+                bundle: .module))
+
+            Button {
+                model.skipFailedCallFromCard(call)
+            } label: {
+                Text("Skip", bundle: .module)
+            }
+            .appAction(.quiet, size: .small)
+            .help(Text("Sends a reply asking the agent to continue without this call", bundle: .module))
+
+            Button {
+                model.explainFailedCallFromCard(call)
+            } label: {
+                Text("Tell the model", bundle: .module)
+            }
+            .appAction(.quiet, size: .small)
+            .help(Text("Drafts a reply in the composer so you can tell the agent what went wrong", bundle: .module))
+        }
+        .padding(.leading, ConversationLayout.activityIconWidth + 7)
+        .padding(.bottom, 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text("Recover from the failed call", bundle: .module))
+    }
+
+    /// Up to six lines, each led by a + or - glyph so the kind never rests on
+    /// color alone; the tint follows the diff-markers setting. The overflow
+    /// row expands the card to the full diff.
+    private func fileEditPeekView(_ peek: FileEditPeek) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(peek.lines.enumerated()), id: \.offset) { _, line in
+                let isAdded = line.kind == .added
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(verbatim: isAdded ? "+" : "-")
+                        .font(theme.code(.small, weight: .bold))
+                        .foregroundStyle(isAdded ? diffAdditionColor : diffDeletionColor)
+                    // A blank line still takes its row.
+                    Text(verbatim: line.text.isEmpty ? " " : line.text)
+                        .font(theme.code(.small))
+                        .foregroundStyle(.appText)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .padding(.horizontal, 6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background {
+                    if appearance.diffMarkers == .color {
+                        Rectangle().fill(
+                            isAdded ? AnyShapeStyle(.appSuccess.opacity(0.08))
+                                : AnyShapeStyle(.appDanger.opacity(0.08)))
+                    }
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(
+                    isAdded
+                        ? Text("Added line: \(line.text)", bundle: .module)
+                        : Text("Removed line: \(line.text)", bundle: .module))
+            }
+            if peek.hiddenLineCount > 0 {
+                Button {
+                    TSMotion.animate(TSMotion.select) { isExpanded = true }
+                } label: {
+                    Text("Show \(peek.hiddenLineCount) more lines", bundle: .module)
+                        .font(theme.code(.tiny))
+                        .foregroundStyle(.appAccentText)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+        .padding(.leading, ConversationLayout.activityIconWidth + 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// "Weekdays at 09:00" beside the raw expression (the expression alone
+    /// when the shape has no name or does not parse), then the next runs in
+    /// the UI locale, under a heading that names the time zone.
+    private func cronSummaryView(_ summary: CronScheduleSummary) -> some View {
+        let locale = AppStrings.currentLanguage.locale
+        let zone = TimeZone.current
+        let zoneName = CronScheduleSummary.zoneLabel(zone, locale: locale)
+        return VStack(alignment: .leading, spacing: 1) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                if let description = summary.description {
+                    Text(verbatim: description)
+                        .font(theme.code(.small, weight: .semibold))
+                        .foregroundStyle(.appText)
+                }
+                Text(verbatim: summary.expression)
+                    .font(theme.code(.small))
+                    .foregroundStyle(summary.description == nil ? AnyShapeStyle(.appText) : AnyShapeStyle(.appSecondary))
+                    .textSelection(.enabled)
+                if !summary.recurring {
+                    Text(verbatim: "\u{00B7}").foregroundStyle(.appSecondary).accessibilityHidden(true)
+                    Text("Runs once", bundle: .module)
+                        .font(theme.code(.tiny))
+                        .foregroundStyle(.appSecondary)
+                }
+            }
+            .lineLimit(1)
+            .truncationMode(.tail)
+            if !summary.nextRuns.isEmpty {
+                Group {
+                    if summary.recurring {
+                        Text("Next runs (\(zoneName))", bundle: .module)
+                    } else {
+                        Text("Next run (\(zoneName))", bundle: .module)
+                    }
+                }
+                .font(theme.code(.tiny))
+                .foregroundStyle(.appSecondary)
+                .padding(.top, 2)
+                ForEach(summary.nextRuns, id: \.self) { run in
+                    Text(verbatim: CronScheduleSummary.runLabel(run, locale: locale, timeZone: zone))
+                        .font(theme.code(.small))
+                        .foregroundStyle(.appText)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .padding(.leading, ConversationLayout.activityIconWidth + 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Up to three tail lines, then "Exit 0, 1.2 s, 48 lines" (dot separated). A failure is
+    /// named in words ("Exit 2", "Timed out"), with color only as a second
+    /// cue; a benign exit 1 (grep with no match) is not an error and stays
+    /// secondary.
+    private func terminalSummaryView(_ summary: TerminalResultSummary, showsTail: Bool) -> some View {
+        let isFailure = result?.isError == true
+        return VStack(alignment: .leading, spacing: 1) {
+            if showsTail {
+                ForEach(Array(summary.tail.enumerated()), id: \.offset) { _, line in
+                    Text(verbatim: line)
+                        .font(theme.code(.small))
+                        .foregroundStyle(.appSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+            HStack(spacing: 5) {
+                Group {
+                    switch summary.outcome {
+                    case .exited(let code):
+                        Text("Exit \(code)", bundle: .module)
+                    case .timedOut:
+                        Text("Timed out", bundle: .module)
+                    }
+                }
+                .foregroundStyle(isFailure ? AnyShapeStyle(.appDanger) : AnyShapeStyle(.appSecondary))
+                if let duration = summary.durationText {
+                    Text(verbatim: "\u{00B7}").foregroundStyle(.appSecondary).accessibilityHidden(true)
+                    Text(verbatim: duration).foregroundStyle(.appSecondary)
+                }
+                // "%lld lines" has no plural forms in the catalog, so a single
+                // line (already visible in the tail) is not counted.
+                if let count = summary.lineCount, count > 1 {
+                    Text(verbatim: "\u{00B7}").foregroundStyle(.appSecondary).accessibilityHidden(true)
+                    Text("\(count) lines", bundle: .module).foregroundStyle(.appSecondary)
+                }
+            }
+            .font(theme.code(.tiny))
+            .lineLimit(1)
+        }
+        .padding(.leading, ConversationLayout.activityIconWidth + 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// "12 passed, 2 failed, 1 skipped, 3.4 s" behind a pass or fail glyph,
+    /// then a collapsed list of the failing tests, each with its first
+    /// failure line. The status is the glyph and the words; color is the
+    /// second cue.
+    private func testRunSummaryView(_ summary: TestRunSummary) -> some View {
+        let separator = Text(verbatim: "\u{00B7}").foregroundStyle(.appSecondary).accessibilityHidden(true)
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 5) {
+                Image(systemName: summary.allPassed ? "checkmark.circle.fill" : "xmark.octagon.fill")
+                    .foregroundStyle(summary.allPassed ? AnyShapeStyle(.appSuccess) : AnyShapeStyle(.appDanger))
+                    .accessibilityHidden(true)
+                Text("\(summary.passed) passed", bundle: .module)
+                    .foregroundStyle(summary.allPassed ? AnyShapeStyle(.appSuccess) : AnyShapeStyle(.appSecondary))
+                if summary.failed > 0 {
+                    separator
+                    Text("\(summary.failed) failed", bundle: .module).foregroundStyle(.appDanger)
+                }
+                if summary.skipped > 0 {
+                    separator
+                    Text("\(summary.skipped) skipped", bundle: .module).foregroundStyle(.appSecondary)
+                }
+                if let seconds = summary.durationSeconds,
+                   let duration = TerminalResultSummary.durationText(seconds: seconds) {
+                    separator
+                    Text(verbatim: duration).foregroundStyle(.appSecondary)
+                }
+            }
+            .font(theme.code(.tiny))
+            .lineLimit(1)
+            .accessibilityElement(children: .combine)
+
+            if !summary.failures.isEmpty {
+                Button {
+                    TSMotion.animate(TSMotion.select) { showsFailingTests.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.right")
+                            .rotationEffect(.degrees(showsFailingTests ? 90 : 0))
+                            .accessibilityHidden(true)
+                        Text("Failing tests", bundle: .module)
+                    }
+                    .themedFont(.tiny)
+                    .foregroundStyle(.appSecondary)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(
+                    showsFailingTests ? AppStrings.localized("Expanded") : AppStrings.localized("Collapsed"))
+
+                if showsFailingTests {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(summary.failures.enumerated()), id: \.offset) { _, failure in
+                            VStack(alignment: .leading, spacing: 1) {
+                                HStack(spacing: 4) {
+                                    Image(systemName: "xmark.octagon")
+                                        .foregroundStyle(.appDanger)
+                                        .accessibilityHidden(true)
+                                    Text(verbatim: failure.name)
+                                        .foregroundStyle(.appText)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                                if let message = failure.message {
+                                    Text(verbatim: message)
+                                        .foregroundStyle(.appSecondary)
+                                        .lineLimit(2)
+                                        .truncationMode(.tail)
+                                        .padding(.leading, 16)
+                                }
+                            }
+                            .font(theme.code(.tiny))
+                            .textSelection(.enabled)
+                            .accessibilityElement(children: .combine)
+                        }
+                    }
+                    .padding(.leading, 8)
+                }
+            }
+        }
+        .padding(.leading, ConversationLayout.activityIconWidth + 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The model's stated reason and the directory a shell command starts
+    /// in, so the user can judge the call without expanding anything else.
+    @ViewBuilder
+    private var approvalContext: some View {
+        let reason = ToolApprovalContext.reason(for: call)
+        let cwd: String? = {
+            guard terminalCommand != nil, model.pendingToolCall?.id == call.id,
+                  let root = model.pendingToolCallProject?.rootDirectoryURL
+            else { return nil }
+            // The tracker is where the runner will start, which can differ
+            // from the root after an earlier `cd` in this chat.
+            let start = ShellCwdTracker.shared.startDirectory(
+                for: root, chatID: model.pendingToolCallChatID)
+            return ToolApprovalContext.displayPath(start)
+        }()
+        if reason != nil || cwd != nil {
+            VStack(alignment: .leading, spacing: 3) {
+                if let reason {
+                    Text(verbatim: reason)
+                        .themedFont(.small)
+                        .foregroundStyle(.appText)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityLabel(Text("Reason: \(reason)", bundle: .module))
+                }
+                if let cwd {
+                    HStack(spacing: 4) {
+                        Image(systemName: "folder")
+                            .themedFont(.tiny)
+                            .foregroundStyle(.appSecondary)
+                            .accessibilityHidden(true)
+                        Text(verbatim: cwd)
+                            .font(theme.code(.tiny))
+                            .foregroundStyle(.appSecondary)
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                    }
+                    .help(Text("Runs in \(cwd)", bundle: .module))
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(Text("Runs in \(cwd)", bundle: .module))
+                }
+            }
+        }
+    }
+
+    /// On an edited call's card: the command the model proposed, so the
+    /// user approves the edit knowing what it replaced.
+    @ViewBuilder
+    private var editedFromLine: some View {
+        if let proposed = call.editedFromCommand {
+            VStack(alignment: .leading, spacing: 2) {
+                Label {
+                    Text("You edited this command. The model proposed:", bundle: .module)
+                        .themedFont(.tiny, weight: .medium)
+                        .foregroundStyle(.appText)
+                } icon: {
+                    Image(systemName: "pencil")
+                        .themedFont(.tiny)
+                        .foregroundStyle(.appSecondary)
+                        .accessibilityHidden(true)
+                }
+                Text(verbatim: proposed)
+                    .font(theme.code(.tiny))
+                    .foregroundStyle(.appSecondary)
+                    .lineLimit(3)
+                    .truncationMode(.tail)
+                    .textSelection(.enabled)
+            }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private func beginCommandEdit() {
+        commandDraft = call.shellCommand ?? ""
+        isEditingCommand = true
+    }
+
+    /// Esc or Cancel: the draft is dropped and the model's command shows
+    /// again, untouched.
+    private func cancelCommandEdit() {
+        isEditingCommand = false
+        commandDraft = ""
+    }
+
+    /// The model decides; an unchanged or empty draft submits nothing and
+    /// reads as a cancel.
+    private func submitCommandEdit() {
+        model.submitEditedPendingToolCall(id: call.id, command: commandDraft)
+        cancelCommandEdit()
+    }
+
+    private func commandEditHelp(_ unavailable: ToolCallCommandEdit.Unavailable?) -> Text {
+        switch unavailable {
+        case .batch:
+            return Text("Editing is not available for a batch of calls. Approve or deny the batch.", bundle: .module)
+        case .compound:
+            return Text("Editing is not available for a command with a validation step.", bundle: .module)
+        case nil:
+            return Text("Edit this command. The edit is checked again and needs its own approval.", bundle: .module)
+        }
+    }
+
     private var approvalPrompt: some View {
         VStack(alignment: .leading, spacing: 8) {
+            if isPendingApproval {
+                approvalContext
+                editedFromLine
+            }
+
             if let notice = model.pendingToolCallClassifierNotice, isPendingApproval {
                 // Agent mode punted this call to a human: the classifier
                 // was unavailable or is being skipped. Qwen Code renders
@@ -1150,7 +1706,8 @@ struct ToolCallCardView: View {
                     onAllowOnce: { model.approvePendingToolCall(id: call.id, alwaysAllowSession: false) },
                     onAlwaysAllow: {
                         model.addNetworkDomain(host, allow: true)
-                        model.approvePendingToolCall(id: call.id, alwaysAllowSession: false)
+                        model.approvePendingToolCall(
+                            id: call.id, alwaysAllowSession: false, recordAs: .allowedAlways)
                     },
                     onAlwaysBlock: {
                         model.addNetworkDomain(host, allow: false)
@@ -1158,6 +1715,11 @@ struct ToolCallCardView: View {
                     },
                     onDeny: { model.denyPendingToolCall(id: call.id) }
                 )
+            } else if isEditingCommand, isPendingApproval {
+                // The editor above carries its own Use and Cancel; Approve
+                // stays out of reach so the unedited command cannot be
+                // approved while the user is mid-edit.
+                EmptyView()
             } else {
                 Text("This action requires your confirmation to execute.", bundle: .module)
                     .themedFont(.small)
@@ -1176,6 +1738,19 @@ struct ToolCallCardView: View {
                     .tint(isHighRisk ? theme.warning : theme.accent)
                     .help(Text("Approve this tool call once", bundle: .module))
                     .accessibilityLabel(Text("Approve once \(call.name)", bundle: .module))
+
+                    if model.showsPendingCommandEdit(for: call) {
+                        let unavailable = model.pendingCommandEditUnavailableReason(for: call)
+                        Button {
+                            beginCommandEdit()
+                        } label: {
+                            Label { Text("Edit", bundle: .module) } icon: { Image(systemName: "pencil") }
+                        }
+                        .appAction(.secondary, size: .small)
+                        .disabled(unavailable != nil)
+                        .help(commandEditHelp(unavailable))
+                        .accessibilityLabel(Text("Edit the command before approving", bundle: .module))
+                    }
 
                     if model.pendingToolCallClassifierNotice != nil, isPendingApproval {
                         Button {
@@ -1199,11 +1774,13 @@ struct ToolCallCardView: View {
                         Menu {
                             Button {
                                 model.addMcpPermissionRule(serverName: target.server, toolName: target.tool, allow: true)
-                                model.approvePendingToolCall(id: call.id, alwaysAllowSession: false)
+                                model.approvePendingToolCall(
+                                    id: call.id, alwaysAllowSession: false, recordAs: .allowedAlways)
                             } label: { Text("Always Allow This Tool", bundle: .module) }
                             Button {
                                 model.addMcpPermissionRule(serverName: target.server, toolName: nil, allow: true)
-                                model.approvePendingToolCall(id: call.id, alwaysAllowSession: false)
+                                model.approvePendingToolCall(
+                                    id: call.id, alwaysAllowSession: false, recordAs: .allowedAlways)
                             } label: { Text("Always Allow This Server", bundle: .module) }
                         } label: {
                             Label { Text("Always Allow", bundle: .module) } icon: { Image(systemName: "checkmark.seal") }
@@ -1211,10 +1788,11 @@ struct ToolCallCardView: View {
                         .appMenuAction(size: .small)
                         .help(Text("Persist an allow rule for this MCP tool or server in project settings", bundle: .module))
                         .accessibilityLabel(Text("Always allow \(call.name) in project settings", bundle: .module))
-                    } else if !isHighRisk {
+                    } else if !isHighRisk, ToolCallCommandEdit.allowsStandingGrant(call) {
                         // Hidden for high risk: the engine checks risk before
                         // a session grant, so the grant would never apply and
-                        // every repeat would ask again.
+                        // every repeat would ask again. Hidden for an edited
+                        // command too: the user's own text is approved once.
                         Button {
                             model.approvePendingToolCall(id: call.id, alwaysAllowSession: true)
                         } label: {

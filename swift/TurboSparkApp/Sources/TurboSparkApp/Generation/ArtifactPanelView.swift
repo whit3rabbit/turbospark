@@ -32,23 +32,36 @@ struct ArtifactPanelView: View {
     @State private var isBannerDismissed = false
     @State private var isMaximized = false
     @State private var isCopied = false
+    /// History: Current plus earlier versions from this chat's checkpoints.
+    /// Read-only; nothing here writes the file (Restore lives on the
+    /// transcript's checkpoint row).
+    @State private var versions: [ArtifactVersion] = []
+    @State private var viewedVersion: ArtifactVersion?
+    @State private var viewedText: String?
+    @State private var viewedReadFailed = false
 
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            if showsNetworkBanner {
+            if let viewedVersion {
+                historyBanner(viewedVersion)
+                Divider()
+            } else if showsNetworkBanner {
                 networkBanner
                 Divider()
             }
             content
         }
         .background(TurboSparkTheme.barBackgroundColor(isDark: theme.isDark))
-        .onExitCommand { close() }
+        // Esc leaves an earlier version first, then closes the panel.
+        .onExitCommand { if viewedVersion != nil { showCurrent() } else { close() } }
         .sheet(isPresented: $isMaximized) { maximizedSheet }
         .onChange(of: identityKey) { _, _ in resetPerContentState() }
         .onAppear { resetPerContentState() }
         .task(id: identityKey) { loadSourceText() }
+        .task(id: identityKey) { await loadHistory() }
+        .task(id: viewedVersion?.id) { await loadViewedText() }
     }
 
     // MARK: - Resolution
@@ -116,6 +129,25 @@ struct ArtifactPanelView: View {
         isHTML && !networkAllowed && !isBannerDismissed
     }
 
+    /// The text the panel shows: an earlier version's while one is selected.
+    private var displayedSourceText: String? {
+        viewedVersion == nil ? sourceText : viewedText
+    }
+
+    private var displayedReadFailed: Bool {
+        viewedVersion == nil ? sourceReadFailed : viewedReadFailed
+    }
+
+    /// History is offered for text formats the panel renders from a string,
+    /// in a chat that keeps checkpoints (never Ghost or a protected profile).
+    private var historyArtifact: AppArtifact? {
+        guard let artifact = resolvedArtifact, artifact.path != nil,
+              [.markdown, .html, .text].contains(artifact.renderKind),
+              model.checkpointsAvailable(inChat: artifact.chatID)
+        else { return nil }
+        return artifact
+    }
+
     // MARK: - Header
 
     private var header: some View {
@@ -149,16 +181,24 @@ struct ArtifactPanelView: View {
             .fixedSize()
             .help(Text("Switch between the rendered page and its source", bundle: .module))
 
+            if versions.count > 1 {
+                historyMenu
+            }
+
             AppIconButton(
                 isCopied ? "checkmark" : "doc.on.doc",
                 label: isCopied ? Text("Copied source", bundle: .module) : Text("Copy source", bundle: .module)
             ) {
                 copySource()
             }
-            .disabled(sourceText == nil)
-            .help(sourceText == nil ? Text("Source text is not available", bundle: .module) : (isCopied ? Text("Copied", bundle: .module) : Text("Copy source", bundle: .module)))
+            .disabled(displayedSourceText == nil)
+            .help(displayedSourceText == nil ? Text("Source text is not available", bundle: .module) : (isCopied ? Text("Copied", bundle: .module) : Text("Copy source", bundle: .module)))
 
-            if resolvedArtifact?.existsOnDisk == true {
+            // Save, Reveal and Copy into profile act on the file on disk, so
+            // they are hidden while an earlier version is on screen.
+            if viewedVersion != nil {
+                EmptyView()
+            } else if resolvedArtifact?.existsOnDisk == true {
                 if let artifact = resolvedArtifact,
                    artifact.path.flatMap(ManagedAssetStore.assetID(from:)) == nil {
                     AppIconButton("lock.doc", label: Text("Copy into profile", bundle: .module)) {
@@ -195,6 +235,73 @@ struct ArtifactPanelView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    // MARK: - History
+
+    /// Rows that cannot be shown stay in the list, disabled, with their
+    /// reason in the row text, so a gap in history is explained rather than
+    /// hidden.
+    private var historyMenu: some View {
+        Menu {
+            ForEach(versions) { version in
+                let row = ArtifactVersionText.menuRow(version)
+                let isShown = version.id == (viewedVersion?.id ?? "current")
+                Button {
+                    if version.isCurrent { showCurrent() } else { show(version) }
+                } label: {
+                    if isShown { Label(row, systemImage: "checkmark") } else { Text(verbatim: row) }
+                }
+                .disabled(version.unavailable != nil && !version.isCurrent)
+            }
+        } label: {
+            Label {
+                Text("History", bundle: .module)
+            } icon: {
+                Image(systemName: "clock.arrow.circlepath")
+            }
+        }
+        .appMenuAction(size: .mini, quiet: true)
+        .fixedSize()
+        .help(Text("Earlier versions of this file from this chat's checkpoints", bundle: .module))
+    }
+
+    private func historyBanner(_ version: ArtifactVersion) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "clock.arrow.circlepath")
+                .themedFont(.tiny, weight: .semibold)
+                .foregroundStyle(.appSecondary)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Viewing an earlier version, read-only", bundle: .module)
+                    .themedFont(.tiny, weight: .medium)
+                Text(verbatim: ArtifactVersionText.menuRow(version))
+                    .themedFont(.micro)
+                    .foregroundStyle(.appSecondary)
+                    .lineLimit(1)
+            }
+            .accessibilityElement(children: .combine)
+            Spacer(minLength: 4)
+            if let turnID = version.turnID, version.turnNumber != nil, let chatID = resolvedArtifact?.chatID {
+                Button {
+                    showTurn(turnID, chatID: chatID)
+                } label: {
+                    Text("Show Turn", bundle: .module)
+                }
+                .appAction(.quiet, size: .mini)
+                .help(Text("Scroll the transcript to the turn that changed this file", bundle: .module))
+            }
+            Button {
+                showCurrent()
+            } label: {
+                Text("Back to Current", bundle: .module)
+            }
+            .appAction(.secondary, size: .mini)
+            .help(Text("Back to Current", bundle: .module))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(.appElevated)
     }
 
     // MARK: - Network banner
@@ -250,7 +357,18 @@ struct ArtifactPanelView: View {
     private func artifactPreview(_ artifact: AppArtifact) -> some View {
         switch artifact.renderKind {
         case .html:
-            if artifact.existsOnDisk, let url = artifact.url {
+            if viewedVersion != nil {
+                // An earlier version renders from its snapshot text with
+                // network off, whatever the current file was granted.
+                if viewedReadFailed {
+                    unavailableView("This version could not be read as text.")
+                } else if let viewedText, let id = viewedVersion?.id {
+                    ArtifactWebView(document: .inline(html: viewedText), networkAllowed: false)
+                        .id("history:\(id)")
+                } else {
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else if artifact.existsOnDisk, let url = artifact.url {
                 ArtifactWebView(
                     document: .file(page: url, readAccessFolder: url.deletingLastPathComponent()),
                     networkAllowed: networkAllowed)
@@ -261,26 +379,34 @@ struct ArtifactPanelView: View {
         case .markdown:
             // An oversized or non-UTF-8 file would otherwise render as an
             // empty page, which reads as an empty file.
-            if sourceReadFailed {
-                unavailableView("The source could not be read as text.")
+            if displayedReadFailed {
+                unavailableView(readFailedReason)
             } else {
                 ScrollView {
-                    ChatMessageMarkdownView(sourceText ?? "")
+                    ChatMessageMarkdownView(displayedSourceText ?? "")
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         case .text:
-            if sourceReadFailed {
-                unavailableView("The source could not be read as text.")
+            if displayedReadFailed {
+                unavailableView(readFailedReason)
             } else {
                 monospacedSourceView
             }
         case .image:
             if let url = artifact.url, let image = NSImage(contentsOf: url) {
-                ImagePreviewView(image: image) { png in
-                    model.attachAnnotatedImage(png, sourceName: url.lastPathComponent)
-                }
+                // Ask is offered only while the loaded model takes images.
+                ImagePreviewView(
+                    image: image,
+                    onAsk: model.visionIsActive
+                        ? { png, question in
+                            model.askAboutImage(png, sourceName: url.lastPathComponent, question: question)
+                        }
+                        : nil,
+                    onSendToChat: { png in
+                        model.attachAnnotatedImage(png, sourceName: url.lastPathComponent)
+                    })
             } else {
                 unavailableView("The image is no longer at its written path.")
             }
@@ -317,10 +443,14 @@ struct ArtifactPanelView: View {
         }
     }
 
+    private var readFailedReason: LocalizedStringKey {
+        viewedVersion == nil ? "The source could not be read as text." : "This version could not be read as text."
+    }
+
     private var sourceView: some View {
         Group {
-            if sourceReadFailed {
-                unavailableView("The source could not be read as text.")
+            if displayedReadFailed {
+                unavailableView(readFailedReason)
             } else {
                 monospacedSourceView
             }
@@ -329,7 +459,7 @@ struct ArtifactPanelView: View {
 
     private var monospacedSourceView: some View {
         ScrollView {
-            Text(sourceText ?? "")
+            Text(displayedSourceText ?? "")
                 .themedCode(.callout)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -388,6 +518,11 @@ struct ArtifactPanelView: View {
     // MARK: - Actions
 
     private func resetPerContentState() {
+        // A rewrite moves the identity; any earlier version on screen is
+        // dropped so the panel never shows stale history as current.
+        viewedVersion = nil
+        viewedText = nil
+        viewedReadFailed = false
         viewMode = .preview
         isBannerDismissed = false
         sourceReadFailed = false
@@ -434,8 +569,57 @@ struct ArtifactPanelView: View {
         }
     }
 
+    private func loadHistory() async {
+        guard let artifact = historyArtifact, let path = artifact.path else {
+            versions = []
+            return
+        }
+        let chatID = artifact.chatID
+        let numbers = ArtifactVersionHistory.turnNumbers(
+            in: model.chats.first(where: { $0.id == chatID })?.messages ?? [])
+        let loaded = await Task.detached(priority: .utility) {
+            ArtifactVersionHistory.load(chatID: chatID, artifactPath: path, turnNumbers: numbers)
+        }.value
+        guard !Task.isCancelled else { return }
+        versions = loaded
+    }
+
+    private func loadViewedText() async {
+        guard let version = viewedVersion, let chatID = resolvedArtifact?.chatID else { return }
+        let text = await Task.detached(priority: .userInitiated) {
+            ArtifactVersionHistory.text(of: version, chatID: chatID)
+        }.value
+        guard !Task.isCancelled, viewedVersion?.id == version.id else { return }
+        viewedText = text
+        viewedReadFailed = text == nil
+    }
+
+    private func show(_ version: ArtifactVersion) {
+        guard version.unavailable == nil, !version.isCurrent else { return }
+        viewedText = nil
+        viewedReadFailed = false
+        viewedVersion = version
+    }
+
+    private func showCurrent() {
+        viewedVersion = nil
+        viewedText = nil
+        viewedReadFailed = false
+    }
+
+    /// Scrolls the transcript to the turn's prompt; its checkpoint row sits
+    /// directly above it. Same token the turn navigation commands use.
+    private func showTurn(_ turnID: UUID, chatID: UUID) {
+        if model.selectedChatID != chatID { model.selectChat(id: chatID) }
+        Task { @MainActor in
+            await Task.yield()
+            model.turnNavigationTargetID = turnID
+            model.turnNavigationToken += 1
+        }
+    }
+
     private func copySource() {
-        guard let sourceText else { return }
+        guard let sourceText = displayedSourceText else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(sourceText, forType: .string)
         TSMotion.animate(TSMotion.select) { isCopied = true }

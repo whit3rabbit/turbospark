@@ -74,6 +74,13 @@ final class VoiceCallSpeaker: NSObject, VoiceCallSpeaking, AVSpeechSynthesizerDe
 final class AudioCaptureVoiceSource: VoiceCallAudioSource {
     private var capture: AudioCapture?
     private var pump: Pump?
+    /// The device to open, resolved at each start so a saved microphone
+    /// that was unplugged falls back to the system default (nil).
+    private let microphoneID: @MainActor () -> UInt32?
+
+    init(microphoneID: @escaping @MainActor () -> UInt32? = { nil }) {
+        self.microphoneID = microphoneID
+    }
 
     func start(onSamples: @escaping @Sendable ([Float]) -> Void,
                onFailure: @escaping @Sendable (String) -> Void) async throws {
@@ -92,6 +99,7 @@ final class AudioCaptureVoiceSource: VoiceCallAudioSource {
         capture.attachLiveFeed(feed)
         var configuration = AudioCapture.Configuration()
         configuration.capturesMicrophone = true
+        configuration.microphoneID = microphoneID()
         configuration.systemSource = .none
         configuration.persistsChunks = false
         try await capture.start(configuration: configuration)

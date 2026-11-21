@@ -206,4 +206,35 @@ extension AppModel {
                 style: .error)
         }
     }
+
+    /// The state the proposal note shows. Nil (Review only) under the same
+    /// gate as `actOnMemoryProposal`, or when the claim cannot be addressed.
+    func memoryProposalResolution(
+        callID: UUID, ledger: MemoryLedgerStore = .shared
+    ) -> MemoryProposalNote.Resolution? {
+        guard memoryEnabled, !selectedChat.isGhost else { return nil }
+        return MemoryProposalNote.resolution(callID: callID, claims: ledger.snapshot().claims)
+    }
+
+    /// Undo or Approve from a transcript proposal note. Acts only on the one
+    /// claim the call staged (`MemoryProposalNote.resolution`), and only
+    /// while it is still pending: a claim decided in Settings is reported,
+    /// not changed. Nil, with nothing changed, while memory is off or in a
+    /// Ghost chat, the same places the note is hidden.
+    @discardableResult
+    func actOnMemoryProposal(
+        callID: UUID, _ action: MemoryProposalNote.Action, ledger: MemoryLedgerStore = .shared
+    ) -> MemoryProposalNote.Resolution? {
+        let current = memoryProposalResolution(callID: callID, ledger: ledger)
+        guard case .pending(let claimID) = current else { return current }
+        do {
+            switch action {
+            case .undo: try ledger.dismiss(claimID)
+            case .approve: try ledger.approve(claimID)
+            }
+        } catch {
+            showToast(AppStrings.localized("Could not save memory: \(error.localizedDescription)"), style: .error)
+        }
+        return MemoryProposalNote.resolution(callID: callID, claims: ledger.snapshot().claims)
+    }
 }

@@ -134,7 +134,9 @@ extension AppModel {
         port: AppModelVoiceCallPort, environment: VoiceCallEnvironment
     ) -> VoiceCallController {
         let controller = VoiceCallController(
-            chat: port, audio: AudioCaptureVoiceSource(), speaker: VoiceCallSpeaker(),
+            chat: port,
+            audio: AudioCaptureVoiceSource(microphoneID: { [weak self] in self?.voiceCallMicrophoneResolution().deviceID }),
+            speaker: VoiceCallSpeaker(),
             environment: environment,
             makeTranscriber: { [weak self] onEvent in
                 let path = self?.voiceCallSpeechModelPath()
@@ -305,6 +307,28 @@ extension AppModel {
     /// The Download offer in the call panel.
     func downloadVoiceCallSpeechModel() {
         audioWorkspace.installLiveTextModel()
+    }
+
+    // MARK: Microphone
+
+    /// Input devices from the Core Audio device list. Listing reads HAL
+    /// properties only: it opens no input and never shows the macOS prompt.
+    func voiceCallMicrophones() -> [MicrophoneSelection.Device] {
+        ((try? AudioCapture.microphones()) ?? [])
+            .filter { !$0.uid.isEmpty }
+            .map { MicrophoneSelection.Device(id: $0.id, uid: $0.uid, name: $0.name) }
+    }
+
+    func voiceCallMicrophoneResolution(
+        available: [MicrophoneSelection.Device]? = nil
+    ) -> MicrophoneSelection.Resolution {
+        MicrophoneSelection.resolve(savedUID: voiceCallMicrophoneUID, available: available ?? voiceCallMicrophones())
+    }
+
+    func setVoiceCallMicrophoneUID(_ uid: String?) {
+        guard voiceCallMicrophoneUID != uid else { return }
+        voiceCallMicrophoneUID = uid
+        persistSettings()
     }
 
     func setVoiceCallEnabled(_ enabled: Bool) {

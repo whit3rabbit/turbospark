@@ -37,7 +37,9 @@ final class ChatRecallStore: @unchecked Sendable {
     private var engine: (modelPath: String, engine: SyntextContextEngine)?
     private var conversations: [UUID: SyntextConversation] = [:]
     private var conversationOrder: [UUID] = []
-    private var evidenceCache: [String: String] = [:]
+    /// Text and the inspector's view of the same packet, so a cached step
+    /// of a tool loop reports what it actually sends.
+    private var evidenceCache: [String: Retrieved] = [:]
     private var evidenceCacheOrder: [String] = []
     private var compactTask: DispatchWorkItem?
     private var needsForcedCompaction = false
@@ -134,6 +136,23 @@ final class ChatRecallStore: @unchecked Sendable {
     func evidence(
         chatID: UUID, question: String, keptTurns: Int, budget: Int, modelPath: String
     ) async -> String? {
+        await retrieve(
+            chatID: chatID, question: question, keptTurns: keptTurns,
+            budget: budget, modelPath: modelPath)?.text
+    }
+
+    /// One packet: the text sent to the model (nil when empty) and what
+    /// the retrieval inspector shows about it.
+    struct Retrieved: Sendable {
+        let text: String?
+        let retrieval: RecallInspection.Retrieval
+    }
+
+    /// `evidence`, plus the packet's blocks and receipt for the inspector.
+    /// Nil exactly when `evidence` would fail rather than come back empty.
+    func retrieve(
+        chatID: UUID, question: String, keptTurns: Int, budget: Int, modelPath: String
+    ) async -> Retrieved? {
         await withCheckedContinuation { continuation in
             queue.async {
                 continuation.resume(returning: self.evidenceLocked(
@@ -145,10 +164,10 @@ final class ChatRecallStore: @unchecked Sendable {
 
     private func evidenceLocked(
         chatID: UUID, question: String, keptTurns: Int, budget: Int, modelPath: String
-    ) -> String? {
+    ) -> Retrieved? {
         guard allowedLocked else { return nil }
         let key = "\(chatID.uuidString)/\(keptTurns)/\(budget)/\(modelPath)/\(question.utf8.count)/\(question.hashValue)"
-        if let cached = evidenceCache[key] { return cached.isEmpty ? nil : cached }
+        if let cached = evidenceCache[key] { return cached }
         guard let conversation = conversationLocked(chatID: chatID, create: true),
               let engine = engineLocked(modelPath: modelPath),
               let packet = try? engine.prepare(
@@ -156,12 +175,22 @@ final class ChatRecallStore: @unchecked Sendable {
                 conversation: conversation, keptTurns: keptTurns)
         else { return nil }
         let text = packet.isEmpty ? "" : packet.evidenceText
-        evidenceCache[key] = text
+        let retrieved = Retrieved(
+            text: text.isEmpty ? nil : text,
+            retrieval: RecallInspection.Retrieval(
+                blocks: packet.blocks.map {
+                    RecallInspection.Block(
+                        id: $0.id, source: $0.source, breadcrumb: $0.breadcrumb, kind: $0.kind,
+                        score: $0.score, condensed: $0.condensed, tokens: $0.tokens)
+                },
+                candidatesConsidered: packet.receipt.candidatesConsidered,
+                budget: packet.budget, evidenceTokens: packet.evidenceTokens))
+        evidenceCache[key] = retrieved
         evidenceCacheOrder.append(key)
         if evidenceCacheOrder.count > 16 {
             evidenceCache.removeValue(forKey: evidenceCacheOrder.removeFirst())
         }
-        return text.isEmpty ? nil : text
+        return retrieved
     }
 
     private func invalidateEvidenceLocked(chatID: UUID) {

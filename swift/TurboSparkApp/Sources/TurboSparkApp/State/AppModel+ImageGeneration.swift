@@ -169,7 +169,29 @@ extension AppModel {
         startImageGeneration(job.options, chatID: job.chatID)
     }
 
+    /// One gate for every Regenerate control (menus and the preview's
+    /// button), so they never disagree about when re-rendering is possible.
+    func canRegenerateImage(from artifact: AppArtifact) -> Bool {
+        canStartImageGeneration && hasSupportedSelectedImageModel
+            && !imageModelPath.isEmpty && artifact.imageRequest != nil
+    }
+
     public func regenerateImage(from artifact: AppArtifact) {
+        rerunSavedImage(artifact) { $0.options }
+    }
+
+    /// Same prompt, size and steps as the saved image, with a new random
+    /// seed. Gated by `canRegenerateImage(from:)` like Regenerate.
+    public func varyImage(from artifact: AppArtifact) {
+        rerunSavedImage(artifact) { request in
+            ImageVariation.options(from: request) { UInt64.random(in: 0...UInt64.max) }
+        }
+    }
+
+    /// Regenerate and Vary differ only in the seed; one set of refusals.
+    private func rerunSavedImage(
+        _ artifact: AppArtifact, options: (AppImageRequest) -> ImageGenerateOptions
+    ) {
         guard let request = artifact.imageRequest else {
             showToast(AppStrings.localized("This saved image has no request metadata to regenerate."), style: .warning)
             return
@@ -185,7 +207,7 @@ extension AppModel {
             return
         }
         guard canStartImageGeneration else { return }
-        startImageGeneration(request.options, chatID: artifact.chatID)
+        startImageGeneration(options(request), chatID: artifact.chatID)
     }
 
     public func cancelImageGeneration() {

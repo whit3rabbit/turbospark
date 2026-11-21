@@ -250,6 +250,7 @@ extension AppModel {
         outputPromptText = turnMessages(for: chatID).last(where: { $0.role == .user })?.content ?? ""
         outputText = ""
         outputReasoningText = ""
+        reasoningClock = ReasoningClock(chatID: chatID)
         generating = true
         claimLane(for: chatID)
         phase = .prefill
@@ -312,6 +313,7 @@ extension AppModel {
                         if self.phase != .decode { self.phase = .decode; self.decodeStartTime = Date() }
                         reasoning += chunk
                         self.outputReasoningText += chunk
+                        self.reasoningClock.note(at: Date())
                         self.liveTokenCount += 1
                     case .toolCall(let call):
                         calls.append(call)

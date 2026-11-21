@@ -13,9 +13,15 @@ struct SubagentLiveCardView: View {
     /// Set only for finished background runs: clears the card.
     var onDismiss: (() -> Void)? = nil
 
-    @State private var isExpanded: Bool = true
+    /// Nil until the user toggles the card; their choice then sticks for
+    /// the card's life, including across the running-to-finished change.
+    @State private var userExpanded: Bool?
 
     private var isRunning: Bool { state.status == "running" }
+
+    private var isExpanded: Bool {
+        SubagentCardExpansion.isExpanded(isRunning: isRunning, userChoice: userExpanded)
+    }
 
     /// The run's status in the UI language. The engine reports a small set
     /// of lowercase states; one it adds later shows as sent rather than
@@ -89,6 +95,15 @@ struct SubagentLiveCardView: View {
                     }
                 }
                 .padding(.top, 2)
+            } else if !isRunning, let result = state.result, state.mode == .background,
+                      let line = SubagentCardExpansion.resultSummary(result.finalResponse) {
+                // A collapsed background card is its chat's only record of
+                // the result, so it keeps the first line in view.
+                Text(verbatim: line)
+                    .font(theme.code(.small))
+                    .foregroundStyle(theme.metadataForeground)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
         }
         .padding(.horizontal, 10)
@@ -109,7 +124,8 @@ struct SubagentLiveCardView: View {
     private var header: some View {
         HStack(spacing: 6) {
             Button {
-                TSMotion.animate(TSMotion.select) { isExpanded.toggle() }
+                let next = !isExpanded
+                TSMotion.animate(TSMotion.select) { userExpanded = next }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "person.2.wave.2")
@@ -187,5 +203,23 @@ struct SubagentLiveCardView: View {
             return state.streamedText
         }
         return String(state.streamedText.suffix(4_000))
+    }
+}
+
+/// Whether a subagent card shows its body. A finished run folds to its
+/// header so a long run does not crowd the strip; a running one stays open
+/// so its live tool rows are visible. An explicit user toggle always wins.
+enum SubagentCardExpansion {
+    static func isExpanded(isRunning: Bool, userChoice: Bool?) -> Bool {
+        userChoice ?? isRunning
+    }
+
+    /// The first non-blank line of a run's final response, for the folded
+    /// card. Nil when the response is blank.
+    static func resultSummary(_ response: String) -> String? {
+        response.split(whereSeparator: \.isNewline)
+            .lazy
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty }
     }
 }

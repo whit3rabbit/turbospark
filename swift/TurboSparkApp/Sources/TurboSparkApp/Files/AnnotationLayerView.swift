@@ -10,6 +10,9 @@ import SwiftUI
 @MainActor
 struct AnnotationLayerView: View {
     @Binding var session: ImageAnnotationSession
+    /// Receives the image-pixel region of a finished `.ask` gesture. The
+    /// layer only reports it; the preview decides what to attach.
+    var onAskRegion: ((CGRect) -> Void)?
     @Environment(\.appTheme) private var theme
 
     /// A box or arrow being dragged out; committed on release.
@@ -116,6 +119,11 @@ struct AnnotationLayerView: View {
             movingDraft = original.translated(by: CGSize(width: b.x - a.x, height: b.y - a.y))
         case .box:
             draft = ImageAnnotation(kind: .box(Self.rect(a, b)))
+        case .ask:
+            // Preview exactly the box that will be burned in, through the
+            // same function, so a press already shows the widened click box.
+            draft = PointAndAsk.region(fromView: start, to: current, viewport: viewport)
+                .map { ImageAnnotation(kind: .box($0)) }
         case .arrow:
             draft = ImageAnnotation(kind: .arrow(from: a, to: b))
         case .text:
@@ -137,6 +145,11 @@ struct AnnotationLayerView: View {
             guard let draft, Self.extent(of: draft) >= ImageAnnotation.minimumExtent else { return }
             session.history.add(draft)
             session.selectedID = draft.id
+        case .ask:
+            guard let onAskRegion,
+                let region = PointAndAsk.region(fromView: start, to: end, viewport: viewport)
+            else { return }
+            onAskRegion(region)
         case .text:
             pendingText = ""
             pendingTextAnchor = clamped(viewport.imagePoint(fromView: start))

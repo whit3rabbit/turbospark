@@ -10,6 +10,18 @@ struct MessageRowView: View {
     /// The web sources of the turn this row closes (OC-09). Set by the
     /// transcript only on a turn's final reply row; nil draws no chip.
     var sources: TurnSources?
+    /// The files the turn this row closes touched (component audit,
+    /// file-tree). Set on the same final reply row as `sources`.
+    var touchedFiles: TurnFileTree?
+    /// What conversation recall did for this turn, in memory only
+    /// (`RecallInspection`). Set on the same final reply row as `sources`.
+    var recallInspection: RecallInspection?
+    /// Keeps the action bar up without hover. The transcript sets it on the
+    /// newest reply only (`MessageActionBarPin`).
+    var pinsActions = false
+    /// Shows the opt-in follow-up chips. The transcript sets it on one row
+    /// at most (`FollowUpSuggestions.rowID`).
+    var showsFollowUps = false
     @State private var isHovered = false
     @State private var showsReasoning = false
     @State private var branchTarget: AppModel.BranchTarget?
@@ -20,7 +32,7 @@ struct MessageRowView: View {
     }
 
     private var showsMessageActions: Bool {
-        isHovered || isCurrentlySpeakingThis
+        isHovered || isCurrentlySpeakingThis || pinsActions
     }
 
     private var showsAssistantContent: Bool {
@@ -37,6 +49,14 @@ struct MessageRowView: View {
 
     private func stepVariant(_ delta: Int) {
         model.stepVariant(of: message.id, delta: delta)
+    }
+
+    /// Memory proposals staged by this step's `memory` calls. None while
+    /// model memory is off or in a Ghost chat: the note must not advertise
+    /// memory where it is not in use.
+    private var memoryProposalNotes: [MemoryProposalNote] {
+        guard model.memoryEnabled, !model.selectedChat.isGhost else { return [] }
+        return MemoryProposalNote.notes(calls: message.toolCalls, results: message.toolResults)
     }
 
     private var canEditThisInPlace: Bool {
@@ -57,6 +77,22 @@ struct MessageRowView: View {
         }
     }
 
+    /// "Quote in reply" (component audit, selection-toolbar). The whole
+    /// message, because SwiftUI's selectable `Text` does not expose the
+    /// selected range. Nil when there is no prose to quote: a tool-call
+    /// step's raw call text, a `#` memory save, or a `!` shell run.
+    private var quoteAction: (() -> Void)? {
+        if message.role == .user {
+            guard UserMemoryInputMessage.parse(message.content) == nil,
+                  ShellMessageContent.parse(message.content) == nil
+            else { return nil }
+        } else if !showsAssistantContent {
+            return nil
+        }
+        guard MessageQuote.blockquote(message.content) != nil else { return nil }
+        return { _ = model.quoteInReply(message.content) }
+    }
+
     private var transcriptPresentation: MidTurnTranscriptRowPresentation {
         MidTurnTranscriptRowPresentation(message: message)
     }
@@ -65,6 +101,26 @@ struct MessageRowView: View {
     /// the fence is not a file, so nothing joins the artifact archive.
     private var previewHTML: (String) -> Void {
         { model.openHTMLPreview(title: AppStrings.localized("HTML preview"), html: $0) }
+    }
+
+    /// A reply whose `[n]` markers name the turn's sources (component audit,
+    /// inline-citation): markers render as links and the cited sources as
+    /// chips below. Only this row, which `sources` marks as the committed
+    /// reply, takes the rewrite, so the streaming row is untouched. The
+    /// `openURL` override is scoped to this branch so other rows keep the
+    /// default link handling, and any URL that is not a citation still goes
+    /// to the system.
+    @ViewBuilder
+    private func citedAssistantContent(_ citations: InlineCitations.Rendering, sources: TurnSources) -> some View {
+        MarkdownContentWithTablesView(text: citations.markdown, onPreviewHTML: previewHTML)
+            .fixedSize(horizontal: false, vertical: true)
+            .environment(\.openURL, OpenURLAction { url in
+                guard let number = InlineCitations.number(from: url, sourceCount: sources.sources.count)
+                else { return .systemAction }
+                model.revealToolCard(for: sources.sources[number - 1])
+                return .handled
+            })
+        InlineCitationChipsView(model: model, sources: sources, numbers: citations.numbers)
     }
 
     /// One chip per artifact this message's tool calls produced, anchored by
@@ -93,6 +149,13 @@ struct MessageRowView: View {
                     Text(artifact.formatLabel)
                         .themedCode(.tiny)
                         .foregroundStyle(.appSecondary)
+                    if let revision = ArtifactChipState.revisionBadge(revision: artifact.revision) {
+                        Text("v\(revision)", bundle: .module)
+                            .themedCode(.tiny)
+                            .monospacedDigit()
+                            .foregroundStyle(.appSecondary)
+                            .accessibilityHidden(true)
+                    }
                     Spacer(minLength: 4)
                     Image(systemName: "sidebar.right")
                         .themedFont(.micro)
@@ -112,6 +175,17 @@ struct MessageRowView: View {
             .buttonStyle(.plain)
             .help(Text("Open \(artifact.fileName) in the artifact panel", bundle: .module))
             .accessibilityLabel(Text("Open artifact \(artifact.fileName)", bundle: .module))
+            .accessibilityValue(
+                ArtifactChipState.revisionBadge(revision: artifact.revision)
+                    .map { Text("Version \($0)", bundle: .module) } ?? Text(verbatim: ""))
+        }
+        // A call still executing has no artifact row yet; the real chip
+        // replaces this one when `registerProducedArtifacts` anchors on it.
+        ForEach(ArtifactChipState.writing(
+            calls: message.toolCalls, results: message.toolResults,
+            artifacts: model.selectedChat.artifacts)
+        ) { writing in
+            ArtifactWritingChip(fileName: writing.fileName)
         }
     }
 
@@ -136,6 +210,17 @@ struct MessageRowView: View {
                     .foregroundStyle(.appSecondary)
             }
         }
+    }
+
+    /// The collapsed reasoning header: "Thought for 12s" when the row's
+    /// duration was measured, else the plain label. Rows from before the
+    /// duration was stored show no time rather than an estimate.
+    private var reasoningLabel: Text? {
+        guard !message.reasoning.isEmpty else { return nil }
+        if let duration = ReasoningDurationText.text(seconds: message.reasoningSeconds) {
+            return Text("Thought for \(duration)", bundle: .module)
+        }
+        return Text("Thought process", bundle: .module)
     }
 
     /// The ordinary user bubble. Split out of `body` when `#` quick-saves
@@ -187,6 +272,7 @@ struct MessageRowView: View {
                         : nil,
                     standingInstructionAction: standingInstructionAction,
                     isStandingInstruction: message.isStandingInstruction,
+                    quoteAction: quoteAction,
                     actionsDisabled: model.isRunning
                 )
             }
@@ -358,8 +444,10 @@ struct MessageRowView: View {
                         ChatActivityLine(
                             modelName: message.toolCalls.isEmpty
                                 ? (model.selected?.alias ?? "TurboSpark") : nil,
-                            label: message.reasoning.isEmpty
-                                ? nil : Text("Thought process", bundle: .module),
+                            label: reasoningLabel,
+                            // The summary stands in for the folded trace, so
+                            // it hides once the full trace is open below.
+                            detail: showsReasoning ? nil : ReasoningSummary.headline(of: message.reasoning),
                             reasoningExpanded: message.reasoning.isEmpty ? nil : $showsReasoning)
                             .accessibilityHeading(.h2)
                             .padding(.bottom, -6)
@@ -380,17 +468,46 @@ struct MessageRowView: View {
                             ToolCallCardView(model: model, call: call, result: matchResult)
                         }
                         artifactChips
+                        ForEach(memoryProposalNotes, id: \.callID) { note in
+                            MemoryProposalNoteRow(
+                                note: note,
+                                resolve: { model.memoryProposalResolution(callID: note.callID) },
+                                act: { model.actOnMemoryProposal(callID: note.callID, $0) },
+                                onReview: { model.openSettings(tab: .memory) })
+                        }
                     }
 
                     if showsAssistantContent {
-                        MarkdownContentWithTablesView(text: message.content, onPreviewHTML: previewHTML)
-                            .fixedSize(horizontal: false, vertical: true)
+                        if let sources, let citations = InlineCitations.apply(
+                            to: message.content, sourceCount: sources.sources.count) {
+                            citedAssistantContent(citations, sources: sources)
+                        } else {
+                            MarkdownContentWithTablesView(text: message.content, onPreviewHTML: previewHTML)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
 
                     imageAttachments
 
                     if let sources, !sources.isEmpty {
-                        SourcesChipView(model: model, sources: sources)
+                        SourcesChipView(model: model, sources: sources, inspection: recallInspection)
+                    } else if let recallInspection {
+                        SourcesChipView(model: model, sources: TurnSources(), inspection: recallInspection)
+                    }
+
+                    if let touchedFiles {
+                        TurnFileTreeCardView(model: model, tree: touchedFiles)
+                    }
+
+                    if let notice = MessageStopNotice.resolve(message), let reason = message.stopReason {
+                        MessageStopNoticeView(
+                            notice: notice,
+                            stopReason: reason,
+                            retryAction: model.canRetry(response: message)
+                                ? { _ = model.regenerateResponse() } : nil,
+                            actionsDisabled: model.isRunning,
+                            compactAction: notice == .contextFull ? { model.compactKeepingDraft() } : nil,
+                            compactBlocker: model.contextMeterCompactBlocker)
                     }
 
                     MessageActionBarView(
@@ -403,9 +520,14 @@ struct MessageRowView: View {
                         variantCount: variantPosition.count,
                         retryAction: model.canRetry(response: message)
                             ? { _ = model.regenerateResponse() } : nil,
+                        quoteAction: quoteAction,
                         actionsDisabled: model.isRunning
                     )
                     .padding(.top, 2)
+
+                    if showsFollowUps {
+                        FollowUpSuggestionsRow { model.draftFollowUp($0) }
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -425,6 +547,9 @@ struct MessageRowView: View {
             )
         }
         .accessibilityElement(children: .contain)
+        .accessibilityAction(named: Text("Quote in reply", bundle: .module)) {
+            quoteAction?()
+        }
         .accessibilityAction(named: Text("Copy message", bundle: .module)) {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(message.content, forType: .string)

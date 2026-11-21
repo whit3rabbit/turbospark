@@ -333,6 +333,7 @@ extension AppModel {
             try? MemoryLedgerStore.shared.invalidateEvidence(chatID: id, messages: [])
             forgetConversationRecall(chatID: id)
             RolloutStore.shared.delete(chatID: id)
+            deleteTurnCheckpoints(chatID: id)
         }
         invalidatePendingTitleGeneration(for: id)
         // A deleted chat's queued drafts are discarded WITH it: the user's
