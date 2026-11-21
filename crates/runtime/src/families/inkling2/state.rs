@@ -21,8 +21,25 @@ pub(crate) const TAG_F32: u8 = 3;
 pub(crate) const TAG_INT4_AFFINE: u8 = 4;
 pub(crate) const TAG_INT8_AFFINE: u8 = 5;
 
+/// The GGUF library function the routed argument buffer reflects (every GGUF
+/// pair binds the same `RoutedBlobs`).
+pub(crate) const GGUF_REFLECT_FUNCTION: &str = "moe_phase1_gate_up_act_q8_0";
+
 /// The most block states a depth mix sees (blocks plus the current state).
 pub(crate) const MAX_STATES: usize = gpu::INKLING2_DEPTH_MAX_STATES;
+
+/// One physical layer's routed-expert format.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExpertKind {
+    /// The checkpoint's own NVFP4 / MXFP8 rows (`gpu::moe_inkling2`).
+    Native(gpu::Inkling2ExpertType),
+    /// GGUF blocks, gate-up and down each their own type, run by the GGUF
+    /// pairs' Inkling mode (`gpu::encode_inkling2_gguf_phase{1,2}`).
+    Gguf {
+        gate_up: gpu::Inkling2GgufExpertType,
+        down: gpu::Inkling2GgufExpertType,
+    },
+}
 
 pub(crate) fn name(layer: usize, suffix: &str) -> String {
     format!("model.llm.layers.{layer}.{suffix}")
@@ -48,7 +65,7 @@ pub(crate) struct RealInkling2State {
     /// Per physical layer: expert sub-tensor offsets, with `gate_s` / `up_s`
     /// / `down_s` pointing into the blob's outer-scale record.
     pub(crate) offsets: Vec<gpu::MoeExpertOffsets>,
-    pub(crate) kinds: Vec<gpu::Inkling2ExpertType>,
+    pub(crate) kinds: Vec<ExpertKind>,
     pub(crate) routed: gpu::RoutedBlobsBuffer,
     /// Set when the open resolved `ResolvedExpertResidency::Resident`: every
     /// expert of every layer resident, so routing and the MoE run on the GPU
@@ -161,6 +178,13 @@ pub(crate) fn require_matrix(
             Ok(())
         }
         super::lamq::TAG_LAMQ if (e.shape.0 as usize, e.shape.1 as usize) == (rows, cols) => Ok(()),
+        // A GGUF install's block-quantized matrices, run by `encode_gemv_any`
+        // and `encode_embed_any` (each refuses a type it has no kernel for).
+        tag if crate::real_forward_layout::EXECUTABLE_GGUF_DTYPES.contains(&tag)
+            && (e.shape.0 as usize, e.shape.1 as usize) == (rows, cols) =>
+        {
+            Ok(())
+        }
         other => Err(RealForwardError::Unsupported(format!(
             "{name}: expected a BF16 or affine 4/8-bit [{rows}, {cols}] matrix, found dtype \
              {other} shaped {:?}",
@@ -303,9 +327,11 @@ impl RealInkling2State {
             if (cfg.core_start as usize..cfg.core_end as usize).contains(&l) {
                 for c in ["attn", "k", "v", "mlp"] {
                     let p = name(l, &format!("controllers.{c}"));
-                    require(index, &format!("{p}.down_weight"), TAG_BF16, rank * 2 * h)?;
-                    require(index, &format!("{p}.gain_weight"), TAG_BF16, h * rank)?;
-                    require(index, &format!("{p}.forget_weight"), TAG_BF16, h * rank)?;
+                    // GEMV weights (`Ctx::control`), so any matrix form the
+                    // GEMV helper runs: BF16, or a GGUF install's blocks.
+                    require_matrix(index, &format!("{p}.down_weight"), rank, 2 * h)?;
+                    require_matrix(index, &format!("{p}.gain_weight"), h, rank)?;
+                    require_matrix(index, &format!("{p}.forget_weight"), h, rank)?;
                 }
             }
         }
@@ -384,20 +410,68 @@ impl RealInkling2State {
             };
             let (outer, gate, up, down) = (sub("outer")?, sub("gate")?, sub("up")?, sub("down")?);
             let kind = match gate.dtype.as_str() {
-                "inkling2_nvfp4" => gpu::Inkling2ExpertType::Nvfp4,
-                "inkling2_mxfp8" => gpu::Inkling2ExpertType::Mxfp8,
-                other => return Err(unsupported(format!("layer {l}: expert dtype {other}"))),
+                "inkling2_nvfp4" => ExpertKind::Native(gpu::Inkling2ExpertType::Nvfp4),
+                "inkling2_mxfp8" => ExpertKind::Native(gpu::Inkling2ExpertType::Mxfp8),
+                other => match (
+                    gpu::Inkling2GgufExpertType::from_dtype(other),
+                    gpu::Inkling2GgufExpertType::from_dtype(&down.dtype),
+                ) {
+                    (Some(gate_up), Some(down)) => ExpertKind::Gguf { gate_up, down },
+                    _ => {
+                        return Err(unsupported(format!(
+                            "layer {l}: expert dtypes {other} / {} have no Inkling pair",
+                            down.dtype
+                        )))
+                    }
+                },
+            };
+            // Gate and up share a type; down has its own in a GGUF layer.
+            let row_bytes = |role: &str, cols: usize| match kind {
+                ExpertKind::Native(k) => k.row_bytes(cols),
+                ExpertKind::Gguf { gate_up, down } => {
+                    if role == "down" {
+                        down.row_bytes(cols)
+                    } else {
+                        gate_up.row_bytes(cols)
+                    }
+                }
+            };
+            let tiles = |role: &str, cols: usize| match kind {
+                ExpertKind::Native(k) => cols % k.block_elems() == 0,
+                ExpertKind::Gguf { gate_up, down } => {
+                    cols % if role == "down" {
+                        down.block_elems()
+                    } else {
+                        gate_up.block_elems()
+                    } == 0
+                }
             };
             for (role, s, rows, cols) in [
                 ("gate", gate, ffn, h),
                 ("up", up, ffn, h),
                 ("down", down, h, ffn),
             ] {
-                if s.dtype != gate.dtype || s.size as usize != rows * kind.row_bytes(cols) {
+                let same_type = if role == "down" {
+                    true
+                } else {
+                    s.dtype == gate.dtype
+                };
+                let native_type = !matches!(kind, ExpertKind::Native(_)) || s.dtype == gate.dtype;
+                if !same_type
+                    || !native_type
+                    || !tiles(role, cols)
+                    || s.size as usize != rows * row_bytes(role, cols)
+                {
                     return Err(unsupported(format!(
-                        "layer {l}: {role} blob size or dtype mismatch"
+                        "layer {l}: {role} blob size, dtype or block tiling mismatch"
                     )));
                 }
+            }
+            if matches!(kind, ExpertKind::Gguf { .. }) && resident_experts {
+                return Err(unsupported(
+                    "resident expert residency has no GGUF expert kernels; open this install streamed"
+                        .into(),
+                ));
             }
             if outer.size != 16 || outer.offset % 4 != 0 {
                 return Err(unsupported(format!(
@@ -417,7 +491,7 @@ impl RealInkling2State {
                 )));
             }
             // The NVFP4 kernel loads code bytes as 32-bit words.
-            if kind == gpu::Inkling2ExpertType::Nvfp4
+            if kind == ExpertKind::Native(gpu::Inkling2ExpertType::Nvfp4)
                 && [gate, up, down].iter().any(|s| s.offset % 4 != 0)
             {
                 return Err(unsupported(format!(
@@ -449,11 +523,19 @@ impl RealInkling2State {
         } else {
             None
         };
+        let gguf_experts = kinds.iter().any(|k| matches!(k, ExpertKind::Gguf { .. }));
+        if gguf_experts && kinds.iter().any(|k| matches!(k, ExpertKind::Native(_))) {
+            return Err(unsupported(
+                "an install mixing GGUF and native expert layers".into(),
+            ));
+        }
         let (source, function) = if lamq_experts {
             (
                 gpu::moe_inkling2_lamq_source(),
                 gpu::MOE_INKLING2_LAMQ_REFLECT_FUNCTION,
             )
+        } else if gguf_experts {
+            (gpu::moe_gguf_source(), GGUF_REFLECT_FUNCTION)
         } else {
             (
                 gpu::moe_inkling2_source(),

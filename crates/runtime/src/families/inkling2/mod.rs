@@ -921,11 +921,17 @@ fn layer_moe(
         .map(|&s| (&slot_buffers[ip][s], 0u64))
         .collect();
     let lq = st.lamq.clone().filter(|l| l.experts.is_some());
+    let gguf = match st.kinds.get(ip) {
+        Some(&state::ExpertKind::Gguf { gate_up, down }) => Some((gate_up, down)),
+        _ => None,
+    };
     let (source, function) = if lq.is_some() {
         (
             gpu::moe_inkling2_lamq_source(),
             gpu::MOE_INKLING2_LAMQ_REFLECT_FUNCTION,
         )
+    } else if gguf.is_some() {
+        (gpu::moe_gguf_source(), state::GGUF_REFLECT_FUNCTION)
     } else {
         (
             gpu::moe_inkling2_source(),
@@ -956,7 +962,42 @@ fn layer_moe(
         moe_tail(c, pass, st, arch, slot, ip)?;
         return Ok((plan.hits, plan.misses.len()));
     }
-    let kind = st.kinds[ip];
+    if let Some((gate_up, down)) = gguf {
+        gpu::encode_inkling2_gguf_phase1(
+            c.context,
+            pass,
+            gate_up,
+            &st.routed,
+            &st.offsets[ip],
+            (&st.mn, 0),
+            (&st.acts, 0),
+            h as u32,
+            ffn as u32,
+            top_k as u32,
+            cfg.gate_softcap,
+            cfg.up_softcap,
+        )
+        .map_err(g)?;
+        gpu::encode_inkling2_gguf_phase2(
+            c.context,
+            pass,
+            down,
+            &st.routed,
+            &st.offsets[ip],
+            (&st.acts, 0),
+            (&st.routing_w, 0),
+            (&st.y, 0),
+            h as u32,
+            ffn as u32,
+            top_k as u32,
+        )
+        .map_err(g)?;
+        moe_tail(c, pass, st, arch, slot, ip)?;
+        return Ok((plan.hits, plan.misses.len()));
+    }
+    let state::ExpertKind::Native(kind) = st.kinds[ip] else {
+        unreachable!("GGUF layers returned above")
+    };
     gpu::encode_inkling2_moe_phase1(
         c.context,
         pass,
@@ -1090,7 +1131,11 @@ fn layer_moe_resident(
         )?;
         return moe_tail(c, pass, st, arch, slot, ip);
     }
-    let kind = st.kinds[ip];
+    let state::ExpertKind::Native(kind) = st.kinds[ip] else {
+        return Err(RealForwardError::Unsupported(
+            "resident experts have no GGUF kernels (state build refuses this)".into(),
+        ));
+    };
     gpu::encode_inkling2_moe_phase1_indexed(
         c.context,
         pass,

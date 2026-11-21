@@ -143,6 +143,11 @@ pub const LAMQ_SCHEME: &str = "lamq";
 /// install: per-expert trellis blobs in `packed_experts`, each opening with a
 /// format record.
 pub const INKLING2_LAMQ_ROUTED_SCHEME: &str = "inkling2_lamq";
+/// `manifest.quant.routedExpert.scheme` of an Inkling 2 GGUF install:
+/// ggml-block expert blobs behind an outer-scale record, run by the GGUF
+/// routed pairs' Inkling mode. Each layer's types are in `layout.json`; the
+/// runtime checks every one has a pair in that mode.
+pub const INKLING2_GGUF_ROUTED_SCHEME: &str = "inkling2_gguf";
 
 pub(crate) fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
     // Embedding and attention admit 8 as well as 4: the INT8 affine GEMV is
@@ -264,6 +269,12 @@ pub(crate) fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
             && slot.scale_type == "none"
             && slot.bias_type == "none"
             && slot.group_size == 0;
+        let inkling2_gguf_routed = name == "routedExpert"
+            && slot.scheme == INKLING2_GGUF_ROUTED_SCHEME
+            && slot.weight_bits == 0
+            && slot.scale_type == "none"
+            && slot.bias_type == "none"
+            && slot.group_size == 0;
         let inkling2_lamq_routed = name == "routedExpert"
             && slot.scheme == INKLING2_LAMQ_ROUTED_SCHEME
             && slot.weight_bits == 0
@@ -273,6 +284,7 @@ pub(crate) fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
         if !(affine
             || lamq
             || inkling2_lamq_routed
+            || inkling2_gguf_routed
             || affine_1bit
             || affine_2bit
             || gguf

@@ -371,13 +371,19 @@ pub fn resolve_expert_residency_for_install(
     let resident_bytes = std::fs::metadata(dir.join("model_weights.bin"))
         .map(|m| m.len())
         .unwrap_or(0);
-    let (bytes_per_slot, table_bytes) = model_io::load_packed_experts_layout(
+    let layout = model_io::load_packed_experts_layout(
         dir,
         model_io::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
     )
-    .map(|layout| expert_table_bytes(&layout))
-    .unwrap_or((0, 0));
-    if resident_experts_for(requested, family, resident_bytes, table_bytes)? {
+    .ok();
+    let (bytes_per_slot, table_bytes) = layout.as_ref().map(expert_table_bytes).unwrap_or((0, 0));
+    if resident_experts_for(
+        requested,
+        family,
+        layout.as_ref(),
+        resident_bytes,
+        table_bytes,
+    )? {
         return Ok(model_io::ResolvedExpertResidency::Resident);
     }
     let resolved = resolve_expert_residency(
@@ -607,13 +613,38 @@ pub fn resident_experts_decision(
 /// [`resident_experts_decision`] with this process's env and device. The
 /// device is only asked when the family has a resident flow.
 #[cfg(target_os = "macos")]
+/// Whether an install's expert blobs have resident (indexed) kernels: an
+/// Inkling 2 GGUF install's ggml-block experts do not (only the streamed GGUF
+/// pairs run them), so `Auto` streams it and `Resident` is refused by name.
+fn resident_blobs_supported(
+    family: model_io::ModelFamily,
+    layout: Option<&model_io::PackedExpertsLayout>,
+) -> bool {
+    if family != model_io::ModelFamily::Inkling2Loop {
+        return true;
+    }
+    let Some(first) = layout
+        .and_then(|l| l.layers.first())
+        .and_then(|l| l.experts.first())
+    else {
+        return true;
+    };
+    first.sub_tensors.contains_key("lamq_fmt")
+        || first
+            .sub_tensors
+            .get("gate")
+            .is_some_and(|g| matches!(g.dtype.as_str(), "inkling2_nvfp4" | "inkling2_mxfp8"))
+}
+
 fn resident_experts_for(
     requested: model_io::ExpertResidency,
     family: model_io::ModelFamily,
+    layout: Option<&model_io::PackedExpertsLayout>,
     resident_bytes: u64,
     table_bytes: u64,
 ) -> Result<bool, String> {
-    let supported = resident_residency_supported(family);
+    let supported =
+        resident_residency_supported(family) && resident_blobs_supported(family, layout);
     let working_set = if supported {
         gpu::recommended_max_working_set().map_or(0, |(bytes, _)| bytes)
     } else {
@@ -697,8 +728,14 @@ fn open_expert_streamers_with(
     // Resident experts: the family copies every expert into its own GPU
     // buffers and routes on the GPU, so the streamer below only has to exist.
     // It is sized at the routing minimum (top_k slots) and never read.
-    let resident = resident_experts_for(residency, expecting.family, resident_bytes, table_bytes)
-        .map_err(RealForwardError::Unsupported)?;
+    let resident = resident_experts_for(
+        residency,
+        expecting.family,
+        Some(&layout),
+        resident_bytes,
+        table_bytes,
+    )
+    .map_err(RealForwardError::Unsupported)?;
     let (expert_cache_slots, resolved_residency) = if resident {
         (
             ExpertCacheSlots::Fixed(expecting.top_k_experts.max(1) as usize),

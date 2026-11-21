@@ -392,9 +392,37 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   Four Inkling-branch mutants fail only the Inkling cases (the 27
   `moe_gguf_parity` cases still pass), and two default-branch mutants fail
   both suites. MXFP4 is refused in the mode (its pair binds a bias plane and
-  bakes `top_k`); one layer of one UD file uses it. Not done: the intake
-  (fused gate-up split, `.scale` into the outer record, F32 1-D tensors to
-  BF16), the runtime wiring, a gate against llama.cpp.
+  bakes `top_k`); one layer of one UD file uses it.
+- DONE (2026-11-21): GGUF intake and flow. `write_inkling2_gguf_install`
+  (`crates/repack/src/inkling2_gguf.rs`, `examples/inkling2_gguf_install.rs`):
+  names and converter transforms from the name table, block-quantized
+  matrices kept under their GGUF tags, float tensors F32 where the flow reads
+  F32 and BF16 elsewhere (lossy values counted), experts as an outer-scale
+  record (`.scale` or 1.0) plus gate, up and down rows (the fused gate-up is
+  gate rows first). Manifest `routedExpert` scheme `inkling2_gguf`. The flow
+  takes GGUF resident matrices wherever it takes a matrix (including the loop
+  controller planes, which these files ship as Q8_0), and runs GGUF expert
+  layers through the Inkling mode of the GGUF pairs. GGUF experts have no
+  resident (indexed) kernels, so `auto` streams such an install and
+  `resident` is refused by name (`resident_blobs_supported`).
+  Gate (M4 Max, `Inkling-2-Mini-Uncensored-AD-IQ2_M.gguf`, a community
+  fine-tune: Q8_0 attention and controllers, Q4_K embedding, Q6_K head,
+  IQ2_XXS gate-up, IQ4_NL and Q2_0 down): intake 26 s, 8.1 GB, all 646
+  resident names and shapes equal to the HF install's, 0 lossy floats.
+  Logits against llama.cpp on the same file and ids:
+
+  | prompt | llama.cpp | top-1 | mean KL | max KL |
+  |---|---|---|---|---|
+  | 19 tokens | CPU | 19/19 | 1.2e-3 | 5.0e-3 |
+  | 232 tokens | Metal (`ngl 99`) | 228/232 | 1.3e-3 | 1.0e-2 |
+
+  ORACLE TRAP: llama.cpp's CPU path (`dump_logits ... 0`) returns all-zero
+  logits for this file at 32 tokens or more while reporting success (32, 33,
+  64, 128 and 232 tokens all zero; 19 fine). Use `ngl 99` for it, and check a
+  reference for zero rows before reading a KL. The BF16 and LAMQ installs'
+  gates reproduce bit for bit after this change. Not run: the unsloth UD
+  files (not downloaded; their `.scale` path is unit-shaped only), sampled
+  generation, a speed profile (decode 65 ms per token, unpaired).
 - MEASURED (2026-11-21): DSpark drafter acceptance, offline. The drafter is
   the bundled `mtp.safetensors` of `mlx-community/Inkling-2-Mini-oQ4e-mtp`
   (BF16, 3 layers, block 8; the same weights unsloth ships as a GGUF). The

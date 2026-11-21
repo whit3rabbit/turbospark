@@ -9,8 +9,8 @@ use std::path::Path;
 
 pub(crate) use quant::validate_quant;
 pub use quant::{
-    EXECUTABLE_GGUF_TYPES, INKLING2_LAMQ_ROUTED_SCHEME, INKLING2_ROUTED_SCHEME, LAMQ_SCHEME,
-    RESIDENT_ONLY_GGUF_TYPES,
+    EXECUTABLE_GGUF_TYPES, INKLING2_GGUF_ROUTED_SCHEME, INKLING2_LAMQ_ROUTED_SCHEME,
+    INKLING2_ROUTED_SCHEME, LAMQ_SCHEME, RESIDENT_ONLY_GGUF_TYPES,
 };
 pub use types::{
     Manifest, ManifestArch, ManifestFileEntry, ManifestHadamard, ManifestHadamardSigns,
