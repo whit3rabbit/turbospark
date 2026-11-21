@@ -28,6 +28,8 @@ pub mod gdn;
 /// `qwen4_exp`'s hyper-connection mix (PORT-LOCAL; not `HyperConnectionConfig`'s
 /// Sinkhorn-normalised mHC).
 pub mod hyper_connection;
+/// Inkling 2 Mini building blocks (NVFP4/MXFP8 dequant, depth attention, loop controllers).
+pub mod inkling2;
 /// TurboQuant KV-cache codec: per-row norm, randomized Hadamard rotation,
 /// Lloyd-Max codebook quantization (ported from mlx-vlm's
 /// `_TurboQuantMSECodec`, see `docs/TRUBOQUANT.md`).
