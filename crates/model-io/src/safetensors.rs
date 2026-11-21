@@ -33,6 +33,9 @@ pub struct SafetensorsFile {
     mmap: Mmap,
     data_start: usize,
     tensors: BTreeMap<String, TensorDescriptor>,
+    /// The header's `__metadata__` string entries. Some checkpoints carry
+    /// their architecture config here (inworld voice-isolator).
+    metadata: BTreeMap<String, String>,
 }
 
 impl SafetensorsFile {
@@ -101,8 +104,18 @@ impl SafetensorsFile {
             })?;
 
         let mut tensors = BTreeMap::new();
+        let mut metadata = BTreeMap::new();
         for (k, v) in raw_map {
             if k == "__metadata__" {
+                // The format defines string-to-string entries; anything else
+                // is ignored rather than refused, as before.
+                if let serde_json::Value::Object(entries) = v {
+                    for (key, value) in entries {
+                        if let serde_json::Value::String(text) = value {
+                            metadata.insert(key, text);
+                        }
+                    }
+                }
                 continue;
             }
             let desc: TensorDescriptor =
@@ -144,7 +157,13 @@ impl SafetensorsFile {
             mmap,
             data_start,
             tensors,
+            metadata,
         })
+    }
+
+    /// The header's `__metadata__` string entries, empty when absent.
+    pub fn metadata(&self) -> &BTreeMap<String, String> {
+        &self.metadata
     }
 
     /// Check if a tensor is present.

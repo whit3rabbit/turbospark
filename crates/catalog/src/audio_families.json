@@ -564,6 +564,20 @@
     "evidence": "Concurrent source addition; no checkpoint or fixture gate run by this integration"
   },
   {
+    "family": "sts/voice_isolator",
+    "task": "enhancement",
+    "operations": [
+      "isolate",
+      "forward"
+    ],
+    "backend": "portable_cpu",
+    "can_run": true,
+    "component": false,
+    "unavailable_reason": null,
+    "source": "crates/audio/src/sts/voice_isolator/mod.rs",
+    "evidence": "crates/audio/src/sts/voice_isolator/README.md; runtime session adapter in crates/runtime/src/native_audio.rs; historical evidence only, not rerun by capability discovery"
+  },
+  {
     "family": "vad/nemotron_diarization",
     "task": "diarization",
     "operations": [

@@ -1,0 +1,98 @@
+{
+ "case": "causal",
+ "config": {
+  "width": 32,
+  "num_heads": 2,
+  "n_fft": 256,
+  "hop_length": 64,
+  "sample_rate": 16000,
+  "band_plan": [
+   [
+    500,
+    2000
+   ],
+   [
+    1000,
+    8000
+   ]
+  ],
+  "correction_bound": 0.5,
+  "chunk_seconds": 2.0,
+  "overlap_seconds": 0.125,
+  "exclusive_self_attention": true,
+  "exclusive_axes": "time",
+  "mamba_state": 8,
+  "mamba_conv": 4,
+  "mamba_expand": 2,
+  "block_types": [
+   "transformer",
+   "mamba",
+   "transformer",
+   "mamba"
+  ],
+  "causal": true,
+  "lookahead_frames": 2,
+  "lookahead_frames_choices": [
+   0,
+   2,
+   4
+  ],
+  "attention_window_frames": 8
+ },
+ "seed": 1235,
+ "bands": 11,
+ "edges": [
+  [
+   0,
+   8
+  ],
+  [
+   8,
+   16
+  ],
+  [
+   16,
+   24
+  ],
+  [
+   24,
+   32
+  ],
+  [
+   32,
+   48
+  ],
+  [
+   48,
+   64
+  ],
+  [
+   64,
+   80
+  ],
+  [
+   80,
+   96
+  ],
+  [
+   96,
+   112
+  ],
+  [
+   112,
+   128
+  ],
+  [
+   128,
+   129
+  ]
+ ],
+ "frames": 76,
+ "lookahead_frames": 2,
+ "stream_pieces": [
+  37,
+  200,
+  513,
+  64
+ ]
+}

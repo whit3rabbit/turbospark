@@ -432,6 +432,8 @@ pub const OMNIVOICE_FAMILY: &str = "omnivoice";
 pub const MUSIC3_FAMILY: &str = "minimax_music3";
 /// Persisted family string of the MossFormer2 SE 48 kHz enhancement engine.
 pub const MOSSFORMER2_SE_FAMILY: &str = "mossformer2_se";
+/// Persisted family string of the inworld Voice Isolator engine.
+pub const VOICE_ISOLATOR_FAMILY: &str = "voice_isolator";
 /// Input rates an enhancement job accepts, as for cloning references.
 const ENHANCEMENT_INPUT_RATES: std::ops::RangeInclusive<u32> = 8_000..=192_000;
 /// Reference audio bounds for cloning: shorter clips align poorly, and the
@@ -805,6 +807,7 @@ enum Engine {
     OmniVoice(std::cell::RefCell<Box<crate::omnivoice::OmniVoiceRunner>>),
     Music(Box<crate::Music3Runner>),
     MossFormer2Se(Box<audio::sts::mossformer2_se::MossFormer2Se>),
+    VoiceIsolator(Box<audio::sts::VoiceIsolator>),
 }
 // The observer owns an event sender, so it must be removed even if a backend panics.
 #[cfg(test)]
@@ -828,6 +831,7 @@ impl Engine {
             Self::OmniVoice(_) => OMNIVOICE_FAMILY,
             Self::Music(_) => MUSIC3_FAMILY,
             Self::MossFormer2Se(_) => MOSSFORMER2_SE_FAMILY,
+            Self::VoiceIsolator(_) => VOICE_ISOLATOR_FAMILY,
         }
     }
     fn open(
@@ -942,6 +946,9 @@ impl Engine {
                 // to prefer, so it needs no portable opt-in.
                 MOSSFORMER2_SE_FAMILY => audio::sts::mossformer2_se::MossFormer2Se::open(path)
                     .map(|m| Self::MossFormer2Se(Box::new(m)))
+                    .map_err(|e| e.to_string()),
+                VOICE_ISOLATOR_FAMILY => audio::sts::VoiceIsolator::open(path)
+                    .map(|m| Self::VoiceIsolator(Box::new(m)))
                     .map_err(|e| e.to_string()),
                 family => Err(format!("unsupported enhancement family {family:?}")),
             },
@@ -1265,20 +1272,26 @@ impl Engine {
                 });
                 result.seed = Some(r.seed.unwrap_or(0));
             }
-            Self::MossFormer2Se(model) => {
+            Self::MossFormer2Se(_) | Self::VoiceIsolator(_) => {
                 let input = enhancement_pcm(r, samples)?;
-                let mut voice = model
-                    .enhance_controlled(&input, None, &mut |done, total| {
-                        events
-                            .send(AudioEvent::Progress(AudioProgress {
-                                stage: "enhance".into(),
-                                completed: done,
-                                total: Some(total),
-                            }))
-                            .is_ok()
-                            && !cancel.is_cancelled()
-                    })
-                    .map_err(|e| e.to_string())?;
+                let mut report = |done, total| {
+                    events
+                        .send(AudioEvent::Progress(AudioProgress {
+                            stage: "enhance".into(),
+                            completed: done,
+                            total: Some(total),
+                        }))
+                        .is_ok()
+                        && !cancel.is_cancelled()
+                };
+                let mut voice = match self {
+                    Self::MossFormer2Se(model) => {
+                        model.enhance_controlled(&input, None, &mut report)
+                    }
+                    Self::VoiceIsolator(model) => model.isolate_controlled(&input, &mut report),
+                    _ => unreachable!("matched above"),
+                }
+                .map_err(|e| e.to_string())?;
                 // The reference iSTFT stops at the last whole frame, up to one
                 // hop short of the input. The voice is the input's length so
                 // input minus voice lines up; the short tail is silence.
@@ -1318,8 +1331,17 @@ pub fn enhancement_pcm(r: &AudioRequest, samples: &[f32]) -> Result<Vec<f32>, St
 fn enhancement_family(path: &Path) -> Result<&'static str, String> {
     match tts_model_type(path).as_deref() {
         Some(MOSSFORMER2_SE_FAMILY) => return Ok(MOSSFORMER2_SE_FAMILY),
+        Some(VOICE_ISOLATOR_FAMILY) => return Ok(VOICE_ISOLATOR_FAMILY),
         Some(other) => return Err(format!("unsupported enhancement model_type {other:?}")),
         None => {}
+    }
+    // The inworld release names; the architecture itself is then read from
+    // the file's embedded config and refused if it is not one.
+    if audio::sts::voice_isolator::WEIGHT_FILES[..2]
+        .iter()
+        .any(|name| path.join(name).is_file())
+    {
+        return Ok(VOICE_ISOLATOR_FAMILY);
     }
     if audio::sts::mossformer2_se::WEIGHT_FILES
         .iter()

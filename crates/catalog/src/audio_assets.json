@@ -2572,6 +2572,84 @@
         "voices": [],
         "max_input_seconds": 600
       }
+    },
+    {
+      "alias": "voice-isolator-v1",
+      "assets": [
+        {
+          "path": "LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "size": 11358
+        },
+        {
+          "path": "NOTICE",
+          "sha256": "86e7455d0804e20c3f31a84b10b9b5e39995a526dc9e4f1d210e64513c3f3e9b",
+          "size": 904
+        },
+        {
+          "path": "denoiser.safetensors",
+          "sha256": "647335a6aeb4dc706b895532c209d51e0e84a4849d17b339f00d4392a050ae53",
+          "size": 256260128
+        }
+      ],
+      "source": {
+        "repository": "inworld/voice-isolator",
+        "revision": "9b0285b3fe8403aa8e2f1dbb2165a80a4294c970"
+      },
+      "metadata": {
+        "task": "enhancement",
+        "family": "voice_isolator",
+        "display_name": "Inworld Voice Isolator v1",
+        "required_files": [
+          "LICENSE",
+          "NOTICE",
+          "denoiser.safetensors"
+        ],
+        "sample_rate": 48000,
+        "channels": 1,
+        "languages": [],
+        "voices": [],
+        "max_input_seconds": 600
+      }
+    },
+    {
+      "alias": "voice-isolator-v1-realtime",
+      "assets": [
+        {
+          "path": "LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "size": 11358
+        },
+        {
+          "path": "NOTICE",
+          "sha256": "86e7455d0804e20c3f31a84b10b9b5e39995a526dc9e4f1d210e64513c3f3e9b",
+          "size": 904
+        },
+        {
+          "path": "denoiser_realtime.safetensors",
+          "sha256": "76598f05523c0669e76562a8b2f31c9d395fca316e80c907ee11775e7497ae0f",
+          "size": 232780800
+        }
+      ],
+      "source": {
+        "repository": "inworld/voice-isolator",
+        "revision": "9b0285b3fe8403aa8e2f1dbb2165a80a4294c970"
+      },
+      "metadata": {
+        "task": "enhancement",
+        "family": "voice_isolator",
+        "display_name": "Inworld Voice Isolator v1 Realtime",
+        "required_files": [
+          "LICENSE",
+          "NOTICE",
+          "denoiser_realtime.safetensors"
+        ],
+        "sample_rate": 48000,
+        "channels": 1,
+        "languages": [],
+        "voices": [],
+        "max_input_seconds": 600
+      }
     }
   ]
 }
