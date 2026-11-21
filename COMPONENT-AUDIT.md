@@ -98,7 +98,7 @@ rebuild in SwiftUI. Ignore Tailwind classes, Radix and Framer Motion specifics.
 "All suggestions" means all ADOPT and IMPROVE rows in the tier tables and the quick-win
 list. SKIP rows stay skipped; each has a reason in "Skipped, and why". Work tier 1 first.
 Conditional items (before-after, image-prompt-composer reference images) wait for their
-stated condition. Do not widen scope to new engine features (inpainting, guardrail
+stated condition (before-after is still waiting as of 2026-11-20). Do not widen scope to new engine features (inpainting, guardrail
 signals) that the audit found missing.
 
 ---
@@ -185,7 +185,7 @@ credentials or approval semantics and need a go-ahead per CLAUDE.md before work 
 | artifact-panel (history) | IMPROVE | M/L | Needs snapshot storage |
 | image-generation | IMPROVE | M/M | Blur-to-sharp progress, in-place Regenerate |
 | image-results | IMPROVE | M/M | Vary, batch pick row, hover actions |
-| before-after | ADOPT | M/S | Only once an image pair (img2img, upscale) exists |
+| before-after | ADOPT | M/S | Only once an image pair (img2img, upscale) exists. Status 2026-11-20: deferred, condition not met (the app has no img2img or upscale path, and adding one is engine scope) |
 | prose-diff | IMPROVE | M/M | Per-change accept/reject in `HumanizeDiff`, display-only |
 | selection-toolbar | ADOPT | M/S as quote/context actions | SwiftUI `Text` hides selection range; full floating toolbar is L, skip |
 | mentions-menu | IMPROVE | M/S then L | Kind grouping and tint first; inline pills deferred |
