@@ -266,6 +266,16 @@ staging files changed.
   `item.transcriptText` or `item.userNotes`. The raw timestamped transcript
   remains immutable ground truth, and the user's notes are only ever written
   by the user. Ask answers are session-only and never saved.
+- Enhancement and separation (Clean Up, `AudioWorkspaceJobs`) save their
+  result as a new take; the source take is never changed. The request must
+  carry the rate (and, for separation, the channel layout) the take was read
+  in (`AudioEnhancementRequestTests`, `AudioSeparationRequestTests`).
+- Live noise reduction (`AudioLiveVoiceCleaner`, "Reduce background noise")
+  stays off by default and cleans only the microphone feed to live text. The
+  saved recording and the final pass keep the original audio, and running
+  late, a backed-up queue, or a failed open or push falls back to raw audio
+  for the rest of the take (`AudioLiveNoiseReductionTests`). It has no path
+  to voice cloning references, so the per-region consent rule is unchanged.
 - CoreAudio process tap vs ScreenCaptureKit: Meeting audio capture on macOS
   14.2+ uses native CoreAudio process tapping (`CATapDescription`) with
   `NSAudioCaptureUsageDescription` to isolate conference apps without

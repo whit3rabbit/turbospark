@@ -45,7 +45,7 @@ model_io = { package = "turbospark-model-io", path = "../model-io" }
 - `ngram_hash.rs` & `ngram_table.rs`: Hashed n-gram PLE hash and disk reader for sparse n-gram embeddings.
 - `resident_index.rs`: Reads and parses tensor metadata entries from `model_weights.bin`.
 - `resident_buffer.rs`: Zero-copy `mmap` wrapper (`ResidentBuffer`) for memory-mapped model weights.
-- `safetensors.rs`: Memory-mapped reader (`SafetensorsFile`) for direct inspection of `.safetensors` headers and slices.
+- `safetensors.rs`: Memory-mapped reader (`SafetensorsFile`) for direct inspection of `.safetensors` headers and slices; `metadata()` exposes the header `__metadata__` string entries (the voice isolator reads its architecture from there).
 - `steering_set.rs`: Portable per-layer steering vector serialization and loading (`SteeringSet`, `LayerDirection`).
 - `speech_family.rs`: `SpeechFamily` enumeration for audio transcription architectures (`whisper`, `qwen3_asr`, `parakeet_tdt`).
 - `speech_receipt.rs`: `SpeechInstallReceipt` and schema validation for speech model installs (`speech-receipt.json`).

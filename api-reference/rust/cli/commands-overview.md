@@ -291,6 +291,26 @@ turbospark-clone speak --model MODEL --reference WAV (--text TEXT | --text-file 
 
 The source notes that the WavVAE encoder used for cloning has no verified provenance or license. Only clone voices you are allowed to use.
 
+## turbospark-enhance
+
+Speech enhancement (voice isolation, noise suppression) or vocal separation of a WAV file. Usage errors exit `2`. Failed runs exit `1`.
+
+```text
+turbospark-enhance --model MODEL --input WAV --output WAV \
+    [--task enhance|separate] [--background WAV] [--wav-format pcm16|float32]
+```
+
+| Flag | Default | Notes |
+| --- | --- | --- |
+| `--model` | required | A model directory, or an installed audio alias: `voice-isolator-v1`, `voice-isolator-v1-realtime`, `mossformer2-se-48k-fp16` (enhance), `mel-roformer-vocals-v1` (separate). |
+| `--input WAV` | required | Any rate from 8 kHz to 192 kHz. |
+| `--output WAV` | required | `enhance`: mono 48 kHz voice. `separate`: stereo 44.1 kHz vocals. |
+| `--task` | `enhance` | `enhance` mixes the input to mono, at most 661 s. `separate` keeps mono or stereo (more channels mix to mono), at most 360 s of output and about 326 s of stereo 44.1 kHz input. |
+| `--background WAV` | none | Writes the input at the output's rate and layout minus the result: the noise, or the instrumental. |
+| `--wav-format` | `pcm16` | `pcm16` or `float32`. |
+
+Each flag may be given once. `turbospark enhance` forwards to this binary.
+
 ## turbospark front end
 
 The `turbospark` binary dispatches. It parses only the first argument, then passes the rest to the target binary unchanged. Exit codes from the child process are returned as is.

@@ -272,7 +272,10 @@ modules and internal codecs are not presented as runnable jobs.
   step when installed, else Metal. Every push reports whether it ran late;
   the per-call Metal path is not real time on its own (RTF about 3 on an M4
   Max), so a host falls back to raw audio while pushes run late
-  (`crates/audio/src/sts/voice_isolator/README.md`).
+  (`crates/audio/src/sts/voice_isolator/README.md`). In the app this is the
+  opt-in "Reduce background noise" for live text (off by default,
+  microphone only); the saved recording stays the original audio
+  ([meeting notes architecture](../swift/docs/SWIFT_AUDIO_MEETING_NOTES.md)).
 - Vocal separation runs the pinned Mel-Band RoFormer vocals profile
   (`mel-roformer-vocals-v1`, portable CPU) from the Clean Up page's
   "Separate stems". The take is read at 44.1 kHz stereo (a mono take is
