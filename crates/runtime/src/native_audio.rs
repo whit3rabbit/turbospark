@@ -941,17 +941,31 @@ impl Engine {
                 crate::coreml::DiarizationCoreMl::open(path, &opts)
                     .map(|m| Self::DiarizationCoreMl(Box::new(m)))
             }
-            AudioTask::Enhancement => match enhancement_family(path)? {
-                // Portable f32 CPU is the only path; no Metal offload exists
-                // to prefer, so it needs no portable opt-in.
-                MOSSFORMER2_SE_FAMILY => audio::sts::mossformer2_se::MossFormer2Se::open(path)
-                    .map(|m| Self::MossFormer2Se(Box::new(m)))
-                    .map_err(|e| e.to_string()),
-                VOICE_ISOLATOR_FAMILY => audio::sts::VoiceIsolator::open(path)
-                    .map(|m| Self::VoiceIsolator(Box::new(m)))
-                    .map_err(|e| e.to_string()),
-                family => Err(format!("unsupported enhancement family {family:?}")),
-            },
+            AudioTask::Enhancement => {
+                match enhancement_family(path)? {
+                    // Portable f32 CPU is the only path; no Metal offload exists
+                    // to prefer, so it needs no portable opt-in.
+                    MOSSFORMER2_SE_FAMILY => audio::sts::mossformer2_se::MossFormer2Se::open(path)
+                        .map(|m| Self::MossFormer2Se(Box::new(m)))
+                        .map_err(|e| e.to_string()),
+                    // Metal for the projections, attention and scan (parity with
+                    // the host port is held by runtime::voice_isolator's tests);
+                    // the CPU when Metal cannot open or the env asks for it.
+                    VOICE_ISOLATOR_FAMILY => {
+                        use crate::voice_isolator::{default_device, open, Device};
+                        let device = default_device();
+                        match open(path, device) {
+                            Ok(m) => Ok(Self::VoiceIsolator(Box::new(m))),
+                            Err(e) if device == Device::Metal => {
+                                eprintln!("voice isolator runs on the CPU because Metal failed to open: {e}");
+                                open(path, Device::Cpu).map(|m| Self::VoiceIsolator(Box::new(m)))
+                            }
+                            Err(e) => Err(e),
+                        }
+                    }
+                    family => Err(format!("unsupported enhancement family {family:?}")),
+                }
+            }
         }
     }
     fn estimate_run_bytes(&self, r: &AudioRequest, samples: &[f32]) -> Result<u64, String> {
