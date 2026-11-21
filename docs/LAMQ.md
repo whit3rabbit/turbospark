@@ -343,8 +343,9 @@ The intake must check every offset bound and every sha256.
    installs differ from each other by mean KL 1.5e-3. Not yet run:
    the 8.9 GB release, the memory oracle, a tslab profile, sampled
    generation. No catalog row.
-6. Workstream B: Inkling 2 GGUF intake for the published ggml-org and unsloth
-   files (stock types).
+6. DONE (2026-11-21): Workstream B, Inkling 2 GGUF intake and decode
+   (`docs/INKLING2_PHASE0.md`, GGUF sections). The unsloth UD files are not
+   gated (not downloaded) and MXFP4 down projections are refused.
 7. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
    on the same kernels, each with its own family quality gate.
 

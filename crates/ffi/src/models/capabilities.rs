@@ -176,30 +176,35 @@ pub(crate) fn expert_residency_for_install_json(
             .map(|e| e.to_string()),
     );
     // The two numbers the resident decision compares, so a host can say why
-    // auto did or did not pick it. Only for a family with a resident flow.
-    let (resident_bytes, working_set) =
-        if routed && runtime::resident_residency_supported(arch.family) {
-            let weights = std::fs::metadata(dir.join("model_weights.bin"))
-                .map(|m| m.len())
-                .unwrap_or(0);
-            let table = model_io::load_packed_experts_layout(
-                dir,
-                model_io::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
-            )
-            .map(|l| {
-                l.layers
-                    .iter()
-                    .map(|x| x.expert_stride.saturating_mul(l.experts_per_layer as u64))
-                    .sum::<u64>()
-            })
+    // auto did or did not pick it. Only where resident can open at all: a
+    // family with a resident flow whose install's expert blobs have resident
+    // kernels (not an Inkling 2 GGUF install), or the host would explain a
+    // streamed choice by memory when the cause is the expert format.
+    let resident_supported =
+        routed && runtime::install_resident_experts_supported(dir, arch.family);
+    let (resident_bytes, working_set) = if resident_supported {
+        let weights = std::fs::metadata(dir.join("model_weights.bin"))
+            .map(|m| m.len())
             .unwrap_or(0);
-            (
-                Some(weights.saturating_add(table)),
-                runtime::recommended_max_working_set().map(|(bytes, _)| bytes),
-            )
-        } else {
-            (None, None)
-        };
+        let table = model_io::load_packed_experts_layout(
+            dir,
+            model_io::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
+        )
+        .map(|l| {
+            l.layers
+                .iter()
+                .map(|x| x.expert_stride.saturating_mul(l.experts_per_layer as u64))
+                .sum::<u64>()
+        })
+        .unwrap_or(0);
+        (
+            Some(weights.saturating_add(table)),
+            runtime::recommended_max_working_set().map(|(bytes, _)| bytes),
+        )
+    } else {
+        (None, None)
+    };
+    json["residentSupported"] = json!(resident_supported);
     json["residentBytes"] = json!(resident_bytes);
     json["workingSetBytes"] = json!(working_set);
     Ok(json.to_string())

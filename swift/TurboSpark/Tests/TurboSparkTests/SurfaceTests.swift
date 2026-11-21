@@ -1521,4 +1521,25 @@ final class SurfaceTests: XCTestCase {
                 + "\"echo \\\"a\\\\\\\\b\\\" && turbospark start claude\"")
     }
 
+
+    /// The residency preflight carries `residentSupported` (false on an
+    /// Inkling 2 GGUF install, whose experts have no resident kernels), and an
+    /// older engine's JSON without the field still decodes, as nil.
+    func testExpertResidencyPreflightDecodesResidentSupported() throws {
+        let gguf = Data("""
+            {"applicable":true,"requested":"auto","resolved":"streamed","refusal":null,
+             "residentSupported":false,"residentBytes":null,"workingSetBytes":null}
+            """.utf8)
+        let p = try JSONDecoder().decode(ExpertResidencyPreflight.self, from: gguf)
+        XCTAssertEqual(p.residentSupported, false)
+        XCTAssertNil(p.residentBytes)
+        XCTAssertEqual(p.resolved, "streamed")
+        let older = Data("""
+            {"applicable":true,"requested":"auto","resolved":"resident","refusal":null,
+             "residentBytes":100,"workingSetBytes":200}
+            """.utf8)
+        let q = try JSONDecoder().decode(ExpertResidencyPreflight.self, from: older)
+        XCTAssertNil(q.residentSupported)
+        XCTAssertEqual(q.residentBytes, 100)
+    }
 }

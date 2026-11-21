@@ -14,6 +14,22 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Inkling 2 Mini from LookAtMyQuant packed releases
+  (`shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-*`), with the trellis and
+  Lloyd-Max codes kept native (`docs/LAMQ.md`): a stored-only `.npz` reader,
+  the `compute::lamq` CPU reference, resident tag 36, Metal kernels for the
+  Kronecker Hadamard rotation, the coded GEMVs and a mixed-format expert pair,
+  and `examples/inkling2_lamq_install.rs`. On the 5.4 GB release: 19/19 and
+  182/232 top-1 against the BF16 install; the authors' own KL is lower under
+  their protocol and that gap is open.
+- Inkling 2 Mini from GGUF (`inkling2_loop` and the older `inkling2` arch),
+  `examples/inkling2_gguf_install.rs`: block-quantized matrices kept, experts
+  run by a new Inkling mode of the shared GGUF routed pairs (function
+  constants 112-114; other families' pipelines unchanged). On a local IQ2_M
+  file: 19/19 and 228/232 top-1 against llama.cpp on the same file.
+- The expert residency preflight reports `residentSupported` per install
+  (Swift `ExpertResidencyPreflight.residentSupported`); auto residency streams
+  an Inkling GGUF install, whose experts have no resident kernels.
 - PEFT LoRA adapter repositories install by merging into their base while it
   streams (`repack::lora_merge`, `docs/LORA_MERGE.md`):
   `harness-hub/Qwen3.8-27B-pi-adapted` probes runnable and merges into

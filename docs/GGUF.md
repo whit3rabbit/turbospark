@@ -111,6 +111,13 @@ authoritative list. At the time of writing:
 | `lfm3` | LFM3 |
 | `muse-glimmer` | Muse Glimmer |
 
+Inkling 2 (`inkling2_loop`, `inkling2`) is not in `SUPPORTED_GGUF`: the
+generic walk refuses it by name. It installs through its own intake,
+`write_inkling2_gguf_install` (`crates/repack/src/inkling2_gguf.rs`), because
+its experts need the Inkling mode of the routed pairs and a per-expert outer
+scale record (`docs/INKLING2_PHASE0.md`, GGUF intake). The CLI and app
+install paths do not call it yet.
+
 Match is by exact string, never by prefix: `qwen35` and `qwen35moe` are
 different families and a prefix match would run a dense file through a router.
 An architecture the registry only recognizes is refused at every call site.

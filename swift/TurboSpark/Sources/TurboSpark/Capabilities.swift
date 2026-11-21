@@ -71,22 +71,28 @@ public struct ExpertResidencyPreflight: Decodable, Sendable, Equatable {
     public let resolved: String?
     /// Why the open would refuse the request, or nil.
     public let refusal: String?
+    /// Whether this install can open with `.resident` at all: its family has
+    /// a resident flow and its expert blobs have resident kernels (an Inkling
+    /// 2 GGUF install's do not). Nil from an engine that predates the field.
+    public let residentSupported: Bool?
     /// What resident experts would place in GPU memory (the resident weights
-    /// plus the whole expert table), on a family with a resident flow only.
+    /// plus the whole expert table), only when `residentSupported`.
     public let residentBytes: UInt64?
-    /// Metal's recommended working set on this Mac, on a family with a
-    /// resident flow only. Auto picks resident when `residentBytes` plus a
+    /// Metal's recommended working set on this Mac, only when
+    /// `residentSupported`. Auto picks resident when `residentBytes` plus a
     /// 10 GiB reserve fits it.
     public let workingSetBytes: UInt64?
 
     public init(
         applicable: Bool, requested: String, resolved: String?, refusal: String?,
-        residentBytes: UInt64? = nil, workingSetBytes: UInt64? = nil
+        residentSupported: Bool? = nil, residentBytes: UInt64? = nil,
+        workingSetBytes: UInt64? = nil
     ) {
         self.applicable = applicable
         self.requested = requested
         self.resolved = resolved
         self.refusal = refusal
+        self.residentSupported = residentSupported
         self.residentBytes = residentBytes
         self.workingSetBytes = workingSetBytes
     }

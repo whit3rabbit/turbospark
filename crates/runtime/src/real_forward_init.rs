@@ -636,6 +636,19 @@ fn resident_blobs_supported(
             .is_some_and(|g| matches!(g.dtype.as_str(), "inkling2_nvfp4" | "inkling2_mxfp8"))
 }
 
+/// Whether the install at `dir` can open with resident experts at all: its
+/// family has a resident flow and its expert blobs have resident kernels (an
+/// Inkling 2 GGUF install's do not). Fit against the working set is a
+/// separate question (`resident_experts_decision`).
+pub fn install_resident_experts_supported(dir: &Path, family: model_io::ModelFamily) -> bool {
+    let layout = model_io::load_packed_experts_layout(
+        dir,
+        model_io::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
+    )
+    .ok();
+    resident_residency_supported(family) && resident_blobs_supported(family, layout.as_ref())
+}
+
 fn resident_experts_for(
     requested: model_io::ExpertResidency,
     family: model_io::ModelFamily,

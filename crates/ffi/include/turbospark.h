@@ -1769,11 +1769,14 @@ int32_t ts_chip_supports_ane_prefill(void);
  *   { "applicable": true, "requested": "mapped",
  *     "resolved": "mapped" | "streamed" | "resident" | null,
  *     "refusal": null | "...",
+ *     "residentSupported": bool,
  *     "residentBytes": null | number, "workingSetBytes": null | number }
- * residentBytes is what "resident" would place in GPU memory (the resident
- * weights plus the whole expert table) and workingSetBytes Metal's
- * recommended working set, both set only for a family with a resident flow,
- * so a host can say why "auto" did or did not pick it.
+ * residentSupported: this install can open with "resident" at all (its family
+ * has a resident flow and its expert blobs have resident kernels; an Inkling
+ * 2 GGUF install's do not). residentBytes is what "resident" would place in
+ * GPU memory (the resident weights plus the whole expert table) and
+ * workingSetBytes Metal's recommended working set, both set only when
+ * residentSupported, so a host can say why "auto" did or did not pick it.
  * applicable is false on an install with no routed experts (send "auto").
  * resolved is null and refusal names why when the open would refuse the
  * request: a family with no mapped arm, or an expert table past Metal's
