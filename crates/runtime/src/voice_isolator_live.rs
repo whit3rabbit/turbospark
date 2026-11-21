@@ -201,7 +201,10 @@ impl Engine {
         if want_coreml {
             let program =
                 program.ok_or("no VoiceIsolatorStep Core ML program beside the weights")?;
-            let step = CoreMlStep::open(&program, ComputeUnits::CpuAndNeuralEngine)?;
+            // CPU and GPU: the fp16 program does not compile for the Neural
+            // Engine (error -14), and ALL then fails to load rather than fall
+            // back (crates/audio/src/sts/voice_isolator/COREML.md).
+            let step = CoreMlStep::open(&program, ComputeUnits::CpuAndGpu)?;
             // The stream's STFT and bound come from the checkpoint the step was
             // exported from; read its config when the weights are present.
             let (n_fft, hop, bound, lookahead) = match VoiceIsolator::open_file(&weights) {
@@ -432,6 +435,76 @@ mod tests {
             assert!((cos[i] - pc[1000 * half + i]).abs() < 2e-4);
             assert!((sin[i] - ps[1000 * half + i]).abs() < 2e-4);
         }
+    }
+
+    /// The real Core ML step through the live session against the CPU port
+    /// stream on the same 10 s clip, with per-push timing. Needs
+    /// `TURBOSPARK_VOICE_ISOLATOR_MODEL` (realtime weights, `real_clip.npy`)
+    /// and `TURBOSPARK_VOICE_ISOLATOR_COREML` (the exported program dir).
+    #[test]
+    #[ignore = "requires the realtime checkpoint and the exported Core ML step"]
+    fn real_coreml_step_matches_the_port_stream() {
+        let weights = PathBuf::from(std::env::var("TURBOSPARK_VOICE_ISOLATOR_MODEL").unwrap());
+        let program = PathBuf::from(std::env::var("TURBOSPARK_VOICE_ISOLATOR_COREML").unwrap());
+        let _serial = crate::heavy::serial_test_lock();
+        let dir = std::env::temp_dir().join(format!("ts-vi-coreml-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(weights.join(REALTIME_WEIGHTS), dir.join(REALTIME_WEIGHTS))
+            .unwrap();
+        std::os::unix::fs::symlink(
+            program.join(COREML_PROGRAMS[0]),
+            dir.join(COREML_PROGRAMS[0]),
+        )
+        .unwrap();
+        let bytes = std::fs::read(weights.join("real_clip.npy")).unwrap();
+        let header = u16::from_le_bytes([bytes[8], bytes[9]]) as usize;
+        let clip: Vec<f32> = bytes[10 + header..]
+            .chunks_exact(4)
+            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+            .collect();
+        let run = |backend: Backend| -> (Vec<f32>, Vec<f64>, &'static str) {
+            let live = LiveDenoiser::open(&dir, backend).unwrap();
+            let name = live.backend();
+            let (mut out, mut times) = (Vec::new(), Vec::new());
+            for piece in clip.chunks(960) {
+                let push = live.push(piece).unwrap();
+                times.push(push.processing_ms);
+                out.extend(push.samples);
+            }
+            out.extend(live.flush().unwrap());
+            (out, times, name)
+        };
+        let (coreml, mut times, name) = run(Backend::Auto);
+        assert_eq!(name, "coreml");
+        let (port, _, _) = run(Backend::Cpu);
+        assert_eq!(coreml.len(), clip.len());
+        let diff = coreml
+            .iter()
+            .zip(&port)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0f32, f32::max);
+        let signal: f64 = port.iter().map(|v| f64::from(*v).powi(2)).sum();
+        let noise: f64 = coreml
+            .iter()
+            .zip(&port)
+            .map(|(a, b)| f64::from(a - b).powi(2))
+            .sum();
+        times.sort_by(f64::total_cmp);
+        let late = times.iter().filter(|&&t| t > 20.0).count();
+        eprintln!(
+            "coreml vs cpu port: max diff {diff}, SNR {:.1} dB; push ms median {:.1} p95 {:.1} max {:.1}; {late} of {} pushes over 20 ms",
+            10.0 * (signal / noise).log10(),
+            times[times.len() / 2],
+            times[times.len() * 95 / 100],
+            times[times.len() - 1],
+            times.len()
+        );
+        assert!(
+            10.0 * (signal / noise).log10() > 50.0,
+            "Core ML drifted from the port"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// The port backends through the worker on the tiny causal fixture:

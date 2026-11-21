@@ -77,7 +77,13 @@ an imaginary part. Keeping them moved the output by 4e-3.
 
 The Metal path is per-call: each projection uploads its input and reads its
 output back, and a 20 ms stream push makes about 74 such calls, so the stream
-is not real time on it. A live push needs one submission for the whole
-network: the stateful Core ML step (`COREML.md`) or a recorded Metal graph.
+is not real time on it. The stateful Core ML step (`COREML.md`) runs a push
+as one call: through `runtime::voice_isolator_live` on fp16 CPU and GPU, 500
+pushes of 20 ms took a median 15.8 ms (p95 16.1 ms; one push over 20 ms, the
+first, 194 ms), and its output sat 67.6 dB above its difference from the CPU
+port stream (max abs 3.1e-4). The Neural Engine refuses the fp16 program, so
+the host asks for CPU and GPU explicitly. The program is a local export (not
+yet a pinned catalog asset): place `VoiceIsolatorStep.mlmodelc` beside
+`denoiser_realtime.safetensors` and the live session takes it.
 Quality beyond reference parity (PESQ/DNSMOS on real recordings) is not
 measured here.
