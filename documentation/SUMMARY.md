@@ -29,6 +29,7 @@
 * [Speech to Text](audio/speech-to-text.md)
 * [Text to Speech and Voice Cloning](audio/text-to-speech.md)
 * [Music Generation](audio/music-generation.md)
+* [Speech Enhancement and Separation](audio/speech-enhancement.md)
 
 ## Decision Models
 

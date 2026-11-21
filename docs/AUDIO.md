@@ -39,7 +39,7 @@ source from runnable native integrations and qualification.
 | `stt` | Speech-to-Text & Alignment | [Whisper, Qwen3 ASR, Whistle, Moonshine, Parakeet, Granite, MMS, Nemotron, SenseVoice, FireRedASR2, Voxtral](audio/stt.md) |
 | `tts` | Text-to-Speech | [Kokoro 82M, MegaTTS3, Bark, Confucius4, Dia, EchoTTS, OmniVoice, MeloTTS, Longcat AudioDiT, etc.](audio/tts.md) |
 | `vad` | VAD & Diarization | [Silero VAD, Sortformer, Nemotron Diarization](audio/vad.md) |
-| `sts` | Speech Enhancement | [DeepFilterNet 1/2/3](audio/sts.md) |
+| `sts` | Speech Enhancement & Separation | [Voice Isolator, MossFormer2 SE, Mel-Band RoFormer, DeepFilterNet 1/2/3](audio/sts.md) |
 | `codec` | Neural Codecs | [DAC, EnCodec, Mimi, SNAC, BigVGAN, Fish S1 DAC, WavVAE, Vocos](audio/codec.md) |
 | `lid` | Language Identification | [ECAPA-TDNN, Wav2Vec2 LID](audio/lid.md) |
 

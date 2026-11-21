@@ -7,9 +7,11 @@ pub mod dialogue_sidon;
 pub mod mel_roformer;
 pub mod mossformer2_se;
 pub mod sam_audio;
+pub mod voice_isolator;
 
 pub use deepfilternet::DeepFilterNet;
 pub use dialogue_sidon::{DialogueSidon, SidonConfig};
 pub use mel_roformer::{MelRoFormer, MelRoFormerConfig};
 pub use mossformer2_se::{MossFormer2Se, MossFormer2SeConfig};
 pub use sam_audio::{SamAudio, SamAudioConfig};
+pub use voice_isolator::{VoiceIsolator, VoiceIsolatorConfig, VoiceIsolatorStream};

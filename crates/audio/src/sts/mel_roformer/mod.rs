@@ -387,41 +387,28 @@ impl RoFormerAttention {
         }
 
         let scale = 1.0 / (self.dim_head as f32).sqrt();
+        // One job per (sequence, head), reading K and V in place. Every
+        // score is the ascending-d dot from 0 times the scale, then the
+        // stable softmax and an ascending-u weighted sum of V, the same
+        // order as the plain loop this replaced.
+        let dh = self.dim_head;
+        let heads = self.heads;
+        let per_head = crate::ops::par_map(rows * heads, |job| {
+            let (row, head) = (job / heads, job % heads);
+            let base = row * seq * inner + head * dh;
+            let q_head: Vec<f32> = (0..seq)
+                .flat_map(|t| qr[base + t * inner..base + t * inner + dh].iter().copied())
+                .collect();
+            crate::ops::sdpa_strided(
+                &q_head, &kr, base, inner, &v, base, inner, None, seq, seq, dh, dh, scale,
+            )
+        });
         let mut attended = vec![0.0f32; rows * seq * inner];
-        for row in 0..rows {
-            for head in 0..self.heads {
-                for t in 0..seq {
-                    let qbase = (row * seq + t) * inner + head * self.dim_head;
-                    let mut acc = vec![0.0f32; self.dim_head];
-                    let mut max_score = f32::NEG_INFINITY;
-                    let mut scores = vec![0.0f32; seq];
-                    // The index also feeds offsets or math beyond this buffer, so an iterator is not simpler.
-                    #[allow(clippy::needless_range_loop)]
-                    for u in 0..seq {
-                        let kbase = (row * seq + u) * inner + head * self.dim_head;
-                        let mut dot = 0.0f32;
-                        for d in 0..self.dim_head {
-                            dot += qr[qbase + d] * kr[kbase + d];
-                        }
-                        scores[u] = dot * scale;
-                        max_score = max_score.max(scores[u]);
-                    }
-                    let mut sum = 0.0f32;
-                    for score in scores.iter_mut() {
-                        *score = (*score - max_score).exp();
-                        sum += *score;
-                    }
-                    for score in scores.iter_mut() {
-                        *score /= sum;
-                    }
-                    for (u, &weight) in scores.iter().enumerate() {
-                        let vbase = (row * seq + u) * inner + head * self.dim_head;
-                        for d in 0..self.dim_head {
-                            acc[d] += weight * v[vbase + d];
-                        }
-                    }
-                    attended[qbase..qbase + self.dim_head].copy_from_slice(&acc);
-                }
+        for (job, out) in per_head.iter().enumerate() {
+            let base = (job / heads) * seq * inner + (job % heads) * dh;
+            for t in 0..seq {
+                attended[base + t * inner..base + t * inner + dh]
+                    .copy_from_slice(&out[t * dh..(t + 1) * dh]);
             }
         }
 
@@ -594,25 +581,33 @@ impl MelRoFormer {
         let geometry = BandGeometry::build(&config)?;
         let dim = config.dim;
 
+        // Published conversions (for example the mlx-community uploads)
+        // keep the PyTorch names and rely on the reference `sanitize` at
+        // load time, so resolve every name through the same renaming.
+        let names = sanitized_names(file);
+        let resolve =
+            |name: &str| -> String { names.get(name).cloned().unwrap_or_else(|| name.to_string()) };
+        let has = |name: &str| file.contains_tensor(&resolve(name));
         let f32_tensor = |name: &str| -> Result<Vec<f32>> {
-            file.load_as_f32(name).map_err(|e| SpeechError::Tensor {
-                name: name.to_string(),
-                why: e.to_string(),
-            })
+            file.load_as_f32(&resolve(name))
+                .map_err(|e| SpeechError::Tensor {
+                    name: name.to_string(),
+                    why: e.to_string(),
+                })
         };
         let linear = |name: &str, expected_out: usize, expected_in: usize| -> Result<Linear> {
             let weight = f32_tensor(&format!("{name}.weight"))?;
-            let bias = if file.contains_tensor(&format!("{name}.bias")) {
+            let bias = if has(&format!("{name}.bias")) {
                 Some(f32_tensor(&format!("{name}.bias"))?)
             } else {
                 None
             };
-            let desc =
-                file.descriptor(&format!("{name}.weight"))
-                    .ok_or_else(|| SpeechError::Tensor {
-                        name: name.to_string(),
-                        why: "weight descriptor missing".to_string(),
-                    })?;
+            let desc = file
+                .descriptor(&resolve(&format!("{name}.weight")))
+                .ok_or_else(|| SpeechError::Tensor {
+                    name: name.to_string(),
+                    why: "weight descriptor missing".to_string(),
+                })?;
             if desc.shape.len() != 2 {
                 return Err(SpeechError::Tensor {
                     name: name.to_string(),
@@ -888,6 +883,115 @@ impl MelRoFormer {
         Ok(separated)
     }
 
+    /// Separates planar stereo `[2, samples]` of any length into one stem
+    /// `[2, samples]` with the ZFTurbo MSS-Training `demix` overlap-add:
+    /// `chunk_size` windows every `chunk_size / num_overlap` samples, a
+    /// linear fade of `chunk_size / 10` at each window edge (none at the
+    /// track's own edges), and a reflect pad of the overlap border when
+    /// the track is longer than two borders. The reference `__call__` is
+    /// single pass; its README leaves chunking to the caller, and this is
+    /// the scheme the checkpoints were published with.
+    pub fn separate(&self, audio: &[f32]) -> Result<Vec<f32>> {
+        self.separate_controlled(audio, &mut |_, _| true)
+    }
+
+    /// As [`separate`](Self::separate), calling `progress(done, total)`
+    /// before each chunk and once after the last. Returning false stops
+    /// before the next chunk with [`SpeechError::Input`]. The hook runs only
+    /// between chunks, so the output is identical to the uncontrolled call.
+    pub fn separate_controlled(
+        &self,
+        audio: &[f32],
+        progress: &mut dyn FnMut(usize, usize) -> bool,
+    ) -> Result<Vec<f32>> {
+        if audio.is_empty() || audio.len() % 2 != 0 || audio.iter().any(|v| !v.is_finite()) {
+            return Err(SpeechError::Input {
+                why: "expected nonempty finite planar stereo PCM with equal channel lengths".into(),
+            });
+        }
+        let length = audio.len() / 2;
+        let chunk = self.config.chunk_size;
+        let step_len = chunk / self.config.num_overlap;
+        if step_len == 0 {
+            return Err(SpeechError::BadConfig {
+                field: "chunk_size/num_overlap".into(),
+                why: "chunk_size must be at least num_overlap".into(),
+            });
+        }
+        let fade = chunk / 10;
+        let border = chunk - step_len;
+        let padded_border = length > 2 * border && border > 0;
+        let channels: Vec<Vec<f32>> = (0..2)
+            .map(|c| {
+                let x = &audio[c * length..(c + 1) * length];
+                if padded_border {
+                    reflect_pad(x, border, border)
+                } else {
+                    x.to_vec()
+                }
+            })
+            .collect();
+        let total_len = channels[0].len();
+        let mut window = vec![1.0f32; chunk];
+        // torch.linspace(0, 1, fade) and its reverse.
+        for i in 0..fade {
+            let ramp = if fade == 1 {
+                0.0
+            } else {
+                i as f32 / (fade - 1) as f32
+            };
+            window[i] = ramp;
+            window[chunk - 1 - i] = ramp;
+        }
+        let mut result = vec![0.0f32; 2 * total_len];
+        let mut counter = vec![0.0f32; 2 * total_len];
+        let passes = total_len.div_ceil(step_len);
+        let mut done = 0usize;
+        let mut start = 0usize;
+        while start < total_len {
+            chunk_step(progress, done, passes)?;
+            let end = (start + chunk).min(total_len);
+            let seg_len = end - start;
+            let mut part = Vec::with_capacity(2 * chunk);
+            for channel in &channels {
+                let piece = &channel[start..end];
+                if seg_len > chunk / 2 {
+                    part.extend(reflect_pad(piece, 0, chunk - seg_len));
+                } else {
+                    part.extend_from_slice(piece);
+                    part.resize(part.len() + chunk - seg_len, 0.0);
+                }
+            }
+            let separated = self.forward(&part)?;
+            done += 1;
+            let next = start + step_len;
+            let mut w = window.clone();
+            if start == 0 {
+                w[..fade].fill(1.0);
+            } else if next >= total_len {
+                w[chunk - fade..].fill(1.0);
+            }
+            for c in 0..2 {
+                for i in 0..seg_len {
+                    result[c * total_len + start + i] += separated[c * chunk + i] * w[i];
+                    counter[c * total_len + start + i] += w[i];
+                }
+            }
+            start = next;
+        }
+        chunk_step(progress, done, passes)?;
+        let trim = if padded_border { border } else { 0 };
+        let mut out = Vec::with_capacity(2 * length);
+        for c in 0..2 {
+            for i in trim..trim + length {
+                let value = result[c * total_len + i] / counter[c * total_len + i];
+                // np.nan_to_num(nan=0.0) after the division.
+                out.push(if value.is_nan() { 0.0 } else { value });
+            }
+        }
+        Ok(out)
+    }
+
     /// Forward STFT with center=True reflect padding; returns per-frame
     /// spectra of `n_fft / 2 + 1` bins.
     fn stft_reflect(&self, signal: &[f32]) -> Result<Vec<Vec<ComplexF32>>> {
@@ -959,12 +1063,19 @@ impl MelRoFormer {
         let total = (frames - 1) * hop + n_fft;
         let mut acc = vec![0.0f32; total];
         let mut norm = vec![0.0f32; total];
+        let bins = n_fft / 2 + 1;
+        let mut frame = vec![ComplexF32::new(0.0, 0.0); bins];
         for f in 0..frames {
-            let samples = plan
-                .inverse(&spectrum[f * (n_fft / 2 + 1)..(f + 1) * (n_fft / 2 + 1)])
-                .map_err(|e| SpeechError::Input {
-                    why: format!("istft: {e}"),
-                })?;
+            // irfft (MLX, numpy, torch) discards the imaginary part of the
+            // DC and Nyquist bins. The complex mask gives them one, and the
+            // crate's inverse folds it into every output sample, so drop it
+            // here as the reference does.
+            frame.copy_from_slice(&spectrum[f * bins..(f + 1) * bins]);
+            frame[0].im = 0.0;
+            frame[bins - 1].im = 0.0;
+            let samples = plan.inverse(&frame).map_err(|e| SpeechError::Input {
+                why: format!("istft: {e}"),
+            })?;
             let offset = f * hop;
             for (i, &sample) in samples.iter().enumerate() {
                 acc[offset + i] += sample * self.window[i];
@@ -979,6 +1090,79 @@ impl MelRoFormer {
         }
         Ok(out)
     }
+}
+
+/// torch `F.pad(mode="reflect")`: the edge sample is not repeated. Callers
+/// keep each pad below the signal length, as torch requires.
+fn reflect_pad(x: &[f32], left: usize, right: usize) -> Vec<f32> {
+    debug_assert!(left < x.len() && right < x.len());
+    let n = x.len();
+    let mut out = Vec::with_capacity(n + left + right);
+    out.extend((1..=left).rev().map(|i| x[i]));
+    out.extend_from_slice(x);
+    out.extend((1..=right).map(|i| x[n - 1 - i]));
+    out
+}
+
+/// Reports one chunk step; false from the hook stops the separation.
+fn chunk_step(
+    progress: &mut dyn FnMut(usize, usize) -> bool,
+    done: usize,
+    total: usize,
+) -> Result<()> {
+    if progress(done, total) {
+        Ok(())
+    } else {
+        Err(SpeechError::Input {
+            why: "separation cancelled".into(),
+        })
+    }
+}
+
+/// Reference `MelRoFormer.sanitize` key renaming: maps each MLX-layout
+/// name to the file's own name. Applied to an already sanitized file it is
+/// the identity. `rotary_embed.freqs` is dropped (RoPE is recomputed) and
+/// packed `to_qkv` keys stay as they are so `load` can refuse them.
+fn sanitized_names(file: &SafetensorsFile) -> std::collections::HashMap<String, String> {
+    file.tensor_names()
+        .filter_map(|raw| sanitize_key(raw).map(|name| (name, raw.to_string())))
+        .collect()
+}
+
+fn sanitize_key(raw: &str) -> Option<String> {
+    if raw.ends_with("rotary_embed.freqs") {
+        return None;
+    }
+    let mut key = raw.to_string();
+    // `mask_estimators.<m>.to_freqs.<band>.0.<seq>.<kind>`: the PyTorch
+    // Sequential holds linears at 0, 2, 4, which are MLX list items 0, 1, 2.
+    let parts: Vec<&str> = raw.split('.').collect();
+    let index = |s: &str| s.parse::<usize>().ok().filter(|_| !s.starts_with('+'));
+    if parts.len() == 7
+        && parts[0] == "mask_estimators"
+        && index(parts[1]).is_some()
+        && parts[2] == "to_freqs"
+        && index(parts[3]).is_some()
+        && parts[4] == "0"
+        && matches!(parts[6], "weight" | "bias")
+    {
+        if let Some(seq) = index(parts[5]) {
+            key = format!(
+                "mask_estimators.{}.to_freqs.{}.{}.0.{}",
+                parts[1],
+                parts[3],
+                seq / 2,
+                parts[6]
+            );
+        }
+    }
+    if let Some(prefix) = key.strip_suffix("to_out.0.weight") {
+        key = format!("{prefix}to_out.weight");
+    }
+    if let Some(prefix) = key.strip_suffix(".gamma") {
+        key = format!("{prefix}.weight");
+    }
+    Some(key)
 }
 
 #[cfg(test)]

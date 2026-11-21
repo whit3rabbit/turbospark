@@ -1,6 +1,6 @@
 # Native Audio capability audit
 
-This inventory covers 58 families, including local Mel-RoFormer,
+This inventory covers 60 families, including local Mel-RoFormer,
 MossFormer2, SAM-Audio, and DialogueSidon additions. A declared portable method
 is not a qualified Metal workflow. `audio_families.json` carries the same discovery
 records returned by `ts_audio_capabilities_json`; pinned installation profiles
@@ -64,8 +64,9 @@ use the same native service without changing their public result shape.
 | [music/minimax_music3](../crates/audio/src/music/minimax_music3/mod.rs) | `generate_text` | Implemented, checkpoint/quality unqualified |
 | [sts/deepfilternet](../crates/audio/src/sts/deepfilternet/mod.rs) | `enhance` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [sts/dialogue_sidon](../crates/audio/src/sts/dialogue_sidon/mod.rs) | `extract_features`, `normalize_chunk`, `conditioning`, `sample_latents`, `decode_latents` | Concurrent source in progress; no complete separation entry point, native adapter or checkpoint qualification |
-| [sts/mel_roformer](../crates/audio/src/sts/mel_roformer/mod.rs) | `forward` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
-| [sts/mossformer2_se](../crates/audio/src/sts/mossformer2_se/mod.rs) | `enhance`, `enhance_with_mode`, `forward` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
+| [sts/mel_roformer](../crates/audio/src/sts/mel_roformer/README.md) | `forward`, `separate` | Native `separation` task (portable CPU, cancel between chunks), catalog row `mel-roformer-vocals-v1`, Clean Up "Separate stems", `turbospark enhance --task separate`; reference parity only, SDR not measured |
+| [sts/mossformer2_se](../crates/audio/src/sts/mossformer2_se/README.md) | `enhance`, `enhance_with_mode`, `forward` | Native `enhancement` task (portable CPU, cancel between passes), catalog row `mossformer2-se-48k-fp16`, Clean Up "Enhance speech", `turbospark enhance`; reference parity only, PESQ/DNSMOS not measured |
+| [sts/voice_isolator](../crates/audio/src/sts/voice_isolator/README.md) | `isolate`, `forward`, stream `push`/`flush` | Native `enhancement` task (Metal with CPU fallback), live stream `ts_audio_enhance_stream_*` (Core ML step when installed, else Metal), catalog rows `voice-isolator-v1` and `voice-isolator-v1-realtime`; reference parity only, PESQ/DNSMOS not measured |
 | [sts/sam_audio](../crates/audio/src/sts/sam_audio/mod.rs) | `separate`, `encode_text`, `audio_features`, `velocity` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [vad/nemotron_diarization](../crates/audio/src/vad/nemotron_diarization/mod.rs) | `generate_stream`, `feed` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
 | [vad/silero_vad](../crates/audio/src/vad/silero_vad/mod.rs) | `detect`, `timestamps`, `feed` | No native runtime, admission, cancellation and Swift adapter has been qualified for this family |
@@ -99,15 +100,15 @@ use the same native service without changing their public result shape.
   lower bound), steps 1 through 30, and an optional seed. It emits interleaved
   44.1 kHz stereo. PCM delivery is bounded to 32,000 samples per callback and
   six minutes total; the model still materializes its bounded final waveform.
-- Alignment, diarization, detection, enhancement, separation, language ID,
-  and codec signatures differ by family. Their linked READMEs own sample
+- Alignment, detection, language ID, and codec signatures differ by family. Their linked READMEs own sample
   rates, layouts and evidence. Their operations are discoverable but unavailable
   as native jobs until dedicated adapters implement those contracts.
-- Mel-RoFormer currently accepts planar stereo `[2, samples]` at 44.1 kHz, so
-  a public interleaved PCM adapter remains required. MossFormer2 and
-  DeepFilterNet are mono 48 kHz enhancement implementations. Source presence
-  and reported fixtures do not establish native Metal support. Neither is
-  promoted to a runnable product model by this integration.
+- Enhancement (`mossformer2_se`, `voice_isolator`) takes mono PCM at
+  `input_sample_rate` (8 kHz to 192 kHz), resampled to 48 kHz, and returns
+  48 kHz mono as long as the resampled input (at most 661 s). Separation (`mel_roformer`) takes
+  `input_channels` 1 or 2 interleaved, resampled to 44.1 kHz, and returns
+  interleaved stereo vocals; the instrumental is input minus vocals, computed
+  by the host. DeepFilterNet stays unavailable (no runtime adapter or unit tests).
 
 ## Evidence and remaining qualification
 

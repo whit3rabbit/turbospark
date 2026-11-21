@@ -248,7 +248,7 @@ turn through `--messages-file`) unless `--raw` is given. The
 - `crates/image`: native text-to-image generation pipeline.
 - `crates/vision-io`: portable vision preprocessing.
 - `crates/audio`: portable audio crate (DSP, neural ops, TTS, STT, music,
-  VAD, codecs). See `docs/AUDIO.md`.
+  VAD, enhancement and separation, codecs). See `docs/AUDIO.md`.
 - `crates/embeddings`: portable embedding models with pinned checkpoints. See
   `crates/embeddings/MODELS.md`.
 - `crates/coreml`: the Apple Core ML runner (macOS stub elsewhere). Model

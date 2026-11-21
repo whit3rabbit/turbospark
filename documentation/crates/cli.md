@@ -15,7 +15,7 @@ users and scripts are the consumers; there is no library target to embed.
 
 ## What it does
 
-The `Cargo.toml` declares eight binaries:
+The `Cargo.toml` declares these binaries (plus `turbospark-acp-agent`):
 
 | Binary | Responsibility | Source |
 | --- | --- | --- |
@@ -26,6 +26,7 @@ The `Cargo.toml` declares eight binaries:
 | `turbospark-music` | Music generation | `src/bin/music.rs` |
 | `turbospark-clone` | Zero-shot voice cloning (MegaTTS3) | `src/bin/clone.rs` |
 | `turbospark-speak` | Speech synthesis (Fish Audio Drama 3) | `src/bin/speak.rs` |
+| `turbospark-enhance` | Speech enhancement and vocal separation of a WAV file | `src/bin/enhance.rs` |
 | `turbospark-steer` | Trait steering packs, direction extraction, and check | `src/bin/steer.rs` |
 | `turbospark-ocr` | Page images to text over Core ML | `src/bin/ocr.rs` |
 
@@ -39,6 +40,7 @@ The `turbospark` front end groups subcommands and mostly delegates:
 | Model management | `list`, `pull`, `info`, `rm`, `probe`, `recommend`, `path`, `auth` | `turbospark-model` |
 | Benchmark | `bench` | `turbospark-bench` (from `crates/bench`) |
 | Image | `image generate`, `image pack`, `ocr` | `turbospark-image` and `turbospark-ocr` |
+| Audio | `music`, `speak`, `clone`, `enhance` | the matching `turbospark-*` binary |
 
 ## Where it sits
 

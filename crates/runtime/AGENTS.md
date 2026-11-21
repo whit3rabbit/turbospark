@@ -40,6 +40,16 @@ policy.
   reference path runs only as an opt-in fallback when Metal cannot open
   (`megatts3_devices` in `src/native_audio.rs`, gated by `allow_portable`). Memory
   admission must size for Metal device allocations.
+- Enhancement and separation are CPU portable paths except the voice
+  isolator, which opens on Metal and falls back to the CPU when Metal fails
+  (`TURBOSPARK_VOICE_ISOLATOR_DEVICE=cpu` forces the host). Enhancement
+  family detection reads `config.json` `model_type`, else the released
+  weight file names, because the upstream repositories ship no config.
+  `voice_isolator_live::LiveDenoiser` takes no heavy-work guard and must keep
+  reporting per-push lateness, the host's only signal to fall back to raw
+  audio. Its Core ML step runs on CPU and GPU (the fp16 program does not
+  compile for the Neural Engine). See
+  `../audio/src/sts/voice_isolator/README.md` and `COREML.md` there.
 - Real-model validation needs greedy, sampled, and memory-oracle coverage. A
   compile or synthetic fixture is not a runtime parity claim.
 - Core ML pipelines check each program's input and output names, dtypes, and

@@ -280,28 +280,61 @@ private struct VoiceReferenceDetails: View {
         .disabled(!editable)
     }
 
-    private var actions: some View {
-        HStack(spacing: AppMetrics.actionSpacing) {
-            // Playback looks the same here as in the transport and the API
-            // test panel: secondary, with a play/stop symbol.
-            Button { controller.previewVoiceReference() } label: {
-                Label {
-                    if controller.referencePlaying { Text("Stop preview", bundle: .module) }
-                    else { Text("Preview reference audio", bundle: .module) }
-                } icon: {
-                    Image(systemName: controller.referencePlaying ? "stop.fill" : "play.fill")
-                        .contentTransition(.symbolEffect(.replace))
-                }
+    @ViewBuilder private var actions: some View {
+        if controller.isCleaningVoiceReference {
+            cleaningProgress
+        } else {
+            // Clean reference makes the row a third action wide, so it
+            // stacks under German and Extra Large text instead of clipping.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: AppMetrics.actionSpacing) { previewAction; cleanAction; Spacer(minLength: 8); removeAction }
+                VStack(alignment: .leading, spacing: AppMetrics.actionSpacing) { previewAction; cleanAction; removeAction }
+            }
+        }
+    }
+
+    /// Shown only when an enhancement model is installed and runnable.
+    @ViewBuilder private var cleanAction: some View {
+        if controller.offersReferenceCleaning {
+            Button { controller.cleanVoiceReference() } label: {
+                Label { Text("Clean reference", bundle: .module) } icon: { Image(systemName: "wand.and.stars") }
             }
             .appAction(.secondary, size: .small)
-            .tsAnimation(TSMotion.hover, value: controller.referencePlaying)
-            .disabled(!reference.isValid || controller.hasRecordingActivity)
-            Spacer(minLength: 8)
-            Button { controller.clearVoiceReference() } label: {
-                Label { Text("Remove", bundle: .module) } icon: { Image(systemName: "xmark") }
-            }
-            .appAction(.quiet, size: .small)
-            .disabled(!editable)
+            .disabled(!controller.canCleanVoiceReference)
+            .help(Text("Removes background noise from the selected region and uses the cleaned copy as the reference. The source audio is kept.", bundle: .module))
         }
+    }
+
+    private var cleaningProgress: some View {
+        HStack(spacing: AppMetrics.actionSpacing) {
+            AppProgressBar(value: controller.progress, label: Text("Cleaning reference", bundle: .module), size: .compact)
+            Button { controller.cancel() } label: { Text("Cancel", bundle: .module) }
+                .appAction(.secondary, size: .small)
+        }
+    }
+
+    private var previewAction: some View {
+        // Playback looks the same here as in the transport and the API
+        // test panel: secondary, with a play/stop symbol.
+        Button { controller.previewVoiceReference() } label: {
+            Label {
+                if controller.referencePlaying { Text("Stop preview", bundle: .module) }
+                else { Text("Preview reference audio", bundle: .module) }
+            } icon: {
+                Image(systemName: controller.referencePlaying ? "stop.fill" : "play.fill")
+                    .contentTransition(.symbolEffect(.replace))
+            }
+        }
+        .appAction(.secondary, size: .small)
+        .tsAnimation(TSMotion.hover, value: controller.referencePlaying)
+        .disabled(!reference.isValid || controller.hasRecordingActivity)
+    }
+
+    private var removeAction: some View {
+        Button { controller.clearVoiceReference() } label: {
+            Label { Text("Remove", bundle: .module) } icon: { Image(systemName: "xmark") }
+        }
+        .appAction(.quiet, size: .small)
+        .disabled(!editable)
     }
 }

@@ -245,7 +245,7 @@ cp -R "$mlx_bundle" "$contents/Resources/"
 # carried four and `turbospark image` failed with "No such file".
 # `turbospark-steer` is the model detail pane's trait-extraction tool
 # (SteeringTraitTool.findSteerCLI resolves it the same way).
-cli_bins=(turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-music turbospark-clone turbospark-speak turbospark-steer turbospark-ocr turbospark-acp-agent)
+cli_bins=(turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-music turbospark-clone turbospark-speak turbospark-enhance turbospark-steer turbospark-ocr turbospark-acp-agent)
 for bin in "${cli_bins[@]}"; do
   src="$root/target/$target/release/$bin"
   [ -x "$src" ] || { echo "expected $src to exist; run without --skip-build" >&2; exit 1; }

@@ -39,7 +39,7 @@ The crate has no `target_os`, `target_arch`, or feature gates. Its CPU code does
 | Speech-to-text | `stt` | `ParakeetTdt::open`, `transcribe` | Parakeet compiled. Whisper stops at token IDs. See [Speech models](speech.md). |
 | Text-to-speech | `tts` | `KokoroSynthesizer`, `MegaTts3` | Compiled. See [Speech models](speech.md). |
 | Voice activity | `vad` | `SileroVad::load`, `detect` | Compiled. See [Speech models](speech.md). |
-| Enhancement | `sts` | `DeepFilterNet::open`, `enhance` | Compiled. See [Speech models](speech.md). |
+| Enhancement and separation | `sts` | `DeepFilterNet::open`, `enhance`; `VoiceIsolator::open`, `isolate`; `MossFormer2Se::open`, `enhance`; `MelRoFormer::open`, `separate` | DeepFilterNet compiled; the others are described from source. See [Speech models](speech.md). |
 | Music generation | `music` | `minimax_music3::Model::load_converted`, `generate_text` | Compiled. See [Music and codecs](music-and-codecs.md). |
 | Codecs | `codec` | Per-family types, no shared entry point | Not documented here. See [Music and codecs](music-and-codecs.md). |
 | Language ID | `lid` | None | Not usable from Rust yet. |
@@ -100,7 +100,7 @@ The crate defines `turbospark_audio::Result<T>` as `Result<T, SpeechError>`, and
 ## Where to go next
 
 - [DSP primitives](dsp-primitives.md): WAV, resampling, STFT, and mel features.
-- [Speech models](speech.md): Parakeet, Whisper, Silero VAD, Kokoro, MegaTTS3, and DeepFilterNet.
+- [Speech models](speech.md): Parakeet, Whisper, Silero VAD, Kokoro, MegaTTS3, DeepFilterNet, Voice Isolator, MossFormer2 SE, and Mel-Band RoFormer.
 - [Music and codecs](music-and-codecs.md): MiniMax Music 3 and the codec layer.
 
 For scope and the reasons behind this layering, read [Audio architecture](https://github.com/whit3rabbit/turbospark/blob/main/docs/AUDIO.md). The [audio HTTP API](https://github.com/whit3rabbit/turbospark/blob/main/docs/AUDIO_API.md) lists the served routes and their limits, which are separate from what the Rust crate exposes. The [model inventory](https://github.com/whit3rabbit/turbospark/blob/main/crates/audio/MODELS.md) records what each family has been verified to do.

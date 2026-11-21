@@ -29,6 +29,9 @@ final class AudioLiveTranscriber: @unchecked Sendable {
         case update(AudioStreamUpdate)
         /// Live text stopped for this take; the reason is user-facing.
         case stopped(String)
+        /// Background noise reduction stopped for this take and live text
+        /// hears the raw microphone; the reason is user-facing.
+        case cleaningStopped(String)
     }
 
     private let queue = DispatchQueue(label: "app.turbospark.audio.live", qos: .userInitiated)
@@ -36,6 +39,9 @@ final class AudioLiveTranscriber: @unchecked Sendable {
     private var mixer = AudioLiveMixer(makeResampler: { AudioLiveConverter() })
     private let open: @Sendable () throws -> AudioLiveStreaming
     private let onEvent: @Sendable (Event) -> Void
+    /// Opens the live voice isolation stream, when the take reduces noise.
+    private let openCleaner: (@Sendable () throws -> AudioLiveEnhancing)?
+    private var cleaner: AudioLiveVoiceCleaner
     private let backlogLimit: Int
     /// Audio handed to the model per append: big enough to catch up fast
     /// after a slow first load, small enough that the queue keeps draining
@@ -58,10 +64,15 @@ final class AudioLiveTranscriber: @unchecked Sendable {
     private var committedWords: [AudioStreamWord] = []
 
     /// - Parameter backlogSeconds: mixed audio kept while the model loads.
+    /// - Parameter openCleaner: when given, the microphone is cleaned
+    ///   (`AudioLiveVoiceCleaner`) before live text hears it.
     init(feed: AudioLiveFeed, backlogSeconds: Double = 600,
+         cleaner: AudioLiveVoiceCleaner = AudioLiveVoiceCleaner(),
+         openCleaner: (@Sendable () throws -> AudioLiveEnhancing)? = nil,
          open: @escaping @Sendable () throws -> AudioLiveStreaming,
          onEvent: @escaping @Sendable (Event) -> Void) {
         self.feed = feed; self.open = open; self.onEvent = onEvent
+        self.cleaner = cleaner; self.openCleaner = openCleaner
         backlogLimit = Int(backlogSeconds * 16_000)
     }
 
@@ -77,6 +88,34 @@ final class AudioLiveTranscriber: @unchecked Sendable {
         Thread.detachNewThread { [self] in
             let result = Result { try open() }
             queue.async { [self] in opened(result) }
+        }
+        // Its own thread, so a slow first load of either model never holds
+        // the other back. The microphone passes raw until it is ready.
+        if let openCleaner {
+            Thread.detachNewThread { [self] in
+                let result = Result { try openCleaner() }
+                queue.async { [self] in cleanerOpened(result) }
+            }
+        }
+    }
+
+    private func cleanerOpened(_ result: Result<AudioLiveEnhancing, Error>) {
+        switch result {
+        case .success(let s):
+            if ended { s.close(); return }
+            cleaner.attach(s)
+        case .failure(let error):
+            onEvent(.cleaningStopped(AppStrings.localized("Background noise reduction is off for this recording: \(error.localizedDescription)")))
+        }
+    }
+
+    private func reportCleaning(_ fallback: AudioLiveVoiceCleaner.Fallback?) {
+        switch fallback {
+        case .fellBehind?:
+            onEvent(.cleaningStopped(AppStrings.localized("Background noise reduction could not keep up and is off for the rest of this recording.")))
+        case .failed(let reason)?:
+            onEvent(.cleaningStopped(AppStrings.localized("Background noise reduction is off for this recording: \(reason)")))
+        case nil: break
         }
     }
 
@@ -95,7 +134,11 @@ final class AudioLiveTranscriber: @unchecked Sendable {
 
     private func pump(flush: Bool) {
         guard !ended || flush else { return }
-        let (packets, _) = feed.drain()
+        let (drained, dropped) = feed.drain()
+        let cleaned = cleaner.process(drained, dropped: dropped)
+        reportCleaning(cleaned.fallback)
+        var packets = cleaned.packets
+        if flush { packets += cleaner.finish() }
         for packet in packets { mixer.add(packet) }
         backlog.append(contentsOf: mixer.drain(flush: flush))
         guard let stream else {
@@ -140,6 +183,7 @@ final class AudioLiveTranscriber: @unchecked Sendable {
         timer?.cancel(); timer = nil
         backlog = []
         stream?.close(); stream = nil
+        cleaner.close()
         onEvent(.stopped(reason))
     }
 
@@ -156,6 +200,7 @@ final class AudioLiveTranscriber: @unchecked Sendable {
                 }
                 ended = true
                 stream?.close(); stream = nil
+                cleaner.close()
                 backlog = []
                 done.resume()
             }
@@ -172,6 +217,7 @@ final class AudioLiveTranscriber: @unchecked Sendable {
             ended = true
             timer?.cancel(); timer = nil
             stream?.close(); stream = nil
+            cleaner.close()
             backlog = []
         }
     }
@@ -180,5 +226,6 @@ final class AudioLiveTranscriber: @unchecked Sendable {
     /// Test seam: runs one pump on the queue and waits for it.
     func pumpForTesting() { queue.sync { pump(flush: false) } }
     var isOpenForTesting: Bool { queue.sync { stream != nil } }
+    var isCleaningForTesting: Bool { queue.sync { cleaner.stream != nil } }
     #endif
 }

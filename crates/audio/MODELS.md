@@ -412,10 +412,11 @@ Speech-to-speech and audio processing. [Pinned source directory](https://github.
 | `deepfilternet` | README | 46 | Enhancement; v1/v2/v3 are separate profile gates | [Flat port](src/sts/deepfilternet/mod.rs) |
 | `dialogue_sidon` | README | 49 | Separation / restoration; alias `dialoguesidon` | [Flat port](src/sts/dialogue_sidon/mod.rs) |
 | `lfm_audio` | README | 50 | STS / TTS / STT; aliases `lfm2_audio`, `lfm2.5` | None |
-| `mel_roformer` | Source | None | Default task-qualified family | [Flat port](src/sts/mel_roformer/mod.rs) |
+| `mel_roformer` | Source | None | Vocal separation; catalog `mel-roformer-vocals-v1` (ZFTurbo vocals v1, MIT) runs through the runtime `separation` session (portable CPU) | [Flat port](src/sts/mel_roformer/mod.rs) |
 | `mimo_audio` | README | 51 | Base/Instruct; STS / TTS / STT / understanding | None |
 | `moshi` | Source | None | Alias `moshiko` | None |
-| `mossformer2_se` | README | 47 | Enhancement; alias `mossformer2` | [Flat port](src/sts/mossformer2_se/mod.rs) |
+| `mossformer2_se` | README | 47 | Enhancement; alias `mossformer2`; catalog `mossformer2-se-48k-fp16` runs through the runtime `enhancement` session (portable CPU) | [Flat port](src/sts/mossformer2_se/mod.rs) |
+| (not in mlx-audio) `voice_isolator` | README | None | Inworld Voice Isolator v1, offline and realtime; catalog `voice-isolator-v1`, `voice-isolator-v1-realtime`; ported from inworld-ai/voice-isolator `c73b3fab`, real-checkpoint parity 2.7e-7 | [Family port](src/sts/voice_isolator/mod.rs) |
 | `nemotron_voicechat` | README | 52 | Full-duplex STS / transcription / function calling | None |
 | `sam_audio` | README | 48 | Text-guided source separation; alias `samaudio` | [Flat port](src/sts/sam_audio/mod.rs) |
 

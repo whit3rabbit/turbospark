@@ -191,6 +191,11 @@ final class AudioWorkspaceController: ObservableObject {
     var recordingID: UUID?
     /// The recording that becomes the cloning reference when it stops.
     @Published var voiceReferenceRecordingID: UUID?
+    /// Clean reference is running (AudioWorkspaceReferenceCleaning.swift).
+    @Published var isCleaningVoiceReference = false
+    /// Runs the enhancement job for Clean reference. Nil uses the resident
+    /// session; tests replace it so no model is needed.
+    var referenceCleaningRunner: AudioReferenceCleaningRunner?
     var pendingRefinementIDs: [UUID] = []
     var nextDraftAttemptAt = Date.distantPast
     var draftThrough: Double = 0

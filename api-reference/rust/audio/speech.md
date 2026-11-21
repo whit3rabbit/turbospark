@@ -1,5 +1,5 @@
 ---
-description: "Rust reference for turbospark-audio speech models: Parakeet and Whisper for speech-to-text, Silero VAD, Kokoro and MegaTTS3 for text-to-speech, and DeepFilterNet for enhancement."
+description: "Rust reference for turbospark-audio speech models: Parakeet and Whisper for speech-to-text, Silero VAD, Kokoro and MegaTTS3 for text-to-speech, DeepFilterNet, Voice Isolator and MossFormer2 SE for enhancement, and Mel-Band RoFormer for separation."
 icon: box
 ---
 # Speech models
@@ -16,6 +16,8 @@ Every example here reads a file path from the command line and returns `Result` 
 | Kokoro | Text | Mono f32 at 24 kHz, in segments |
 | MegaTTS3 | Mono 24 kHz reference audio, plus text | Mono f32 at 24 kHz |
 | DeepFilterNet | Mono f32 at 48 kHz | Enhanced mono f32 |
+| Voice Isolator, MossFormer2 SE | Mono f32 at 48 kHz | Isolated or enhanced mono f32, same length |
+| Mel-Band RoFormer | Planar stereo f32 `[2, samples]` at 44.1 kHz | Planar stereo vocal stem |
 
 The repository's [examples folder](https://github.com/whit3rabbit/turbospark/tree/main/crates/audio/examples) has runnable starting points for other families, such as Moonshine, Granite, Nemotron, and Sortformer. Those are outside this page.
 
@@ -214,6 +216,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 ```
+
+## Voice isolation, MossFormer2 SE, and vocal separation
+
+These have no compiled example on this page. The calls below are read from the source.
+
+- `sts::VoiceIsolator::open(dir)` loads the first of `denoiser.safetensors`, `denoiser_realtime.safetensors`, `model.safetensors`; the architecture comes from the file's safetensors metadata. `isolate(&self, &[f32])` renders a whole 48 kHz mono clip in overlapping windows; `isolate_controlled` adds a progress callback that can stop between passes. `sts::VoiceIsolatorStream::new(&model, block_frames, None)` streams the realtime checkpoint: `push(&model, &samples)` returns the samples that became final, `flush(&model)` the rest.
+- `sts::MossFormer2Se::open(dir)` takes `model.safetensors` or the published `model_fp32`, `model_fp16`, `model_int8` files; `enhance` and `enhance_controlled` take 48 kHz mono.
+- `sts::MelRoFormer::open(dir)` needs `config.json`. `separate(&self, &[f32])` takes planar stereo of any length and overlap-adds chunks; `forward` is one chunk.
+
+The runtime's `enhancement` and `separation` tasks wrap these with resampling, bounds, and cancellation; most callers want those (see the [audio workspace notes](https://github.com/whit3rabbit/turbospark/blob/main/docs/AUDIO_WORKSPACE.md)).
 
 ## Errors you will see
 
