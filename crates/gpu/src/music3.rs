@@ -56,6 +56,11 @@ static SEQUENCE_SOURCE: &str = concat!(
     include_str!("shaders/music3.metal"),
     include_str!("shaders/music3_sequence.metal")
 );
+// The Mamba1 selective scan for the voice isolator, precise exp and division.
+static SCAN_SOURCE: &str = concat!(
+    "// turbospark: precise-math\n",
+    include_str!("shaders/selective_scan.metal")
+);
 mod sequence;
 pub use sequence::{Music3Buffer, Music3Sequence, Music3Slot, Music3Table};
 /// Source for a kernel that reads a weight's scales and offsets.
@@ -541,6 +546,104 @@ impl Music3Device {
             );
             pass.commit_and_wait_checked()?;
             finite_output(&output, count)
+        })
+    }
+    /// The Mamba1 selective scan (`shaders/selective_scan.metal`) over `seqs`
+    /// sequences of `len` steps and `channels` channels with `states <= 16`.
+    /// `u`, `delta` are `[seqs * len, channels]`; `a` is `[channels,
+    /// states]`; `d` is `[channels]`. `bc` rows (`bc_stride` floats each)
+    /// hold b at `b_offset` and c at `c_offset`; `z` rows (`z_stride`) hold
+    /// the gate at `z_offset`. `carried` is `[seqs, channels, states]`, or
+    /// zeros when `None`. Returns `y [seqs * len, channels]` and the last
+    /// state `[seqs, channels, states]`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn selective_scan_f32(
+        &self,
+        u: &[f32],
+        delta: &[f32],
+        a: &[f32],
+        bc: &[f32],
+        d: &[f32],
+        z: &[f32],
+        carried: Option<&[f32]>,
+        seqs: usize,
+        len: usize,
+        channels: usize,
+        states: usize,
+        bc_layout: (usize, usize, usize),
+        z_layout: (usize, usize),
+    ) -> Result<(Vec<f32>, Vec<f32>), GpuError> {
+        let rows = product(&[seqs, len])?;
+        let elements = product(&[rows, channels])?;
+        let state_count = product(&[seqs, channels, states])?;
+        let (bc_stride, b_offset, c_offset) = bc_layout;
+        let (z_stride, z_offset) = z_layout;
+        if states == 0
+            || states > 16
+            || elements == 0
+            || u.len() != elements
+            || delta.len() != elements
+            || a.len() != channels * states
+            || d.len() != channels
+            || b_offset + states > bc_stride
+            || c_offset + states > bc_stride
+            || bc.len() != rows * bc_stride
+            || z_offset + channels > z_stride
+            || z.len() != rows * z_stride
+            || carried.is_some_and(|c| c.len() != state_count)
+        {
+            return Err(bad("selective scan geometry mismatch"));
+        }
+        let to_u32 = |v: usize| u32::try_from(v).map_err(|_| bad("selective scan dimension exceeds u32"));
+        let p: Vec<u8> = [
+            to_u32(seqs)?,
+            to_u32(len)?,
+            to_u32(channels)?,
+            to_u32(states)?,
+            to_u32(bc_stride)?,
+            to_u32(b_offset)?,
+            to_u32(c_offset)?,
+            to_u32(z_stride)?,
+            to_u32(z_offset)?,
+            u32::from(carried.is_some()),
+        ]
+        .iter()
+        .flat_map(|v| v.to_le_bytes())
+        .collect();
+        autorelease_pool(|| {
+            let mut c = self.state.context.borrow_mut();
+            let constants = crate::rms_norm::unused_function_constants();
+            let pipeline = c.pipeline(SCAN_SOURCE, "selective_scan_f32", &constants, b"")?;
+            let ub = c.new_buffer_with_data(u);
+            let db = c.new_buffer_with_data(delta);
+            let ab = c.new_buffer_with_data(a);
+            let bcb = c.new_buffer_with_data(bc);
+            let skip = c.new_buffer_with_data(d);
+            let zb = c.new_buffer_with_data(z);
+            let cb = c.new_buffer_with_data(carried.unwrap_or(&[0.0]));
+            let y = c.new_output_buffer((elements * 4) as u64);
+            let last = c.new_output_buffer((state_count * 4) as u64);
+            let pass = c.begin_pass();
+            let threads = 256u64;
+            pass.encode_threadgroups(
+                &pipeline,
+                &[
+                    (&y, 0, 0),
+                    (&last, 1, 0),
+                    (&ub, 2, 0),
+                    (&db, 3, 0),
+                    (&ab, 4, 0),
+                    (&bcb, 5, 0),
+                    (&skip, 6, 0),
+                    (&zb, 7, 0),
+                    (&cb, 8, 0),
+                ],
+                &[(&p, 9)],
+                ((seqs * channels) as u64).div_ceil(threads),
+                threads,
+            );
+            pass.commit_and_wait_checked()?;
+            Ok((finite_output(&y, elements)?, finite_output(&last, state_count)?))
         })
     }
     /// Rows are stored contiguously; `columns` retains the pre-materialization mean layout.

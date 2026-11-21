@@ -15,7 +15,8 @@ use rayon::prelude::*;
 
 use super::Loader;
 use crate::backend::{
-    AttentionShape, ComputeBackend, DType, DeviceWeight, WeightData, WeightEncoding,
+    AttentionShape, ComputeBackend, DType, DeviceWeight, ScanInputs, ScanShape, WeightData,
+    WeightEncoding,
 };
 use crate::nn::{LayerNorm, Linear};
 use crate::ops;
@@ -25,6 +26,18 @@ use crate::Result;
 pub(crate) const LN_EPS: f32 = 1e-5;
 /// Rows per rayon task for the row-wise host operations.
 const ROW_CHUNK: usize = 256;
+/// Smallest projection (rows x input x output multiply-adds) sent to the
+/// device; smaller ones run on the host. Overridable for measurement with
+/// `TURBOSPARK_VOICE_ISOLATOR_DEVICE_MIN_MACS`.
+fn device_min_macs() -> usize {
+    static CELL: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *CELL.get_or_init(|| {
+        std::env::var("TURBOSPARK_VOICE_ISOLATOR_DEVICE_MIN_MACS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1 << 24)
+    })
+}
 
 /// Device dispatch for the projections and non-causal attention.
 ///
@@ -35,9 +48,26 @@ pub(crate) struct Exec {
     backend: Option<Rc<dyn ComputeBackend>>,
     weights: RefCell<HashMap<usize, Rc<dyn DeviceWeight>>>,
     fallbacks: Cell<usize>,
+    /// Wall time inside linear, attention and scan calls (either side).
+    times: Cell<[std::time::Duration; 3]>,
 }
 
 impl Exec {
+    fn timed<R>(&self, slot: usize, f: impl FnOnce() -> R) -> R {
+        let started = std::time::Instant::now();
+        let out = f();
+        let mut t = self.times.get();
+        t[slot] += started.elapsed();
+        self.times.set(t);
+        out
+    }
+
+    /// Seconds spent in linear, attention and scan calls since the backend
+    /// was set.
+    pub(crate) fn times(&self) -> [f64; 3] {
+        self.times.get().map(|d| d.as_secs_f64())
+    }
+
     pub(crate) fn new(backend: Option<Rc<dyn ComputeBackend>>) -> Self {
         Self {
             backend,
@@ -83,7 +113,15 @@ impl Exec {
 
     /// `x [rows, layer.input] -> [rows, layer.output]`.
     pub(crate) fn linear(&self, layer: &Linear, x: &[f32], rows: usize) -> Vec<f32> {
-        if let Some(backend) = &self.backend {
+        self.timed(0, || self.linear_inner(layer, x, rows))
+    }
+
+    fn linear_inner(&self, layer: &Linear, x: &[f32], rows: usize) -> Vec<f32> {
+        // Below a few thousand multiply-adds per weight the device round
+        // trip (copy in, dispatch, wait, copy out) costs more than the
+        // host GEMM: a stream block's per-band layers see 4 rows.
+        let device_worth = rows * layer.input * layer.output >= device_min_macs();
+        if let Some(backend) = self.backend.as_ref().filter(|_| device_worth) {
             let out = self.device_weight(backend.as_ref(), layer).and_then(|w| {
                 w.linear(
                     x,
@@ -100,6 +138,26 @@ impl Exec {
             }
         }
         layer.forward(x, rows)
+    }
+
+    /// The selective scan on the device, or `None` without one (or on a
+    /// device error, counted). States above 16 stay on the host.
+    pub(crate) fn scan(
+        &self,
+        inputs: ScanInputs<'_>,
+        shape: ScanShape,
+    ) -> Option<(Vec<f32>, Vec<f32>)> {
+        let backend = self.backend.as_ref()?;
+        if shape.states > 16 {
+            return None;
+        }
+        match backend.selective_scan(inputs, shape) {
+            Ok(out) => Some(out),
+            Err(_) => {
+                self.fallbacks.set(self.fallbacks.get() + 1);
+                None
+            }
+        }
     }
 
     /// Non-causal self attention on the device over position-major
@@ -267,12 +325,14 @@ pub(crate) fn attend(
         rotate(&mut q);
         rotate(&mut k);
     }
-    let device = if mask == Mask::Full {
-        exec.attention(&q, &k, &v, seqs, len, heads, dim)
-    } else {
-        None
-    };
-    let mut out = device.unwrap_or_else(|| host_attention(&q, &k, &v, seqs, len, heads, dim, mask));
+    let mut out = exec.timed(1, || {
+        let device = if mask == Mask::Full {
+            exec.attention(&q, &k, &v, seqs, len, heads, dim)
+        } else {
+            None
+        };
+        device.unwrap_or_else(|| host_attention(&q, &k, &v, seqs, len, heads, dim, mask))
+    });
     if exclusive {
         out.par_chunks_mut(dim)
             .zip(v.par_chunks(dim))
@@ -833,27 +893,56 @@ impl Mamba {
                 *v = if *v > 20.0 { *v } else { v.exp().ln_1p() };
             }
         });
-        let mut ssm_in = state.as_ref().map(|s| s.ssm.clone());
-        let mut y = vec![0.0f32; rows * inner];
-        let mut last = vec![0.0f32; seqs * inner * self.state];
-        y.par_chunks_mut(len * inner)
-            .zip(last.par_chunks_mut(inner * self.state))
-            .enumerate()
-            .for_each(|(s, (ys, h))| {
-                if let Some(ssm) = &ssm_in {
-                    h.copy_from_slice(&ssm[s * inner * self.state..(s + 1) * inner * self.state]);
-                }
-                self.scan(
-                    s,
+        let ssm_in = state.as_ref().map(|s| s.ssm.as_slice());
+        let device = exec.timed(2, || {
+            exec.scan(
+                ScanInputs {
+                    u: &u,
+                    delta: &delta,
+                    a: &self.a,
+                    bc: &projected,
+                    d: &self.d,
+                    z: &xz,
+                    carried: ssm_in,
+                },
+                ScanShape {
+                    seqs,
                     len,
-                    &u[s * len * inner..(s + 1) * len * inner],
-                    &delta[s * len * inner..(s + 1) * len * inner],
-                    &projected,
-                    &xz,
-                    h,
-                    ys,
-                );
-            });
+                    channels: inner,
+                    states: self.state,
+                    bc_stride: width_bc,
+                    b_offset: self.dt_rank,
+                    c_offset: self.dt_rank + self.state,
+                    z_stride: 2 * inner,
+                    z_offset: inner,
+                },
+            )
+        });
+        let (y, last) = device.unwrap_or_else(|| {
+            let mut y = vec![0.0f32; rows * inner];
+            let mut last = vec![0.0f32; seqs * inner * self.state];
+            y.par_chunks_mut(len * inner)
+                .zip(last.par_chunks_mut(inner * self.state))
+                .enumerate()
+                .for_each(|(s, (ys, h))| {
+                    if let Some(ssm) = ssm_in {
+                        h.copy_from_slice(
+                            &ssm[s * inner * self.state..(s + 1) * inner * self.state],
+                        );
+                    }
+                    self.scan(
+                        s,
+                        len,
+                        &u[s * len * inner..(s + 1) * len * inner],
+                        &delta[s * len * inner..(s + 1) * len * inner],
+                        &projected,
+                        &xz,
+                        h,
+                        ys,
+                    );
+                });
+            (y, last)
+        });
         if let Some(st) = state {
             // Advance the conv history: the last k-1 inputs of carried + new.
             let mut conv = vec![0.0f32; seqs * km1 * inner];
@@ -872,7 +961,6 @@ impl Mamba {
             }
             st.conv = conv;
             st.ssm = last;
-            ssm_in.take();
         }
         exec.linear(&self.out_proj, &y, rows)
     }

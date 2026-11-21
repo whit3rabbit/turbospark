@@ -626,6 +626,12 @@ impl VoiceIsolator {
         self.exec.fallbacks()
     }
 
+    /// Seconds spent in linear, attention and scan calls since the backend
+    /// was set (host or device), for profiling a render.
+    pub fn op_seconds(&self) -> [f64; 3] {
+        self.exec.times()
+    }
+
     pub fn sample_rate(&self) -> u32 {
         self.config.sample_rate
     }

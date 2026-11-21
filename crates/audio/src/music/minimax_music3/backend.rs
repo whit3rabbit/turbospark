@@ -269,6 +269,36 @@ pub struct RopeShape {
     pub theta: f32,
 }
 
+/// Geometry of a Mamba1 selective scan over `seqs` sequences of `len` steps.
+/// `u` and `delta` are `[seqs * len, channels]`; `a` is `[channels, states]`
+/// (already negative), `d` `[channels]`. Each `bc` row is `bc_stride` floats
+/// with b at `b_offset` and c at `c_offset`; each `z` row is `z_stride` with
+/// the gate at `z_offset`. `carried` is `[seqs, channels, states]`.
+#[derive(Clone, Copy, Debug)]
+pub struct ScanShape {
+    pub seqs: usize,
+    pub len: usize,
+    pub channels: usize,
+    pub states: usize,
+    pub bc_stride: usize,
+    pub b_offset: usize,
+    pub c_offset: usize,
+    pub z_stride: usize,
+    pub z_offset: usize,
+}
+
+/// The tensors of a selective scan, laid out as [`ScanShape`] says.
+#[derive(Clone, Copy)]
+pub struct ScanInputs<'a> {
+    pub u: &'a [f32],
+    pub delta: &'a [f32],
+    pub a: &'a [f32],
+    pub bc: &'a [f32],
+    pub d: &'a [f32],
+    pub z: &'a [f32],
+    pub carried: Option<&'a [f32]>,
+}
+
 /// Arithmetic layout before materializing channel-major normalization input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NormalizationLayout {
@@ -361,6 +391,14 @@ pub trait ComputeBackend {
         theta: f32,
     ) -> Result<(Vec<f32>, Vec<f32>)> {
         Ok(rotary_tables(len, rotary_dim, theta))
+    }
+    /// The Mamba1 selective scan (`ScanShape` documents the layout).
+    /// Returns `y` and the last state. Backends without a device kernel
+    /// refuse, and the caller scans on the host.
+    fn selective_scan(&self, _inputs: ScanInputs<'_>, _shape: ScanShape) -> Result<(Vec<f32>, Vec<f32>)> {
+        Err(SpeechError::Unsupported {
+            why: "backend does not implement the selective scan".into(),
+        })
     }
     /// Uniforms are the f32 MLX erfinv inputs in (-1, 1), after its
     /// uniform-range remap. The Gaussian output is rounded to logical dtype.

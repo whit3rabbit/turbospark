@@ -14,4 +14,4 @@ pub use dialogue_sidon::{DialogueSidon, SidonConfig};
 pub use mel_roformer::{MelRoFormer, MelRoFormerConfig};
 pub use mossformer2_se::{MossFormer2Se, MossFormer2SeConfig};
 pub use sam_audio::{SamAudio, SamAudioConfig};
-pub use voice_isolator::{VoiceIsolator, VoiceIsolatorConfig};
+pub use voice_isolator::{VoiceIsolator, VoiceIsolatorConfig, VoiceIsolatorStream};
