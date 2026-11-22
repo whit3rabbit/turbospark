@@ -338,10 +338,47 @@ The intake must check every offset bound and every sha256.
    as weight error, not a position-dependent defect. Most misses are the
    reference's second choice. Decode is 64 ms per token against 28 ms for
    the BF16 install (untuned kernels, unpaired, not a protocol number).
-   OPEN: the authors report `free_KL` 0.0895 and 89.2% top-1 for this file
-   (English/chat/code windows against the BF16 teacher, their harness). The
-   protocols differ, so the gap is not a measured defect, but it is not
-   explained either. RULED OUT (2026-11-21): the BF16 rounding of the F32
+   OPEN: the authors report `free_KL` 0.0895 (English/chat/code windows)
+   and `all13_KL` 0.2871 (13 languages) for this file against the original
+   teacher, their harness, which is not in the upstream repository. (An
+   earlier note here read their 89.2% as top-1; it is their "3-task mean vs
+   teacher", GSM8K, HumanEval and vision retention, not a token metric.)
+   The protocols differ, so the gap is not a measured defect, but it is not
+   explained either. Two more windows (2026-11-22, `07218acf`, 450 tokens
+   each, no BOS, `inkling2_logits` against the BF16 install): English
+   (docs/DEVELOPMENT.md) top-1 363/450, mean KL 0.248, median 0.132; Rust
+   source (crates/compute/src/lamq.rs) 357/450, 0.313, median 0.186.
+   RULED OUT (2026-11-22), a decode defect in any coded tensor: the
+   diagnostic `examples/inkling2_lamq_weight_err.rs` (runtime crate)
+   compares every coded matrix through the CPU reference
+   (`LamqLinear::forward`, rotations included) with the original weights
+   on random probes. Error sits in tight bands by code, with no outlier
+   tensor, flat over the 16 columns of a chunk and equal on even and odd
+   chunks; the embedding (no activations behind it) lands within 3 to 8%
+   of the Gaussian bound 2^-R at every code (rtr4 0.067, rtr3 0.135, rtr2
+   0.26, rtr1 0.515), so the windows, tables, rotations and bucket order
+   decode right. The head (1.3x the bound) and attention (rtr4 1.9x) sit
+   higher, as an activation-aware quantizer places its error. Experts
+   (against the NVFP4 / MXFP8 originals times their outer scales; the
+   release uses only ht2, ht3 and rtr1 there) match the same bands: rtr1
+   0.63 to 0.71, ht3 0.16 to 0.22, ht2 0.31 to 0.50, scale ratios 0.88 to
+   1.0. The intake reads every meta field the upstream loader uses
+   (`hash_mult` is checked against the kernels' constant). RULED OUT
+   (2026-11-22), the Metal runtime on this install as a whole: the CPU f32
+   reference forward (`compute::inkling2::forward`, whose `WeightSource`
+   now has default `matvec`, `embed_row` and expert hooks; a hook-vs-dense
+   test is bit-exact and fails with gate and up swapped) run on the LAMQ
+   weights by `examples/inkling2_lamq_reference_logits.rs` (runtime crate,
+   every coded tensor through `LamqLinear`, about 2 s a token). Over the
+   48-token `ids48` prompt: CPU LAMQ against Metal LAMQ 45/48 top-1, mean
+   KL 1.4e-3, max 1.1e-2; BF16 against Metal LAMQ 19/48, 0.762; BF16
+   against CPU LAMQ 20/48, 0.768 (that prompt is a synthetic id run, so
+   its absolute KL is high). The runtime reproduces the reference about
+   500x closer than either sits to BF16, so the gap is in the release's
+   weights as this format reads them, and the embedding's near-bound error
+   says the reading is right. What is left unexplained is only the
+   protocol difference from the authors' 0.0895, whose harness and windows
+   are not public. RULED OUT (2026-11-21): the BF16 rounding of the F32
    steering. Rounding every narrowed value to the OTHER BF16 neighbour (0.5
    to 1 ulp, max relative change 7.8e-3, about 3x the nearest-even error)
    moved prose KL from 0.1543 to 0.1556 and top-1 from 182 to 181, and the two

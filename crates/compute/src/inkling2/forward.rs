@@ -32,6 +32,29 @@ pub enum Dtype {
 /// little-endian bytes.
 pub trait WeightSource: Sync {
     fn tensor(&self, name: &str) -> Option<(Dtype, &[usize], &[u8])>;
+
+    /// `W x` for the linear `name`, when the source computes it itself (a
+    /// coded format with no dense tensor). `None` reads the dense tensor.
+    fn matvec(&self, _name: &str, _x: &[f32]) -> Option<Vec<f32>> {
+        None
+    }
+
+    /// Embedding row of `token`, when the source computes it itself.
+    fn embed_row(&self, _token: usize) -> Option<Vec<f32>> {
+        None
+    }
+
+    /// Expert `e` of layer `ip` on the normed input `x`: its gate and up
+    /// projections (`expert_ffn` each, outer scales applied), when the source
+    /// computes them itself. `None` reads the HF `w13` tensors.
+    fn expert_gate_up(&self, _ip: usize, _e: usize, _x: &[f32]) -> Option<(Vec<f32>, Vec<f32>)> {
+        None
+    }
+
+    /// Expert `e` of layer `ip`'s down projection of `act`, likewise.
+    fn expert_down(&self, _ip: usize, _e: usize, _act: &[f32]) -> Option<Vec<f32>> {
+        None
+    }
 }
 
 /// The text model's hyperparameters. [`Config::mini`] is
@@ -231,6 +254,11 @@ impl<'w, W: WeightSource> Reference<'w, W> {
 
     /// `W x` for a `[rows, cols]` float tensor.
     fn matvec(&self, name: &str, rows: usize, cols: usize, x: &[f32]) -> Vec<f32> {
+        assert_eq!(x.len(), cols, "{name} input");
+        if let Some(y) = self.w.matvec(name, x) {
+            assert_eq!(y.len(), rows, "{name} rows");
+            return y;
+        }
         let (dt, s, b) = self.get(name);
         assert_eq!(s, [rows, cols], "{name} shape");
         assert_eq!(x.len(), cols, "{name} input");
@@ -282,6 +310,23 @@ impl<'w, W: WeightSource> Reference<'w, W> {
         let bias = self.vec(&format!("{p}.gate.bias"), &[n_exp]);
         let (idx, wts) = route_sigmoid(&logits, &bias, self.cfg.top_k, self.cfg.route_scale);
 
+        if let Some(first) = self.w.expert_gate_up(ip, idx[0], m) {
+            let mut first = Some(first);
+            let mut y = vec![0.0f32; h];
+            for (&e, &wt) in idx.iter().zip(&wts) {
+                let (g, u) = first
+                    .take()
+                    .unwrap_or_else(|| self.w.expert_gate_up(ip, e, m).expect("expert source"));
+                let act: Vec<f32> = (0..f)
+                    .map(|k| situ(g[k], u[k], self.cfg.gate_cap, self.cfg.up_cap))
+                    .collect();
+                let out = self.w.expert_down(ip, e, &act).expect("expert source");
+                for (yy, o) in y.iter_mut().zip(&out) {
+                    *yy += wt * o;
+                }
+            }
+            return y;
+        }
         let (w13_dt, w13_s, w13) = self.get(&format!("{p}.experts.w13_weight"));
         let (_, _, s13) = self.get(&format!("{p}.experts.w13_weight_scale"));
         let (w2_dt, _, w2) = self.get(&format!("{p}.experts.w2_weight"));
@@ -563,11 +608,17 @@ impl<'w, W: WeightSource> Reference<'w, W> {
     pub fn step(&mut self, token: u32) -> Vec<f32> {
         let c = self.cfg.clone();
         let h = c.hidden;
-        let (dt, s, b) = self.get("model.llm.embed.weight");
-        assert_eq!(s[1], h);
-        let es = if dt == Dtype::Bf16 { 2 } else { 4 };
         let t = token as usize;
-        let emb = decode(dt, &b[t * h * es..(t + 1) * h * es]);
+        let emb = match self.w.embed_row(t) {
+            Some(e) => e,
+            None => {
+                let (dt, s, b) = self.get("model.llm.embed.weight");
+                assert_eq!(s[1], h);
+                let es = if dt == Dtype::Bf16 { 2 } else { 4 };
+                decode(dt, &b[t * h * es..(t + 1) * h * es])
+            }
+        };
+        assert_eq!(emb.len(), h, "embedding row");
         let mut cur = self.norm(&emb, "model.llm.embed_norm.weight");
 
         let mut blocks = Vec::new();
@@ -622,9 +673,14 @@ impl<'w, W: WeightSource> Reference<'w, W> {
             .mix(&blocks, &cur, "model.llm.attn_res.output_query")
             .remove(0);
         let out = self.norm(&out, "model.llm.norm.weight");
-        let (_, us, _) = self.get("model.llm.unembed.weight");
-        let padded = us[0];
-        let mut logits = self.matvec("model.llm.unembed.weight", padded, h, &out);
+        let mut logits = match self.w.matvec("model.llm.unembed.weight", &out) {
+            Some(l) => l,
+            None => {
+                let (_, us, _) = self.get("model.llm.unembed.weight");
+                let padded = us[0];
+                self.matvec("model.llm.unembed.weight", padded, h, &out)
+            }
+        };
         logits.truncate(c.vocab);
         for l in logits.iter_mut() {
             *l = (*l / c.final_softcap).tanh() * c.final_softcap;
@@ -900,6 +956,104 @@ mod tests {
         // Token 3 recurs: KV, conv tails and position make each one differ.
         assert_ne!(a[0], a[3]);
         assert_ne!(a[3], a[9]);
+    }
+
+    /// The source hooks answer densely from the same synthetic tensors, in
+    /// the dense path's summation order (and the HF w13 interleave: gate on
+    /// even rows, up on odd), so the logits must be bit-identical with and
+    /// without them.
+    struct Hooked<'a>(&'a Synth);
+
+    impl Hooked<'_> {
+        fn dense(&self, name: &str) -> (Vec<usize>, Vec<f32>) {
+            let (dt, s, b) = self.0.tensor(name).expect("tensor");
+            (s.to_vec(), decode(dt, b))
+        }
+
+        fn dot(rows: &[f32], cols: usize, x: &[f32]) -> Vec<f32> {
+            rows.chunks_exact(cols)
+                .map(|r| r.iter().zip(x).map(|(a, b)| a * b).sum())
+                .collect()
+        }
+
+        fn expert_rows(&self, ip: usize, e: usize, w: &str, rows: usize, cols: usize) -> Vec<f32> {
+            let x = format!("model.llm.layers.{ip}.mlp.experts");
+            let (dt, _, wb) = self.0.tensor(&format!("{x}.{w}_weight")).unwrap();
+            let (_, _, sb) = self.0.tensor(&format!("{x}.{w}_weight_scale")).unwrap();
+            let nv = dt == Dtype::U8;
+            let o = if nv {
+                let amax = self.dense(&format!("{x}.{w}_weight_amax")).1;
+                let den = self
+                    .dense(&format!("{x}.{w}_weight_outer_scale_denominator"))
+                    .1;
+                amax[e] / den[0]
+            } else {
+                1.0
+            };
+            let (rb, sbb) = if nv {
+                (cols / 2, cols / 16)
+            } else {
+                (cols, cols / 32)
+            };
+            let mut out = vec![0.0f32; rows * cols];
+            for r in 0..rows {
+                let (wr, sr) = ((e * rows + r) * rb, (e * rows + r) * sbb);
+                let dst = &mut out[r * cols..(r + 1) * cols];
+                if nv {
+                    dequant_nvfp4_row(&wb[wr..wr + rb], &sb[sr..sr + sbb], o, dst);
+                } else {
+                    dequant_mxfp8_row(&wb[wr..wr + rb], &sb[sr..sr + sbb], dst);
+                }
+            }
+            out
+        }
+    }
+
+    impl WeightSource for Hooked<'_> {
+        fn tensor(&self, name: &str) -> Option<(Dtype, &[usize], &[u8])> {
+            self.0.tensor(name)
+        }
+
+        fn matvec(&self, name: &str, x: &[f32]) -> Option<Vec<f32>> {
+            let (s, w) = self.dense(name);
+            let y = Self::dot(&w, s[1], x);
+            Some(if name == "model.llm.unembed.weight" {
+                y
+            } else {
+                y[..s[0]].to_vec()
+            })
+        }
+
+        fn embed_row(&self, token: usize) -> Option<Vec<f32>> {
+            let (s, w) = self.dense("model.llm.embed.weight");
+            Some(w[token * s[1]..(token + 1) * s[1]].to_vec())
+        }
+
+        fn expert_gate_up(&self, ip: usize, e: usize, x: &[f32]) -> Option<(Vec<f32>, Vec<f32>)> {
+            let (h, f) = (x.len(), tiny().expert_ffn);
+            let gu = Self::dot(&self.expert_rows(ip, e, "w13", 2 * f, h), h, x);
+            Some((
+                (0..f).map(|k| gu[2 * k]).collect(),
+                (0..f).map(|k| gu[2 * k + 1]).collect(),
+            ))
+        }
+
+        fn expert_down(&self, ip: usize, e: usize, act: &[f32]) -> Option<Vec<f32>> {
+            let (f, h) = (act.len(), tiny().hidden);
+            Some(Self::dot(&self.expert_rows(ip, e, "w2", h, f), f, act))
+        }
+    }
+
+    #[test]
+    fn source_hooks_reproduce_the_dense_path_bit_for_bit() {
+        let c = tiny();
+        let w = synth(&c, 4);
+        let tokens = [3, 17, 42, 3, 9];
+        let plain = run(&c, &w, &tokens);
+        let hooks = Hooked(&w);
+        let mut r = Reference::new(&hooks, c.clone());
+        let hooked: Vec<Vec<f32>> = tokens.iter().map(|&t| r.step(t)).collect();
+        assert_eq!(plain, hooked);
     }
 
     /// The loop is wired: a third pass changes the output, so pass > 0 reads
