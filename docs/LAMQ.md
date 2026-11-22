@@ -21,7 +21,7 @@ self-test), `model.py` (wiring), `fast_kernels.py` (Metal fast path).
 
 | Container | Releases | Status here |
 |---|---|---|
-| `inkling2-packed` | `shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-5.4GB` (1.63 bpw), `-8.9GB` (2.69 bpw) | planned first (workstream A) |
+| `inkling2-packed` | `shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-5.4GB` (1.63 bpw), `-8.9GB` (2.69 bpw) | 5.4 GB: intake, kernels and decode done (workstream A), quality gap open, no catalog row; 8.9 GB: not installed |
 | `lamq-1` | Gemma 4 E2B exports | planned (workstream C) |
 | `opgraph-packed-1` | Qwen3.5-4B (`lm2-qwen35-4b-1.2gb`), `shinmegamiboson/Qwen3.8-27B-LookAtMyQuant-7.2GB` | planned (workstream C) |
 | GGUF | Gemma 4 E2B compiled mixes | stock llama.cpp types per tensor, so it goes through the existing GGUF intake (`docs/GGUF.md`); no LAMQ code |
@@ -328,6 +328,11 @@ The intake must check every offset bound and every sha256.
    |---|---|---|---|---|
    | 19 tokens (capitals) | 19/19 | 2.6e-2 | 2.2e-2 | 6.0e-2 |
    | 232 tokens (prose) | 182/232 | 0.154 | 0.095 | 2.03 |
+
+   Re-run 2026-11-22 at `07218acf` (after the step 9 to 14 kernel ports,
+   both installs dumped by the same rebuilt example): 19/19, mean KL 2.8e-2,
+   max 6.9e-2; 183/232, mean KL 0.154, median 0.093, max 2.08. The kernel
+   work did not move the gap in either direction.
 
    KL is flat over position (0.12 to 0.22 per 29-token band), so this reads
    as weight error, not a position-dependent defect. Most misses are the
