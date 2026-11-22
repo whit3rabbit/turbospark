@@ -547,6 +547,15 @@ The intake must check every offset bound and every sha256.
     not apply (rtr1 is nearly unused here, and wider-code multi-weight
     tables exceed threadgroup memory). The next GEMV lever would have to
     cut gathers per weight, which is a format question, not a kernel one.
+    Lossless form of that, tried and NOT kept (2026-11-22): a two-column
+    table derived from each direct code's LUT at load, entry W of
+    2^(12 + k) = (lut[(W >> k) & 4095], lut[W & 4095]), one device lookup
+    per two columns (64 / 128 / 256 KB for rtr2 / rtr3 / rtr4, too large
+    for threadgroup memory). Interleaved against `lamq_gemv` at the Mini's
+    shapes: -2 to -8% for rtr2 and rtr3, -15 to -34% for rtr4. A device
+    gather into a table of that size costs more than two threadgroup
+    gathers, so halving the lookups loses. Any further GEMV gain would need
+    a lossy re-encode of the weights, which needs its own quality gate.
     Expert pair characterized the same way (2026-11-22, nothing kept): the
     ignored `expert_pair_bandwidth` test in
     `tests/moe_inkling2_lamq_parity.rs` (128 resident experts of one
