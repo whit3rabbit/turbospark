@@ -525,6 +525,28 @@ The intake must check every offset bound and every sha256.
     two passes, 11 of 12 runs clean: step 13 28.86 to 29.51 tok/s (median
     29.09), this 30.64 to 31.30 (median 30.71). A dev A/B, not a frozen
     row.
+    `lamq_gemv` characterized (2026-11-22, M4 Max, nothing kept). The
+    ignored `gemv_bandwidth` test in `tests/lamq_parity.rs` times the GEMV
+    in one primed command buffer over about 192 MB of distinct matrices.
+    Time does not depend on bits per weight: at 2304 x 2304, rtr1 to rtr4
+    all take about 30 us (22 to 84 GB/s of codes), and lm8, a plain byte
+    index, is as slow. The kernel is bound by its one threadgroup-table
+    gather per weight (about 170 to 240 G weights/s; ht2, one hashed lookup
+    per 4 weights, is about 1.5x faster), not by DRAM or the bit extract.
+    Per token the Mini runs about 1.1 G coded weights through it (attention
+    643 M, head 461 M; codes mostly rtr4 and ht3 in attention, rtr2 to rtr4
+    in the head, rtr1 in one matrix), about 5.5 ms of a 32.6 ms token.
+    Tried, all bit-identical where they pass parity, none kept: x as float4
+    register loads, +1 to 3% interleaved with overlapping ranges; the window
+    base specialized to constant 0 / 16 bodies, 50 to 70% slower (likely
+    register spills); the FP16 table read from device memory instead of
+    staged, about 40% slower; 16 or 8 rows per threadgroup instead of 32,
+    +16 to 21% on `wo_ud` (2304 x 3072) and +31 to 37% on `wr_du` (384 rows)
+    but -3 to -34% elsewhere, about 0.3 ms per token if chosen per shape,
+    under the 2% floor. A three-weight table like the expert rtr1 one does
+    not apply (rtr1 is nearly unused here, and wider-code multi-weight
+    tables exceed threadgroup memory). The next GEMV lever would have to
+    cut gathers per weight, which is a format question, not a kernel one.
 15. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
    on the same kernels, each with its own family quality gate.
 

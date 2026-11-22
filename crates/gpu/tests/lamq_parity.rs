@@ -459,3 +459,76 @@ fn batched_rotation_equals_one_at_a_time_bit_for_bit() {
         refused.commit_and_wait();
     }
 }
+
+/// Not a gate: GPU time of `lamq_gemv` per code at decode shapes, to tell a
+/// bandwidth-bound kernel from a decode-bound one, at the Inkling 2 Mini
+/// attention and head shapes. About 192 MB of distinct matrices are cycled so
+/// the codes come from DRAM, not the system cache, and a primer
+/// pass brings the device up first (a cold device runs 3-6x slow). Run with
+/// `cargo test --release -p turbospark-gpu --test lamq_parity -- --ignored
+/// gemv_bandwidth --nocapture`.
+#[test]
+#[ignore]
+fn gemv_bandwidth() {
+    let mut context = MetalContext::new().expect("Metal device");
+    const REPS: usize = 4;
+    for (rows, cols) in [
+        (384usize, 2304usize),
+        (1024, 2304),
+        (3072, 2304),
+        (2304, 3072),
+        (32768, 2304),
+    ] {
+        for &code in &[LamqCode::Ht3, LamqCode::Rtr2, LamqCode::Rtr4, LamqCode::Lm6] {
+            let f = Fixture::new(code, rows, cols, 7 + rows as u32);
+            let mat = f.codes.len();
+            let copies = (192usize << 20).div_ceil(mat).clamp(4, 512);
+            let mut all = Vec::with_capacity(mat * copies);
+            let mut s = 12345u32;
+            for _ in 0..copies {
+                all.extend((0..mat).map(|_| xs(&mut s) as u8));
+            }
+            let codes = context.new_buffer_with_data(&all);
+            let scales = context.new_buffer_with_data(
+                &f.scales
+                    .iter()
+                    .flat_map(|v| v.to_le_bytes())
+                    .collect::<Vec<_>>(),
+            );
+            let table = context.new_buffer_with_data(&f.table_bytes());
+            let mut seed = 3u32;
+            let x: Vec<f32> = (0..cols).map(|_| unit(&mut seed)).collect();
+            let x_buf = context.new_buffer_with_data(&le32(&x));
+            let y = context.new_buffer_with_data(&vec![0u8; rows * 2]);
+            let run = |context: &mut MetalContext| -> f64 {
+                let pass = context.begin_pass();
+                for _ in 0..REPS {
+                    for c in 0..copies {
+                        let view = LamqMatrixView {
+                            code,
+                            rows: rows as u32,
+                            cols: cols as u32,
+                            codes: (&codes, (c * mat) as u64),
+                            scales: (&scales, 0),
+                            table: (&table, 0),
+                        };
+                        encode_lamq_gemv(context, &pass, &view, (&x_buf, 0), (&y, 0), true)
+                            .unwrap();
+                    }
+                }
+                pass.commit_and_wait_with_gpu_time()
+            };
+            run(&mut context); // primer
+            let t = (0..3).map(|_| run(&mut context)).fold(f64::MAX, f64::min);
+            let n = (REPS * copies) as f64;
+            let us = t / n * 1e6;
+            println!(
+                "{:5} {rows:5}x{cols}: {:7.2} us/dispatch  {:6.1} GB/s codes  {:6.2} Gweights/s",
+                code.name(),
+                us,
+                mat as f64 / (t / n) / 1e9,
+                (rows * cols) as f64 / (t / n) / 1e9,
+            );
+        }
+    }
+}
