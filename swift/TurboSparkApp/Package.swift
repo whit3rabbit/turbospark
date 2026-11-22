@@ -23,6 +23,7 @@ let package = Package(
         .package(path: "Vendor/ZImage"),
         .package(path: "Vendor/QwenImage"),
         .package(path: "Vendor/Qwen3TTS"),
+        .package(path: "Vendor/VoiceIsolatorMLX"),
         .package(url: "https://github.com/sqlcipher/SQLCipher.swift.git", from: "4.10.0"),
         .package(url: "https://github.com/gonzalezreal/swift-markdown-ui", from: "2.4.0"),
         // Exact is safe from 2.7.1 on: the tag pins its own xcframework zip.
@@ -73,6 +74,7 @@ let package = Package(
                 .product(name: "ZImage", package: "zimage"),
                 .product(name: "QwenImage", package: "qwenimage"),
                 .product(name: "Qwen3TTS", package: "qwen3tts"),
+                .product(name: "VoiceIsolatorMLX", package: "voiceisolatormlx"),
                 .product(name: "SQLCipher", package: "SQLCipher.swift"),
                 .product(name: "MarkdownUI", package: "swift-markdown-ui"),
                 .product(name: "Syntext", package: "syntext"),
@@ -141,6 +143,7 @@ let package = Package(
                 "ComputerUseKit",
                 "DOMSnapshotFixtures",
                 .product(name: "TurboSpark", package: "TurboSpark"),
+                .product(name: "VoiceIsolatorMLX", package: "voiceisolatormlx"),
                 .product(name: "SQLCipher", package: "SQLCipher.swift"),
                 .product(name: "Syntext", package: "syntext"),
                 .product(name: "SyntextContext", package: "syntext"),

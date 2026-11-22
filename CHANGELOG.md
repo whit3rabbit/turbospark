@@ -77,6 +77,11 @@ when this file gets updated relative to the version bump and the tag.
   for a file that would speculate.
 
 ### Changed
+- The app renders the offline Voice Isolator (`voice-isolator-v1`) on a
+  vendored MLX port (VoiceIsolatorMLX, Apache-2.0) instead of the Rust Metal
+  path, for Clean Up's "Enhance speech" and "Clean reference". It loads the
+  same verified `denoiser.safetensors`, so installs are unchanged. The CLI,
+  FFI, realtime profile and live streams keep the Rust engine.
 - Rust API, source-breaking for struct literals: `catalog::ProbeReport` gains
   `speculation: Option<repack::GgufSpeculation>` (add `speculation: None`).
   FFI/Swift: the probe and Hub check JSON gain `speculation`

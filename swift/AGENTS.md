@@ -273,6 +273,12 @@ staging files changed.
   result as a new take; the source take is never changed. The request must
   carry the rate (and, for separation, the channel layout) the take was read
   in (`AudioEnhancementRequestTests`, `AudioSeparationRequestTests`).
+- The offline Voice Isolator (`voice-isolator-v1`) runs on the vendored MLX
+  port (`Audio/VoiceIsolatorMLXModel.swift`, `Vendor/VoiceIsolatorMLX`), not
+  the Rust session; its catalog provider stays `.rust`. The model is resident
+  like the Qwen model, so release `voiceIsolatorModel` wherever `qwenModel`
+  is released. Only an MLX construction failure falls back to Rust; a
+  finding or verification failure propagates (`VoiceIsolatorMLXTests`).
 - Live noise reduction (`AudioLiveVoiceCleaner`, "Reduce background noise")
   stays off by default and cleans only the microphone feed to live text. The
   saved recording and the final pass keep the original audio, and running
