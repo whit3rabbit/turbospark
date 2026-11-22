@@ -274,6 +274,14 @@ impl LamqMatrixView<'_> {
                 self.rows
             )));
         }
+        // Trellis rows decode 16 columns per step.
+        if self.code.is_trellis() && self.cols % 16 != 0 {
+            return Err(invalid(format!(
+                "LAMQ {} width {} is not a multiple of 16",
+                self.code.name(),
+                self.cols
+            )));
+        }
         // Trellis rows are read as u32 words.
         if self.code.is_trellis() && (self.codes.1 % 4 != 0 || rb % 4 != 0) {
             return Err(invalid(format!(

@@ -179,6 +179,42 @@ static inline uint lamq_window(device const uint* w, uint words, uint bp) {
     return (lo | hi) & 4095u;
 }
 
+// Bits [off, off + nb) of the 96 bits held in two overlapping 64-bit views
+// (lo = w0 | w1 << 32, hi = w1 | w2 << 32), off + nb <= 96. Shared with the
+// expert pair (moe_inkling2_lamq.metal is compiled after this file).
+static inline uint lamq_bits96(ulong lo, ulong hi, uint off, uint nb) {
+    const uint m = (1u << nb) - 1u;
+    return off + nb <= 64u ? uint(lo >> off) & m : uint(hi >> (off - 32u)) & m;
+}
+
+// Dot product of columns [16c, 16c + 16) of one trellis row with x, the
+// table staged in threadgroup memory. The windows are the ones lamq_window
+// reads (past-the-end words as zero); only the summation order differs from
+// the per-column loop. Direct codes (shift 0) have g = 1. Needs n % 16 == 0.
+static inline float lamq_chunk16_tg(
+    device const uint* w, uint words, uint n, uint c, uint k, uint g, uint shift,
+    threadgroup const float* lut, device const float* x
+) {
+    const uint B = (n - 16u * (c + 1u)) * k, wb = B >> 5, o = B & 31u;
+    const uint w0 = w[wb];
+    const uint w1 = wb + 1u < words ? w[wb + 1u] : 0u;
+    const uint w2 = wb + 2u < words ? w[wb + 2u] : 0u;
+    const ulong lo = ulong(w0) | (ulong(w1) << 32);
+    const ulong hi = ulong(w1) | (ulong(w2) << 32);
+    device const float* xc = x + 16u * c;
+    float acc = 0.0f;
+    if (shift != 0u) {
+        for (uint i = 0; i < 16u; i += g) {
+            const uint st = lamq_bits96(lo, hi, o + (15u - (i + g - 1u)) * k, 12u);
+            const uint e = ((st * 0x9E3779B1u) >> shift) * g;
+            for (uint t = 0; t < g; ++t) acc += lut[e + t] * xc[i + t];
+        }
+    } else {
+        for (uint j = 0; j < 16u; ++j) acc += lut[lamq_bits96(lo, hi, o + (15u - j) * k, 12u)] * xc[j];
+    }
+    return acc;
+}
+
 static inline uint lamq_level_index(device const uchar* b, uint j) {
     if (kLm == 8u) return uint(b[j]);
     const uint q = j >> 2, t = j & 3u;
@@ -214,10 +250,8 @@ kernel void lamq_gemv(
     } else {
         device const uint* w = (device const uint*)rb;
         const uint words = p.row_bytes / 4u;
-        for (uint j = lane * kG; j < n; j += 32u * kG) {
-            const uint s = lamq_window(w, words, (n - 1u - (j + kG - 1u)) * kK);
-            const uint e = (kShift != 0u ? (s * 0x9E3779B1u) >> kShift : s) * kG;
-            for (uint t = 0; t < kG; ++t) acc += lut[e + t] * x[j + t];
+        for (uint ch = lane; ch < n / 16u; ch += 32u) {
+            acc += lamq_chunk16_tg(w, words, n, ch, kK, kG, kShift, lut, x);
         }
     }
     acc = simd_sum(acc);

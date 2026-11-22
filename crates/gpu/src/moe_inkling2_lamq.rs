@@ -139,9 +139,10 @@ fn check(d_dim: u32, f_dim: u32, top_k: u32, experts: &LamqExperts<'_>) -> Resul
             "LAMQ experts need positive dims".into(),
         ));
     }
-    if d_dim % 16 != 0 {
+    if d_dim % 16 != 0 || f_dim % 16 != 0 {
         return Err(GpuError::InvalidInput(format!(
-            "LAMQ experts decode 16 columns at a time; width {d_dim} is not a multiple of 16"
+            "LAMQ experts decode 16 columns at a time; widths {d_dim} and {f_dim} must be \
+             multiples of 16"
         )));
     }
     if top_k == 0 || top_k as usize > INKLING2_LAMQ_MAX_SLOTS {

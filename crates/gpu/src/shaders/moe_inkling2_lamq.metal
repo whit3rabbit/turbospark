@@ -55,33 +55,10 @@ static inline LamqCodeParams lamq_code_params(uint id) {
     }
 }
 
-// One coded row against an F32 x, one weight per lane per step (phase 2).
-template <typename Lut>
-static inline float lamq_expert_row(
-    device const uchar* row, uint row_bytes, uint n, LamqCodeParams c,
-    Lut lut, device const float* x, uint lane
-) {
-    device const uint* w = (device const uint*)row;
-    const uint words = row_bytes / 4u;
-    float acc = 0.0f;
-    for (uint j = lane * c.g; j < n; j += 32u * c.g) {
-        const uint s = lamq_window(w, words, (n - 1u - (j + c.g - 1u)) * c.k);
-        const uint e = (c.shift != 0u ? (s * 0x9E3779B1u) >> c.shift : s) * c.g;
-        for (uint t = 0; t < c.g; ++t) acc += float(lut[e + t]) * x[j + t];
-    }
-    return simd_sum(acc);
-}
-
 // Offset (halves) of the rtr1 three-weight table in the pack: entry `idx` (14
 // bits) holds the 12-bit table values at idx >> 2, idx >> 1 and idx, so one
 // lookup gives three consecutive columns (LAMQ_RTR1_MT_OFF in the host).
 constant constexpr uint kLamqRtr1MtOff = 20480u;
-
-// Bits [off, off + nb) of the 96 bits held in w0..w2 (off + nb <= 96).
-static inline uint lamq_bits96(ulong lo, ulong hi, uint off, uint nb) {
-    const uint m = (1u << nb) - 1u;
-    return off + nb <= 64u ? uint(lo >> off) & m : uint(hi >> (off - 32u)) & m;
-}
 
 // Dot product of columns [16c, 16c + 16) of one coded row with `xv[16]`
 // (the same columns of x). Every window is the 12 bits `lamq_window` reads
@@ -171,10 +148,22 @@ static inline float lamq_phase2_term(
     device const float* act, uint F, uint d, uint lane
 ) {
     device const uint* fmt = (device const uint*)(base + o.fmt);
-    const LamqCodeParams c = lamq_code_params(fmt[1]);
+    const uint id = fmt[1];
+    const LamqCodeParams c = lamq_code_params(id);
     const uint rb = fmt[3];
     device const half* sc = (device const half*)(base + o.dn_s);
-    return lamq_expert_row(base + o.dn + ulong(d) * rb, rb, F, c, luts + c.lut_off, act, lane) * float(sc[d]);
+    device const uint* row = (device const uint*)(base + o.dn + ulong(d) * rb);
+    // The same 16-column chunk decode as phase 1, across the simdgroup.
+    float acc = 0.0f;
+    for (uint ch = lane; ch < F / 16u; ch += 32u) {
+        float xv[16];
+        for (uint q = 0; q < 4u; ++q) {
+            const float4 v = ((device const float4*)(act + ch * 16u))[q];
+            xv[4u * q] = v.x; xv[4u * q + 1u] = v.y; xv[4u * q + 2u] = v.z; xv[4u * q + 3u] = v.w;
+        }
+        acc += lamq_chunk16(row, rb / 4u, F, ch, id, c, luts, xv);
+    }
+    return simd_sum(acc) * float(sc[d]);
 }
 
 constant constexpr uint kLamqExpRowsPerTG = 64; // phase 1: 2 per simdgroup, = ROWS_PER_THREADGROUP

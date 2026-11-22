@@ -447,7 +447,21 @@ The intake must check every offset bound and every sha256.
     example) and leaves the previous `tslab-worker` in `target/`; both arms
     of `lamq-kernels-c16` were that stale binary. Check that each arm's
     `exe_sha256` in the ledger differs before reading an A/B.
-12. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
+12. DONE (2026-11-21): the step 10 chunk decode in expert phase 2 and the
+    coded GEMV. Phase 2 keeps its layout (one threadgroup per output row,
+    one simdgroup per slot, slot-order sum) and decodes 16-column chunks
+    across the simdgroup (`lamq_chunk16`); the GEMV decodes them against its
+    threadgroup table (`lamq_chunk16_tg`, no multi-weight table there yet).
+    Both need widths that are multiples of 16 (checked on the host). Parity
+    suites pass; a one-bit window shift in the GEMV helper fails them. The
+    phase 2 output is FP16, so its parity is to one half-precision step.
+    Drift against the original bit-exact kernels with steps 10 to 12: mean
+    KL 2.3e-3, 47/48 top-1 over 48 tokens. tslab: `lamq-kernels-3arm`
+    (this change alone on the step 10 build: median 18.7 -> 20.1 tok/s) and
+    `lamq-kernels-both` (on top of step 11: 20.70 to 20.89 vs 21.99 to
+    23.47, medians 20.8 and 22.1), all runs dirty. Day total on the 5.4 GB
+    install, same workload: about 14.9 -> 22.1 tok/s.
+13. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
    on the same kernels, each with its own family quality gate.
 
 No catalog row, and no change to any family's defaults, without its gate.
