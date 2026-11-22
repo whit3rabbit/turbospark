@@ -115,8 +115,12 @@ Inkling 2 (`inkling2_loop`, `inkling2`) is not in `SUPPORTED_GGUF`: the
 generic walk refuses it by name. It installs through its own intake,
 `write_inkling2_gguf_install` (`crates/repack/src/inkling2_gguf.rs`), because
 its experts need the Inkling mode of the routed pairs and a per-expert outer
-scale record (`docs/INKLING2_PHASE0.md`, GGUF intake). The CLI and app
-install paths do not call it yet.
+scale record (`docs/INKLING2_PHASE0.md`, GGUF intake). It is reached from
+`turbospark model pull-local <file.gguf> --tokenizer-from DIR`, from
+`pull --repo` (the probe reports an Inkling GGUF as runnable and the install
+downloads the file whole), and from the app's Discover > Install from Files.
+A GGUF carries no `tokenizer.json`, so the tokenizer comes from
+`thinkingmachines/Inkling-2-Mini` unless another source is named.
 
 Match is by exact string, never by prefix: `qwen35` and `qwen35moe` are
 different families and a prefix match would run a dense file through a router.

@@ -174,6 +174,17 @@ fn check_meta(h: &GgufHeader, arch: &str, key: &str, want: u64) -> Result<(), In
     }
 }
 
+/// The `general.architecture` of a local GGUF when it is an Inkling 2 one
+/// (`inkling2_loop` or `inkling2`), None for any other architecture. Reads
+/// only the header. For install front ends deciding which intake a file needs.
+pub fn inkling2_gguf_architecture(path: &Path) -> Result<Option<String>, Inkling2RepackError> {
+    let g = Gguf::open(path)?;
+    Ok(g.header
+        .architecture()
+        .filter(|a| matches!(*a, "inkling2_loop" | "inkling2"))
+        .map(str::to_string))
+}
+
 /// The `manifest.quant` section: GGUF resident slots naming every block type
 /// the install's resident matrices use, raw F32 router, the Inkling GGUF
 /// routed scheme.

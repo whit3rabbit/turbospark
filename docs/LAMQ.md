@@ -300,7 +300,7 @@ The intake must check every offset bound and every sha256.
    the manifest schemes, the name map and the intake refusals (repeated or
    out-of-range token ids, short buckets, stray members and `signs_out`,
    reused or unknown expert slots); each guard was mutation-checked.
-   The runtime does not open the install yet.
+   (The runtime opened it from step 4 on.)
 4. DONE (2026-11-21): Metal and runtime. `shaders/lamq.metal` (`gpu::lamq`):
    the Kronecker RHT (FWHT over the Sylvester factor, dense small factor),
    trellis and level GEMVs, one-row decode, bucket scatter. Function
@@ -346,7 +346,22 @@ The intake must check every offset bound and every sha256.
 6. DONE (2026-11-21): Workstream B, Inkling 2 GGUF intake and decode
    (`docs/INKLING2_PHASE0.md`, GGUF sections). The unsloth UD files are not
    gated (not downloaded) and MXFP4 down projections are refused.
-7. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
+7. DONE (2026-11-21): install and run paths. `turbospark model pull-local`,
+   `pull --repo` (the probe reports a LAMQ release or an Inkling GGUF as
+   runnable, and the install downloads the files whole at the pinned commit,
+   resumes by size, then runs the local intake), the FFI
+   (`ts_install_local_with_options`, `ts_local_install_kind_json`), Swift
+   (`TurboSparkCatalog.install(localPath:)`) and the app's Discover > Install
+   from Files sheet. Shared steps: `catalog::install_inkling2_local` and
+   `catalog::install_inkling2_repo`. Chat through `turbospark run` was broken
+   for every Inkling install until the padded vocabulary rows were masked
+   with a finite value: the producer wrote -inf there and the sampler
+   refuses non-finite scores. The logits harness drops those rows, which is
+   why the gates above never saw it. Checked after the fix: BF16, LAMQ 5.4
+   GB, MLX 4-bit and the local IQ2_M GGUF each answer a one-sentence factual
+   prompt correctly and stop at end of turn. The `pull --repo` download is
+   tested against a loopback Hub only; no real Hub download has been run.
+8. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
    on the same kernels, each with its own family quality gate.
 
 No catalog row, and no change to any family's defaults, without its gate.

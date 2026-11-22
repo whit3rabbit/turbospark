@@ -1849,6 +1849,31 @@ int32_t ts_install_repo_with_options(const char *repo, const char *alias,
                                      void *userdata, char **result_json);
 
 /*
+ * Installs Inkling 2 Mini from files on disk as `alias`: a LookAtMyQuant
+ * packed release directory, or an Inkling 2 GGUF (general.architecture
+ * "inkling2_loop" or "inkling2"). `tokenizer_from` (nullable) is a directory
+ * holding tokenizer.json and the chat files, required for a GGUF, which
+ * carries none (an HF install, or a download of thinkingmachines/Inkling-2-Mini).
+ * `options_json` picks the library as for ts_install_repo_with_options.
+ * Progress arrives as TS_INSTALL_STAGE lines. The install is written to a
+ * staging folder, read back (tokenizer, manifest, resident index, expert
+ * layout), then moved into place and recorded; any failure leaves nothing.
+ * The result is the recorded row, with the library keys.
+ */
+int32_t ts_install_local_with_options(const char *path, const char *alias,
+                                      const char *tokenizer_from,
+                                      const char *options_json, TsInstallCallback cb,
+                                      void *userdata, char **result_json);
+
+/*
+ * Whether `path` is a local source ts_install_local_with_options takes, as
+ * JSON: { "kind": "lamq" | "gguf" | null, "family": "inkling2_loop" | null,
+ *         "needsTokenizer": bool }. Reads only a manifest.json or a GGUF
+ * header. Any other file or folder is kind null; an unreadable path fails.
+ */
+int32_t ts_local_install_kind_json(const char *path, char **out);
+
+/*
  * Signals every in-flight install walk to stop. Returns 1 when at least one
  * walk was running and has been signalled, 0 when nothing was running.
  *

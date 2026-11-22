@@ -33,6 +33,8 @@ mod hub;
 mod hub_transfer;
 mod hub_validation;
 mod image;
+mod inkling2_local;
+mod inkling2_repo;
 mod install;
 pub mod library;
 pub mod music;
@@ -77,6 +79,14 @@ pub use hub_validation::{
 pub use image::{
     image_family_for_model_id, materialize_image_source, normalize_mflux_source,
     validate_krea2_ram_bits, ImageCatalog, ImageCatalogEntry, QWEN_IMAGE_21_TURBO_PREFIX,
+};
+pub use inkling2_local::{
+    detect_inkling2_local, inkling2_local_required_bytes, install_inkling2_local,
+    Inkling2LocalSource,
+};
+pub use inkling2_repo::{
+    detect_inkling2_repo, install_inkling2_repo, Inkling2RepoKind, Inkling2RepoSource,
+    INKLING2_TOKENIZER_REPO,
 };
 pub use install::{
     gate, human_bytes, install, install_destination, install_text_into, install_variant,

@@ -27,6 +27,13 @@ when this file gets updated relative to the version bump and the tag.
   run by a new Inkling mode of the shared GGUF routed pairs (function
   constants 112-114; other families' pipelines unchanged). On a local IQ2_M
   file: 19/19 and 228/232 top-1 against llama.cpp on the same file.
+- Inkling 2 LookAtMyQuant releases and GGUFs install from the CLI, the
+  FFI and the app: `turbospark model pull-local <PATH>` (with
+  `--tokenizer-from DIR` for a GGUF), `pull --repo` of such a repository
+  (whole-file download at the pinned commit, resumable), Swift
+  `TurboSparkCatalog.install(localPath:)` and `localInstallKind(path:)`, and
+  Discover > Install from Files in the app. The probe reports these
+  repositories as runnable (`SourceKind::Lamq` for a LAMQ release).
 - The expert residency preflight reports `residentSupported` per install
   (Swift `ExpertResidencyPreflight.residentSupported`); auto residency streams
   an Inkling GGUF install, whose experts have no resident kernels.
@@ -97,6 +104,9 @@ when this file gets updated relative to the version bump and the tag.
   instead of Online catalog (the catalog ships with the app).
 
 ### Fixed
+- Inkling 2 chat failed on every install ("score vector must not contain a
+  non-finite entry"): the padded vocabulary rows were -inf. They are now the
+  most negative finite f16.
 - A standard llama.cpp K-quant GGUF of a Qwen gated-DeltaNet model (Q4_K_M and
   friends store `ssm_out` at Q4_K/Q6_K) no longer fails mid-install with "a
   128-column V head is not a whole number of 256-element blocks". The walk

@@ -9,9 +9,13 @@ and a Metal decode flow have landed. The flow is greedy-matched to the CPU
 reference and llama.cpp on real installs (Stage A below). There is no catalog
 row, and the memory oracle and the Phase 6 quality gates in
 `docs/NEW_MODEL.md` have not run. Do not call it supported until they have.
-GGUF intake is still refused. LookAtMyQuant packed releases install and
-decode with their codes native (`docs/LAMQ.md`, 5.4 GB release: 19/19 and
-182/232 top-1 against the BF16 install, with a quality gap still open).
+GGUF installs through its own intake (GGUF sections below). LookAtMyQuant
+packed releases install and decode with their codes native (`docs/LAMQ.md`,
+5.4 GB release: 19/19 and 182/232 top-1 against the BF16 install, with a
+quality gap still open). Every install type is reachable from the CLI
+(`turbospark model pull-local`, `pull --repo`) and the app (Discover >
+Install from Files), and chats through `turbospark run` (2026-11-21, after
+the padded vocabulary rows stopped being -inf: see step 4 below).
 
 Sources (formulas are transcribed, not derived): Hugging Face
 `transformers/models/inkling2/modeling_inkling2.py` (layer math; it has NO loop
@@ -353,7 +357,18 @@ Stage A: reachable and correct (decode only)
 4. PARTLY DONE: tokenizer dialect (`ChatDialect::Inkling2`, 2026-11-21:
    no BOS, stop `<|content_model_end_sampling|>`, thought span
    `<|content_thinking|>` to the next `<|end_message|>`; tslab now opens the
-   install). Remaining: `probe/safetensors.rs` arm and CLI reachability.
+   install). DONE (2026-11-21): CLI reachability. `turbospark run` failed
+   on every Inkling install with "score vector must not contain a non-finite
+   entry": the flow wrote -inf into the padded vocabulary rows (200058 to
+   201023) and `selection::select` refuses non-finite scores. The logits
+   harness drops those rows, so no gate saw it. They are now the most
+   negative finite f16 (`mask_padding`, unit test mutation-checked). After
+   it, BF16, LAMQ 5.4 GB, MLX 4-bit and a local IQ2_M GGUF each answer a
+   one-sentence factual prompt correctly and stop at end of turn. Open:
+   the CLI prints the thought span run-on with the answer, and a cold BF16
+   prefill took 88 s for 27 tokens (others 2 to 5 s; not investigated).
+   Remaining: the `probe/safetensors.rs` arm for the HF checkpoint (the
+   LAMQ and GGUF probes are done, `crates/catalog/src/inkling2_repo.rs`).
 5. DONE: long-context check (above). Remaining: memory oracle, quality
    gates, then a catalog row.
 

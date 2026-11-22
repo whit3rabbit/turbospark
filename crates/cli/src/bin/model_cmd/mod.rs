@@ -12,13 +12,14 @@ mod auth;
 mod destination;
 mod drama3;
 mod image_source;
+mod inkling2_local;
 mod library;
 mod progress;
 mod render;
 mod transfer;
 mod views;
 
-use catalog::{Catalog, Client, InstallKind, InstallPlan, RepoRef, Store, Verdict};
+use catalog::{Catalog, Client, InstallKind, InstallPlan, RepoRef, SourceKind, Store, Verdict};
 use destination::Destination;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -31,6 +32,7 @@ static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 pub use audio::{list_audio, pull_audio};
 pub use auth::auth;
 pub use drama3::pull_drama3;
+pub use inkling2_local::pull_local;
 pub use library::library;
 pub use render::human_bytes;
 pub use transfer::move_model;
@@ -398,13 +400,13 @@ impl PullSource {
     }
 
     /// The plan, probing a `--repo` source first.
-    fn plan(self, client: &Client, options: &Options) -> Result<InstallPlan, Error> {
+    fn plan(self, client: &Client, options: &Options) -> Result<Planned, Error> {
         match self {
             Self::Row(_) if options.quantize.is_some() => Err(Error::Usage(
                 "--quantize applies to a --repo pull; a catalog row pins its own quantization"
                     .to_string(),
             )),
-            Self::Row(plan) => Ok(plan),
+            Self::Row(plan) => Ok(Planned::Walk(plan)),
             Self::Repo {
                 alias,
                 weights,
@@ -413,12 +415,44 @@ impl PullSource {
                 let report =
                     catalog::probe(client, &weights, options.file.as_deref(), Some(&sidecars))
                         .map_err(Error::Failed)?;
+                // An Inkling 2 GGUF or LookAtMyQuant release is downloaded
+                // whole, then converted; the HF-checkpoint Inkling (`mlx`
+                // kind) keeps the walk.
+                if report.family == Some(model_io::ModelFamily::Inkling2Loop)
+                    && matches!(report.kind, SourceKind::Gguf | SourceKind::Lamq)
+                {
+                    if options.quantize.is_some() {
+                        return Err(Error::Usage(
+                            "--quantize does not apply to an Inkling GGUF or LookAtMyQuant \
+                             release; it installs as published"
+                                .to_string(),
+                        ));
+                    }
+                    let tokenizer_repo = (sidecars != weights).then_some(&sidecars);
+                    let source = catalog::detect_inkling2_repo(
+                        client,
+                        &weights,
+                        options.file.as_deref(),
+                        tokenizer_repo,
+                    )
+                    .map_err(Error::Failed)?
+                    .ok_or_else(|| {
+                        Error::Failed(format!("{weights}: no longer an Inkling 2 source"))
+                    })?;
+                    return Ok(Planned::Inkling2(source));
+                }
                 let mut plan = InstallPlan::from_probe(&alias, &report, sidecars);
                 plan.quantize_bits = options.quantize;
-                Ok(plan)
+                Ok(Planned::Walk(plan))
             }
         }
     }
+}
+
+/// What a pull does: the streamed walk, or the whole-file Inkling route.
+enum Planned {
+    Walk(InstallPlan),
+    Inkling2(catalog::Inkling2RepoSource),
 }
 
 /// Install a curated row, or any repository the probe accepts.
@@ -432,7 +466,13 @@ pub fn pull(
     let source = pull_source(catalog, positionals, options)?;
     // Before the probe, a `--repo` pull's first network request (10.4).
     let destination = text_destination(store, InstallKind::Text, source.alias(), options)?;
-    let mut plan = source.plan(client, options)?;
+    let alias = source.alias().to_string();
+    let mut plan = match source.plan(client, options)? {
+        Planned::Walk(plan) => plan,
+        Planned::Inkling2(inkling) => {
+            return inkling2_local::pull_repo(store, client, &inkling, &alias, destination);
+        }
+    };
     if let Some(alias) = &options.reuse_trunk_from {
         plan.reuse_trunk_from = Some(resolve_reuse_trunk_from(store, &plan, alias)?);
     }

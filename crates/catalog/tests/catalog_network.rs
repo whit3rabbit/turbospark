@@ -109,6 +109,7 @@ fn every_row_still_names_files_that_exist_at_the_size_it_records() {
                 .filter(|f| f.ends_with(".safetensors"))
                 .filter_map(|f| client.content_length(&weights.file_url(f)).ok().flatten())
                 .sum(),
+            SourceKind::Lamq => unreachable!("never a catalog row's kind"),
         };
         // **A VISION-TOWER ROW'S `download_bytes` IS NOT COMPARABLE TO THE
         // WHOLE-REPO SHARD SUM ABOVE.** A tower row's weights repository is

@@ -61,6 +61,15 @@ pub fn probe(
     let ggufs: Vec<&String> = files.iter().filter(|f| f.ends_with(".gguf")).collect();
     let has_safetensors = files.iter().any(|f| f.ends_with(".safetensors"));
 
+    // A LookAtMyQuant Inkling release (a `manifest.json` and no GGUF) has no
+    // streamed walk; it is answered by the whole-file route's own report.
+    if want_file.is_none() && ggufs.is_empty() && files.iter().any(|f| f == "manifest.json") {
+        if let Some(source) = crate::inkling2_repo::detect_inkling2_repo(client, repo, None, None)?
+        {
+            return Ok(crate::inkling2_repo::probe_report(&source));
+        }
+    }
+
     // A repository can hold both; the explicit file wins, then GGUF, because
     // a repo publishing GGUF is publishing it as the artifact.
     let mut report = if let Some(name) = want_file {
@@ -90,6 +99,19 @@ pub fn probe(
              here this port could install."
         ));
     };
+
+    // An Inkling 2 GGUF installs through the whole-file route, which reads
+    // the file end to end; its own report replaces the architecture refusal.
+    if report.kind == crate::SourceKind::Gguf
+        && crate::inkling2_repo::is_inkling2_gguf_arch(report.architecture.as_deref())
+    {
+        let file = report.file.clone();
+        if let Some(source) =
+            crate::inkling2_repo::detect_inkling2_repo(client, repo, file.as_deref(), sidecar_repo)?
+        {
+            return Ok(crate::inkling2_repo::probe_report(&source));
+        }
+    }
 
     // Sidecars come from a different repository for every GGUF row, because
     // a GGUF carries llama.cpp's tokenizer representation rather than an HF

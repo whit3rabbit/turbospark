@@ -845,6 +845,73 @@ unsafe fn run_install_repo(
     strings::emit(&json, result_json).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
 }
 
+/// Installs Inkling 2 Mini from a local LookAtMyQuant release directory or an
+/// Inkling 2 GGUF at `path` as `alias`. `tokenizer_from` (nullable) names a
+/// directory holding the tokenizer files, required for a GGUF. `options_json`
+/// picks the library as for [`ts_install_repo_with_options`]. Progress
+/// arrives as `TS_INSTALL_STAGE` lines; the result is the recorded row.
+#[no_mangle]
+pub unsafe extern "C" fn ts_install_local_with_options(
+    path: *const c_char,
+    alias: *const c_char,
+    tokenizer_from: *const c_char,
+    options_json: *const c_char,
+    cb: TsInstallCallback,
+    userdata: *mut c_void,
+    result_json: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        if result_json.is_null() {
+            return Err((
+                abi::TS_ERR_INVALID_ARGUMENT,
+                "resultJson must not be null".to_string(),
+            ));
+        }
+        let path =
+            strings::required(path, "path").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let alias =
+            strings::required(alias, "alias").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let tokenizer_from = strings::optional(tokenizer_from, "tokenizerFrom")
+            .map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        refuse_while_moving()?;
+        let library = destination(options_json)?;
+        let json = models::install_local(path, alias, tokenizer_from, library.as_deref(), |line| {
+            if let Some(f) = cb {
+                unsafe {
+                    f(
+                        userdata,
+                        TS_INSTALL_STAGE,
+                        line.as_ptr() as *const c_char,
+                        line.len(),
+                        0,
+                        0,
+                    )
+                };
+            }
+        })
+        .map_err(install_fault)?;
+        strings::emit(&json, result_json).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
+/// Whether `path` is a local Inkling 2 source `ts_install_local_with_options`
+/// takes, as JSON: `{"kind": "lamq" | "gguf" | null, "family":
+/// "inkling2_loop" | null, "needsTokenizer": bool}`. Reads only a manifest or
+/// a GGUF header. An unreadable path is an error; any other file is kind null.
+#[no_mangle]
+pub unsafe extern "C" fn ts_local_install_kind_json(
+    path: *const c_char,
+    out: *mut *mut c_char,
+) -> c_int {
+    guard_result(|| {
+        let path =
+            strings::required(path, "path").map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        let json =
+            models::local_install_kind_json(path).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))?;
+        strings::emit(&json, out).map_err(|e| (abi::TS_ERR_INVALID_ARGUMENT, e))
+    })
+}
+
 /// Signals every in-flight install walk (`ts_install`, `ts_install_repo`)
 /// to stop. Returns 1 when at least one walk was running and has been
 /// signalled, 0 when nothing was running.

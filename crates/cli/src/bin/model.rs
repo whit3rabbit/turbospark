@@ -52,6 +52,11 @@ COMMANDS:
     pull-drama3 --out <DIR> --accept-fish-license
                                 install Fish Audio Drama 3 (44.1 kHz speech)
                                 from its pinned MLX conversion, about 22 GiB
+    pull-local <PATH> --alias NAME [--tokenizer-from DIR]
+                                install Inkling 2 Mini from a local
+                                LookAtMyQuant release directory or an Inkling
+                                2 GGUF (a GGUF needs --tokenizer-from, a
+                                directory holding its tokenizer.json)
     pull-vision <ALIAS>         install a curated vision-tower sidecar
     pull-vision --repo <REPO>[@REV] --alias <NAME>
                                 install any repo's vision tower directly,
@@ -140,6 +145,7 @@ OPTIONS:
                                 for `pull-audio`; `list-audio` shows the ids)
     --accept-fish-license       accept the Fish Audio Community License
                                 (for `pull-drama3`; the terms print first)
+    --tokenizer-from <DIR>      tokenizer files for a GGUF (for `pull-local`)
     --force                     install past a probe refusal
     --yes                       do not prompt before deleting or removing
     --help                      print this text
@@ -218,6 +224,9 @@ pub struct Options {
     pub kind: Option<String>,
     pub file: Option<String>,
     pub sidecar_repo: Option<String>,
+    /// `--tokenizer-from <DIR>`: where `pull-local` copies a GGUF's tokenizer
+    /// files from (a GGUF carries no tokenizer.json).
+    pub tokenizer_from: Option<String>,
     /// `--quantize <2|4|8>`: quantize-on-install width for a `--repo` pull.
     pub quantize: Option<u32>,
     /// An already-installed alias to reuse the trunk's resident bytes from,
@@ -367,6 +376,10 @@ fn run(args: &[String]) -> Result<(), Error> {
             }
             model_cmd::pull_drama3(&client, &options)
         }
+        "pull-local" => {
+            options.reject_unused(&["out", "library", "alias", "tokenizer-from"])?;
+            model_cmd::pull_local(&store, &positionals, &options)
+        }
         "pull-vision" => {
             options.reject_unused(&["out", "library", "alias", "file", "force"])?;
             model_cmd::pull_vision(&catalog, &store, &client, &positionals, &options)
@@ -503,6 +516,10 @@ fn parse(args: &[String]) -> Result<(Vec<String>, Options), Error> {
             "--sidecar-repo" => {
                 options.sidecar_repo = Some(value_for(&mut index, "--sidecar-repo")?);
                 seen.push("sidecar-repo");
+            }
+            "--tokenizer-from" => {
+                options.tokenizer_from = Some(value_for(&mut index, "--tokenizer-from")?);
+                seen.push("tokenizer-from");
             }
             "--quantize" => {
                 let value = value_for(&mut index, "--quantize")?;

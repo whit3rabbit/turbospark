@@ -396,6 +396,23 @@ public struct InstallCost: Decodable, Sendable, Equatable {
 }
 
 /// One install-progress event.
+/// What `TurboSparkCatalog.localInstallKind(path:)` answers: the local
+/// intake a file or folder takes. `kind` is `lamq` (a LookAtMyQuant release
+/// folder) or `gguf`, nil for anything else.
+public struct LocalInstallKind: Decodable, Sendable, Equatable {
+    public let kind: String?
+    public let family: String?
+    /// True for a GGUF, which carries no tokenizer: the install needs a
+    /// `tokenizerFrom` folder.
+    public let needsTokenizer: Bool
+
+    public init(kind: String?, family: String?, needsTokenizer: Bool) {
+        self.kind = kind
+        self.family = family
+        self.needsTokenizer = needsTokenizer
+    }
+}
+
 public enum InstallEvent: Sendable, Equatable {
     case stage(String)
     case bytes(done: UInt64, total: UInt64)
@@ -955,6 +972,59 @@ public enum TurboSparkCatalog {
             thread.name = "com.turbospark.install"
             thread.start()
         }
+    }
+
+    /// Installs Inkling 2 Mini from files on disk as `alias`: a
+    /// LookAtMyQuant packed release folder or an Inkling 2 GGUF.
+    /// `tokenizerFrom` is a folder holding `tokenizer.json` and the chat
+    /// files; a GGUF carries none, so it is required for one (check with
+    /// `localInstallKind(path:)`). Progress arrives as `.stage` lines. The
+    /// install is read back before it is recorded, and a failure leaves
+    /// nothing behind. `cancelInstall()` does not stop it: the intake reads
+    /// local files and has no ranged walk to interrupt.
+    public static func install(
+        localPath: String,
+        alias: String,
+        tokenizerFrom: String? = nil,
+        library: String? = nil
+    ) -> AsyncThrowingStream<InstallEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let thread = Thread {
+                let box = InstallBox(continuation)
+                let userdata = Unmanaged.passRetained(box).toOpaque()
+                defer { Unmanaged<InstallBox>.fromOpaque(userdata).release() }
+                do {
+                    let options = try installDestinationOptions(library: library)
+                    let json = try takeString { out in
+                        localPath.withCString { p in
+                            alias.withCString { a in
+                                withOptionalCString(tokenizerFrom) { t in
+                                    withOptionalCString(options) { o in
+                                        ts_install_local_with_options(
+                                            p, a, t, o, installCallback, userdata, out)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    continuation.yield(.finished(try decode(InstalledModel.self, from: json)))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            thread.name = "com.turbospark.install"
+            thread.start()
+        }
+    }
+
+    /// Which local intake `path` takes, if any. Reads only a manifest.json
+    /// or a GGUF header, so it is cheap enough for a file picker's answer.
+    public static func localInstallKind(path: String) throws -> LocalInstallKind {
+        let raw = try takeString { out in
+            path.withCString { p in ts_local_install_kind_json(p, out) }
+        }
+        return try decode(LocalInstallKind.self, from: raw)
     }
 
     /// The options JSON of an install entry point for a destination:

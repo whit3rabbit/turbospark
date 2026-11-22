@@ -344,6 +344,33 @@ pub(crate) fn install_repo(
             Verdict::Runnable => unreachable!(),
         }));
     }
+    // An Inkling 2 GGUF or LookAtMyQuant release has no streamed walk: it is
+    // downloaded whole, then converted (`catalog::install_inkling2_repo`).
+    // The probe already said which; the HF-checkpoint Inkling (`mlx` kind)
+    // keeps the walk.
+    if report.family == Some(model_io::ModelFamily::Inkling2Loop)
+        && matches!(
+            report.kind,
+            catalog::SourceKind::Gguf | catalog::SourceKind::Lamq
+        )
+    {
+        let tokenizer_repo = sidecar_repo.map(|_| &sidecars);
+        let source = catalog::detect_inkling2_repo(&client, &weights, file, tokenizer_repo)
+            .map_err(StoreError::Io)?
+            .ok_or_else(|| StoreError::Io(format!("{weights}: no longer an Inkling 2 source")))?;
+        let installed = catalog::install_inkling2_repo(
+            &source,
+            alias,
+            &target,
+            &client,
+            |line| on_stage(line),
+            &mut |n| on_bytes(n),
+            Some(&cancel),
+            &store,
+            &env,
+        )?;
+        return result_json(&installed.model, &target);
+    }
     let plan = InstallPlan::from_probe(alias, &report, sidecars);
     if target.dir.join("manifest.json").is_file() {
         return Err(StoreError::Io(format!(
@@ -366,6 +393,65 @@ pub(crate) fn install_repo(
         &env,
     )?;
     result_json(&installed.model, &target)
+}
+
+/// Installs Inkling 2 Mini from files on disk (a LookAtMyQuant release
+/// directory or an Inkling 2 GGUF) through `catalog::install_inkling2_local`,
+/// the step the CLI's `pull-local` runs. `tokenizer_from` is required for a
+/// GGUF, which carries no tokenizer.json. It reads local files only and is
+/// not cancellable.
+pub(crate) fn install_local(
+    path: &str,
+    alias: &str,
+    tokenizer_from: Option<&str>,
+    library: Option<&str>,
+    mut on_stage: impl FnMut(&str),
+) -> Result<String, StoreError> {
+    let _active = ActiveInstall::register();
+    let source_path = std::path::Path::new(path);
+    let source = catalog::detect_inkling2_local(source_path)
+        .map_err(StoreError::Io)?
+        .ok_or_else(|| {
+            StoreError::Io(format!(
+                "{path} is neither a LookAtMyQuant Inkling release directory nor an Inkling 2 GGUF"
+            ))
+        })?;
+    let store = Store::default_store().map_err(StoreError::Io)?;
+    let env = LocationEnv::system(store.root()).map_err(StoreError::Io)?;
+    let target = catalog::install_destination(&store, library, InstallKind::Text, alias, &env)?;
+    let available = model_io::available_bytes(target.dir.parent().unwrap_or(&target.dir))
+        .map_err(StoreError::Io)?;
+    let origin = source_path
+        .canonicalize()
+        .unwrap_or_else(|_| source_path.to_path_buf())
+        .display()
+        .to_string();
+    let installed = catalog::install_inkling2_local(
+        &source,
+        alias,
+        &target,
+        tokenizer_from.map(std::path::Path::new),
+        &format!("local:{origin}"),
+        "local",
+        available,
+        |line| on_stage(line),
+        &store,
+        &env,
+    )?;
+    result_json(&installed.model, &target)
+}
+
+/// What `ts_local_install_kind_json` answers for `path`: which Inkling local
+/// intake it takes, if any, and whether it needs a tokenizer directory.
+pub(crate) fn local_install_kind_json(path: &str) -> Result<String, String> {
+    let source = catalog::detect_inkling2_local(std::path::Path::new(path))?;
+    let kind = source.as_ref().map(|s| s.kind());
+    Ok(serde_json::json!({
+        "kind": kind,
+        "family": source.as_ref().map(|_| model_io::ModelFamily::Inkling2Loop.as_str()),
+        "needsTokenizer": matches!(source, Some(catalog::Inkling2LocalSource::Gguf(_))),
+    })
+    .to_string())
 }
 
 /// The answer of a text install: the row recorded, with the library keys.

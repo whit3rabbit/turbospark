@@ -159,7 +159,8 @@ pub use inkling2_checkpoint::{
     INKLING2_OUTER_RECORD_BYTES, INKLING2_TOKENIZER_FILES,
 };
 pub use inkling2_gguf::{
-    inkling2_gguf_manifest_quant, write_inkling2_gguf_install, Inkling2GgufReport,
+    inkling2_gguf_architecture, inkling2_gguf_manifest_quant, write_inkling2_gguf_install,
+    Inkling2GgufReport,
 };
 pub use inkling2_gguf_names::{
     gguf_to_hf as inkling2_gguf_to_hf, GgufTransform as Inkling2GgufTransform,
