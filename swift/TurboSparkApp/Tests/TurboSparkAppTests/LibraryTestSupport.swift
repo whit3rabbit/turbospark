@@ -126,7 +126,7 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
 
     /// One install as the engine would have seen it.
     struct InstallCall: Equatable {
-        enum Kind: Equatable { case text, repo, image, audio }
+        enum Kind: Equatable { case text, repo, local, image, audio }
         let kind: Kind
         let alias: String
         /// The `library:` argument, exactly as the app passed it.
@@ -399,6 +399,20 @@ final class FakeModelLibraryService: ModelLibraryService, @unchecked Sendable {
             onMainThread: Thread.isMainThread)
         guard let script = recordInstall(call).textInstallScript else {
             return AsyncThrowingStream { $0.finish(throwing: FakeServiceError.unscripted("installRepo")) }
+        }
+        return script(call)
+    }
+
+    /// `repo` records the local path, so a test can assert which files the
+    /// app handed the engine.
+    func installLocal(
+        path: String, alias: String, tokenizerFrom: String?, library: String?
+    ) -> AsyncThrowingStream<InstallEvent, Error> {
+        let call = InstallCall(
+            kind: .local, alias: alias, library: library, repo: path, acknowledged: [],
+            onMainThread: Thread.isMainThread)
+        guard let script = recordInstall(call).textInstallScript else {
+            return AsyncThrowingStream { $0.finish(throwing: FakeServiceError.unscripted("installLocal")) }
         }
         return script(call)
     }

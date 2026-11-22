@@ -82,6 +82,12 @@ protocol ModelLibraryService: Sendable {
 
     func installImage(alias: String, library: String?) -> AsyncThrowingStream<ImageInstallEvent, Error>
 
+    /// Inkling 2 Mini from a LookAtMyQuant release folder or an Inkling 2
+    /// GGUF on disk. `tokenizerFrom` is required for a GGUF.
+    func installLocal(
+        path: String, alias: String, tokenizerFrom: String?, library: String?
+    ) -> AsyncThrowingStream<InstallEvent, Error>
+
     /// Blocking transfer; call off the main actor.
     func installAudio(
         _ identity: AudioProfileIdentity, acknowledged: [String], library: String?,
@@ -160,6 +166,13 @@ struct LiveModelLibraryService: ModelLibraryService {
 
     func installImage(alias: String, library: String?) -> AsyncThrowingStream<ImageInstallEvent, Error> {
         TurboSparkCatalog.installImage(alias, library: library)
+    }
+
+    func installLocal(
+        path: String, alias: String, tokenizerFrom: String?, library: String?
+    ) -> AsyncThrowingStream<InstallEvent, Error> {
+        TurboSparkCatalog.install(
+            localPath: path, alias: alias, tokenizerFrom: tokenizerFrom, library: library)
     }
 
     func installAudio(

@@ -113,6 +113,9 @@ extension AppModel {
             startAudioModelInstall(identity: identity, library: library)
         case .embedding(let alias, let revision):
             startEmbeddingModelInstall(alias: alias, revision: revision)
+        case .localFiles(let path, let alias, let tokenizerFrom):
+            startLocalModelInstall(
+                path: path, alias: alias, tokenizerFrom: tokenizerFrom, library: library)
         }
     }
 
@@ -339,7 +342,7 @@ extension AppModel {
     /// session that may have the weights mapped.
     func isModelAlreadyInstalled(_ request: ModelDownload.Request) -> Bool {
         switch request {
-        case .catalog(let alias), .repository(_, let alias, _, _):
+        case .catalog(let alias), .repository(_, let alias, _, _), .localFiles(_, let alias, _):
             return installed.contains { $0.alias == alias }
         case .image(let alias):
             return imageModels.contains { $0.alias == alias }
@@ -367,6 +370,8 @@ extension AppModel {
             enqueueModelDownload(.audio(identity: identity), library: library)
         case .embedding(let alias, let revision):
             enqueueModelDownload(.embedding(alias: alias, revision: revision))
+        case .localFiles(let path, let alias, let tokenizerFrom):
+            installLocalFiles(path: path, alias: alias, tokenizerFrom: tokenizerFrom, library: library)
         }
     }
 
