@@ -487,6 +487,23 @@ The intake must check every offset bound and every sha256.
     (`lamq-kernels-gs`). The table re-staging is not what limits the GEMV.
     The dispatch profile after this step (rank only): `lamq_gemv` 22%,
     phase 1 17% (was 25%), the two rotation kernels 15%, phase 2 10%.
+    Also tried and NOT kept: the Sylvester stages h < 32 of both rotation
+    kernels with `simd_shuffle_xor` (step 9's form) instead of one
+    threadgroup barrier per stage, same stages and operands, so 48-token
+    logits `cmp`-equal to step 13 (a flipped butterfly sign fails the
+    rotation parity test). Median 29.50 -> 29.70 tok/s, under the 2% floor
+    (`lamq-kernels-shuf`, 3 of 12 runs clean, spotlightknowledged busy).
+    Dispatch profile: `lamq_rht` 2.20 -> 2.06 ms/token, `lamq_rht_in_batch`
+    1.67 -> 1.50. The barriers are not the rotation's cost; the likely one
+    is the 72-tap dense factor with each vector on one threadgroup (one
+    core), so the next lever is splitting a vector across threadgroups or
+    fusing the rotation into the kernel that produces its input. Other
+    barrier-per-stage butterflies the same rewrite would apply to (not
+    measured): `hadamard_butterfly` (hadamard.metal), the TurboQuant KV
+    transforms (attention_tq.metal, kv_quantize_tq.metal), and the norm
+    tree reduction in mla.metal (`simd_sum` there reorders the sum, so not
+    bit-identical). Price each with a dispatch profile first: a kernel that
+    is not barrier-bound gains as little as this one.
 14. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
    on the same kernels, each with its own family quality gate.
 
