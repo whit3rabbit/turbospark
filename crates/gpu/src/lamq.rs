@@ -17,16 +17,22 @@ const SOURCE: &str = include_str!("shaders/lamq.metal");
 
 /// Widest vector `lamq_rht` holds (`kLamqMaxN`).
 pub const LAMQ_MAX_N: usize = 3072;
+/// Largest dense factor the rotation stages in threadgroup memory.
+pub const LAMQ_MAX_NB: usize = 72;
 /// Largest table the GEMV stages (`kLamqMaxTable`).
 pub const LAMQ_MAX_TABLE: usize = 4096;
-const ROWS_PER_TG: u64 = 8;
+/// Rows per GEMV threadgroup, one simdgroup each. Every threadgroup stages the
+/// whole lookup table (up to 4096 entries) first; at 8 rows a 1-bit `rtr1`
+/// row set read about 3x more table than codes. Must equal the shader's
+/// `kLamqRowsPerTG`, and the threadgroup is `ROWS_PER_TG * 32` threads.
+const ROWS_PER_TG: u64 = 32;
 
 fn invalid(msg: String) -> GpuError {
     GpuError::InvalidInput(msg)
 }
 
 /// One width's Hadamard factors, uploaded: the Sylvester size (applied as an
-/// FWHT) and the dense factor `B` as f32.
+/// FWHT) and the dense factor `B` as int8 (+1/-1).
 pub struct LamqRhtFactor {
     pub n: u32,
     pub na: u32,
@@ -45,7 +51,23 @@ impl LamqRhtFactor {
         }
         let rht = Rht::new(n).ok_or_else(|| invalid(format!("LAMQ width {n} has no Hadamard")))?;
         let (na, _, nb, b) = rht.factors();
-        let bytes: Vec<u8> = b.iter().flat_map(|&v| (v as f32).to_le_bytes()).collect();
+        if nb > LAMQ_MAX_NB {
+            return Err(invalid(format!(
+                "LAMQ width {n}: dense factor {nb} is wider than {LAMQ_MAX_NB}"
+            )));
+        }
+        // The kernel stages B as int8: refuse a factor that is not exactly
+        // +1/-1 rather than truncate it.
+        let bytes = b
+            .iter()
+            .map(|&v| match v {
+                1.0 => Ok(1i8 as u8),
+                -1.0 => Ok((-1i8) as u8),
+                other => Err(invalid(format!(
+                    "LAMQ width {n}: dense factor entry {other} is not +1/-1"
+                ))),
+            })
+            .collect::<Result<Vec<u8>, _>>()?;
         Ok(Self {
             n: n as u32,
             na: na as u32,
@@ -105,7 +127,9 @@ pub fn encode_lamq_rht(
         ],
         &[(&params, 4)],
         u64::from(count),
-        256,
+        // One threadgroup holds the whole vector, so a decode rotation runs on
+        // one core: give it the most threads a threadgroup takes.
+        1024,
     );
     Ok(())
 }
@@ -223,7 +247,7 @@ pub fn encode_lamq_gemv(
         ],
         &[(&params, 5)],
         u64::from(m.rows).div_ceil(ROWS_PER_TG),
-        256,
+        ROWS_PER_TG * 32,
     );
     Ok(())
 }

@@ -3,9 +3,8 @@
 //! contract is `turbospark_compute::lamq` plus `inkling2::situ`, held by
 //! `tests/moe_inkling2_lamq_parity.rs`.
 //!
-//! Same dispatch shapes and slot binding as [`crate::moe_inkling2`] (8 rows
-//! per 256-thread threadgroup in phase 1, one threadgroup per output row in
-//! phase 2, `RoutedBlobs` or a resident layer with a `sel` list). The
+//! Same slot binding as [`crate::moe_inkling2`] (32 rows per 1024-thread
+//! threadgroup in phase 1, one threadgroup per output row in phase 2, `RoutedBlobs` or a resident layer with a `sel` list). The
 //! differences: each expert's code comes from its blob's format record, the
 //! input and the activations are already rotated F32 vectors (`lamq_rht`
 //! dispatches around this pair), and every trellis LUT is bound in one pack.
@@ -21,8 +20,13 @@ const SOURCE: &str = concat!(
     include_str!("shaders/lamq.metal"),
     include_str!("shaders/moe_inkling2_lamq.metal")
 );
-const ROWS_PER_THREADGROUP: u64 = 8;
-const THREADS_PER_GROUP: u64 = 256;
+/// Phase 1 rows per threadgroup, one simdgroup each (= the shader's
+/// `kLamqExpRowsPerTG`). A threadgroup whose rows are all one expert stages
+/// that expert's table once instead of gathering it from device memory.
+const ROWS_PER_THREADGROUP: u64 = 32;
+const PHASE1_THREADS: u64 = ROWS_PER_THREADGROUP * 32;
+/// Phase 2: one simdgroup per slot.
+const PHASE2_THREADS: u64 = 256;
 
 /// The most routed slots phase 2 reduces.
 pub const INKLING2_LAMQ_MAX_SLOTS: usize = 8;
@@ -154,6 +158,7 @@ fn dispatch(
     buffers: &[(&metal::Buffer, u64, u64)],
     bytes: &[(&[u8], u64)],
     groups: u64,
+    threads: u64,
 ) -> Result<(), GpuError> {
     let kernel = match experts {
         LamqExperts::Streamed(_) => streamed_kernel,
@@ -178,7 +183,7 @@ fn dispatch(
             by.push((u32_bytes(&l.n_experts), 10));
         }
     }
-    pass.encode_threadgroups(&p, &b, &by, groups, THREADS_PER_GROUP);
+    pass.encode_threadgroups(&p, &b, &by, groups, threads);
     Ok(())
 }
 
@@ -224,6 +229,7 @@ pub fn encode_inkling2_lamq_phase1(
             (&caps, 7),
         ],
         rows.div_ceil(ROWS_PER_THREADGROUP),
+        PHASE1_THREADS,
     )
 }
 
@@ -264,5 +270,6 @@ pub fn encode_inkling2_lamq_phase2(
             (u32_bytes(&top_k), 7),
         ],
         u64::from(d_dim),
+        PHASE2_THREADS,
     )
 }

@@ -22,6 +22,10 @@ using namespace metal;
 // Widest vector the transform holds in threadgroup memory (the Inkling q and
 // gate outputs). The host refuses anything larger.
 constant constexpr uint kLamqMaxN = 3072;
+// Largest dense factor (Paley-I of order 72, for 2304 and 1152). Its entries
+// are exactly +1/-1, so it is staged as int8: 5 KB beside the two 12 KB
+// vectors, inside the 32 KB threadgroup limit. The host refuses larger.
+constant constexpr uint kLamqMaxNb = 72;
 
 struct LamqRhtParams {
     uint n;
@@ -41,7 +45,7 @@ constant bool kRhtOutHalf [[function_constant(121)]];
 kernel void lamq_rht(
     device const void*      x_raw  [[buffer(0)]],
     device const char*      signs  [[buffer(1)]],
-    device const float*     B      [[buffer(2)]],
+    device const char*      Bdev   [[buffer(2)]],
     device void*            y_raw  [[buffer(3)]],
     constant LamqRhtParams& p      [[buffer(4)]],
     uint                    v      [[threadgroup_position_in_grid]],
@@ -50,8 +54,13 @@ kernel void lamq_rht(
 ) {
     threadgroup float a[kLamqMaxN];
     threadgroup float t[kLamqMaxN];
+    threadgroup char B[kLamqMaxNb * kLamqMaxNb];
     const uint n = p.n, na = p.na, nb = p.nb;
     const ulong base = ulong(v) * n;
+    // Staged once per vector rather than read from device memory nb times per
+    // element. float(+1/-1) is exact, so every product and sum is the same
+    // f32 value as with the f32 factor this replaced.
+    for (uint i = tid; i < nb * nb; i += nt) B[i] = Bdev[i];
     for (uint i = tid; i < n; i += nt) {
         float xi = kRhtInHalf ? float(((device const half*)x_raw)[base + i])
                               : ((device const float*)x_raw)[base + i];
@@ -64,9 +73,9 @@ kernel void lamq_rht(
         const uint pp = idx / nb, j = idx % nb;
         float s = 0.0f;
         if (p.dir == 0u) {
-            for (uint q = 0; q < nb; ++q) s += a[pp * nb + q] * B[j * nb + q];
+            for (uint q = 0; q < nb; ++q) s += a[pp * nb + q] * float(B[j * nb + q]);
         } else {
-            for (uint q = 0; q < nb; ++q) s += a[pp * nb + q] * B[q * nb + j];
+            for (uint q = 0; q < nb; ++q) s += a[pp * nb + q] * float(B[q * nb + j]);
         }
         t[idx] = s;
     }
@@ -95,7 +104,7 @@ kernel void lamq_rht(
 
 // ----------------------------------------------------------------------------
 // GEMV: y[r] = scale[r] * sum_j W~[r, j] * x[j], x already rotated (f32).
-// One simdgroup per row, eight rows per threadgroup; the table is staged in
+// One simdgroup per row, 32 rows per threadgroup; the table is staged in
 // threadgroup memory before the row bound is checked, so every thread meets
 // the barrier.
 // ----------------------------------------------------------------------------
@@ -114,7 +123,7 @@ constant bool kOutHalf [[function_constant(125)]];
 constant uint kLm     [[function_constant(126)]]; // 0 = trellis, 6 or 8 = levels
 
 constant constexpr uint kLamqMaxTable = 4096;
-constant constexpr uint kLamqRowsPerTG = 8;
+constant constexpr uint kLamqRowsPerTG = 32; // = ROWS_PER_TG in lamq.rs
 
 static inline uint lamq_window(device const uint* w, uint words, uint bp) {
     const uint wi = bp >> 5, off = bp & 31u;

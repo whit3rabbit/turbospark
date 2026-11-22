@@ -365,7 +365,27 @@ The intake must check every offset bound and every sha256.
    (mostly download), removed its download folder, and wrote every file
    except `manifest.json` byte-identical to the install converted earlier
    from the same files; it answers the same prompt correctly.
-8. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
+8. DONE (2026-11-21): first decode tuning, output bit-identical (48-token
+   logits `cmp`-equal before and after; parity suites pass). The dispatch
+   profile (`TURBOSPARK_DISPATCH_PROFILE=1`, rank only) put `lamq_rht` first
+   at 34.5% of LAMQ decode: one threadgroup per vector, so a decode
+   rotation runs on one core, and its dense loop re-read the 72x72 factor
+   from device memory per element. Changes: the factor (exactly +1/-1) is
+   staged as int8 in threadgroup memory and the rotation runs 1024
+   threads; the coded GEMV takes 32 rows per threadgroup (each threadgroup
+   stages the whole table, up to 4096 entries); expert phase 1 stages its
+   expert's gate-up table when all 32 of a threadgroup's rows share it.
+   tslab `profile`, experiment `lamq-kernels-ab2`, old and new worker
+   builds interleaved, 5.4 GB install, `protocol:short-explanation`, 128
+   decode tokens, resident experts: old 14.70 to 15.08 tok/s, new 16.06 to
+   18.15 (medians 14.91 and 17.95), every new run above every old run. ALL
+   12 RUNS ARE DIRTY (a foreign Python job and mediaanalysisd over 90% CPU):
+   a direction, not a quotable number. Tried and reverted: a
+   lane-contiguous trellis loop with a sliding 64-bit code register (loses
+   coalescing; read slower, also under noise). Next levers, not tried:
+   batching the per-matrix rotations into one dispatch, and a multi-weight
+   inner loop that keeps lanes coalesced.
+9. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
    on the same kernels, each with its own family quality gate.
 
 No catalog row, and no change to any family's defaults, without its gate.
