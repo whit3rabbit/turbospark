@@ -322,6 +322,14 @@ staging files changed.
   Rust audio catalog. A family runs only once `FluidAudioFamily.hasAdapter`
   is true for it. Check a model's inputs before handing it to FluidAudio:
   a mismatch is a `preconditionFailure` that ends the app, not an error.
+- Apple Speech (built-in) is the zero-download final-pass engine, macOS 26+
+  only (`Audio/AppleSpeech/`, `AudioRuntimeProvider.appleSpeech`). Only
+  `AppleSpeechTranscriber.swift` imports Speech. Never add `SFSpeechRecognizer`
+  as a fallback: it needs a speech-recognition grant and can send audio to
+  Apple's servers. The language-model download goes through
+  `AssetInventory`, only inside a run the user started. Its row has an empty
+  repository and counts as installed (`isInstalled`, `installStatus`), so an
+  installed catalog model still outranks it.
 - Keep source files modular and focused (aiming under 800 lines). Break out
   multi-view SwiftUI files into individual view components
   (`Generation/MessageRowView.swift`, `ActiveStreamingRowView.swift`). Delegate

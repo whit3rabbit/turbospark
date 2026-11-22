@@ -107,7 +107,17 @@ its text is saved into one draft revision that each save replaces. Otherwise, or
 if the stream stops, live text is a draft assembled from bounded windows every
 15 seconds. A voice reference recording has no live text. Final refinement reads
 the saved recording with the selected batch model; a fresh install prefers
-Parakeet Ultra, then Redux, then Whisper Base, and a saved choice always wins. User transcript edits remain preferred when a newer model
+Parakeet Ultra, then Redux, then Whisper Base, and a saved choice always wins.
+With none of them installed on macOS 26 or newer, the final pass uses Apple
+Speech (built-in), `SpeechAnalyzer` with `SpeechTranscriber`
+(`Audio/AppleSpeech/`). It needs no TurboSpark download: macOS fetches and
+stores the language model itself, on the first run the user starts. It runs on
+this Mac, asks for no privacy grant beyond the recording grants, and gives word
+times from `audioTimeRange`. It is final-pass only (no live text, so drafts
+still need a catalog model), and its accuracy has not been measured against
+this repo's WER gates, so the picker marks it experimental. Older macOS gets no
+row: `SFSpeechRecognizer` is not a fallback, because it needs a separate
+speech-recognition grant and can send audio to Apple's servers. User transcript edits remain preferred when a newer model
 revision arrives. Whisper window timing and Qwen whole-clip timing are approximate
 extents, not forced alignment. Subtitles exclude segments with no usable timing.
 Speaker and word metadata appear only when a model supplies them.

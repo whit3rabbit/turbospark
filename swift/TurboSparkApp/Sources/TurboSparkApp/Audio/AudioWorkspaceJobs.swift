@@ -215,6 +215,12 @@ extension AudioWorkspaceController {
                     try await self.completeFinalTranscription(item: selected, into: result.id, transcription: transcription, token: token)
                     return
                 }
+                if provider == .appleSpeech, currentTask == .speechToText {
+                    guard let selected else { throw AudioWorkspaceError.message(AppStrings.localized("Import or select a recording first.")) }
+                    let transcription = try await self.transcribeWithAppleSpeech(item: selected, into: result.id, source: .final, token: token)
+                    try await self.completeFinalTranscription(item: selected, into: result.id, transcription: transcription, token: token)
+                    return
+                }
                 if provider != .rust && provider != .qwenMLX {
                     throw AudioWorkspaceError.message(AppStrings.localized("Runtime unavailable"))
                 }
