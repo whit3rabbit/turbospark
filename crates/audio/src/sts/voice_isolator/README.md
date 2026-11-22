@@ -94,7 +94,7 @@ The app renders `voice-isolator-v1` on the vendored MLX port
 (`swift/TurboSparkApp/Vendor/VoiceIsolatorMLX`, starkdmi/VoiceIsolatorMLX,
 Apache-2.0), not on this crate: it loads the same `denoiser.safetensors`
 and converts it in memory. This crate stays the engine for the CLI, the FFI,
-the realtime file's offline render and the Core ML live step. Against the torch CPU reference above
+the realtime file's offline render and the live fallback. Against the torch CPU reference above
 (`VoiceIsolatorMLXTests.testRealCheckpointMatchesTheTorchReference`,
 `TURBOSPARK_VOICE_ISOLATOR_MODEL`): float32 max abs 2.7e-7, the app's float16
 68.9 dB SNR.
@@ -115,9 +115,9 @@ The stream numbers are the library alone.
 `denoiser_realtime.safetensors` on the MLX port
 (`Audio/VoiceIsolatorMLXLive.swift`): float16, lanes off (`windowFrames: 0`,
 the cache keeps the trained 1200-frame window, as this crate's stream does),
-up to 10 frames per network call. The Rust stream still opens first when the
-Core ML step is installed beside the weights on macOS 15, and again only if
-the MLX load fails. Against this crate's CPU port stream on `real_clip.npy`
+up to 10 frames per network call. It runs first even when the Core ML step
+is installed; only an MLX load failure opens this crate's stream instead, on
+`auto` (the Core ML step when installed on macOS 15, else Metal). Against this crate's CPU port stream on `real_clip.npy`
 (`VoiceIsolatorMLXLiveTests.testRealStreamMatchesTheRustStream`, MLX in
 4096-sample pushes, Rust in 20 ms pushes): float32 max abs 6.5e-7, the app's
 float16 69.1 dB SNR.
@@ -138,7 +138,8 @@ takes per engine interleaved, not benchmark rows:
 At capture packet sizes the Core ML step, fixed at two frames a call, sits
 near real time and runs a quarter of its pushes late, against its 15.8 ms per
 20 ms push above. Its first push on a cold Core ML cache took 4.4 s, which
-ends cleaning for that take (late for over a second). The live text model was
+ends cleaning for that take (late for over a second). These runs are why MLX
+goes first in the app even beside the step. The live text model was
 not installed for these runs, so its contention for the GPU and Neural Engine
 is not in these numbers; the cleaner logs each take's timings on close
 (subsystem `com.turbospark.app`, category `LiveNoiseReduction`).

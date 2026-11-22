@@ -91,12 +91,12 @@ microphone for live text only (`Audio/AudioLiveVoiceCleaner.swift`):
   stops for the rest of the take, live text hears the raw microphone, and
   `AudioLiveText.cleaningStatus` shows one line. A failed open or push does
   the same. Tests: `AudioLiveNoiseReductionTests`.
-- Engine (`Audio/VoiceIsolatorMLXLive.swift`): the Rust `AudioEnhanceStream`
-  on its Core ML step when that step is installed (macOS 15+), else the
-  vendored MLX port, loaded once after the install's bytes verify and kept in
-  its own slot (`liveVoiceIsolator`) so a take never evicts the resident
-  model. Only an MLX load failure opens the Rust stream instead, whose Metal
-  network is not real time. Each take logs its push timings on close
+- Engine (`Audio/VoiceIsolatorMLXLive.swift`): the vendored MLX port, even
+  when the Core ML step is installed (faster at capture packet sizes), loaded
+  once after the install's bytes verify and kept in its own slot
+  (`liveVoiceIsolator`) so a take never evicts the resident model. Only an
+  MLX load failure opens the Rust `AudioEnhanceStream` instead, on its Core
+  ML step when installed (macOS 15+), else Metal, which is not real time. Each take logs its push timings on close
   (category `LiveNoiseReduction`). Tests: `VoiceIsolatorMLXLiveTests`.
 
 ---

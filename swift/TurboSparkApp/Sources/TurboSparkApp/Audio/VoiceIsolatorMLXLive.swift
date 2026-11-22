@@ -10,8 +10,8 @@ import VoiceIsolatorMLX
 /// The Rust stream's fallback network is per-call Metal, about RTF 3 on an
 /// M4 Max, so live text gave up on it within a second. This port pushes
 /// 20 ms in a median 5.8 ms (crates/audio/src/sts/voice_isolator/README.md).
-/// The Rust Core ML step is still taken first when installed (see
-/// `AudioWorkspaceController.liveNoiseEngine`).
+/// It runs first even beside the Rust Core ML step: at capture packet sizes
+/// that step, fixed at two frames a call, measured about 2.6 times slower.
 final class VoiceIsolatorMLXLiveModel: @unchecked Sendable {
     nonisolated static let weightFile = "denoiser_realtime.safetensors"
     /// Most frames computed in one network call. A block never waits for
@@ -87,40 +87,14 @@ final class VoiceIsolatorMLXLiveStream: AudioLiveEnhancing, @unchecked Sendable 
 private let liveIsolatorLog = Logger(subsystem: "com.turbospark.app", category: "VoiceIsolatorMLX")
 
 extension AudioWorkspaceController {
-    /// Which network cleans the microphone for live text.
-    enum LiveNoiseEngine: Equatable {
-        /// The Rust stream on its stateful Core ML step.
-        case coreML
-        /// The vendored MLX port (`VoiceIsolatorMLXLiveModel`).
-        case mlx
-    }
-
-    /// The Core ML step program names the Rust stream looks for beside the
-    /// weights (`crates/runtime/src/voice_isolator_live.rs`).
-    nonisolated static let liveCoreMLPrograms = ["VoiceIsolatorStep.mlmodelc", "VoiceIsolatorStep.mlpackage"]
-
-    /// Core ML when its step is installed and the OS has `MLState` (macOS
-    /// 15), the rule the Rust stream's `auto` uses; otherwise MLX, so the
-    /// per-call Rust Metal network is never the live choice.
-    nonisolated static func liveNoiseEngine(directory: URL,
-                                            osMajor: Int = ProcessInfo.processInfo.operatingSystemVersion.majorVersion,
-                                            fileManager: FileManager = .default) -> LiveNoiseEngine {
-        let hasStep = liveCoreMLPrograms.contains {
-            fileManager.fileExists(atPath: directory.appendingPathComponent($0).path)
-        }
-        return hasStep && osMajor >= 15 ? .coreML : .mlx
-    }
-
-    /// Opens one take's live isolation stream on the install at `path`.
-    /// MLX falls back to the Rust stream only when the MLX step itself
-    /// fails; finding, moving and verification errors propagate, and the
-    /// transcriber turns them into "Background noise reduction is off".
+    /// Opens one take's live isolation stream on the install at `path`:
+    /// MLX first, whether or not the Core ML step is installed. Only an MLX
+    /// step failure opens the Rust stream instead, on `auto` (its Core ML
+    /// step when installed on macOS 15, else Metal). Finding, moving and
+    /// verification errors propagate, and the transcriber turns them into
+    /// "Background noise reduction is off".
     func openLiveCleaner(path: String) async throws -> AudioLiveEnhancing {
-        let directory = URL(fileURLWithPath: path, isDirectory: true)
         let openRust = liveCleanerDependencies.openRust
-        if Self.liveNoiseEngine(directory: directory) == .coreML {
-            return try await Task.detached { try openRust(path) }.value
-        }
         do {
             let model = try await residentLiveVoiceIsolator(path: path)
             do { return try model.openStream() } catch { throw VoiceIsolatorMLXLoadFailure(underlying: error) }

@@ -289,9 +289,10 @@ modules and internal codecs are not presented as runnable jobs.
   ([meeting notes architecture](../swift/docs/SWIFT_AUDIO_MEETING_NOTES.md)).
   The app streams the realtime profile on the vendored MLX port instead of
   the Rust Metal fallback (float16, a median 28 ms per 85 ms capture packet,
-  RTF about 0.33 in the app's pipeline on an M4 Max). The Rust stream opens
-  first when the Core ML step is installed, and again only if the MLX load
-  fails. Every push still reports whether it ran late.
+  RTF about 0.33 in the app's pipeline on an M4 Max), first even when the
+  Core ML step is installed (the step measured RTF about 0.92 there). Only an
+  MLX load failure opens the Rust stream, on its Core ML step when installed,
+  else Metal. Every push still reports whether it ran late.
 - Vocal separation runs the pinned Mel-Band RoFormer vocals profile
   (`mel-roformer-vocals-v1`, portable CPU) from the Clean Up page's
   "Separate stems". The take is read at 44.1 kHz stereo (a mono take is

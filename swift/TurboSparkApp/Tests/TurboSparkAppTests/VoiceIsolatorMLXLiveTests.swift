@@ -7,9 +7,9 @@ import XCTest
 
 @testable import TurboSparkApp
 
-/// Live noise reduction picks its network: the Rust stream's Core ML step
-/// when installed, else the vendored MLX port, and the Rust stream again
-/// only when the MLX step fails (VoiceIsolatorMLXLive.swift).
+/// Live noise reduction streams on the vendored MLX port, and opens the
+/// Rust stream (its Core ML step when installed, else Metal) only when the
+/// MLX step fails (VoiceIsolatorMLXLive.swift).
 @MainActor
 final class VoiceIsolatorMLXLiveTests: XCTestCase {
     private final class StubStream: AudioLiveEnhancing, @unchecked Sendable {
@@ -53,41 +53,20 @@ final class VoiceIsolatorMLXLiveTests: XCTestCase {
 
     // MARK: Selection
 
-    /// Core ML only with its step installed and macOS 15 (`MLState`), the
-    /// Rust stream's own `auto` rule; everything else is MLX, never the
-    /// per-call Rust Metal network.
-    func testCoreMLStepIsTakenFirstOnlyWhenInstalledOnMacOS15() throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        XCTAssertEqual(AudioWorkspaceController.liveNoiseEngine(directory: dir, osMajor: 26), .mlx)
-        for program in AudioWorkspaceController.liveCoreMLPrograms {
-            let path = dir.appendingPathComponent(program)
-            try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
-            XCTAssertEqual(AudioWorkspaceController.liveNoiseEngine(directory: dir, osMajor: 15), .coreML, program)
-            XCTAssertEqual(AudioWorkspaceController.liveNoiseEngine(directory: dir, osMajor: 14), .mlx, program)
-            try FileManager.default.removeItem(at: path)
-        }
-        // The program names must stay the ones the Rust stream looks for.
-        let rust = try String(contentsOfFile: #filePath.replacingOccurrences(
-            of: "swift/TurboSparkApp/Tests/TurboSparkAppTests/VoiceIsolatorMLXLiveTests.swift",
-            with: "crates/runtime/src/voice_isolator_live.rs"), encoding: .utf8)
-        for program in AudioWorkspaceController.liveCoreMLPrograms { XCTAssertTrue(rust.contains("\"\(program)\""), program) }
-    }
-
-    /// With the Core ML step installed the Rust stream opens, and MLX is
-    /// neither verified nor loaded.
-    func testACoreMLInstallOpensTheRustStreamWithoutMLX() async throws {
-        try XCTSkipIf(ProcessInfo.processInfo.operatingSystemVersion.majorVersion < 15, "Core ML state needs macOS 15")
+    /// MLX runs first even with the Core ML step installed: the step only
+    /// matters to the Rust fallback, which opens after the MLX load fails.
+    func testACoreMLInstallStillLoadsMLXFirst() async throws {
         let (controller, model, root, calls) = try fixture()
         defer { try? FileManager.default.removeItem(at: root) }
-        try FileManager.default.createDirectory(at: model.appendingPathComponent("VoiceIsolatorStep.mlmodelc"), withIntermediateDirectories: true)
-        controller.voiceIsolatorLoadDependencies.verify = { _, _, _ in XCTFail("must not verify for MLX"); return model.path }
-        controller.voiceIsolatorLoadDependencies.loadLive = { _ in XCTFail("must not load MLX"); throw CancellationError() }
+        for program in ["VoiceIsolatorStep.mlmodelc", "VoiceIsolatorStep.mlpackage"] {
+            try FileManager.default.createDirectory(at: model.appendingPathComponent(program), withIntermediateDirectories: true)
+        }
+        struct Broken: Error {}
+        controller.voiceIsolatorLoadDependencies.verify = { _, _, _ in model.path }
+        controller.voiceIsolatorLoadDependencies.loadLive = { _ in calls.add("mlx"); throw Broken() }
         let stream = try await controller.openLiveCleaner(path: model.path)
         XCTAssertEqual(stream.backend, "rust")
-        XCTAssertEqual(calls.all, ["rust"])
-        XCTAssertNil(controller.liveVoiceIsolator)
+        XCTAssertEqual(calls.all, ["mlx", "rust"], "MLX was tried before the Rust stream")
     }
 
     /// An MLX step failure falls back to the Rust stream; nothing resident.
@@ -199,6 +178,22 @@ final class VoiceIsolatorMLXLiveTests: XCTestCase {
         XCTAssertGreaterThan(snr16, 40)
     }
 
+    /// The real checkpoint with a Core ML step beside it streams on MLX and
+    /// never opens the Rust stream.
+    func testRealCoreMLInstallStreamsOnMLX() async throws {
+        let folder = try realFolder()
+        let (controller, model, root, calls) = try fixture()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createSymbolicLink(at: model.appendingPathComponent(VoiceIsolatorMLXLiveModel.weightFile),
+                                                   withDestinationURL: folder.appendingPathComponent(VoiceIsolatorMLXLiveModel.weightFile))
+        try FileManager.default.createDirectory(at: model.appendingPathComponent("VoiceIsolatorStep.mlmodelc"), withIntermediateDirectories: true)
+        controller.voiceIsolatorLoadDependencies.verify = { _, _, _ in model.path }
+        let stream = try await controller.openLiveCleaner(path: model.path)
+        XCTAssertEqual(stream.backend, "mlx")
+        XCTAssertEqual(calls.all, [])
+        stream.close()
+    }
+
     /// Through the controller's real load: one load for two takes, a stream
     /// per take, and released with the other resident models.
     func testRealLoadIsResidentAcrossTakesAndReleased() async throws {
@@ -238,7 +233,7 @@ final class VoiceIsolatorMLXLiveTests: XCTestCase {
         let mlx: (String, @Sendable () throws -> AudioLiveEnhancing) = ("mlx fp16", { try VoiceIsolatorMLXLiveModel(directory: folder).openStream() })
         var engines = [mlx, mlx]
         if let coreml = ProcessInfo.processInfo.environment["TURBOSPARK_LIVE_NOISE_COREML"], !coreml.isEmpty {
-            // `.auto`, as the app opens it: Core ML because the step is there.
+            // `.auto`, as the app's fallback opens it: Core ML, the step is there.
             // Interleaved, so the second Core ML take runs on a warm cache.
             let step: (String, @Sendable () throws -> AudioLiveEnhancing) = ("rust coreml", { try AudioEnhanceStream(path: (coreml as NSString).expandingTildeInPath) })
             engines = [mlx, step, mlx, step]
