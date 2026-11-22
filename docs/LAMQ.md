@@ -385,7 +385,50 @@ The intake must check every offset bound and every sha256.
    coalescing; read slower, also under noise). Next levers, not tried:
    batching the per-matrix rotations into one dispatch, and a multi-weight
    inner loop that keeps lanes coalesced.
-9. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
+9. STUDIED (2026-11-21): the authors' fast path, read only, never run
+   (`runtime_mlx/inkling/fast_kernels.py` at commit 5106923, MIT). Their
+   card claims 63.5 tok/s serial for the 8.9 GB file on an M5 Max, in the
+   range of plain MLX 4-bit, so the gap to it is our kernels, not the
+   format. Their techniques, none of which this port had:
+   - Inner loop: each lane decodes a chunk of 16 consecutive columns per
+     step, reading its 1 to 3 code words once and taking every window
+     with `extract_bits`; chunks interleave across lanes (`c = lane + L *
+     it`), which keeps the word loads coalesced. A lane-contiguous layout
+     loses that (measured here, reverted).
+   - Multi-weight tables, exact: `rtr1` takes 14 bits for 3 consecutive
+     weights (`build_rtr_multitable`, a 16384 x half4 table, 128 KB in
+     device memory, relying on L1); `rtr2` and `rtr3` 2 weights; `ht2` and
+     `ht3` read a half4 or half2 table row per lookup from threadgroup
+     memory (4 KB).
+   - Row layout: 16 lanes per row (8 for width 1152), several rows per lane
+     group, and each x chunk loaded once and reused across those rows.
+     Activations are half and the 16-column partials are summed in half.
+   - Rotations: the 32-wide Sylvester factor with `simd_shuffle_xor` (lane
+     = outer index, no barriers), then the dense factor after one barrier;
+     one launch rotates every vector of a layer (grid y over an `x_map` /
+     `s_map` pair: q, k, v, rel and o_gate in one dispatch).
+   - Fusion: the expert-input rotation fused with the softcapped SwiGLU,
+     norms fused with the rotation that follows them, the attention gate
+     with the output rotation, and the whole MoE in one launch across
+     formats.
+10. DONE (2026-11-21): first port from step 9, expert phase 1 only. Each
+    16-lane half of a simdgroup takes one gate/up row pair; each step loads
+    a 16-column chunk of x once and decodes that chunk of both rows from
+    1 to 3 code words read once (`lamq_chunk16`). `rtr1` reads 14 bits per
+    three columns from a 16384 x half4 table appended to the LUT pack
+    (`LAMQ_RTR1_MT_OFF`, built from the same f16 values, so the weights are
+    exact). Sums stay F32 (theirs use half). Not bit-identical to the
+    previous kernel: phase 1 matches the f64 reference to 1e-5 relative
+    for all eight format pairs (checked with the parity tolerance tightened,
+    then restored), and swapping two table slots fails the parity test. On
+    48 tokens against the previous build: mean KL 1.4e-3, max 1.9e-2, 45/48
+    top-1, which reads as F32 reordering amplified by 48 applications with
+    FP16 activations (about 5% of the LAMQ-vs-BF16 error). tslab profile,
+    experiment `lamq-kernels-h16`, interleaved, two passes: committed
+    kernels 17.15 to 18.33 tok/s (median 17.8), this kernel 18.23 to 19.21
+    (median 18.8). ALL RUNS DIRTY (mediaanalysisd over 90%). Not yet
+    ported: phase 2, the coded GEMV, the batched shuffle rotation, fusion.
+11. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
    on the same kernels, each with its own family quality gate.
 
 No catalog row, and no change to any family's defaults, without its gate.

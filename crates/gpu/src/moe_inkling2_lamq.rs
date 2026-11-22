@@ -20,11 +20,10 @@ const SOURCE: &str = concat!(
     include_str!("shaders/lamq.metal"),
     include_str!("shaders/moe_inkling2_lamq.metal")
 );
-/// Phase 1 rows per threadgroup, one simdgroup each (= the shader's
-/// `kLamqExpRowsPerTG`). A threadgroup whose rows are all one expert stages
-/// that expert's table once instead of gathering it from device memory.
-const ROWS_PER_THREADGROUP: u64 = 32;
-const PHASE1_THREADS: u64 = ROWS_PER_THREADGROUP * 32;
+/// Phase 1 gate/up row pairs per threadgroup, one per 16-lane half of a
+/// simdgroup (= the shader's `kLamqExpRowsPerTG`).
+const ROWS_PER_THREADGROUP: u64 = 64;
+const PHASE1_THREADS: u64 = ROWS_PER_THREADGROUP * 16;
 /// Phase 2: one simdgroup per slot.
 const PHASE2_THREADS: u64 = 256;
 
@@ -32,7 +31,7 @@ const PHASE2_THREADS: u64 = 256;
 pub const INKLING2_LAMQ_MAX_SLOTS: usize = 8;
 
 /// The packed LUT order and offsets (in halves) the shader's
-/// `lamq_code_params` reads. 20480 halves.
+/// `lamq_code_params` reads, followed by the rtr1 three-weight table.
 pub const LAMQ_LUT_PACK: [(LamqCode, usize); 6] = [
     (LamqCode::Ht2, 0),
     (LamqCode::Ht3, 2048),
@@ -41,7 +40,10 @@ pub const LAMQ_LUT_PACK: [(LamqCode, usize); 6] = [
     (LamqCode::Rtr3, 12288),
     (LamqCode::Rtr4, 16384),
 ];
-pub const LAMQ_LUT_PACK_HALVES: usize = 20480;
+/// Where the rtr1 three-weight table starts (halves), after the six LUTs:
+/// 16384 entries of four halves (`kLamqRtr1MtOff` in the shader).
+pub const LAMQ_RTR1_MT_OFF: usize = 20480;
+pub const LAMQ_LUT_PACK_HALVES: usize = LAMQ_RTR1_MT_OFF + (1 << 14) * 4;
 
 /// This module's compiled library, for `RoutedBlobsBuffer::new_for`.
 pub fn moe_inkling2_lamq_source() -> &'static str {
@@ -71,6 +73,19 @@ pub fn lamq_lut_pack(tables: &[(LamqCode, &[u16])]) -> Result<Vec<u8>, GpuError>
         }
         for (i, v) in t.iter().enumerate() {
             out[2 * (off + i)..2 * (off + i) + 2].copy_from_slice(&v.to_le_bytes());
+        }
+        if code == LamqCode::Rtr1 {
+            // Entry `idx` (14 bits) fixes three consecutive rtr1 columns: the
+            // first's 12-bit state is idx >> 2, the second's idx >> 1, the
+            // third's idx (k = 1), so slot t holds t[(idx >> (2 - t)) & 4095].
+            // The same f16 values as the table, so the weights are exact.
+            for idx in 0..1usize << 14 {
+                for slot in 0..3 {
+                    let v = t[(idx >> (2 - slot)) & 4095];
+                    let at = LAMQ_RTR1_MT_OFF + idx * 4 + slot;
+                    out[2 * at..2 * at + 2].copy_from_slice(&v.to_le_bytes());
+                }
+            }
         }
     }
     Ok(out)
@@ -123,6 +138,11 @@ fn check(d_dim: u32, f_dim: u32, top_k: u32, experts: &LamqExperts<'_>) -> Resul
         return Err(GpuError::InvalidInput(
             "LAMQ experts need positive dims".into(),
         ));
+    }
+    if d_dim % 16 != 0 {
+        return Err(GpuError::InvalidInput(format!(
+            "LAMQ experts decode 16 columns at a time; width {d_dim} is not a multiple of 16"
+        )));
     }
     if top_k == 0 || top_k as usize > INKLING2_LAMQ_MAX_SLOTS {
         return Err(GpuError::InvalidInput(format!(
