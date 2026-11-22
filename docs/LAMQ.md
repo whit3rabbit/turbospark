@@ -359,8 +359,12 @@ The intake must check every offset bound and every sha256.
    refuses non-finite scores. The logits harness drops those rows, which is
    why the gates above never saw it. Checked after the fix: BF16, LAMQ 5.4
    GB, MLX 4-bit and the local IQ2_M GGUF each answer a one-sentence factual
-   prompt correctly and stop at end of turn. The `pull --repo` download is
-   tested against a loopback Hub only; no real Hub download has been run.
+   prompt correctly and stop at end of turn. Real Hub run (2026-11-21):
+   `pull --repo shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-5.4GB` pinned
+   commit `9af87091`, downloaded 5.0 GiB, installed 6.9 GiB in 21 minutes
+   (mostly download), removed its download folder, and wrote every file
+   except `manifest.json` byte-identical to the install converted earlier
+   from the same files; it answers the same prompt correctly.
 8. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
    on the same kernels, each with its own family quality gate.
 
