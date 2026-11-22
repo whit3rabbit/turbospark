@@ -478,6 +478,15 @@ The intake must check every offset bound and every sha256.
     install, `protocol:short-explanation`, 128 decode tokens, resident
     experts, all 12 runs clean: step 12 22.76 to 23.12 tok/s (median 22.85),
     this 28.78 to 28.90 (median 28.85). A dev A/B, not a frozen row.
+    Tried after it and NOT kept, both measured the same way (all runs
+    clean): the coded GEMV with one row per 16-lane half (balanced chunks
+    at width 2304), median 29.06 -> 29.56 tok/s, under the 2% floor with
+    overlapping ranges (`lamq-kernels-gemv16`); and a grid-stride GEMV
+    capped at 160 threadgroups so each stages its table once instead of
+    once per 32 rows, bit-identical output, median 28.88 -> 28.75
+    (`lamq-kernels-gs`). The table re-staging is not what limits the GEMV.
+    The dispatch profile after this step (rank only): `lamq_gemv` 22%,
+    phase 1 17% (was 25%), the two rotation kernels 15%, phase 2 10%.
 14. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
    on the same kernels, each with its own family quality gate.
 
