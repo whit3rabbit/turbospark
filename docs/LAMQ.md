@@ -461,7 +461,24 @@ The intake must check every offset bound and every sha256.
     `lamq-kernels-both` (on top of step 11: 20.70 to 20.89 vs 21.99 to
     23.47, medians 20.8 and 22.1), all runs dirty. Day total on the 5.4 GB
     install, same workload: about 14.9 -> 22.1 tok/s.
-13. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
+13. DONE (2026-11-22): the expert chunk decode specialized per format at
+    compile time. The code id is read once per row and switched on outside
+    the chunk loop, which calls a template per format (`lamq_p1_rows<ID>`,
+    `lamq_p2_row<ID>`), so k, g, the hash shift and the table offset are
+    constants and the 16 windows of a chunk unroll with fixed offsets.
+    Phase 1 also stages the ht2/ht3 gate-up table (2048 halves, the same f16
+    values) in threadgroup memory when every row of the threadgroup shares
+    one expert (`F % 64 == 0`, true for Inkling's 1152). Staging the wrong
+    table fails the parity test. The summation order is unchanged, but the
+    48-token logits are not `cmp`-equal (the unrolled loops contract to
+    FMAs differently): against step 12, mean KL 3.0e-3, max 2.1e-2, 46/48
+    top-1; against the original bit-exact kernels 1.3e-3 and 47/48. tslab
+    `profile`, experiment `lamq-kernels-spec`, step 12 and this worker
+    interleaved (distinct `exe_sha256`), two passes of three rounds, 5.4 GB
+    install, `protocol:short-explanation`, 128 decode tokens, resident
+    experts, all 12 runs clean: step 12 22.76 to 23.12 tok/s (median 22.85),
+    this 28.78 to 28.90 (median 28.85). A dev A/B, not a frozen row.
+14. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
    on the same kernels, each with its own family quality gate.
 
 No catalog row, and no change to any family's defaults, without its gate.
