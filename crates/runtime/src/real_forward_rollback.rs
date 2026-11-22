@@ -151,6 +151,26 @@ impl RealForwardRunner {
     /// alternative is attending over rows this generation has already
     /// overwritten, which produces plausible text rather than an error.
     pub fn rollback(&mut self, point: &RollbackPoint) {
+        // Inkling 2: back to the start of the last verify (its conv-tail
+        // snapshot 0) when the point is that verify's start. The shared KV
+        // manager only holds the position for this family.
+        if self.real_inkling2.is_some() {
+            let rec = self.real_inkling2.as_ref().and_then(|s| s.verify);
+            match rec {
+                Some(r) if r.base == point.position => {
+                    self.inkling2_rollback_verify(0)
+                        .unwrap_or_else(|e| panic!("inkling2 rollback: {e}"));
+                }
+                _ => assert_eq!(
+                    point.position,
+                    self.kv.position(),
+                    "an Inkling 2 rollback can undo only its last verify; the conv tails of \
+                     earlier single-token steps were advanced in place"
+                ),
+            }
+            self.kv_prefix.rewind_to(point.position);
+            return;
+        }
         assert!(
             self.real_qwen4.is_none(),
             "rollback is not implemented for qwen4_exp; recurrent/hybrid state \
@@ -270,6 +290,22 @@ impl RealForwardRunner {
         point: &RollbackPoint,
         keep_rows: usize,
     ) -> Result<(), String> {
+        if self.real_inkling2.is_some() {
+            let rec = self
+                .real_inkling2
+                .as_ref()
+                .and_then(|s| s.verify)
+                .ok_or("retaining rollback needs the last pass to be an Inkling 2 verify")?;
+            if rec.base != point.position || keep_rows == 0 {
+                return Err(format!(
+                    "retaining rollback of {keep_rows} rows to {}; the verify began at {}",
+                    point.position, rec.base
+                ));
+            }
+            self.inkling2_rollback_verify(keep_rows)?;
+            self.kv_prefix.rewind_to(point.position + keep_rows);
+            return Ok(());
+        }
         assert!(
             self.real_qwen4.is_none(),
             "retaining rollback is not implemented for qwen4_exp; recurrent/hybrid state \

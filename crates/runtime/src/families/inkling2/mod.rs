@@ -21,8 +21,12 @@
 //! Exactness class: KL-bounded against the CPU reference (FP16 activations,
 //! FP32 accumulation, FP32 router). Prefill is this decode path per token.
 
+mod dspark;
 mod lamq;
 mod state;
+mod verify;
+
+pub use dspark::inkling2_dspark_dir;
 
 use half::f16;
 use model_io::ResidentIndex;
@@ -269,7 +273,18 @@ impl RealForwardRunner {
         // The state is taken out for the token so its buffers can be borrowed
         // beside `self.context` and the streamers, and always put back.
         let mut st = self.real_inkling2.take().expect("caller checked is_some");
+        // A single-token pass advances the conv tails in place, so the last
+        // verify's tail snapshots no longer describe a rollback target.
+        st.verify = None;
         let result = self.produce_real_inkling2_inner(&mut st, token, position, logits);
+        if let Some(d) = st.dspark.as_mut() {
+            d.source = if result.is_ok() && !self.skip_head {
+                dspark::TapSource::Single(position)
+            } else {
+                // A headless pass skips the final-norm tap.
+                dspark::TapSource::None
+            };
+        }
         self.real_inkling2 = Some(st);
         self.phases.calls += 1;
         self.phases.total_nanos += started.elapsed().as_nanos() as u64;
@@ -536,8 +551,9 @@ impl RealForwardRunner {
     }
 }
 
-/// Makes the padding rows past the real vocabulary unsampleable. The most
-/// negative FINITE f16, never -inf: `selection::select` refuses a score
+/// Makes the padding rows past the real vocabulary unsampleable with
+/// [`PAD_LOGIT`] (verify writes the same value). The most negative FINITE
+/// f16, never -inf: `selection::select` refuses a score
 /// vector with any non-finite entry, which is how every Inkling chat failed
 /// while the logit gates (which drop these rows) passed. After the
 /// sampler's max subtraction its weight underflows to exactly zero at any
@@ -545,7 +561,7 @@ impl RealForwardRunner {
 fn mask_padding(logits: &mut [f16], unpadded: usize) {
     let start = unpadded.min(logits.len());
     for l in &mut logits[start..] {
-        *l = f16::MIN;
+        *l = PAD_LOGIT;
     }
 }
 
@@ -1068,6 +1084,9 @@ fn layer_moe(
     moe_tail(c, pass, st, arch, slot, ip)?;
     Ok((plan.hits, plan.misses.len()))
 }
+
+/// What the padding rows past `unpadded_vocab` read (see the decode readback).
+pub(crate) const PAD_LOGIT: f16 = f16::MIN;
 
 /// The DSpark drafter's target visits, `mtp_config.target_layer_ids` minus the
 /// last (48, the final-norm output, stored as the row after these).

@@ -275,3 +275,94 @@ constant constexpr uint ink_block_elems_mxfp8 = 32;
 constant constexpr uint ink_block_bytes_mxfp8 = 33;
 INK_PAIR_IDX(nvfp4)
 INK_PAIR_IDX(mxfp8)
+
+// ----------------------------------------------------------------------------
+// Multi-row indexed pair (speculative verify): the indexed pair above for row
+// r = threadgroup grid y, reading `x + r * x_stride` and the row's own
+// selection and weights (`sel + r * kInkMaxSlots`, `routing_w + r *
+// kInkMaxSlots`), writing `acts + r * top_k * F` and `y + r * D`. Row r's math
+// is the single-row kernel's, so it writes the same bits.
+// ----------------------------------------------------------------------------
+#define INK_PAIR_IDX_ROWS(NAME)                                                          \
+[[kernel, max_total_threads_per_threadgroup(256)]]                                       \
+kernel void moe_inkling2_phase1_idx_rows_##NAME(                                         \
+    device const uint8_t*     layer           [[buffer(0)]],                             \
+    constant ExpertOffsets&   re              [[buffer(1)]],                             \
+    device const half*        x_all           [[buffer(2)]],                             \
+    device half*              acts_all        [[buffer(3)]],                             \
+    constant uint&            D               [[buffer(4)]],                             \
+    constant uint&            F               [[buffer(5)]],                             \
+    constant uint&            top_k           [[buffer(6)]],                             \
+    constant float2&          caps            [[buffer(7)]],                             \
+    device const uint*        sel_all         [[buffer(8)]],                             \
+    constant ulong&           stride          [[buffer(9)]],                             \
+    constant uint&            n_experts       [[buffer(10)]],                            \
+    constant uint&            x_stride        [[buffer(11)]],                            \
+    uint2                     tg              [[threadgroup_position_in_grid]],          \
+    uint                      sg_idx          [[simdgroup_index_in_threadgroup]],        \
+    uint                      lane            [[thread_index_in_simdgroup]]              \
+) {                                                                                      \
+    const uint rowg = tg.x * kInkRowsPerTG + sg_idx;                                     \
+    if (rowg >= top_k * F) return;                                                       \
+    device const half* x = x_all + ulong(tg.y) * x_stride;                               \
+    device half* acts = acts_all + ulong(tg.y) * top_k * F;                              \
+    device const uint* sel = sel_all + ulong(tg.y) * kInkMaxSlots;                       \
+    const uint slot = rowg / F;                                                          \
+    const uint f = rowg % F;                                                             \
+    const uint e = min(sel[slot], n_experts - 1u);                                       \
+    device const uint8_t* base = layer + ulong(e) * stride;                              \
+    const ulong row_bytes = ulong(D / ink_block_elems_##NAME) * ink_block_bytes_##NAME;  \
+    const float g = ink_##NAME##_row(base + re.gate_W_off + f * row_bytes, x, D, lane)   \
+        * ink_outer(base, re.gate_s_off);                                                \
+    const float u = ink_##NAME##_row(base + re.up_W_off + f * row_bytes, x, D, lane)     \
+        * ink_outer(base, re.up_s_off);                                                  \
+    if (lane == 0) {                                                                     \
+        const float sig = 1.0f / (1.0f + precise::exp(-g));                              \
+        acts[slot * F + f] = half(ink_softcap(g, caps.x) * sig * ink_softcap(u, caps.y)); \
+    }                                                                                    \
+}                                                                                        \
+                                                                                         \
+[[kernel, max_total_threads_per_threadgroup(256)]]                                       \
+kernel void moe_inkling2_phase2_idx_rows_##NAME(                                         \
+    device const uint8_t*     layer           [[buffer(0)]],                             \
+    constant ExpertOffsets&   re              [[buffer(1)]],                             \
+    device const half*        acts_all        [[buffer(2)]],                             \
+    device const half*        rw_all          [[buffer(3)]],                             \
+    device half*              y_all           [[buffer(4)]],                             \
+    constant uint&            D               [[buffer(5)]],                             \
+    constant uint&            F               [[buffer(6)]],                             \
+    constant uint&            top_k           [[buffer(7)]],                             \
+    device const uint*        sel_all         [[buffer(8)]],                             \
+    constant ulong&           stride          [[buffer(9)]],                             \
+    constant uint&            n_experts       [[buffer(10)]],                            \
+    uint2                     tg              [[threadgroup_position_in_grid]],          \
+    uint                      sg_idx          [[simdgroup_index_in_threadgroup]],        \
+    uint                      lane            [[thread_index_in_simdgroup]]              \
+) {                                                                                      \
+    threadgroup float partial[kInkMaxSlots];                                             \
+    const uint d = tg.x;                                                                 \
+    if (d >= D) return;                                                                  \
+    device const half* acts = acts_all + ulong(tg.y) * top_k * F;                        \
+    device const half* routing_w = rw_all + ulong(tg.y) * kInkMaxSlots;                  \
+    device const uint* sel = sel_all + ulong(tg.y) * kInkMaxSlots;                       \
+    float w = 0.0f;                                                                      \
+    if (sg_idx < top_k) {                                                                \
+        const uint e = min(sel[sg_idx], n_experts - 1u);                                 \
+        device const uint8_t* base = layer + ulong(e) * stride;                          \
+        const ulong row_bytes = ulong(F / ink_block_elems_##NAME) * ink_block_bytes_##NAME; \
+        const float v = ink_##NAME##_row(base + re.down_W_off + d * row_bytes,           \
+                                         acts + sg_idx * F, F, lane)                     \
+            * ink_outer(base, re.down_s_off);                                            \
+        w = float(routing_w[sg_idx]) * v;                                                \
+    }                                                                                    \
+    if (lane == 0) partial[sg_idx] = w;                                                  \
+    threadgroup_barrier(mem_flags::mem_threadgroup);                                     \
+    if (sg_idx == 0 && lane == 0) {                                                      \
+        float acc = 0.0f;                                                                \
+        for (uint i = 0; i < top_k; ++i) acc += partial[i];                              \
+        y_all[ulong(tg.y) * D + d] = half(acc);                                          \
+    }                                                                                    \
+}
+
+INK_PAIR_IDX_ROWS(nvfp4)
+INK_PAIR_IDX_ROWS(mxfp8)
