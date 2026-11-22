@@ -11,8 +11,8 @@ row, and the memory oracle and the Phase 6 quality gates in
 `docs/NEW_MODEL.md` have not run. Do not call it supported until they have.
 GGUF installs through its own intake (GGUF sections below). LookAtMyQuant
 packed releases install and decode with their codes native (`docs/LAMQ.md`,
-5.4 GB release: 19/19 and 182/232 top-1 against the BF16 install, with a
-quality gap still open). Every install type is reachable from the CLI
+5.4 GB release: 19/19 and 183/232 top-1 against the BF16 install; the loss
+is in the release's weights, not the runtime). Every install type is reachable from the CLI
 (`turbospark model pull-local`, `pull --repo`) and the app (Discover >
 Install from Files), and chats through `turbospark run` (2026-11-21, after
 the padded vocabulary rows stopped being -inf: see step 4 below).
@@ -245,6 +245,35 @@ Conv state per slot: (2 x 1024 + 2 x 2304) x 3 rows. KV:
 context; 40 SWA slots ring at 1024 rows (~160 MB fixed). The shared
 `KvCacheManager` still allocates its own 24-layer cache that this family
 never reads; dropping it is open work.
+
+## Speed and memory by install (2026-11-22)
+
+tslab `profile` development readings, not frozen rows. Apple M4 Max 36 GB,
+AC power, worker `568bbaed` built at `e2929518`, experts resident (8 slots
+reported), two interleaved passes of three rounds per install and workload,
+about 11 GB of swap in use throughout. Medians of the clean runs; experiment
+`inkling2-install-bench2`.
+
+| Install | Decode, `short-explanation` (64-token prompt, 128 decode) | `long-synthesis` (3,252-token prompt, 64 decode): prefill, decode | Peak footprint | Clean runs (decode, long) |
+|---|---|---|---|---|
+| `inkling2-mini-gturbo` (18 GB) | 34.2 tok/s (32.8 to 36.3) | 32.5, 27.7 tok/s | 17.7 GiB | 6/6, 5/6 |
+| `inkling2-mini-mlx4-gturbo` (16 GB) | 45.6 tok/s (45.6 to 45.7) | 37.9, 33.5 tok/s | 17.7 GiB | 3/6, 4/6 |
+| `inkling2-mini-lamq54-gturbo` (6.9 GB) | 30.5 tok/s (30.5 to 30.7) | 27.7, 24.3 tok/s | 8.4 GiB | 6/6, 3/6 |
+
+Summary records, pass 1 then pass 2: original `1795373901693-51813-8`,
+`1795375394542-9293-8` (decode) and `1795374341570-58473-8`,
+`1795375844051-16326-8` (long); MLX `1795373472063-9085-8`,
+`1795374931307-61609-8` and `1795373849753-15090-8`,
+`1795375337020-68125-8`; LAMQ `1795372934446-55330-8`,
+`1795374381290-1940-8` and `1795373428052-60787-8`,
+`1795374880655-7446-8`. Dirty runs came from Spotlight and other foreign
+CPU, not from these processes. Prefill is sequential on every install
+(`--chunk off`; a chunked profile is refused), so prefill tok/s tracks
+decode. The MLX build shares the original's packed NVFP4 and MXFP8
+experts, so its peak matches; the gain is its 4-bit dense weights. Energy
+per decode token on the short workload: 1.30 J (original), 0.80 J (MLX),
+1.02 J (LAMQ). An earlier experiment, `inkling2-install-bench`, ran a stale
+worker and a refused long workload; do not read it.
 
 ## Remaining work, in dependency order
 

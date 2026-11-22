@@ -1,6 +1,7 @@
 # LookAtMyQuant (LAMQ) formats
 
-STATUS: **runs on the 5.4 GB Inkling release, quality gap open.** This page
+STATUS: **runs on the 5.4 GB Inkling release; its loss against the original
+is in the release's weights (step 5).** This page
 is the spec the intake and kernels follow, and the record of their gates. The `inkling2-packed` section was checked on 2026-11-21 against the
 5.4 GB release (container layout, dtypes, shapes, maps, the name map). The
 math comes from the upstream source and is marked "from source" where no file
@@ -21,7 +22,7 @@ self-test), `model.py` (wiring), `fast_kernels.py` (Metal fast path).
 
 | Container | Releases | Status here |
 |---|---|---|
-| `inkling2-packed` | `shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-5.4GB` (1.63 bpw), `-8.9GB` (2.69 bpw) | 5.4 GB: intake, kernels and decode done (workstream A), quality gap open, no catalog row; 8.9 GB: not installed |
+| `inkling2-packed` | `shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-5.4GB` (1.63 bpw), `-8.9GB` (2.69 bpw) | 5.4 GB: intake, kernels and decode done (workstream A), loss against the original traced to the release's weights, no catalog row; 8.9 GB: not installed |
 | `lamq-1` | Gemma 4 E2B exports | planned (workstream C) |
 | `opgraph-packed-1` | Qwen3.5-4B (`lm2-qwen35-4b-1.2gb`), `shinmegamiboson/Qwen3.8-27B-LookAtMyQuant-7.2GB` | planned (workstream C) |
 | GGUF | Gemma 4 E2B compiled mixes | stock llama.cpp types per tensor, so it goes through the existing GGUF intake (`docs/GGUF.md`); no LAMQ code |
@@ -383,8 +384,9 @@ The intake must check every offset bound and every sha256.
    to 1 ulp, max relative change 7.8e-3, about 3x the nearest-even error)
    moved prose KL from 0.1543 to 0.1556 and top-1 from 182 to 181, and the two
    installs differ from each other by mean KL 1.5e-3. Not yet run:
-   the 8.9 GB release, the memory oracle, a tslab profile, sampled
-   generation. No catalog row.
+   the 8.9 GB release, the memory oracle, sampled generation. No catalog
+   row. Speed and peak footprint beside the other Inkling installs:
+   `docs/INKLING2_PHASE0.md`, "Speed and memory by install".
 6. DONE (2026-11-21): Workstream B, Inkling 2 GGUF intake and decode
    (`docs/INKLING2_PHASE0.md`, GGUF sections). The unsloth UD files are not
    gated (not downloaded) and MXFP4 down projections are refused.

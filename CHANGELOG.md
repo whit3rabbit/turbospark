@@ -20,8 +20,22 @@ when this file gets updated relative to the version bump and the tag.
   the `compute::lamq` CPU reference, resident tag 36, Metal kernels for the
   Kronecker Hadamard rotation, the coded GEMVs and a mixed-format expert pair,
   and `examples/inkling2_lamq_install.rs`. On the 5.4 GB release: 19/19 and
-  182/232 top-1 against the BF16 install; the authors' own KL is lower under
-  their protocol and that gap is open.
+  183/232 top-1 against the BF16 install (mean KL 2.8e-2 and 0.154), and
+  80% top-1 at mean KL 0.25 to 0.31 on 450-token English and Rust windows.
+  That loss is in the release's weights: every coded tensor decodes within
+  its code's error band, and a CPU f32 forward on the same weights matches
+  the Metal path at mean KL 1.4e-3. The authors' lower KL (0.0895) comes from
+  their own harness, which is not public.
+- Inkling 2 LookAtMyQuant diagnostics in the runtime crate:
+  `examples/inkling2_lamq_weight_err.rs` (every coded matrix against the
+  original weights on random probes) and
+  `examples/inkling2_lamq_reference_logits.rs` (the CPU reference forward on a
+  LAMQ install). `compute::inkling2::forward::WeightSource` gains default
+  `matvec`, `embed_row`, `expert_gate_up` and `expert_down` hooks for coded
+  sources; existing sources are unchanged.
+- Ignored GPU microbenches `gemv_bandwidth` (`lamq_parity`) and
+  `expert_pair_bandwidth` (`moe_inkling2_lamq_parity`), for telling a
+  bandwidth-bound LAMQ kernel from a lookup-bound one. Not gates.
 - Inkling 2 Mini from GGUF (`inkling2_loop` and the older `inkling2` arch),
   `examples/inkling2_gguf_install.rs`: block-quantized matrices kept, experts
   run by a new Inkling mode of the shared GGUF routed pairs (function
@@ -102,6 +116,13 @@ when this file gets updated relative to the version bump and the tag.
 - Discover's search box says Search, a search with no catalog match leads
   with the Hugging Face search, and the header badge reads Tested on Mac
   instead of Online catalog (the catalog ships with the app).
+- Inkling 2 LookAtMyQuant decode on the 5.4 GB release went from about 17.8
+  to a 30.5 tok/s median on an M4 Max (tslab dev profiles, not frozen rows):
+  batched input rotations, 16-column chunk decode, per-format expert decode
+  specialized at compile time, a staged ht2/ht3 table, and rotations split
+  across threadgroups (`docs/LAMQ.md` steps 10 to 14). Output moves by
+  summation order and FMA contraction only (48-token mean KL 1.3e-3 against
+  the first bit-exact kernels).
 
 ### Fixed
 - Inkling 2 chat failed on every install ("score vector must not contain a
@@ -116,6 +137,10 @@ when this file gets updated relative to the version bump and the tag.
   decode, and with speculation on, greedy output identical to plain decode)
   and on the 2B MTP Q4_K_M and Q4_K_S (Q5_K `ssm_out`). Q3_K, Q6_K and IQ
   `ssm_out` take the same path and have no real-file run yet.
+
+### Security
+- `url` 2.5.9 and `form_urlencoded` 1.2.3 in `Cargo.lock` for
+  RUSTSEC-2026-0592.
 
 ## [0.9.0] - 2026-11-15
 

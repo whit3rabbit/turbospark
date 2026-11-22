@@ -231,6 +231,30 @@ listed configurations, not guarantees for other machines or settings. See
 the slot arithmetic in [`docs/MODEL_FAMILY.md`](docs/MODEL_FAMILY.md) and use
 `turbospark-model recommend` for the active machine and context.
 
+Inkling 2 Mini (`thinkingmachines/Inkling-2-Mini`, a 24-layer MoE looped to
+48 layer applications) decodes but has no catalog row yet: its memory
+oracle and quality gates have not run. Install it from a local path or a
+repository with `turbospark model pull-local` or `pull --repo`: the original
+checkpoint, an MLX conversion, a GGUF, or a LookAtMyQuant packed release.
+Indicative readings on a 36 GB M4 Max, from tslab development profiles with
+the experts resident and about 11 GB of swap in use. These are not frozen
+rows:
+
+| Install | Disk | Decode, 64-token prompt | Prefill and decode, 3,252-token prompt | Peak footprint |
+| --- | ---: | ---: | ---: | ---: |
+| Original (NVFP4 and MXFP8 experts, BF16 dense) | ~18 GB | 34.2 tok/s | 32.5 and 27.7 tok/s | 17.7 GiB |
+| MLX 4-bit (`mlx-community/Inkling-2-Mini-4bit`) | ~16 GB | 45.6 tok/s | 37.9 and 33.5 tok/s | 17.7 GiB |
+| LookAtMyQuant 5.4 GB release | ~6.9 GB | 30.5 tok/s | 27.7 and 24.3 tok/s | 8.4 GiB |
+
+Inkling prefill is sequential, so a 3,252-token prompt takes about 100 s on
+the original install. The MLX build keeps the checkpoint's own NVFP4 and
+MXFP8 experts and shrinks only the dense weights, so it uses as much memory
+as the original. The LookAtMyQuant 5.4 GB release halves it but loses
+quality: against the original it agrees on about 80% of next tokens, with a
+mean KL of 0.25 on an English window. That loss is in the release's weights,
+not the runtime. See [`docs/INKLING2_PHASE0.md`](docs/INKLING2_PHASE0.md) and
+[`docs/LAMQ.md`](docs/LAMQ.md).
+
 ### Dense checkpoints (weights stay memory-mapped)
 
 Dense models do not stream, so budget roughly the on-disk size plus KV and scratch that grow with context. The small "peak footprint" numbers in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) for these rows are a leak sentinel, not a capacity number: mapped weights do not appear in them.
