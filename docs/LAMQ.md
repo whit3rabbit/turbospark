@@ -504,7 +504,23 @@ The intake must check every offset bound and every sha256.
     tree reduction in mla.metal (`simd_sum` there reorders the sum, so not
     bit-identical). Price each with a dispatch profile first: a kernel that
     is not barrier-bound gains as little as this one.
-14. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
+14. DONE (2026-11-22): split rotations, bit-identical. Every release
+    width whose Sylvester factor is 32 or less (2304 = 32 x 72,
+    1152 = 16 x 72, 384, 1024) rotates in `lamq_rht_split` /
+    `lamq_rht_in_batch_split`: output column j of the dense factor is
+    independent, so a vector spreads over ceil(nb / 8) threadgroups of 256
+    threads (9 for 2304) instead of one 1024-thread threadgroup on one
+    core. Each na-lane group takes one column, lane = outer index: the
+    dense sum in the same order, then the FWHT with `simd_shuffle_xor`.
+    3072 = 256 x 12 keeps the one-threadgroup kernels. 48-token logits
+    `cmp`-equal to step 13; swapping the vector and column-block decode
+    fails both rotation parity tests, a flipped butterfly sign fails the
+    reference one. Dispatch profile (rank only): rotations 3.87 -> 2.32
+    ms/token. tslab profile, experiment `lamq-kernels-split`, interleaved,
+    two passes, 11 of 12 runs clean: step 13 28.86 to 29.51 tok/s (median
+    29.09), this 30.64 to 31.30 (median 30.71). A dev A/B, not a frozen
+    row.
+15. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
    on the same kernels, each with its own family quality gate.
 
 No catalog row, and no change to any family's defaults, without its gate.

@@ -95,6 +95,78 @@ static inline void lamq_rht_vec(
     }
 }
 
+// Split form for Sylvester factors of 32 or less (every release width but
+// 3072). Output column j of the dense factor is independent of the others,
+// so a vector spreads over ceil(nb / (nt / na)) threadgroups, each taking
+// nt / na columns: an na-lane group per column, lane = outer index, computes
+// the dense sum and then the FWHT with simd_shuffle_xor. Same products in
+// the same order and the same butterfly stages as lamq_rht_vec, so the
+// output is bit-identical; the gain is that one vector runs on several
+// cores instead of one. `g` is this threadgroup's column block.
+static inline void lamq_rht_split_vec(
+    device const void* x_raw, bool x_half, device const char* signs,
+    device const char* Bdev, device void* y_raw, bool y_half,
+    uint n, uint na, uint nb, uint dir, uint g, uint tid, uint nt,
+    threadgroup float* a
+) {
+    for (uint i = tid; i < n; i += nt) {
+        float xi = x_half ? float(((device const half*)x_raw)[i]) : ((device const float*)x_raw)[i];
+        a[i] = dir == 0u ? xi * float(signs[i]) : xi;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    const uint cpt = nt / na;
+    const uint j = g * cpt + tid / na;
+    const uint pp = tid % na;
+    const bool valid = j < nb;
+    float s = 0.0f;
+    if (valid) {
+        if (dir == 0u) {
+            for (uint q = 0; q < nb; ++q) s += a[pp * nb + q] * float(Bdev[j * nb + q]);
+        } else {
+            for (uint q = 0; q < nb; ++q) s += a[pp * nb + q] * float(Bdev[q * nb + j]);
+        }
+    }
+    // na divides 32 and groups are lane-aligned, so xor h < na stays inside
+    // this column's group. Every lane runs every shuffle, valid or not.
+    for (uint h = 1; h < na; h <<= 1) {
+        const float o = simd_shuffle_xor(s, ushort(h));
+        s = (pp & h) ? (o - s) : (s + o);
+    }
+    if (!valid) return;
+    const uint i = pp * nb + j;
+    float r = s * rsqrt(float(n));
+    if (dir == 1u) r *= float(signs[i]);
+    if (y_half) ((device half*)y_raw)[i] = half(r);
+    else ((device float*)y_raw)[i] = r;
+}
+
+// Threadgroups per vector of the split form (host: lamq_split_groups).
+static inline uint lamq_split_groups(uint na, uint nb, uint nt) {
+    const uint cpt = nt / na;
+    return (nb + cpt - 1u) / cpt;
+}
+
+kernel void lamq_rht_split(
+    device const void*      x_raw  [[buffer(0)]],
+    device const char*      signs  [[buffer(1)]],
+    device const char*      Bdev   [[buffer(2)]],
+    device void*            y_raw  [[buffer(3)]],
+    constant LamqRhtParams& p      [[buffer(4)]],
+    uint                    gid    [[threadgroup_position_in_grid]],
+    uint                    tid    [[thread_position_in_threadgroup]],
+    uint                    nt     [[threads_per_threadgroup]]
+) {
+    threadgroup float a[kLamqMaxN];
+    const uint G = lamq_split_groups(p.na, p.nb, nt);
+    const uint v = gid / G, g = gid % G;
+    const ulong base = ulong(v) * p.n;
+    device const void* xv = kRhtInHalf ? (device const void*)((device const half*)x_raw + base)
+                                       : (device const void*)((device const float*)x_raw + base);
+    device void* yv = kRhtOutHalf ? (device void*)((device half*)y_raw + base)
+                                   : (device void*)((device float*)y_raw + base);
+    lamq_rht_split_vec(xv, kRhtInHalf, signs, Bdev, yv, kRhtOutHalf, p.n, p.na, p.nb, p.dir, g, tid, nt, a);
+}
+
 kernel void lamq_rht(
     device const void*      x_raw  [[buffer(0)]],
     device const char*      signs  [[buffer(1)]],
@@ -147,6 +219,30 @@ kernel void lamq_rht_in_batch(
     device const half* x = j.x_sel == 0u ? x0 : (j.x_sel == 1u ? x1 : x2);
     lamq_rht_vec(x, true, signs + j.s_off, Bdev, y + ulong(v) * p.n, false,
                  p.n, p.na, p.nb, 0u, tid, nt, a, t, B);
+}
+
+// lamq_rht_in_batch in the split form (na <= 32): job v's column blocks are
+// threadgroups v * G .. v * G + G - 1.
+kernel void lamq_rht_in_batch_split(
+    device const half*      x0     [[buffer(0)]],
+    device const half*      x1     [[buffer(1)]],
+    device const half*      x2     [[buffer(2)]],
+    device const char*      signs  [[buffer(3)]],
+    device const char*      Bdev   [[buffer(4)]],
+    device float*           y      [[buffer(5)]],
+    constant LamqRhtParams& p      [[buffer(6)]],
+    constant LamqRhtJob*    jobs   [[buffer(7)]],
+    uint                    gid    [[threadgroup_position_in_grid]],
+    uint                    tid    [[thread_position_in_threadgroup]],
+    uint                    nt     [[threads_per_threadgroup]]
+) {
+    threadgroup float a[kLamqMaxN];
+    const uint G = lamq_split_groups(p.na, p.nb, nt);
+    const uint v = gid / G, g = gid % G;
+    const LamqRhtJob j = jobs[v];
+    device const half* x = j.x_sel == 0u ? x0 : (j.x_sel == 1u ? x1 : x2);
+    lamq_rht_split_vec(x, true, signs + j.s_off, Bdev, y + ulong(v) * p.n, false,
+                       p.n, p.na, p.nb, 0u, g, tid, nt, a);
 }
 
 // ----------------------------------------------------------------------------

@@ -123,9 +123,14 @@ pub fn encode_lamq_rht_in_batch(
             xs.len()
         )));
     }
+    let split = split_groups(factor);
     let p = context.pipeline(
         SOURCE,
-        "lamq_rht_in_batch",
+        if split.is_some() {
+            "lamq_rht_in_batch_split"
+        } else {
+            "lamq_rht_in_batch"
+        },
         &FunctionConstantValues::new(),
         &[],
     )?;
@@ -153,10 +158,30 @@ pub fn encode_lamq_rht_in_batch(
             (y.0, 5, y.1),
         ],
         &[(&params, 6), (&table, 7)],
-        jobs.len() as u64,
-        1024,
+        jobs.len() as u64 * split.unwrap_or(1),
+        if split.is_some() {
+            LAMQ_SPLIT_THREADS
+        } else {
+            1024
+        },
     );
     Ok(())
+}
+
+/// Threads per threadgroup of the split rotation kernels. A multiple of 32,
+/// so every Sylvester factor of 32 or less tiles it in lane-aligned groups.
+const LAMQ_SPLIT_THREADS: u64 = 256;
+
+/// Threadgroups per vector when the split rotation applies (Sylvester
+/// factor of 32 or less), mirroring `lamq_split_groups` in lamq.metal.
+/// None selects the one-threadgroup kernels (3072 = 256 x 12).
+fn split_groups(factor: &LamqRhtFactor) -> Option<u64> {
+    let na = u64::from(factor.na);
+    if na > 32 {
+        return None;
+    }
+    let cpt = LAMQ_SPLIT_THREADS / na;
+    Some(u64::from(factor.nb).div_ceil(cpt))
 }
 
 /// Rotates `count` vectors of width `factor.n` (vector `v` at `v * n`
@@ -181,7 +206,13 @@ pub fn encode_lamq_rht(
     values.set_constant_value_at_index((&x_half as *const bool).cast(), MTLDataType::Bool, 120);
     values.set_constant_value_at_index((&y_half as *const bool).cast(), MTLDataType::Bool, 121);
     let key = [u8::from(x_half), u8::from(y_half)];
-    let p = context.pipeline(SOURCE, "lamq_rht", &values, &key)?;
+    let split = split_groups(factor);
+    let name = if split.is_some() {
+        "lamq_rht_split"
+    } else {
+        "lamq_rht"
+    };
+    let p = context.pipeline(SOURCE, name, &values, &key)?;
     let dir_v: u32 = match dir {
         LamqRhtDir::In => 0,
         LamqRhtDir::Out => 1,
@@ -199,10 +230,14 @@ pub fn encode_lamq_rht(
             (y.0, 3, y.1),
         ],
         &[(&params, 4)],
-        u64::from(count),
-        // One threadgroup holds the whole vector, so a decode rotation runs on
-        // one core: give it the most threads a threadgroup takes.
-        1024,
+        u64::from(count) * split.unwrap_or(1),
+        // Unsplit, one threadgroup holds the whole vector, so a decode
+        // rotation runs on one core: give it the most threads it takes.
+        if split.is_some() {
+            LAMQ_SPLIT_THREADS
+        } else {
+            1024
+        },
     );
     Ok(())
 }
