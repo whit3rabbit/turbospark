@@ -177,6 +177,11 @@ final class AudioWorkspaceController: ObservableObject {
     /// The offline Voice Isolator on MLX (VoiceIsolatorMLXModel.swift).
     /// Released wherever the Qwen model is.
     var voiceIsolatorModel: VoiceIsolatorMLXModel?
+    /// The realtime Voice Isolator on MLX for live noise reduction and the
+    /// install it came from (VoiceIsolatorMLXLive.swift). Released wherever
+    /// the Qwen model is.
+    var liveVoiceIsolator: (path: String, model: VoiceIsolatorMLXLiveModel)?
+    var liveCleanerDependencies = AudioLiveCleanerDependencies()
     /// A resident FluidAudio recognizer (AudioWorkspaceFluid.swift). Released
     /// wherever the Rust session and Qwen model are.
     var fluidTranscriber: (any FluidAudioTranscriber)?
@@ -884,8 +889,8 @@ final class AudioWorkspaceController: ObservableObject {
         if let previous = session { await Task.detached { previous.close() }.value }
         modelAccessURL?.stopAccessingSecurityScopedResource(); modelAccessURL = nil
         session = nil; sessionKey = nil
-        if qwenModel != nil || voiceIsolatorModel != nil {
-            qwenModel = nil; voiceIsolatorModel = nil
+        if qwenModel != nil || voiceIsolatorModel != nil || liveVoiceIsolator != nil {
+            qwenModel = nil; voiceIsolatorModel = nil; liveVoiceIsolator = nil
             MLX.Memory.clearCache()
         }
         fluidTranscriber = nil
@@ -938,7 +943,7 @@ final class AudioWorkspaceController: ObservableObject {
         if let previous = session { await Task.detached { previous.close() }.value }
         session = nil
         modelAccessURL?.stopAccessingSecurityScopedResource(); modelAccessURL = nil
-        qwenModel = nil; voiceIsolatorModel = nil; fluidTranscriber = nil; sessionKey = nil; loadedModelAlias = nil
+        qwenModel = nil; voiceIsolatorModel = nil; liveVoiceIsolator = nil; fluidTranscriber = nil; sessionKey = nil; loadedModelAlias = nil
         MLX.Memory.clearCache()
 
         let token = epoch
@@ -1034,7 +1039,7 @@ final class AudioWorkspaceController: ObservableObject {
     }
 
     var canUnloadModel: Bool {
-        (session != nil || qwenModel != nil || voiceIsolatorModel != nil || loadedModelAlias != nil) && !isBusy && !isRecording
+        (session != nil || qwenModel != nil || voiceIsolatorModel != nil || liveVoiceIsolator != nil || loadedModelAlias != nil) && !isBusy && !isRecording
     }
 
     func loadModel() {
@@ -1081,14 +1086,14 @@ final class AudioWorkspaceController: ObservableObject {
         sessionKey = nil
         modelAccessURL = nil
         let oldQwen = qwenModel
-        let oldIsolator = voiceIsolatorModel
-        qwenModel = nil; voiceIsolatorModel = nil
+        let oldIsolator = voiceIsolatorModel != nil || liveVoiceIsolator != nil
+        qwenModel = nil; voiceIsolatorModel = nil; liveVoiceIsolator = nil
         fluidTranscriber = nil
         loadedModelAlias = nil
         Task {
             if let old { await Task.detached { old.close() }.value }
             oldAccess?.stopAccessingSecurityScopedResource()
-            if oldQwen != nil || oldIsolator != nil {
+            if oldQwen != nil || oldIsolator {
                 MLX.Memory.clearCache()
             }
         }
@@ -1102,14 +1107,14 @@ final class AudioWorkspaceController: ObservableObject {
             guard !Task.isCancelled, let self, !self.isBusy, !self.isRecording else { return }
             let old = self.session; let oldAccess = self.modelAccessURL
             let oldQwen = self.qwenModel
-            let oldIsolator = self.voiceIsolatorModel
+            let oldIsolator = self.voiceIsolatorModel != nil || self.liveVoiceIsolator != nil
             self.session = nil; self.sessionKey = nil; self.modelAccessURL = nil
-            self.qwenModel = nil; self.voiceIsolatorModel = nil
+            self.qwenModel = nil; self.voiceIsolatorModel = nil; self.liveVoiceIsolator = nil
             self.fluidTranscriber = nil
             self.loadedModelAlias = nil
             if let old { await Task.detached { old.close() }.value }
             oldAccess?.stopAccessingSecurityScopedResource()
-            if oldQwen != nil || oldIsolator != nil {
+            if oldQwen != nil || oldIsolator {
                 MLX.Memory.clearCache()
             }
         }
@@ -1164,7 +1169,7 @@ final class AudioWorkspaceController: ObservableObject {
         opening = nil
         if let old = session { DispatchQueue.global(qos: .userInitiated).sync { old.close() } }
         session = nil; sessionKey = nil; modelAccessURL?.stopAccessingSecurityScopedResource(); modelAccessURL = nil
-        qwenModel = nil; voiceIsolatorModel = nil; fluidTranscriber = nil; loadedModelAlias = nil
+        qwenModel = nil; voiceIsolatorModel = nil; liveVoiceIsolator = nil; fluidTranscriber = nil; loadedModelAlias = nil
         MLX.Memory.clearCache()
         for url in scratchURLs { try? FileManager.default.removeItem(at: url) }
         scratchURLs.removeAll(); items.removeAll(); activeGeneration = nil; activeRunID = nil; generationProgress = nil

@@ -6,12 +6,15 @@ a Swift and MLX port of the
 [Inworld Voice Isolator](https://github.com/inworld-ai/voice-isolator).
 Apache License 2.0; `LICENSE` and `NOTICE` are the upstream files, unchanged.
 
-The app uses it for the offline Voice Isolator only
-(`voice-isolator-v1`, `Audio/VoiceIsolatorMLXModel.swift`). The Rust port in
+The app uses it for the offline Voice Isolator (`voice-isolator-v1`,
+`Audio/VoiceIsolatorMLXModel.swift`) and for live noise reduction on the
+realtime checkpoint when its Core ML step is not installed
+(`Audio/VoiceIsolatorMLXLive.swift`). The Rust port in
 `crates/audio/src/sts/voice_isolator/` stays the engine for the CLI, the FFI,
-the realtime checkpoint and live streams. Reason: the Rust Metal path is
-per-call (each projection uploads and reads back), about 14 s for a 10 s
-file on an M4 Max, where this port renders the same file in about 1 s.
+the realtime checkpoint's offline render and the Core ML live step. Reason:
+the Rust Metal path is per-call (each projection uploads and reads back),
+about 14 s for a 10 s file on an M4 Max, where this port renders the same
+file in about 1 s, and a live stream on it is not real time (RTF about 3).
 
 The catalog owns downloads and byte verification. This port loads the
 released `denoiser.safetensors` and converts it in memory, so it needs no

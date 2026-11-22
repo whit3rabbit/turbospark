@@ -94,7 +94,7 @@ The app renders `voice-isolator-v1` on the vendored MLX port
 (`swift/TurboSparkApp/Vendor/VoiceIsolatorMLX`, starkdmi/VoiceIsolatorMLX,
 Apache-2.0), not on this crate: it loads the same `denoiser.safetensors`
 and converts it in memory. This crate stays the engine for the CLI, the FFI,
-the realtime file and live streams. Against the torch CPU reference above
+the realtime file's offline render and the Core ML live step. Against the torch CPU reference above
 (`VoiceIsolatorMLXTests.testRealCheckpointMatchesTheTorchReference`,
 `TURBOSPARK_VOICE_ISOLATOR_MODEL`): float32 max abs 2.7e-7, the app's float16
 68.9 dB SNR.
@@ -107,5 +107,38 @@ first pass discarded, float16 and float32 interleaved, not benchmark rows:
 | float16 | 1.01 s (RTF 0.10) | median 5.8 ms, p95 7.9 ms, 1 push over 20 ms |
 | float32 | 1.18 s (RTF 0.12) | median 6.8 ms, p95 9.3 ms, 1 push over 20 ms |
 
-The stream numbers are the library alone, not yet wired to the app's live
-path.
+The stream numbers are the library alone.
+
+### Live noise reduction in the app
+
+"Reduce background noise" (`AudioLiveVoiceCleaner`) streams
+`denoiser_realtime.safetensors` on the MLX port
+(`Audio/VoiceIsolatorMLXLive.swift`): float16, lanes off (`windowFrames: 0`,
+the cache keeps the trained 1200-frame window, as this crate's stream does),
+up to 10 frames per network call. The Rust stream still opens first when the
+Core ML step is installed beside the weights on macOS 15, and again only if
+the MLX load fails. Against this crate's CPU port stream on `real_clip.npy`
+(`VoiceIsolatorMLXLiveTests.testRealStreamMatchesTheRustStream`, MLX in
+4096-sample pushes, Rust in 20 ms pushes): float32 max abs 6.5e-7, the app's
+float16 69.1 dB SNR.
+
+In the app's pipeline (`testRealLiveLatencyUnderTheCapturePipeline`: the
+capture feed, the transcriber's queue and 100 ms pump, the cleaner and the
+mixer, fed in real time with `AudioCapture`'s 4096-sample taps, about
+85 ms each), with a stand-in for the live text model. Same M4 Max, AC power,
+load average 5 to 9 from other sessions, 30 s takes, 352 pushes each, two
+takes per engine interleaved, not benchmark rows:
+
+| Engine | Median push | p95 | Late pushes | RTF |
+|---|---|---|---|---|
+| MLX float16, 10 frames per call | 27.6, 29.5 ms | 34.8, 38.8 ms | 0, 0 | 0.33, 0.35 |
+| MLX float16, 2 frames per call | 56.1, 56.8 ms | 71.1, 78.0 ms | 2, 6 | 0.66, 0.68 |
+| Rust Core ML step (`auto`) | 73.5, 74.1 ms | 92.2, 93.0 ms | 95, 95 | 0.92, 0.92 |
+
+At capture packet sizes the Core ML step, fixed at two frames a call, sits
+near real time and runs a quarter of its pushes late, against its 15.8 ms per
+20 ms push above. Its first push on a cold Core ML cache took 4.4 s, which
+ends cleaning for that take (late for over a second). The live text model was
+not installed for these runs, so its contention for the GPU and Neural Engine
+is not in these numbers; the cleaner logs each take's timings on close
+(subsystem `com.turbospark.app`, category `LiveNoiseReduction`).

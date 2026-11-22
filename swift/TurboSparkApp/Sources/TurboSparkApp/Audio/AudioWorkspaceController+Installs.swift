@@ -85,14 +85,14 @@ extension AudioWorkspaceController {
         let old = session; let oldAccess = modelAccessURL
         session = nil; sessionKey = nil; modelAccessURL = nil
         let oldQwen = qwenModel
-        let oldIsolator = voiceIsolatorModel
-        qwenModel = nil; voiceIsolatorModel = nil
+        let oldIsolator = voiceIsolatorModel != nil || liveVoiceIsolator != nil
+        qwenModel = nil; voiceIsolatorModel = nil; liveVoiceIsolator = nil
         fluidTranscriber = nil
         loadedModelAlias = nil
         Task { [weak self] in
             let result = await Task.detached { () -> Result<Void, Error> in
                 old?.close()
-                if oldQwen != nil || oldIsolator != nil {
+                if oldQwen != nil || oldIsolator {
                     MLX.Memory.clearCache()
                 }
                 return Result {

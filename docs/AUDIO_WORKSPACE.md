@@ -268,8 +268,8 @@ modules and internal codecs are not presented as runnable jobs.
   app, `voice-isolator-v1` renders on the vendored MLX port
   (`swift/TurboSparkApp/Vendor/VoiceIsolatorMLX`, float16) instead of the
   Rust Metal path, which is per-call and far slower; an MLX load failure
-  falls back to the Rust session. The CLI, FFI, realtime profile and live
-  streams stay on Rust. Quality is not yet gated beyond reference parity
+  falls back to the Rust session. The CLI, FFI and realtime profile stay on
+  Rust. Quality is not yet gated beyond reference parity
   (family READMEs under `crates/audio/src/sts/`).
 - "Clean reference" on the Voice Cloning reference card runs the same
   enhancement over only the trimmed reference region (best installed of
@@ -287,6 +287,11 @@ modules and internal codecs are not presented as runnable jobs.
   opt-in "Reduce background noise" for live text (off by default,
   microphone only); the saved recording stays the original audio
   ([meeting notes architecture](../swift/docs/SWIFT_AUDIO_MEETING_NOTES.md)).
+  The app streams the realtime profile on the vendored MLX port instead of
+  the Rust Metal fallback (float16, a median 28 ms per 85 ms capture packet,
+  RTF about 0.33 in the app's pipeline on an M4 Max). The Rust stream opens
+  first when the Core ML step is installed, and again only if the MLX load
+  fails. Every push still reports whether it ran late.
 - Vocal separation runs the pinned Mel-Band RoFormer vocals profile
   (`mel-roformer-vocals-v1`, portable CPU) from the Clean Up page's
   "Separate stems". The take is read at 44.1 kHz stereo (a mono take is

@@ -7,11 +7,12 @@ import VoiceIsolatorMLX
 /// The offline Voice Isolator on the vendored MLX port
 /// (Vendor/VoiceIsolatorMLX/UPSTREAM.md).
 ///
-/// The catalog row stays a Rust row: the CLI, the FFI, the realtime
-/// checkpoint and live streams run the Rust engine. Only this app's offline
+/// The catalog row stays a Rust row: the CLI, the FFI and the realtime
+/// checkpoint's offline render run the Rust engine. This app's offline
 /// enhancement (Clean Up and Clean reference) comes here, because the Rust
 /// Metal path is per-call and takes about 14 s for 10 s of audio on an
-/// M4 Max, where this port takes about 1 s.
+/// M4 Max, where this port takes about 1 s. Live noise reduction streams
+/// the realtime checkpoint on this port too (VoiceIsolatorMLXLive.swift).
 final class VoiceIsolatorMLXModel: @unchecked Sendable {
     nonisolated static let alias = "voice-isolator-v1"
     nonisolated static let family = "voice_isolator"
@@ -71,6 +72,7 @@ struct AudioVoiceIsolatorLoadDependencies {
         try AudioCatalog.verify($0, token: $1, progress: $2)
     }
     var load: @Sendable (URL) throws -> VoiceIsolatorMLXModel = { try VoiceIsolatorMLXModel(directory: $0) }
+    var loadLive: @Sendable (URL) throws -> VoiceIsolatorMLXLiveModel = { try VoiceIsolatorMLXLiveModel(directory: $0) }
 }
 
 /// The MLX step failed, as opposed to finding or verifying the install.
@@ -128,7 +130,7 @@ extension AudioWorkspaceController {
         if let previous = session { await Task.detached { previous.close() }.value }
         session = nil
         modelAccessURL?.stopAccessingSecurityScopedResource(); modelAccessURL = nil
-        qwenModel = nil; voiceIsolatorModel = nil; fluidTranscriber = nil; sessionKey = nil; loadedModelAlias = nil
+        qwenModel = nil; voiceIsolatorModel = nil; liveVoiceIsolator = nil; fluidTranscriber = nil; sessionKey = nil; loadedModelAlias = nil
         MLX.Memory.clearCache()
 
         let token = epoch
