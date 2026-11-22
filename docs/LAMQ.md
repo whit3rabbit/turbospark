@@ -547,6 +547,30 @@ The intake must check every offset bound and every sha256.
     not apply (rtr1 is nearly unused here, and wider-code multi-weight
     tables exceed threadgroup memory). The next GEMV lever would have to
     cut gathers per weight, which is a format question, not a kernel one.
+    Expert pair characterized the same way (2026-11-22, nothing kept): the
+    ignored `expert_pair_bandwidth` test in
+    `tests/moe_inkling2_lamq_parity.rs` (128 resident experts of one
+    format, 16 disjoint 8-slot selections cycled). The release's experts
+    use only ht2, ht3 and rtr1 (gate_up 41 / 3 / 56%, down 48 / 8 / 44% of
+    3072 expert records). Phase 1: ht2 87 us (122 GB/s), ht3 140 us,
+    rtr1 128 to 140 us (41 GB/s); phase 2: 63, 93 and 73 us. Both phases
+    are gather-bound like the GEMV. Staging the plain 4096-entry rtr1 table
+    in threadgroup memory for phase 1 (16 threadgroup gathers per chunk
+    instead of 6 three-weight device gathers) was slower, 151 to 156 us
+    against 140, interleaved: the 128 KB three-weight table stays.
+    `inkling2_bf16_gemv_multi` is dispatch-bound, not weight-bound: 336
+    dispatches per token, 328 of them one segment, on 0.3 to 0.6 MB
+    controller matrices (`down_weight` 64 x 4608, `gain_weight` and
+    `forget_weight` 2304 x 64). Grouping each controller's gain and forget
+    GEMVs (same input) into one dispatch removes 96 dispatches per token,
+    48-token logits `cmp`-equal, NOT kept: tslab `profile`, experiment
+    `lamq-ctrl-group2` (the first try, `lamq-ctrl-group`, was all dirty
+    from another session's Swift build), interleaved, two passes, all 12
+    runs clean: 30.47 to 33.22 tok/s against 30.71 to 31.64, medians both
+    about 30.8. So 96 fewer dispatches cost under about 0.2% of a token:
+    a small dispatch in the real (one encoder) decode is well under 1 us,
+    and the dispatch profile's per-dispatch times are its own overhead.
+    Cutting dispatch count is not a decode lever here.
 15. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
    on the same kernels, each with its own family quality gate.
 

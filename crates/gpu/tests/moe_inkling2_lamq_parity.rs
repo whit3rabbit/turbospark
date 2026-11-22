@@ -365,3 +365,138 @@ fn lut_pack_and_shapes_out_of_contract_are_refused() {
     all[0].1 = &short;
     assert!(lamq_lut_pack(&all).is_err(), "wrong size");
 }
+
+/// Not a gate: GPU time of the resident expert pair per format, at the
+/// Mini's shapes. 128 experts of one format sit in one buffer and the timed
+/// dispatches cycle through 16 disjoint 8-expert selections, so the codes
+/// come from DRAM, not the system cache; a primer pass brings the device up
+/// first. Only the codes the 5.4 GB release uses for experts are timed. Run
+/// with `cargo test --release -p turbospark-gpu --test
+/// moe_inkling2_lamq_parity -- --ignored expert_pair_bandwidth --nocapture`.
+#[test]
+#[ignore]
+fn expert_pair_bandwidth() {
+    const EXPERTS: usize = 128;
+    const REPS: usize = 8;
+    let mut context = MetalContext::new().expect("Metal device");
+    let mut s = 0xBE4C_0001u32;
+    let luts: Vec<(LamqCode, Vec<u16>)> = trellis()
+        .iter()
+        .map(|&c| {
+            (
+                c,
+                (0..c.table_rows() * c.g())
+                    .map(|_| f16::from_f32(unit(&mut s)).to_bits())
+                    .collect(),
+            )
+        })
+        .collect();
+    let pack: Vec<(LamqCode, &[u16])> = luts.iter().map(|(c, t)| (*c, t.as_slice())).collect();
+    let lut_buf = context.new_buffer_with_data(&lamq_lut_pack(&pack).unwrap());
+    let x: Vec<f32> = (0..D).map(|_| unit(&mut s)).collect();
+    let act_in: Vec<f32> = (0..SLOTS * F).map(|_| unit(&mut s)).collect();
+    let x_buf = context.new_buffer_with_data(&le32(&x));
+    let a_buf = context.new_buffer_with_data(&le32(&act_in));
+    let w_buf = context.new_buffer_with_data(&[0x3c00u16; SLOTS]);
+    let acts = context.new_buffer_with_data(&vec![0u8; SLOTS * F * 4]);
+    let y = context.new_buffer_with_data(&vec![0u8; D * 2]);
+    let sets = EXPERTS / SLOTS;
+    let sel: Vec<u32> = (0..EXPERTS as u32).collect();
+    let sel_buf =
+        context.new_buffer_with_data(&sel.iter().flat_map(|v| v.to_le_bytes()).collect::<Vec<_>>());
+    for code in [LamqCode::Ht2, LamqCode::Ht3, LamqCode::Rtr1] {
+        let (gu_rb, dn_rb) = (code.row_bytes(D).unwrap(), code.row_bytes(F).unwrap());
+        let off = LamqExpertOffsets {
+            fmt: 0,
+            gu: 16,
+            gu_s: (16 + 2 * F * gu_rb) as u32,
+            dn: (16 + 2 * F * gu_rb + 4 * F) as u32,
+            dn_s: (16 + 2 * F * gu_rb + 4 * F + D * dn_rb) as u32,
+        };
+        let stride = (off.dn_s as usize + 2 * D).div_ceil(16384) * 16384;
+        let mut layer: Vec<u8> = (0..stride * EXPERTS).map(|_| xs(&mut s) as u8).collect();
+        for e in 0..EXPERTS {
+            let b = &mut layer[e * stride..];
+            b[..16].fill(0);
+            b[0] = code.id();
+            b[4] = code.id();
+            b[8..12].copy_from_slice(&(gu_rb as u32).to_le_bytes());
+            b[12..16].copy_from_slice(&(dn_rb as u32).to_le_bytes());
+            // Finite scales.
+            for i in 0..2 * F {
+                let o = off.gu_s as usize + 2 * i;
+                b[o..o + 2].copy_from_slice(&f16::from_f32(0.03).to_bits().to_le_bytes());
+            }
+            for i in 0..D {
+                let o = off.dn_s as usize + 2 * i;
+                b[o..o + 2].copy_from_slice(&f16::from_f32(0.03).to_bits().to_le_bytes());
+            }
+        }
+        let layer_buf = context.new_buffer_with_data(&layer);
+        drop(layer);
+        for phase in [1, 2] {
+            let run = |context: &mut MetalContext| -> f64 {
+                let pass = context.begin_pass();
+                for _ in 0..REPS {
+                    for set in 0..sets {
+                        let resident = Inkling2ResidentLayer {
+                            buffer: &layer_buf,
+                            stride: stride as u64,
+                            n_experts: EXPERTS as u32,
+                            sel: (&sel_buf, (set * SLOTS * 4) as u64),
+                        };
+                        let ex = LamqExperts::Resident(&resident);
+                        if phase == 1 {
+                            encode_inkling2_lamq_phase1(
+                                context,
+                                &pass,
+                                &ex,
+                                &off,
+                                (&lut_buf, 0),
+                                (&x_buf, 0),
+                                (&acts, 0),
+                                D as u32,
+                                F as u32,
+                                SLOTS as u32,
+                                CAPS.0,
+                                CAPS.1,
+                            )
+                            .unwrap();
+                        } else {
+                            encode_inkling2_lamq_phase2(
+                                context,
+                                &pass,
+                                &ex,
+                                &off,
+                                (&lut_buf, 0),
+                                (&a_buf, 0),
+                                (&w_buf, 0),
+                                (&y, 0),
+                                D as u32,
+                                F as u32,
+                                SLOTS as u32,
+                            )
+                            .unwrap();
+                        }
+                    }
+                }
+                pass.commit_and_wait_with_gpu_time()
+            };
+            run(&mut context); // primer
+            let t = (0..3).map(|_| run(&mut context)).fold(f64::MAX, f64::min);
+            let per = t / (REPS * sets) as f64;
+            let bytes = if phase == 1 {
+                SLOTS * 2 * F * gu_rb
+            } else {
+                SLOTS * D * dn_rb
+            };
+            println!(
+                "{:5} phase {phase}: {:7.2} us/dispatch  {:6.1} GB/s codes  {:6.1} G weights/s",
+                code.name(),
+                per * 1e6,
+                bytes as f64 / per / 1e9,
+                (SLOTS * 2 * F * D / phase) as f64 / per / 1e9,
+            );
+        }
+    }
+}
