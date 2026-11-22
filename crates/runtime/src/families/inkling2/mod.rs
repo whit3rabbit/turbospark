@@ -531,11 +531,49 @@ impl RealForwardRunner {
             )));
         }
         gpu::read_buffer_f16_into(&self.scratch.logits, 0, logits);
-        // Padding rows past the real vocabulary can never be sampled.
-        for l in &mut logits[cfg.unpadded_vocab as usize..] {
-            *l = f16::NEG_INFINITY;
-        }
+        mask_padding(logits, cfg.unpadded_vocab as usize);
         Ok(())
+    }
+}
+
+/// Makes the padding rows past the real vocabulary unsampleable. The most
+/// negative FINITE f16, never -inf: `selection::select` refuses a score
+/// vector with any non-finite entry, which is how every Inkling chat failed
+/// while the logit gates (which drop these rows) passed. After the
+/// sampler's max subtraction its weight underflows to exactly zero at any
+/// temperature, and a greedy argmax never reaches it.
+fn mask_padding(logits: &mut [f16], unpadded: usize) {
+    let start = unpadded.min(logits.len());
+    for l in &mut logits[start..] {
+        *l = f16::MIN;
+    }
+}
+
+#[cfg(test)]
+mod padding_tests {
+    use super::*;
+    use foundation::LogitsView;
+
+    #[test]
+    fn padding_is_finite_and_never_chosen() {
+        let greedy = selection::ShapingConfig::new(0.0, 0, None, 1.0, Some(1)).unwrap();
+        // Rows 6 and 7 are padding. The real rows are all very negative, so
+        // a padding row left at a large value would win any comparison.
+        let mut real = vec![f16::from_f32(-60000.0); 8];
+        real[6] = f16::from_f32(3.0);
+        real[7] = f16::from_f32(9.0);
+        real[2] = f16::from_f32(1.0);
+        mask_padding(&mut real, 6);
+        assert!(real.iter().all(|l| l.is_finite()));
+        assert_eq!(
+            selection::select(LogitsView::new(&real), &greedy, &[], 0).unwrap(),
+            2
+        );
+        let hot = selection::ShapingConfig::new(5.0, 0, None, 1.0, Some(7)).unwrap();
+        for pos in 0..200 {
+            let id = selection::select(LogitsView::new(&real), &hot, &[], pos).unwrap();
+            assert!(id < 6, "padding row {id} sampled at position {pos}");
+        }
     }
 }
 
