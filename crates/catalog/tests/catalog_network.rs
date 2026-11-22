@@ -86,30 +86,65 @@ fn every_row_still_names_files_that_exist_at_the_size_it_records() {
         }
 
         // The size, which for a `main`-pinned row is the only fingerprint.
-        let published: u64 = match entry.source.kind {
-            // Probe shares split discovery with installation. A HEAD on just
-            // the first filename would undercount a split catalog artifact.
-            SourceKind::Gguf => match turbospark_catalog::probe(
+        // An Inkling 2 row installs through the whole-file route, which
+        // downloads its own file list (the original checkpoint without the
+        // DSpark drafter, a LookAtMyQuant release with its JSON and npz), so
+        // it is measured the way it installs.
+        let published: u64 = if turbospark_catalog::is_inkling2_row(entry) {
+            match turbospark_catalog::detect_inkling2_repo(
                 &client,
                 &weights,
                 entry.source.file.as_deref(),
                 None,
             ) {
-                Ok(report) => report.download_bytes.unwrap_or(0),
-                Err(error) => {
+                Ok(Some(source)) => source.download_bytes(),
+                Ok(None) => {
                     findings.push(format!(
-                        "{}: GGUF shard validation failed: {error}",
+                        "{}: {weights} no longer resolves to an Inkling 2 source",
                         entry.alias
                     ));
                     continue;
                 }
-            },
-            SourceKind::Mlx => files
-                .iter()
-                .filter(|f| f.ends_with(".safetensors"))
-                .filter_map(|f| client.content_length(&weights.file_url(f)).ok().flatten())
-                .sum(),
-            SourceKind::Lamq => unreachable!("never a catalog row's kind"),
+                Err(error) => {
+                    findings.push(format!(
+                        "{}: Inkling 2 detection failed: {error}",
+                        entry.alias
+                    ));
+                    continue;
+                }
+            }
+        } else {
+            match entry.source.kind {
+                // Probe shares split discovery with installation. A HEAD on just
+                // the first filename would undercount a split catalog artifact.
+                SourceKind::Gguf => match turbospark_catalog::probe(
+                    &client,
+                    &weights,
+                    entry.source.file.as_deref(),
+                    None,
+                ) {
+                    Ok(report) => report.download_bytes.unwrap_or(0),
+                    Err(error) => {
+                        findings.push(format!(
+                            "{}: GGUF shard validation failed: {error}",
+                            entry.alias
+                        ));
+                        continue;
+                    }
+                },
+                SourceKind::Mlx => files
+                    .iter()
+                    .filter(|f| f.ends_with(".safetensors"))
+                    .filter_map(|f| client.content_length(&weights.file_url(f)).ok().flatten())
+                    .sum(),
+                SourceKind::Lamq => {
+                    findings.push(format!(
+                        "{}: a lamq row outside the Inkling 2 family has no install route",
+                        entry.alias
+                    ));
+                    continue;
+                }
+            }
         };
         // **A VISION-TOWER ROW'S `download_bytes` IS NOT COMPARABLE TO THE
         // WHOLE-REPO SHARD SUM ABOVE.** A tower row's weights repository is

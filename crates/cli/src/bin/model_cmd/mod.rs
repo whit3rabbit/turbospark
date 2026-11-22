@@ -19,7 +19,7 @@ mod render;
 mod transfer;
 mod views;
 
-use catalog::{Catalog, Client, InstallKind, InstallPlan, RepoRef, SourceKind, Store, Verdict};
+use catalog::{Catalog, Client, InstallKind, InstallPlan, RepoRef, Store, Verdict};
 use destination::Destination;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -415,12 +415,10 @@ impl PullSource {
                 let report =
                     catalog::probe(client, &weights, options.file.as_deref(), Some(&sidecars))
                         .map_err(Error::Failed)?;
-                // An Inkling 2 GGUF or LookAtMyQuant release is downloaded
-                // whole, then converted; the HF-checkpoint Inkling (`mlx`
-                // kind) keeps the walk.
-                if report.family == Some(model_io::ModelFamily::Inkling2Loop)
-                    && matches!(report.kind, SourceKind::Gguf | SourceKind::Lamq)
-                {
+                // Every Inkling 2 source (GGUF, LookAtMyQuant release, the
+                // original checkpoint, an MLX conversion) is downloaded
+                // whole, then converted: none has a streamed walk.
+                if report.family == Some(model_io::ModelFamily::Inkling2Loop) {
                     if options.quantize.is_some() {
                         return Err(Error::Usage(
                             "--quantize does not apply to an Inkling GGUF or LookAtMyQuant \
@@ -467,6 +465,22 @@ pub fn pull(
     // Before the probe, a `--repo` pull's first network request (10.4).
     let destination = text_destination(store, InstallKind::Text, source.alias(), options)?;
     let alias = source.alias().to_string();
+    // An Inkling 2 row installs through the whole-file route, at its pinned
+    // revision, recorded under its own status.
+    if let PullSource::Row(plan) = &source {
+        if let Some(entry) = catalog
+            .get(&plan.alias)
+            .filter(|e| catalog::is_inkling2_row(e))
+        {
+            if options.quantize.is_some() {
+                return Err(Error::Usage(
+                    "--quantize applies to a --repo pull; a catalog row pins its own quantization"
+                        .to_string(),
+                ));
+            }
+            return inkling2_local::pull_row(store, client, entry, destination);
+        }
+    }
     let mut plan = match source.plan(client, options)? {
         Planned::Walk(plan) => plan,
         Planned::Inkling2(inkling) => {

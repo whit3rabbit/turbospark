@@ -1,7 +1,7 @@
-//! Local installs of Inkling 2 Mini from the two sources that need whole
-//! files on disk rather than the range-streamed walk: a LookAtMyQuant packed
-//! release directory (`docs/LAMQ.md`) and an Inkling 2 GGUF
-//! (`docs/INKLING2_PHASE0.md`). The CLI (`turbospark model pull-local`), the
+//! Local installs of Inkling 2 Mini from the sources that need whole files on
+//! disk rather than the range-streamed walk: a LookAtMyQuant packed release
+//! directory (`docs/LAMQ.md`), an Inkling 2 GGUF, the original Hugging Face
+//! checkpoint and an MLX conversion of it (`docs/INKLING2_PHASE0.md`). The CLI (`turbospark model pull-local`), the
 //! FFI and the Hugging Face route (which downloads the files first) all come
 //! through [`install_inkling2_local`], so they share one order of steps:
 //!
@@ -23,28 +23,75 @@ use crate::install::{
 use crate::library::LocationEnv;
 use crate::store::{directory_bytes, InstalledModel, ModelModality, Store, StoreError};
 
-/// The two local Inkling sources.
+/// The local Inkling sources.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Inkling2LocalSource {
     /// A LookAtMyQuant packed release directory.
     Lamq(PathBuf),
     /// An Inkling 2 GGUF file (`inkling2_loop` or `inkling2`).
     Gguf(PathBuf),
+    /// A directory holding the original checkpoint: `config.json` (no MLX
+    /// `quantization` block) and one `.safetensors` weights file.
+    Hf(PathBuf),
+    /// A directory holding an MLX conversion: `config.json` with an MLX
+    /// `quantization` block and its safetensors shards.
+    Mlx(PathBuf),
 }
 
 impl Inkling2LocalSource {
     pub fn path(&self) -> &Path {
         match self {
-            Self::Lamq(p) | Self::Gguf(p) => p,
+            Self::Lamq(p) | Self::Gguf(p) | Self::Hf(p) | Self::Mlx(p) => p,
         }
     }
 
-    /// `lamq` or `gguf`, for messages and the receipt.
+    /// `lamq`, `gguf`, `hf` or `mlx`, for messages and the receipt.
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Lamq(_) => "lamq",
             Self::Gguf(_) => "gguf",
+            Self::Hf(_) => "hf",
+            Self::Mlx(_) => "mlx",
         }
+    }
+}
+
+/// Which safetensors Inkling source a `config.json` describes: None unless
+/// it declares `model_type` `inkling2_loop`; MLX when it carries mlx-lm's
+/// `quantization` block (the original checkpoint's is null and its
+/// `quantization_config` names modelopt NVFP4), else the original.
+pub(crate) fn inkling2_safetensors_kind(config_json: &str) -> Option<bool> {
+    let v: serde_json::Value = serde_json::from_str(config_json).ok()?;
+    if v.get("model_type").and_then(|t| t.as_str()) != Some("inkling2_loop") {
+        return None;
+    }
+    Some(v.get("quantization").is_some_and(|q| q.is_object()))
+}
+
+/// The one weights file of an original-checkpoint directory: every
+/// `.safetensors` file except the DSpark drafter (`mtp.safetensors`), which
+/// the intake does not read. More than one is refused, since the intake
+/// reads a single file.
+fn hf_weights_file(dir: &Path) -> Result<PathBuf, String> {
+    let mut found = Vec::new();
+    for e in std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))? {
+        let name = e.map_err(|e| e.to_string())?.file_name();
+        let name = name.to_string_lossy();
+        if name.ends_with(".safetensors") && name != "mtp.safetensors" {
+            found.push(dir.join(name.as_ref()));
+        }
+    }
+    found.sort();
+    match found.len() {
+        1 => Ok(found.remove(0)),
+        0 => Err(format!(
+            "{} has no .safetensors weights file",
+            dir.display()
+        )),
+        n => Err(format!(
+            "{} has {n} .safetensors weights files; the Inkling 2 checkpoint intake reads one",
+            dir.display()
+        )),
     }
 }
 
@@ -56,15 +103,19 @@ pub fn detect_inkling2_local(path: &Path) -> Result<Option<Inkling2LocalSource>,
     if meta.is_dir() {
         let manifest = path.join("manifest.json");
         let Ok(text) = std::fs::read_to_string(&manifest) else {
-            return Ok(None);
+            return Ok(detect_safetensors_dir(path));
         };
         // A `.gturbo` install also has a manifest.json; only the LAMQ
         // release's top-level `format` string selects this intake.
         let format = serde_json::from_str::<serde_json::Value>(&text)
             .ok()
             .and_then(|v| v.get("format").and_then(|f| f.as_str()).map(str::to_string));
-        return Ok((format.as_deref() == Some(repack::LAMQ_INKLING2_FORMAT))
-            .then(|| Inkling2LocalSource::Lamq(path.to_path_buf())));
+        if format.as_deref() == Some(repack::LAMQ_INKLING2_FORMAT) {
+            return Ok(Some(Inkling2LocalSource::Lamq(path.to_path_buf())));
+        }
+        // A `.gturbo` install has no config.json; a checkpoint directory
+        // that also ships a manifest.json still falls through to it.
+        return Ok(detect_safetensors_dir(path));
     }
     if path
         .extension()
@@ -77,20 +128,54 @@ pub fn detect_inkling2_local(path: &Path) -> Result<Option<Inkling2LocalSource>,
     Ok(None)
 }
 
+/// An original-checkpoint or MLX directory, from its `config.json`.
+fn detect_safetensors_dir(dir: &Path) -> Option<Inkling2LocalSource> {
+    let text = std::fs::read_to_string(dir.join("config.json")).ok()?;
+    let mlx = inkling2_safetensors_kind(&text)?;
+    Some(if mlx {
+        Inkling2LocalSource::Mlx(dir.to_path_buf())
+    } else {
+        Inkling2LocalSource::Hf(dir.to_path_buf())
+    })
+}
+
 /// Bytes a source occupies (a file, or every file in a directory).
 fn source_bytes(source: &Inkling2LocalSource) -> u64 {
     match source {
         Inkling2LocalSource::Gguf(p) => std::fs::metadata(p).map_or(0, |m| m.len()),
-        Inkling2LocalSource::Lamq(p) => directory_bytes(p),
+        Inkling2LocalSource::Lamq(p) | Inkling2LocalSource::Hf(p) | Inkling2LocalSource::Mlx(p) => {
+            directory_bytes(p)
+        }
     }
 }
 
-/// Free space an install needs beside its source: the written install (the
-/// LAMQ expert padding makes it about 1.3x the release; a GGUF install is
-/// about the file's size) plus a margin.
+/// Free space an install needs beside its source, from the source's bytes:
+/// the written install plus a margin. The LAMQ expert padding makes an
+/// install about 1.43x the release (a GGUF install is about the file's
+/// size, under the same bound); the original checkpoint and an MLX
+/// conversion keep their expert bytes as published, so their install is
+/// about the source's size. `crate::inkling2_repo` estimates from listed
+/// sizes with this same function.
+pub(crate) fn inkling2_install_estimate(whole_file_format: bool, source_bytes: u64) -> u64 {
+    if whole_file_format {
+        source_bytes.saturating_mul(3) / 2 + (1 << 30)
+    } else {
+        source_bytes + (1 << 30)
+    }
+}
+
+/// [`inkling2_install_estimate`] for a source on disk.
 pub fn inkling2_local_required_bytes(source: &Inkling2LocalSource) -> u64 {
-    let src = source_bytes(source);
-    src.saturating_mul(3) / 2 + (1 << 30)
+    let packed = matches!(
+        source,
+        Inkling2LocalSource::Lamq(_) | Inkling2LocalSource::Gguf(_)
+    );
+    inkling2_install_estimate(packed, source_bytes(source))
+}
+
+fn read_config(dir: &Path) -> Result<String, String> {
+    let p = dir.join("config.json");
+    std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))
 }
 
 /// A sibling of `dest`, so the final rename stays on one filesystem.
@@ -148,7 +233,9 @@ pub fn install_inkling2_local(
         )));
     }
     let tokenizer_dir = match source {
-        Inkling2LocalSource::Lamq(dir) => dir.clone(),
+        Inkling2LocalSource::Lamq(dir)
+        | Inkling2LocalSource::Hf(dir)
+        | Inkling2LocalSource::Mlx(dir) => dir.clone(),
         Inkling2LocalSource::Gguf(_) => tokenizer_from
             .ok_or_else(|| {
                 failed(
@@ -200,6 +287,55 @@ pub fn install_inkling2_local(
                 progress(&format!(
                     "wrote {} resident tensors from a {} GGUF",
                     r.resident_tensors, r.arch
+                ));
+            }
+            Inkling2LocalSource::Hf(dir) => {
+                let config = read_config(dir)?;
+                let file = hf_weights_file(dir)?;
+                let src = model_io::SafetensorsFile::open(&file)
+                    .map_err(|e| format!("{}: {e}", file.display()))?;
+                let r = repack::write_inkling2_install(&src, &config, &staging, &model_id, |l| {
+                    progress(l)
+                })
+                .map_err(|e| e.0)?;
+                progress(&format!(
+                    "wrote {} resident tensors, {} NVFP4 and {} MXFP8 expert layers",
+                    r.resident_tensors, r.nvfp4_layers, r.mxfp8_layers
+                ));
+            }
+            Inkling2LocalSource::Mlx(dir) => {
+                let config = read_config(dir)?;
+                let (arch, side) = repack::parse_inkling2_config(&config).map_err(|e| e.0)?;
+                let src = repack::Inkling2MlxSource::open(
+                    dir,
+                    arch.num_layers as usize,
+                    (side.core_end - side.core_start) as usize,
+                    arch.hidden_size as usize,
+                )
+                .map_err(|e| e.0)?;
+                // The manifest declares one dense bit width.
+                let bits = match src.affine_bits.iter().collect::<Vec<_>>().as_slice() {
+                    [b] => **b,
+                    other => {
+                        return Err(format!(
+                            "{}: the MLX conversion mixes affine widths {other:?}; the Inkling \
+                             MLX intake takes one",
+                            dir.display()
+                        ))
+                    }
+                };
+                let r = repack::write_inkling2_install_from(
+                    &src,
+                    &config,
+                    &staging,
+                    &model_id,
+                    repack::inkling2_mlx_manifest_quant(bits),
+                    |l| progress(l),
+                )
+                .map_err(|e| e.0)?;
+                progress(&format!(
+                    "wrote {} resident tensors ({bits}-bit affine dense weights)",
+                    r.resident_tensors
                 ));
             }
         }
@@ -295,6 +431,77 @@ mod tests {
             assert_eq!(detect_inkling2_local(&p).unwrap().is_some(), want, "{arch}");
         }
         assert!(detect_inkling2_local(&d.join("missing.gguf")).is_err());
+    }
+
+    #[test]
+    fn a_config_selects_the_original_or_the_mlx_intake() {
+        assert_eq!(
+            inkling2_safetensors_kind(
+                r#"{"model_type": "inkling2_loop", "quantization": {"bits": 4}}"#
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            inkling2_safetensors_kind(
+                r#"{"model_type": "inkling2_loop", "quantization": null, "quantization_config": {"quant_method": "modelopt"}}"#
+            ),
+            Some(false)
+        );
+        assert_eq!(
+            inkling2_safetensors_kind(r#"{"model_type": "inkling2_loop"}"#),
+            Some(false)
+        );
+        assert_eq!(
+            inkling2_safetensors_kind(r#"{"model_type": "llama", "quantization": {}}"#),
+            None
+        );
+        assert_eq!(inkling2_safetensors_kind("not json"), None);
+
+        let d = tmp("ckpt");
+        std::fs::write(d.join("config.json"), r#"{"model_type": "inkling2_loop"}"#).unwrap();
+        assert_eq!(
+            detect_inkling2_local(&d).unwrap(),
+            Some(Inkling2LocalSource::Hf(d.clone()))
+        );
+        std::fs::write(
+            d.join("config.json"),
+            r#"{"model_type": "inkling2_loop", "quantization": {"bits": 4}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            detect_inkling2_local(&d).unwrap(),
+            Some(Inkling2LocalSource::Mlx(d.clone()))
+        );
+    }
+
+    #[test]
+    fn the_checkpoint_intake_reads_exactly_one_weights_file_besides_the_drafter() {
+        let d = tmp("weights");
+        assert!(hf_weights_file(&d).is_err());
+        std::fs::write(d.join("mtp.safetensors"), b"x").unwrap();
+        assert!(
+            hf_weights_file(&d).is_err(),
+            "the drafter alone is not the weights"
+        );
+        std::fs::write(d.join("model-00001-of-00001.safetensors"), b"x").unwrap();
+        assert_eq!(
+            hf_weights_file(&d).unwrap(),
+            d.join("model-00001-of-00001.safetensors")
+        );
+        std::fs::write(d.join("model-extra.safetensors"), b"x").unwrap();
+        assert!(hf_weights_file(&d).unwrap_err().contains("reads one"));
+    }
+
+    #[test]
+    fn checkpoint_installs_are_sized_at_the_source_and_packed_ones_at_1_5x() {
+        assert_eq!(
+            inkling2_install_estimate(false, 10 << 30),
+            (10 << 30) + (1 << 30)
+        );
+        assert_eq!(
+            inkling2_install_estimate(true, 10 << 30),
+            (15 << 30) + (1 << 30)
+        );
     }
 
     #[test]

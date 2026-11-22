@@ -196,6 +196,18 @@ fn tokenizer_repo() -> (String, (String, BTreeMap<String, Vec<u8>>)) {
     )
 }
 
+/// A real release also ships the HF `config.json` (declaring the model it
+/// was compiled from) and a `steering.safetensors`, so it must not read as a
+/// checkpoint.
+fn lamq_config(format: &str) -> String {
+    let model_type = if format == repack::LAMQ_INKLING2_FORMAT {
+        "inkling2_loop"
+    } else {
+        "qwen3_5"
+    };
+    format!(r#"{{"model_type": "{model_type}"}}"#)
+}
+
 fn lamq_release(format: &str) -> (String, (String, BTreeMap<String, Vec<u8>>)) {
     (
         "owner/lamq".to_string(),
@@ -206,6 +218,7 @@ fn lamq_release(format: &str) -> (String, (String, BTreeMap<String, Vec<u8>>)) {
                     "manifest.json",
                     format!(r#"{{"format": "{format}"}}"#).into_bytes(),
                 ),
+                ("config.json", lamq_config(format).into_bytes()),
                 ("layer_00_packed.npz", vec![7; 3000]),
                 ("steering.safetensors", vec![1; 100]),
                 ("tokenizer.json", b"{}".to_vec()),
@@ -232,9 +245,13 @@ fn the_probe_reports_a_lamq_release_as_runnable_and_sizes_only_what_it_downloads
     assert!(report.verdict.is_runnable(), "{:?}", report.verdict);
     assert_eq!(report.kind, SourceKind::Lamq);
     assert_eq!(report.family, Some(model_io::ModelFamily::Inkling2Loop));
-    // manifest (34 bytes) + npz + steering + tokenizer; README excluded.
+    // manifest + config + npz + steering + tokenizer; README excluded.
     let manifest_len = format!(r#"{{"format": "{}"}}"#, repack::LAMQ_INKLING2_FORMAT).len() as u64;
-    assert_eq!(report.download_bytes, Some(manifest_len + 3000 + 100 + 2));
+    let config_len = lamq_config(repack::LAMQ_INKLING2_FORMAT).len() as u64;
+    assert_eq!(
+        report.download_bytes,
+        Some(manifest_len + config_len + 3000 + 100 + 2)
+    );
     // Pinned to the commit, not "main".
     assert_eq!(report.repo.revision, REVISION);
 }
@@ -377,4 +394,114 @@ fn a_failed_intake_keeps_the_download_and_a_retry_fetches_nothing_again() {
     assert_eq!(again, source.download_bytes(), "skipped bytes still count");
 
     let _ = std::fs::remove_dir_all(&home);
+}
+
+fn checkpoint_repo(
+    id: &str,
+    config: &str,
+    extra: &[(&str, Vec<u8>)],
+) -> (String, (String, BTreeMap<String, Vec<u8>>)) {
+    let mut f = files(&[
+        ("config.json", config.as_bytes().to_vec()),
+        ("tokenizer.json", b"{}".to_vec()),
+        ("chat_template.jinja", b"x".to_vec()),
+        ("README.md", b"readme".to_vec()),
+    ]);
+    for (n, b) in extra {
+        f.insert(n.to_string(), b.clone());
+    }
+    (id.to_string(), (REVISION.to_string(), f))
+}
+
+const MLX_CONFIG: &str =
+    r#"{"model_type": "inkling2_loop", "quantization": {"group_size": 64, "bits": 4}}"#;
+const HF_CONFIG: &str =
+    r#"{"model_type": "inkling2_loop", "quantization_config": {"quant_method": "modelopt"}}"#;
+
+#[test]
+fn an_mlx_conversion_is_detected_with_its_shards_and_index() {
+    let _guard = ENDPOINT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _server = serve(
+        [checkpoint_repo(
+            "owner/mlx",
+            MLX_CONFIG,
+            &[
+                ("model-00001-of-00002.safetensors", vec![1; 40]),
+                ("model-00002-of-00002.safetensors", vec![2; 30]),
+                ("model.safetensors.index.json", b"{}".to_vec()),
+            ],
+        )]
+        .into(),
+    );
+    let client = Client::with_timeout(Duration::from_secs(3));
+    let source = detect_inkling2_repo(&client, &RepoRef::new("owner/mlx", "main"), None, None)
+        .unwrap()
+        .expect("an MLX Inkling conversion");
+    assert_eq!(source.kind, Inkling2RepoKind::Mlx);
+    assert_eq!(source.repo.revision, REVISION);
+    let names: Vec<&str> = source.files.iter().map(|(n, _)| n.as_str()).collect();
+    assert!(!names.contains(&"README.md"), "{names:?}");
+    assert!(names.contains(&"model.safetensors.index.json"), "{names:?}");
+    // config + tokenizer + template + two shards + index.
+    assert_eq!(
+        source.download_bytes(),
+        (MLX_CONFIG.len() + 2 + 1 + 40 + 30 + 2) as u64
+    );
+}
+
+#[test]
+fn the_original_checkpoint_skips_the_drafter_and_refuses_two_weights_files() {
+    let _guard = ENDPOINT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _server = serve(
+        [
+            checkpoint_repo(
+                "owner/hf",
+                HF_CONFIG,
+                &[
+                    ("model-00001-of-00001.safetensors", vec![1; 50]),
+                    ("mtp.safetensors", vec![9; 20]),
+                ],
+            ),
+            checkpoint_repo(
+                "owner/hf2",
+                HF_CONFIG,
+                &[
+                    ("model-00001-of-00002.safetensors", vec![1; 5]),
+                    ("model-00002-of-00002.safetensors", vec![1; 5]),
+                ],
+            ),
+        ]
+        .into(),
+    );
+    let client = Client::with_timeout(Duration::from_secs(3));
+    let source = detect_inkling2_repo(&client, &RepoRef::new("owner/hf", "main"), None, None)
+        .unwrap()
+        .expect("the original Inkling checkpoint");
+    assert_eq!(source.kind, Inkling2RepoKind::Hf);
+    assert!(source.files.iter().all(|(n, _)| n != "mtp.safetensors"));
+    assert!(source
+        .files
+        .iter()
+        .any(|(n, _)| n == "model-00001-of-00001.safetensors"));
+    let err =
+        detect_inkling2_repo(&client, &RepoRef::new("owner/hf2", "main"), None, None).unwrap_err();
+    assert!(err.contains("reads one"), "{err}");
+}
+
+#[test]
+fn a_safetensors_repo_of_another_model_type_is_not_this_route() {
+    let _guard = ENDPOINT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _server = serve(
+        [checkpoint_repo(
+            "owner/llama",
+            r#"{"model_type": "llama", "quantization": {"bits": 4}}"#,
+            &[("model.safetensors", vec![1; 10])],
+        )]
+        .into(),
+    );
+    let client = Client::with_timeout(Duration::from_secs(3));
+    assert_eq!(
+        detect_inkling2_repo(&client, &RepoRef::new("owner/llama", "main"), None, None).unwrap(),
+        None
+    );
 }

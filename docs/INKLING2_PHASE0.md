@@ -6,9 +6,12 @@ active per pass, 1M context, text + image in, text out.
 
 STATUS: **decodes, not supported.** The family enum, the HF and MLX intakes
 and a Metal decode flow have landed. The flow is greedy-matched to the CPU
-reference and llama.cpp on real installs (Stage A below). There is no catalog
-row, and the memory oracle and the Phase 6 quality gates in
-`docs/NEW_MODEL.md` have not run. Do not call it supported until they have.
+reference and llama.cpp on real installs (Stage A below). Three catalog rows
+are at status `runs` (2026-11-22): `inkling2-mini` (the original at
+`ed40e7da`), `inkling2-mini-mlx4` and `inkling2-mini-lamq54`, each pulled
+by alias here and chatted. The memory oracle and the Phase 6 quality gates
+in `docs/NEW_MODEL.md` have not run, so no row is `verified` and none is
+featured. Do not call it supported until they have.
 GGUF installs through its own intake (GGUF sections below). LookAtMyQuant
 packed releases install and decode with their codes native (`docs/LAMQ.md`,
 5.4 GB release: 19/19 and 183/232 top-1 against the BF16 install; the loss
@@ -289,8 +292,11 @@ Stage A: reachable and correct (decode only)
    block, unpadded vocab) go in an `inkling2.json` sidecar beside the
    manifest, not in `ArchConfig`, which has about 50 constructor sites. The
    generic fields (softcap, window, mask, sconv taps, route scale, router
-   function) are in `ArchConfig`. Swift's per-family UI lists
-   (`ModelFeatureDescriptor`, `ModelFamilyVisuals`) wait for the catalog row.
+   function) are in `ArchConfig`. Swift's per-family UI lists name the
+   family (2026-11-22): `ModelFamilyVisuals` gives it its own tile (the
+   family letter on a brown category hue; no vendor mark is bundled) and
+   `ModelFeatureDescriptor.knownMoEFamilies` marks the catalog rows as MoE
+   before they are installed.
 2. DONE: repack (`crates/repack/src/inkling2_checkpoint.rs`,
    `examples/inkling2_local_install.rs`). `parse_inkling2_config` turns the real
    `config.json` (fixture) into exactly `inkling2_mini()` plus
@@ -396,10 +402,19 @@ Stage A: reachable and correct (decode only)
    one-sentence factual prompt correctly and stop at end of turn. Open:
    the CLI prints the thought span run-on with the answer, and a cold BF16
    prefill took 88 s for 27 tokens (others 2 to 5 s; not investigated).
-   Remaining: the `probe/safetensors.rs` arm for the HF checkpoint (the
-   LAMQ and GGUF probes are done, `crates/catalog/src/inkling2_repo.rs`).
-5. DONE: long-context check (above). Remaining: memory oracle, quality
-   gates, then a catalog row.
+   DONE (2026-11-22): the probe and pull for the original checkpoint and MLX
+   conversions. They take the same whole-file route as LAMQ and GGUF
+   (`crates/catalog/src/inkling2_repo.rs`, kinds `Hf` and `Mlx`): the
+   repository is downloaded whole at a pinned commit (the DSpark drafter
+   `mtp.safetensors` is not fetched), then converted by
+   `write_inkling2_install(_from)`. A LAMQ release also ships an HF
+   `config.json` declaring `inkling2_loop` and a `steering.safetensors`, so
+   its manifest is read first; checking the checkpoint first took the
+   release for a checkpoint (the catalog network guard caught it, and the
+   fixture now ships a config so `tests/inkling2_repo.rs` does too).
+5. DONE: long-context check (above). Catalog rows landed at `runs`
+   (2026-11-22). Remaining: memory oracle and quality gates, which are what
+   would make a row `verified` and give `recommend` a fit.
 
 Stage B: speed and memory (after A's gates, each with a kill switch)
 - DONE (2026-11-21): GGUF name table (`crates/repack/src/inkling2_gguf_names.rs`),

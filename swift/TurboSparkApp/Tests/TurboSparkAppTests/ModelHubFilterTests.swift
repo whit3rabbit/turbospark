@@ -563,4 +563,19 @@ final class ModelHubFilterTests: XCTestCase {
         XCTAssertTrue(ModelHubFilter.isMlxOrMoe(entry: gemma))
         XCTAssertFalse(ModelHubFilter.isMlxOrMoe(entry: mistral))
     }
+
+    /// Every Inkling 2 catalog alias resolves to the Inkling visuals (no row
+    /// falls to the generic tile or an earlier family's substring match), its
+    /// capabilities are catalog keys the filter menu can localize, and the
+    /// family reads as MoE before a manifest exists.
+    func testInkling2RowsResolveToTheirOwnVisualsAndCountAsMoE() throws {
+        for alias in ["inkling2-mini", "inkling2-mini-mlx4", "inkling2-mini-lamq54"] {
+            let visuals = ModelFamilyVisuals.resolve(alias: alias, family: "inkling2_loop", name: alias)
+            XCTAssertEqual(visuals.family, "Inkling 2", alias)
+            XCTAssertEqual(visuals.logoAssetName, "", alias)
+            XCTAssertEqual(visuals.capabilities, ["Reasoning", "Long Context"], alias)
+        }
+        XCTAssertTrue(ModelFeatureDescriptor.isMoE(manifestExperts: nil, family: "inkling2_loop"))
+        XCTAssertFalse(ModelFeatureDescriptor.isMoE(manifestExperts: nil, family: "inkling2_dense_test"))
+    }
 }

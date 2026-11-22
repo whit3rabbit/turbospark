@@ -100,6 +100,43 @@ fn target_of(
     }
 }
 
+/// `pull <ALIAS>` of an Inkling 2 catalog row: the whole-file route at the
+/// row's pinned revision (`catalog::install_inkling2_row`).
+pub(super) fn pull_row(
+    store: &Store,
+    client: &Client,
+    entry: &catalog::CatalogEntry,
+    destination: Destination,
+) -> Result<(), Error> {
+    let (target, env) = target_of(store, &entry.alias, destination)?;
+    let pb = super::progress::byte_progress_bar(entry.download_bytes);
+    let pb_msg = pb.clone();
+    let pb_bytes = pb.clone();
+    let started = Instant::now();
+    let installed = catalog::install_inkling2_row(
+        entry,
+        &target,
+        client,
+        move |line| pb_msg.println(format!("[{:7.1}s] {line}", started.elapsed().as_secs_f64())),
+        &mut move |n| pb_bytes.inc(n),
+        None,
+        store,
+        &env,
+    )
+    .inspect_err(|_| pb.finish_and_clear())
+    .map_err(destination::failure)?;
+    pb.finish_and_clear();
+    println!(
+        "installed {} (Inkling 2, {} at {}, {}) at {}",
+        installed.model.alias,
+        entry.source.repo,
+        entry.source.revision,
+        human_bytes(installed.model.install_bytes),
+        installed.model.path.display()
+    );
+    Ok(())
+}
+
 /// `pull --repo` of an Inkling 2 GGUF or LookAtMyQuant release: download
 /// the files whole, then the local intake.
 pub(super) fn pull_repo(
@@ -134,6 +171,8 @@ pub(super) fn pull_repo(
         match source.kind {
             catalog::Inkling2RepoKind::Lamq => "lamq",
             catalog::Inkling2RepoKind::Gguf => "gguf",
+            catalog::Inkling2RepoKind::Hf => "hf",
+            catalog::Inkling2RepoKind::Mlx => "mlx",
         },
         source.repo,
         human_bytes(installed.model.install_bytes),

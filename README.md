@@ -232,10 +232,13 @@ the slot arithmetic in [`docs/MODEL_FAMILY.md`](docs/MODEL_FAMILY.md) and use
 `turbospark-model recommend` for the active machine and context.
 
 Inkling 2 Mini (`thinkingmachines/Inkling-2-Mini`, a 24-layer MoE looped to
-48 layer applications) decodes but has no catalog row yet: its memory
-oracle and quality gates have not run. Install it from a local path or a
-repository with `turbospark model pull-local` or `pull --repo`: the original
-checkpoint, an MLX conversion, a GGUF, or a LookAtMyQuant packed release.
+48 layer applications) is in the catalog at status `runs`, as
+`inkling2-mini` (the original checkpoint), `inkling2-mini-mlx4` and
+`inkling2-mini-lamq54`. `turbospark-model pull <alias>` downloads the whole
+repository at its pinned revision, then converts it on this Mac, so it
+needs about the download plus the install free while both exist. Its memory
+oracle and quality gates have not run, so `recommend` lists its fit as
+unknown. A GGUF installs with `turbospark model pull-local` or `pull --repo`.
 Indicative readings on a 36 GB M4 Max, from tslab development profiles with
 the experts resident and about 11 GB of swap in use. These are not frozen
 rows:

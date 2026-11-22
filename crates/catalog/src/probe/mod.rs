@@ -113,6 +113,19 @@ pub fn probe(
         }
     }
 
+    // The original Inkling 2 checkpoint and its MLX conversions have no
+    // streamed walk either (their intakes read every expert of a layer);
+    // the whole-file route's report replaces the registry refusal.
+    if report.kind != crate::SourceKind::Gguf
+        && report.architecture.as_deref() == Some("inkling2_loop")
+    {
+        if let Some(source) =
+            crate::inkling2_repo::detect_inkling2_repo(client, repo, None, sidecar_repo)?
+        {
+            return Ok(crate::inkling2_repo::probe_report(&source));
+        }
+    }
+
     // Sidecars come from a different repository for every GGUF row, because
     // a GGUF carries llama.cpp's tokenizer representation rather than an HF
     // `tokenizer.json`. Probing the weights repo for them would report every

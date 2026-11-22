@@ -26,6 +26,21 @@ when this file gets updated relative to the version bump and the tag.
   its code's error band, and a CPU f32 forward on the same weights matches
   the Metal path at mean KL 1.4e-3. The authors' lower KL (0.0895) comes from
   their own harness, which is not public.
+- Catalog rows for Inkling 2 Mini at status `runs`: `inkling2-mini` (the
+  original checkpoint at `ed40e7da`), `inkling2-mini-mlx4`
+  (`mlx-community/Inkling-2-Mini-4bit`) and `inkling2-mini-lamq54` (the
+  LookAtMyQuant 5.4 GB release). Each was pulled by alias and chatted here;
+  no memory oracle or quality gate has run, so none is `verified` and
+  `recommend` lists their fit as unknown.
+- The original Inkling 2 checkpoint and its MLX conversions install from the
+  Hub: the probe reports them runnable and `pull --repo` takes the
+  whole-file route (download at a pinned commit, then convert; the DSpark
+  drafter `mtp.safetensors` is not fetched). `pull-local` takes such a
+  directory too. Catalog rows of the family install the same way from the
+  CLI and the app (`catalog::install_inkling2_row`, which refuses a Hub
+  answer for any commit but the row's and records the row's status).
+- The app shows Inkling 2 rows with their own family tile, and Discover
+  marks them as MoE before they are installed.
 - Inkling 2 LookAtMyQuant diagnostics in the runtime crate:
   `examples/inkling2_lamq_weight_err.rs` (every coded matrix against the
   original weights on random probes) and
@@ -125,6 +140,9 @@ when this file gets updated relative to the version bump and the tag.
   the first bit-exact kernels).
 
 ### Fixed
+- The catalog rot guard measures Inkling 2 rows by the files their install
+  route downloads, and no longer panics on a `lamq` row (it had no branch
+  for that kind).
 - Inkling 2 chat failed on every install ("score vector must not contain a
   non-finite entry"): the padded vocabulary rows were -inf. They are now the
   most negative finite f16.

@@ -22,7 +22,7 @@ self-test), `model.py` (wiring), `fast_kernels.py` (Metal fast path).
 
 | Container | Releases | Status here |
 |---|---|---|
-| `inkling2-packed` | `shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-5.4GB` (1.63 bpw), `-8.9GB` (2.69 bpw) | 5.4 GB: intake, kernels and decode done (workstream A), loss against the original traced to the release's weights, no catalog row; 8.9 GB: not installed |
+| `inkling2-packed` | `shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-5.4GB` (1.63 bpw), `-8.9GB` (2.69 bpw) | 5.4 GB: intake, kernels and decode done (workstream A), loss against the original traced to the release's weights, catalog row `inkling2-mini-lamq54` at `runs`; 8.9 GB: not installed |
 | `lamq-1` | Gemma 4 E2B exports | planned (workstream C) |
 | `opgraph-packed-1` | Qwen3.5-4B (`lm2-qwen35-4b-1.2gb`), `shinmegamiboson/Qwen3.8-27B-LookAtMyQuant-7.2GB` | planned (workstream C) |
 | GGUF | Gemma 4 E2B compiled mixes | stock llama.cpp types per tensor, so it goes through the existing GGUF intake (`docs/GGUF.md`); no LAMQ code |
@@ -622,4 +622,6 @@ The intake must check every offset bound and every sha256.
 15. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
    on the same kernels, each with its own family quality gate.
 
-No catalog row, and no change to any family's defaults, without its gate.
+No catalog row beyond `runs`, and no change to any family's defaults, without
+its gate. The 5.4 GB release's row (`inkling2-mini-lamq54`) is `runs`: pulled
+by alias and chatted here, nothing frozen.

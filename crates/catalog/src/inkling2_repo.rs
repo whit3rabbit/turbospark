@@ -1,7 +1,9 @@
-//! Hugging Face installs of the two Inkling 2 Mini sources that need whole
-//! files on disk: a LookAtMyQuant packed release repository and an Inkling 2
-//! GGUF. Neither has a streamed walk (the LAMQ intake reads npz members, the
-//! GGUF intake reads the file end to end), so the route is:
+//! Hugging Face installs of the Inkling 2 Mini sources, which all need whole
+//! files on disk: a LookAtMyQuant packed release repository, an Inkling 2
+//! GGUF, the original checkpoint and an MLX conversion. None has a streamed
+//! walk (the LAMQ intake reads npz members, the GGUF intake reads the file
+//! end to end, and the checkpoint intakes read every expert of a layer to
+//! write its blobs), so the route is:
 //!
 //! 1. pin the repository to the commit the Hub reports, so every file comes
 //!    from one revision;
@@ -37,6 +39,18 @@ pub const INKLING2_TOKENIZER_REPO: &str = "thinkingmachines/Inkling-2-Mini";
 pub enum Inkling2RepoKind {
     Lamq,
     Gguf,
+    /// The original checkpoint (`thinkingmachines/Inkling-2-Mini`).
+    Hf,
+    /// An MLX conversion of it.
+    Mlx,
+}
+
+impl Inkling2RepoKind {
+    /// Whether the install expands past the download (LAMQ padding, GGUF
+    /// rewrite) rather than keeping the published expert bytes.
+    fn packed(self) -> bool {
+        matches!(self, Self::Lamq | Self::Gguf)
+    }
 }
 
 /// A repository resolved for a whole-file Inkling install.
@@ -205,20 +219,31 @@ pub fn detect_inkling2_repo(
             tokenizer_files,
         }));
     }
-    if want_file.is_some()
-        || !ggufs.is_empty()
-        || !listing.iter().any(|(n, _)| n == "manifest.json")
-    {
+    if want_file.is_some() || !ggufs.is_empty() {
         return Ok(None);
     }
-    let Some(manifest) = client.get_optional(&pinned.file_url("manifest.json"))? else {
-        return Ok(None);
+    // A LookAtMyQuant release also ships an HF `config.json` declaring
+    // `inkling2_loop` and a `steering.safetensors`, so its manifest is read
+    // first; only a repository that is not a LAMQ release is tried as a
+    // checkpoint.
+    let manifest = if listing.iter().any(|(n, _)| n == "manifest.json") {
+        client.get_optional(&pinned.file_url("manifest.json"))?
+    } else {
+        None
     };
-    let format = serde_json::from_slice::<serde_json::Value>(&manifest)
-        .ok()
-        .and_then(|v| v.get("format").and_then(|f| f.as_str()).map(str::to_string));
+    let format = manifest.as_ref().and_then(|m| {
+        serde_json::from_slice::<serde_json::Value>(m)
+            .ok()
+            .and_then(|v| v.get("format").and_then(|f| f.as_str()).map(str::to_string))
+    });
     if format.as_deref() != Some(repack::LAMQ_INKLING2_FORMAT) {
-        return Ok(None);
+        let checkpoint = listing.iter().any(|(n, _)| n == "config.json")
+            && listing.iter().any(|(n, _)| n.ends_with(".safetensors"));
+        return if checkpoint {
+            detect_checkpoint(client, &pinned, &listing)
+        } else {
+            Ok(None)
+        };
     }
     let files = lamq_release_files(&pinned, &listing)?;
     // Checked here, before any download, rather than by the intake after it.
@@ -233,6 +258,52 @@ pub fn detect_inkling2_repo(
     }))
 }
 
+/// The original checkpoint or an MLX conversion, from its `config.json`;
+/// None for any other safetensors repository. Downloads the top-level JSON,
+/// safetensors and Jinja files except the DSpark drafter
+/// (`mtp.safetensors`), which the intake does not read.
+fn detect_checkpoint(
+    client: &Client,
+    pinned: &RepoRef,
+    listing: &[(String, Option<u64>)],
+) -> Result<Option<Inkling2RepoSource>, String> {
+    let Some(config) = client.get_optional(&pinned.file_url("config.json"))? else {
+        return Ok(None);
+    };
+    let Some(mlx) = std::str::from_utf8(&config)
+        .ok()
+        .and_then(crate::inkling2_local::inkling2_safetensors_kind)
+    else {
+        return Ok(None);
+    };
+    let files: Vec<(String, u64)> = lamq_release_files(pinned, listing)?
+        .into_iter()
+        .filter(|(n, _)| n != "mtp.safetensors" && !n.ends_with(".npz"))
+        .collect();
+    let weights = files
+        .iter()
+        .filter(|(n, _)| n.ends_with(".safetensors"))
+        .count();
+    if !mlx && weights != 1 {
+        return Err(format!(
+            "{pinned} lists {weights} weights files; the Inkling 2 checkpoint intake reads one"
+        ));
+    }
+    tokenizer_files_in(pinned, listing)?;
+    Ok(Some(Inkling2RepoSource {
+        kind: if mlx {
+            Inkling2RepoKind::Mlx
+        } else {
+            Inkling2RepoKind::Hf
+        },
+        repo: pinned.clone(),
+        files,
+        architecture: "inkling2_loop".to_string(),
+        tokenizer_repo: pinned.clone(),
+        tokenizer_files: Vec::new(),
+    }))
+}
+
 /// The probe's answer for a resolved source: runnable, Inkling 2 Mini, with
 /// the whole download named, because nothing streams.
 pub fn probe_report(source: &Inkling2RepoSource) -> ProbeReport {
@@ -242,14 +313,17 @@ pub fn probe_report(source: &Inkling2RepoSource) -> ProbeReport {
             source.files.first().map(|f| f.0.clone()),
         ),
         Inkling2RepoKind::Lamq => (crate::SourceKind::Lamq, None),
+        Inkling2RepoKind::Hf | Inkling2RepoKind::Mlx => (crate::SourceKind::Mlx, None),
     };
     let tokenizer_present = match source.kind {
         Inkling2RepoKind::Gguf => source.tokenizer_files.clone(),
-        Inkling2RepoKind::Lamq => repack::INKLING2_TOKENIZER_FILES
-            .iter()
-            .filter(|n| source.files.iter().any(|(f, _)| f == *n))
-            .map(|s| s.to_string())
-            .collect(),
+        Inkling2RepoKind::Lamq | Inkling2RepoKind::Hf | Inkling2RepoKind::Mlx => {
+            repack::INKLING2_TOKENIZER_FILES
+                .iter()
+                .filter(|n| source.files.iter().any(|(f, _)| f == *n))
+                .map(|s| s.to_string())
+                .collect()
+        }
     };
     let chat_template = tokenizer_present
         .iter()
@@ -281,17 +355,19 @@ pub fn probe_report(source: &Inkling2RepoSource) -> ProbeReport {
             match source.kind {
                 Inkling2RepoKind::Gguf => "GGUF",
                 Inkling2RepoKind::Lamq => "LookAtMyQuant release",
+                Inkling2RepoKind::Hf => "checkpoint",
+                Inkling2RepoKind::Mlx => "MLX conversion",
             },
             human_bytes(bytes),
-            human_bytes(bytes + inkling2_install_bytes(bytes)),
+            human_bytes(bytes + inkling2_install_bytes(source.kind, bytes)),
         )],
     }
 }
 
 /// The estimate `crate::inkling2_local_required_bytes` makes from files on
-/// disk, from a byte count. Keep the two equal.
-fn inkling2_install_bytes(source_bytes: u64) -> u64 {
-    source_bytes.saturating_mul(3) / 2 + (1 << 30)
+/// disk, from listed sizes (the same function).
+fn inkling2_install_bytes(kind: Inkling2RepoKind, source_bytes: u64) -> u64 {
+    crate::inkling2_local::inkling2_install_estimate(kind.packed(), source_bytes)
 }
 
 /// The hidden download folder for `source`, named by repository and commit
@@ -382,7 +458,7 @@ pub fn install_inkling2_repo(
         .map(|(_, size)| size)
         .sum();
     let remaining = source.download_bytes() - have;
-    let need = remaining + inkling2_install_bytes(source.download_bytes());
+    let need = remaining + inkling2_install_bytes(source.kind, source.download_bytes());
     let available = model_io::available_bytes(&dl).map_err(|e| failed(e.to_string()))?;
     if available < need {
         return Err(failed(format!(
@@ -451,6 +527,8 @@ pub fn install_inkling2_repo(
 
     let local = match source.kind {
         Inkling2RepoKind::Lamq => Inkling2LocalSource::Lamq(dl.clone()),
+        Inkling2RepoKind::Hf => Inkling2LocalSource::Hf(dl.clone()),
+        Inkling2RepoKind::Mlx => Inkling2LocalSource::Mlx(dl.clone()),
         Inkling2RepoKind::Gguf => {
             Inkling2LocalSource::Gguf(dl.join(local_name(&source.files[0].0)))
         }
@@ -486,6 +564,85 @@ pub fn install_inkling2_repo(
         ));
     }
     Ok(installed)
+}
+
+/// True when a catalog row installs through this route (every
+/// `inkling2_loop` row: none of its sources has a streamed walk).
+pub fn is_inkling2_row(entry: &crate::CatalogEntry) -> bool {
+    entry.family == model_io::ModelFamily::Inkling2Loop.as_str()
+}
+
+/// Installs the Inkling 2 catalog row `entry` at `target`: resolves its
+/// repository at the row's pinned revision, refuses a Hub answer for any
+/// other commit, installs through [`install_inkling2_repo`], and records
+/// the install under the row's own status rather than `unlisted`.
+#[allow(clippy::too_many_arguments)]
+pub fn install_inkling2_row(
+    entry: &crate::CatalogEntry,
+    target: &InstallTarget,
+    client: &Client,
+    progress: impl FnMut(&str),
+    on_bytes: &mut dyn FnMut(u64),
+    cancel: Option<&CancelFlag>,
+    store: &Store,
+    env: &LocationEnv,
+) -> Result<Installed, StoreError> {
+    if !is_inkling2_row(entry) {
+        return Err(StoreError::Io(format!(
+            "{} is a {} row, not an Inkling 2 row",
+            entry.alias, entry.family
+        )));
+    }
+    let repo = RepoRef::new(&entry.source.repo, &entry.source.revision);
+    let tokenizer = entry
+        .sidecars
+        .repo
+        .as_ref()
+        .map(|r| RepoRef::new(r, entry.sidecar_revision()));
+    let source = detect_inkling2_repo(
+        client,
+        &repo,
+        entry.source.file.as_deref(),
+        tokenizer.as_ref(),
+    )
+    .map_err(StoreError::Io)?
+    .ok_or_else(|| {
+        StoreError::Io(format!(
+            "{repo}: the catalog row {} no longer resolves to an Inkling 2 source",
+            entry.alias
+        ))
+    })?;
+    if pinned_to_other_commit(&entry.source.revision, &source.repo.revision) {
+        return Err(StoreError::Io(format!(
+            "{repo}: the Hub answered for commit {}, not the row's pinned {}",
+            source.repo.revision, entry.source.revision
+        )));
+    }
+    let installed = install_inkling2_repo(
+        &source,
+        &entry.alias,
+        target,
+        client,
+        progress,
+        on_bytes,
+        cancel,
+        store,
+        env,
+    )?;
+    let mut model = installed.model;
+    model.status = entry.status.as_str().to_string();
+    let model = crate::record_into(store, &model, target, env)?;
+    Ok(Installed {
+        model,
+        arch: installed.arch,
+    })
+}
+
+/// A row pinned to a full commit id must install that commit; a row that
+/// floats (`main`) takes whatever the Hub reports.
+fn pinned_to_other_commit(row_revision: &str, got: &str) -> bool {
+    let pinned = row_revision.len() == 40 && row_revision.bytes().all(|b| b.is_ascii_hexdigit());
+    pinned && !row_revision.eq_ignore_ascii_case(got)
 }
 
 /// The local file name of a repository path: its last component, since a
@@ -554,6 +711,15 @@ mod tests {
     }
 
     #[test]
+    fn a_pinned_row_refuses_any_other_commit_and_a_floating_one_takes_any() {
+        let pin = "9af870917c5f3a2e26c6a305f82f27b4d350e9e1";
+        assert!(!pinned_to_other_commit(pin, pin));
+        assert!(!pinned_to_other_commit(pin, &pin.to_uppercase()));
+        assert!(pinned_to_other_commit(pin, &"0".repeat(40)));
+        assert!(!pinned_to_other_commit("main", &"0".repeat(40)));
+    }
+
+    #[test]
     fn the_download_folder_is_hidden_and_names_repo_and_commit() {
         let src = Inkling2RepoSource {
             kind: Inkling2RepoKind::Lamq,
@@ -569,6 +735,38 @@ mod tests {
         );
         assert_eq!(local_name("UD-Q2/m.gguf"), "m.gguf");
         assert_eq!(local_name("m.gguf"), "m.gguf");
+    }
+
+    #[test]
+    fn checkpoint_sources_probe_as_mlx_kind_and_size_their_install_at_the_source() {
+        for (kind, label) in [
+            (Inkling2RepoKind::Mlx, "MLX conversion"),
+            (Inkling2RepoKind::Hf, "checkpoint"),
+        ] {
+            let src = Inkling2RepoSource {
+                kind,
+                repo: repo(),
+                files: vec![
+                    ("config.json".to_string(), 1),
+                    ("tokenizer.json".to_string(), 1),
+                    ("model.safetensors".to_string(), 10 << 30),
+                ],
+                architecture: "inkling2_loop".to_string(),
+                tokenizer_repo: repo(),
+                tokenizer_files: Vec::new(),
+            };
+            let r = probe_report(&src);
+            assert!(r.verdict.is_runnable());
+            assert_eq!(r.kind, crate::SourceKind::Mlx);
+            assert_eq!(r.file, None);
+            assert!(r.sidecars_present.iter().any(|n| n == "tokenizer.json"));
+            assert!(r.warnings[0].contains(label), "{:?}", r.warnings);
+            // About the source's size plus 1 GiB, not the packed 1.5x.
+            let need = inkling2_install_bytes(kind, src.download_bytes());
+            assert_eq!(need, src.download_bytes() + (1 << 30));
+        }
+        let packed = inkling2_install_bytes(Inkling2RepoKind::Lamq, 10 << 30);
+        assert_eq!(packed, (15 << 30) + (1 << 30));
     }
 
     #[test]

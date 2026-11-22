@@ -253,6 +253,24 @@ public struct ModelFamilyVisuals {
                 capabilities: ["Reasoning", "MoE 256-Expert", "Shared Expert", "Chunked Prefill"],
                 description: "Recursive Flint 40B-A2.5B with 256 routed experts top-6, one shared expert, and hybrid attention."
             )
+        } else if lFamily.hasPrefix("inkling2") || lAlias.contains("inkling") {
+            // No vendor mark is bundled, so the tile is the family hue with
+            // its letter (an empty logo name takes ModelLogoView's fallback).
+            // Brown is a category hue no other family uses and not a status
+            // color. Capabilities stay catalog keys (Discover's filter menu
+            // localizes them).
+            return ModelFamilyVisuals(
+                family: "Inkling 2",
+                letter: "I",
+                iconSystemName: "arrow.triangle.2.circlepath.circle.fill",
+                logoAssetName: "",
+                accentColor: Color.brown,
+                parameterTag: "26B-A3B",
+                architectureType: "Looped MoE 128-Expert",
+                formatLabel: derivedFormat,
+                capabilities: ["Reasoning", "Long Context"],
+                description: "Thinking Machines Inkling 2 Mini: 24 layers with the middle 12 looped three times, 128 routed experts top-8."
+            )
         }
 
         // Generic fallback

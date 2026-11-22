@@ -293,6 +293,21 @@ pub(crate) fn install(
     let store = Store::default_store().map_err(StoreError::Io)?;
     let env = LocationEnv::system(store.root()).map_err(StoreError::Io)?;
     let target = catalog::install_destination(&store, library, InstallKind::Text, alias, &env)?;
+    // An Inkling 2 row has no streamed walk: its files are downloaded whole
+    // at the row's pinned revision, then converted.
+    if catalog::is_inkling2_row(entry) {
+        let installed = catalog::install_inkling2_row(
+            entry,
+            &target,
+            &Client::new(),
+            |line| on_stage(line),
+            &mut |n| on_bytes(n),
+            Some(&cancel),
+            &store,
+            &env,
+        )?;
+        return result_json(&installed.model, &target);
+    }
 
     on_stage(
         "failed or cancelled immutable-revision downloads reuse completed ranges; \
@@ -344,16 +359,10 @@ pub(crate) fn install_repo(
             Verdict::Runnable => unreachable!(),
         }));
     }
-    // An Inkling 2 GGUF or LookAtMyQuant release has no streamed walk: it is
-    // downloaded whole, then converted (`catalog::install_inkling2_repo`).
-    // The probe already said which; the HF-checkpoint Inkling (`mlx` kind)
-    // keeps the walk.
-    if report.family == Some(model_io::ModelFamily::Inkling2Loop)
-        && matches!(
-            report.kind,
-            catalog::SourceKind::Gguf | catalog::SourceKind::Lamq
-        )
-    {
+    // No Inkling 2 source has a streamed walk: a GGUF, a LookAtMyQuant
+    // release, the original checkpoint or an MLX conversion is downloaded
+    // whole, then converted (`catalog::install_inkling2_repo`).
+    if report.family == Some(model_io::ModelFamily::Inkling2Loop) {
         let tokenizer_repo = sidecar_repo.map(|_| &sidecars);
         let source = catalog::detect_inkling2_repo(&client, &weights, file, tokenizer_repo)
             .map_err(StoreError::Io)?

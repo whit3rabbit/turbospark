@@ -85,8 +85,8 @@ pub use inkling2_local::{
     Inkling2LocalSource,
 };
 pub use inkling2_repo::{
-    detect_inkling2_repo, install_inkling2_repo, Inkling2RepoKind, Inkling2RepoSource,
-    INKLING2_TOKENIZER_REPO,
+    detect_inkling2_repo, install_inkling2_repo, install_inkling2_row, is_inkling2_row,
+    Inkling2RepoKind, Inkling2RepoSource, INKLING2_TOKENIZER_REPO,
 };
 pub use install::{
     gate, human_bytes, install, install_destination, install_text_into, install_variant,

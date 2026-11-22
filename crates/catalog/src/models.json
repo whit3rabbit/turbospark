@@ -1733,6 +1733,87 @@
         "server /v1/chat/completions and /v1/messages page transcription"
       ],
       "notes": "LFM3-VL: the lfm3 trunk (hidden 2048, 24 layers, the lfm3-1.7b baseline's shape) with the LFM3-VL tower: 14 RMSNorm blocks alternating a gated depthwise 3x3 conv (8 blocks) and grouped-query attention (6 blocks, 16 heads over 8 KV heads, per-head q/k norms, neox 2-D rope at theta 1e6), a SwiGLU MLP, and a pixel-unshuffle projector to the trunk width. VisionTowerKind::Lfm3Vl. THE 8-BIT BUILD ON PURPOSE: LiquidAI's MLX-4bit is affine group 32, which this port's kernels do not implement (4- and 8-bit at group 64 only), and its tower weights differ from the 8-bit build's by up to 1% per weight, so each build needs its own probe reference. The tower ships unquantized BF16 and is narrowed to FP16 at repack. Combined install only (no sidecar pairing). Image preprocessing is processor_config.json's image_processor object (the Qwen3-VL smart-resize, 0.5/0.5 normalization, patch 16, merge 2). The max_pixels ceiling is not memory-clamped for this tower. docs/LFM3_VL_VISION_PHASE0.md."
+    },
+    {
+      "alias": "inkling2-mini",
+      "name": "Inkling 2 Mini (original checkpoint: NVFP4 and MXFP8 experts, BF16 dense)",
+      "family": "inkling2_loop",
+      "source": {
+        "kind": "mlx",
+        "repo": "thinkingmachines/Inkling-2-Mini",
+        "revision": "ed40e7da625f594fc9c4990f5f66be24873c22d7",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 19552398983,
+      "install_bytes": 19500000000,
+      "status": "runs",
+      "gates": [],
+      "measured": [],
+      "notes": "The original 26B-physical MoE (24 layers, layers 6-17 looped 3x, 128 experts top-8). Downloaded whole at the pinned revision (the DSpark drafter mtp.safetensors is not fetched), then converted on this Mac; it needs about 37 GiB free while both exist. Logits match the CPU reference and llama.cpp (docs/INKLING2_PHASE0.md). No memory oracle or Phase 6 quality gate yet, so the status stays runs. Prefill is sequential. Experts are resident when they fit (auto residency); one indicative reading peaked at 17.7 GiB and decoded about 34 tok/s on a short prompt."
+    },
+    {
+      "alias": "inkling2-mini-mlx4",
+      "name": "Inkling 2 Mini (MLX 4-bit dense weights, native NVFP4 and MXFP8 experts)",
+      "family": "inkling2_loop",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/Inkling-2-Mini-4bit",
+        "revision": "9c0e2960609ba7cb40daf92c6f7bf8ed56e1dd62",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 17334678817,
+      "install_bytes": 17200000000,
+      "status": "runs",
+      "gates": [],
+      "measured": [],
+      "notes": "mlx-lm's conversion (PR 2086): attention, embedding and head at affine 4-bit group 64, the experts kept as the original NVFP4 and MXFP8 bytes, so it saves disk but not expert memory. Downloaded whole at the pinned revision, then converted; it needs about 33 GiB free while both exist. Not bit-exact with inkling2-mini (4-bit dense weights). No memory oracle or quality gate, so the status stays runs. One indicative reading decoded about 46 tok/s on a short prompt, the fastest Inkling install here, at the same 17.7 GiB peak as the original."
+    },
+    {
+      "alias": "inkling2-mini-lamq54",
+      "name": "Inkling 2 Mini (LookAtMyQuant 5.4 GB, 1.65 bits per weight)",
+      "family": "inkling2_loop",
+      "source": {
+        "kind": "lamq",
+        "repo": "shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-5.4GB",
+        "revision": "9af870917c5f3a2e26c6a305f82f27b4d350e9e1",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 5379987356,
+      "install_bytes": 7600000000,
+      "status": "runs",
+      "gates": [],
+      "measured": [],
+      "notes": "The LookAtMyQuant packed release (MIT), trellis and Lloyd-Max codes kept native (docs/LAMQ.md). Downloaded whole at the pinned revision, then converted; the install is about 1.4x the release and needs about 13.5 GiB free while both exist. The smallest Inkling install: one indicative reading peaked at 8.4 GiB and decoded about 30 tok/s. It loses quality against inkling2-mini: about 80 percent next-token agreement and mean KL 0.25 to 0.31 on English and code windows. That loss is in the release's weights, not the runtime (a CPU f32 forward on the same weights matches Metal at KL 1.4e-3). No quality gate, so the status stays runs."
     }
   ]
 }
