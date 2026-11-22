@@ -428,7 +428,26 @@ The intake must check every offset bound and every sha256.
     kernels 17.15 to 18.33 tok/s (median 17.8), this kernel 18.23 to 19.21
     (median 18.8). ALL RUNS DIRTY (mediaanalysisd over 90%). Not yet
     ported: phase 2, the coded GEMV, the batched shuffle rotation, fusion.
-11. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
+11. DONE (2026-11-21): batched input rotations, bit-identical. A layer's
+    attention group (up to eight projections of width 2304 over three
+    inputs) rotates every LAMQ input in one `lamq_rht_in_batch` dispatch,
+    one threadgroup per vector, so they run on several cores at once
+    instead of one after another on one; each GEMV then reads its own
+    rotated slot (`LamqRuntime::gemv_batch`). Each vector's arithmetic is
+    the single-vector kernel's: 48-token logits `cmp`-equal to the previous
+    build, and `batched_rotation_equals_one_at_a_time_bit_for_bit` (a wrong
+    input selection fails it). Single rotations per token 332 -> 112 plus
+    80 batched; rotation share of the dispatch profile 19% -> 11%. tslab
+    profile `lamq-kernels-3arm` (three distinct workers, interleaved, two
+    passes, all dirty from mediaanalysisd): previous build 18.01 to 18.90
+    tok/s (median 18.7), this 20.67 to 21.00 (median 20.9).
+    METHOD TRAP, recorded because it produced a false null: an A/B worker
+    built with `cargo build -p turbospark-lab -p turbospark-runtime
+    --example inkling2_logits` builds nothing (the lab crate has no such
+    example) and leaves the previous `tslab-worker` in `target/`; both arms
+    of `lamq-kernels-c16` were that stale binary. Check that each arm's
+    `exe_sha256` in the ledger differs before reading an A/B.
+12. Workstream C: `lamq-1` (Gemma 4) and `opgraph-packed-1` (Qwen GDN dense)
    on the same kernels, each with its own family quality gate.
 
 No catalog row, and no change to any family's defaults, without its gate.

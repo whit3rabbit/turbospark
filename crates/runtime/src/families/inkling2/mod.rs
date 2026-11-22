@@ -86,18 +86,17 @@ impl Ctx<'_> {
     ) -> Result<(), RealForwardError> {
         let mut v = Vec::with_capacity(segs.len());
         let lq = self.lamq.clone();
+        // The group's LAMQ matrices first, their input rotations batched into
+        // one dispatch (the outputs are independent, so order does not
+        // matter).
+        if let Some(l) = lq.as_ref() {
+            let coded: Vec<_> = segs.iter().copied().filter(|s| l.has(s.0)).collect();
+            if !coded.is_empty() {
+                l.gemv_batch(self.context, pass, self.weights.buffer(), xs, &coded)?;
+            }
+        }
         for &(name, rows, cols, x, y) in segs {
-            if let Some(l) = lq.as_ref().filter(|l| l.has(name)) {
-                l.gemv(
-                    self.context,
-                    pass,
-                    self.weights.buffer(),
-                    name,
-                    rows,
-                    cols,
-                    xs[x],
-                    y,
-                )?;
+            if lq.as_ref().is_some_and(|l| l.has(name)) {
                 continue;
             }
             if entry(self.index, name)?.dtype != state::TAG_BF16 {

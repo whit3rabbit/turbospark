@@ -86,6 +86,79 @@ pub enum LamqRhtDir {
     Out,
 }
 
+/// The most vectors one batched rotation takes (an Inkling attention group
+/// has at most eight projections).
+pub const LAMQ_RHT_BATCH_MAX: usize = 8;
+
+/// Input-rotates several FP16 vectors of width `factor.n` in one dispatch,
+/// one threadgroup each: job `v` is `(input index into xs, byte offset of its
+/// signs in signs_buf)`, written as F32 to `y` at `v * n` elements. Each
+/// vector's arithmetic is [`encode_lamq_rht`]'s, so the outputs are
+/// bit-identical to rotating them one at a time; the gain is that they run
+/// on several cores at once instead of one after another.
+pub fn encode_lamq_rht_in_batch(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    factor: &LamqRhtFactor,
+    xs: &[(&metal::Buffer, u64)],
+    signs_buf: &metal::Buffer,
+    jobs: &[(u32, u64)],
+    y: (&metal::Buffer, u64),
+) -> Result<(), GpuError> {
+    if jobs.is_empty() || jobs.len() > LAMQ_RHT_BATCH_MAX {
+        return Err(invalid(format!(
+            "LAMQ batched rotation of {} vectors (1..={LAMQ_RHT_BATCH_MAX})",
+            jobs.len()
+        )));
+    }
+    if xs.is_empty() || xs.len() > 3 {
+        return Err(invalid(format!(
+            "LAMQ batched rotation with {} inputs (1..=3)",
+            xs.len()
+        )));
+    }
+    if let Some(&(sel, _)) = jobs.iter().find(|(sel, _)| *sel as usize >= xs.len()) {
+        return Err(invalid(format!(
+            "LAMQ batched rotation input {sel} of {}",
+            xs.len()
+        )));
+    }
+    let p = context.pipeline(
+        SOURCE,
+        "lamq_rht_in_batch",
+        &FunctionConstantValues::new(),
+        &[],
+    )?;
+    let mut params = Vec::with_capacity(16);
+    for v in [factor.n, factor.na, factor.nb, 0] {
+        params.extend_from_slice(&v.to_le_bytes());
+    }
+    // LamqRhtJob: x_sel u32, pad u32, s_off u64.
+    let mut table = Vec::with_capacity(jobs.len() * 16);
+    for &(sel, off) in jobs {
+        table.extend_from_slice(&sel.to_le_bytes());
+        table.extend_from_slice(&0u32.to_le_bytes());
+        table.extend_from_slice(&off.to_le_bytes());
+    }
+    // Unused input slots repeat the first input; no job selects them.
+    let x = |i: usize| xs.get(i).copied().unwrap_or(xs[0]);
+    pass.encode_threadgroups(
+        &p,
+        &[
+            (x(0).0, 0, x(0).1),
+            (x(1).0, 1, x(1).1),
+            (x(2).0, 2, x(2).1),
+            (signs_buf, 3, 0),
+            (&factor.b, 4, 0),
+            (y.0, 5, y.1),
+        ],
+        &[(&params, 6), (&table, 7)],
+        jobs.len() as u64,
+        1024,
+    );
+    Ok(())
+}
+
 /// Rotates `count` vectors of width `factor.n` (vector `v` at `v * n`
 /// elements). `x_half` / `y_half` pick FP16 or F32 for each side.
 #[allow(clippy::too_many_arguments)]

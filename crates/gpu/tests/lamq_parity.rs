@@ -12,8 +12,8 @@
 use half::f16;
 use turbospark_compute::lamq::{LamqCode, LamqLinear, Rht};
 use turbospark_gpu::{
-    encode_lamq_decode_row, encode_lamq_gemv, encode_lamq_rht, encode_lamq_scatter, LamqMatrixView,
-    LamqRhtDir, LamqRhtFactor, MetalContext,
+    encode_lamq_decode_row, encode_lamq_gemv, encode_lamq_rht, encode_lamq_rht_in_batch,
+    encode_lamq_scatter, LamqMatrixView, LamqRhtDir, LamqRhtFactor, MetalContext,
 };
 
 fn xs(state: &mut u32) -> u32 {
@@ -361,4 +361,101 @@ fn shapes_out_of_contract_are_refused() {
         "wider than the kernel holds"
     );
     assert!(LamqRhtFactor::new(&context, 10).is_err(), "no Hadamard");
+}
+
+/// The batched input rotation is the single-vector kernel run on several
+/// vectors at once: every job's output must equal rotating that input with
+/// those signs on its own, bit for bit. Five jobs over three inputs (one
+/// input used twice, one signs vector at a nonzero offset) at the two
+/// batched widths.
+#[test]
+fn batched_rotation_equals_one_at_a_time_bit_for_bit() {
+    let mut context = MetalContext::new().expect("Metal device");
+    for n in [1152usize, 2304] {
+        let factor = LamqRhtFactor::new(&context, n).unwrap();
+        // Five sign vectors back to back in one buffer, like the weights.
+        let all_signs: Vec<u8> = (0..5)
+            .flat_map(|k| signs(n, 31 * (k + 1) + n as u32))
+            .map(|v| v as u8)
+            .collect();
+        let s_buf = context.new_buffer_with_data(&all_signs);
+        let mut seed = 11 + n as u32;
+        let inputs: Vec<metal::Buffer> = (0..3)
+            .map(|_| {
+                let x: Vec<f32> = (0..n).map(|_| unit(&mut seed)).collect();
+                context.new_buffer_with_data(&le16(&x))
+            })
+            .collect();
+        // (input, signs vector)
+        let jobs = [(0u32, 0usize), (1, 1), (2, 2), (0, 3), (1, 4)];
+        let batched = context.new_buffer_with_data(&vec![0u8; jobs.len() * n * 4]);
+        let single: Vec<metal::Buffer> = jobs
+            .iter()
+            .map(|_| context.new_buffer_with_data(&vec![0u8; n * 4]))
+            .collect();
+        let pass = context.begin_pass();
+        let xs: Vec<(&metal::Buffer, u64)> = inputs.iter().map(|b| (b, 0)).collect();
+        let table: Vec<(u32, u64)> = jobs.iter().map(|&(x, k)| (x, (k * n) as u64)).collect();
+        encode_lamq_rht_in_batch(
+            &mut context,
+            &pass,
+            &factor,
+            &xs,
+            &s_buf,
+            &table,
+            (&batched, 0),
+        )
+        .unwrap();
+        for (i, &(x, k)) in jobs.iter().enumerate() {
+            encode_lamq_rht(
+                &mut context,
+                &pass,
+                &factor,
+                LamqRhtDir::In,
+                (&inputs[x as usize], 0),
+                true,
+                (&s_buf, (k * n) as u64),
+                (&single[i], 0),
+                false,
+                1,
+            )
+            .unwrap();
+        }
+        pass.commit_and_wait();
+        let got = read_f32(&batched, jobs.len() * n);
+        for (i, one) in single.iter().enumerate() {
+            let want = read_f32(one, n);
+            let row = &got[i * n..(i + 1) * n];
+            assert!(
+                row.iter()
+                    .zip(&want)
+                    .all(|(a, b)| a.to_bits() == b.to_bits()),
+                "n {n} job {i}: batched rotation differs from the single one"
+            );
+        }
+        // Out-of-contract batches are refused: no jobs, and an input index
+        // past the inputs bound.
+        let refused = context.begin_pass();
+        assert!(encode_lamq_rht_in_batch(
+            &mut context,
+            &refused,
+            &factor,
+            &xs,
+            &s_buf,
+            &[],
+            (&batched, 0)
+        )
+        .is_err());
+        assert!(encode_lamq_rht_in_batch(
+            &mut context,
+            &refused,
+            &factor,
+            &xs,
+            &s_buf,
+            &[(3, 0)],
+            (&batched, 0)
+        )
+        .is_err());
+        refused.commit_and_wait();
+    }
 }

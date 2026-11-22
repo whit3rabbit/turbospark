@@ -42,37 +42,30 @@ constant bool kRhtInHalf  [[function_constant(120)]];
 constant bool kRhtOutHalf [[function_constant(121)]];
 
 // One threadgroup per vector (vector v at v * n in both buffers).
-kernel void lamq_rht(
-    device const void*      x_raw  [[buffer(0)]],
-    device const char*      signs  [[buffer(1)]],
-    device const char*      Bdev   [[buffer(2)]],
-    device void*            y_raw  [[buffer(3)]],
-    constant LamqRhtParams& p      [[buffer(4)]],
-    uint                    v      [[threadgroup_position_in_grid]],
-    uint                    tid    [[thread_position_in_threadgroup]],
-    uint                    nt     [[threads_per_threadgroup]]
+// One vector's rotation, the whole of it in this threadgroup: `a`, `t` and
+// `B` are the caller's threadgroup arrays. Inputs and outputs are typed by
+// flags so one body serves the half/f32 kernels and the batch below.
+static inline void lamq_rht_vec(
+    device const void* x_raw, bool x_half, device const char* signs,
+    device const char* Bdev, device void* y_raw, bool y_half,
+    uint n, uint na, uint nb, uint dir, uint tid, uint nt,
+    threadgroup float* a, threadgroup float* t, threadgroup char* B
 ) {
-    threadgroup float a[kLamqMaxN];
-    threadgroup float t[kLamqMaxN];
-    threadgroup char B[kLamqMaxNb * kLamqMaxNb];
-    const uint n = p.n, na = p.na, nb = p.nb;
-    const ulong base = ulong(v) * n;
     // Staged once per vector rather than read from device memory nb times per
     // element. float(+1/-1) is exact, so every product and sum is the same
     // f32 value as with the f32 factor this replaced.
     for (uint i = tid; i < nb * nb; i += nt) B[i] = Bdev[i];
     for (uint i = tid; i < n; i += nt) {
-        float xi = kRhtInHalf ? float(((device const half*)x_raw)[base + i])
-                              : ((device const float*)x_raw)[base + i];
+        float xi = x_half ? float(((device const half*)x_raw)[i]) : ((device const float*)x_raw)[i];
         // Input rotation applies the signs before the transform.
-        a[i] = p.dir == 0u ? xi * float(signs[i]) : xi;
+        a[i] = dir == 0u ? xi * float(signs[i]) : xi;
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     // Dense factor on the inner index: in X B^T, out Y B.
     for (uint idx = tid; idx < n; idx += nt) {
         const uint pp = idx / nb, j = idx % nb;
         float s = 0.0f;
-        if (p.dir == 0u) {
+        if (dir == 0u) {
             for (uint q = 0; q < nb; ++q) s += a[pp * nb + q] * float(B[j * nb + q]);
         } else {
             for (uint q = 0; q < nb; ++q) s += a[pp * nb + q] * float(B[q * nb + j]);
@@ -96,10 +89,64 @@ kernel void lamq_rht(
     const float inv = rsqrt(float(n));
     for (uint i = tid; i < n; i += nt) {
         float r = t[i] * inv;
-        if (p.dir == 1u) r *= float(signs[i]);
-        if (kRhtOutHalf) ((device half*)y_raw)[base + i] = half(r);
-        else ((device float*)y_raw)[base + i] = r;
+        if (dir == 1u) r *= float(signs[i]);
+        if (y_half) ((device half*)y_raw)[i] = half(r);
+        else ((device float*)y_raw)[i] = r;
     }
+}
+
+kernel void lamq_rht(
+    device const void*      x_raw  [[buffer(0)]],
+    device const char*      signs  [[buffer(1)]],
+    device const char*      Bdev   [[buffer(2)]],
+    device void*            y_raw  [[buffer(3)]],
+    constant LamqRhtParams& p      [[buffer(4)]],
+    uint                    v      [[threadgroup_position_in_grid]],
+    uint                    tid    [[thread_position_in_threadgroup]],
+    uint                    nt     [[threads_per_threadgroup]]
+) {
+    threadgroup float a[kLamqMaxN];
+    threadgroup float t[kLamqMaxN];
+    threadgroup char B[kLamqMaxNb * kLamqMaxNb];
+    const ulong base = ulong(v) * p.n;
+    device const void* xv = kRhtInHalf ? (device const void*)((device const half*)x_raw + base)
+                                       : (device const void*)((device const float*)x_raw + base);
+    device void* yv = kRhtOutHalf ? (device void*)((device half*)y_raw + base)
+                                   : (device void*)((device float*)y_raw + base);
+    lamq_rht_vec(xv, kRhtInHalf, signs, Bdev, yv, kRhtOutHalf, p.n, p.na, p.nb, p.dir, tid, nt, a, t, B);
+}
+
+// Several input rotations of one width in one dispatch, one threadgroup per
+// vector (so they run on as many cores): job v rotates half input x_sel
+// (0..2) with the signs at byte s_off of `signs` into f32 y[v * n, ...).
+// Each vector's arithmetic is the single-vector kernel's, so the outputs are
+// bit-identical to rotating them one at a time.
+struct LamqRhtJob {
+    uint  x_sel;
+    uint  pad;
+    ulong s_off;
+};
+
+kernel void lamq_rht_in_batch(
+    device const half*      x0     [[buffer(0)]],
+    device const half*      x1     [[buffer(1)]],
+    device const half*      x2     [[buffer(2)]],
+    device const char*      signs  [[buffer(3)]],
+    device const char*      Bdev   [[buffer(4)]],
+    device float*           y      [[buffer(5)]],
+    constant LamqRhtParams& p      [[buffer(6)]],
+    constant LamqRhtJob*    jobs   [[buffer(7)]],
+    uint                    v      [[threadgroup_position_in_grid]],
+    uint                    tid    [[thread_position_in_threadgroup]],
+    uint                    nt     [[threads_per_threadgroup]]
+) {
+    threadgroup float a[kLamqMaxN];
+    threadgroup float t[kLamqMaxN];
+    threadgroup char B[kLamqMaxNb * kLamqMaxNb];
+    const LamqRhtJob j = jobs[v];
+    device const half* x = j.x_sel == 0u ? x0 : (j.x_sel == 1u ? x1 : x2);
+    lamq_rht_vec(x, true, signs + j.s_off, Bdev, y + ulong(v) * p.n, false,
+                 p.n, p.na, p.nb, 0u, tid, nt, a, t, B);
 }
 
 // ----------------------------------------------------------------------------

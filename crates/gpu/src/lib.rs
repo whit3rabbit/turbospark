@@ -406,8 +406,9 @@ pub use kv_quant_tables::{KvQuantTables, TqSideTables};
 pub use kv_quantize::encode_kv_quantize_tq;
 #[cfg(target_os = "macos")]
 pub use lamq::{
-    encode_lamq_decode_row, encode_lamq_gemv, encode_lamq_rht, encode_lamq_scatter, LamqMatrixView,
-    LamqRhtDir, LamqRhtFactor, LAMQ_MAX_N, LAMQ_MAX_TABLE,
+    encode_lamq_decode_row, encode_lamq_gemv, encode_lamq_rht, encode_lamq_rht_in_batch,
+    encode_lamq_scatter, LamqMatrixView, LamqRhtDir, LamqRhtFactor, LAMQ_MAX_N, LAMQ_MAX_TABLE,
+    LAMQ_RHT_BATCH_MAX,
 };
 #[cfg(target_os = "macos")]
 pub use logit_softmax::{encode_logit_softcap_softmax, logit_softcap_softmax};

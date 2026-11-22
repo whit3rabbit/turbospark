@@ -65,6 +65,8 @@ pub(crate) struct LamqRuntime {
     head_order: u64,
     head_count: u32,
     x_rot: gpu::MetalBuffer,
+    /// One rotated input per slot of a batched group (`gemv_batch`).
+    x_rot_batch: gpu::MetalBuffer,
     y32: gpu::MetalBuffer,
     head32: gpu::MetalBuffer,
     pub(crate) experts: Option<LamqExpertRt>,
@@ -319,6 +321,7 @@ impl LamqRuntime {
             head_order: gpu_off(weights, index, order_at),
             head_count: unpadded as u32,
             x_rot: context.new_output_buffer(widest * 4),
+            x_rot_batch: context.new_output_buffer(gpu::LAMQ_RHT_BATCH_MAX as u64 * widest * 4),
             y32: context.new_output_buffer(widest * 4),
             head32: context.new_output_buffer(unpadded as u64 * 4),
             experts: None,
@@ -344,6 +347,21 @@ impl LamqRuntime {
         &self.factors[&n]
     }
 
+    /// The LAMQ matrix `name`, checked against the shape the flow wants.
+    fn mat(&self, name: &str, rows: usize, cols: usize) -> Result<&LamqMat, RealForwardError> {
+        let m = self
+            .mats
+            .get(name)
+            .ok_or_else(|| bad(format!("{name}: not a LAMQ matrix")))?;
+        if (m.rows as usize, m.cols as usize) != (rows, cols) {
+            return Err(bad(format!(
+                "{name}: LAMQ {}x{}, flow wants {rows}x{cols}",
+                m.rows, m.cols
+            )));
+        }
+        Ok(m)
+    }
+
     /// `y = W x` for a coded linear: FP16 `x[cols]` in, FP16 `y[rows]` out.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn gemv(
@@ -357,17 +375,7 @@ impl LamqRuntime {
         x: Buf<'_>,
         y: Buf<'_>,
     ) -> Result<(), RealForwardError> {
-        let g = RealForwardError::Gpu;
-        let m = self
-            .mats
-            .get(name)
-            .ok_or_else(|| bad(format!("{name}: not a LAMQ matrix")))?;
-        if (m.rows as usize, m.cols as usize) != (rows, cols) {
-            return Err(bad(format!(
-                "{name}: LAMQ {}x{}, flow wants {rows}x{cols}",
-                m.rows, m.cols
-            )));
-        }
+        let m = self.mat(name, rows, cols)?;
         gpu::encode_lamq_rht(
             context,
             pass,
@@ -380,18 +388,82 @@ impl LamqRuntime {
             false,
             1,
         )
-        .map_err(g)?;
+        .map_err(RealForwardError::Gpu)?;
+        self.gemv_rotated(context, pass, wb, m, (&self.x_rot, 0), y)
+    }
+
+    /// Several coded linears of one width in one rotation dispatch, then
+    /// their GEMVs: each `(name, rows, cols, input index into xs, output)`.
+    /// The rotations are bit-identical to [`Self::gemv`]'s; they run on
+    /// several cores at once instead of one after another. Falls back to one
+    /// at a time when the widths differ or the group is too large.
+    #[allow(clippy::type_complexity)]
+    pub(crate) fn gemv_batch(
+        &self,
+        context: &mut gpu::MetalContext,
+        pass: &gpu::PassEncoder,
+        wb: &gpu::MetalBuffer,
+        xs: &[Buf<'_>],
+        segs: &[(&str, usize, usize, usize, Buf<'_>)],
+    ) -> Result<(), RealForwardError> {
+        let mats = segs
+            .iter()
+            .map(|&(name, rows, cols, _, _)| self.mat(name, rows, cols))
+            .collect::<Result<Vec<_>, _>>()?;
+        let cols = mats.first().map_or(0, |m| m.cols);
+        let batchable = mats.len() <= gpu::LAMQ_RHT_BATCH_MAX
+            && xs.len() <= 3
+            && mats.iter().all(|m| m.cols == cols);
+        if !batchable {
+            for &(name, rows, c, x, y) in segs {
+                self.gemv(context, pass, wb, name, rows, c, xs[x], y)?;
+            }
+            return Ok(());
+        }
+        let jobs: Vec<(u32, u64)> = segs
+            .iter()
+            .zip(&mats)
+            .map(|(s, m)| (s.3 as u32, m.signs_in))
+            .collect();
+        gpu::encode_lamq_rht_in_batch(
+            context,
+            pass,
+            self.factor(cols),
+            xs,
+            wb,
+            &jobs,
+            (&self.x_rot_batch, 0),
+        )
+        .map_err(RealForwardError::Gpu)?;
+        for (i, (seg, m)) in segs.iter().zip(&mats).enumerate() {
+            let slot = i as u64 * u64::from(cols) * 4;
+            self.gemv_rotated(context, pass, wb, m, (&self.x_rot_batch, slot), seg.4)?;
+        }
+        Ok(())
+    }
+
+    /// The GEMV of an already input-rotated F32 `x_rot`, plus the output
+    /// rotation when the matrix has one.
+    fn gemv_rotated(
+        &self,
+        context: &mut gpu::MetalContext,
+        pass: &gpu::PassEncoder,
+        wb: &gpu::MetalBuffer,
+        m: &LamqMat,
+        x_rot: Buf<'_>,
+        y: Buf<'_>,
+    ) -> Result<(), RealForwardError> {
+        let g = RealForwardError::Gpu;
         match m.signs_out {
             None => {
-                gpu::encode_lamq_gemv(context, pass, &self.view(wb, m), (&self.x_rot, 0), y, true)
-                    .map_err(g)
+                gpu::encode_lamq_gemv(context, pass, &self.view(wb, m), x_rot, y, true).map_err(g)
             }
             Some(so) => {
                 gpu::encode_lamq_gemv(
                     context,
                     pass,
                     &self.view(wb, m),
-                    (&self.x_rot, 0),
+                    x_rot,
                     (&self.y32, 0),
                     false,
                 )
