@@ -1062,8 +1062,13 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
 
   Resident sits where streamed does; a second resident run reproduced the
   first byte for byte. `examples/inkling2_logits.rs` takes
-  `INKLING2_RESIDENCY=resident|streamed` for this. Not run: the ggml-org
-  files.
+  `INKLING2_RESIDENCY=resident|streamed` for this.
+  Memory oracle (`bench/tests/inkling2_gguf_memory_oracle.rs`, the IQ2_M
+  install, streamed at 16 slots, 8,192 context, all three protocol cases):
+  frozen from two runs (peaks 1,669 and 1,668 MiB; 12.9 to 14.6 tok/s; every
+  case at end of turn with the same token counts; replay flat), ceiling
+  1,770 MiB and floor 9.0 tok/s, asserted by a third (peak 1,667 MiB, 13.3 to
+  14.6 tok/s). Not run: the ggml-org files.
 - DONE (2026-11-23): prompt-copy drafting, mtplx item (3)
   (`runtime/src/prompt_copy.rs`, wired in `speculative.rs`; on with the
   DSpark drafter, `TURBOSPARK_SPEC_PROMPT_COPY=0` turns it off). When the
