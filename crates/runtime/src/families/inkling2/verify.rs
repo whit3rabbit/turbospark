@@ -29,6 +29,10 @@ use foundation::LogitValue;
 
 /// Rows one verify serves (the DSpark block: the anchor and 7 proposals).
 pub(crate) const VERIFY_MAX_ROWS: usize = 8;
+/// The widest speculative verify (all-rows head, rollback snapshots): a
+/// prompt-copy round of 24 proposals plus the confirmed token
+/// (`crate::prompt_copy`). The DSpark block stays [`VERIFY_MAX_ROWS`].
+pub(crate) const VERIFY_COPY_MAX_ROWS: usize = 25;
 /// Rows one multi-row pass may carry: a chunked prefill panel
 /// (`super::prefill`). Sizes the batch scratch and the ring slack.
 pub(crate) const PANEL_MAX_ROWS: usize = gpu::INKLING2_BATCH_MAX_ROWS;
@@ -204,10 +208,10 @@ impl BatchScratch {
         );
         let half = |c: &gpu::MetalContext, n: usize| c.new_output_buffer((M * n.max(1) * 2) as u64);
         // Snapshots and the all-rows head serve speculative verify only (a
-        // prefill pass writes neither), so they are sized for its block, not
-        // the panel.
+        // prefill pass writes neither), so they are sized for its widest
+        // round, not the panel.
         let snap = |c: &mut gpu::MetalContext, ch: usize| {
-            c.new_buffer_with_data(&vec![0u8; (VERIFY_MAX_ROWS + 1) * (taps - 1) * ch * 2])
+            c.new_buffer_with_data(&vec![0u8; (VERIFY_COPY_MAX_ROWS + 1) * (taps - 1) * ch * 2])
         };
         let snaps = (0..st.slots.len())
             .map(|_| {
@@ -252,7 +256,7 @@ impl BatchScratch {
             sel: context.new_output_buffer((M * gpu::INKLING2_MAX_SLOTS * 4) as u64),
             y: half(context, h),
             y2: half(context, h),
-            logits: context.new_output_buffer((VERIFY_MAX_ROWS * vocab * 2) as u64),
+            logits: context.new_output_buffer((VERIFY_COPY_MAX_ROWS * vocab * 2) as u64),
             taps: half(context, DSPARK_TAP_ROWS * h),
             snaps,
             group_offs: context
@@ -651,6 +655,18 @@ impl RealForwardRunner {
     /// row per token in `logits` (`tokens.len() * vocab`). Leaves the KV
     /// cursor at `base + tokens.len()` and an [`InklingVerifyRecord`] for the
     /// rollback.
+    /// Proposals a prompt-copy round may verify here: the widest verify
+    /// minus the confirmed token on a runner whose multi-row forward runs,
+    /// else 0.
+    pub(crate) fn inkling2_copy_draft_max(&self) -> usize {
+        match self.real_inkling2.as_ref() {
+            Some(st) if st.resident.is_some() && st.multi_row_refusal().is_none() => {
+                VERIFY_COPY_MAX_ROWS - 1
+            }
+            _ => 0,
+        }
+    }
+
     pub(crate) fn verify_real_inkling2(
         &mut self,
         tokens: &[i32],
@@ -723,9 +739,9 @@ impl RealForwardRunner {
                 st.max_ctx
             )));
         }
-        if head == HeadRows::All && n > VERIFY_MAX_ROWS {
+        if head == HeadRows::All && n > VERIFY_COPY_MAX_ROWS {
             return Err(unsupported(format!(
-                "an Inkling 2 verify takes 1 to {VERIFY_MAX_ROWS} rows, got {n}"
+                "an Inkling 2 verify takes 1 to {VERIFY_COPY_MAX_ROWS} rows, got {n}"
             )));
         }
         let head_rows = match head {
@@ -998,23 +1014,26 @@ impl RealForwardRunner {
         let encode_ms = t_encode.elapsed().as_secs_f64() * 1e3;
         let t_gpu = std::time::Instant::now();
         let gpu_ms = pass.commit_and_wait_with_gpu_time() * 1e3;
-        if super::trace_enabled() {
-            // One line per multi-row pass: host encoding, GPU execution, and
-            // the commit-to-return wall (GPU plus scheduling).
-            eprintln!(
-                "inkling2 rows trace base {base} rows {n}: encode {encode_ms:.1} ms, gpu {gpu_ms:.1} ms, \
-                 wait {:.1} ms",
-                t_gpu.elapsed().as_secs_f64() * 1e3
-            );
-        }
+        let wait_ms = t_gpu.elapsed().as_secs_f64() * 1e3;
         for _ in 0..n {
             self.kv.advance();
         }
+        let t_read = std::time::Instant::now();
         gpu::read_buffer_f16_into(&b.logits, 0, logits);
         for row in logits.chunks_exact_mut(vocab) {
             for l in &mut row[cfg.unpadded_vocab as usize..] {
                 *l = super::PAD_LOGIT;
             }
+        }
+        if super::trace_enabled() {
+            // One line per multi-row pass: host encoding, GPU execution, the
+            // commit-to-return wall (GPU plus scheduling), and the logits
+            // readback (what a GPU-side acceptance would not copy).
+            eprintln!(
+                "inkling2 rows trace base {base} rows {n}: encode {encode_ms:.1} ms, gpu {gpu_ms:.1} ms, \
+                 wait {wait_ms:.1} ms, readback {:.2} ms",
+                t_read.elapsed().as_secs_f64() * 1e3
+            );
         }
         Ok(())
     }

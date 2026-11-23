@@ -591,6 +591,29 @@ impl RealForwardRunner {
         Ok(())
     }
 
+    /// `skip_drafter_round`: writes the drafter's context rows up to `base`
+    /// from the last verify's taps, which the coming verify overwrites.
+    pub(crate) fn inkling2_dspark_sync(&mut self, base: usize) -> Result<(), RealForwardError> {
+        let ctx_rows = self
+            .real_inkling2
+            .as_ref()
+            .and_then(|s| s.dspark.as_ref())
+            .map(|d| d.ctx_rows)
+            .ok_or_else(|| RealForwardError::Unsupported("no DSpark drafter is open".into()))?;
+        if ctx_rows >= base {
+            return Ok(());
+        }
+        let pass = self.context.begin_pass_labeled("dspark sync");
+        self.dspark_write_context(&pass, ctx_rows, base)?;
+        pass.commit_and_wait();
+        self.real_inkling2
+            .as_mut()
+            .and_then(|s| s.dspark.as_mut())
+            .expect("checked")
+            .ctx_rows = base;
+        Ok(())
+    }
+
     /// Why Inkling 2 speculation cannot run on this runner, or `None`.
     pub(crate) fn inkling2_speculation_blocker(&self) -> Option<String> {
         let st = self.real_inkling2.as_ref()?;

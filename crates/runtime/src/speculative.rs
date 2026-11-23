@@ -251,8 +251,24 @@ fn run_speculative<P: SpeculativeProducer>(
     }
     let mut logits = vec![LogitValue::from_f32(0.0); vocab_size];
     let mut draft_logits = vec![LogitValue::from_f32(0.0); vocab_size];
+    // PROMPT-COPY ROUNDS (`crate::prompt_copy`): greedy only, on a producer
+    // that takes them; `TURBOSPARK_SPEC_PROMPT_COPY=0` turns them off. A
+    // copy round may propose more than `block`, so the round buffers are
+    // sized for the wider of the two.
+    let copy_max = if config.shaping.is_deterministic()
+        && std::env::var("TURBOSPARK_SPEC_PROMPT_COPY").as_deref() != Ok("0")
+    {
+        producer.copy_draft_max()
+    } else {
+        0
+    };
+    if copy_max > 0 {
+        foundation::engaged!("spec_prompt_copy");
+    }
+    let mut prompt_copy = crate::prompt_copy::PromptCopy::default();
+    let widest = block.max(copy_max);
     // The confirmed token plus every proposal.
-    let mut batch_logits = vec![LogitValue::from_f32(0.0); (block + 1) * vocab_size];
+    let mut batch_logits = vec![LogitValue::from_f32(0.0); (widest + 1) * vocab_size];
     let mut history: Vec<TokenId> =
         Vec::with_capacity(prompt_ids.len() + config.max_new_tokens as usize);
 
@@ -417,15 +433,17 @@ fn run_speculative<P: SpeculativeProducer>(
     let stats = std::env::var("TURBOSPARK_SPEC_STATS").as_deref() == Ok("1");
     let mut stat_rounds = 0usize;
     let mut stat_accepted = 0usize;
-    let mut stat_offered = vec![0usize; block];
-    let mut stat_matched = vec![0usize; block];
+    let mut stat_offered = vec![0usize; widest];
+    let mut stat_matched = vec![0usize; widest];
     let mut stat_rollbacks = 0usize;
     // Wall time per phase of a round, stats runs only: draft, verify,
     // accept, rollback, commit, rewind, bonus. Every phase that reads back
     // from the GPU is a sync point, so these are wall times, not GPU times.
     let mut ph = [std::time::Duration::ZERO; 7];
+    // Draft and verify wall time of the copy rounds alone.
+    let mut copy_ph = [std::time::Duration::ZERO; 2];
     // Rounds per proposed depth, so an adaptive run shows where it sat.
-    let mut stat_depth = vec![0usize; block + 1];
+    let mut stat_depth = vec![0usize; widest + 1];
 
     'rounds: loop {
         // `next` was sampled but not yet fed. Committing it first is what
@@ -464,7 +482,17 @@ fn run_speculative<P: SpeculativeProducer>(
         //    The accepted path is then compacted into rows `0..keep`, after
         //    which retaining rollback, the fold, the record and the drafter
         //    rewind run exactly as for a chain of that length.
-        if let Some(nodes) = tree_nodes.filter(|_| round_block == block && adaptive.is_none()) {
+        // -- A COPY round, when the history repeats: its proposals come from
+        //    the history, and the drafter is skipped (it takes the previous
+        //    verify's captures first). Everything after the draft is the
+        //    chain round's.
+        let copy_round = copy_max > 0 && {
+            let room = copy_max.min(budget_room).min(context_room);
+            prompt_copy.propose(&sink.history, round_block, room, &mut proposals)
+        };
+        if let Some(nodes) =
+            tree_nodes.filter(|_| !copy_round && round_block == block && adaptive.is_none())
+        {
             let t_draft = std::time::Instant::now();
             producer
                 .draft_tree(next, base, nodes, &mut tree, &mut tree_tokens)
@@ -591,9 +619,13 @@ fn run_speculative<P: SpeculativeProducer>(
         //    -- happens inside the call, from the capture the previous
         //    verify filled.
         let t_draft = std::time::Instant::now();
-        proposals.clear();
         draft_qs.clear();
-        if producer.drafts_block_passes() {
+        if copy_round {
+            producer
+                .skip_drafter_round(base)
+                .map_err(RuntimeError::Producer)?;
+        } else if producer.drafts_block_passes() {
+            proposals.clear();
             producer
                 .draft_block(next, base, round_block, &mut proposals)
                 .map_err(RuntimeError::Producer)?;
@@ -604,6 +636,7 @@ fn run_speculative<P: SpeculativeProducer>(
                 proposals.len()
             );
         } else {
+            proposals.clear();
             let mut chained = next;
             for d in 0..=round_block {
                 if d == round_block {
@@ -664,6 +697,9 @@ fn run_speculative<P: SpeculativeProducer>(
         //    is checked against `proposals[0]`, and the row after the last
         //    accepted proposal carries the free bonus token.
         ph[0] += t_draft.elapsed();
+        if copy_round {
+            copy_ph[0] += t_draft.elapsed();
+        }
         feed.clear();
         feed.push(next);
         feed.extend_from_slice(&proposals);
@@ -673,6 +709,9 @@ fn run_speculative<P: SpeculativeProducer>(
             .verify(&feed, base, &mut batch_logits[..feed.len() * vocab_size])
             .map_err(RuntimeError::Producer)?;
         ph[1] += t_verify.elapsed();
+        if copy_round {
+            copy_ph[1] += t_verify.elapsed();
+        }
 
         // -- Accept. Each accepted proposal is committed through the sink
         // IMMEDIATELY, which is what keeps the shaped distributions exact:
@@ -754,12 +793,16 @@ fn run_speculative<P: SpeculativeProducer>(
             }
             stat_accepted += accepted;
             if stats {
-                stat_depth[round_block] += 1;
+                stat_depth[proposals.len()] += 1;
+            }
+            if copy_round {
+                prompt_copy.observe(accepted, proposals.len());
             }
             // A round a stop cut short never saw the rest of its proposals, so
-            // its `accepted` undercounts and would read as a miss.
+            // its `accepted` undercounts and would read as a miss. A copy
+            // round says nothing about the drafter's depth.
             if let Some(a) = adaptive.as_mut() {
-                if !truncated && stopped.is_none() {
+                if !truncated && !copy_round && stopped.is_none() {
                     a.observe(proposals.len(), accepted);
                 }
             }
@@ -906,6 +949,14 @@ fn run_speculative<P: SpeculativeProducer>(
             .map(|(d, n)| format!("{d}:{n}"))
             .collect();
         eprintln!("[spec-stats] rounds per depth: {}", depths.join(" "));
+        eprintln!(
+            "[spec-stats] prompt-copy rounds={} accepted={} (cap {copy_max}) ms/copy-round: \
+             sync={:.2} verify={:.2}",
+            prompt_copy.rounds,
+            prompt_copy.accepted,
+            copy_ph[0].as_secs_f64() * 1000.0 / prompt_copy.rounds.max(1) as f64,
+            copy_ph[1].as_secs_f64() * 1000.0 / prompt_copy.rounds.max(1) as f64
+        );
         let per = |d: std::time::Duration| d.as_secs_f64() * 1000.0 / stat_rounds.max(1) as f64;
         eprintln!(
             "[spec-stats] ms/round: draft={:.2} verify={:.2} accept={:.2} rollback={:.2} \

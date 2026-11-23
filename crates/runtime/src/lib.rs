@@ -67,6 +67,7 @@ mod router_hist;
 mod session_pool;
 #[cfg(target_os = "macos")]
 mod speculation_policy;
+mod prompt_copy;
 mod speculative;
 mod speculative_adaptive;
 #[cfg(target_os = "macos")]

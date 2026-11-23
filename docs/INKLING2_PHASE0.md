@@ -985,6 +985,37 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   against 25.1): the per-row coded GEMVs make a 4-row verify cost about
   four tokens. DSpark stays opt-in, so no default changes. A multi-row coded
   GEMV (decode each chunk once for N rows) is what would make it pay.
+- DONE (2026-11-23): prompt-copy drafting, mtplx item (3)
+  (`runtime/src/prompt_copy.rs`, wired in `speculative.rs`; on with the
+  DSpark drafter, `TURBOSPARK_SPEC_PROMPT_COPY=0` turns it off). When the
+  last 10 down to 6 committed tokens occurred earlier in the history, the
+  round proposes what followed the most recent occurrence instead of
+  drafting. Probation: a copy round starts at the drafter's own depth and
+  doubles after a fully accepted round, up to 24 proposals (the Inkling
+  verify now takes 25 rows, `VERIFY_COPY_MAX_ROWS`; snapshots and the
+  logits buffer grew with it); a rejection drops it back. A round accepting
+  fewer than 2 pauses copying for 2, 4, ... 16 rounds. Greedy only. Producers
+  opt in through `copy_draft_max`; `skip_drafter_round` lets DSpark write its
+  context rows from the previous verify's taps before the copy round's
+  verify overwrites them. A first try at a fixed 24-wide copy lost (code
+  50.9 against 54.4 tok/s on mlx4): a verify row costs about 10 ms there, and
+  early-rejected copies paid for 25 rows. Gates, M4 Max, depth 3, 256
+  greedy tokens, every run lossless (255 committed tokens identical); the
+  new `edit` prompt (repo code, then a rewrite request) is the copy-heavy
+  case:
+
+  | install | prompt | copy off | copy on | copy rounds, accepted |
+  |---|---|---|---|---|
+  | mlx4 | edit | 51.9, 51.8 | 54.9, 54.8 | 10, 57 |
+  | mlx4 | prose | 44.3, 44.3 | 45.1 | 3, 20 |
+  | mlx4 | code | 54.4, 54.1 | 53.4 | 4, 11 |
+  | mlx4 | long | 42.6, 42.7 | 41.8 | 10, 17 |
+  | BF16 | edit | 42.0, 42.0 | 42.0, 42.1 | 3, 7 |
+  | BF16 | code | 52.2, 52.4 | 52.0, 51.8 | 3, 10 |
+  | BF16 | long | 47.6, 47.5 | 48.7, 48.8 | 11, 35 |
+
+  Speculative tok/s, in-test wall time, not frozen rows. Copy wins where the
+  output re-quotes its context and is within about 2% elsewhere.
 - RESEARCH (2026-11-22): mtplx (github.com/youssofal/mtplx, Apache-2.0, MLX)
   runs Inkling 2 Mini with the same bundled DSpark drafter. Our port already
   has its Markov head (`dspark_markov_*`), so the draft logic matches.

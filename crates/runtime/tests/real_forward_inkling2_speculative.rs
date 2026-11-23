@@ -31,7 +31,18 @@ fn prompts() -> Vec<(&'static str, String)> {
     .expect("long prompt");
     // About 2,500 tokens of the doc, then a question about it.
     let cut: String = long.chars().take(9000).collect();
-    vec![
+    // Output that re-quotes its context, the case prompt-copy rounds serve.
+    let code = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/prompt_copy.rs"),
+    )
+    .expect("edit prompt");
+    let body: String = code
+        .lines()
+        .skip_while(|l| !l.starts_with("pub(crate) fn find_copy"))
+        .take_while(|l| !l.starts_with("#[cfg(test)]"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let all = vec![
         (
             "prose",
             "Write a short story, about 300 words, about a lighthouse keeper who finds a \
@@ -48,7 +59,22 @@ fn prompts() -> Vec<(&'static str, String)> {
             "long",
             format!("{cut}\n\nSummarize the document above in five bullet points."),
         ),
-    ]
+        (
+            "edit",
+            format!(
+                "```rust\n{body}\n```\n\nRewrite the Rust code above with `PromptCopy` \
+                 renamed to `CopyDrafter`. Output the complete code.\n\n```rust\n"
+            ),
+        ),
+    ];
+    // `INKLING2_SPEC_PROMPTS=code,edit` runs a subset.
+    match std::env::var("INKLING2_SPEC_PROMPTS") {
+        Ok(keep) => all
+            .into_iter()
+            .filter(|(k, _)| keep.split(',').any(|w| w == *k))
+            .collect(),
+        Err(_) => all,
+    }
 }
 
 #[test]

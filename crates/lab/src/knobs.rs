@@ -671,6 +671,23 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[off("0", "inkling2_batched_affine")],
     },
     Knob {
+        // Prompt-copy rounds in greedy speculation (`runtime/src/prompt_copy.rs`):
+        // when the history repeats, propose its continuation instead of
+        // drafting, at up to 24 proposals. On for producers that take copy
+        // rounds (Inkling 2 with its DSpark drafter); "0" turns them off.
+        // Lossless (the speculative gate on BF16 and mlx4), so output bits
+        // are the plain greedy stream either way.
+        name: "spec_prompt_copy",
+        env: "TURBOSPARK_SPEC_PROMPT_COPY",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::PerCall,
+        exactness: Exactness::BitExact,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[off("0", "spec_prompt_copy")],
+    },
+    Knob {
         // Inkling 2 resident installs: a GPU touch of every resident buffer
         // at open, not waited on, so the driver's 1 to 3 s first-use mapping
         // overlaps the gap before the first request. "0" turns it off. Writes

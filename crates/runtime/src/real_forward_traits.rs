@@ -456,6 +456,22 @@ impl SpeculativeProducer for RealForwardRunner {
         self.real_dflash.is_some() || self.inkling2_dspark_open()
     }
 
+    fn copy_draft_max(&self) -> usize {
+        if self.inkling2_dspark_open() {
+            self.inkling2_copy_draft_max()
+        } else {
+            0
+        }
+    }
+
+    fn skip_drafter_round(&mut self, base: usize) -> Result<(), String> {
+        if self.inkling2_dspark_open() {
+            gpu::autorelease_pool(|| self.inkling2_dspark_sync(base).map_err(|e| e.to_string()))
+        } else {
+            Ok(())
+        }
+    }
+
     fn draft_block(
         &mut self,
         anchor: i32,
