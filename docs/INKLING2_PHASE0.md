@@ -882,6 +882,18 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   streamed one, so do not run it beside another resident-install test on a
   36 GB machine (one such overlap probably took this machine down on
   2026-11-23).
+- DONE (2026-11-23): a quality gate on the default prefill
+  (`bench/tests/inkling2_prefill_quality.rs`). The Phase 6 gates open
+  streamed, which prefills one token at a time, so they never ran the
+  chunked matrix-unit prefill. This scores the Phase 6 reference answer
+  sequentially on a resident runner, through the default chunked prefill,
+  and sequentially streamed (the floor; it reproduces the frozen Phase 6
+  rows, 4.7024 and 4.8026, to the last digit). Bound, set before the first
+  run: |chunked - sequential| at most max(3 x the floor's distance, 0.1%).
+  BF16: sequential 4.6890, chunked 4.6906 (+0.0017), floor +0.0134, bound
+  0.0403. MLX 4-bit: 4.8104, 4.8043 (-0.0061), floor -0.0078, bound 0.0233.
+  The quality prompt is 66 tokens (one panel): it covers the kernels, not
+  long-context prefill, which the KL gate covers.
 - DONE (2026-11-23): batched affine projections for MLX-sourced installs in
   multi-row passes (`Ctx::gemv_rows`, `TURBOSPARK_INKLING2_BATCHED_AFFINE=0`
   restores one GEMV per row; tslab knob `inkling2_batched_affine`). The mlx4
