@@ -1016,6 +1016,17 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
 
   Speculative tok/s, in-test wall time, not frozen rows. Copy wins where the
   output re-quotes its context and is within about 2% elsewhere.
+- MEASURED, NOT BUILT (2026-11-23): GPU-side acceptance, mtplx item (6).
+  `TURBOSPARK_INKLING2_TRACE=1` on mlx4, code prompt, depth 3, 83 rounds:
+  a round is 57.3 ms wall (draft 9.85, verify 45.85, accept 0.95, rollback
+  0.26, bonus 0.35). The verify is 44.2 ms of GPU time; its host share is
+  encode 1.18, commit-to-return 0.23 and the logits readback 0.04 ms. So
+  one command buffer per round with greedy acceptance on the GPU can win
+  at most about 3 ms a round (5%), plus the draft's unmeasured host share.
+  Only the 0.95 ms host accept goes away without the rest; overlapping the
+  encode with the GPU needs every position, KV cursor and rollback count
+  GPU-resident, a redesign of the decode flow for at most that 5%. Declined
+  for now; the readback is not the cost.
 - RESEARCH (2026-11-22): mtplx (github.com/youssofal/mtplx, Apache-2.0, MLX)
   runs Inkling 2 Mini with the same bundled DSpark drafter. Our port already
   has its Markov head (`dspark_markov_*`), so the draft logic matches.
