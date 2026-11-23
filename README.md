@@ -232,7 +232,7 @@ the slot arithmetic in [`docs/MODEL_FAMILY.md`](docs/MODEL_FAMILY.md) and use
 `turbospark-model recommend` for the active machine and context.
 
 Inkling 2 Mini (`thinkingmachines/Inkling-2-Mini`, a 24-layer MoE looped to
-48 layer applications) is in the catalog at status `runs`, as
+48 layer applications) is in the catalog at status `verified`, as
 `inkling2-mini` (the original checkpoint), `inkling2-mini-mlx4` and
 `inkling2-mini-lamq54`. `turbospark-model pull <alias>` downloads the whole
 repository at its pinned revision, then converts it on this Mac, so it

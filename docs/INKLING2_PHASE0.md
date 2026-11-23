@@ -4,16 +4,15 @@ Target: `thinkingmachines/Inkling-2-Mini`, revision
 `ed40e7da625f594fc9c4990f5f66be24873c22d7`. Apache 2.0, ~26B physical / 3B
 active per pass, 1M context, text + image in, text out.
 
-STATUS: **decodes, not supported.** The family enum, the HF and MLX intakes
+STATUS: **supported on three verified catalog installs (2026-11-22).** The family enum, the HF and MLX intakes
 and a Metal decode flow have landed. The flow is greedy-matched to the CPU
 reference and llama.cpp on real installs (Stage A below). Three catalog rows
-are at status `runs` (2026-11-22): `inkling2-mini` (the original at
-`ed40e7da`), `inkling2-mini-mlx4` and `inkling2-mini-lamq54`, each pulled
-by alias here and chatted. The memory oracle is frozen for all three
+are `verified` (2026-11-22): `inkling2-mini` (the original at `ed40e7da`),
+`inkling2-mini-mlx4` and `inkling2-mini-lamq54`, each pulled by alias here
+and chatted. None is featured yet. The memory oracle is frozen for all three
 (streamed at 16 slots, 8,192 context: 2,662, 2,663 and 1,587 MiB; see
-"Memory oracle" below). The Phase 6 quality gates in `docs/NEW_MODEL.md`
-have not run, so no row is `verified` and none is featured. Do not call it
-supported until they have.
+"Memory oracle" below). The Phase 6 quality gates are frozen too
+(2026-11-22; see "Quality gate" below).
 GGUF installs through its own intake (GGUF sections below). LookAtMyQuant
 packed releases install and decode with their codes native (`docs/LAMQ.md`,
 5.4 GB release: 19/19 and 183/232 top-1 against the BF16 install; the loss
@@ -316,6 +315,27 @@ peak were normal. Rerun once the daemon was idle, it read 19.0 tok/s and
 passed. The floor was not loosened: a contended host reads as a floor
 failure here, so check `ps` before reading one as a regression.
 
+## Quality gate (2026-11-22)
+
+`crates/bench/tests/inkling2_quality_gate.rs`,
+`inkling2_mlx4_quality_gate.rs` and `inkling2_lamq54_quality_gate.rs` on
+`quality_common`. The reference answer is scored in the text segment after
+`<|message_model|><|content_text|>` (the template writes no generation
+prompt; the model opens its own turn), and the gate asserts that prefix
+encodes as those two special tokens. Streamed, 16 slots, 8,192 context.
+
+| Install | Reference perplexity | 8-slot digest = 16-slot | 8-slot decode |
+|---|---|---|---|
+| `inkling2-mini` | 4.7024 | yes | 0.89x |
+| `inkling2-mini-mlx4` | 4.8026 (+2.1%) | yes | 0.87x, 0.89x |
+| `inkling2-mini-lamq54` | 5.7382 (+22%) | yes | 0.97x |
+
+Two fresh processes per install agreed on the perplexity's last digit and
+on both digests' every hex character; a third asserted the frozen rows. The
+perplexity orders the installs as the KL measurements do (MLX's 4-bit dense
+weights cost a little, the LookAtMyQuant release clearly more). It is no
+ranking against other families: each template places the answer elsewhere.
+
 ## Remaining work, in dependency order
 
 Stage A: reachable and correct (decode only)
@@ -451,8 +471,8 @@ Stage A: reachable and correct (decode only)
    release for a checkpoint (the catalog network guard caught it, and the
    fixture now ships a config so `tests/inkling2_repo.rs` does too).
 5. DONE: long-context check (above). Catalog rows landed at `runs`
-   (2026-11-22), and the memory oracle (below). Remaining: the Phase 6
-   quality gates, which are what would make a row `verified`.
+   (2026-11-22), then the memory oracle and the quality gates (below), and
+   the rows moved to `verified`.
 
 Stage B: speed and memory (after A's gates, each with a kill switch)
 - DONE (2026-11-21): GGUF name table (`crates/repack/src/inkling2_gguf_names.rs`),

@@ -1756,8 +1756,9 @@
       },
       "download_bytes": 19552398983,
       "install_bytes": 19500000000,
-      "status": "runs",
+      "status": "verified",
       "gates": [
+        "inkling2_quality_gate",
         "inkling2_memory_oracle"
       ],
       "measured": [
@@ -1772,7 +1773,7 @@
           "source": "this port, two oracle sessions, AC, streamed (inkling2_memory_oracle); all three protocol cases stop at end of turn; resident experts (auto on a 36 GB Mac) peak about 17.7 GiB instead"
         }
       ],
-      "notes": "The original 26B-physical MoE (24 layers, layers 6-17 looped 3x, 128 experts top-8). Downloaded whole at the pinned revision (the DSpark drafter mtp.safetensors is not fetched), then converted on this Mac; it needs about 37 GiB free while both exist. Logits match the CPU reference and llama.cpp (docs/INKLING2_PHASE0.md). The memory oracle (inkling2_memory_oracle) holds it streamed at 16 slots: 2,662 MiB peak at 8,192 context, 14.5 to 18.0 tok/s. No Phase 6 quality gate yet, so the status stays runs. Prefill is sequential. With room (auto residency on a 36 GB Mac) the experts go resident instead: about 17.7 GiB and about 34 tok/s on a short prompt, an indicative reading."
+      "notes": "The original 26B-physical MoE (24 layers, layers 6-17 looped 3x, 128 experts top-8). Downloaded whole at the pinned revision (the DSpark drafter mtp.safetensors is not fetched), then converted on this Mac; it needs about 37 GiB free while both exist. Logits match the CPU reference and llama.cpp (docs/INKLING2_PHASE0.md). The memory oracle (inkling2_memory_oracle) holds it streamed at 16 slots: 2,662 MiB peak at 8,192 context, 14.5 to 18.0 tok/s. The quality gate (inkling2_quality_gate) holds perplexity 4.7024 and both digests, so the status is verified. Prefill is sequential. With room (auto residency on a 36 GB Mac) the experts go resident instead: about 17.7 GiB and about 34 tok/s on a short prompt, an indicative reading."
     },
     {
       "alias": "inkling2-mini-mlx4",
@@ -1796,8 +1797,9 @@
       },
       "download_bytes": 17334678817,
       "install_bytes": 17200000000,
-      "status": "runs",
+      "status": "verified",
       "gates": [
+        "inkling2_mlx4_quality_gate",
         "inkling2_mlx4_memory_oracle"
       ],
       "measured": [
@@ -1812,7 +1814,7 @@
           "source": "this port, two oracle sessions, AC, streamed (inkling2_mlx4_memory_oracle); all three protocol cases stop at end of turn; resident experts peak about 17.7 GiB instead"
         }
       ],
-      "notes": "mlx-lm's conversion (PR 2086): attention, embedding and head at affine 4-bit group 64, the experts kept as the original NVFP4 and MXFP8 bytes, so it saves disk but not expert memory. Downloaded whole at the pinned revision, then converted; it needs about 33 GiB free while both exist. Not bit-exact with inkling2-mini (4-bit dense weights). The memory oracle (inkling2_mlx4_memory_oracle) holds it streamed at 16 slots: 2,663 MiB peak, 17.9 to 20.5 tok/s, the fastest Inkling install streamed. No quality gate, so the status stays runs. Resident (auto with room), one indicative reading decoded about 46 tok/s at the original's 17.7 GiB."
+      "notes": "mlx-lm's conversion (PR 2086): attention, embedding and head at affine 4-bit group 64, the experts kept as the original NVFP4 and MXFP8 bytes, so it saves disk but not expert memory. Downloaded whole at the pinned revision, then converted; it needs about 33 GiB free while both exist. Not bit-exact with inkling2-mini (4-bit dense weights). The memory oracle (inkling2_mlx4_memory_oracle) holds it streamed at 16 slots: 2,663 MiB peak, 17.9 to 20.5 tok/s, the fastest Inkling install streamed. The quality gate (inkling2_mlx4_quality_gate) holds perplexity 4.8026 and both digests, so the status is verified. Resident (auto with room), one indicative reading decoded about 46 tok/s at the original's 17.7 GiB."
     },
     {
       "alias": "inkling2-mini-lamq54",
@@ -1836,8 +1838,9 @@
       },
       "download_bytes": 5379987356,
       "install_bytes": 7600000000,
-      "status": "runs",
+      "status": "verified",
       "gates": [
+        "inkling2_lamq54_quality_gate",
         "inkling2_lamq54_memory_oracle"
       ],
       "measured": [
@@ -1852,7 +1855,7 @@
           "source": "this port, two oracle sessions, AC, streamed (inkling2_lamq54_memory_oracle), short-explanation and medium-review only: long-synthesis runs past the 4,096-token budget on this release"
         }
       ],
-      "notes": "The LookAtMyQuant packed release (MIT), trellis and Lloyd-Max codes kept native (docs/LAMQ.md). Downloaded whole at the pinned revision, then converted; the install is about 1.4x the release and needs about 13.5 GiB free while both exist. The smallest Inkling install: the memory oracle (inkling2_lamq54_memory_oracle) holds it at 1,587 MiB streamed at 16 slots, 16.5 to 18.9 tok/s, over short-explanation and medium-review only, since on long-synthesis it reasons past the 4,096-token budget where the original stops at 2,070. Resident, one indicative reading peaked at 8.4 GiB at about 30 tok/s. It loses quality against inkling2-mini: about 80 percent next-token agreement and mean KL 0.25 to 0.31 on English and code windows. That loss is in the release's weights, not the runtime (a CPU f32 forward on the same weights matches Metal at KL 1.4e-3). No quality gate, so the status stays runs."
+      "notes": "The LookAtMyQuant packed release (MIT), trellis and Lloyd-Max codes kept native (docs/LAMQ.md). Downloaded whole at the pinned revision, then converted; the install is about 1.4x the release and needs about 13.5 GiB free while both exist. The smallest Inkling install: the memory oracle (inkling2_lamq54_memory_oracle) holds it at 1,587 MiB streamed at 16 slots, 16.5 to 18.9 tok/s, over short-explanation and medium-review only, since on long-synthesis it reasons past the 4,096-token budget where the original stops at 2,070. Resident, one indicative reading peaked at 8.4 GiB at about 30 tok/s. It loses quality against inkling2-mini: about 80 percent next-token agreement and mean KL 0.25 to 0.31 on English and code windows. That loss is in the release's weights, not the runtime (a CPU f32 forward on the same weights matches Metal at KL 1.4e-3). The quality gate (inkling2_lamq54_quality_gate) holds perplexity 5.7382 (22 percent over the original's 4.7024) and both digests, so the status is verified; verified means its gates hold, not that it matches the original."
     }
   ]
 }

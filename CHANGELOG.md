@@ -26,12 +26,12 @@ when this file gets updated relative to the version bump and the tag.
   its code's error band, and a CPU f32 forward on the same weights matches
   the Metal path at mean KL 1.4e-3. The authors' lower KL (0.0895) comes from
   their own harness, which is not public.
-- Catalog rows for Inkling 2 Mini at status `runs`: `inkling2-mini` (the
-  original checkpoint at `ed40e7da`), `inkling2-mini-mlx4`
+- Catalog rows for Inkling 2 Mini at status `verified`: `inkling2-mini`
+  (the original checkpoint at `ed40e7da`), `inkling2-mini-mlx4`
   (`mlx-community/Inkling-2-Mini-4bit`) and `inkling2-mini-lamq54` (the
-  LookAtMyQuant 5.4 GB release). Each was pulled by alias and chatted here;
-  no memory oracle or quality gate has run, so none is `verified` and
-  `recommend` lists their fit as unknown.
+  LookAtMyQuant 5.4 GB release). Each was pulled by alias and chatted here,
+  and each has a frozen memory oracle and quality gate (below). None is
+  featured.
 - The original Inkling 2 checkpoint and its MLX conversions install from the
   Hub: the probe reports them runnable and `pull --repo` takes the
   whole-file route (download at a pinned commit, then convert; the DSpark
@@ -46,6 +46,12 @@ when this file gets updated relative to the version bump and the tag.
   catalog rows carry these as `measured`, so `recommend --context 8192` fits
   them. The LookAtMyQuant oracle drives two of the three protocol cases: on
   the long one that release reasons past the 4,096-token budget.
+- Quality gates for the three Inkling 2 installs (`inkling2_quality_gate`,
+  `inkling2_mlx4_quality_gate`, `inkling2_lamq54_quality_gate`): the
+  reference answer scored in the `<|message_model|><|content_text|>` slot
+  (perplexity 4.7024, 4.8026 and 5.7382), greedy and sampled digests frozen
+  from two fresh processes each, and the 8-slot digest equal to the 16-slot
+  one on all three.
 - The app shows Inkling 2 rows with their own family tile, and Discover
   marks them as MoE before they are installed.
 - Inkling 2 LookAtMyQuant diagnostics in the runtime crate:
