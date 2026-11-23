@@ -12,8 +12,9 @@
 use half::f16;
 use turbospark_compute::lamq::{LamqCode, LamqLinear, Rht};
 use turbospark_gpu::{
-    encode_lamq_decode_row, encode_lamq_gemv, encode_lamq_rht, encode_lamq_rht_in_batch,
-    encode_lamq_scatter, LamqMatrixView, LamqRhtDir, LamqRhtFactor, MetalContext,
+    encode_lamq_decode_row, encode_lamq_gemv, encode_lamq_gemv_rows, encode_lamq_rht,
+    encode_lamq_rht_in_batch, encode_lamq_scatter, LamqMatrixView, LamqRhtDir, LamqRhtFactor,
+    MetalContext,
 };
 
 fn xs(state: &mut u32) -> u32 {
@@ -530,5 +531,328 @@ fn gemv_bandwidth() {
                 (rows * cols) as f64 / (t / n) / 1e9,
             );
         }
+    }
+}
+
+fn bits(b: &metal::Buffer, off: usize, n: usize) -> Vec<u8> {
+    unsafe { std::slice::from_raw_parts((b.contents() as *const u8).add(off), n) }.to_vec()
+}
+
+/// The multi-row GEMV's rows against the same kernel run on each row alone,
+/// every code, bit for bit (a row's result must not depend on which rows
+/// share its dispatch), at row counts below, at and past the kernel's block
+/// of 8, with padded strides on both sides and both output types.
+#[test]
+fn gemv_rows_bits_do_not_depend_on_the_rows_sharing_a_dispatch() {
+    let mut context = MetalContext::new().expect("Metal device");
+    for (ci, &code) in CODES.iter().enumerate() {
+        for (rows, cols) in [(37usize, 2304usize), (9, 1152)] {
+            let f = Fixture::new(code, rows, cols, 500 + ci as u32 * 7 + rows as u32);
+            let codes = context.new_buffer_with_data(&f.codes);
+            let scales = context.new_buffer_with_data(
+                &f.scales
+                    .iter()
+                    .flat_map(|v| v.to_le_bytes())
+                    .collect::<Vec<_>>(),
+            );
+            let table = context.new_buffer_with_data(&f.table_bytes());
+            let view = LamqMatrixView {
+                code,
+                rows: rows as u32,
+                cols: cols as u32,
+                codes: (&codes, 0),
+                scales: (&scales, 0),
+                table: (&table, 0),
+            };
+            for n in [1usize, 5, 13] {
+                let (xs, ys) = (cols + 16, rows + 3);
+                let mut seed = 7 + n as u32 + rows as u32;
+                let x: Vec<f32> = (0..n * xs).map(|_| unit(&mut seed)).collect();
+                let x_buf = context.new_buffer_with_data(&le32(&x));
+                for half in [false, true] {
+                    let w = if half { 2 } else { 4 };
+                    let y_rows = context.new_buffer_with_data(&vec![0u8; n * ys * w]);
+                    let y_one = context.new_buffer_with_data(&vec![0u8; n * rows * w]);
+                    let pass = context.begin_pass();
+                    encode_lamq_gemv_rows(
+                        &mut context,
+                        &pass,
+                        &view,
+                        (&x_buf, 0),
+                        xs as u32,
+                        (&y_rows, 0),
+                        ys as u32,
+                        n as u32,
+                        half,
+                    )
+                    .unwrap();
+                    // Each row alone, through the same kernel: a row's bits must
+                    // not depend on which rows share its dispatch.
+                    for t in 0..n {
+                        encode_lamq_gemv_rows(
+                            &mut context,
+                            &pass,
+                            &view,
+                            (&x_buf, (t * xs * 4) as u64),
+                            cols as u32,
+                            (&y_one, (t * rows * w) as u64),
+                            rows as u32,
+                            1,
+                            half,
+                        )
+                        .unwrap();
+                    }
+                    pass.commit_and_wait();
+                    for t in 0..n {
+                        assert_eq!(
+                            bits(&y_rows, t * ys * w, rows * w),
+                            bits(&y_one, t * rows * w, rows * w),
+                            "{} {rows}x{cols}, {n} rows, row {t}, half {half}",
+                            code.name()
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// `encode_lamq_rht` over `count` vectors equals one call per vector, bit for
+/// bit, both directions (the multi-row LAMQ path rotates a panel at once).
+#[test]
+fn counted_rotation_equals_one_vector_at_a_time() {
+    let mut context = MetalContext::new().expect("Metal device");
+    for n in [1152usize, 2304] {
+        let factor = LamqRhtFactor::new(&context, n).unwrap();
+        let s_buf = context.new_buffer_with_data(
+            &signs(n, 3 + n as u32)
+                .iter()
+                .map(|&v| v as u8)
+                .collect::<Vec<_>>(),
+        );
+        let count = 128usize;
+        let mut seed = 5 + n as u32;
+        let x: Vec<f32> = (0..count * n).map(|_| unit(&mut seed)).collect();
+        for (dir, x_half, y_half) in [
+            (LamqRhtDir::In, true, false),
+            (LamqRhtDir::Out, false, false),
+            (LamqRhtDir::Out, false, true),
+        ] {
+            let x_buf = if x_half {
+                context.new_buffer_with_data(&le16(&x))
+            } else {
+                context.new_buffer_with_data(&le32(&x))
+            };
+            let xw = if x_half { 2 } else { 4 };
+            let yw = if y_half { 2 } else { 4 };
+            let all = context.new_buffer_with_data(&vec![0u8; count * n * 4]);
+            let one = context.new_buffer_with_data(&vec![0u8; count * n * 4]);
+            let pass = context.begin_pass();
+            encode_lamq_rht(
+                &mut context,
+                &pass,
+                &factor,
+                dir,
+                (&x_buf, 0),
+                x_half,
+                (&s_buf, 0),
+                (&all, 0),
+                y_half,
+                count as u32,
+            )
+            .unwrap();
+            for v in 0..count {
+                encode_lamq_rht(
+                    &mut context,
+                    &pass,
+                    &factor,
+                    dir,
+                    (&x_buf, (v * n * xw) as u64),
+                    x_half,
+                    (&s_buf, 0),
+                    (&one, (v * n * yw) as u64),
+                    y_half,
+                    1,
+                )
+                .unwrap();
+            }
+            pass.commit_and_wait();
+            assert_eq!(
+                bits(&all, 0, count * n * yw),
+                bits(&one, 0, count * n * yw),
+                "width {n}, half out {y_half}"
+            );
+        }
+    }
+}
+
+/// Not a gate: GPU time of the multi-row GEMV against one-row dispatches at
+/// Mini decode shapes (32 rows), and of the multi-row kernel at one row
+/// against the decode kernel. `cargo test --release -p turbospark-gpu --test
+/// lamq_parity gemv_rows_speed -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn gemv_rows_speed() {
+    let mut context = MetalContext::new().expect("Metal device");
+    const N: usize = 32;
+    for (rows, cols) in [(3072usize, 2304usize), (1024, 2304), (2304, 3072)] {
+        for &code in &[LamqCode::Ht3, LamqCode::Rtr2, LamqCode::Rtr4, LamqCode::Lm6] {
+            let f = Fixture::new(code, rows, cols, 9 + rows as u32);
+            let codes = context.new_buffer_with_data(&f.codes);
+            let scales = context.new_buffer_with_data(
+                &f.scales
+                    .iter()
+                    .flat_map(|v| v.to_le_bytes())
+                    .collect::<Vec<_>>(),
+            );
+            let table = context.new_buffer_with_data(&f.table_bytes());
+            let view = LamqMatrixView {
+                code,
+                rows: rows as u32,
+                cols: cols as u32,
+                codes: (&codes, 0),
+                scales: (&scales, 0),
+                table: (&table, 0),
+            };
+            let mut seed = 3u32;
+            let x: Vec<f32> = (0..N * cols).map(|_| unit(&mut seed)).collect();
+            let x_buf = context.new_buffer_with_data(&le32(&x));
+            let y = context.new_buffer_with_data(&vec![0u8; N * rows * 2]);
+            // (label, closure index)
+            let time = |context: &mut MetalContext, which: u8| -> f64 {
+                let pass = context.begin_pass();
+                for _ in 0..8 {
+                    match which {
+                        0 => {
+                            for t in 0..N {
+                                encode_lamq_gemv(
+                                    context,
+                                    &pass,
+                                    &view,
+                                    (&x_buf, (t * cols * 4) as u64),
+                                    (&y, (t * rows * 2) as u64),
+                                    true,
+                                )
+                                .unwrap();
+                            }
+                        }
+                        1 => encode_lamq_gemv_rows(
+                            context,
+                            &pass,
+                            &view,
+                            (&x_buf, 0),
+                            cols as u32,
+                            (&y, 0),
+                            rows as u32,
+                            N as u32,
+                            true,
+                        )
+                        .unwrap(),
+                        2 => encode_lamq_gemv(context, &pass, &view, (&x_buf, 0), (&y, 0), true)
+                            .unwrap(),
+                        _ => encode_lamq_gemv_rows(
+                            context,
+                            &pass,
+                            &view,
+                            (&x_buf, 0),
+                            cols as u32,
+                            (&y, 0),
+                            rows as u32,
+                            1,
+                            true,
+                        )
+                        .unwrap(),
+                    }
+                }
+                pass.commit_and_wait_with_gpu_time() / 8.0 * 1e6
+            };
+            time(&mut context, 0);
+            let best = |context: &mut MetalContext, w: u8| {
+                (0..3).map(|_| time(context, w)).fold(f64::MAX, f64::min)
+            };
+            let (a, b, c, d) = (
+                best(&mut context, 0),
+                best(&mut context, 1),
+                best(&mut context, 2),
+                best(&mut context, 3),
+            );
+            println!(
+                "{:5} {rows}x{cols}: {N} rows {a:8.1} us one-row vs {b:8.1} us rows ({:.2}x); \
+                 1 row {c:6.1} us decode kernel vs {d:6.1} us rows kernel",
+                code.name(),
+                a / b
+            );
+        }
+    }
+}
+
+/// The multi-row GEMV is a re-summation of the one-row GEMV, never more:
+/// every row within 1e-5 of the row's output RMS, every code, F32 out.
+#[test]
+fn gemv_rows_is_the_one_row_gemv_up_to_summation_order() {
+    let mut context = MetalContext::new().expect("Metal device");
+    for (ci, &code) in CODES.iter().enumerate() {
+        let (rows, cols, n) = (37usize, 2304usize, 13usize);
+        let f = Fixture::new(code, rows, cols, 900 + ci as u32);
+        let codes = context.new_buffer_with_data(&f.codes);
+        let scales = context.new_buffer_with_data(
+            &f.scales
+                .iter()
+                .flat_map(|v| v.to_le_bytes())
+                .collect::<Vec<_>>(),
+        );
+        let table = context.new_buffer_with_data(&f.table_bytes());
+        let view = LamqMatrixView {
+            code,
+            rows: rows as u32,
+            cols: cols as u32,
+            codes: (&codes, 0),
+            scales: (&scales, 0),
+            table: (&table, 0),
+        };
+        let mut seed = 77u32;
+        let x: Vec<f32> = (0..n * cols).map(|_| unit(&mut seed)).collect();
+        let x_buf = context.new_buffer_with_data(&le32(&x));
+        let a = context.new_buffer_with_data(&vec![0u8; n * rows * 4]);
+        let b = context.new_buffer_with_data(&vec![0u8; n * rows * 4]);
+        let pass = context.begin_pass();
+        encode_lamq_gemv_rows(
+            &mut context,
+            &pass,
+            &view,
+            (&x_buf, 0),
+            cols as u32,
+            (&a, 0),
+            rows as u32,
+            n as u32,
+            false,
+        )
+        .unwrap();
+        for t in 0..n {
+            encode_lamq_gemv(
+                &mut context,
+                &pass,
+                &view,
+                (&x_buf, (t * cols * 4) as u64),
+                (&b, (t * rows * 4) as u64),
+                false,
+            )
+            .unwrap();
+        }
+        pass.commit_and_wait();
+        let (ga, gb) = (read_f32(&a, n * rows), read_f32(&b, n * rows));
+        let rms = (gb.iter().map(|v| f64::from(*v).powi(2)).sum::<f64>() / gb.len() as f64).sqrt();
+        let worst = ga
+            .iter()
+            .zip(&gb)
+            .map(|(p, q)| (f64::from(*p) - f64::from(*q)).abs())
+            .fold(0f64, f64::max)
+            / rms;
+        println!("{}: worst |rows - one-row| / rms {worst:.2e}", code.name());
+        assert!(
+            worst < 1e-5,
+            "{}: rows GEMV off by {worst:.2e} of rms",
+            code.name()
+        );
     }
 }

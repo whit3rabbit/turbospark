@@ -395,3 +395,89 @@ kernel void lamq_scatter(
 ) {
     if (gid < count) dst[order[gid]] = half(src[gid]);
 }
+
+// lamq_gemv over n token rows: x row t at x + t * x_stride (rotated F32), y
+// row t at t * y_stride. Each 16-column chunk (or level index) is decoded
+// once into registers and applied to up to kLamqTokBlock rows, so the codes
+// are read once per block instead of once per row. NOT lamq_gemv's bits:
+// under fast-math the two kernels associate a chunk's sum differently (within
+// about 1e-6 of a row's RMS); a row's bits do not depend on which other rows
+// share the dispatch. `lamq_parity.rs` checks both. Not wired into the flow:
+// in chunked prefill the difference moved the LAMQ 5.4 GB reference
+// perplexity past its bound (docs/INKLING2_PHASE0.md).
+constant constexpr uint kLamqTokBlock = 8;
+
+kernel void lamq_gemv_rows(
+    device const uchar*      codes    [[buffer(0)]],
+    device const half*       scales   [[buffer(1)]],
+    device const void*       table    [[buffer(2)]],
+    device const float*      x        [[buffer(3)]],
+    device void*             y_raw    [[buffer(4)]],
+    constant LamqGemvParams& p        [[buffer(5)]],
+    constant uint&           n_tok    [[buffer(6)]],
+    constant uint&           x_stride [[buffer(7)]],
+    constant uint&           y_stride [[buffer(8)]],
+    uint                     tg       [[threadgroup_position_in_grid]],
+    uint                     sg       [[simdgroup_index_in_threadgroup]],
+    uint                     lane     [[thread_index_in_simdgroup]],
+    uint                     tid      [[thread_position_in_threadgroup]],
+    uint                     nt       [[threads_per_threadgroup]]
+) {
+    threadgroup float lut[kLamqMaxTable];
+    for (uint i = tid; i < p.table_len; i += nt) {
+        lut[i] = kLm != 0u ? ((device const float*)table)[i] : float(((device const half*)table)[i]);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    const uint row = tg * kLamqRowsPerTG + sg;
+    if (row >= p.rows) return;
+    device const uchar* rb = codes + ulong(row) * p.row_bytes;
+    const uint n = p.cols;
+    const float sc = float(scales[row]);
+    for (uint t0 = 0; t0 < n_tok; t0 += kLamqTokBlock) {
+        const uint nb = min(kLamqTokBlock, n_tok - t0);
+        float acc[kLamqTokBlock];
+        for (uint t = 0; t < kLamqTokBlock; ++t) acc[t] = 0.0f;
+        if (kLm != 0u) {
+            for (uint j = lane; j < n; j += 32u) {
+                const float v = lut[lamq_level_index(rb, j)];
+                for (uint t = 0; t < nb; ++t) acc[t] += v * x[ulong(t0 + t) * x_stride + j];
+            }
+        } else {
+            device const uint* w = (device const uint*)rb;
+            const uint words = p.row_bytes / 4u;
+            for (uint ch = lane; ch < n / 16u; ch += 32u) {
+                const uint B = (n - 16u * (ch + 1u)) * kK, wb = B >> 5, o = B & 31u;
+                const uint w0 = w[wb];
+                const uint w1 = wb + 1u < words ? w[wb + 1u] : 0u;
+                const uint w2 = wb + 2u < words ? w[wb + 2u] : 0u;
+                const ulong lo = ulong(w0) | (ulong(w1) << 32);
+                const ulong hi = ulong(w1) | (ulong(w2) << 32);
+                float v[16];
+                if (kShift != 0u) {
+                    for (uint i = 0; i < 16u; i += kG) {
+                        const uint st = lamq_bits96(lo, hi, o + (15u - (i + kG - 1u)) * kK, 12u);
+                        const uint e = ((st * 0x9E3779B1u) >> kShift) * kG;
+                        for (uint q = 0; q < kG; ++q) v[i + q] = lut[e + q];
+                    }
+                } else {
+                    for (uint j = 0; j < 16u; ++j) v[j] = lut[lamq_bits96(lo, hi, o + (15u - j) * kK, 12u)];
+                }
+                for (uint t = 0; t < nb; ++t) {
+                    device const float* xc = x + ulong(t0 + t) * x_stride + 16u * ch;
+                    float a = 0.0f;
+                    for (uint j = 0; j < 16u; ++j) a += v[j] * xc[j];
+                    acc[t] += a;
+                }
+            }
+        }
+        for (uint t = 0; t < nb; ++t) {
+            const float s = simd_sum(acc[t]);
+            if (lane == 0u) {
+                const float r = s * sc;
+                const ulong at = ulong(t0 + t) * y_stride + row;
+                if (kOutHalf) ((device half*)y_raw)[at] = half(r);
+                else ((device float*)y_raw)[at] = r;
+            }
+        }
+    }
+}

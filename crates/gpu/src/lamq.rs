@@ -368,6 +368,53 @@ pub fn encode_lamq_gemv(
     Ok(())
 }
 
+/// [`encode_lamq_gemv`] over `n_rows` token rows: rotated F32 input row `t`
+/// at `x + t * x_stride` floats, output row `t` at `y + t * y_stride`
+/// elements. The codes are decoded once per block of 8 rows. A re-summation
+/// of [`encode_lamq_gemv`] (within about 1e-6 of a row's RMS, not its bits);
+/// a row's bits do not depend on the other rows in the dispatch. Trellis
+/// codes only pay: on level codes it is slower than one-row dispatches.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_lamq_gemv_rows(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    m: &LamqMatrixView<'_>,
+    x: (&metal::Buffer, u64),
+    x_stride: u32,
+    y: (&metal::Buffer, u64),
+    y_stride: u32,
+    n_rows: u32,
+    y_half: bool,
+) -> Result<(), GpuError> {
+    let params = m.params()?;
+    if x.1 % 4 != 0 || n_rows == 0 || x_stride < m.cols || y_stride < m.rows {
+        return Err(invalid(format!(
+            "LAMQ gemv rows: {n_rows} rows, strides {x_stride}/{y_stride} for {}x{}",
+            m.rows, m.cols
+        )));
+    }
+    let p = gemv_pipeline(context, "lamq_gemv_rows", m.code, y_half)?;
+    pass.encode_threadgroups(
+        &p,
+        &[
+            (m.codes.0, 0, m.codes.1),
+            (m.scales.0, 1, m.scales.1),
+            (m.table.0, 2, m.table.1),
+            (x.0, 3, x.1),
+            (y.0, 4, y.1),
+        ],
+        &[
+            (&params, 5),
+            (u32_bytes(&n_rows), 6),
+            (u32_bytes(&x_stride), 7),
+            (u32_bytes(&y_stride), 8),
+        ],
+        u64::from(m.rows).div_ceil(ROWS_PER_TG),
+        ROWS_PER_TG * 32,
+    );
+    Ok(())
+}
+
 /// Row `row` of `m`, decoded and scaled, into F32 `out[cols]`.
 pub fn encode_lamq_decode_row(
     context: &mut MetalContext,

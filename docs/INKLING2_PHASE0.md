@@ -983,12 +983,31 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   depth 3 lossless on all three prompts but slower than plain except long
   context (prose 19.0 against 31.3 tok/s, code 25.2 against 31.2, long 27.2
   against 25.1): the per-row coded GEMVs make a 4-row verify cost about
-  four tokens. DSpark stays opt-in, so no default changes. A multi-row coded
-  GEMV (decode each chunk once for N rows) is what would make it pay, but
-  only partly: by parameter count the dense matrices are about 29% of a
-  visit's coded reads (about 26M against 64M for 8 experts), so batching
-  them caps near 1.35x while the experts still run per row. A grouped LAMQ
-  expert pair is the larger lever. Neither is built.
+  four tokens. DSpark stays opt-in, so no default changes.
+- BUILT, NOT WIRED (2026-11-23): a multi-row coded GEMV, `lamq_gemv_rows`
+  (`gpu::encode_lamq_gemv_rows`): each 16-column chunk is decoded once into
+  registers for a block of 8 token rows. GPU time at 32 rows (M4 Max,
+  `lamq_parity.rs` `gemv_rows_speed`): 2.3x to 3.2x faster than 32 one-row
+  dispatches for the trellis codes at the Mini's attention shapes, equal to
+  the decode kernel at one row; SLOWER for the level codes (lm6 0.63x to
+  0.73x, 2.6x slower at one row). Its rows are within about 1e-6 of a row's
+  RMS of `lamq_gemv` but not its bits (fast-math associates the chunk sum
+  differently; two rewrites, one with reassociation pinned off, still
+  differed), and a row's bits do not depend on the other rows in the
+  dispatch. Wired into chunked prefill only, as a KL-bounded path behind
+  `TURBOSPARK_INKLING2_PREFILL_MMA` (rotations by a counted `encode_lamq_rht`,
+  bit-identical per vector), it FAILED the LAMQ perplexity bound: 0.0069 with
+  only `wo_ud`, 0.0367 with every trellis attention matrix, bound 0.0057.
+  Bisected: the same wiring with the old one-row GEMV over the rotated rows
+  scores diff 0.0000, so the shift is the kernel's summation order alone, not
+  a wiring bug; this install is that sensitive. The wiring was removed (a
+  patch is kept locally). The one remaining route to a bit-exact multi-row
+  GEMV is to move DECODE onto `lamq_gemv_rows` at one row (equal speed),
+  which changes LAMQ decode bits and needs the frozen
+  `inkling2_lamq54_quality_gate` digests re-frozen: not done without a
+  decision to re-freeze. Expected gain if done: coded attention is about
+  5.5 ms of a 32.6 ms token, so on the order of 10% of LAMQ prefill and
+  verify. A grouped LAMQ expert pair would be the larger lever.
 - DONE (2026-11-23): resident GGUF experts and the multi-row forward on GGUF
   installs. No per-type kernels: `gpu::encode_inkling2_gguf_bind_rows` writes
   one `RoutedBlobs` table per row from the GPU router's ids
