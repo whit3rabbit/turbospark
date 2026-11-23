@@ -1068,7 +1068,20 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   frozen from two runs (peaks 1,669 and 1,668 MiB; 12.9 to 14.6 tok/s; every
   case at end of turn with the same token counts; replay flat), ceiling
   1,770 MiB and floor 9.0 tok/s, asserted by a third (peak 1,667 MiB, 13.3 to
-  14.6 tok/s). Not run: the ggml-org files.
+  14.6 tok/s).
+  Third file, ggml-org `Inkling-2-Mini-IQ4_NL.gguf` @ `e8a2cecf` (the
+  llama.cpp project's own conversion; sha256 `cbdf3fa9...`; IQ4_NL experts in
+  every layer): intake OK (646 names, 16 GB); chunked prefill 1,400 tokens
+  24.7 to 50.1 tok/s, 32/32 rows bit-identical; verify 72/72 and 1,154/1,154.
+  Logits against llama.cpp master `c212d25`, same file and ids:
+
+  | prompt | ours | top-1 | mean KL | max KL |
+  |---|---|---|---|---|
+  | 12 tokens | resident | 12/12 | 5.2e-4 | 1.9e-3 |
+  | 711 tokens, every 4th row and the last 16 | resident | 183/189 | 5.9e-3 | 6.9e-2 |
+  | same | streamed | 180/189 | 6.2e-3 | 1.1e-1 |
+
+  Not run on the ggml-org repo: its Q8_0 and BF16 files (27.8 and 52.2 GB).
 - DONE (2026-11-23): prompt-copy drafting, mtplx item (3)
   (`runtime/src/prompt_copy.rs`, wired in `speculative.rs`; on with the
   DSpark drafter, `TURBOSPARK_SPEC_PROMPT_COPY=0` turns it off). When the
