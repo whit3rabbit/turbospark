@@ -94,6 +94,28 @@ pub(crate) struct BatchScratch {
     group_terms: gpu::MetalBuffer,
 }
 
+/// The matrix-unit BF16 GEMM for prefill panels
+/// (`gpu::encode_inkling2_bf16_gemm_rows_mma`): OFF unless
+/// `TURBOSPARK_INKLING2_PREFILL_MMA=1`. Not bit-identical to the GEMV, so a
+/// prefill through it is KL-bounded against sequential decode (the
+/// `real_forward_inkling2_prefill` KL gate); a row's output still depends only
+/// on its own input, so it is independent of how the prompt is chunked.
+fn prefill_mma_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TURBOSPARK_INKLING2_PREFILL_MMA").as_deref() == Ok("1"))
+}
+
+/// Which rows of a multi-row pass get the output head.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HeadRows {
+    /// Every row (speculative verify).
+    All,
+    /// The last row only (the final chunked-prefill panel).
+    Last,
+    /// None (a chunked-prefill panel that is not the last).
+    None,
+}
+
 /// The expert-grouped MoE pair for passes above the verify block (chunked
 /// prefill panels): on unless `TURBOSPARK_INKLING2_GROUPED_MOE=0`. Bit-identical
 /// to the `_idx_rows` pair (`gpu/tests/moe_inkling2_grouped_parity.rs`);
@@ -246,6 +268,23 @@ impl Ctx<'_> {
         }
         let xb: Vec<((&gpu::MetalBuffer, u64), u32)> =
             xs.iter().map(|&(b, o, s)| ((b, o), s)).collect();
+        // Opt-in matrix units for prefill passes only: never for speculative
+        // verify, whose rows must equal decode bit for bit.
+        // Keyed on the pass kind, not the row count: every prefill row takes
+        // the same kernel however the prompt is chunked (a tail panel of 8 or
+        // fewer rows included), or the result would depend on the chunking.
+        if self.prefill && prefill_mma_enabled() && v.iter().all(|s| s.cols % 64 == 0) {
+            foundation::engaged!("inkling2_prefill_mma");
+            return gpu::encode_inkling2_bf16_gemm_rows_mma(
+                self.context,
+                pass,
+                self.weights.buffer(),
+                &xb,
+                &v,
+                n as u32,
+            )
+            .map_err(RealForwardError::Gpu);
+        }
         gpu::encode_inkling2_bf16_gemv_rows(
             self.context,
             pass,
@@ -425,9 +464,24 @@ impl RealForwardRunner {
         base: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), RealForwardError> {
+        self.rows_real_inkling2(tokens, base, logits, HeadRows::All)
+    }
+
+    /// The multi-row forward with the output head on `head`'s rows only
+    /// (chunked prefill: none on a non-final panel, the last row on the
+    /// final one). `logits` holds exactly those rows. The head row's bits
+    /// equal the all-rows head's for that row (the 8-row GEMV at one row is
+    /// the single-row kernel's arithmetic).
+    pub(crate) fn rows_real_inkling2(
+        &mut self,
+        tokens: &[i32],
+        base: usize,
+        logits: &mut [LogitValue],
+        head: HeadRows,
+    ) -> Result<(), RealForwardError> {
         let started = std::time::Instant::now();
         let mut st = self.real_inkling2.take().expect("caller checked is_some");
-        let result = self.verify_real_inkling2_inner(&mut st, tokens, base, logits);
+        let result = self.verify_real_inkling2_inner(&mut st, tokens, base, logits, head);
         self.real_inkling2 = Some(st);
         self.phases.calls += 1;
         self.phases.total_nanos += started.elapsed().as_nanos() as u64;
@@ -440,6 +494,7 @@ impl RealForwardRunner {
         tokens: &[i32],
         base: usize,
         logits: &mut [LogitValue],
+        head: HeadRows,
     ) -> Result<(), RealForwardError> {
         let unsupported = RealForwardError::Unsupported;
         let arch = self.arch.clone();
@@ -473,7 +528,12 @@ impl RealForwardRunner {
                 st.max_ctx
             )));
         }
-        if logits.len() != n * vocab {
+        let head_rows = match head {
+            HeadRows::All => n,
+            HeadRows::Last => 1,
+            HeadRows::None => 0,
+        };
+        if logits.len() != head_rows * vocab {
             return Err(unsupported(format!(
                 "verify logits hold {} values, expected {n} x {vocab}",
                 logits.len()
@@ -492,7 +552,7 @@ impl RealForwardRunner {
             st.batch = Some(BatchScratch::new(&mut self.context, st, &arch));
         }
         let b = st.batch.take().expect("allocated above");
-        let result = self.verify_encode(st, &b, tokens, base, logits);
+        let result = self.verify_encode(st, &b, tokens, base, logits, head);
         st.batch = Some(b);
         result?;
         st.verify = Some(InklingVerifyRecord { base, rows: n });
@@ -509,6 +569,7 @@ impl RealForwardRunner {
         tokens: &[i32],
         base: usize,
         logits: &mut [LogitValue],
+        head: HeadRows,
     ) -> Result<(), RealForwardError> {
         let arch = self.arch.clone();
         let cfg = st.cfg.clone();
@@ -523,6 +584,9 @@ impl RealForwardRunner {
             eps: cfg.rms_eps,
             // Refused above when set; carried so the struct stays one shape.
             lamq: st.lamq.clone(),
+            // A head on every row is speculative verify; prefill heads one
+            // row or none.
+            prefill: head != HeadRows::All,
         };
         let pass = c.context.begin_pass_labeled("inkling2 verify");
         for (m, &t) in tokens.iter().enumerate() {
@@ -675,26 +739,34 @@ impl RealForwardRunner {
             h,
             n,
         )?;
-        c.gemv_rows(
-            &pass,
-            &[(&b.mn, 0, hs)],
-            &[(
-                "model.llm.unembed.weight",
-                vocab,
-                h,
-                0,
-                (&b.logits, 0, vocab as u32),
-            )],
-            n,
-        )?;
-        gpu::encode_logit_softcap(
-            c.context,
-            &pass,
-            (&b.logits, 0),
-            arch.final_logit_softcap as f32,
-            (n * vocab) as u32,
-        )
-        .map_err(RealForwardError::Gpu)?;
+        // The head: every row (verify), the last row only, or none.
+        let (head_off, head_n) = match head {
+            HeadRows::All => (0usize, n),
+            HeadRows::Last => ((n - 1) * h * 2, 1),
+            HeadRows::None => (0, 0),
+        };
+        if head_n > 0 {
+            c.gemv_rows(
+                &pass,
+                &[(&b.mn, head_off as u64, hs)],
+                &[(
+                    "model.llm.unembed.weight",
+                    vocab,
+                    h,
+                    0,
+                    (&b.logits, 0, vocab as u32),
+                )],
+                head_n,
+            )?;
+            gpu::encode_logit_softcap(
+                c.context,
+                &pass,
+                (&b.logits, 0),
+                arch.final_logit_softcap as f32,
+                (head_n * vocab) as u32,
+            )
+            .map_err(RealForwardError::Gpu)?;
+        }
         pass.commit_and_wait();
         for _ in 0..n {
             self.kv.advance();

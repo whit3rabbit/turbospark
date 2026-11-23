@@ -60,6 +60,10 @@ struct Ctx<'a> {
     eps: f32,
     /// A LookAtMyQuant install's coded entries (`lamq.rs`).
     lamq: Option<std::sync::Arc<lamq::LamqRuntime>>,
+    /// A chunked-prefill pass: the only kind that may take the opt-in
+    /// matrix-unit GEMM (`verify::prefill_mma_enabled`). Never set for decode
+    /// or speculative verify, whose rows must stay bit-exact to each other.
+    prefill: bool,
 }
 
 impl Ctx<'_> {
@@ -368,6 +372,7 @@ impl RealForwardRunner {
             h,
             eps: cfg.rms_eps,
             lamq: st.lamq.clone(),
+            prefill: false,
         };
         let mut pass = c.context.begin_pass_labeled("inkling2 attn+router");
         // BF16, MLX affine 4/8-bit on an MLX-sourced install, or a LAMQ

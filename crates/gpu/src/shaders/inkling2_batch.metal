@@ -353,6 +353,147 @@ kernel void inkling2_bf16_gemv_rows32(
     }
 }
 
+// --- Matrix-unit BF16 GEMM for prefill panels (opt-in, KL-bounded) ---------
+//
+// The panel GEMV's job (`inkling2_bf16_gemv_rows32`) on simdgroup_matrix with
+// register operands (the lane layout and register-operand technique of
+// `dequant_int4_mma8.metal`, docs/INT4_SMALL_M_MMA.md). FP32 fragments hold
+// the BF16 weights and FP16 inputs exactly; accumulation is FP32.
+//
+// EXACTNESS CLASS: not bit-identical to the GEMV (the matrix unit sums each
+// 8-term k block in its own order), so prefill through it is KL-bounded
+// against sequential decode, and speculative verify never runs it. But a
+// token's output depends only on its own input row: C[o][t] reads weight row
+// o and input row t only, K runs in one simdgroup in fixed 8-step order with
+// no split, and token columns past n_rows are zero. So a row's bits do not
+// depend on how many rows share the panel or how a prompt is chunked
+// (`tests/inkling2_mma_gemm.rs`).
+//
+// One simdgroup = 8 output rows x up to 4 token tiles of 8; 8 simdgroups per
+// threadgroup, so 64 output rows per threadgroup (the host's `tg_start`).
+// K runs in blocks of 64: the threadgroup stages every input row's block in
+// threadgroup memory once, and each lane reads its 16 weights of the block
+// with two 16-byte loads. That needs k permuted inside the block, the SAME
+// way for every output and input row: k-step s, fragment column kk is
+// physical column 16 (kk / 2) + 2 s + (kk % 2). The permutation and the block
+// order are fixed, so row independence holds. K must be a multiple of 64
+// (host).
+constant constexpr uint kInkMmaRowsPerTG = 64;
+constant constexpr uint kInkMmaKB = 64;
+constant constexpr uint kInkMmaXPad = 4;  // threadgroup row stride 68 halfs
+
+inline uint2 ink_mma_coord(uint lane) {
+    const uint q = lane >> 2;
+    return uint2((q & 4u) | ((lane >> 1) & 3u), ((q & 2u) << 1) | ((lane & 1u) << 1));
+}
+
+kernel void inkling2_bf16_gemm_rows_mma(
+    device const uchar*              W   [[buffer(0)]],
+    constant Inkling2GemvRowsTable&  t   [[buffer(1)]],
+    device const half*               x0  [[buffer(2)]],
+    device const half*               x1  [[buffer(3)]],
+    device const half*               x2  [[buffer(4)]],
+    device half*                     y0  [[buffer(5)]],
+    device half*                     y1  [[buffer(6)]],
+    device half*                     y2  [[buffer(7)]],
+    device half*                     y3  [[buffer(8)]],
+    device half*                     y4  [[buffer(9)]],
+    device half*                     y5  [[buffer(10)]],
+    device half*                     y6  [[buffer(11)]],
+    device half*                     y7  [[buffer(12)]],
+    uint                             tg   [[threadgroup_position_in_grid]],
+    uint                             tid  [[thread_index_in_threadgroup]],
+    uint                             sg   [[simdgroup_index_in_threadgroup]],
+    uint                             lane [[thread_index_in_simdgroup]]
+) {
+    threadgroup half xt[32 * (kInkMmaKB + kInkMmaXPad)];
+    uint s = 0;
+    while (s + 1u < t.n_seg && tg >= t.tg_start[s + 1u]) ++s;
+    const uint nrows = t.rows[s];
+    const uint o0 = (tg - t.tg_start[s]) * kInkMmaRowsPerTG + sg * 8u;
+    // Every simdgroup stays for the staging barriers; one with no rows of
+    // its own just skips the multiplies and the write.
+    const bool sg_live = o0 < nrows;
+    const uint2 c = ink_mma_coord(lane);
+    const uint fm = c.x, fn = c.y;
+    const uint o = o0 + fm;
+    const bool live = sg_live && o < nrows;
+    const uint xi = t.x_idx[s];
+    device const half* x = xi == 0u ? x0 : (xi == 1u ? x1 : x2);
+    const uint xs = t.x_stride[xi];
+    const uint K = t.cols[s];
+    const uint nr = t.n_rows;
+    const uint ntile = (nr + 7u) / 8u;
+    const uint XR = kInkMmaKB + kInkMmaXPad;
+    device const bfloat* wrow = (device const bfloat*)(W + t.w_off[s]) + ulong(live ? o : 0u) * K;
+    // A lane's weights of a block: physical columns 16 p .. 16 p + 15,
+    // p = fn / 2.
+    const uint p = fn >> 1;
+    float2 acc[4] = {float2(0.0f), float2(0.0f), float2(0.0f), float2(0.0f)};
+    for (uint kb = 0; kb < K; kb += kInkMmaKB) {
+        // Stage the block: 32 rows x 64 halfs, zero past n_rows.
+        for (uint e = tid; e < 32u * kInkMmaKB; e += 256u) {
+            const uint r = e / kInkMmaKB, k = e % kInkMmaKB;
+            xt[r * XR + k] = r < nr ? x[ulong(r) * xs + kb + k] : half(0.0h);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if (sg_live) {
+            float wv[16];
+            if (live) {
+                device const bfloat4* w4 = (device const bfloat4*)(wrow + kb + 16u * p);
+                for (uint q = 0; q < 4u; ++q) {
+                    const float4 v = float4(w4[q]);
+                    wv[4u * q] = v.x;
+                    wv[4u * q + 1u] = v.y;
+                    wv[4u * q + 2u] = v.z;
+                    wv[4u * q + 3u] = v.w;
+                }
+            } else {
+                for (uint q = 0; q < 16u; ++q) wv[q] = 0.0f;
+            }
+            // B's k-slot fm sits at physical column 16 (fm / 2) + 2 s + fm % 2.
+            const uint bcol = 16u * (fm >> 1) + (fm & 1u);
+            for (uint st = 0; st < 8u; ++st) {
+                simdgroup_float8x8 A;
+                A.thread_elements()[0] = wv[2u * st];
+                A.thread_elements()[1] = wv[2u * st + 1u];
+                const uint kc = bcol + 2u * st;
+                for (uint tt = 0; tt < 4u; ++tt) {
+                    if (tt < ntile) {
+                        const uint ta = tt * 8u + fn;
+                        simdgroup_float8x8 B, C;
+                        B.thread_elements()[0] = float(xt[ta * XR + kc]);
+                        B.thread_elements()[1] = float(xt[(ta + 1u) * XR + kc]);
+                        C.thread_elements()[0] = acc[tt].x;
+                        C.thread_elements()[1] = acc[tt].y;
+                        simdgroup_multiply_accumulate(C, A, B, C);
+                        acc[tt] = float2(C.thread_elements()[0], C.thread_elements()[1]);
+                    }
+                }
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (!live) return;
+    device half* y;
+    switch (s) {
+        case 0: y = y0; break;
+        case 1: y = y1; break;
+        case 2: y = y2; break;
+        case 3: y = y3; break;
+        case 4: y = y4; break;
+        case 5: y = y5; break;
+        case 6: y = y6; break;
+        default: y = y7; break;
+    }
+    const uint ys = t.y_stride[s];
+    for (uint tt = 0; tt < ntile; ++tt) {
+        const uint ta = tt * 8u + fn, tb = ta + 1u;
+        if (ta < nr) y[ulong(ta) * ys + o] = half(acc[tt].x);
+        if (tb < nr) y[ulong(tb) * ys + o] = half(acc[tt].y);
+    }
+}
+
 // --- Short convolution over consecutive rows --------------------------------
 //
 // `inkling2_short_conv_decode` applied to rows 0..n_rows in order, the tail

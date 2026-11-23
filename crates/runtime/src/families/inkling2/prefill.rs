@@ -57,22 +57,25 @@ impl RealForwardRunner {
             return self.prefill_chunk_inkling2_sequential(tokens, start_position, logits);
         }
         foundation::engaged!("inkling2_chunked_prefill");
-        let vocab = self.arch.vocab_size as usize;
         let rows = super::verify::PANEL_MAX_ROWS;
-        let mut scratch = vec![LogitValue::ZERO; rows * vocab];
         let mut offset = 0usize;
         while offset < tokens.len() {
             let take = (tokens.len() - offset).min(rows);
-            let out = &mut scratch[..take * vocab];
-            self.verify_real_inkling2(
+            let last = offset + take == tokens.len();
+            // Only the final row's logits are returned, so only it pays for
+            // the 201k-row head; a non-final panel runs no head at all.
+            let (out, head): (&mut [LogitValue], _) = if last {
+                (&mut *logits, super::verify::HeadRows::Last)
+            } else {
+                (&mut [], super::verify::HeadRows::None)
+            };
+            self.rows_real_inkling2(
                 &tokens[offset..offset + take],
                 start_position + offset,
                 out,
+                head,
             )?;
             offset += take;
-            if offset == tokens.len() {
-                logits.copy_from_slice(&out[(take - 1) * vocab..take * vocab]);
-            }
         }
         // A prefill is not a verify: nothing may roll it back.
         if let Some(st) = self.real_inkling2.as_mut() {

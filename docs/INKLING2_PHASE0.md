@@ -728,6 +728,48 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   as scalar per-lane dots; the remaining lever is a matrix-unit BF16 GEMM,
   which changes summation order, so it would make prefill KL-bounded rather
   than bit-exact and needs its own gate.
+- PARTLY DONE (2026-11-23): chunked prefill, step 3.
+  - Head trimming (bit-exact, default): a prefill panel runs the 201k-row
+    unembed on its last row only when it is the final panel, and not at all
+    otherwise (`HeadRows`). Prefill gate 125.8 tok/s, bit-identical.
+  - OPT-IN matrix-unit BF16 GEMM, `TURBOSPARK_INKLING2_PREFILL_MMA=1`
+    (`inkling2_bf16_gemm_rows_mma`, tslab knob `inkling2_prefill_mma`,
+    KL-bounded). FP32 `simdgroup_matrix` on register operands (the
+    `docs/INT4_SMALL_M_MMA.md` lane layout), each 64-wide K block of the
+    inputs staged in threadgroup memory, 16 weights per lane per block in two
+    16-byte loads (k permuted inside the block, the same way for every row).
+    Keyed on the pass kind, never the row count: a first version keyed on
+    "more than 8 rows" put short tail panels on the GEMV and made the result
+    depend on chunking, which the gate caught. Kernel tests
+    (`gpu/tests/inkling2_mma_gemm.rs`): mean error against f64 equal to the
+    GEMV's (3.79e-4), a row's bits the same alone, in a 9-row and in a 17-row
+    panel, deterministic.
+  - KL gate (`runtime/tests/real_forward_inkling2_prefill_mma.rs`, BF16
+    install, 1,100-token prompt, last prompt row plus 64 teacher-forced
+    decode rows). No llama.cpp dumps exist on this machine, so the bound is
+    relative to a deviation the project already ships, measured in the same
+    run: the streamed host-routed path against the resident one (mean KL
+    1.93e-3, max 3.12e-2, top-1 62/65). Matrix units: mean 3.14e-3 (1.63x the
+    floor), max 3.80e-2 (1.22x), top-1 62/65; last prompt row 4.3e-7. Bounds:
+    2x the floor's mean and max, top-1 at most one row below it. An earlier,
+    equally accurate kernel variant read 1.29x on the same prompt, so a
+    one-prompt KL moves this much between roundings and the 2x headroom is
+    not generous. Prefill under it is bitwise independent of chunking
+    (asserted with three chunkings).
+  - Speed (development readings, host load about 2): CLI on the 3,088-token
+    prompt 27.2 s without, 24.7 s with (about 9%), same generated text. The
+    dispatch profile puts the kernel at 58 ms against the GEMV's 79 ms per
+    32-row panel (inflated, ranking only), still far above the weight
+    bandwidth floor (about 2.6 GB of dense weights per panel), so the kernel
+    has headroom: more output rows per simdgroup to reuse each input load.
+  - Not default yet: the quality gates do not exercise it (they open
+    streamed, which prefills sequentially), and only the BF16 install has
+    BF16 dense weights. The mlx4 install's dense GEMVs are 4-bit affine and
+    still run one row at a time in a panel (`gemv_rows` falls back per row);
+    its chunked prefill is bit-exact too (prefill gate 40.0 to 123.5 tok/s,
+    32/32 decode rows). LAMQ installs refuse chunked prefill by name.
+    Correction to the 2026-11-22 entries: the mlx4 and LAMQ installs are on
+    this machine, under `~/.turbospark/models/text/`.
 - RESEARCH (2026-11-22): mtplx (github.com/youssofal/mtplx, Apache-2.0, MLX)
   runs Inkling 2 Mini with the same bundled DSpark drafter. Our port already
   has its Markov head (`dspark_markov_*`), so the draft logic matches.

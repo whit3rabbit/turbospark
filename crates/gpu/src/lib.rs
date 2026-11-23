@@ -373,12 +373,12 @@ pub use hadamard::{
 pub use hyper_connection::{encode_hc_inject_add, encode_hc_mix};
 #[cfg(target_os = "macos")]
 pub use inkling2_batch::{
-    encode_inkling2_attention_rows, encode_inkling2_bf16_gemv_rows,
-    encode_inkling2_control_combine_rows, encode_inkling2_copy_rows,
-    encode_inkling2_depth_mix_rows, encode_inkling2_l2_clip_rows, encode_inkling2_rel_table_rows,
-    encode_inkling2_rms_rows, encode_inkling2_router_rows, encode_inkling2_router_select_rows,
-    encode_inkling2_short_conv_rows, Inkling2GemvRowsSegment, Inkling2Rows,
-    INKLING2_BATCH_MAX_ROWS,
+    encode_inkling2_attention_rows, encode_inkling2_bf16_gemm_rows_mma,
+    encode_inkling2_bf16_gemv_rows, encode_inkling2_control_combine_rows,
+    encode_inkling2_copy_rows, encode_inkling2_depth_mix_rows, encode_inkling2_l2_clip_rows,
+    encode_inkling2_rel_table_rows, encode_inkling2_rms_rows, encode_inkling2_router_rows,
+    encode_inkling2_router_select_rows, encode_inkling2_short_conv_rows, Inkling2GemvRowsSegment,
+    Inkling2Rows, INKLING2_BATCH_MAX_ROWS,
 };
 #[cfg(target_os = "macos")]
 pub use inkling2_dspark::{

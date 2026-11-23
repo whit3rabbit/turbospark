@@ -637,6 +637,23 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[off("0", "inkling2_grouped_moe")],
     },
     Knob {
+        // Inkling 2's matrix-unit BF16 GEMM for chunked-prefill passes, OPT-IN
+        // ("1"). KL-bounded against sequential decode, gated relative to the
+        // shipped streamed-vs-resident deviation
+        // (`crates/runtime/tests/real_forward_inkling2_prefill_mma.rs`); a
+        // row's output depends only on its own input, so chunking does not
+        // change the result. Speculative verify never takes it.
+        name: "inkling2_prefill_mma",
+        env: "TURBOSPARK_INKLING2_PREFILL_MMA",
+        values: &["<unset>", "1"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::KlBounded,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[on("1", "inkling2_prefill_mma")],
+    },
+    Knob {
         // LFM3's M-row chunk driver, default on for INT4 installs; `0` is the
         // per-token loop behind the same entry point. KL-bounded because the
         // default arm takes Steel and the rows attention: with

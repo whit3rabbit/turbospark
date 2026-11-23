@@ -250,6 +250,58 @@ pub fn encode_inkling2_bf16_gemv_rows(
     segments: &[Inkling2GemvRowsSegment<'_>],
     n_rows: u32,
 ) -> Result<(), GpuError> {
+    let kernel = if n_rows <= GEMV_ROWS_SMALL {
+        "inkling2_bf16_gemv_rows"
+    } else {
+        "inkling2_bf16_gemv_rows32"
+    };
+    encode_rows_table(context, pass, weights, xs, segments, n_rows, kernel, 8)
+}
+
+/// The same segments and layout as [`encode_inkling2_bf16_gemv_rows`] on the
+/// matrix units (`inkling2_bf16_gemm_rows_mma`). NOT bit-identical to the
+/// GEMV, so it serves chunked prefill only, behind its own switch; a row's
+/// output depends only on its own input row, never on `n_rows`. Every
+/// segment's `cols` must be a multiple of 64 (the kernel's K block).
+pub fn encode_inkling2_bf16_gemm_rows_mma(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    weights: &metal::Buffer,
+    xs: &[(Buf<'_>, u32)],
+    segments: &[Inkling2GemvRowsSegment<'_>],
+    n_rows: u32,
+) -> Result<(), GpuError> {
+    if let Some(s) = segments.iter().find(|s| s.cols % 64 != 0) {
+        return Err(invalid(format!(
+            "bf16 mma gemm rows needs cols a multiple of 64, got {}",
+            s.cols
+        )));
+    }
+    encode_rows_table(
+        context,
+        pass,
+        weights,
+        xs,
+        segments,
+        n_rows,
+        "inkling2_bf16_gemm_rows_mma",
+        64,
+    )
+}
+
+/// Builds the shader's `Inkling2GemvRowsTable` and dispatches `kernel` at
+/// `rows_per_tg` weight rows per threadgroup.
+#[allow(clippy::too_many_arguments)]
+fn encode_rows_table(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    weights: &metal::Buffer,
+    xs: &[(Buf<'_>, u32)],
+    segments: &[Inkling2GemvRowsSegment<'_>],
+    n_rows: u32,
+    kernel: &'static str,
+    rows_per_tg: u32,
+) -> Result<(), GpuError> {
     rows_ok(n_rows)?;
     if segments.is_empty() || segments.len() > 8 {
         return Err(invalid(format!(
@@ -262,7 +314,6 @@ pub fn encode_inkling2_bf16_gemv_rows(
             "bf16 gemv rows takes 1 to 3 inputs at 8-byte-aligned offsets and strides".into(),
         ));
     }
-    let small = n_rows <= GEMV_ROWS_SMALL;
     let (mut w_off, mut rows, mut cols, mut x_idx) = ([0u64; 8], [0u32; 8], [0u32; 8], [0u32; 8]);
     let mut y_stride = [0u32; 8];
     let mut tg_start = [0u32; 9];
@@ -292,7 +343,7 @@ pub fn encode_inkling2_bf16_gemv_rows(
         x_idx[i] = s.x as u32;
         y_stride[i] = s.y_stride;
         tg_start[i] = groups;
-        groups += s.rows.div_ceil(8);
+        groups += s.rows.div_ceil(rows_per_tg);
     }
     for g in &mut tg_start[segments.len()..] {
         *g = groups;
@@ -319,11 +370,6 @@ pub fn encode_inkling2_bf16_gemv_rows(
     while bytes.len() % 8 != 0 {
         bytes.push(0);
     }
-    let kernel = if small {
-        "inkling2_bf16_gemv_rows"
-    } else {
-        "inkling2_bf16_gemv_rows32"
-    };
     let p = pipeline(context, kernel)?;
     let mut buffers: Vec<(&metal::Buffer, u64, u64)> = vec![(weights, 0, 0)];
     for i in 0..3 {
