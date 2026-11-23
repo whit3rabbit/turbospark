@@ -639,7 +639,7 @@ fn grouped_impl(
             (u32_bytes(&layer.n_experts), 5),
         ],
         1,
-        32,
+        256,
     );
     let mut cap_bytes = [0u8; 8];
     cap_bytes[..4].copy_from_slice(&caps.0.to_le_bytes());

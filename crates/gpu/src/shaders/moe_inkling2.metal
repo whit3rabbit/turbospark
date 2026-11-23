@@ -378,9 +378,9 @@ INK_PAIR_IDX_ROWS(mxfp8)
 // kernel's reduction. After oMLX's `_gather_sort` and mtplx's distinct-expert
 // verify (both Apache-2.0); this port's own code.
 //
-// `moe_inkling2_group` (one thread) lists the pairs by expert: `offs[e]` ..
-// `offs[e + 1]` index `pairs`, each `row * kInkMaxSlots + slot`, rows then
-// slots ascending within an expert.
+// `moe_inkling2_group` (one threadgroup) lists the pairs by expert: `offs[e]`
+// .. `offs[e + 1]` index `pairs`, each `row * kInkMaxSlots + slot`, in no
+// fixed order within an expert.
 // ----------------------------------------------------------------------------
 constant constexpr uint kInkGroupBatch = 8;
 constant constexpr uint kInkGroupMaxExperts = 256;
@@ -392,30 +392,42 @@ kernel void moe_inkling2_group(
     constant uint&       n_rows    [[buffer(3)]],
     constant uint&       top_k     [[buffer(4)]],
     constant uint&       n_experts [[buffer(5)]],
-    uint                 tid       [[thread_position_in_grid]]
+    uint                 tid       [[thread_index_in_threadgroup]],
+    uint                 nthreads  [[threads_per_threadgroup]]
 ) {
-    if (tid != 0u) return;
-    uint cursor[kInkGroupMaxExperts];
-    for (uint e = 0; e < n_experts; ++e) cursor[e] = 0u;
-    for (uint r = 0; r < n_rows; ++r) {
-        for (uint s = 0; s < top_k; ++s) {
-            cursor[min(sel_all[r * kInkMaxSlots + s], n_experts - 1u)] += 1u;
-        }
+    // One threadgroup: count pairs per expert, prefix-sum, scatter. The order
+    // of pairs WITHIN an expert's list is not fixed (atomic cursors), which
+    // is safe: every consumer computes each pair on its own (outputs indexed
+    // by pair id, slots reduced in rank order), so no output bit depends on
+    // list order (`tests/moe_inkling2_grouped_parity.rs` and `_mma.rs`).
+    threadgroup atomic_uint count[kInkGroupMaxExperts];
+    threadgroup atomic_uint cursor[kInkGroupMaxExperts];
+    const uint total = n_rows * top_k;
+    for (uint e = tid; e < n_experts; e += nthreads) {
+        atomic_store_explicit(&count[e], 0u, memory_order_relaxed);
     }
-    uint acc = 0u;
-    for (uint e = 0; e < n_experts; ++e) {
-        offs[e] = acc;
-        const uint c = cursor[e];
-        cursor[e] = acc;
-        acc += c;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint p = tid; p < total; p += nthreads) {
+        const uint r = p / top_k, s = p % top_k;
+        const uint e = min(sel_all[r * kInkMaxSlots + s], n_experts - 1u);
+        atomic_fetch_add_explicit(&count[e], 1u, memory_order_relaxed);
     }
-    offs[n_experts] = acc;
-    for (uint r = 0; r < n_rows; ++r) {
-        for (uint s = 0; s < top_k; ++s) {
-            const uint e = min(sel_all[r * kInkMaxSlots + s], n_experts - 1u);
-            pairs[cursor[e]] = r * kInkMaxSlots + s;
-            cursor[e] += 1u;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid == 0u) {
+        uint acc = 0u;
+        for (uint e = 0; e < n_experts; ++e) {
+            offs[e] = acc;
+            atomic_store_explicit(&cursor[e], acc, memory_order_relaxed);
+            acc += atomic_load_explicit(&count[e], memory_order_relaxed);
         }
+        offs[n_experts] = acc;
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (uint p = tid; p < total; p += nthreads) {
+        const uint r = p / top_k, s = p % top_k;
+        const uint e = min(sel_all[r * kInkMaxSlots + s], n_experts - 1u);
+        const uint at = atomic_fetch_add_explicit(&cursor[e], 1u, memory_order_relaxed);
+        pairs[at] = r * kInkMaxSlots + s;
     }
 }
 
@@ -680,6 +692,28 @@ static inline void ink_gm_mac(thread float2& c, float a0, float a1, float b0, fl
     c = float2(C.thread_elements()[0], C.thread_elements()[1]);
 }
 
+// Half operands, FP32 accumulate: NVFP4 weights (E2M1 x an E4M3 scale, at
+// most 5 significant bits, within half range) and the FP16 inputs are exact
+// in half, so the operands are the same values as the FP32 form's.
+static inline void ink_gm_mac_nvfp4(thread float2& c, float a0, float a1, float b0, float b1) {
+    simdgroup_half8x8 A, B;
+    simdgroup_float8x8 C;
+    A.thread_elements()[0] = half(a0);
+    A.thread_elements()[1] = half(a1);
+    B.thread_elements()[0] = half(b0);
+    B.thread_elements()[1] = half(b1);
+    C.thread_elements()[0] = c.x;
+    C.thread_elements()[1] = c.y;
+    simdgroup_multiply_accumulate(C, A, B, C);
+    c = float2(C.thread_elements()[0], C.thread_elements()[1]);
+}
+
+// FP32 operands: MXFP8 block exponents do not bound a weight to half range.
+static inline void ink_gm_mac_mxfp8(thread float2& c, float a0, float a1, float b0, float b1) {
+    ink_gm_mac(c, a0, a1, b0, b1);
+}
+
+
 // 8 contiguous halfs of a pair's input at block column `col`, or zeros.
 static inline void ink_gm_x8(device const half* x, bool live, thread float* out) {
     if (!live) {
@@ -740,8 +774,8 @@ kernel void moe_inkling2_phase1_grouped_mma_##NAME(                             
                 ink_gm_x8(x_all + ulong((pa < p1 ? pairs[pa] : 0u) / kInkMaxSlots) * x_stride + kb + 8u * fm, pa < p1, xa); \
                 ink_gm_x8(x_all + ulong((pb < p1 ? pairs[pb] : 0u) / kInkMaxSlots) * x_stride + kb + 8u * fm, pb < p1, xb); \
                 for (uint st = 0; st < 8u; ++st) {                                       \
-                    ink_gm_mac(ag[tt], wg[st], wg[8u + st], xa[st], xb[st]);             \
-                    ink_gm_mac(au[tt], wu[st], wu[8u + st], xa[st], xb[st]);             \
+                    ink_gm_mac_##NAME(ag[tt], wg[st], wg[8u + st], xa[st], xb[st]);             \
+                    ink_gm_mac_##NAME(au[tt], wu[st], wu[8u + st], xa[st], xb[st]);             \
                 }                                                                        \
             }                                                                            \
         }                                                                                \
@@ -806,7 +840,7 @@ kernel void moe_inkling2_phase2_grouped_mma_##NAME(                             
                 ink_gm_x8(acts_all + ulong(qa / kInkMaxSlots) * top_k * F + (qa % kInkMaxSlots) * F + kb + 8u * fm, pa < p1, xa); \
                 ink_gm_x8(acts_all + ulong(qb / kInkMaxSlots) * top_k * F + (qb % kInkMaxSlots) * F + kb + 8u * fm, pb < p1, xb); \
                 for (uint st = 0; st < 8u; ++st) {                                       \
-                    ink_gm_mac(ac[tt], w[st], w[8u + st], xa[st], xb[st]);               \
+                    ink_gm_mac_##NAME(ac[tt], w[st], w[8u + st], xa[st], xb[st]);               \
                 }                                                                        \
             }                                                                            \
         }                                                                                \

@@ -240,7 +240,17 @@ fn check(kind: Inkling2ExpertType, seed: u32) {
             worst = worst.max((a - b).abs() / rms);
         }
     }
-    eprintln!("{kind:?}: mma vs scalar grouped pair, worst |diff| / row rms {worst:.2e}");
+    // A digest of every output bit, so two builds of the kernel can be
+    // compared bit for bit from their logs.
+    let digest = mma
+        .iter()
+        .flat_map(|(a, y)| a.iter().chain(y))
+        .fold(0xcbf2_9ce4_8422_2325u64, |h, &b| {
+            (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+        });
+    eprintln!(
+        "{kind:?}: mma vs scalar grouped pair, worst |diff| / row rms {worst:.2e}; output digest {digest:016x}"
+    );
     assert!(
         worst < 5e-3,
         "{kind:?}: mma grouped pair off the scalar pair: {worst}"

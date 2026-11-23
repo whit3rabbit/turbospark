@@ -882,6 +882,24 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   streamed one, so do not run it beside another resident-install test on a
   36 GB machine (one such overlap probably took this machine down on
   2026-11-23).
+- DONE (2026-11-23): prefill expert tuning, no output change.
+  - 256-row panels measured and not kept: GPU per 3,088-token prompt 8,592
+    against 8,600 ms at 128 rows. With matrix-unit experts the cost follows
+    the work per pair, not expert reuse, so a bigger panel buys nothing; the
+    cap stays at 128 (smaller ring and scratch).
+  - NVFP4 grouped experts take HALF matrix operands with FP32 accumulation:
+    an NVFP4 weight (E2M1 x an E4M3 scale, at most 5 significant bits,
+    within half range) and the FP16 inputs are exact in half. Output digests
+    of `gpu/tests/moe_inkling2_grouped_mma.rs` are identical to the FP32
+    operand build in all three fixtures, so the KL gates stand unchanged.
+    MXFP8 keeps FP32 operands (its block exponents do not bound a weight to
+    half range). Phase 1 81 to 68 ms per 128-row panel (profile, ranking).
+  - `moe_inkling2_group` runs on one threadgroup (atomic counts, prefix,
+    atomic scatter) instead of one thread. The order of pairs within an
+    expert's list is no longer fixed, which no output depends on (every
+    consumer computes each pair on its own); the grouped parity suites
+    passed three repeats.
+  - Together: GPU per 3,088-token prompt 8,600 to 8,210 ms (-4.5%).
 - DONE (2026-11-23): decode BF16 GEMV headroom measured and one step taken.
   `gpu/tests/inkling2_gemv_bandwidth.rs` (ignored bench, ~192 MB cycled from
   DRAM): the one-row `inkling2_bf16_gemv_multi` reads 275 to 307 GB/s at q
