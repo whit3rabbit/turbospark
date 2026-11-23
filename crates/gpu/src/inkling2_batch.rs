@@ -19,6 +19,11 @@ const SOURCE: &str = concat!(
 /// verify uses at most 8 (the DSpark block, anchor + 7); past 8 the GEMV
 /// takes its 32-accumulator twin.
 pub const INKLING2_BATCH_MAX_ROWS: usize = 32;
+/// Output rows per threadgroup of the matrix-unit GEMM: 8 simdgroups x
+/// `INK_MMA_NF` fragments of 8 (the shader's `kInkMmaRowsPerTG`).
+const INKLING2_MMA_ROWS_PER_TG: u32 = 8 * INKLING2_MMA_SG * 1;
+/// Simdgroups per threadgroup of the matrix-unit GEMM (`INK_MMA_SG`).
+const INKLING2_MMA_SG: u32 = 4;
 /// Rows the 8-accumulator GEMV kernel serves (the verify block).
 const GEMV_ROWS_SMALL: u32 = 8;
 
@@ -285,7 +290,7 @@ pub fn encode_inkling2_bf16_gemm_rows_mma(
         segments,
         n_rows,
         "inkling2_bf16_gemm_rows_mma",
-        64,
+        INKLING2_MMA_ROWS_PER_TG,
     )
 }
 
@@ -380,7 +385,12 @@ fn encode_rows_table(
         let y = segments[i.min(segments.len() - 1)].y;
         buffers.push((y.0, 5 + i as u64, y.1));
     }
-    pass.encode_threadgroups(&p, &buffers, &[(&bytes, 1)], u64::from(groups), 256);
+    let threads = if kernel == "inkling2_bf16_gemm_rows_mma" {
+        32 * u64::from(INKLING2_MMA_SG)
+    } else {
+        256
+    };
+    pass.encode_threadgroups(&p, &buffers, &[(&bytes, 1)], u64::from(groups), threads);
     Ok(())
 }
 

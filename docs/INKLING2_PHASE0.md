@@ -749,19 +749,26 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
     decode rows). No llama.cpp dumps exist on this machine, so the bound is
     relative to a deviation the project already ships, measured in the same
     run: the streamed host-routed path against the resident one (mean KL
-    1.93e-3, max 3.12e-2, top-1 62/65). Matrix units: mean 3.14e-3 (1.63x the
-    floor), max 3.80e-2 (1.22x), top-1 62/65; last prompt row 4.3e-7. Bounds:
-    2x the floor's mean and max, top-1 at most one row below it. An earlier,
-    equally accurate kernel variant read 1.29x on the same prompt, so a
-    one-prompt KL moves this much between roundings and the 2x headroom is
-    not generous. Prefill under it is bitwise independent of chunking
-    (asserted with three chunkings).
-  - Speed (development readings, host load about 2): CLI on the 3,088-token
-    prompt 27.2 s without, 24.7 s with (about 9%), same generated text. The
-    dispatch profile puts the kernel at 58 ms against the GEMV's 79 ms per
-    32-row panel (inflated, ranking only), still far above the weight
-    bandwidth floor (about 2.6 GB of dense weights per panel), so the kernel
-    has headroom: more output rows per simdgroup to reuse each input load.
+    1.93e-3, max 3.12e-2, top-1 62/65). Bounds: 2x the floor's mean and max,
+    top-1 at most one row below it. The kernel as shipped: mean 2.43e-3
+    (1.26x), max 1.99e-2 (0.64x), top-1 62/65, last prompt row 1.3e-6.
+    Equally accurate kernel variants on the way read 1.29x and 1.63x the
+    floor's mean on the same prompt, so a one-prompt KL moves this much
+    between roundings and the 2x headroom is not generous. Prefill under it
+    is bitwise independent of chunking (asserted with three chunkings).
+  - Tuning (2026-11-23, dispatch profile of a 32-row panel, inflated,
+    ranking only; the bit-exact GEMV reads 79 ms): first version 86 ms;
+    inputs staged per 64-wide K block and 16-weight vector loads 58 ms;
+    4-wide staging 53.6 ms; 4 simdgroups per threadgroup (more threadgroups:
+    the o-proj alone is 36 threadgroups at 64 rows) 50.8 ms; k permuted as
+    8 kk + s so a lane's inputs of a block are 8 contiguous halfs per row
+    (two 16-byte threadgroup loads per tile instead of 16 scalar ones)
+    29.3 ms. Slower and not kept: 2 or 4 output fragments per simdgroup
+    sharing each input load (68.6 and 82.7 ms before the last change, 38.9
+    after it), 2 simdgroups per threadgroup (57.3 ms).
+  - Speed (development readings, host load about 3): CLI on the 3,088-token
+    prompt 27.1 s without, 21.7 s with (about 20%, 114 to 142 tok/s), same
+    generated text. The panel is now led by the grouped expert pair.
   - Not default yet: the quality gates do not exercise it (they open
     streamed, which prefills sequentially), and only the BF16 install has
     BF16 dense weights. The mlx4 install's dense GEMVs are 4-bit affine and
