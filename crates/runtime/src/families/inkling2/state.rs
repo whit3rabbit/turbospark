@@ -476,12 +476,6 @@ impl RealInkling2State {
                     )));
                 }
             }
-            if matches!(kind, ExpertKind::Gguf { .. }) && resident_experts {
-                return Err(unsupported(
-                    "resident expert residency has no GGUF expert kernels; open this install streamed"
-                        .into(),
-                ));
-            }
             if outer.size != 16 || outer.offset % 4 != 0 {
                 return Err(unsupported(format!(
                     "layer {l}: malformed outer-scale record"
@@ -657,32 +651,15 @@ impl RealInkling2State {
     /// coded GEMVs, embedding, head and expert pair called per row (the same
     /// calls decode makes, so the same bits); a GGUF install's experts have no
     /// multi-row form.
+    /// Why this install has no multi-row forward (verify, chunked prefill,
+    /// DSpark), or `None`. Native and GGUF experts both have one (GGUF rows
+    /// run the decode pair over per-row blob tables); a LookAtMyQuant
+    /// install needs its coded experts.
     pub(crate) fn multi_row_refusal(&self) -> Option<String> {
-        if let Some(l) = self.lamq.as_ref() {
-            return l.experts.is_none().then(|| {
-                "a LookAtMyQuant install without coded experts has no multi-row forward".to_string()
-            });
-        }
-        self.native_expert_types().err()
-    }
-
-    pub(crate) fn native_expert_types(&self) -> Result<Vec<gpu::Inkling2ExpertType>, String> {
-        if self.lamq.is_some() {
-            return Err(
-                "a LookAtMyQuant install has no batched verify; it decodes without \
-                        speculation"
-                    .to_string(),
-            );
-        }
-        self.kinds
-            .iter()
-            .map(|k| match k {
-                ExpertKind::Native(t) => Ok(*t),
-                ExpertKind::Gguf { .. } => Err("a GGUF install's experts have no batched \
-                                                 verify; it decodes without speculation"
-                    .to_string()),
-            })
-            .collect()
+        let l = self.lamq.as_ref()?;
+        l.experts.is_none().then(|| {
+            "a LookAtMyQuant install without coded experts has no multi-row forward".to_string()
+        })
     }
 
     /// Zeroes every slot's conv tails and drops the verify record: a new
@@ -713,6 +690,9 @@ pub(crate) struct ResidentExperts {
     /// `u32[top_k]` ranked expert ids, written by the GPU router each
     /// application and read by the indexed MoE pair in the same buffer.
     pub(crate) sel: gpu::MetalBuffer,
+    /// One GGUF blob table (`gpu::encode_inkling2_gguf_bind_rows`) for
+    /// decode on a GGUF install's resident experts.
+    pub(crate) table: gpu::MetalBuffer,
     pub(crate) n_experts: u32,
 }
 
@@ -766,11 +746,13 @@ impl ResidentExperts {
             })
             .collect();
         let sel = context.new_buffer_with_data(&[0u8; 4 * gpu::INKLING2_ROUTER_TOP_K]);
+        let table = context.new_output_buffer(gpu::INKLING2_GGUF_TABLE_BYTES);
         Ok(Self {
             layers,
             strides,
             bias,
             sel,
+            table,
             n_experts: experts as u32,
         })
     }

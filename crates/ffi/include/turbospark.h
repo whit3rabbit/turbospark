@@ -1772,8 +1772,8 @@ int32_t ts_chip_supports_ane_prefill(void);
  *     "residentSupported": bool,
  *     "residentBytes": null | number, "workingSetBytes": null | number }
  * residentSupported: this install can open with "resident" at all (its family
- * has a resident flow and its expert blobs have resident kernels; an Inkling
- * 2 GGUF install's do not). residentBytes is what "resident" would place in
+ * has a resident flow and its expert blobs have resident kernels; an expert
+ * format without them streams). residentBytes is what "resident" would place in
  * GPU memory (the resident weights plus the whole expert table) and
  * workingSetBytes Metal's recommended working set, both set only when
  * residentSupported, so a host can say why "auto" did or did not pick it.

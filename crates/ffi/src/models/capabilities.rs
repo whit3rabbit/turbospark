@@ -178,7 +178,7 @@ pub(crate) fn expert_residency_for_install_json(
     // The two numbers the resident decision compares, so a host can say why
     // auto did or did not pick it. Only where resident can open at all: a
     // family with a resident flow whose install's expert blobs have resident
-    // kernels (not an Inkling 2 GGUF install), or the host would explain a
+    // kernels (an expert format without them streams), or the host would explain a
     // streamed choice by memory when the cause is the expert format.
     let resident_supported =
         routed && runtime::install_resident_experts_supported(dir, arch.family);

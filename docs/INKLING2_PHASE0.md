@@ -989,13 +989,40 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   visit's coded reads (about 26M against 64M for 8 experts), so batching
   them caps near 1.35x while the experts still run per row. A grouped LAMQ
   expert pair is the larger lever. Neither is built.
-- OPEN (2026-11-23): GGUF installs have no multi-row forward. The multi-row
-  pass reads experts from resident layers by index, and GGUF experts have no
-  resident kernels (`auto` streams such an install; `resident` is refused),
-  so verify, chunked prefill and DSpark refuse GGUF by name
-  (`multi_row_refusal`). Needs indexed GGUF Inkling pairs per GGUF type
-  (IQ2_XXS, IQ4_NL, Q2_0 in the gated file), then the bit-exact gates. The
-  gated IQ2_M file is no longer on this machine.
+- DONE (2026-11-23): resident GGUF experts and the multi-row forward on GGUF
+  installs. No per-type kernels: `gpu::encode_inkling2_gguf_bind_rows` writes
+  one `RoutedBlobs` table per row from the GPU router's ids
+  (`layer + id * stride`), and the streamed GGUF Inkling pair runs unchanged
+  over it (`_table` encoders), so every GGUF type with an Inkling pair gets
+  resident decode, chunked prefill, verify and DSpark with decode's
+  arithmetic. On Apple tier-2 argument buffers a table entry is the blob's
+  GPU address; `gpu/tests/inkling2_gguf_tables.rs` checks the GPU tables
+  against `bind_for`'s bytes and the pair's outputs bit for bit (a mutant
+  ignoring the row fails). `resident_blobs_supported` now accepts GGUF, so
+  `auto` opens a GGUF install resident when it fits, as for native installs.
+  Multi-row dense GGUF matrices batch only through dtypes `encode_gemm_any`
+  holds bit-exact (`GEMM_ANY_BATCHED`); others run per row. Gates on
+  `Inkling-2-Mini-Uncensored-AD-IQ2_M.gguf` (AtomicChat @ `40886ab6`, sha256
+  `fca99d48...`, re-downloaded; IQ2_XXS gate-up, Q2_0 and IQ4_NL down, Q8_0
+  dense, Q6_K head), M4 Max:
+  - chunked prefill 1,400 tokens 14.2 to 33.2 tok/s, 32/32 decode rows
+    bit-identical; verify 72/72 and 1,154/1,154;
+  - reference perplexity: resident sequential 5.3048, streamed 5.3225;
+  - the matrix-unit default FAILED the KL gate (pooled median 0.95x and p90
+    1.70x of the floor, but pooled top-1 256 against the floor's 259, the
+    bound is 2 rows), so GGUF, like LAMQ, keeps the bit-exact prefill
+    (`Ctx::prefill_mma` is native experts only); its default then scores
+    5.3048, diff 0;
+  - plain decode, `real_forward_inkling2_residency_speed.rs`, 128 tokens,
+    interleaved: resident 20.8 and 21.2 tok/s, streamed 17.5 and 16.8;
+  - speculative depth 3 with the mlx4 install's DSpark drafter: lossless on
+    all four prompts; prose 12.3 against 17.8 tok/s, code 13.2 against 17.1,
+    long 20.3 against 18.1, edit 29.2 against 19.7 (copy rounds accepted 211).
+    GGUF experts run one row at a time in the verify, so short-answer rounds
+    lose; DSpark stays opt-in.
+  Not run: logits against llama.cpp on the resident path (the dumper under
+  `~/models/oracles` is gone; resident is compared with streamed, which was
+  gated against llama.cpp), the unsloth and ggml-org files, a memory oracle.
 - DONE (2026-11-23): prompt-copy drafting, mtplx item (3)
   (`runtime/src/prompt_copy.rs`, wired in `speculative.rs`; on with the
   DSpark drafter, `TURBOSPARK_SPEC_PROMPT_COPY=0` turns it off). When the

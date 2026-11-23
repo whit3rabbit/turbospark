@@ -613,9 +613,10 @@ pub fn resident_experts_decision(
 /// [`resident_experts_decision`] with this process's env and device. The
 /// device is only asked when the family has a resident flow.
 #[cfg(target_os = "macos")]
-/// Whether an install's expert blobs have resident (indexed) kernels: an
-/// Inkling 2 GGUF install's ggml-block experts do not (only the streamed GGUF
-/// pairs run them), so `Auto` streams it and `Resident` is refused by name.
+/// Whether an install's expert blobs have resident kernels: Inkling 2's
+/// native NVFP4/MXFP8 pairs, LookAtMyQuant's coded pair, and any GGUF block
+/// type with an Inkling pair (the streamed pair over GPU-written blob
+/// tables, `gpu::encode_inkling2_gguf_bind_rows`). Anything else streams.
 fn resident_blobs_supported(
     family: model_io::ModelFamily,
     layout: Option<&model_io::PackedExpertsLayout>,
@@ -630,10 +631,10 @@ fn resident_blobs_supported(
         return true;
     };
     first.sub_tensors.contains_key("lamq_fmt")
-        || first
-            .sub_tensors
-            .get("gate")
-            .is_some_and(|g| matches!(g.dtype.as_str(), "inkling2_nvfp4" | "inkling2_mxfp8"))
+        || first.sub_tensors.get("gate").is_some_and(|g| {
+            matches!(g.dtype.as_str(), "inkling2_nvfp4" | "inkling2_mxfp8")
+                || gpu::Inkling2GgufExpertType::from_dtype(&g.dtype).is_some()
+        })
 }
 
 /// Whether the install at `dir` can open with resident experts at all: its

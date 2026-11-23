@@ -64,6 +64,9 @@ struct Ctx<'a> {
     /// matrix-unit GEMM (`verify::prefill_mma_enabled`). Never set for decode
     /// or speculative verify, whose rows must stay bit-exact to each other.
     prefill: bool,
+    /// Whether this install's prefill may take the matrix-unit default:
+    /// native experts only (`verify::Ctx::prefill_mma`).
+    mma: bool,
     /// Multi-row passes only: scratch the affine batched GEMM packs a
     /// strided input into, token-major (`verify::BatchScratch::affine_pack`).
     pack: Option<&'a gpu::MetalBuffer>,
@@ -380,6 +383,7 @@ impl RealForwardRunner {
             eps: cfg.rms_eps,
             lamq: st.lamq.clone(),
             prefill: false,
+            mma: false,
             pack: None,
         };
         let mut pass = c.context.begin_pass_labeled("inkling2 attn+router");
@@ -1381,10 +1385,40 @@ fn layer_moe_resident(
         )?;
         return moe_tail(c, pass, st, arch, slot, ip);
     }
-    let state::ExpertKind::Native(kind) = st.kinds[ip] else {
-        return Err(RealForwardError::Unsupported(
-            "resident experts have no GGUF kernels (state build refuses this)".into(),
-        ));
+    let kind = match st.kinds[ip] {
+        state::ExpertKind::Native(kind) => kind,
+        state::ExpertKind::Gguf { gate_up, down } => {
+            // The streamed GGUF pair over a blob table the GPU writes from
+            // the router's ids: the streamed path's arithmetic on resident
+            // bytes.
+            pass.use_read_buffer(&r.layers[ip]);
+            gpu::encode_inkling2_gguf_bind_rows(
+                c.context,
+                pass,
+                &r.layers[ip],
+                r.strides[ip],
+                (&r.sel, 0),
+                top_k as u32,
+                (&r.table, 0),
+                top_k as u32,
+                1,
+            )
+            .map_err(g)?;
+            gguf_pair_table(
+                c,
+                pass,
+                (gate_up, down),
+                (&r.table, 0),
+                &st.offsets[ip],
+                (&st.mn, 0),
+                (&st.acts, 0),
+                (&st.routing_w, 0),
+                (&st.y, 0),
+                (h, ffn, top_k),
+                (cfg.gate_softcap, cfg.up_softcap),
+            )?;
+            return moe_tail(c, pass, st, arch, slot, ip);
+        }
     };
     gpu::encode_inkling2_moe_phase1_indexed(
         c.context,
@@ -1416,6 +1450,54 @@ fn layer_moe_resident(
     )
     .map_err(g)?;
     moe_tail(c, pass, st, arch, slot, ip)
+}
+
+/// The GGUF expert pair (phase 1 then phase 2) for one row over a blob
+/// table: decode on resident experts and each row of a multi-row pass.
+#[allow(clippy::too_many_arguments)]
+fn gguf_pair_table(
+    c: &mut Ctx<'_>,
+    pass: &gpu::PassEncoder,
+    (gate_up, down): (gpu::Inkling2GgufExpertType, gpu::Inkling2GgufExpertType),
+    table: (&gpu::MetalBuffer, u64),
+    offsets: &gpu::MoeExpertOffsets,
+    x: (&gpu::MetalBuffer, u64),
+    acts: (&gpu::MetalBuffer, u64),
+    routing_w: (&gpu::MetalBuffer, u64),
+    y: (&gpu::MetalBuffer, u64),
+    (h, ffn, top_k): (usize, usize, usize),
+    (gate_cap, up_cap): (f32, f32),
+) -> Result<(), RealForwardError> {
+    let g = RealForwardError::Gpu;
+    gpu::encode_inkling2_gguf_phase1_table(
+        c.context,
+        pass,
+        gate_up,
+        table,
+        offsets,
+        x,
+        acts,
+        h as u32,
+        ffn as u32,
+        top_k as u32,
+        gate_cap,
+        up_cap,
+    )
+    .map_err(g)?;
+    gpu::encode_inkling2_gguf_phase2_table(
+        c.context,
+        pass,
+        down,
+        table,
+        offsets,
+        acts,
+        routing_w,
+        y,
+        h as u32,
+        ffn as u32,
+        top_k as u32,
+    )
+    .map_err(g)
 }
 
 /// The decode BF16 GEMV with two weight rows per simdgroup

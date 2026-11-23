@@ -101,7 +101,16 @@ pub(crate) struct BatchScratch {
     /// `[3][M][AFFINE_PACK_COLS]` halfs: the affine batched GEMM's packed
     /// inputs, one region per input slot.
     affine_pack: gpu::MetalBuffer,
+    /// One GGUF blob table per row (`gpu::INKLING2_GGUF_TABLE_BYTES` each).
+    gguf_tables: gpu::MetalBuffer,
 }
+
+/// Dense dtypes `encode_gemm_any` batches, each bit-exact against the GEMV
+/// `encode_gemv_any` runs for it (its parity tests): INT4 and INT8 affine,
+/// 1- and 2-bit affine, GGUF Q8_0, Q4_K, Q6_K and Q5_K. Any other dtype (a
+/// GGUF IQ type, say) runs one GEMV per row, which `encode_gemm_any` would
+/// refuse rather than loop.
+const GEMM_ANY_BATCHED: [u8; 8] = [4, 5, 15, 16, 6, 7, 8, 13];
 
 /// Widest input the affine pack holds per row (4 x the Mini's hidden size;
 /// a wider input falls back to one GEMV per row).
@@ -264,6 +273,7 @@ impl BatchScratch {
             group_pairs: context.new_output_buffer((M * gpu::INKLING2_MAX_SLOTS * 4) as u64),
             group_terms: context.new_output_buffer((M * gpu::INKLING2_MAX_SLOTS * h * 4) as u64),
             affine_pack: context.new_output_buffer((3 * M * AFFINE_PACK_COLS * 2) as u64),
+            gguf_tables: context.new_output_buffer(M as u64 * gpu::INKLING2_GGUF_TABLE_BYTES),
         }
     }
 }
@@ -284,12 +294,14 @@ fn plain<'a>(r: Rows<'a>) -> gpu::Inkling2Rows<'a> {
 }
 
 impl Ctx<'_> {
-    /// The KL-bounded matrix-unit prefill (GEMM and tiled attention). A
-    /// LookAtMyQuant install keeps the bit-exact path: its default prefill
-    /// moved the reference perplexity past the floor bound (0.0087 against
-    /// 0.0057, `inkling2_prefill_quality`), so it does not take the default.
+    /// The KL-bounded matrix-unit prefill (GEMM and tiled attention), on
+    /// native-expert installs only. LookAtMyQuant and GGUF installs keep the
+    /// bit-exact path, each having failed a bound on its own install: LAMQ's
+    /// reference perplexity moved 0.0087 against 0.0057
+    /// (`inkling2_prefill_quality`), and the IQ2_M GGUF's pooled top-1 was 256
+    /// against the floor's 259 (`real_forward_inkling2_prefill_mma`).
     fn prefill_mma(&self) -> bool {
-        self.prefill && self.lamq.is_none() && prefill_mma_enabled()
+        self.prefill && self.mma && prefill_mma_enabled()
     }
 
     /// Multi-row form of [`Ctx::gemv_group`]: BF16 segments in one
@@ -350,7 +362,13 @@ impl Ctx<'_> {
                 let out_major = y.2 as usize == rows;
                 let in_major = xs[x].2 as usize == cols;
                 let packable = self.pack.is_some() && cols <= AFFINE_PACK_COLS;
-                if out_major && (in_major || packable) && n > 1 && batched_affine_enabled() {
+                let batched = GEMM_ANY_BATCHED.contains(&entry(self.index, nm)?.dtype);
+                if batched
+                    && out_major
+                    && (in_major || packable)
+                    && n > 1
+                    && batched_affine_enabled()
+                {
                     foundation::engaged!("inkling2_batched_affine");
                     let src = if in_major {
                         (xs[x].0, xs[x].1)
@@ -803,6 +821,7 @@ impl RealForwardRunner {
             // A head on every row is speculative verify; prefill heads one
             // row or none.
             prefill: head != HeadRows::All,
+            mma: st.lamq.is_none() && st.kinds.iter().all(|k| matches!(k, ExpertKind::Native(_))),
             pack: Some(&b.affine_pack),
         };
         let t_encode = std::time::Instant::now();
@@ -1545,14 +1564,40 @@ fn layer_moe_rows(
         }
         return moe_rows_tail(c, pass, st, b, arch, slot, ip, n);
     }
-    // Native rows only: `multi_row_refusal` refused GGUF installs at the
-    // verify entry.
     let kind = match st.kinds[ip] {
         ExpertKind::Native(t) => t,
-        ExpertKind::Gguf { .. } => {
-            return Err(RealForwardError::Unsupported(
-                "GGUF experts have no batched verify".to_string(),
-            ))
+        ExpertKind::Gguf { gate_up, down } => {
+            // Decode's pair per row, each over its own blob table: every
+            // row gets decode's bits (no grouped GGUF pair exists).
+            pass.use_read_buffer(&r.layers[ip]);
+            gpu::encode_inkling2_gguf_bind_rows(
+                c.context,
+                pass,
+                &r.layers[ip],
+                r.strides[ip],
+                (&b.sel, 0),
+                gpu::INKLING2_MAX_SLOTS as u32,
+                (&b.gguf_tables, 0),
+                top_k as u32,
+                n as u32,
+            )
+            .map_err(g)?;
+            for m in 0..n {
+                super::gguf_pair_table(
+                    c,
+                    pass,
+                    (gate_up, down),
+                    (&b.gguf_tables, m as u64 * gpu::INKLING2_GGUF_TABLE_BYTES),
+                    &st.offsets[ip],
+                    (&b.mn, (m * h * 2) as u64),
+                    (&b.acts, (m * gpu::INKLING2_MAX_SLOTS * ffn * 2) as u64),
+                    (&b.routing_w, (m * gpu::INKLING2_MAX_SLOTS * 2) as u64),
+                    (&b.y, (m * h * 2) as u64),
+                    (h, ffn, top_k),
+                    (cfg.gate_softcap, cfg.up_softcap),
+                )?;
+            }
+            return moe_rows_tail(c, pass, st, b, arch, slot, ip, n);
         }
     };
     let group_scratch = gpu::Inkling2GroupScratch {
