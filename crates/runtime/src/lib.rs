@@ -33,6 +33,7 @@ mod moe_prefill_pipeline;
 mod pacing;
 mod power;
 mod producer;
+mod prompt_copy;
 mod raw_completion;
 mod raw_completion_chunked;
 #[cfg(target_os = "macos")]
@@ -67,7 +68,6 @@ mod router_hist;
 mod session_pool;
 #[cfg(target_os = "macos")]
 mod speculation_policy;
-mod prompt_copy;
 mod speculative;
 mod speculative_adaptive;
 #[cfg(target_os = "macos")]
