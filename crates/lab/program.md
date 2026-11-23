@@ -280,6 +280,40 @@ cannot run.
     lattice does not. The result and its reading for qwen38 are in
     `docs/KAPITSA_KERNELS.md` (KFlash section).
 
+13. **Wall against GPU, per pass, and the first pass.** A resident install's
+    first command buffer can wait 1 to 3 s before its GPU work starts while
+    the driver maps the freshly filled buffers (Inkling 2: a first decode
+    token at 1.5 to 2.8 s wall for 30 ms of GPU). The worker times its first
+    prompt's prefill right after open, so that stall sits inside the first
+    prompt's `prefill_s` of every arm: equal across arms, but it inflates
+    the absolute number and its noise. Read the first prompt apart, or use
+    a workload whose first prompt is not the one being judged. Print
+    encode, GPU and wait time per pass (Inkling: `TURBOSPARK_INKLING2_TRACE=1`)
+    before trusting a dispatch-profile total, which ranked well here but
+    came out 2x off the wall clock on a different prompt length.
+14. **Single-row fallbacks inside a multi-row pass.** A batched kernel can
+    be bypassed by one input stride with nothing failing: Inkling 2's mlx4
+    install ran its 4-bit projections as one GEMV per row in every prefill
+    panel (about 1,700 dispatches per 32-row pass) because three inputs
+    share a buffer per token. After wiring a batched arm, look for the
+    single-row kernel's name in the dispatch profile of the batched pass.
+15. **Where routed-expert prefill is bound.** Compute the experts' bytes per
+    pass against their time before assuming bandwidth. Inkling 2's experts
+    were 65% of a 128-row panel at about 85 GB/s, bound by dequant and
+    scalar dots: listing pairs by expert (bit-exact) and then the matrix
+    units paid, a larger panel alone much less. Sweep the panel size; it is
+    a throughput choice only when every prefill arm is row-independent.
+16. **The output head in prefill.** A chunked driver built on a verify path
+    can run the vocabulary head on every row. Prefill needs the last row of
+    the last pass (Inkling 2: bit-exact, about 7%).
+17. **Row independence of a KL-bounded prefill arm.** Beyond the KL bound, a
+    row's output must not depend on which rows share its pass, or the result
+    moves with the chunk size, the panel size and prefix reuse. Run the arm
+    over the same prompt with two or three chunkings and require identical
+    last-row bits. Switch such kernels on the pass kind, never a row count
+    (a tail panel under the threshold reverts to the old kernel), align
+    tiles to absolute positions, and fix any K split per shape.
+
 Record what each check found in the family's profile (a `finding` with the
 ledger id, the install, machine, power source, revision, workload and
 conditions; `crates/lab/families/README.md`), and change a `recommended`
@@ -457,5 +491,16 @@ Say so in the hypothesis rather than measure around it:
   host to settle, and stops early, naming the offenders, if it does not; it also
   refuses to start under `--min-free-gb` (default 10) of free disk. Pass `0` to
   either to turn it off.
+- The KL in a quality verdict is the prefill's last-row logits per prompt,
+  averaged over the workload's prompts: the direct measure of prefill
+  fidelity. Keep it that way when judging a prefill arm by hand. A KL over
+  teacher-forced decode rows after the prefill amplifies tiny K/V
+  differences chaotically: on Inkling 2, equally accurate kernel variants
+  read 1.26x to 3.45x a shipped deviation on one prompt, and one spike row
+  made a low-entropy prompt's mean 13x. If decode rows must be judged, pool
+  them over several frozen prompts and bound quantiles (median, p90)
+  against a floor measured in the same run, as
+  `crates/runtime/tests/real_forward_inkling2_prefill_mma.rs` does. Never
+  pick the variant that happens to score best on one prompt.
 - Dirty runs stay in the ledger with their reasons (`tslab ledger
   --experiment <name> --kind run`).

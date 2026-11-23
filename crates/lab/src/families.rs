@@ -219,6 +219,8 @@ pub fn facts(f: ModelFamily) -> FamilyFacts {
                 "24 physical layers run as 48 applications (layers 6-17 loop three times)",
                 "phase buckets are not filled; TURBOSPARK_INKLING2_TRACE=1 prints a per-token split",
                 "residency resident keeps every expert in GPU memory (about 15.7 GB) and runs a token as one command buffer; auto picks it where it fits, so streamed needs an explicit @N/streamed arm",
+                "chunked prefill defaults to the matrix units (KL-bounded, row-independent); TURBOSPARK_INKLING2_PREFILL_MMA=0 is the bit-exact arm; decode and speculative verify stay bit-exact either way",
+                "a resident open's first pass waits 1-3 s on GPU mapping, inside the first prompt's prefill_s; the open-time prewarm only helps when the first request comes after an idle gap",
             ],
         },
         Flint => FamilyFacts {

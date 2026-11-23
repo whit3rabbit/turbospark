@@ -256,6 +256,58 @@ Measurement and caveats: `docs/BENCHMARKS.md`, the Qwen3.8 section.
   cache and dependency state of a real pass. Rank with the profile and
   microbench, but accept a change on the wall-clock A/B, taken on a quiet host.
 
+- **The first pass of a process can wait seconds for memory mapping.** On
+  Inkling 2 with 15.7 GB of resident experts, the first decode token read
+  1.5 to 2.8 s wall for 30 ms of GPU time: the driver maps freshly filled
+  buffers on first GPU use, before the work starts. The command buffer's GPU
+  time does not show it; compare wall to GPU per pass. A one-shot CLI run
+  pays it inside its prefill number, and so does the tslab worker, which
+  times its first prompt right after open: the stall sits inside every
+  arm's first-prompt `prefill_s` (equal across arms, but it inflates the
+  absolute number). Exclude the first pass or say it is in. A
+  fire-and-forget GPU touch at open hides it behind an idle gap
+  (`docs/INKLING2_PHASE0.md`, prewarm).
+- **A KL bound over teacher-forced decode rows is noisy on one prompt.**
+  Inkling 2's first prefill KL gate took the mean and max KL over the last
+  prompt row plus 64 teacher-forced decode rows of one prompt, at 2x a
+  shipped deviation (streamed against resident) measured in the same run.
+  It was not a stable instrument: kernel variants with the same error
+  against f64 read 1.26x to 3.45x the floor on one prompt, swapping fast
+  `exp` for `precise::exp` moved one from 2.07x to 3.45x, and on a
+  low-entropy code prompt one spike row made a mean 13x. The decode rows
+  amplify tiny K/V differences chaotically. What held: several prompts
+  frozen as fixtures, per-row KL pooled over all of them and bounded at the
+  median and p90 against the floor's pooled values, top-1 pooled, and every
+  bound relative to the floor (the shipped floor itself read 1.48e-3 on one
+  last row, over an absolute 1e-3 that was set first)
+  (`docs/INKLING2_PHASE0.md`, the KL gate redesign). The last prompt row is
+  the direct measure of prefill fidelity, and it is what tslab's quality
+  gate compares (each prompt's prefill logits, averaged over the workload,
+  against an absolute bound per class: `crates/lab/src/gates.rs`). Never
+  pick the variant that happens to score best on one prompt.
+- **A prompt file the work itself edits is not a fixed prompt.** A KL gate
+  that read `verify.rs` as its code prompt measured a different prompt after
+  every edit, and its floor moved between runs. Point gates at files the
+  change does not touch.
+- **The dispatch profile and the wall clock can disagree by 2x.** The
+  profile ranks well, but its per-pass totals came from a shorter prompt
+  than the timed one, and attention cost grows with context. For a
+  multi-row pass, print encode, GPU and wait time per command buffer
+  (`commit_and_wait_with_gpu_time`; `TURBOSPARK_INKLING2_TRACE=1` does it
+  for Inkling) on the prompt you time.
+- **Two resident MoE installs do not fit beside each other.** A 17 GB
+  resident Inkling 2 gate in one session beside another session's model run
+  took a session down on this 36 GB host. After a crash, check `ps` before
+  timing anything: a resumed agent session relaunched its interrupted gate
+  in the background twice, and the relaunched copy kept competing.
+- **A batched kernel can be silently bypassed by one stride.** Inkling 2's
+  mlx4 install kept its 4-bit projections on one GEMV per row in every
+  prefill panel, about 1,700 dispatches per 32-row pass, because the q/k/v
+  inputs share a buffer at three rows per token and the batched kernels
+  take token-major rows only. Nothing failed; the prefill number did not
+  move. Check the dispatch profile for the single-row kernel's name after
+  wiring a batched one.
+
 ## Opt-in: the ANE+Steel prefill split
 
 Not a default. Steel alone stays the dense qwen prefill arm. The split is a
@@ -1292,6 +1344,50 @@ argument. Keep decode and speculative verify on the scalar kernels, because
 they must stay bit-exact against sequential decode. Hold a new family to a KL
 probe like `qwen38_prefill_arm_probe` before making it the default.
 
+### Inkling 2 prefill: what transfers to other families
+
+From `docs/INKLING2_PHASE0.md` (chunked prefill, steps 1 to 5); the
+numbers are development readings on the M4 Max.
+
+- **A prefill pass needs the head on its last row only.** Inkling's
+  first chunked driver reused the verify forward and ran the 201k-row
+  unembed on every row of every panel. Heading only the final panel's last
+  row was bit-exact and worth about 7%. Check any driver built from a
+  verify path.
+- **Start from the verify path.** Its multi-row kernels were already held
+  bit-identical to decode, so a driver that feeds the prompt through it in
+  micro-batches was correct by construction (30.7 to 94.6 tok/s on 1,100
+  tokens) before any kernel work.
+- **For MoE prefill, measure before assuming bandwidth.** The routed
+  experts were 65% of a 128-row panel at about 85 GB/s: dequant and scalar
+  dots, not bytes. Two levers stacked: list (row, slot) pairs by expert and
+  decode each expert's weights once for all of them (bit-exact against the
+  per-pair kernel, +22%), then put the grouped dot on the matrix units
+  (KL-bounded). At 128-row panels an expert averages about 8 pairs, one
+  8-wide tile. Larger panels alone bought less than the bandwidth argument
+  predicted (32 to 128 rows: 21.7 to 19.4 s on 3,088 tokens).
+- **Size scratch for the pass that needs it.** Raising the panel to 128
+  rows would have cost about 250 MB of conv-tail snapshots that only
+  speculative verify rolls back. A prefill pass writes none, and the logits
+  buffer is sized for the 8-row verify.
+- **A ring KV cache needs slack for the pass, and for the tiling.** Every
+  K/V row of a pass is written before its attention runs, so a sliding
+  window ring needs window plus rows minus one, and tiles aligned to
+  32-key boundaries add up to 31 more. The encoder's range check caught the
+  second; gates must cross the ring's wrap at its new size.
+- **Tile prefill attention by query block.** The rows kernel read each
+  row's whole window per row and head, so a 128-row panel read every key up
+  to 128 times. A threadgroup of 32 query rows that stages each 32-key
+  tile once (matrix units for QK^T and PV, online softmax started from the
+  sink) took the 3,088-token prompt from 14.0 to about 11 s and made a
+  panel's GPU time flat in context. Align key tiles to absolute positions
+  for row independence, and give the ring the 31 extra rows the alignment
+  reaches back.
+- **Fusion pays less here than in an MLX engine.** oMLX's fused per-visit
+  kernels (about 2,070 to 1,150 launches per Inkling token) bought them 8 to
+  21%. The same fusions here removed about 340 of 1,900 dispatches for 2.8%
+  decode, consistent with the dispatch price above.
+
 ### Row-batching small per-row ops, other families
 
 Anything shaped like the Qwen batched layers can take the same change. The
@@ -1394,9 +1490,24 @@ row, a parity test, and a `tslab project` price before the model run.
    rows into one dispatch only when the op is per head or per element.
 3. State the exactness class up front: bit-exact (test with `to_bits()`), or
    KL-bounded (name the probe and the bound). Decode and verify must stay in
-   the first class.
+   the first class. A KL-bounded prefill kernel still owes row
+   independence: a row's bits must not depend on which rows share its pass,
+   or the result changes with chunk and panel size (and prefix reuse).
+   Test a row alone, inside a full pass, and in a pass that starts elsewhere.
+   Switch on the pass kind, never the row count: Inkling 2's first
+   matrix-unit GEMM took "more than 8 rows", so short tail panels kept the
+   old kernel and the gate caught the chunking dependence. Align tiles to
+   absolute positions (a fully masked tile must be an exact no-op), and give
+   a fixed K split per shape, never per batch.
 4. Force any f32 to f16 round trip that a later stage reads through a
    `volatile` half; fast-math elides it (`docs/KAPITSA_KERNELS.md`, items 4 and 5).
+   Fast math also reassociates multiply chains by operand definition order,
+   so the same helper inlined into a fused kernel and a separate one can
+   differ by an ulp. Pin it with `#pragma clang fp reassociate(off)` in the
+   helper or the new kernel, then check the old kernel's bits did not move:
+   adding the pragma to Inkling 2's depth-mix helpers changed them
+   (`crates/gpu/AGENTS.md`). One random fixture passed while the real model
+   diverged at position 3; use many seeds and wide magnitudes.
 5. Put the kill switch behind an env var read once through a `OnceLock`, keep
    the old path one flag away, and mutation-check the new test.
 6. Time it in the engine on AC power, interleaved, with the reference arm in
