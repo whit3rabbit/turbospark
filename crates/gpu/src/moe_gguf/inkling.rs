@@ -18,6 +18,7 @@
 use metal::{FunctionConstantValues, MTLDataType};
 
 use super::{encode_phase1_with, encode_phase2_with, MoeExtType, PHASE2_FIXED_SLOTS};
+use crate::bytes::u32_bytes;
 use crate::context::{GpuError, MetalContext, PassEncoder};
 use crate::moe_decode::{moe_function_constants, MoeExpertOffsets, RoutedBlobsBuffer};
 
@@ -158,6 +159,40 @@ pub fn encode_inkling2_gguf_phase1(
     gate_cap: f32,
     up_cap: f32,
 ) -> Result<(), GpuError> {
+    encode_inkling2_gguf_phase1_table(
+        context,
+        pass,
+        kind,
+        (routed.buffer(), 0),
+        offsets,
+        x,
+        acts,
+        d_dim,
+        f_dim,
+        top_k,
+        gate_cap,
+        up_cap,
+    )
+}
+
+/// [`encode_inkling2_gguf_phase1`] over a blob table at `table` (one of
+/// [`encode_inkling2_gguf_bind_rows`]'s rows, or a bound
+/// `RoutedBlobsBuffer` at offset 0).
+#[allow(clippy::too_many_arguments)]
+pub fn encode_inkling2_gguf_phase1_table(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    kind: Inkling2GgufExpertType,
+    routed: (&metal::Buffer, u64),
+    offsets: &MoeExpertOffsets,
+    x: (&metal::Buffer, u64),
+    acts: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+    gate_cap: f32,
+    up_cap: f32,
+) -> Result<(), GpuError> {
     check(kind, "d_dim", d_dim, top_k)?;
     check_caps(gate_cap, up_cap)?;
     if f_dim == 0 {
@@ -198,6 +233,36 @@ pub fn encode_inkling2_gguf_phase2(
     f_dim: u32,
     top_k: u32,
 ) -> Result<(), GpuError> {
+    encode_inkling2_gguf_phase2_table(
+        context,
+        pass,
+        kind,
+        (routed.buffer(), 0),
+        offsets,
+        acts,
+        routing_w,
+        y,
+        d_dim,
+        f_dim,
+        top_k,
+    )
+}
+
+/// [`encode_inkling2_gguf_phase2`] over a blob table at `table`.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_inkling2_gguf_phase2_table(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    kind: Inkling2GgufExpertType,
+    routed: (&metal::Buffer, u64),
+    offsets: &MoeExpertOffsets,
+    acts: (&metal::Buffer, u64),
+    routing_w: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+) -> Result<(), GpuError> {
     check(kind, "f_dim", f_dim, top_k)?;
     if d_dim == 0 {
         return Err(GpuError::InvalidInput("d_dim must be positive".into()));
@@ -219,4 +284,61 @@ pub fn encode_inkling2_gguf_phase2(
         d_dim,
         f_dim,
     )
+}
+
+/// Bytes of one blob table (`RoutedBlobs`: `MAX_STREAMED_EXPERTS` GPU
+/// addresses), the row stride of [`encode_inkling2_gguf_bind_rows`]'s output.
+pub const INKLING2_GGUF_TABLE_BYTES: u64 = (crate::moe_decode::MAX_STREAMED_EXPERTS * 8) as u64;
+
+/// One blob table per row for resident GGUF experts: row `r`'s slot `k`
+/// points at `layer + sel[r * sel_stride + k] * stride` (slots past `top_k`
+/// repeat the last, as `RoutedBlobsBuffer::bind_for` fills them). The tables
+/// feed [`encode_inkling2_gguf_phase1_table`] and
+/// [`encode_inkling2_gguf_phase2_table`], so a resident row runs the
+/// streamed decode pair's own arithmetic. The caller makes `layer` resident
+/// in the pass (`PassEncoder::use_read_buffer`): the pair reads it only
+/// through the table.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_inkling2_gguf_bind_rows(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    layer: &metal::Buffer,
+    stride: u64,
+    sel: (&metal::Buffer, u64),
+    sel_stride: u32,
+    tables: (&metal::Buffer, u64),
+    top_k: u32,
+    n_rows: u32,
+) -> Result<(), GpuError> {
+    if top_k == 0 || top_k > sel_stride || top_k as usize > crate::moe_decode::MAX_STREAMED_EXPERTS
+    {
+        return Err(GpuError::InvalidInput(format!(
+            "GGUF blob tables: top_k {top_k} with {sel_stride} ids per row"
+        )));
+    }
+    if n_rows == 0 || tables.1 % 8 != 0 {
+        return Err(GpuError::InvalidInput(
+            "GGUF blob tables: no rows, or an unaligned table".into(),
+        ));
+    }
+    let pipeline = context.pipeline(
+        super::SOURCE,
+        "inkling2_gguf_bind_rows",
+        &FunctionConstantValues::new(),
+        &[],
+    )?;
+    let threads = u64::from(n_rows) * crate::moe_decode::MAX_STREAMED_EXPERTS as u64;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[(layer, 0, 0), (sel.0, 1, sel.1), (tables.0, 2, tables.1)],
+        &[
+            (&stride.to_le_bytes(), 3),
+            (u32_bytes(&top_k), 4),
+            (u32_bytes(&sel_stride), 5),
+            (u32_bytes(&n_rows), 6),
+        ],
+        threads.div_ceil(64),
+        64,
+    );
+    Ok(())
 }

@@ -429,14 +429,15 @@ pub use moe_decode::{
 };
 #[cfg(target_os = "macos")]
 pub use moe_gguf::{
-    encode_inkling2_gguf_phase1, encode_inkling2_gguf_phase2, encode_moe_phase1_ext,
+    encode_inkling2_gguf_bind_rows, encode_inkling2_gguf_phase1, encode_inkling2_gguf_phase1_table,
+    encode_inkling2_gguf_phase2, encode_inkling2_gguf_phase2_table, encode_moe_phase1_ext,
     encode_moe_phase1_iq1_m, encode_moe_phase1_iq2_s, encode_moe_phase1_iq2_xxs,
     encode_moe_phase1_iq3_xxs, encode_moe_phase1_iq4_xs, encode_moe_phase1_mxfp4,
     encode_moe_phase1_q2_0, encode_moe_phase1_q4_k, encode_moe_phase1_q8_0, encode_moe_phase2_ext,
     encode_moe_phase2_iq4_nl, encode_moe_phase2_mxfp4, encode_moe_phase2_q2_0_top10,
     encode_moe_phase2_q4_k, encode_moe_phase2_q6_k, encode_moe_phase2_q8_0, moe_gguf_source,
-    mxfp4_row_bytes, Inkling2GgufExpertType, MoeExtType, Mxfp4Activation, MXFP4_BLOCK_BYTES,
-    MXFP4_BLOCK_ELEMS, PHASE2_FIXED_SLOTS,
+    mxfp4_row_bytes, Inkling2GgufExpertType, MoeExtType, Mxfp4Activation,
+    INKLING2_GGUF_TABLE_BYTES, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS, PHASE2_FIXED_SLOTS,
 };
 #[cfg(target_os = "macos")]
 pub use moe_inkling2::{

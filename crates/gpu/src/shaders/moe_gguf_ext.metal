@@ -147,3 +147,25 @@ MOE_ELEM_ROW(iq1_xxxs, 256, 38, iq1_xxxs_elem)
 MOE_PAIR(iq1_xs, 256, 46, moe_iq1_xs_row_simd)
 MOE_PAIR(iq1_xxs, 256, 42, moe_iq1_xxs_row_simd)
 MOE_PAIR(iq1_xxxs, 256, 38, moe_iq1_xxxs_row_simd)
+
+// Inkling 2 resident GGUF experts: one RoutedBlobs table per token row, from
+// that row's expert ids, so the streamed decode pair above runs unchanged on
+// a resident layer (`layer + id * stride`). Slots past top_k repeat the last
+// one, as RoutedBlobsBuffer::bind_for fills them. On Apple GPUs (argument
+// buffers tier 2) a table entry is the blob's GPU address, what the argument
+// encoder writes; `inkling2_gguf_tables.rs` checks the two byte for byte.
+kernel void inkling2_gguf_bind_rows(
+    device const uint8_t* layer      [[buffer(0)]],
+    device const uint*    sel        [[buffer(1)]],
+    device RoutedBlobs*   tables     [[buffer(2)]],
+    constant ulong&       stride     [[buffer(3)]],
+    constant uint&        top_k      [[buffer(4)]],
+    constant uint&        sel_stride [[buffer(5)]],
+    constant uint&        n_rows     [[buffer(6)]],
+    uint                  gid        [[thread_position_in_grid]]
+) {
+    const uint row = gid / kMaxStreamedExperts, k = gid % kMaxStreamedExperts;
+    if (row >= n_rows) return;
+    const uint e = sel[row * sel_stride + min(k, top_k - 1u)];
+    tables[row].blob[k] = layer + ulong(e) * stride;
+}
