@@ -284,6 +284,75 @@ kernel void inkling2_bf16_gemv_rows(
     }
 }
 
+// The same kernel for up to 32 input rows (chunked prefill panels). A
+// separate kernel rather than a wider `kInkBMaxRows`, so the 8-row form that
+// speculative verify runs keeps its exact code. Row m's accumulator sees the
+// same terms in the same lane order, so its bits are the single-row kernel's
+// (`tests/inkling2_batch_parity.rs`). Tried and slower (2026-11-23): four
+// weight rows per simdgroup sharing each input load, 117 against 98 ms per
+// 32-row panel in the dispatch profile; the extra registers cost more than
+// the input re-reads, which hit cache.
+constant constexpr uint kInkBMaxRows32 = 32;
+
+kernel void inkling2_bf16_gemv_rows32(
+    device const uchar*              W   [[buffer(0)]],
+    constant Inkling2GemvRowsTable&  t   [[buffer(1)]],
+    device const half*               x0  [[buffer(2)]],
+    device const half*               x1  [[buffer(3)]],
+    device const half*               x2  [[buffer(4)]],
+    device half*                     y0  [[buffer(5)]],
+    device half*                     y1  [[buffer(6)]],
+    device half*                     y2  [[buffer(7)]],
+    device half*                     y3  [[buffer(8)]],
+    device half*                     y4  [[buffer(9)]],
+    device half*                     y5  [[buffer(10)]],
+    device half*                     y6  [[buffer(11)]],
+    device half*                     y7  [[buffer(12)]],
+    uint                             tg   [[threadgroup_position_in_grid]],
+    uint                             sg   [[simdgroup_index_in_threadgroup]],
+    uint                             lane [[thread_index_in_simdgroup]]
+) {
+    uint s = 0;
+    while (s + 1u < t.n_seg && tg >= t.tg_start[s + 1u]) ++s;
+    const uint row = (tg - t.tg_start[s]) * kInkBGemvRowsPerTG + sg;
+    if (row >= t.rows[s]) return;
+    const uint xi = t.x_idx[s];
+    device const half* x = xi == 0u ? x0 : (xi == 1u ? x1 : x2);
+    const uint xs = t.x_stride[xi];
+    const uint n4 = t.cols[s] / 4u;
+    const uint nr = t.n_rows;
+    device const bfloat4* w = (device const bfloat4*)(W + t.w_off[s]) + ulong(row) * n4;
+    float acc[kInkBMaxRows32];
+    for (uint m = 0; m < kInkBMaxRows32; ++m) acc[m] = 0.0f;
+    for (uint i = lane; i < n4; i += 32u) {
+        const float4 wv = float4(w[i]);
+        for (uint m = 0; m < kInkBMaxRows32; ++m) {
+            if (m < nr) {
+                device const half4* xv = (device const half4*)(x + ulong(m) * xs);
+                acc[m] += dot(wv, float4(xv[i]));
+            }
+        }
+    }
+    device half* y;
+    switch (s) {
+        case 0: y = y0; break;
+        case 1: y = y1; break;
+        case 2: y = y2; break;
+        case 3: y = y3; break;
+        case 4: y = y4; break;
+        case 5: y = y5; break;
+        case 6: y = y6; break;
+        default: y = y7; break;
+    }
+    const uint ys = t.y_stride[s];
+    for (uint m = 0; m < kInkBMaxRows32; ++m) {
+        if (m < nr) {
+            const float v = simd_sum(acc[m]);
+            if (lane == 0u) y[ulong(m) * ys + row] = half(v);
+        }
+    }
+}
+
 // --- Short convolution over consecutive rows --------------------------------
 //
 // `inkling2_short_conv_decode` applied to rows 0..n_rows in order, the tail

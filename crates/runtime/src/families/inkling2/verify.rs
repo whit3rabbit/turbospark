@@ -28,12 +28,16 @@ use crate::real_forward_utils::entry;
 use foundation::LogitValue;
 
 /// Rows one verify serves (the DSpark block: the anchor and 7 proposals).
-pub(crate) const VERIFY_MAX_ROWS: usize = gpu::INKLING2_BATCH_MAX_ROWS;
-/// Extra rows on every sliding-window ring so a block's rows never overwrite
-/// a position an earlier row of the same block still attends to.
-pub(crate) const VERIFY_SLACK: usize = VERIFY_MAX_ROWS - 1;
+pub(crate) const VERIFY_MAX_ROWS: usize = 8;
+/// Rows one multi-row pass may carry: a chunked prefill panel
+/// (`super::prefill`). Sizes the batch scratch and the ring slack.
+pub(crate) const PANEL_MAX_ROWS: usize = gpu::INKLING2_BATCH_MAX_ROWS;
+/// Extra rows on every sliding-window ring so a pass's rows never overwrite
+/// a position an earlier row of the same pass still attends to: every K/V
+/// row of a pass is written before its attention runs.
+pub(crate) const VERIFY_SLACK: usize = PANEL_MAX_ROWS - 1;
 
-const M: usize = VERIFY_MAX_ROWS;
+const M: usize = PANEL_MAX_ROWS;
 
 /// The verify's per-row activations (FP16 unless noted), each `M` rows.
 pub(crate) struct BatchScratch {
@@ -83,6 +87,20 @@ pub(crate) struct BatchScratch {
     /// Per cache slot, the `M + 1` tail snapshots of its K, V, out and FFN
     /// convs (`gpu::encode_inkling2_short_conv_rows`).
     snaps: Vec<[gpu::MetalBuffer; 4]>,
+    /// The expert-grouped pair's lists and per-slot F32 down terms
+    /// (`gpu::encode_inkling2_moe_grouped_rows`).
+    group_offs: gpu::MetalBuffer,
+    group_pairs: gpu::MetalBuffer,
+    group_terms: gpu::MetalBuffer,
+}
+
+/// The expert-grouped MoE pair for passes above the verify block (chunked
+/// prefill panels): on unless `TURBOSPARK_INKLING2_GROUPED_MOE=0`. Bit-identical
+/// to the `_idx_rows` pair (`gpu/tests/moe_inkling2_grouped_parity.rs`);
+/// speculative verify keeps the `_idx_rows` pair either way.
+fn grouped_moe_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TURBOSPARK_INKLING2_GROUPED_MOE").as_deref() != Ok("0"))
 }
 
 impl BatchScratch {
@@ -159,6 +177,10 @@ impl BatchScratch {
             logits: half(context, vocab),
             taps: half(context, DSPARK_TAP_ROWS * h),
             snaps,
+            group_offs: context
+                .new_output_buffer(((gpu::INKLING2_GROUP_MAX_EXPERTS as usize + 1) * 4) as u64),
+            group_pairs: context.new_output_buffer((M * gpu::INKLING2_MAX_SLOTS * 4) as u64),
+            group_terms: context.new_output_buffer((M * gpu::INKLING2_MAX_SLOTS * h * 4) as u64),
         }
     }
 }
@@ -1169,38 +1191,64 @@ fn layer_moe_rows(
             ))
         }
     };
-    gpu::encode_inkling2_moe_phase1_indexed_rows(
-        c.context,
-        pass,
-        kind,
-        &layer,
-        &st.offsets[ip],
-        (&b.mn, 0),
-        hs,
-        (&b.acts, 0),
-        hs,
-        ffn as u32,
-        top_k as u32,
-        cfg.gate_softcap,
-        cfg.up_softcap,
-        n as u32,
-    )
-    .map_err(g)?;
-    gpu::encode_inkling2_moe_phase2_indexed_rows(
-        c.context,
-        pass,
-        kind,
-        &layer,
-        &st.offsets[ip],
-        (&b.acts, 0),
-        (&b.routing_w, 0),
-        (&b.y, 0),
-        hs,
-        ffn as u32,
-        top_k as u32,
-        n as u32,
-    )
-    .map_err(g)?;
+    if n > VERIFY_MAX_ROWS && grouped_moe_enabled() {
+        foundation::engaged!("inkling2_grouped_moe");
+        gpu::encode_inkling2_moe_grouped_rows(
+            c.context,
+            pass,
+            kind,
+            &layer,
+            &st.offsets[ip],
+            (&b.mn, 0),
+            hs,
+            (&b.acts, 0),
+            (&b.routing_w, 0),
+            (&b.y, 0),
+            &gpu::Inkling2GroupScratch {
+                offs: (&b.group_offs, 0),
+                pairs: (&b.group_pairs, 0),
+                terms: (&b.group_terms, 0),
+            },
+            (hs, ffn as u32),
+            top_k as u32,
+            (cfg.gate_softcap, cfg.up_softcap),
+            n as u32,
+        )
+        .map_err(g)?;
+    } else {
+        gpu::encode_inkling2_moe_phase1_indexed_rows(
+            c.context,
+            pass,
+            kind,
+            &layer,
+            &st.offsets[ip],
+            (&b.mn, 0),
+            hs,
+            (&b.acts, 0),
+            hs,
+            ffn as u32,
+            top_k as u32,
+            cfg.gate_softcap,
+            cfg.up_softcap,
+            n as u32,
+        )
+        .map_err(g)?;
+        gpu::encode_inkling2_moe_phase2_indexed_rows(
+            c.context,
+            pass,
+            kind,
+            &layer,
+            &st.offsets[ip],
+            (&b.acts, 0),
+            (&b.routing_w, 0),
+            (&b.y, 0),
+            hs,
+            ffn as u32,
+            top_k as u32,
+            n as u32,
+        )
+        .map_err(g)?;
+    }
     let fw = view(c.weights, c.index, &name(ip, "mlp_sconv.weight"))?;
     let s = &st.slots[slot];
     gpu::encode_inkling2_short_conv_rows(

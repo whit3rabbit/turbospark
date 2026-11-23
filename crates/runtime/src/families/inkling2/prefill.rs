@@ -1,5 +1,5 @@
 //! Chunked prefill for Inkling 2: the prompt through the multi-row verify
-//! forward ([`super::verify`]), up to `VERIFY_MAX_ROWS` rows per command
+//! forward ([`super::verify`]), up to `PANEL_MAX_ROWS` rows per command
 //! buffer, instead of one `produce` per token.
 //!
 //! Correctness rides an existing contract: every multi-row kernel computes
@@ -58,7 +58,7 @@ impl RealForwardRunner {
         }
         foundation::engaged!("inkling2_chunked_prefill");
         let vocab = self.arch.vocab_size as usize;
-        let rows = super::verify::VERIFY_MAX_ROWS;
+        let rows = super::verify::PANEL_MAX_ROWS;
         let mut scratch = vec![LogitValue::ZERO; rows * vocab];
         let mut offset = 0usize;
         while offset < tokens.len() {

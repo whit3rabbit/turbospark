@@ -52,11 +52,10 @@ fn bits32(b: &metal::Buffer, off: usize, n: usize) -> Vec<u32> {
 
 const M: usize = 8;
 
-#[test]
-fn gemv_rows_match_single_row_gemv() {
+fn run_gemv_rows(n: usize, cols_a: usize) {
     let mut ctx = MetalContext::new().expect("Metal device");
     let mut s = 7u32;
-    let (cols_a, rows_a, rows_b) = (256usize, 40usize, 17usize);
+    let (rows_a, rows_b) = (40usize, 17usize);
     let wa = rand_bf16(&mut s, rows_a * cols_a, 0.5);
     let wb = rand_bf16(&mut s, rows_b * cols_a, 0.5);
     let mut wbytes = bb16(&wa);
@@ -65,10 +64,10 @@ fn gemv_rows_match_single_row_gemv() {
     let w = ctx.new_buffer_with_data(&wbytes);
     // Two inputs, row strides larger than cols (as the cat buffer is).
     let xs = (cols_a * 2) as u32;
-    let x0 = ctx.new_buffer_with_data(&b16(&rand_f16(&mut s, M * xs as usize, 1.0)));
-    let x1 = ctx.new_buffer_with_data(&b16(&rand_f16(&mut s, M * xs as usize, 1.0)));
-    let ya = ctx.new_output_buffer((M * rows_a * 2) as u64);
-    let yb = ctx.new_output_buffer((M * 64 * 2) as u64);
+    let x0 = ctx.new_buffer_with_data(&b16(&rand_f16(&mut s, n * xs as usize, 1.0)));
+    let x1 = ctx.new_buffer_with_data(&b16(&rand_f16(&mut s, n * xs as usize, 1.0)));
+    let ya = ctx.new_output_buffer((n * rows_a * 2) as u64);
+    let yb = ctx.new_output_buffer((n * 64 * 2) as u64);
     let pass = ctx.begin_pass();
     encode_inkling2_bf16_gemv_rows(
         &mut ctx,
@@ -93,13 +92,13 @@ fn gemv_rows_match_single_row_gemv() {
                 y_stride: 64,
             },
         ],
-        M as u32,
+        n as u32,
     )
     .unwrap();
     pass.commit_and_wait();
     let ra = ctx.new_output_buffer((rows_a * 2) as u64);
     let rb = ctx.new_output_buffer((rows_b * 2) as u64);
-    for m in 0..M {
+    for m in 0..n {
         let pass = ctx.begin_pass();
         let o = (m * xs as usize * 2) as u64;
         encode_inkling2_bf16_gemv_multi(
@@ -136,6 +135,17 @@ fn gemv_rows_match_single_row_gemv() {
             bits16(&rb, 0, rows_b),
             "seg b row {m}"
         );
+    }
+}
+
+#[test]
+fn gemv_rows_match_single_row_gemv() {
+    // 8 rows take the verify kernel; above 8 the 32-accumulator twin. The
+    // real hidden width too, where more terms reach a rounding boundary.
+    for n in [1usize, 8, 9, 23, 32] {
+        for cols in [256usize, 2304] {
+            run_gemv_rows(n, cols);
+        }
     }
 }
 

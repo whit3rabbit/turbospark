@@ -15,8 +15,12 @@ const SOURCE: &str = concat!(
     include_str!("shaders/inkling2_batch.metal")
 );
 
-/// Rows one batched dispatch serves: the verify block (anchor + 7).
-pub const INKLING2_BATCH_MAX_ROWS: usize = 8;
+/// Rows one batched dispatch serves: a chunked prefill panel. Speculative
+/// verify uses at most 8 (the DSpark block, anchor + 7); past 8 the GEMV
+/// takes its 32-accumulator twin.
+pub const INKLING2_BATCH_MAX_ROWS: usize = 32;
+/// Rows the 8-accumulator GEMV kernel serves (the verify block).
+const GEMV_ROWS_SMALL: u32 = 8;
 
 type Buf<'a> = (&'a metal::Buffer, u64);
 
@@ -258,6 +262,7 @@ pub fn encode_inkling2_bf16_gemv_rows(
             "bf16 gemv rows takes 1 to 3 inputs at 8-byte-aligned offsets and strides".into(),
         ));
     }
+    let small = n_rows <= GEMV_ROWS_SMALL;
     let (mut w_off, mut rows, mut cols, mut x_idx) = ([0u64; 8], [0u32; 8], [0u32; 8], [0u32; 8]);
     let mut y_stride = [0u32; 8];
     let mut tg_start = [0u32; 9];
@@ -314,7 +319,12 @@ pub fn encode_inkling2_bf16_gemv_rows(
     while bytes.len() % 8 != 0 {
         bytes.push(0);
     }
-    let p = pipeline(context, "inkling2_bf16_gemv_rows")?;
+    let kernel = if small {
+        "inkling2_bf16_gemv_rows"
+    } else {
+        "inkling2_bf16_gemv_rows32"
+    };
+    let p = pipeline(context, kernel)?;
     let mut buffers: Vec<(&metal::Buffer, u64, u64)> = vec![(weights, 0, 0)];
     for i in 0..3 {
         let (x, _) = xs[i.min(xs.len() - 1)];

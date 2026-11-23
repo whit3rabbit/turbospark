@@ -366,3 +366,247 @@ kernel void moe_inkling2_phase2_idx_rows_##NAME(                                
 
 INK_PAIR_IDX_ROWS(nvfp4)
 INK_PAIR_IDX_ROWS(mxfp8)
+
+// ----------------------------------------------------------------------------
+// Expert-grouped multi-row pair (chunked prefill). The `_idx_rows` pair reads
+// every (row, slot) pair's expert rows independently; here each distinct
+// expert's weight row is decoded ONCE per lane chunk and dotted with every
+// pair routed to it (up to 8 at a time). Per pair the arithmetic is the
+// `_idx_rows` kernel's term for term, so acts and the per-slot down terms
+// carry the same bits; phase 2 writes each pair's weighted F32 term and
+// `moe_inkling2_reduce_slots` sums the slots in rank order, the single-row
+// kernel's reduction. After oMLX's `_gather_sort` and mtplx's distinct-expert
+// verify (both Apache-2.0); this port's own code.
+//
+// `moe_inkling2_group` (one thread) lists the pairs by expert: `offs[e]` ..
+// `offs[e + 1]` index `pairs`, each `row * kInkMaxSlots + slot`, rows then
+// slots ascending within an expert.
+// ----------------------------------------------------------------------------
+constant constexpr uint kInkGroupBatch = 8;
+constant constexpr uint kInkGroupMaxExperts = 256;
+
+kernel void moe_inkling2_group(
+    device const uint*   sel_all   [[buffer(0)]],
+    device uint*         offs      [[buffer(1)]],
+    device uint*         pairs     [[buffer(2)]],
+    constant uint&       n_rows    [[buffer(3)]],
+    constant uint&       top_k     [[buffer(4)]],
+    constant uint&       n_experts [[buffer(5)]],
+    uint                 tid       [[thread_position_in_grid]]
+) {
+    if (tid != 0u) return;
+    uint cursor[kInkGroupMaxExperts];
+    for (uint e = 0; e < n_experts; ++e) cursor[e] = 0u;
+    for (uint r = 0; r < n_rows; ++r) {
+        for (uint s = 0; s < top_k; ++s) {
+            cursor[min(sel_all[r * kInkMaxSlots + s], n_experts - 1u)] += 1u;
+        }
+    }
+    uint acc = 0u;
+    for (uint e = 0; e < n_experts; ++e) {
+        offs[e] = acc;
+        const uint c = cursor[e];
+        cursor[e] = acc;
+        acc += c;
+    }
+    offs[n_experts] = acc;
+    for (uint r = 0; r < n_rows; ++r) {
+        for (uint s = 0; s < top_k; ++s) {
+            const uint e = min(sel_all[r * kInkMaxSlots + s], n_experts - 1u);
+            pairs[cursor[e]] = r * kInkMaxSlots + s;
+            cursor[e] += 1u;
+        }
+    }
+}
+
+// `ink_nvfp4_row` for up to 8 inputs sharing one weight row: out[p] is the
+// bits `ink_nvfp4_row(row, xs[p], n, lane)` returns.
+static inline void ink_nvfp4_rows8(
+    device const uint8_t* row, device const half* const thread* xs, uint np, uint n,
+    uint lane, thread float* out) {
+    #pragma clang fp reassociate(off)
+    const uint n_sub = n / 16u;
+    float acc[kInkGroupBatch];
+    for (uint p = 0; p < kInkGroupBatch; ++p) acc[p] = 0.0f;
+    for (uint j = lane; j < n_sub; j += 32u) {
+        device const uint8_t* blk = row + (j >> 2) * 36u;
+        const uint s = j & 3u;
+        device const uint* q = (device const uint*)(blk + 4u + s * 8u);
+        const uint q0 = q[0];
+        const uint q1 = q[1];
+        const float4 w0 = float4(kInkE2M1[q0 & 15u], kInkE2M1[(q0 >> 8) & 15u],
+                                 kInkE2M1[(q0 >> 16) & 15u], kInkE2M1[(q0 >> 24) & 15u]);
+        const float4 w1 = float4(kInkE2M1[q1 & 15u], kInkE2M1[(q1 >> 8) & 15u],
+                                 kInkE2M1[(q1 >> 16) & 15u], kInkE2M1[(q1 >> 24) & 15u]);
+        const float4 w2 = float4(kInkE2M1[(q0 >> 4) & 15u], kInkE2M1[(q0 >> 12) & 15u],
+                                 kInkE2M1[(q0 >> 20) & 15u], kInkE2M1[q0 >> 28]);
+        const float4 w3 = float4(kInkE2M1[(q1 >> 4) & 15u], kInkE2M1[(q1 >> 12) & 15u],
+                                 kInkE2M1[(q1 >> 20) & 15u], kInkE2M1[q1 >> 28]);
+        const float sc = nvfp4_scale(blk[s]);
+        for (uint p = 0; p < kInkGroupBatch; ++p) {
+            if (p < np) {
+                device const half4* xv = (device const half4*)(xs[p] + j * 16u);
+                const float4 x0 = float4(xv[0]);
+                const float4 x1 = float4(xv[1]);
+                const float4 x2 = float4(xv[2]);
+                const float4 x3 = float4(xv[3]);
+                const float sum = dot(w0, x0) + dot(w1, x1) + dot(w2, x2) + dot(w3, x3);
+                acc[p] = fma(sc, sum, acc[p]);
+            }
+        }
+    }
+    for (uint p = 0; p < kInkGroupBatch; ++p) {
+        if (p < np) out[p] = simd_sum(acc[p]);
+    }
+}
+
+// `ink_mxfp8_row` for up to 8 inputs sharing one weight row.
+static inline void ink_mxfp8_rows8(
+    device const uint8_t* row, device const half* const thread* xs, uint np, uint n,
+    uint lane, thread float* out) {
+    #pragma clang fp reassociate(off)
+    const uint n_blocks = n / 32u;
+    float acc[kInkGroupBatch];
+    for (uint p = 0; p < kInkGroupBatch; ++p) acc[p] = 0.0f;
+    for (uint b = lane; b < n_blocks; b += 32u) {
+        device const uint8_t* blk = row + b * 33u;
+        device const packed_uchar4* q = (device const packed_uchar4*)(blk + 1u);
+        float sum[kInkGroupBatch];
+        for (uint p = 0; p < kInkGroupBatch; ++p) sum[p] = 0.0f;
+        for (uint i = 0; i < 8u; ++i) {
+            const uchar4 c = uchar4(q[i]);
+            const float4 w = float4(ink_e4m3_fast(c.x), ink_e4m3_fast(c.y),
+                                    ink_e4m3_fast(c.z), ink_e4m3_fast(c.w));
+            for (uint p = 0; p < kInkGroupBatch; ++p) {
+                if (p < np) {
+                    device const half4* xv = (device const half4*)(xs[p] + b * 32u);
+                    sum[p] += dot(w, float4(xv[i]));
+                }
+            }
+        }
+        const int ex = int(blk[0]) - 127;
+        for (uint p = 0; p < kInkGroupBatch; ++p) {
+            if (p < np) acc[p] += ldexp(sum[p], ex);
+        }
+    }
+    for (uint p = 0; p < kInkGroupBatch; ++p) {
+        if (p < np) out[p] = simd_sum(acc[p]);
+    }
+}
+
+#define INK_PAIR_GROUPED(NAME)                                                           \
+[[kernel, max_total_threads_per_threadgroup(256)]]                                       \
+kernel void moe_inkling2_phase1_grouped_##NAME(                                          \
+    device const uint8_t*     layer           [[buffer(0)]],                             \
+    constant ExpertOffsets&   re              [[buffer(1)]],                             \
+    device const half*        x_all           [[buffer(2)]],                             \
+    device half*              acts_all        [[buffer(3)]],                             \
+    constant uint&            D               [[buffer(4)]],                             \
+    constant uint&            F               [[buffer(5)]],                             \
+    constant uint&            top_k           [[buffer(6)]],                             \
+    constant float2&          caps            [[buffer(7)]],                             \
+    device const uint*        offs            [[buffer(8)]],                             \
+    constant ulong&           stride          [[buffer(9)]],                             \
+    device const uint*        pairs           [[buffer(10)]],                            \
+    constant uint&            x_stride        [[buffer(11)]],                            \
+    uint2                     tg              [[threadgroup_position_in_grid]],          \
+    uint                      sg_idx          [[simdgroup_index_in_threadgroup]],        \
+    uint                      lane            [[thread_index_in_simdgroup]]              \
+) {                                                                                      \
+    const uint f = tg.x * kInkRowsPerTG + sg_idx;                                        \
+    const uint e = tg.y;                                                                 \
+    if (f >= F) return;                                                                  \
+    const uint p0 = offs[e], p1 = offs[e + 1u];                                          \
+    if (p0 == p1) return;                                                                \
+    device const uint8_t* base = layer + ulong(e) * stride;                              \
+    const ulong row_bytes = ulong(D / ink_block_elems_##NAME) * ink_block_bytes_##NAME;  \
+    const float gs = ink_outer(base, re.gate_s_off);                                     \
+    const float us = ink_outer(base, re.up_s_off);                                       \
+    for (uint b = p0; b < p1; b += kInkGroupBatch) {                                     \
+        const uint np = min(kInkGroupBatch, p1 - b);                                     \
+        device const half* xs[kInkGroupBatch];                                           \
+        for (uint p = 0; p < kInkGroupBatch; ++p) {                                      \
+            const uint pr = pairs[b + min(p, np - 1u)];                                  \
+            xs[p] = x_all + ulong(pr / kInkMaxSlots) * x_stride;                         \
+        }                                                                                \
+        float gv[kInkGroupBatch], uv[kInkGroupBatch];                                    \
+        ink_##NAME##_rows8(base + re.gate_W_off + f * row_bytes, xs, np, D, lane, gv);   \
+        ink_##NAME##_rows8(base + re.up_W_off + f * row_bytes, xs, np, D, lane, uv);     \
+        if (lane == 0) {                                                                 \
+            for (uint p = 0; p < np; ++p) {                                              \
+                const uint pr = pairs[b + p];                                            \
+                const uint r = pr / kInkMaxSlots, slot = pr % kInkMaxSlots;              \
+                const float g = gv[p] * gs;                                              \
+                const float u = uv[p] * us;                                              \
+                const float sig = 1.0f / (1.0f + precise::exp(-g));                      \
+                acts_all[ulong(r) * top_k * F + slot * F + f] =                          \
+                    half(ink_softcap(g, caps.x) * sig * ink_softcap(u, caps.y));         \
+            }                                                                            \
+        }                                                                                \
+    }                                                                                    \
+}                                                                                        \
+                                                                                         \
+[[kernel, max_total_threads_per_threadgroup(256)]]                                       \
+kernel void moe_inkling2_phase2_grouped_##NAME(                                          \
+    device const uint8_t*     layer           [[buffer(0)]],                             \
+    constant ExpertOffsets&   re              [[buffer(1)]],                             \
+    device const half*        acts_all        [[buffer(2)]],                             \
+    device const half*        rw_all          [[buffer(3)]],                             \
+    device float*             terms           [[buffer(4)]],                             \
+    constant uint&            D               [[buffer(5)]],                             \
+    constant uint&            F               [[buffer(6)]],                             \
+    constant uint&            top_k           [[buffer(7)]],                             \
+    device const uint*        offs            [[buffer(8)]],                             \
+    constant ulong&           stride          [[buffer(9)]],                             \
+    device const uint*        pairs           [[buffer(10)]],                            \
+    uint2                     tg              [[threadgroup_position_in_grid]],          \
+    uint                      sg_idx          [[simdgroup_index_in_threadgroup]],        \
+    uint                      lane            [[thread_index_in_simdgroup]]              \
+) {                                                                                      \
+    _Pragma("clang fp reassociate(off)")                                                 \
+    const uint d = tg.x * kInkRowsPerTG + sg_idx;                                        \
+    const uint e = tg.y;                                                                 \
+    if (d >= D) return;                                                                  \
+    const uint p0 = offs[e], p1 = offs[e + 1u];                                          \
+    if (p0 == p1) return;                                                                \
+    device const uint8_t* base = layer + ulong(e) * stride;                              \
+    const ulong row_bytes = ulong(F / ink_block_elems_##NAME) * ink_block_bytes_##NAME;  \
+    const float ds = ink_outer(base, re.down_s_off);                                     \
+    for (uint b = p0; b < p1; b += kInkGroupBatch) {                                     \
+        const uint np = min(kInkGroupBatch, p1 - b);                                     \
+        device const half* xs[kInkGroupBatch];                                           \
+        for (uint p = 0; p < kInkGroupBatch; ++p) {                                      \
+            const uint pr = pairs[b + min(p, np - 1u)];                                  \
+            const uint r = pr / kInkMaxSlots, slot = pr % kInkMaxSlots;                  \
+            xs[p] = acts_all + ulong(r) * top_k * F + slot * F;                          \
+        }                                                                                \
+        float vv[kInkGroupBatch];                                                        \
+        ink_##NAME##_rows8(base + re.down_W_off + d * row_bytes, xs, np, F, lane, vv);   \
+        if (lane == 0) {                                                                 \
+            for (uint p = 0; p < np; ++p) {                                              \
+                const uint pr = pairs[b + p];                                            \
+                const float v = vv[p] * ds;                                              \
+                terms[ulong(pr) * D + d] = float(rw_all[pr]) * v;                        \
+            }                                                                            \
+        }                                                                                \
+    }                                                                                    \
+}
+
+INK_PAIR_GROUPED(nvfp4)
+INK_PAIR_GROUPED(mxfp8)
+
+// y[r, d] = sum over slots in rank order of the phase-2 terms: the
+// `_idx_rows` phase 2's `acc += partial[i]`, then FP16.
+kernel void moe_inkling2_reduce_slots(
+    device const float*  terms  [[buffer(0)]],
+    device half*         y_all  [[buffer(1)]],
+    constant uint&       D      [[buffer(2)]],
+    constant uint&       top_k  [[buffer(3)]],
+    uint2                gid    [[thread_position_in_grid]]
+) {
+    const uint d = gid.x, r = gid.y;
+    if (d >= D) return;
+    float acc = 0.0f;
+    for (uint i = 0; i < top_k; ++i) acc += terms[(ulong(r) * kInkMaxSlots + i) * D + d];
+    y_all[ulong(r) * D + d] = half(acc);
+}

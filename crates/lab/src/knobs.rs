@@ -621,6 +621,22 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[off("0", "inkling2_chunked_prefill")],
     },
     Knob {
+        // Inkling 2's expert-grouped MoE pair for multi-row passes above the
+        // verify block (chunked prefill panels): each distinct expert decoded
+        // once for all its (row, slot) pairs. "0" restores the per-pair
+        // `_idx_rows` pair. Bit-exact
+        // (`crates/gpu/tests/moe_inkling2_grouped_parity.rs`).
+        name: "inkling2_grouped_moe",
+        env: "TURBOSPARK_INKLING2_GROUPED_MOE",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[off("0", "inkling2_grouped_moe")],
+    },
+    Knob {
         // LFM3's M-row chunk driver, default on for INT4 installs; `0` is the
         // per-token loop behind the same entry point. KL-bounded because the
         // default arm takes Steel and the rows attention: with

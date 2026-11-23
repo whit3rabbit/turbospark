@@ -702,6 +702,32 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   keep the bits), then a row cap above 8 and a BF16 GEMM for the dense
   projections, then a flash banded attention for long chunks. The grouped
   pair also serves speculative verify (mtplx's distinct-expert dedupe).
+- PARTLY DONE (2026-11-23): chunked prefill, step 2. Panels of up to 32 rows
+  (`PANEL_MAX_ROWS`; speculative verify keeps `VERIFY_MAX_ROWS` 8, the DSpark
+  block). The SWA ring slack follows the panel (window + 31 = 1,055 rows):
+  every K/V row of a pass is written before its attention, so a smaller
+  slack lets a panel's last rows overwrite history its first rows read; the
+  verify gate gained a block across the new wrap (64/64 bit-identical). The
+  dense projections take `inkling2_bf16_gemv_rows32`, a separate kernel so
+  verify's 8-row GEMV keeps its exact code (bit-identical to single-row at 1,
+  8, 9, 23, 32 rows, widths 256 and 2,304). The routed experts take an
+  expert-grouped pair (`encode_inkling2_moe_grouped_rows`: list the pairs by
+  expert, decode each expert row once per lane chunk for up to 8 pairs,
+  per-slot F32 down terms reduced in rank order), bit-identical to the
+  `_idx_rows` pair over 48 seeded cases in both formats; a reversed slot
+  reduction mutant fails. Its dot helpers pin association (the
+  `crates/gpu/AGENTS.md` fast-math rule); pinning its activation product
+  too broke parity, unpinned it matches. `TURBOSPARK_INKLING2_GROUPED_MOE=0`
+  restores the per-pair kernels for panels. Prefill gate (1,100 tokens,
+  bit-identical): 32-row panels alone 97.9 tok/s, with the grouped pair
+  116.7 to 119.3 tok/s, against 32.2 sequential; the CLI on the 3,088-token
+  prompt 93.7 s sequential, 44.8 s at step 1, 29.6 s now, same text. Dispatch profile of a
+  32-row panel (ranking only): BF16 GEMV 39%, grouped experts 46%, attention
+  7%. TRIED, not kept: four weight rows per simdgroup in the 32-row GEMV
+  (117 against 98 ms per panel). The GEMV runs at a few percent of FP32 peak
+  as scalar per-lane dots; the remaining lever is a matrix-unit BF16 GEMM,
+  which changes summation order, so it would make prefill KL-bounded rather
+  than bit-exact and needs its own gate.
 - RESEARCH (2026-11-22): mtplx (github.com/youssofal/mtplx, Apache-2.0, MLX)
   runs Inkling 2 Mini with the same bundled DSpark drafter. Our port already
   has its Markov head (`dspark_markov_*`), so the draft logic matches.

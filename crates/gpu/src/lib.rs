@@ -439,10 +439,11 @@ pub use moe_gguf::{
 };
 #[cfg(target_os = "macos")]
 pub use moe_inkling2::{
-    encode_inkling2_moe_phase1, encode_inkling2_moe_phase1_indexed,
-    encode_inkling2_moe_phase1_indexed_rows, encode_inkling2_moe_phase2,
-    encode_inkling2_moe_phase2_indexed, encode_inkling2_moe_phase2_indexed_rows,
-    moe_inkling2_source, Inkling2ExpertType, Inkling2ResidentLayer, INKLING2_MAX_SLOTS,
+    encode_inkling2_moe_grouped_rows, encode_inkling2_moe_phase1,
+    encode_inkling2_moe_phase1_indexed, encode_inkling2_moe_phase1_indexed_rows,
+    encode_inkling2_moe_phase2, encode_inkling2_moe_phase2_indexed,
+    encode_inkling2_moe_phase2_indexed_rows, moe_inkling2_source, Inkling2ExpertType,
+    Inkling2GroupScratch, Inkling2ResidentLayer, INKLING2_GROUP_MAX_EXPERTS, INKLING2_MAX_SLOTS,
     INKLING2_MOE_MAX_ROWS, INKLING2_OUTER_SCALE_BYTES, MOE_INKLING2_REFLECT_FUNCTION,
 };
 #[cfg(target_os = "macos")]
