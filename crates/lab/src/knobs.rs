@@ -590,6 +590,37 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[off("0", "flint_chunked_prefill")],
     },
     Knob {
+        // Inkling 2's fused decode kernels (qkv_post, depth mix + norm,
+        // conv + residual), the default; "0" restores the separate kernels.
+        // Bit-identical by construction and by test
+        // (`crates/gpu/tests/inkling2_fused_parity.rs`), so the arms must
+        // share a digest.
+        name: "inkling2_fused",
+        env: "TURBOSPARK_INKLING2_FUSED",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[off("0", "inkling2_fused")],
+    },
+    Knob {
+        // Inkling 2's chunked prefill through the 8-row verify forward, the
+        // default on resident native-expert installs; "0" is the per-token
+        // loop behind the same entry point. Bit-exact
+        // (`crates/runtime/tests/real_forward_inkling2_prefill.rs`).
+        name: "inkling2_chunked_prefill",
+        env: "TURBOSPARK_INKLING2_CHUNKED_PREFILL",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[off("0", "inkling2_chunked_prefill")],
+    },
+    Knob {
         // LFM3's M-row chunk driver, default on for INT4 installs; `0` is the
         // per-token loop behind the same entry point. KL-bounded because the
         // default arm takes Steel and the rows attention: with

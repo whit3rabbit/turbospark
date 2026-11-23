@@ -1411,7 +1411,13 @@ fn layer_moe_resident(
 /// and to bisect a regression.
 fn fused_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("TURBOSPARK_INKLING2_FUSED").as_deref() != Ok("0"))
+    *ON.get_or_init(|| {
+        let on = std::env::var("TURBOSPARK_INKLING2_FUSED").as_deref() != Ok("0");
+        if on {
+            foundation::engaged!("inkling2_fused");
+        }
+        on
+    })
 }
 
 /// `TURBOSPARK_INKLING2_TRACE=1` prints one line per token: where the

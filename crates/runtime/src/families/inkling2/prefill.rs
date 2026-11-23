@@ -20,7 +20,8 @@ use foundation::LogitValue;
 use crate::real_forward::{RealForwardError, RealForwardRunner};
 
 fn chunked_enabled() -> bool {
-    std::env::var("TURBOSPARK_INKLING2_CHUNKED_PREFILL").as_deref() != Ok("0")
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TURBOSPARK_INKLING2_CHUNKED_PREFILL").as_deref() != Ok("0"))
 }
 
 impl RealForwardRunner {
