@@ -633,6 +633,47 @@ pub fn encode_inkling2_bf16_gemv_multi(
     xs: &[(&metal::Buffer, u64)],
     segments: &[Inkling2GemvSegment<'_>],
 ) -> Result<(), GpuError> {
+    gemv_multi_impl(
+        context,
+        pass,
+        weights,
+        xs,
+        segments,
+        "inkling2_bf16_gemv_multi",
+        8,
+    )
+}
+
+/// [`encode_inkling2_bf16_gemv_multi`] with two weight rows per simdgroup
+/// (`inkling2_bf16_gemv_multi2`): the same bits per row, twice the loads in
+/// flight.
+pub fn encode_inkling2_bf16_gemv_multi2(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    weights: &metal::Buffer,
+    xs: &[(&metal::Buffer, u64)],
+    segments: &[Inkling2GemvSegment<'_>],
+) -> Result<(), GpuError> {
+    gemv_multi_impl(
+        context,
+        pass,
+        weights,
+        xs,
+        segments,
+        "inkling2_bf16_gemv_multi2",
+        16,
+    )
+}
+
+fn gemv_multi_impl(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    weights: &metal::Buffer,
+    xs: &[(&metal::Buffer, u64)],
+    segments: &[Inkling2GemvSegment<'_>],
+    kernel: &'static str,
+    rows_per_tg: u32,
+) -> Result<(), GpuError> {
     if segments.is_empty() || segments.len() > INKLING2_GEMV_MAX_SEGMENTS {
         return Err(invalid(format!(
             "bf16 gemv multi takes 1 to {INKLING2_GEMV_MAX_SEGMENTS} segments, got {}",
@@ -672,7 +713,7 @@ pub fn encode_inkling2_bf16_gemv_multi(
         cols[i] = s.cols;
         x_idx[i] = s.x as u32;
         tg_start[i] = groups;
-        groups += s.rows.div_ceil(8);
+        groups += s.rows.div_ceil(rows_per_tg);
     }
     for g in &mut tg_start[segments.len()..] {
         *g = groups;
@@ -686,7 +727,7 @@ pub fn encode_inkling2_bf16_gemv_multi(
     }
     bytes.extend_from_slice(&(segments.len() as u32).to_le_bytes());
     debug_assert_eq!(bytes.len(), 200);
-    let p = pipeline(context, "inkling2_bf16_gemv_multi")?;
+    let p = pipeline(context, kernel)?;
     let mut buffers: Vec<(&metal::Buffer, u64, u64)> = vec![(weights, 0, 0)];
     for i in 0..3 {
         let x = xs[i.min(xs.len() - 1)];

@@ -393,13 +393,13 @@ pub use inkling2_dspark::{
 #[cfg(target_os = "macos")]
 pub use inkling2_ops::{
     encode_inkling2_attention_decode, encode_inkling2_bf16_gemv_multi,
-    encode_inkling2_control_combine, encode_inkling2_copy_half, encode_inkling2_depth_mix,
-    encode_inkling2_depth_mix_norm, encode_inkling2_l2_clip, encode_inkling2_qkv_post,
-    encode_inkling2_rel_table, encode_inkling2_router_select, encode_inkling2_short_conv_decode,
-    encode_inkling2_short_conv_residual, Inkling2AttnShape, Inkling2ConvResidual,
-    Inkling2GemvSegment, Inkling2QkvPostBuffers, Inkling2QkvPostShape, INKLING2_ATTN_MAX_HEAD_DIM,
-    INKLING2_DEPTH_MAX_STATES, INKLING2_GEMV_MAX_SEGMENTS, INKLING2_MIX_NORM_MAX_H,
-    INKLING2_ROUTER_MAX_EXPERTS, INKLING2_ROUTER_TOP_K,
+    encode_inkling2_bf16_gemv_multi2, encode_inkling2_control_combine, encode_inkling2_copy_half,
+    encode_inkling2_depth_mix, encode_inkling2_depth_mix_norm, encode_inkling2_l2_clip,
+    encode_inkling2_qkv_post, encode_inkling2_rel_table, encode_inkling2_router_select,
+    encode_inkling2_short_conv_decode, encode_inkling2_short_conv_residual, Inkling2AttnShape,
+    Inkling2ConvResidual, Inkling2GemvSegment, Inkling2QkvPostBuffers, Inkling2QkvPostShape,
+    INKLING2_ATTN_MAX_HEAD_DIM, INKLING2_DEPTH_MAX_STATES, INKLING2_GEMV_MAX_SEGMENTS,
+    INKLING2_MIX_NORM_MAX_H, INKLING2_ROUTER_MAX_EXPERTS, INKLING2_ROUTER_TOP_K,
 };
 #[cfg(target_os = "macos")]
 pub use kv_cache::{KvCacheManager, LayerKind};

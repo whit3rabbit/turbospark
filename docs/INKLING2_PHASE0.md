@@ -882,6 +882,21 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   streamed one, so do not run it beside another resident-install test on a
   36 GB machine (one such overlap probably took this machine down on
   2026-11-23).
+- DONE (2026-11-23): decode BF16 GEMV headroom measured and one step taken.
+  `gpu/tests/inkling2_gemv_bandwidth.rs` (ignored bench, ~192 MB cycled from
+  DRAM): the one-row `inkling2_bf16_gemv_multi` reads 275 to 307 GB/s at q
+  (3072 x 2304), 279 to 284 at k, 337 to 339 at the o-proj and 392 at the
+  unembed, which is near this machine's practical read ceiling. A two-row
+  form (`inkling2_bf16_gemv_multi2`, one input load feeding two weight
+  streams, each row's accumulation unchanged, bit-identical by test) lifts q
+  to about 335 and leaves the rest within noise. Decode, BF16 install, 3
+  interleaved rounds: GPU 25.2 to 24.9 ms per token, 38.5 to 38.9 tok/s;
+  verify gate still 72/72 (decode now runs the two-row form). Default on,
+  `TURBOSPARK_INKLING2_GEMV2=0` restores the one-row form. Not done: the F32
+  router GEMV (`minimax_router`, scalar loads, shared with MiniMax); a faster
+  one changes its summation order, so the decode router, the verify router
+  and the host-routed path would have to move together and be re-gated
+  against llama.cpp, for an estimated 2% of decode.
 - DONE (2026-11-23): speculative decoding now beats plain greedy on code
   and long prompts (MLX 4-bit install, its DSpark drafter in `dspark/`).
   - Speculative verify takes the expert-grouped pair (bit-identical to the

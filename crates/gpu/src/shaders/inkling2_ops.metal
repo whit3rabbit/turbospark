@@ -711,3 +711,63 @@ kernel void inkling2_bf16_gemv_multi(
     }
     y[row] = half(acc);
 }
+
+// The same GEMV with TWO weight rows per simdgroup (16 per threadgroup): one
+// input load feeds two independent weight streams, so twice the loads are in
+// flight. Each row keeps its own accumulator and the exact term order of the
+// one-row form, so its bits are the same (`tests/inkling2_ops_parity.rs`).
+constant constexpr uint kInkGemv2RowsPerTG = 16;
+
+kernel void inkling2_bf16_gemv_multi2(
+    device const uchar*              W   [[buffer(0)]],
+    constant Inkling2GemvTable&      t   [[buffer(1)]],
+    device const half*               x0  [[buffer(2)]],
+    device const half*               x1  [[buffer(3)]],
+    device const half*               x2  [[buffer(4)]],
+    device half*                     y0  [[buffer(5)]],
+    device half*                     y1  [[buffer(6)]],
+    device half*                     y2  [[buffer(7)]],
+    device half*                     y3  [[buffer(8)]],
+    device half*                     y4  [[buffer(9)]],
+    device half*                     y5  [[buffer(10)]],
+    device half*                     y6  [[buffer(11)]],
+    device half*                     y7  [[buffer(12)]],
+    uint                             tg   [[threadgroup_position_in_grid]],
+    uint                             sg   [[simdgroup_index_in_threadgroup]],
+    uint                             lane [[thread_index_in_simdgroup]]
+) {
+    uint s = 0;
+    while (s + 1u < t.n_seg && tg >= t.tg_start[s + 1u]) ++s;
+    const uint row0 = (tg - t.tg_start[s]) * kInkGemv2RowsPerTG + 2u * sg;
+    const uint nrows = t.rows[s];
+    if (row0 >= nrows) return;
+    const bool two = row0 + 1u < nrows;
+    const uint xi = t.x_idx[s];
+    device const half* x = xi == 0u ? x0 : (xi == 1u ? x1 : x2);
+    const uint n4 = t.cols[s] / 4u;
+    device const bfloat4* wa = (device const bfloat4*)(W + t.w_off[s]) + ulong(row0) * n4;
+    device const bfloat4* wb = two ? wa + n4 : wa;
+    device const half4* xv = (device const half4*)x;
+    float acc0 = 0.0f, acc1 = 0.0f;
+    for (uint i = lane; i < n4; i += 32u) {
+        const float4 xf = float4(xv[i]);
+        acc0 += dot(float4(wa[i]), xf);
+        acc1 += dot(float4(wb[i]), xf);
+    }
+    acc0 = simd_sum(acc0);
+    acc1 = simd_sum(acc1);
+    if (lane != 0u) return;
+    device half* y;
+    switch (s) {
+        case 0: y = y0; break;
+        case 1: y = y1; break;
+        case 2: y = y2; break;
+        case 3: y = y3; break;
+        case 4: y = y4; break;
+        case 5: y = y5; break;
+        case 6: y = y6; break;
+        default: y = y7; break;
+    }
+    y[row0] = half(acc0);
+    if (two) y[row0 + 1u] = half(acc1);
+}

@@ -733,6 +733,20 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[],
     },
     Knob {
+        // Inkling 2's decode BF16 GEMV with two weight rows per simdgroup,
+        // the default; "0" restores one row per simdgroup. The same bits per
+        // row (`crates/gpu/tests/inkling2_fused_parity.rs`).
+        name: "inkling2_gemv2",
+        env: "TURBOSPARK_INKLING2_GEMV2",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[],
+    },
+    Knob {
         // LFM3's M-row chunk driver, default on for INT4 installs; `0` is the
         // per-token loop behind the same entry point. KL-bounded because the
         // default arm takes Steel and the rows attention: with

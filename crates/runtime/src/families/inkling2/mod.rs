@@ -133,8 +133,12 @@ impl Ctx<'_> {
         if v.is_empty() {
             return Ok(());
         }
-        gpu::encode_inkling2_bf16_gemv_multi(self.context, pass, self.weights.buffer(), xs, &v)
-            .map_err(RealForwardError::Gpu)
+        let enc = if gemv2_enabled() {
+            gpu::encode_inkling2_bf16_gemv_multi2
+        } else {
+            gpu::encode_inkling2_bf16_gemv_multi
+        };
+        enc(self.context, pass, self.weights.buffer(), xs, &v).map_err(RealForwardError::Gpu)
     }
 
     fn norm(
@@ -1412,6 +1416,14 @@ fn layer_moe_resident(
     )
     .map_err(g)?;
     moe_tail(c, pass, st, arch, slot, ip)
+}
+
+/// The decode BF16 GEMV with two weight rows per simdgroup
+/// (`gpu::encode_inkling2_bf16_gemv_multi2`, the same bits per row): on unless
+/// `TURBOSPARK_INKLING2_GEMV2=0`.
+fn gemv2_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TURBOSPARK_INKLING2_GEMV2").as_deref() != Ok("0"))
 }
 
 /// The fused decode kernels (oMLX 8dddad9a's launch-count work, ported):

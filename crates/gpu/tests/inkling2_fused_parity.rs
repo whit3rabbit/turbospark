@@ -610,3 +610,67 @@ fn conv_residual_start_block_is_bit_identical_to_conv_then_copies() {
         run_conv_residual(true, 6, seed * 7_919);
     }
 }
+
+// --- Two-row decode GEMV -----------------------------------------------------
+
+#[test]
+fn bf16_gemv_multi2_is_bit_identical_to_the_one_row_kernel() {
+    use turbospark_gpu::{
+        encode_inkling2_bf16_gemv_multi, encode_inkling2_bf16_gemv_multi2, Inkling2GemvSegment,
+    };
+    let mut context = MetalContext::new().expect("Metal device");
+    let mut s = 0x9e37_u32;
+    // Odd row counts (a lone last row), three inputs, the Mini's widths.
+    let segs_shape = [
+        (3071usize, 2304usize, 0usize),
+        (1025, 2304, 1),
+        (17, 3072, 2),
+        (1, 64, 0),
+    ];
+    let mut w = Vec::new();
+    let mut offs = Vec::new();
+    for &(r, c, _) in &segs_shape {
+        offs.push(w.len() * 2);
+        w.extend((0..r * c).map(|_| unit(&mut s) * 0.05));
+    }
+    let w_buf = context.new_buffer_with_data(&leb16(&w));
+    let xs: Vec<metal::Buffer> = [2304usize, 2304, 3072]
+        .iter()
+        .map(|&c| {
+            context.new_buffer_with_data(&le16(&(0..c).map(|_| unit(&mut s)).collect::<Vec<_>>()))
+        })
+        .collect();
+    let run = |context: &mut MetalContext, two: bool| -> Vec<Vec<u16>> {
+        let ys: Vec<metal::Buffer> = segs_shape
+            .iter()
+            .map(|&(r, _, _)| context.new_output_buffer((r * 2) as u64))
+            .collect();
+        let segs: Vec<Inkling2GemvSegment<'_>> = segs_shape
+            .iter()
+            .zip(&ys)
+            .zip(&offs)
+            .map(|((&(r, c, x), y), &o)| Inkling2GemvSegment {
+                w_offset: o as u64,
+                rows: r as u32,
+                cols: c as u32,
+                x,
+                y: (y, 0),
+            })
+            .collect();
+        let xr: Vec<(&metal::Buffer, u64)> = xs.iter().map(|b| (b, 0u64)).collect();
+        let pass = context.begin_pass();
+        if two {
+            encode_inkling2_bf16_gemv_multi2(context, &pass, &w_buf, &xr, &segs).unwrap();
+        } else {
+            encode_inkling2_bf16_gemv_multi(context, &pass, &w_buf, &xr, &segs).unwrap();
+        }
+        pass.commit_and_wait();
+        ys.iter()
+            .zip(&segs_shape)
+            .map(|(y, &(r, _, _))| bits(y, r))
+            .collect()
+    };
+    let one = run(&mut context, false);
+    let two = run(&mut context, true);
+    assert_eq!(one, two, "two-row GEMV differs from the one-row kernel");
+}
