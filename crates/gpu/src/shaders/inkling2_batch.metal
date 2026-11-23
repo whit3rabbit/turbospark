@@ -539,7 +539,8 @@ kernel void inkling2_bf16_gemm_rows_mma(
 //
 // `inkling2_short_conv_decode` applied to rows 0..n_rows in order, the tail
 // advancing between rows exactly as M sequential calls advance it. `snap`
-// holds n_rows + 1 tails of `(taps - 1) * ch`: entry 0 is the tail at the
+// holds n_rows + 1 tails of `(taps - 1) * ch` (unless `has_snap` is 0: a
+// prefill pass, which nothing rolls back): entry 0 is the tail at the
 // block start, entry r + 1 the tail after row r, so a verify that keeps rows
 // 0..k restores entry k (rollback). Output row r
 // goes to `out + ((out_base + r) % out_ring) * out_stride` (`out_ring` 0: no
@@ -562,6 +563,7 @@ kernel void inkling2_short_conv_rows(
     constant uint&        out_base   [[buffer(12)]],
     constant uint&        out_ring   [[buffer(13)]],
     constant uint&        out_stride [[buffer(14)]],
+    constant uint&        has_snap   [[buffer(15)]],
     uint                  c          [[thread_position_in_grid]]
 ) {
     if (c >= ch || taps > kInkMaxConvTaps) return;
@@ -569,7 +571,7 @@ kernel void inkling2_short_conv_rows(
     const uint tn = (taps - 1u) * ch;
     for (uint j = 0; j + 1u < taps; ++j) {
         tl[j] = tail[j * ch + c];
-        snap[j * ch + c] = tl[j];
+        if (has_snap != 0u) snap[j * ch + c] = tl[j];
     }
     for (uint r = 0; r < n_rows; ++r) {
         const float xc = float(x[ulong(r) * x_stride + c]);
@@ -592,8 +594,10 @@ kernel void inkling2_short_conv_rows(
         out[ulong(orow) * out_stride + c] = half((acc + xc) * rsqrt(denom));
         for (uint j = 0; j + 2u < taps; ++j) tl[j] = tl[j + 1u];
         if (taps > 1u) tl[taps - 2u] = half(xc);
-        device half* sn = snap + ulong(r + 1u) * tn;
-        for (uint j = 0; j + 1u < taps; ++j) sn[j * ch + c] = tl[j];
+        if (has_snap != 0u) {
+            device half* sn = snap + ulong(r + 1u) * tn;
+            for (uint j = 0; j + 1u < taps; ++j) sn[j * ch + c] = tl[j];
+        }
     }
     for (uint j = 0; j + 1u < taps; ++j) tail[j * ch + c] = tl[j];
 }

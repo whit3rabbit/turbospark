@@ -338,7 +338,7 @@ fn conv_case(dynamic: bool) {
             ring_base: base as u32,
             ring: ring as u32,
         },
-        (&snap, 0),
+        Some((&snap, 0)),
         ch as u32,
         taps as u32,
         M as u32,

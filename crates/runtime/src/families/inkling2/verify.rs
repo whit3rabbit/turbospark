@@ -101,8 +101,9 @@ pub(crate) struct BatchScratch {
 /// a wider input falls back to one GEMV per row).
 const AFFINE_PACK_COLS: usize = 4 * 2304;
 
-/// The matrix-unit BF16 GEMM for prefill passes
-/// (`gpu::encode_inkling2_bf16_gemm_rows_mma`): the DEFAULT since 2026-11-23;
+/// The matrix units for prefill passes: the BF16 dense projections
+/// (`gpu::encode_inkling2_bf16_gemm_rows_mma`) and the routed experts
+/// (`gpu::encode_inkling2_moe_grouped_rows_mma`). The DEFAULT since 2026-11-23;
 /// `TURBOSPARK_INKLING2_PREFILL_MMA=0` restores the bit-exact GEMV. Not
 /// bit-identical to the GEMV, so a prefill through it is KL-bounded against
 /// sequential decode (`tests/real_forward_inkling2_prefill_mma.rs`, bounded
@@ -175,8 +176,11 @@ impl BatchScratch {
             arch.vocab_size as usize,
         );
         let half = |c: &gpu::MetalContext, n: usize| c.new_output_buffer((M * n.max(1) * 2) as u64);
+        // Snapshots and the all-rows head serve speculative verify only (a
+        // prefill pass writes neither), so they are sized for its block, not
+        // the panel.
         let snap = |c: &mut gpu::MetalContext, ch: usize| {
-            c.new_buffer_with_data(&vec![0u8; (M + 1) * (taps - 1) * ch * 2])
+            c.new_buffer_with_data(&vec![0u8; (VERIFY_MAX_ROWS + 1) * (taps - 1) * ch * 2])
         };
         let snaps = (0..st.slots.len())
             .map(|_| {
@@ -221,7 +225,7 @@ impl BatchScratch {
             sel: context.new_output_buffer((M * gpu::INKLING2_MAX_SLOTS * 4) as u64),
             y: half(context, h),
             y2: half(context, h),
-            logits: half(context, vocab),
+            logits: context.new_output_buffer((VERIFY_MAX_ROWS * vocab * 2) as u64),
             taps: half(context, DSPARK_TAP_ROWS * h),
             snaps,
             group_offs: context
@@ -356,9 +360,44 @@ impl Ctx<'_> {
         if v.is_empty() {
             return Ok(());
         }
+        // Panels above the kernels' 32 rows run per block of 32: each row's
+        // result is its own either way (bit-exact GEMV, row-independent GEMM).
+        let blk = gpu::INKLING2_GEMV_MAX_ROWS;
+        if n > blk {
+            let mut m0 = 0usize;
+            while m0 < n {
+                let take = (n - m0).min(blk);
+                let xs_b: Vec<Rows<'_>> = xs
+                    .iter()
+                    .map(|&(b, o, st)| (b, o + (m0 as u64) * u64::from(st) * 2, st))
+                    .collect();
+                let vb: Vec<gpu::Inkling2GemvRowsSegment<'_>> = v
+                    .iter()
+                    .map(|sg| gpu::Inkling2GemvRowsSegment {
+                        y: (sg.y.0, sg.y.1 + (m0 as u64) * u64::from(sg.y_stride) * 2),
+                        ..*sg
+                    })
+                    .collect();
+                self.bf16_rows_call(pass, &xs_b, &vb, take)?;
+                m0 += take;
+            }
+            return Ok(());
+        }
+        self.bf16_rows_call(pass, xs, &v, n)
+    }
+
+    /// One BF16 rows call of at most `gpu::INKLING2_GEMV_MAX_ROWS` rows: the
+    /// matrix-unit GEMM on a prefill pass, the bit-exact GEMV otherwise.
+    fn bf16_rows_call(
+        &mut self,
+        pass: &gpu::PassEncoder,
+        xs: &[Rows<'_>],
+        v: &[gpu::Inkling2GemvRowsSegment<'_>],
+        n: usize,
+    ) -> Result<(), RealForwardError> {
         let xb: Vec<((&gpu::MetalBuffer, u64), u32)> =
             xs.iter().map(|&(b, o, s)| ((b, o), s)).collect();
-        // Opt-in matrix units for prefill passes only: never for speculative
+        // Matrix units for prefill passes only: never for speculative
         // verify, whose rows must equal decode bit for bit.
         // Keyed on the pass kind, not the row count: every prefill row takes
         // the same kernel however the prompt is chunked (a tail panel of 8 or
@@ -369,7 +408,7 @@ impl Ctx<'_> {
                 pass,
                 self.weights.buffer(),
                 &xb,
-                &v,
+                v,
                 n as u32,
             )
             .map_err(RealForwardError::Gpu);
@@ -379,7 +418,7 @@ impl Ctx<'_> {
             pass,
             self.weights.buffer(),
             &xb,
-            &v,
+            v,
             n as u32,
         )
         .map_err(RealForwardError::Gpu)
@@ -617,6 +656,11 @@ impl RealForwardRunner {
                 st.max_ctx
             )));
         }
+        if head == HeadRows::All && n > VERIFY_MAX_ROWS {
+            return Err(unsupported(format!(
+                "an Inkling 2 verify takes 1 to {VERIFY_MAX_ROWS} rows, got {n}"
+            )));
+        }
         let head_rows = match head {
             HeadRows::All => n,
             HeadRows::Last => 1,
@@ -678,6 +722,7 @@ impl RealForwardRunner {
             prefill: head != HeadRows::All,
             pack: Some(&b.affine_pack),
         };
+        let t_encode = std::time::Instant::now();
         let pass = c.context.begin_pass_labeled("inkling2 verify");
         for (m, &t) in tokens.iter().enumerate() {
             crate::real_forward_dispatch::encode_embed_any(
@@ -857,7 +902,18 @@ impl RealForwardRunner {
             )
             .map_err(RealForwardError::Gpu)?;
         }
-        pass.commit_and_wait();
+        let encode_ms = t_encode.elapsed().as_secs_f64() * 1e3;
+        let t_gpu = std::time::Instant::now();
+        let gpu_ms = pass.commit_and_wait_with_gpu_time() * 1e3;
+        if super::trace_enabled() {
+            // One line per multi-row pass: host encoding, GPU execution, and
+            // the commit-to-return wall (GPU plus scheduling).
+            eprintln!(
+                "inkling2 rows trace base {base} rows {n}: encode {encode_ms:.1} ms, gpu {gpu_ms:.1} ms, \
+                 wait {:.1} ms",
+                t_gpu.elapsed().as_secs_f64() * 1e3
+            );
+        }
         for _ in 0..n {
             self.kv.advance();
         }
@@ -1078,7 +1134,7 @@ fn layer_attention_rows(
         kw,
         full.then_some(((&b.dk, 0u64), kt, kvh as u32)),
         ring,
-        (&snaps[0], 0),
+        (!c.prefill).then_some((&snaps[0], 0)),
         kvd as u32,
         taps,
         n as u32,
@@ -1093,7 +1149,7 @@ fn layer_attention_rows(
         vw,
         full.then_some(((&b.dv, 0u64), kt, kvh as u32)),
         vring,
-        (&snaps[1], 0),
+        (!c.prefill).then_some((&snaps[1], 0)),
         kvd as u32,
         taps,
         n as u32,
@@ -1218,7 +1274,7 @@ fn layer_attention_rows(
         ow,
         None,
         gpu::Inkling2Rows::plain((&b.attn_out, 0), hs),
-        (&snaps[2], 0),
+        (!c.prefill).then_some((&snaps[2], 0)),
         hs,
         taps,
         n as u32,
@@ -1353,7 +1409,34 @@ fn layer_moe_rows(
             ))
         }
     };
-    if n > VERIFY_MAX_ROWS && grouped_moe_enabled() {
+    let group_scratch = gpu::Inkling2GroupScratch {
+        offs: (&b.group_offs, 0),
+        pairs: (&b.group_pairs, 0),
+        terms: (&b.group_terms, 0),
+    };
+    // Prefill passes take the matrix-unit pair whenever the prefill switch is
+    // on, at every panel size (KL-bounded, row-independent, so chunking does
+    // not change the result); speculative verify never does.
+    if c.prefill && prefill_mma_enabled() {
+        gpu::encode_inkling2_moe_grouped_rows_mma(
+            c.context,
+            pass,
+            kind,
+            &layer,
+            &st.offsets[ip],
+            (&b.mn, 0),
+            hs,
+            (&b.acts, 0),
+            (&b.routing_w, 0),
+            (&b.y, 0),
+            &group_scratch,
+            (hs, ffn as u32),
+            top_k as u32,
+            (cfg.gate_softcap, cfg.up_softcap),
+            n as u32,
+        )
+        .map_err(g)?;
+    } else if n > VERIFY_MAX_ROWS && grouped_moe_enabled() {
         foundation::engaged!("inkling2_grouped_moe");
         gpu::encode_inkling2_moe_grouped_rows(
             c.context,
@@ -1366,11 +1449,7 @@ fn layer_moe_rows(
             (&b.acts, 0),
             (&b.routing_w, 0),
             (&b.y, 0),
-            &gpu::Inkling2GroupScratch {
-                offs: (&b.group_offs, 0),
-                pairs: (&b.group_pairs, 0),
-                terms: (&b.group_terms, 0),
-            },
+            &group_scratch,
             (hs, ffn as u32),
             top_k as u32,
             (cfg.gate_softcap, cfg.up_softcap),
@@ -1422,7 +1501,7 @@ fn layer_moe_rows(
         fw,
         None,
         gpu::Inkling2Rows::plain((&b.y2, 0), hs),
-        (&b.snaps[slot][3], 0),
+        (!c.prefill).then_some((&b.snaps[slot][3], 0)),
         hs,
         arch.short_conv_kernel_size as u32,
         n as u32,

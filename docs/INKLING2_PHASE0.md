@@ -783,6 +783,43 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
     touch them) and its chunked prefill stays bit-exact; LAMQ installs refuse
     chunked prefill by name. Correction to the 2026-11-22 entries: the mlx4
     and LAMQ installs are on this machine, under `~/.turbospark/models/text/`.
+- DONE (2026-11-23): chunked prefill, step 4: 128-row panels and matrix-unit
+  experts.
+  - Panels of up to 128 rows (`PANEL_MAX_ROWS`; `TURBOSPARK_INKLING2_PANEL_ROWS`
+    picks 1 to 128 for tuning, a throughput choice only: both arms'
+    results are independent of panel size). The BF16 GEMV and matrix-unit
+    GEMM run per 32-row block. Prefill passes write no conv-tail snapshots
+    (nothing rolls them back) and the logits and snapshot buffers are sized
+    for the 8-row verify, not the panel. The SWA ring slack follows the
+    panel (window + 127 = 1,151 rows); the prefill gate grew to 1,400 tokens
+    and the verify gate gained a block across the new wrap.
+  - The routed experts of a prefill pass take a matrix-unit form of the
+    grouped pair (`encode_inkling2_moe_grouped_rows_mma`, under the same
+    `TURBOSPARK_INKLING2_PREFILL_MMA` switch): each lane's slice of a 64-wide
+    block is one NVFP4 sub-block (element i in byte i % 8, low nibble first)
+    or 16 MXFP8 bytes, dequantized exactly into FP32 fragments, multiplied
+    with up to 32 pairs per sweep. Kernel tests
+    (`gpu/tests/moe_inkling2_grouped_mma.rs`): within about 3e-3 of a row's
+    RMS of the scalar grouped pair in both formats, a row's bits the same
+    alone, in 9 and in 32 rows, deterministic.
+  - Why: the trace (`TURBOSPARK_INKLING2_TRACE=1` now also prints each
+    multi-row pass's encode, GPU and wait time) put a 128-row panel at about
+    620 ms of GPU, experts about 59%, at about 85 GB/s: dequant and scalar
+    dots, not bytes. With the matrix units the panel reads 367 ms.
+  - KL gate, now two prompts (prose, Rust source) on both installs, each
+    against its own floor; mean KL as a multiple of the floor's: BF16 prose
+    1.70x, code 0.67x; mlx4 prose 1.22x, code 0.51x; top-1 equal to or above
+    the floor in all four. A one-prompt KL is noisy; the code prompt sits
+    below the shipped deviation on both installs.
+  - Speed (CLI, 3,088-token prompt, development readings): BF16 default
+    21.7 s at 32-row panels, 19.4 s at 128 rows, 14.0 s with matrix-unit
+    experts (exact arm 25.4 s); mlx4 default 15.4 s (exact arm 22.3 s).
+    The mlx4 install's default prefill is now KL-bounded too (its experts
+    take the matrix units); its exact arm stays bit-identical (prefill gate
+    155.9 tok/s at 1,400 tokens, verify 72/72).
+  - Open: the first panel of a process waits about 1.9 s before its GPU
+    work starts (wait 2.5 s for 0.6 s of GPU), likely first touch of the
+    resident experts; sequential decode pays the same on its first token.
 - DONE (2026-11-23): batched affine projections for MLX-sourced installs in
   multi-row passes (`Ctx::gemv_rows`, `TURBOSPARK_INKLING2_BATCHED_AFFINE=0`
   restores one GEMV per row; tslab knob `inkling2_batched_affine`). The mlx4

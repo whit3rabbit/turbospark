@@ -19,6 +19,22 @@ use foundation::LogitValue;
 
 use crate::real_forward::{RealForwardError, RealForwardRunner};
 
+/// Rows per prefill pass: `TURBOSPARK_INKLING2_PANEL_ROWS` (1 to
+/// `PANEL_MAX_ROWS`), default `PANEL_MAX_ROWS`. A throughput choice only:
+/// both prefill arms give a result independent of the panel size (the exact
+/// arm bit for bit against sequential decode, the matrix-unit arm by row
+/// independence).
+fn panel_rows() -> usize {
+    static ROWS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *ROWS.get_or_init(|| {
+        let max = super::verify::PANEL_MAX_ROWS;
+        std::env::var("TURBOSPARK_INKLING2_PANEL_ROWS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .map_or(max, |r| r.clamp(1, max))
+    })
+}
+
 fn chunked_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("TURBOSPARK_INKLING2_CHUNKED_PREFILL").as_deref() != Ok("0"))
@@ -57,7 +73,7 @@ impl RealForwardRunner {
             return self.prefill_chunk_inkling2_sequential(tokens, start_position, logits);
         }
         foundation::engaged!("inkling2_chunked_prefill");
-        let rows = super::verify::PANEL_MAX_ROWS;
+        let rows = panel_rows();
         let mut offset = 0usize;
         while offset < tokens.len() {
             let take = (tokens.len() - offset).min(rows);

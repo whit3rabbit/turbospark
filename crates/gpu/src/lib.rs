@@ -378,7 +378,7 @@ pub use inkling2_batch::{
     encode_inkling2_copy_rows, encode_inkling2_depth_mix_rows, encode_inkling2_l2_clip_rows,
     encode_inkling2_rel_table_rows, encode_inkling2_rms_rows, encode_inkling2_router_rows,
     encode_inkling2_router_select_rows, encode_inkling2_short_conv_rows, Inkling2GemvRowsSegment,
-    Inkling2Rows, INKLING2_BATCH_MAX_ROWS,
+    Inkling2Rows, INKLING2_BATCH_MAX_ROWS, INKLING2_GEMV_MAX_ROWS,
 };
 #[cfg(target_os = "macos")]
 pub use inkling2_dspark::{
@@ -439,12 +439,13 @@ pub use moe_gguf::{
 };
 #[cfg(target_os = "macos")]
 pub use moe_inkling2::{
-    encode_inkling2_moe_grouped_rows, encode_inkling2_moe_phase1,
-    encode_inkling2_moe_phase1_indexed, encode_inkling2_moe_phase1_indexed_rows,
-    encode_inkling2_moe_phase2, encode_inkling2_moe_phase2_indexed,
-    encode_inkling2_moe_phase2_indexed_rows, moe_inkling2_source, Inkling2ExpertType,
-    Inkling2GroupScratch, Inkling2ResidentLayer, INKLING2_GROUP_MAX_EXPERTS, INKLING2_MAX_SLOTS,
-    INKLING2_MOE_MAX_ROWS, INKLING2_OUTER_SCALE_BYTES, MOE_INKLING2_REFLECT_FUNCTION,
+    encode_inkling2_moe_grouped_rows, encode_inkling2_moe_grouped_rows_mma,
+    encode_inkling2_moe_phase1, encode_inkling2_moe_phase1_indexed,
+    encode_inkling2_moe_phase1_indexed_rows, encode_inkling2_moe_phase2,
+    encode_inkling2_moe_phase2_indexed, encode_inkling2_moe_phase2_indexed_rows,
+    moe_inkling2_source, Inkling2ExpertType, Inkling2GroupScratch, Inkling2ResidentLayer,
+    INKLING2_GROUP_MAX_EXPERTS, INKLING2_MAX_SLOTS, INKLING2_MOE_MAX_ROWS,
+    INKLING2_OUTER_SCALE_BYTES, MOE_INKLING2_REFLECT_FUNCTION,
 };
 #[cfg(target_os = "macos")]
 pub use moe_inkling2_lamq::{

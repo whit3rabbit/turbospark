@@ -53,7 +53,9 @@ fn chunked_prefill_matches_sequential_prefill_bit_for_bit() {
     )
     .expect("prose");
     let mut ids = tok.encode(&text, false);
-    let prompt_len = 1100usize;
+    // Past the window ring's wrap (window + the 128-row panel's slack = 1,151
+    // rows), so a panel crosses it.
+    let prompt_len = 1400usize;
     assert!(ids.len() >= prompt_len, "fixture prose too short");
     ids.truncate(prompt_len);
     let decode = 32usize;
@@ -92,7 +94,7 @@ fn chunked_prefill_matches_sequential_prefill_bit_for_bit() {
 
     // Candidate: chunked, with uneven chunk sizes.
     runner.reset();
-    let chunks = [13usize, 512, 300, 275];
+    let chunks = [13usize, 512, 300, 575];
     assert_eq!(chunks.iter().sum::<usize>(), prompt_len);
     let t = std::time::Instant::now();
     let mut at = 0usize;

@@ -114,6 +114,20 @@ impl Inkling2ExpertType {
         }
     }
 
+    fn phase1_grouped_mma_kernel(self) -> &'static str {
+        match self {
+            Inkling2ExpertType::Nvfp4 => "moe_inkling2_phase1_grouped_mma_nvfp4",
+            Inkling2ExpertType::Mxfp8 => "moe_inkling2_phase1_grouped_mma_mxfp8",
+        }
+    }
+
+    fn phase2_grouped_mma_kernel(self) -> &'static str {
+        match self {
+            Inkling2ExpertType::Nvfp4 => "moe_inkling2_phase2_grouped_mma_nvfp4",
+            Inkling2ExpertType::Mxfp8 => "moe_inkling2_phase2_grouped_mma_mxfp8",
+        }
+    }
+
     fn phase2_idx_rows_kernel(self) -> &'static str {
         match self {
             Inkling2ExpertType::Nvfp4 => "moe_inkling2_phase2_idx_rows_nvfp4",
@@ -532,6 +546,67 @@ pub fn encode_inkling2_moe_grouped_rows(
     caps: (f32, f32),
     n_rows: u32,
 ) -> Result<(), GpuError> {
+    grouped_impl(
+        context, pass, kind, layer, offsets, x, x_stride, acts, routing_w, y, scratch, dims, top_k,
+        caps, n_rows, false,
+    )
+}
+
+/// [`encode_inkling2_moe_grouped_rows`] on the matrix units (chunked prefill,
+/// KL-bounded): each expert's rows multiply up to 32 of its pairs at a time
+/// on FP32 `simdgroup_matrix`. NOT bit-identical to the scalar pair; a pair's
+/// result depends only on its own input row, never on which pairs share its
+/// tile. `d_dim` and `f_dim` must be multiples of 64.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_inkling2_moe_grouped_rows_mma(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    kind: Inkling2ExpertType,
+    layer: &Inkling2ResidentLayer<'_>,
+    offsets: &MoeExpertOffsets,
+    x: (&metal::Buffer, u64),
+    x_stride: u32,
+    acts: (&metal::Buffer, u64),
+    routing_w: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    scratch: &Inkling2GroupScratch<'_>,
+    dims: (u32, u32),
+    top_k: u32,
+    caps: (f32, f32),
+    n_rows: u32,
+) -> Result<(), GpuError> {
+    if dims.0 % 64 != 0 || dims.1 % 64 != 0 || x_stride % 8 != 0 {
+        return Err(GpuError::InvalidInput(format!(
+            "inkling2 grouped moe mma: d_dim {} and f_dim {} must be multiples of 64, x stride \
+             {x_stride} of 8",
+            dims.0, dims.1
+        )));
+    }
+    grouped_impl(
+        context, pass, kind, layer, offsets, x, x_stride, acts, routing_w, y, scratch, dims, top_k,
+        caps, n_rows, true,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn grouped_impl(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    kind: Inkling2ExpertType,
+    layer: &Inkling2ResidentLayer<'_>,
+    offsets: &MoeExpertOffsets,
+    x: (&metal::Buffer, u64),
+    x_stride: u32,
+    acts: (&metal::Buffer, u64),
+    routing_w: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    scratch: &Inkling2GroupScratch<'_>,
+    dims: (u32, u32),
+    top_k: u32,
+    caps: (f32, f32),
+    n_rows: u32,
+    mma: bool,
+) -> Result<(), GpuError> {
     let (d_dim, f_dim) = dims;
     check(kind, "d_dim", d_dim, top_k)?;
     check(kind, "f_dim", f_dim, top_k)?;
@@ -569,7 +644,18 @@ pub fn encode_inkling2_moe_grouped_rows(
     let mut cap_bytes = [0u8; 8];
     cap_bytes[..4].copy_from_slice(&caps.0.to_le_bytes());
     cap_bytes[4..].copy_from_slice(&caps.1.to_le_bytes());
-    let p1 = context.pipeline(SOURCE, kind.phase1_grouped_kernel(), &consts, &key)?;
+    // The matrix-unit kernels: 4 simdgroups of 8 weight rows per threadgroup.
+    let (rows_per_tg, threads) = if mma {
+        (32u64, 128u64)
+    } else {
+        (ROWS_PER_THREADGROUP, THREADS_PER_GROUP)
+    };
+    let k1 = if mma {
+        kind.phase1_grouped_mma_kernel()
+    } else {
+        kind.phase1_grouped_kernel()
+    };
+    let p1 = context.pipeline(SOURCE, k1, &consts, &key)?;
     pass.encode_threadgroups_3d(
         &p1,
         &[
@@ -589,13 +675,18 @@ pub fn encode_inkling2_moe_grouped_rows(
             (u32_bytes(&x_stride), 11),
         ],
         (
-            u64::from(f_dim).div_ceil(ROWS_PER_THREADGROUP),
+            u64::from(f_dim).div_ceil(rows_per_tg),
             u64::from(layer.n_experts),
             1,
         ),
-        (THREADS_PER_GROUP, 1, 1),
+        (threads, 1, 1),
     );
-    let p2 = context.pipeline(SOURCE, kind.phase2_grouped_kernel(), &consts, &key)?;
+    let k2 = if mma {
+        kind.phase2_grouped_mma_kernel()
+    } else {
+        kind.phase2_grouped_kernel()
+    };
+    let p2 = context.pipeline(SOURCE, k2, &consts, &key)?;
     pass.encode_threadgroups_3d(
         &p2,
         &[
@@ -614,11 +705,11 @@ pub fn encode_inkling2_moe_grouped_rows(
             (&layer.stride.to_le_bytes(), 9),
         ],
         (
-            u64::from(d_dim).div_ceil(ROWS_PER_THREADGROUP),
+            u64::from(d_dim).div_ceil(rows_per_tg),
             u64::from(layer.n_experts),
             1,
         ),
-        (THREADS_PER_GROUP, 1, 1),
+        (threads, 1, 1),
     );
     let red = context.pipeline(SOURCE, "moe_inkling2_reduce_slots", &consts, &key)?;
     pass.encode_threadgroups_3d(

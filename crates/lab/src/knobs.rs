@@ -637,8 +637,8 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[off("0", "inkling2_grouped_moe")],
     },
     Knob {
-        // Inkling 2's matrix-unit BF16 GEMM for chunked-prefill passes, the
-        // DEFAULT; "0" restores the bit-exact GEMV. KL-bounded against
+        // Inkling 2's matrix units for chunked-prefill passes (the BF16
+        // dense GEMM and the routed experts), the DEFAULT; "0" restores the bit-exact GEMV. KL-bounded against
         // sequential decode, gated relative to the shipped
         // streamed-vs-resident deviation
         // (`crates/runtime/tests/real_forward_inkling2_prefill_mma.rs`); a

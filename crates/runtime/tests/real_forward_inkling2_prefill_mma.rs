@@ -88,20 +88,14 @@ fn p95(v: &[f64]) -> f64 {
     s[(s.len() * 95 / 100).min(s.len() - 1)]
 }
 
-#[test]
-#[ignore = "needs INKLING2_INSTALL (a real Inkling 2 install, resident experts)"]
-fn mma_prefill_stays_within_the_kl_bound_and_is_chunking_independent() {
-    // The default; set explicitly so an inherited `=0` cannot turn this
-    // gate into a comparison of the exact path with itself.
-    std::env::set_var("TURBOSPARK_INKLING2_PREFILL_MMA", "1");
-    let install = PathBuf::from(std::env::var("INKLING2_INSTALL").expect("INKLING2_INSTALL"));
+/// One prompt through the gate: KL against sequential decode, bounded by the
+/// floor measured on the same prompt, plus chunking independence.
+fn gate_one(install: &std::path::Path, label: &str, file: &str) {
     let arch = model_io::inkling2_mini();
     let vocab = arch.vocab_size as usize;
-    let tok = tokenizer::MfTokenizer::load_from_dir(&install).expect("tokenizer");
-    let text = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/INKLING2_PHASE0.md"),
-    )
-    .expect("prose");
+    let tok = tokenizer::MfTokenizer::load_from_dir(install).expect("tokenizer");
+    let text = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(file))
+        .expect("prompt text");
     let mut ids = tok.encode(&text, false);
     let prompt_len = 1100usize;
     assert!(ids.len() >= prompt_len);
@@ -109,7 +103,7 @@ fn mma_prefill_stays_within_the_kl_bound_and_is_chunking_independent() {
     let real = 200_058usize.min(vocab);
     let decode = 64usize;
     let mut runner = RealForwardRunner::open_with_residency(
-        &install,
+        install,
         arch.clone(),
         2048,
         turbospark_runtime::ExpertCacheSlots::Auto,
@@ -158,7 +152,7 @@ fn mma_prefill_stays_within_the_kl_bound_and_is_chunking_independent() {
     }
     let (mean, max, top1, kls) = compare(&want, &got, real);
     eprintln!(
-        "mma prefill vs sequential over {} rows (last prompt row + {decode} decode): \
+        "{label}: mma prefill vs sequential over {} rows (last prompt row + {decode} decode): \
          mean KL {mean:.3e}, max KL {max:.3e}, p95 {:.3e} (last prompt row {:.3e}), \
          top-1 {top1}/{}",
         kls.len(),
@@ -180,7 +174,7 @@ fn mma_prefill_stays_within_the_kl_bound_and_is_chunking_independent() {
                 .iter()
                 .zip(&first_last)
                 .all(|(a, b)| a.to_bits() == b.to_bits()),
-        "matrix-unit prefill depends on how the prompt is chunked"
+        "{label}: matrix-unit prefill depends on how the prompt is chunked"
     );
 
     // The floor: a deviation this project already ships. Resident experts
@@ -189,7 +183,7 @@ fn mma_prefill_stays_within_the_kl_bound_and_is_chunking_independent() {
     // same teacher-forced tokens, sequential on both.
     drop(runner);
     let mut streamed = RealForwardRunner::open_with_residency(
-        &install,
+        install,
         arch.clone(),
         2048,
         turbospark_runtime::ExpertCacheSlots::Auto,
@@ -212,7 +206,7 @@ fn mma_prefill_stays_within_the_kl_bound_and_is_chunking_independent() {
     }
     let (f_mean, f_max, f_top1, f_kls) = compare(&want, &floor, real);
     eprintln!(
-        "floor (streamed host-routed vs resident, both sequential): mean KL {f_mean:.3e}, \
+        "{label}: floor (streamed host-routed vs resident, both sequential): mean KL {f_mean:.3e}, \
          max KL {f_max:.3e}, p95 {:.3e}, top-1 {f_top1}/{}",
         p95(&f_kls),
         f_kls.len()
@@ -220,14 +214,28 @@ fn mma_prefill_stays_within_the_kl_bound_and_is_chunking_independent() {
 
     assert!(
         mean <= f_mean * KL_HEADROOM,
-        "mean KL {mean:.3e} over {KL_HEADROOM}x the floor's {f_mean:.3e}"
+        "{label}: mean KL {mean:.3e} over {KL_HEADROOM}x the floor's {f_mean:.3e}"
     );
     assert!(
         max <= f_max * KL_HEADROOM,
-        "max KL {max:.3e} over {KL_HEADROOM}x the floor's {f_max:.3e}"
+        "{label}: max KL {max:.3e} over {KL_HEADROOM}x the floor's {f_max:.3e}"
     );
     assert!(
         top1 + 1 >= f_top1,
-        "top-1 {top1} more than one row below the floor's {f_top1}"
+        "{label}: top-1 {top1} more than one row below the floor's {f_top1}"
     );
+}
+
+#[test]
+#[ignore = "needs INKLING2_INSTALL (a real Inkling 2 install, resident experts)"]
+fn mma_prefill_stays_within_the_kl_bound_and_is_chunking_independent() {
+    // The default; set explicitly so an inherited `=0` cannot turn this
+    // gate into a comparison of the exact path with itself.
+    std::env::set_var("TURBOSPARK_INKLING2_PREFILL_MMA", "1");
+    let install = PathBuf::from(std::env::var("INKLING2_INSTALL").expect("INKLING2_INSTALL"));
+    // Prose and source code: one prompt's KL is a noisy statistic (equally
+    // accurate kernel variants read 1.26x to 1.70x the floor on the prose),
+    // so the bound must hold on both.
+    gate_one(&install, "prose", "../../docs/INKLING2_PHASE0.md");
+    gate_one(&install, "code", "src/families/inkling2/verify.rs");
 }

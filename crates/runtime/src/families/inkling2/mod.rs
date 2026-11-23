@@ -1433,7 +1433,7 @@ fn fused_enabled() -> bool {
 /// wall time goes between host encoding, the 48 commit-and-wait round trips,
 /// the host routing and expert reads, and GPU execution. A diagnostic, not a
 /// benchmark: it adds no syncs, but the host timers include scheduler noise.
-fn trace_enabled() -> bool {
+pub(super) fn trace_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("TURBOSPARK_INKLING2_TRACE").as_deref() == Ok("1"))
 }

@@ -16,9 +16,13 @@ const SOURCE: &str = concat!(
 );
 
 /// Rows one batched dispatch serves: a chunked prefill panel. Speculative
-/// verify uses at most 8 (the DSpark block, anchor + 7); past 8 the GEMV
-/// takes its 32-accumulator twin.
-pub const INKLING2_BATCH_MAX_ROWS: usize = 32;
+/// verify uses at most 8 (the DSpark block, anchor + 7). The BF16 GEMV and
+/// matrix-unit GEMM take at most [`INKLING2_GEMV_MAX_ROWS`] per call; the
+/// runtime calls them per block of that many rows.
+pub const INKLING2_BATCH_MAX_ROWS: usize = 128;
+/// Rows one BF16 GEMV-rows or matrix-unit GEMM call serves (the 32
+/// accumulators, the 4 token tiles of 8).
+pub const INKLING2_GEMV_MAX_ROWS: usize = 32;
 /// Output rows per threadgroup of the matrix-unit GEMM: 8 simdgroups x
 /// `INK_MMA_NF` fragments of 8 (the shader's `kInkMmaRowsPerTG`).
 // One fragment per simdgroup (`INK_MMA_NF` 1): 8 rows per simdgroup.
@@ -309,6 +313,11 @@ fn encode_rows_table(
     rows_per_tg: u32,
 ) -> Result<(), GpuError> {
     rows_ok(n_rows)?;
+    if n_rows as usize > INKLING2_GEMV_MAX_ROWS {
+        return Err(invalid(format!(
+            "bf16 gemv/gemm rows takes at most {INKLING2_GEMV_MAX_ROWS} rows per call, got {n_rows}"
+        )));
+    }
     if segments.is_empty() || segments.len() > 8 {
         return Err(invalid(format!(
             "bf16 gemv rows takes 1 to 8 segments, got {}",
@@ -411,12 +420,18 @@ pub fn encode_inkling2_short_conv_rows(
     weight: Buf<'_>,
     dynamic: Option<(Buf<'_>, u32, u32)>,
     out: Inkling2Rows<'_>,
-    snap: Buf<'_>,
+    snap: Option<Buf<'_>>,
     ch: u32,
     taps: u32,
     n_rows: u32,
 ) -> Result<(), GpuError> {
     rows_ok(n_rows)?;
+    // No snapshots (a prefill pass): the slot is bound to the tail and never
+    // written.
+    let (snap, has_snap) = match snap {
+        Some(b) => (b, 1u32),
+        None => (tail, 0u32),
+    };
     if ch == 0 || !(2..=8).contains(&taps) {
         return Err(invalid(format!(
             "short conv rows needs ch > 0 and taps in 2..=8, got ch {ch} taps {taps}"
@@ -454,6 +469,7 @@ pub fn encode_inkling2_short_conv_rows(
             (u32_bytes(&out.ring_base), 12),
             (u32_bytes(&out.ring), 13),
             (u32_bytes(&out.stride), 14),
+            (u32_bytes(&has_snap), 15),
         ],
         u64::from(ch).div_ceil(256),
         256,
