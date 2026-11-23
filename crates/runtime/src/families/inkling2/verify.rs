@@ -101,15 +101,23 @@ pub(crate) struct BatchScratch {
 /// a wider input falls back to one GEMV per row).
 const AFFINE_PACK_COLS: usize = 4 * 2304;
 
-/// The matrix-unit BF16 GEMM for prefill panels
-/// (`gpu::encode_inkling2_bf16_gemm_rows_mma`): OFF unless
-/// `TURBOSPARK_INKLING2_PREFILL_MMA=1`. Not bit-identical to the GEMV, so a
-/// prefill through it is KL-bounded against sequential decode (the
-/// `real_forward_inkling2_prefill` KL gate); a row's output still depends only
-/// on its own input, so it is independent of how the prompt is chunked.
+/// The matrix-unit BF16 GEMM for prefill passes
+/// (`gpu::encode_inkling2_bf16_gemm_rows_mma`): the DEFAULT since 2026-11-23;
+/// `TURBOSPARK_INKLING2_PREFILL_MMA=0` restores the bit-exact GEMV. Not
+/// bit-identical to the GEMV, so a prefill through it is KL-bounded against
+/// sequential decode (`tests/real_forward_inkling2_prefill_mma.rs`, bounded
+/// relative to the shipped streamed-vs-resident deviation); a row's output
+/// depends only on its own input, so the result does not depend on how the
+/// prompt is chunked. Decode and speculative verify never take it.
 fn prefill_mma_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("TURBOSPARK_INKLING2_PREFILL_MMA").as_deref() == Ok("1"))
+    *ON.get_or_init(|| {
+        let on = std::env::var("TURBOSPARK_INKLING2_PREFILL_MMA").as_deref() != Ok("0");
+        if on {
+            foundation::engaged!("inkling2_prefill_mma");
+        }
+        on
+    })
 }
 
 /// Batched affine GEMMs for an MLX-sourced install's dense projections in a
@@ -356,7 +364,6 @@ impl Ctx<'_> {
         // the same kernel however the prompt is chunked (a tail panel of 8 or
         // fewer rows included), or the result would depend on the chunking.
         if self.prefill && prefill_mma_enabled() && v.iter().all(|s| s.cols % 64 == 0) {
-            foundation::engaged!("inkling2_prefill_mma");
             return gpu::encode_inkling2_bf16_gemm_rows_mma(
                 self.context,
                 pass,

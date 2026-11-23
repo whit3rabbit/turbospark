@@ -732,7 +732,8 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   - Head trimming (bit-exact, default): a prefill panel runs the 201k-row
     unembed on its last row only when it is the final panel, and not at all
     otherwise (`HeadRows`). Prefill gate 125.8 tok/s, bit-identical.
-  - OPT-IN matrix-unit BF16 GEMM, `TURBOSPARK_INKLING2_PREFILL_MMA=1`
+  - Matrix-unit BF16 GEMM, DEFAULT since 2026-11-23 (was opt-in the same
+    day); `TURBOSPARK_INKLING2_PREFILL_MMA=0` restores the bit-exact GEMV
     (`inkling2_bf16_gemm_rows_mma`, tslab knob `inkling2_prefill_mma`,
     KL-bounded). FP32 `simdgroup_matrix` on register operands (the
     `docs/INT4_SMALL_M_MMA.md` lane layout), each 64-wide K block of the
@@ -769,14 +770,19 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   - Speed (development readings, host load about 3): CLI on the 3,088-token
     prompt 27.1 s without, 21.7 s with (about 20%, 114 to 142 tok/s), same
     generated text. The panel is now led by the grouped expert pair.
-  - Not default yet: the quality gates do not exercise it (they open
-    streamed, which prefills sequentially), and only the BF16 install has
-    BF16 dense weights. The mlx4 install's dense GEMVs are 4-bit affine and
-    still run one row at a time in a panel (`gemv_rows` falls back per row);
-    its chunked prefill is bit-exact too (prefill gate 40.0 to 123.5 tok/s,
-    32/32 decode rows). LAMQ installs refuse chunked prefill by name.
-    Correction to the 2026-11-22 entries: the mlx4 and LAMQ installs are on
-    this machine, under `~/.turbospark/models/text/`.
+  - Default (2026-11-23, the owner's decision on the speed result). What
+    stays true: a BF16 install's prefill is no longer bit-identical to
+    sequential decode by default, only KL-bounded; speculative verify and
+    decode are untouched and stay bit-exact against each other. The gates
+    now split by arm: `real_forward_inkling2_prefill.rs` sets `=0` and holds
+    the exact path to the bit, `real_forward_inkling2_prefill_mma.rs` holds
+    the default to the KL bound and to chunking independence. Not covered:
+    the quality gates open streamed, which prefills sequentially, so they do
+    not exercise either arm; the KL bound rests on one 1,100-token prompt.
+    The mlx4 install's dense GEMVs are 4-bit affine (the switch does not
+    touch them) and its chunked prefill stays bit-exact; LAMQ installs refuse
+    chunked prefill by name. Correction to the 2026-11-22 entries: the mlx4
+    and LAMQ installs are on this machine, under `~/.turbospark/models/text/`.
 - DONE (2026-11-23): batched affine projections for MLX-sourced installs in
   multi-row passes (`Ctx::gemv_rows`, `TURBOSPARK_INKLING2_BATCHED_AFFINE=0`
   restores one GEMV per row; tslab knob `inkling2_batched_affine`). The mlx4

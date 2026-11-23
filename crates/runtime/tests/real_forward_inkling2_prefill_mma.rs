@@ -1,5 +1,6 @@
-//! KL gate for the opt-in matrix-unit prefill GEMM
-//! (`TURBOSPARK_INKLING2_PREFILL_MMA=1`), on a real install.
+//! KL gate for the matrix-unit prefill GEMM, the default prefill path on a
+//! BF16 install (`TURBOSPARK_INKLING2_PREFILL_MMA=0` turns it off), on a real
+//! install.
 //!
 //! ```text
 //! INKLING2_INSTALL=~/models/inkling2-mini-gturbo cargo test --release \
@@ -7,7 +8,7 @@
 //! ```
 //!
 //! Its own test binary: the switch is read once per process, so this file
-//! turns it on before anything opens and holds exactly one test.
+//! sets it before anything opens and holds exactly one test.
 //!
 //! Reference: the prompt through `produce` one token at a time (the
 //! bit-exact path), then 64 greedy decode tokens. Candidate: the same prompt
@@ -90,6 +91,8 @@ fn p95(v: &[f64]) -> f64 {
 #[test]
 #[ignore = "needs INKLING2_INSTALL (a real Inkling 2 install, resident experts)"]
 fn mma_prefill_stays_within_the_kl_bound_and_is_chunking_independent() {
+    // The default; set explicitly so an inherited `=0` cannot turn this
+    // gate into a comparison of the exact path with itself.
     std::env::set_var("TURBOSPARK_INKLING2_PREFILL_MMA", "1");
     let install = PathBuf::from(std::env::var("INKLING2_INSTALL").expect("INKLING2_INSTALL"));
     let arch = model_io::inkling2_mini();

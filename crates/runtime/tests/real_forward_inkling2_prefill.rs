@@ -1,4 +1,5 @@
-//! Gate for the Inkling 2 chunked prefill, on a real install.
+//! Gate for the Inkling 2 chunked prefill's bit-exact arm
+//! (`TURBOSPARK_INKLING2_PREFILL_MMA=0`), on a real install.
 //!
 //! ```text
 //! INKLING2_INSTALL=~/models/inkling2-mini-gturbo cargo test --release \
@@ -35,6 +36,14 @@ fn same_bits(a: &[f16], b: &[f16]) -> bool {
 #[test]
 #[ignore = "needs INKLING2_INSTALL (a real Inkling 2 install, resident experts)"]
 fn chunked_prefill_matches_sequential_prefill_bit_for_bit() {
+    // The bit-exact arm: the default prefill takes the matrix-unit GEMM,
+    // which is KL-bounded rather than bit-exact
+    // (`real_forward_inkling2_prefill_mma.rs` gates it). This file holds the
+    // `TURBOSPARK_INKLING2_PREFILL_MMA=0` path to the bit, so it turns the
+    // switch off before anything opens (one test per binary: the switch is
+    // read once per process). On an install with no BF16 dense weights
+    // (mlx4) the switch changes nothing.
+    std::env::set_var("TURBOSPARK_INKLING2_PREFILL_MMA", "0");
     let install = PathBuf::from(std::env::var("INKLING2_INSTALL").expect("INKLING2_INSTALL"));
     let arch = model_io::inkling2_mini();
     let vocab = arch.vocab_size as usize;
