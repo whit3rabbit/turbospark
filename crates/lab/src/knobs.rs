@@ -718,6 +718,21 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[],
     },
     Knob {
+        // Inkling 2 rows from which an exact multi-row pass (speculative
+        // verify, the exact prefill arm) takes the expert-grouped MoE pair;
+        // default 2. Both pairs give the same bits, so this moves time only
+        // (`crates/gpu/tests/moe_inkling2_grouped_parity.rs`).
+        name: "inkling2_grouped_min_rows",
+        env: "TURBOSPARK_INKLING2_GROUPED_MIN_ROWS",
+        values: &["<unset>", "9"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[],
+    },
+    Knob {
         // LFM3's M-row chunk driver, default on for INT4 installs; `0` is the
         // per-token loop behind the same entry point. KL-bounded because the
         // default arm takes Steel and the rows attention: with

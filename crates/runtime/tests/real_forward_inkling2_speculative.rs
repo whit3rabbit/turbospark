@@ -59,6 +59,11 @@ fn greedy_speculation_commits_the_plain_greedy_stream() {
     let vocab = arch.vocab_size as usize;
     let tok = tokenizer::MfTokenizer::load_from_dir(&install).expect("tokenizer");
     let max_ctx = 4096u32;
+    // Proposals per round (1 to 7): `INKLING2_SPEC_DEPTH`, default 7.
+    let depth: usize = std::env::var("INKLING2_SPEC_DEPTH")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(7);
     let mut runner = RealForwardRunner::open_with_residency(
         &install,
         arch.clone(),
@@ -66,7 +71,7 @@ fn greedy_speculation_commits_the_plain_greedy_stream() {
         turbospark_runtime::ExpertCacheSlots::Auto,
         turbospark_runtime::DraftPolicies {
             mtp: turbospark_runtime::MtpDraftPolicy::Off,
-            dflash: turbospark_runtime::DflashDraftPolicy::Fixed(7),
+            dflash: turbospark_runtime::DflashDraftPolicy::Fixed(depth),
         },
         turbospark_runtime::SteeringPolicy::off(),
         1,
@@ -104,7 +109,7 @@ fn greedy_speculation_commits_the_plain_greedy_stream() {
             &config,
             max_ctx,
             vocab,
-            7,
+            depth,
             |_| {},
         )
         .expect("speculative");

@@ -882,6 +882,28 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   streamed one, so do not run it beside another resident-install test on a
   36 GB machine (one such overlap probably took this machine down on
   2026-11-23).
+- DONE (2026-11-23): speculative decoding now beats plain greedy on code
+  and long prompts (MLX 4-bit install, its DSpark drafter in `dspark/`).
+  - Speculative verify takes the expert-grouped pair (bit-identical to the
+    per-pair pair; `TURBOSPARK_INKLING2_GROUPED_MIN_ROWS`, default 2, 9
+    restores the per-pair pair below 9 rows): 8-row verify 83 to 74 ms per
+    round on short prompts, 95 to 93 ms on the 3,299-token one, the same
+    committed tokens. Verify gate 72/72 and 1,154/1,154 on both installs.
+  - Draft depth 3 instead of 7 (mtplx's finding holds here): verify 46 ms per
+    round (55 on the long prompt); per-position acceptance falls off fast
+    enough that 7 rows do not pay for themselves. Lossless on all three
+    prompts (`real_forward_inkling2_speculative.rs`, `INKLING2_SPEC_DEPTH`).
+
+    | prompt | plain | depth 7 (grouped) | depth 3 (grouped) |
+    |---|---|---|---|
+    | prose, 47 tokens | 47.8 | 32.6 | 44.5 |
+    | code, 50 tokens | 47.9 | 42.6 | 54.2 |
+    | long, 3,299 tokens | 34.7 | 34.4 | 42.8 |
+
+    tok/s, greedy, 256 new tokens, development readings. Recommended:
+    `--speculate 3` on an install with its drafter. Speculation stays off
+    under `auto` for this family (it loses about 7% on short prose and the
+    drafter costs 636 MB), so that remains the caller's choice.
 - DONE (2026-11-23): a quality gate on the default prefill
   (`bench/tests/inkling2_prefill_quality.rs`). The Phase 6 gates open
   streamed, which prefills one token at a time, so they never ran the

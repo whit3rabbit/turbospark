@@ -143,6 +143,21 @@ fn prefill_attn_enabled() -> bool {
     *ON.get_or_init(|| std::env::var("TURBOSPARK_INKLING2_PREFILL_ATTN").as_deref() != Ok("0"))
 }
 
+/// Rows from which an exact multi-row pass takes the expert-grouped pair
+/// instead of the per-pair `_idx_rows` pair: `TURBOSPARK_INKLING2_GROUPED_MIN_ROWS`
+/// (2 to 128), default 2, so speculative verify takes it too. Both pairs give
+/// the same bits, so this moves time only: 8-row verify 83 to 74 ms per round
+/// on the MLX 4-bit install, the same committed tokens (2026-11-23).
+fn grouped_min_rows() -> usize {
+    static ROWS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *ROWS.get_or_init(|| {
+        std::env::var("TURBOSPARK_INKLING2_GROUPED_MIN_ROWS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .map_or(2, |r| r.clamp(2, PANEL_MAX_ROWS))
+    })
+}
+
 /// Which rows of a multi-row pass get the output head.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HeadRows {
@@ -1455,7 +1470,7 @@ fn layer_moe_rows(
             n as u32,
         )
         .map_err(g)?;
-    } else if n > VERIFY_MAX_ROWS && grouped_moe_enabled() {
+    } else if n >= grouped_min_rows() && grouped_moe_enabled() {
         foundation::engaged!("inkling2_grouped_moe");
         gpu::encode_inkling2_moe_grouped_rows(
             c.context,
