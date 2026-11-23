@@ -67,6 +67,35 @@ kernel void inkling2_router_select_k8(
 // because it applies to exactly the clipped vector. `scale` is indexed
 // `scale[v * scale_stride + i]`: stride 0 shares one `[dim]` scale across the
 // vectors, stride `dim` gives each its own. One SIMD group per vector.
+//
+// The per-vector body is a helper so `inkling2_qkv_post` runs the SAME code:
+// the fused kernel is held bit-identical to this one, not merely close.
+static inline void ink2_l2_clip_vec(
+    device half*         row,
+    device const bfloat* s,
+    uint                 dim,
+    bool                 has_scale,
+    float                threshold,
+    float                post_scale,
+    uint                 lane
+) {
+    // Fast math may not reassociate here: the fused and separate kernels
+    // inline this body into different contexts, and reassociation orders
+    // operands by definition rank, which differs between them.
+    #pragma clang fp reassociate(off)
+    float ss = 0.0f;
+    for (uint i = lane; i < dim; i += 32u) {
+        const float y = has_scale ? float(row[i]) * float(s[i]) : float(row[i]);
+        ss = fma(y, y, ss);
+    }
+    const float norm = sqrt(simd_sum(ss));
+    const float f = clamp(threshold / (norm + 1e-6f), 0.0f, 1.0f) * post_scale;
+    for (uint i = lane; i < dim; i += 32u) {
+        const float y = has_scale ? float(row[i]) * float(s[i]) : float(row[i]);
+        row[i] = half(y * f);
+    }
+}
+
 kernel void inkling2_l2_clip(
     device half*          x            [[buffer(0)]],
     device const bfloat*  scale        [[buffer(1)]],
@@ -82,19 +111,50 @@ kernel void inkling2_l2_clip(
 ) {
     const uint v = tg_idx * 8u + sg_idx;
     if (v >= n_vec) return;
-    device half* row = x + ulong(v) * dim;
-    device const bfloat* s = scale + ulong(v) * scale_stride;
-    float ss = 0.0f;
-    for (uint i = lane; i < dim; i += 32u) {
-        const float y = has_scale != 0u ? float(row[i]) * float(s[i]) : float(row[i]);
-        ss = fma(y, y, ss);
+    ink2_l2_clip_vec(x + ulong(v) * dim, scale + ulong(v) * scale_stride, dim,
+                     has_scale != 0u, threshold, post_scale, lane);
+}
+
+// One decode-row channel of the causal short conv (the body of
+// `inkling2_short_conv_decode`, shared with `inkling2_qkv_post`). Advances
+// the channel's tail in place and returns the FP16 output.
+static inline half ink2_conv_channel(
+    device const half*    x,
+    device half*          tail,
+    device const bfloat*  weight,
+    device const half*    dyn,
+    uint                  c,
+    uint                  ch,
+    uint                  taps,
+    uint                  heads
+) {
+    // Fast math may not reassociate here: the fused and separate kernels
+    // inline this body into different contexts, and reassociation orders
+    // operands by definition rank, which differs between them.
+    #pragma clang fp reassociate(off)
+    const float xc = float(x[c]);
+    // hist(j) for j < taps-1 is tail row j, hist(taps-1) is the current row.
+    float acc = 0.0f;
+    for (uint j = 0; j + 1u < taps; ++j) {
+        acc = fma(float(weight[c * taps + j]), float(tail[j * ch + c]), acc);
     }
-    const float norm = sqrt(simd_sum(ss));
-    const float f = clamp(threshold / (norm + 1e-6f), 0.0f, 1.0f) * post_scale;
-    for (uint i = lane; i < dim; i += 32u) {
-        const float y = has_scale != 0u ? float(row[i]) * float(s[i]) : float(row[i]);
-        row[i] = half(y * f);
+    acc = fma(float(weight[c * taps + taps - 1u]), xc, acc);
+    float denom = float(taps + 1u);
+    if (heads != 0u) {
+        const uint head = c / (ch / heads);
+        device const half* d = dyn + head * taps;
+        acc = fma(float(d[0]), xc, acc);
+        for (uint lag = 1; lag < taps; ++lag) {
+            acc = fma(float(d[lag]), float(tail[(taps - 1u - lag) * ch + c]), acc);
+        }
+        denom = float(2u * taps + 1u);
     }
+    const half result = half((acc + xc) * rsqrt(denom));
+    for (uint j = 0; j + 2u < taps; ++j) {
+        tail[j * ch + c] = tail[(j + 1u) * ch + c];
+    }
+    if (taps > 1u) tail[(taps - 2u) * ch + c] = half(xc);
+    return result;
 }
 
 // --- Causal short convolution with residual, one decode row ---------------
@@ -119,28 +179,136 @@ kernel void inkling2_short_conv_decode(
     uint                  c       [[thread_position_in_grid]]
 ) {
     if (c >= ch) return;
-    const float xc = float(x[c]);
-    // hist(j) for j < taps-1 is tail row j, hist(taps-1) is the current row.
-    float acc = 0.0f;
-    for (uint j = 0; j + 1u < taps; ++j) {
-        acc = fma(float(weight[c * taps + j]), float(tail[j * ch + c]), acc);
+    out[c] = ink2_conv_channel(x, tail, weight, dyn, c, ch, taps, heads);
+}
+
+// --- Short conv fused with the residual step after it ------------------------
+//
+// The o-proj and MLP-output convs each feed the stream: `cur += conv` (mode 0,
+// the `residual_add_fp16` arithmetic on the FP16-rounded conv output), or at
+// the first layer of a residual block `save = cur; cur = conv` (mode 1, the
+// two copies that push the finished block and start a new one). After oMLX
+// a93fd7b's conv+residual kernels (Apache-2.0); this port's own code. Static
+// taps only. One thread per channel, as `inkling2_short_conv_decode`.
+kernel void inkling2_short_conv_residual(
+    device const half*    x       [[buffer(0)]],
+    device half*          tail    [[buffer(1)]],
+    device const bfloat*  weight  [[buffer(2)]],
+    device half*          cur     [[buffer(3)]],
+    device half*          save    [[buffer(4)]],
+    constant uint&        ch      [[buffer(5)]],
+    constant uint&        taps    [[buffer(6)]],
+    constant uint&        mode    [[buffer(7)]],
+    uint                  c       [[thread_position_in_grid]]
+) {
+    if (c >= ch) return;
+    // `dyn` is unread with heads 0; any half pointer satisfies the signature.
+    const half o = ink2_conv_channel(x, tail, weight, x, c, ch, taps, 0u);
+    if (mode == 0u) {
+        cur[c] = half(float(cur[c]) + float(o));
+    } else {
+        save[c] = cur[c];
+        cur[c] = o;
     }
-    acc = fma(float(weight[c * taps + taps - 1u]), xc, acc);
-    float denom = float(taps + 1u);
-    if (heads != 0u) {
-        const uint head = c / (ch / heads);
-        device const half* d = dyn + head * taps;
-        acc = fma(float(d[0]), xc, acc);
-        for (uint lag = 1; lag < taps; ++lag) {
-            acc = fma(float(d[lag]), float(tail[(taps - 1u - lag) * ch + c]), acc);
+}
+
+// --- Fused attention post-projection (decode) --------------------------------
+//
+// After the attention-input GEMVs, one dispatch does what six did: the K and V
+// short convs (into the slot's KV row), the K L2 clip, the V per-head unit RMS,
+// and the q and r L2 clips with tau. After oMLX `qkv_post` (jundot/omlx
+// 8dddad9a, Apache-2.0); the code here is this port's own and calls the same
+// helpers as the separate kernels, so its output is bit-identical to the
+// six-dispatch chain (`tests/inkling2_ops_parity.rs`).
+//
+// One SIMD group per vector: q heads, then r heads, then K heads, then V
+// heads. Each lane of a K/V group convolves exactly the channels it later
+// clips or normalizes (head * hd + lane + 32 j), so it reads back only its
+// own writes and needs no barrier. The V norm reproduces
+// `rmsnorm_no_scale_perhead`'s reduction tree (hd threads, one element each:
+// a simd_sum per 32-element group, then a simd_sum of the group partials)
+// inside one SIMD group. hd must be a multiple of 32 and at most 256 (host).
+struct Ink2QkvPostParams {
+    uint  heads;
+    uint  kv_heads;
+    uint  head_dim;
+    uint  d_rel;
+    uint  taps;
+    uint  dyn_heads;   // kv_heads on full-attention layers, 0 on SWA
+    float qk_clip;
+    float rel_clip;
+    float tau;
+    float rms_eps;
+};
+
+kernel void inkling2_qkv_post(
+    device half*          q        [[buffer(0)]],
+    device const bfloat*  q_scale  [[buffer(1)]],
+    device half*          r        [[buffer(2)]],
+    device const bfloat*  r_scale  [[buffer(3)]],
+    device const half*    k_pre    [[buffer(4)]],
+    device const half*    v_pre    [[buffer(5)]],
+    device half*          tail_k   [[buffer(6)]],
+    device half*          tail_v   [[buffer(7)]],
+    device const bfloat*  k_w      [[buffer(8)]],
+    device const bfloat*  v_w      [[buffer(9)]],
+    device const half*    dyn_k    [[buffer(10)]],
+    device const half*    dyn_v    [[buffer(11)]],
+    device half*          k_out    [[buffer(12)]],
+    device half*          v_out    [[buffer(13)]],
+    constant Ink2QkvPostParams& p  [[buffer(14)]],
+    uint                  tg_idx   [[threadgroup_position_in_grid]],
+    uint                  sg_idx   [[simdgroup_index_in_threadgroup]],
+    uint                  lane     [[thread_index_in_simdgroup]]
+) {
+    // Fast math may not reassociate here: the fused and separate kernels
+    // inline this body into different contexts, and reassociation orders
+    // operands by definition rank, which differs between them.
+    #pragma clang fp reassociate(off)
+    const uint v = tg_idx * 8u + sg_idx;
+    const uint H = p.heads, KVH = p.kv_heads, HD = p.head_dim;
+    const uint kvd = KVH * HD;
+    if (v < H) {
+        ink2_l2_clip_vec(q + ulong(v) * HD, q_scale + ulong(v) * HD, HD, true,
+                         p.qk_clip, p.tau, lane);
+        return;
+    }
+    if (v < 2u * H) {
+        const uint hh = v - H;
+        ink2_l2_clip_vec(r + ulong(hh) * p.d_rel, r_scale + ulong(hh) * p.d_rel, p.d_rel,
+                         true, p.rel_clip, p.tau, lane);
+        return;
+    }
+    if (v < 2u * H + KVH) {
+        const uint head = v - 2u * H;
+        for (uint i = lane; i < HD; i += 32u) {
+            const uint c = head * HD + i;
+            k_out[c] = ink2_conv_channel(k_pre, tail_k, k_w, dyn_k, c, kvd, p.taps, p.dyn_heads);
         }
-        denom = float(2u * taps + 1u);
+        ink2_l2_clip_vec(k_out + ulong(head) * HD, k_w, HD, false, p.qk_clip, 1.0f, lane);
+        return;
     }
-    out[c] = half((acc + xc) * rsqrt(denom));
-    for (uint j = 0; j + 2u < taps; ++j) {
-        tail[j * ch + c] = tail[(j + 1u) * ch + c];
+    if (v < 2u * H + 2u * KVH) {
+        const uint head = v - 2u * H - KVH;
+        device half* row = v_out + ulong(head) * HD;
+        const uint groups = HD / 32u;
+        float xs[8];
+        float partial = 0.0f;
+        for (uint g = 0; g < groups; ++g) {
+            const uint c = head * HD + g * 32u + lane;
+            const half o = ink2_conv_channel(v_pre, tail_v, v_w, dyn_v, c, kvd, p.taps, p.dyn_heads);
+            row[g * 32u + lane] = o;
+            xs[g] = float(o);
+            // rms_block_inv: acc = fma(v, v, 0) per thread, simd_sum per group.
+            const float sg = simd_sum(fma(xs[g], xs[g], 0.0f));
+            if (lane == g) partial = sg;
+        }
+        const float total = simd_sum(lane < groups ? partial : 0.0f);
+        const float inv = rsqrt(total / float(HD) + p.rms_eps);
+        for (uint g = 0; g < groups; ++g) {
+            row[g * 32u + lane] = half(xs[g] * inv);
+        }
     }
-    if (taps > 1u) tail[(taps - 2u) * ch + c] = half(xc);
 }
 
 // --- Block attention residual ("depth attention") ---------------------------
@@ -152,24 +320,36 @@ kernel void inkling2_short_conv_decode(
 // rinv_s * state_s, i.e. the weighted sum of the NORMED states. One pass over
 // the states computes both the sum of squares and the dot product.
 constant constexpr uint kInkMaxDepthStates = 16;
+// Elements per thread the fused mix+norm keeps in registers (h <= 256 * this).
+constant constexpr uint kInkMixNormMaxPerThread = 16;
 
-kernel void inkling2_depth_mix(
-    device const half*    states   [[buffer(0)]],
-    device const float*   queries  [[buffer(1)]],
-    device half*          out      [[buffer(2)]],
-    constant uint&        n_states [[buffer(3)]],
-    constant uint&        h        [[buffer(4)]],
-    uint                  q_idx    [[threadgroup_position_in_grid]],
-    uint                  tid      [[thread_position_in_threadgroup]],
-    uint                  sg_idx   [[simdgroup_index_in_threadgroup]],
-    uint                  lane     [[thread_index_in_simdgroup]]
+// State row `s` of the mix: `states` rows, except that the LAST state may
+// live elsewhere (`cur`), so the fused kernel reads the stream in place
+// instead of copying it into the state array first.
+static inline device const half* ink2_state_row(
+    device const half* states, device const half* cur, uint s, uint n_states, uint h
 ) {
-    threadgroup float part_ss[kInkMaxDepthStates][8];
-    threadgroup float part_dq[kInkMaxDepthStates][8];
-    threadgroup float w_s[kInkMaxDepthStates];
-    device const float* q = queries + ulong(q_idx) * h;
+    return s + 1u == n_states ? cur : states + ulong(s) * h;
+}
+
+// The mix weights `w_s[s]` for one query (the body of `inkling2_depth_mix`,
+// shared with `inkling2_depth_mix_norm`). 256 threads; returns after the
+// barrier that publishes `w_s`.
+static inline void ink2_depth_mix_weights(
+    device const half*  states,
+    device const half*  cur,
+    device const float* q,
+    uint                n_states,
+    uint                h,
+    uint                tid,
+    uint                sg_idx,
+    uint                lane,
+    threadgroup float (*part_ss)[8],
+    threadgroup float (*part_dq)[8],
+    threadgroup float*  w_s
+) {
     for (uint s = 0; s < n_states; ++s) {
-        device const half* st = states + ulong(s) * h;
+        device const half* st = ink2_state_row(states, cur, s, n_states, h);
         float ss = 0.0f;
         float dq = 0.0f;
         for (uint i = tid; i < h; i += 256u) {
@@ -210,13 +390,110 @@ kernel void inkling2_depth_mix(
         for (uint s = 0; s < n_states; ++s) w_s[s] = sc[s] / z * part_ss[s][0];
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
+}
+
+static inline half ink2_depth_mix_out(
+    device const half* states, device const half* cur, threadgroup const float* w_s,
+    uint n_states, uint h, uint i
+) {
+    float acc = 0.0f;
+    for (uint s = 0; s < n_states; ++s) {
+        acc = fma(w_s[s], float(ink2_state_row(states, cur, s, n_states, h)[i]), acc);
+    }
+    return half(acc);
+}
+
+kernel void inkling2_depth_mix(
+    device const half*    states   [[buffer(0)]],
+    device const float*   queries  [[buffer(1)]],
+    device half*          out      [[buffer(2)]],
+    constant uint&        n_states [[buffer(3)]],
+    constant uint&        h        [[buffer(4)]],
+    uint                  q_idx    [[threadgroup_position_in_grid]],
+    uint                  tid      [[thread_position_in_threadgroup]],
+    uint                  sg_idx   [[simdgroup_index_in_threadgroup]],
+    uint                  lane     [[thread_index_in_simdgroup]]
+) {
+    threadgroup float part_ss[kInkMaxDepthStates][8];
+    threadgroup float part_dq[kInkMaxDepthStates][8];
+    threadgroup float w_s[kInkMaxDepthStates];
+    device const half* cur = states + ulong(n_states - 1u) * h;
+    ink2_depth_mix_weights(states, cur, queries + ulong(q_idx) * h, n_states, h, tid, sg_idx,
+                           lane, part_ss, part_dq, w_s);
     device half* o = out + ulong(q_idx) * h;
     for (uint i = tid; i < h; i += 256u) {
-        float acc = 0.0f;
-        for (uint s = 0; s < n_states; ++s) {
-            acc = fma(w_s[s], float(states[ulong(s) * h + i]), acc);
-        }
-        o[i] = half(acc);
+        o[i] = ink2_depth_mix_out(states, cur, w_s, n_states, h, i);
+    }
+}
+
+// --- Depth mix fused with the RMS norm that follows it ----------------------
+//
+// After oMLX `attn_res_fused` (jundot/omlx 8dddad9a, Apache-2.0); this port's
+// own code. The mix of `states[0..n_states-1]` plus `cur` (the LAST state,
+// read in place: no copy into the state array), then for query j the BF16
+// RMS norm with weight `w_j` (j < 3: the full layer's q/k/v input norms, or
+// one norm). The norm repeats `rmsnorm_bf16w`'s 256-thread reduction tree on
+// the FP16-rounded mix output (each thread owns the same elements in both),
+// so `norm_out` is bit-identical to `inkling2_depth_mix` then
+// `rmsnorm_bf16w`. `mix_out` is written only when `write_mix` is set.
+kernel void inkling2_depth_mix_norm(
+    device const half*    states    [[buffer(0)]],
+    device const half*    cur       [[buffer(1)]],
+    device const float*   queries   [[buffer(2)]],
+    device half*          mix_out   [[buffer(3)]],
+    device const bfloat*  w0        [[buffer(4)]],
+    device const bfloat*  w1        [[buffer(5)]],
+    device const bfloat*  w2        [[buffer(6)]],
+    device half*          norm_out  [[buffer(7)]],
+    constant uint&        n_states  [[buffer(8)]],
+    constant uint&        h         [[buffer(9)]],
+    constant float&       eps       [[buffer(10)]],
+    constant uint&        write_mix [[buffer(11)]],
+    uint                  q_idx     [[threadgroup_position_in_grid]],
+    uint                  tid       [[thread_position_in_threadgroup]],
+    uint                  sg_idx    [[simdgroup_index_in_threadgroup]],
+    uint                  lane      [[thread_index_in_simdgroup]]
+) {
+    // Fast math may not reassociate here: the fused and separate kernels
+    // inline this body into different contexts, and reassociation orders
+    // operands by definition rank, which differs between them.
+    #pragma clang fp reassociate(off)
+    threadgroup float part_ss[kInkMaxDepthStates][8];
+    threadgroup float part_dq[kInkMaxDepthStates][8];
+    threadgroup float w_s[kInkMaxDepthStates];
+    threadgroup float partial[8];
+    ink2_depth_mix_weights(states, cur, queries + ulong(q_idx) * h, n_states, h, tid, sg_idx,
+                           lane, part_ss, part_dq, w_s);
+    // h <= 256 * kInkMixNormMaxPerThread (host).
+    half o[kInkMixNormMaxPerThread];
+    float acc = 0.0f;
+    uint k = 0;
+    for (uint i = tid; i < h; i += 256u, ++k) {
+        o[k] = ink2_depth_mix_out(states, cur, w_s, n_states, h, i);
+        const float v = float(o[k]);
+        acc = fma(v, v, acc);
+    }
+    if (write_mix != 0u) {
+        device half* mo = mix_out + ulong(q_idx) * h;
+        k = 0;
+        for (uint i = tid; i < h; i += 256u, ++k) mo[i] = o[k];
+    }
+    // rms_block_inv, 256 threads = 8 SIMD groups.
+    acc = simd_sum(acc);
+    if (lane == 0u) partial[sg_idx] = acc;
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (sg_idx == 0u) {
+        float v = (lane < 8u) ? partial[lane] : 0.0f;
+        v = simd_sum(v);
+        if (lane == 0u) partial[0] = rsqrt(v / float(h) + eps);
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    const float inv = partial[0];
+    device const bfloat* w = q_idx == 0u ? w0 : (q_idx == 1u ? w1 : w2);
+    device half* no = norm_out + ulong(q_idx) * h;
+    k = 0;
+    for (uint i = tid; i < h; i += 256u, ++k) {
+        no[i] = half(float(o[k]) * inv * float(w[i]));
     }
 }
 

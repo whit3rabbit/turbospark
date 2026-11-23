@@ -96,6 +96,9 @@ impl RealForwardRunner {
             // INT4-affine installs only, through the same refusal the
             // driver itself checks.
             || (self.real_lfm3.is_some() && self.lfm3_chunked_refusal().is_none())
+            // Resident, native-expert installs only (the verify path's own
+            // limits), through the refusal the driver itself checks.
+            || (self.real_inkling2.is_some() && self.inkling2_chunked_refusal().is_none())
     }
 
     /// Rows this model's output head writes, i.e. the length every `produce`

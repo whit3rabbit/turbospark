@@ -848,10 +848,12 @@ impl RealForwardRunner {
             );
         }
         if self.real_inkling2.is_some() {
-            return Err(
-                "inkling2_loop does not support chunked prefill; the sequential path serves it"
-                    .to_string(),
-            );
+            // Resident, native-expert installs only; the driver refuses any
+            // other by name (`families/inkling2/prefill.rs`).
+            return gpu::autorelease_pool(|| {
+                self.prefill_chunk_real_inkling2(tokens, start_position, logits)
+            })
+            .map_err(|e| e.to_string());
         }
         if self.real_flint.is_some() {
             // Always a chunk driver; the layer-batched one is the default and

@@ -57,6 +57,16 @@ threadgroup shape, or normalization convention on the device.
   speculation leave sequential decode on the real 27B. Random fixture data
   rarely reaches a rounding boundary, so pin such a pair at the real width
   with a full, nonzero state (`tests/gdn_conv_order_parity.rs`).
+- Every bundled library builds with `-ffast-math`, which lets LLVM
+  reassociate a multiply chain by operand rank (definition order). The same
+  helper inlined into two kernels can therefore associate `x * inv * w`
+  differently and differ by an ulp. A fused kernel held bit-identical to the
+  separate ones needs `#pragma clang fp reassociate(off)` in the shared helper
+  or its own body, AND a check that the pragma left the separate kernels'
+  bits unchanged: adding it to `inkling2_depth_mix`'s helpers moved them.
+  Pin such pairs with many seeds and wide magnitudes
+  (`tests/inkling2_fused_parity.rs`); one fixture passed while real decode
+  diverged at position 3.
 - `shaders/dequant_int4_steel.metal` is generated from pinned MLX sources by
   `scripts/vendor_mlx_steel_qmm.py`. Change the script and regenerate, never
   the shader. Steel is not bit-exact against the scalar INT4 kernels, so it

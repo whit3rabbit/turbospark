@@ -651,9 +651,70 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   working set (yes on a 36 GB M4 Max, no below about 30 GB of working set),
   so `auto` opens of this family are resident there and no longer bit-exact
   with the host-routed path. A quality gate at its exactness is still owed.
+- DONE (2026-11-22): fused decode kernels, oMLX 8dddad9a / a93fd7b ported
+  as techniques (this port's own Metal, Apache-2.0 credit in the shader
+  headers). `inkling2_qkv_post` (K/V convs, three L2 clips, V unit RMS: six
+  dispatches to one), `inkling2_depth_mix_norm` (the mix plus its one or
+  three BF16 norms, reading `cur` in place so the copy goes too) and
+  `inkling2_short_conv_residual` (the o-proj and MLP-output convs with the
+  residual add or the block-start copies). On by default;
+  `TURBOSPARK_INKLING2_FUSED=0` restores the separate kernels. Exactness:
+  `gpu/tests/inkling2_fused_parity.rs` holds each fused kernel bit-identical
+  to its chain over 24 seeds, zero and full conv tails and per-head
+  magnitudes 0.05x to 30x (a tau, eps and K-scale mutant each fail; a V
+  reduction-tree mutant survives, the two trees round alike on that data);
+  the BF16 install's logits are bit-identical over 1,100 positions across
+  the SWA ring wrap (stride 64 dump, `inkling2_logits`), and
+  `real_forward_inkling2_verify` stays 56/56 and 1,025/1,025 bit-identical.
+  The fast-math reassociation trap this hit is in `crates/gpu/AGENTS.md`.
+  Speed (M4 Max, resident, BF16 install, one binary, 4 interleaved rounds of
+  64 tokens, host load about 2.5; trace medians, a development reading):
+  1,897 to 1,554 dispatches per token, GPU 26.3 to 25.75 ms per token,
+  36.7 to 37.8 tok/s. That is about 2 us per removed dispatch, so this
+  engine is not launch-bound the way oMLX's MLX graph is (their 2,070 to
+  1,150 launches bought 8 to 21%): fusing every remaining small op would buy
+  at most about 10%. The census (`TURBOSPARK_DISPATCH_PROFILE=1`, ranking
+  only) puts the BF16 GEMVs at 40% and the expert pair at 25% of GPU time,
+  and the F32 router GEMV at 3.9% for about 1.2 MB per visit, so those, and
+  batched prefill, are the larger levers. Not run: the speculative gate (no
+  DSpark drafter on this machine), the quality gates, the mlx4 and LAMQ
+  installs (not on this machine; the fused kernels do not touch their
+  GEMVs).
 - The router round trip: 48 GPU-to-CPU syncs per token. Every family pays one
   per MoE layer today. The routed pipeline overlaps the next layer; measure
   before designing past it.
+- PARTLY DONE (2026-11-22): chunked prefill, step 1
+  (`families/inkling2/prefill.rs`). The prompt runs through the multi-row
+  verify forward in 8-row micro-batches instead of one `produce` per token,
+  resident residency with native experts only (`inkling2_chunked_refusal`
+  answers `supports_chunked_prefill` and the driver's backstop);
+  `TURBOSPARK_INKLING2_CHUNKED_PREFILL=0` restores the per-token loop. It
+  inherits the verify gate's exactness: `tests/real_forward_inkling2_prefill.rs`
+  prefills 1,100 tokens in uneven chunks (13, 512, 300, 275) across the ring
+  wrap and gets the last prompt row and 32 decode rows after it bit-identical
+  to the sequential reference. Development readings (M4 Max, BF16 install,
+  busy host): that test 30.7 to 94.6 tok/s; the CLI on a 3,088-token prompt
+  93.7 s to 44.8 s (33 to 69 tok/s), same output text. Dispatch profile of one
+  8-row pass (ranking only): the expert pair 55%, BF16 row GEMVs 24%,
+  attention 7.5%. The `_idx_rows` pair reads each (row, expert) pair's
+  weight rows independently, so step 2 is an expert-grouped pair (each
+  distinct expert read once per chunk, partials reduced in slot order to
+  keep the bits), then a row cap above 8 and a BF16 GEMM for the dense
+  projections, then a flash banded attention for long chunks. The grouped
+  pair also serves speculative verify (mtplx's distinct-expert dedupe).
+- RESEARCH (2026-11-22): mtplx (github.com/youssofal/mtplx, Apache-2.0, MLX)
+  runs Inkling 2 Mini with the same bundled DSpark drafter. Our port already
+  has its Markov head (`dspark_markov_*`), so the draft logic matches.
+  Portable runtime ideas, untested here: (1) fixed draft depth 3 by default
+  (their v2.13.2; a load-time cost table under-priced deep rounds, k=4 cost
+  +33.8% served against +14% predicted), and any adaptive depth may read
+  only committed history; (2) the distinct-expert dedupe above; (3)
+  prompt-copy n-gram drafting (n 6 to 10, up to 24 tokens, verify widths 9 to
+  25, probation and backoff), which needs a verify above 8 rows; (4) commit
+  kept rows from deltas instead of write-then-rollback; (5) a draft
+  vocabulary subset (top 32,768 tokens) for the drafter head; (6) the round
+  as one command buffer with GPU-side acceptance. Their published Inkling
+  numbers are M5 Max only.
 - Loop-aware stats and prefetch: `RouterHistogram` merges the three passes,
   and the pilot probe and Qwen prefetcher assume layer `L + 1` follows `L`
   (false at the 17-to-6 seam). Key them by application, or refuse them.

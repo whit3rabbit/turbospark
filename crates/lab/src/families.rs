@@ -206,8 +206,8 @@ pub fn facts(f: ModelFamily) -> FamilyFacts {
         },
         Inkling2Loop => FamilyFacts {
             flow: "inkling2",
-            chunked_prefill: Support::No(
-                "prefill is the decode path one token at a time; chunked prefill is refused by name"
+            chunked_prefill: Support::Conditional(
+                "resident residency with native NVFP4/MXFP8 experts only (8-row verify micro-batches); streamed, GGUF and LAMQ installs refuse it by name, use --chunk off there"
                     .into(),
             ),
             drafters: &[],

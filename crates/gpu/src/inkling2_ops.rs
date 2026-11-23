@@ -175,6 +175,170 @@ pub fn encode_inkling2_short_conv_decode(
     Ok(())
 }
 
+/// What [`encode_inkling2_short_conv_residual`] does with the conv output.
+#[derive(Clone, Copy, Debug)]
+pub enum Inkling2ConvResidual<'a> {
+    /// `cur += conv` (the `residual_add_fp16` arithmetic).
+    Add,
+    /// `save = cur; cur = conv`: the first layer of a residual block pushes
+    /// the finished stream into the state array and starts a new one.
+    StartBlock { save: (&'a metal::Buffer, u64) },
+}
+
+/// A static-tap decode short conv fused with the residual step after it.
+/// Bit-identical to [`encode_inkling2_short_conv_decode`] then
+/// `encode_residual_add` (or then the two copies), which
+/// `tests/inkling2_fused_parity.rs` holds.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_inkling2_short_conv_residual(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    x: (&metal::Buffer, u64),
+    tail: (&metal::Buffer, u64),
+    weight: (&metal::Buffer, u64),
+    cur: (&metal::Buffer, u64),
+    step: Inkling2ConvResidual<'_>,
+    ch: u32,
+    taps: u32,
+) -> Result<(), GpuError> {
+    if ch == 0 || taps < 2 {
+        return Err(invalid(format!(
+            "short conv needs ch > 0 and taps >= 2, got ch {ch} taps {taps}"
+        )));
+    }
+    let (save, mode) = match step {
+        Inkling2ConvResidual::Add => (cur, 0u32),
+        Inkling2ConvResidual::StartBlock { save } => (save, 1u32),
+    };
+    let p = pipeline(context, "inkling2_short_conv_residual")?;
+    pass.encode_threadgroups(
+        &p,
+        &[
+            (x.0, 0, x.1),
+            (tail.0, 1, tail.1),
+            (weight.0, 2, weight.1),
+            (cur.0, 3, cur.1),
+            (save.0, 4, save.1),
+        ],
+        &[
+            (u32_bytes(&ch), 5),
+            (u32_bytes(&taps), 6),
+            (u32_bytes(&mode), 7),
+        ],
+        u64::from(ch).div_ceil(256),
+        256,
+    );
+    Ok(())
+}
+
+/// Shapes and scalars for [`encode_inkling2_qkv_post`]. `dyn_heads` is
+/// `kv_heads` on a full-attention layer (dynamic conv taps) and 0 on SWA.
+#[derive(Clone, Copy, Debug)]
+pub struct Inkling2QkvPostShape {
+    pub heads: u32,
+    pub kv_heads: u32,
+    pub head_dim: u32,
+    pub d_rel: u32,
+    pub taps: u32,
+    pub dyn_heads: u32,
+    pub qk_clip: f32,
+    pub rel_clip: f32,
+    pub tau: f32,
+    pub rms_eps: f32,
+}
+
+/// Buffers for [`encode_inkling2_qkv_post`]. `k_out` / `v_out` are the slot's
+/// KV row; `dyn_k` / `dyn_v` are read only when `dyn_heads > 0`.
+pub struct Inkling2QkvPostBuffers<'a> {
+    pub q: (&'a metal::Buffer, u64),
+    pub q_scale: (&'a metal::Buffer, u64),
+    pub r: (&'a metal::Buffer, u64),
+    pub r_scale: (&'a metal::Buffer, u64),
+    pub k_pre: (&'a metal::Buffer, u64),
+    pub v_pre: (&'a metal::Buffer, u64),
+    pub tail_k: (&'a metal::Buffer, u64),
+    pub tail_v: (&'a metal::Buffer, u64),
+    pub k_w: (&'a metal::Buffer, u64),
+    pub v_w: (&'a metal::Buffer, u64),
+    pub dyn_k: (&'a metal::Buffer, u64),
+    pub dyn_v: (&'a metal::Buffer, u64),
+    pub k_out: (&'a metal::Buffer, u64),
+    pub v_out: (&'a metal::Buffer, u64),
+}
+
+/// One dispatch for the attention post-projection of a decode row: K and V
+/// short convs into the KV row, K L2 clip, V per-head unit RMS, and the q and
+/// r L2 clips with `tau`. Bit-identical to the chain of
+/// [`encode_inkling2_short_conv_decode`] x2, [`encode_inkling2_l2_clip`] x3
+/// and `encode_rms_norm_no_scale_perhead` (same helpers, same reduction
+/// tree), which `tests/inkling2_ops_parity.rs` holds.
+pub fn encode_inkling2_qkv_post(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    b: &Inkling2QkvPostBuffers<'_>,
+    s: Inkling2QkvPostShape,
+) -> Result<(), GpuError> {
+    // The V norm keeps `rmsnorm_no_scale_perhead`'s tree only for hd threads
+    // in whole SIMD groups of one element each (hd <= 256, the group cap).
+    if s.head_dim == 0 || s.head_dim % 32 != 0 || s.head_dim > 256 {
+        return Err(invalid(format!(
+            "qkv_post needs head_dim a multiple of 32 up to 256, got {}",
+            s.head_dim
+        )));
+    }
+    if s.heads == 0 || s.kv_heads == 0 || s.d_rel == 0 || s.d_rel > 32 * 8 || s.taps < 2 {
+        return Err(invalid(format!(
+            "qkv_post shape out of contract: heads {} kv_heads {} d_rel {} taps {}",
+            s.heads, s.kv_heads, s.d_rel, s.taps
+        )));
+    }
+    if s.dyn_heads != 0 && s.dyn_heads != s.kv_heads {
+        return Err(invalid(format!(
+            "qkv_post dyn_heads must be 0 or kv_heads ({}), got {}",
+            s.kv_heads, s.dyn_heads
+        )));
+    }
+    let mut params = Vec::with_capacity(40);
+    for v in [
+        s.heads,
+        s.kv_heads,
+        s.head_dim,
+        s.d_rel,
+        s.taps,
+        s.dyn_heads,
+    ] {
+        params.extend_from_slice(&v.to_le_bytes());
+    }
+    for v in [s.qk_clip, s.rel_clip, s.tau, s.rms_eps] {
+        params.extend_from_slice(&v.to_le_bytes());
+    }
+    let groups = 2 * u64::from(s.heads) + 2 * u64::from(s.kv_heads);
+    let p = pipeline(context, "inkling2_qkv_post")?;
+    pass.encode_threadgroups(
+        &p,
+        &[
+            (b.q.0, 0, b.q.1),
+            (b.q_scale.0, 1, b.q_scale.1),
+            (b.r.0, 2, b.r.1),
+            (b.r_scale.0, 3, b.r_scale.1),
+            (b.k_pre.0, 4, b.k_pre.1),
+            (b.v_pre.0, 5, b.v_pre.1),
+            (b.tail_k.0, 6, b.tail_k.1),
+            (b.tail_v.0, 7, b.tail_v.1),
+            (b.k_w.0, 8, b.k_w.1),
+            (b.v_w.0, 9, b.v_w.1),
+            (b.dyn_k.0, 10, b.dyn_k.1),
+            (b.dyn_v.0, 11, b.dyn_v.1),
+            (b.k_out.0, 12, b.k_out.1),
+            (b.v_out.0, 13, b.v_out.1),
+        ],
+        &[(&params, 14)],
+        groups.div_ceil(8),
+        256,
+    );
+    Ok(())
+}
+
 /// Depth mix: for each of `n_q` F32 queries `[n_q, h]`, the softmax-weighted
 /// sum of the RMS-normed FP16 `states[n_states, h]` (current state last).
 #[allow(clippy::too_many_arguments)]
@@ -204,6 +368,75 @@ pub fn encode_inkling2_depth_mix(
         ],
         &[(u32_bytes(&n_states), 3), (u32_bytes(&h), 4)],
         u64::from(n_q),
+        256,
+    );
+    Ok(())
+}
+
+/// Elements per row the fused mix+norm holds per thread; rows up to
+/// `256 * 16` wide.
+pub const INKLING2_MIX_NORM_MAX_H: u32 = 256 * 16;
+
+/// Depth mix fused with the BF16 RMS norm after it: one dispatch for
+/// [`encode_inkling2_depth_mix`] (with `cur` read in place as the last state,
+/// so no copy into `states`) followed by one `encode_rms_norm_bf16w` per
+/// query, query `j` normed with `norm_weights[j]`. `norm_out` is `[n_q, h]`;
+/// the un-normed mix goes to `mix_out` only when one is given. Bit-identical
+/// to the separate kernels (`tests/inkling2_fused_parity.rs`); `h` must be at
+/// least 256 so the norm's 256-thread tree is the one `rmsnorm_bf16w` uses.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_inkling2_depth_mix_norm(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    states: (&metal::Buffer, u64),
+    cur: (&metal::Buffer, u64),
+    queries: (&metal::Buffer, u64),
+    mix_out: Option<(&metal::Buffer, u64)>,
+    norm_weights: &[(&metal::Buffer, u64)],
+    norm_out: (&metal::Buffer, u64),
+    n_states: u32,
+    h: u32,
+    eps: f32,
+) -> Result<(), GpuError> {
+    let n = n_states as usize;
+    let n_q = norm_weights.len();
+    if n == 0 || n > INKLING2_DEPTH_MAX_STATES || !(1..=3).contains(&n_q) {
+        return Err(invalid(format!(
+            "depth mix+norm needs 1..={INKLING2_DEPTH_MAX_STATES} states and 1..=3 norms; got {n}, {n_q}"
+        )));
+    }
+    if !(256..=INKLING2_MIX_NORM_MAX_H).contains(&h) {
+        return Err(invalid(format!(
+            "depth mix+norm needs 256 <= h <= {INKLING2_MIX_NORM_MAX_H}, got {h}"
+        )));
+    }
+    let w = |j: usize| norm_weights[j.min(n_q - 1)];
+    let (w0, w1, w2) = (w(0), w(1), w(2));
+    let (mo, write) = match mix_out {
+        Some(m) => (m, 1u32),
+        // Unwritten when write_mix is 0; bound so the table is complete.
+        None => (norm_out, 0u32),
+    };
+    let p = pipeline(context, "inkling2_depth_mix_norm")?;
+    pass.encode_threadgroups(
+        &p,
+        &[
+            (states.0, 0, states.1),
+            (cur.0, 1, cur.1),
+            (queries.0, 2, queries.1),
+            (mo.0, 3, mo.1),
+            (w0.0, 4, w0.1),
+            (w1.0, 5, w1.1),
+            (w2.0, 6, w2.1),
+            (norm_out.0, 7, norm_out.1),
+        ],
+        &[
+            (u32_bytes(&n_states), 8),
+            (u32_bytes(&h), 9),
+            (&f32_bytes(&eps), 10),
+            (u32_bytes(&write), 11),
+        ],
+        n_q as u64,
         256,
     );
     Ok(())

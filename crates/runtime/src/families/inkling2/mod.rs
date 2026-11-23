@@ -23,6 +23,7 @@
 
 mod dspark;
 mod lamq;
+mod prefill;
 mod state;
 mod verify;
 
@@ -139,6 +140,48 @@ impl Ctx<'_> {
         let w = view(self.weights, self.index, weight)?;
         gpu::encode_rms_norm_bf16w(self.context, pass, x, w, out, self.h as u32, self.eps)
             .map_err(RealForwardError::Gpu)
+    }
+
+    /// [`Self::mix`] then one [`Self::norm`] per query, in one dispatch
+    /// (`gpu::encode_inkling2_depth_mix_norm`): `cur` is read in place, so
+    /// state row `n_blocks` is not written (it is scratch: every reader
+    /// copies `cur` there first). Query `j` is normed with `weights[j]` into
+    /// row `j` of `out`. Bit-identical to the separate kernels.
+    #[allow(clippy::too_many_arguments)]
+    fn mix_norm(
+        &mut self,
+        pass: &gpu::PassEncoder,
+        states: &gpu::MetalBuffer,
+        n_blocks: usize,
+        cur: Buf<'_>,
+        query: Buf<'_>,
+        weights: &[&str],
+        out: Buf<'_>,
+    ) -> Result<(), RealForwardError> {
+        if n_blocks + 1 > MAX_STATES {
+            return Err(RealForwardError::Unsupported(format!(
+                "depth mix over {} states exceeds {MAX_STATES}",
+                n_blocks + 1
+            )));
+        }
+        let ws = weights
+            .iter()
+            .map(|w| view(self.weights, self.index, w))
+            .collect::<Result<Vec<_>, _>>()?;
+        gpu::encode_inkling2_depth_mix_norm(
+            self.context,
+            pass,
+            (states, 0),
+            cur,
+            query,
+            None,
+            &ws,
+            out,
+            (n_blocks + 1) as u32,
+            self.h as u32,
+            self.eps,
+        )
+        .map_err(RealForwardError::Gpu)
     }
 
     fn copy(
@@ -493,8 +536,20 @@ impl RealForwardRunner {
 
         if !self.skip_head {
             let q = view(c.weights, c.index, "model.llm.attn_res.output_query")?;
-            c.mix(&pass, &st.states, n_blocks, (&st.cur, 0), q, 1, (&st.m, 0))?;
-            c.norm(&pass, (&st.m, 0), "model.llm.norm.weight", (&st.mn, 0))?;
+            if fused_enabled() {
+                c.mix_norm(
+                    &pass,
+                    &st.states,
+                    n_blocks,
+                    (&st.cur, 0),
+                    q,
+                    &["model.llm.norm.weight"],
+                    (&st.mn, 0),
+                )?;
+            } else {
+                c.mix(&pass, &st.states, n_blocks, (&st.cur, 0), q, 1, (&st.m, 0))?;
+                c.norm(&pass, (&st.m, 0), "model.llm.norm.weight", (&st.mn, 0))?;
+            }
             if let Some(t) = st.taps.as_ref() {
                 c.copy(
                     &pass,
@@ -624,66 +679,96 @@ fn layer_attention(
         (b.clone(), (j * h * 2) as u64)
     };
 
-    // Attention inputs: the depth mix (1 query on SWA, 3 on full layers), or
-    // the stream itself on layer 0.
-    let n_q = if full { 3 } else { 1 };
-    let sources: [(gpu::MetalBuffer, u64); 3] = if ip > 0 {
+    // Fused: the mix and its norms in one dispatch, when no controller sits
+    // between them (layer 0 has no mix; message visits run the controllers
+    // on the un-normed mix).
+    let normed: [(gpu::MetalBuffer, u64); 3] = if fused_enabled() && ip > 0 && !msgs {
         let q = view(
             c.weights,
             c.index,
             &format!("model.llm.attn_res.attn_queries.{}", ip - 1),
         )?;
-        c.mix(
+        let names: Vec<String> = if full {
+            ["q", "k", "v"]
+                .iter()
+                .map(|w| name(ip, &format!("{w}_input_norm.weight")))
+                .collect()
+        } else {
+            vec![name(ip, "attn_norm.weight")]
+        };
+        let ws: Vec<&str> = names.iter().map(String::as_str).collect();
+        c.mix_norm(
             pass,
             &st.states,
             *n_blocks,
             (&st.cur, 0),
             q,
-            n_q,
-            (&st.mixed, 0),
-        )?;
-        [0, 1, 2].map(|j| row(&st.mixed, if full { j } else { 0 }))
-    } else {
-        [0, 1, 2].map(|_| (st.cur.clone(), 0))
-    };
-    let mut inputs = sources;
-    if msgs {
-        for (j, ctrl) in ["attn", "k", "v"].iter().enumerate() {
-            let (sb, so) = inputs[j].clone();
-            c.control(
-                pass,
-                st,
-                ip,
-                ctrl,
-                (&sb, so),
-                (&st.msgs, (j * h * 2) as u64),
-                (&st.inputs, (j * h * 2) as u64),
-            )?;
-            inputs[j] = row(&st.inputs, j);
-        }
-    }
-    // Norms: SWA with messages norms each input; SWA without one norm feeds
-    // all three; full layers have their own q/k/v input norms.
-    let normed: [(gpu::MetalBuffer, u64); 3] = if !full && !msgs {
-        let (b, o) = inputs[0].clone();
-        c.norm(
-            pass,
-            (&b, o),
-            &name(ip, "attn_norm.weight"),
+            &ws,
             (&st.normed, 0),
         )?;
-        [0, 1, 2].map(|_| row(&st.normed, 0))
+        [0, 1, 2].map(|j| row(&st.normed, if full { j } else { 0 }))
     } else {
-        for (j, which) in ["q", "k", "v"].iter().enumerate() {
-            let w = if full {
-                name(ip, &format!("{which}_input_norm.weight"))
-            } else {
-                name(ip, "attn_norm.weight")
-            };
-            let (b, o) = inputs[j].clone();
-            c.norm(pass, (&b, o), &w, (&st.normed, (j * h * 2) as u64))?;
+        // Attention inputs: the depth mix (1 query on SWA, 3 on full layers), or
+        // the stream itself on layer 0.
+        let n_q = if full { 3 } else { 1 };
+        let sources: [(gpu::MetalBuffer, u64); 3] = if ip > 0 {
+            let q = view(
+                c.weights,
+                c.index,
+                &format!("model.llm.attn_res.attn_queries.{}", ip - 1),
+            )?;
+            c.mix(
+                pass,
+                &st.states,
+                *n_blocks,
+                (&st.cur, 0),
+                q,
+                n_q,
+                (&st.mixed, 0),
+            )?;
+            [0, 1, 2].map(|j| row(&st.mixed, if full { j } else { 0 }))
+        } else {
+            [0, 1, 2].map(|_| (st.cur.clone(), 0))
+        };
+        let mut inputs = sources;
+        if msgs {
+            for (j, ctrl) in ["attn", "k", "v"].iter().enumerate() {
+                let (sb, so) = inputs[j].clone();
+                c.control(
+                    pass,
+                    st,
+                    ip,
+                    ctrl,
+                    (&sb, so),
+                    (&st.msgs, (j * h * 2) as u64),
+                    (&st.inputs, (j * h * 2) as u64),
+                )?;
+                inputs[j] = row(&st.inputs, j);
+            }
         }
-        [0, 1, 2].map(|j| row(&st.normed, j))
+        // Norms: SWA with messages norms each input; SWA without one norm feeds
+        // all three; full layers have their own q/k/v input norms.
+        if !full && !msgs {
+            let (b, o) = inputs[0].clone();
+            c.norm(
+                pass,
+                (&b, o),
+                &name(ip, "attn_norm.weight"),
+                (&st.normed, 0),
+            )?;
+            [0, 1, 2].map(|_| row(&st.normed, 0))
+        } else {
+            for (j, which) in ["q", "k", "v"].iter().enumerate() {
+                let w = if full {
+                    name(ip, &format!("{which}_input_norm.weight"))
+                } else {
+                    name(ip, "attn_norm.weight")
+                };
+                let (b, o) = inputs[j].clone();
+                c.norm(pass, (&b, o), &w, (&st.normed, (j * h * 2) as u64))?;
+            }
+            [0, 1, 2].map(|j| row(&st.normed, j))
+        }
     };
     let n = |j: usize| (&normed[j].0, normed[j].1);
     let a = |s: &str| name(ip, &format!("attn.{s}"));
@@ -721,83 +806,123 @@ fn layer_attention(
     let row_off = ((position % s.rows) * kvd * 2) as u64;
     let kw = view(c.weights, c.index, &a("k_sconv.weight"))?;
     let vw = view(c.weights, c.index, &a("v_sconv.weight"))?;
-    let dyn_k = full.then_some(((&st.dk, 0u64), kvh as u32));
-    let dyn_v = full.then_some(((&st.dv, 0u64), kvh as u32));
-    gpu::encode_inkling2_short_conv_decode(
-        c.context,
-        pass,
-        (&st.k_pre, 0),
-        (&s.tail_k, 0),
-        kw,
-        dyn_k,
-        (&s.k, row_off),
-        kvd as u32,
-        taps,
-    )
-    .map_err(g)?;
-    gpu::encode_inkling2_short_conv_decode(
-        c.context,
-        pass,
-        (&st.v_pre, 0),
-        (&s.tail_v, 0),
-        vw,
-        dyn_v,
-        (&s.v, row_off),
-        kvd as u32,
-        taps,
-    )
-    .map_err(g)?;
-
     let tau = if full {
         compute::inkling2::log_scale_tau(position, cfg.log_floor, cfg.log_alpha)
     } else {
         1.0
     };
-    let qs = view(c.weights, c.index, &a("q_l2_clip.scale"))?;
-    let rs = view(c.weights, c.index, &a("rel_l2_clip.scale"))?;
-    gpu::encode_inkling2_l2_clip(
-        c.context,
-        pass,
-        (&st.q, 0),
-        Some((qs, hd as u32)),
-        heads as u32,
-        hd as u32,
-        cfg.qk_clip,
-        tau,
-    )
-    .map_err(g)?;
-    gpu::encode_inkling2_l2_clip(
-        c.context,
-        pass,
-        (&s.k, row_off),
-        None,
-        kvh as u32,
-        hd as u32,
-        cfg.qk_clip,
-        1.0,
-    )
-    .map_err(g)?;
-    gpu::encode_rms_norm_no_scale_perhead(
-        c.context,
-        pass,
-        (&s.v, row_off),
-        (&s.v, row_off),
-        kvh as u32,
-        hd as u32,
-        cfg.rms_eps,
-    )
-    .map_err(g)?;
-    gpu::encode_inkling2_l2_clip(
-        c.context,
-        pass,
-        (&st.r, 0),
-        Some((rs, d_rel as u32)),
-        heads as u32,
-        d_rel as u32,
-        cfg.rel_clip,
-        tau,
-    )
-    .map_err(g)?;
+    if fused_enabled() {
+        // One dispatch for the convs, clips and V norm, bit-identical to the
+        // chain below (`gpu/tests/inkling2_fused_parity.rs`).
+        let qs = view(c.weights, c.index, &a("q_l2_clip.scale"))?;
+        let rs = view(c.weights, c.index, &a("rel_l2_clip.scale"))?;
+        gpu::encode_inkling2_qkv_post(
+            c.context,
+            pass,
+            &gpu::Inkling2QkvPostBuffers {
+                q: (&st.q, 0),
+                q_scale: qs,
+                r: (&st.r, 0),
+                r_scale: rs,
+                k_pre: (&st.k_pre, 0),
+                v_pre: (&st.v_pre, 0),
+                tail_k: (&s.tail_k, 0),
+                tail_v: (&s.tail_v, 0),
+                k_w: kw,
+                v_w: vw,
+                dyn_k: (&st.dk, 0),
+                dyn_v: (&st.dv, 0),
+                k_out: (&s.k, row_off),
+                v_out: (&s.v, row_off),
+            },
+            gpu::Inkling2QkvPostShape {
+                heads: heads as u32,
+                kv_heads: kvh as u32,
+                head_dim: hd as u32,
+                d_rel: d_rel as u32,
+                taps,
+                dyn_heads: if full { kvh as u32 } else { 0 },
+                qk_clip: cfg.qk_clip,
+                rel_clip: cfg.rel_clip,
+                tau,
+                rms_eps: cfg.rms_eps,
+            },
+        )
+        .map_err(g)?;
+    } else {
+        let dyn_k = full.then_some(((&st.dk, 0u64), kvh as u32));
+        let dyn_v = full.then_some(((&st.dv, 0u64), kvh as u32));
+        gpu::encode_inkling2_short_conv_decode(
+            c.context,
+            pass,
+            (&st.k_pre, 0),
+            (&s.tail_k, 0),
+            kw,
+            dyn_k,
+            (&s.k, row_off),
+            kvd as u32,
+            taps,
+        )
+        .map_err(g)?;
+        gpu::encode_inkling2_short_conv_decode(
+            c.context,
+            pass,
+            (&st.v_pre, 0),
+            (&s.tail_v, 0),
+            vw,
+            dyn_v,
+            (&s.v, row_off),
+            kvd as u32,
+            taps,
+        )
+        .map_err(g)?;
+
+        let qs = view(c.weights, c.index, &a("q_l2_clip.scale"))?;
+        let rs = view(c.weights, c.index, &a("rel_l2_clip.scale"))?;
+        gpu::encode_inkling2_l2_clip(
+            c.context,
+            pass,
+            (&st.q, 0),
+            Some((qs, hd as u32)),
+            heads as u32,
+            hd as u32,
+            cfg.qk_clip,
+            tau,
+        )
+        .map_err(g)?;
+        gpu::encode_inkling2_l2_clip(
+            c.context,
+            pass,
+            (&s.k, row_off),
+            None,
+            kvh as u32,
+            hd as u32,
+            cfg.qk_clip,
+            1.0,
+        )
+        .map_err(g)?;
+        gpu::encode_rms_norm_no_scale_perhead(
+            c.context,
+            pass,
+            (&s.v, row_off),
+            (&s.v, row_off),
+            kvh as u32,
+            hd as u32,
+            cfg.rms_eps,
+        )
+        .map_err(g)?;
+        gpu::encode_inkling2_l2_clip(
+            c.context,
+            pass,
+            (&st.r, 0),
+            Some((rs, d_rel as u32)),
+            heads as u32,
+            d_rel as u32,
+            cfg.rel_clip,
+            tau,
+        )
+        .map_err(g)?;
+    }
 
     let proj = view(c.weights, c.index, &a("rel_logits_proj.proj"))?;
     gpu::encode_inkling2_rel_table(
@@ -854,33 +979,61 @@ fn layer_attention(
         (&st.o2, 0),
     )?;
     let ow = view(c.weights, c.index, &name(ip, "attn_sconv.weight"))?;
-    gpu::encode_inkling2_short_conv_decode(
-        c.context,
-        pass,
-        (&st.o2, 0),
-        (&s.tail_o, 0),
-        ow,
-        None,
-        (&st.attn_out, 0),
-        h as u32,
-        taps,
-    )
-    .map_err(g)?;
-
-    // The first layer of a block starts a new stream; its input joins the
-    // blocks. Otherwise the attention output is a residual.
-    if ip % cfg.res_block as usize == 0 {
-        c.copy(
+    let starts_block = ip % cfg.res_block as usize == 0;
+    if fused_enabled() {
+        // The conv and the residual step in one dispatch, bit-identical to
+        // the conv then the add (or then the two copies) below.
+        let step = if starts_block {
+            gpu::Inkling2ConvResidual::StartBlock {
+                save: (&st.states, (*n_blocks * h * 2) as u64),
+            }
+        } else {
+            gpu::Inkling2ConvResidual::Add
+        };
+        gpu::encode_inkling2_short_conv_residual(
+            c.context,
             pass,
+            (&st.o2, 0),
+            (&s.tail_o, 0),
+            ow,
             (&st.cur, 0),
-            (&st.states, (*n_blocks * h * 2) as u64),
-            h,
-        )?;
-        *n_blocks += 1;
-        c.copy(pass, (&st.attn_out, 0), (&st.cur, 0), h)?;
+            step,
+            h as u32,
+            taps,
+        )
+        .map_err(g)?;
+        if starts_block {
+            *n_blocks += 1;
+        }
     } else {
-        gpu::encode_residual_add(c.context, pass, (&st.cur, 0), (&st.attn_out, 0), h as u32)
-            .map_err(g)?;
+        gpu::encode_inkling2_short_conv_decode(
+            c.context,
+            pass,
+            (&st.o2, 0),
+            (&s.tail_o, 0),
+            ow,
+            None,
+            (&st.attn_out, 0),
+            h as u32,
+            taps,
+        )
+        .map_err(g)?;
+
+        // The first layer of a block starts a new stream; its input joins the
+        // blocks. Otherwise the attention output is a residual.
+        if ip % cfg.res_block as usize == 0 {
+            c.copy(
+                pass,
+                (&st.cur, 0),
+                (&st.states, (*n_blocks * h * 2) as u64),
+                h,
+            )?;
+            *n_blocks += 1;
+            c.copy(pass, (&st.attn_out, 0), (&st.cur, 0), h)?;
+        } else {
+            gpu::encode_residual_add(c.context, pass, (&st.cur, 0), (&st.attn_out, 0), h as u32)
+                .map_err(g)?;
+        }
     }
 
     // MoE input: depth mix, the FFN controller on later passes, the norm,
@@ -890,7 +1043,19 @@ fn layer_attention(
         c.index,
         &format!("model.llm.attn_res.mlp_queries.{ip}"),
     )?;
-    c.mix(pass, &st.states, *n_blocks, (&st.cur, 0), q, 1, (&st.m, 0))?;
+    if fused_enabled() && !msgs {
+        c.mix_norm(
+            pass,
+            &st.states,
+            *n_blocks,
+            (&st.cur, 0),
+            q,
+            &[&name(ip, "mlp_norm.weight")],
+            (&st.mn, 0),
+        )?;
+    } else {
+        c.mix(pass, &st.states, *n_blocks, (&st.cur, 0), q, 1, (&st.m, 0))?;
+    }
     if msgs {
         c.control(
             pass,
@@ -903,7 +1068,9 @@ fn layer_attention(
         )?;
         c.copy(pass, (&st.y, 0), (&st.m, 0), h)?;
     }
-    c.norm(pass, (&st.m, 0), &name(ip, "mlp_norm.weight"), (&st.mn, 0))?;
+    if !(fused_enabled() && !msgs) {
+        c.norm(pass, (&st.m, 0), &name(ip, "mlp_norm.weight"), (&st.mn, 0))?;
+    }
     let router = view(c.weights, c.index, &name(ip, "mlp.gate.weight"))?;
     gpu::encode_minimax_router(
         c.context,
@@ -1111,6 +1278,20 @@ fn moe_tail(
     let h = c.h;
     let fw = view(c.weights, c.index, &name(ip, "mlp_sconv.weight"))?;
     let s = &st.slots[slot];
+    if fused_enabled() {
+        return gpu::encode_inkling2_short_conv_residual(
+            c.context,
+            pass,
+            (&st.y, 0),
+            (&s.tail_f, 0),
+            fw,
+            (&st.cur, 0),
+            gpu::Inkling2ConvResidual::Add,
+            h as u32,
+            arch.short_conv_kernel_size as u32,
+        )
+        .map_err(g);
+    }
     gpu::encode_inkling2_short_conv_decode(
         c.context,
         pass,
@@ -1222,6 +1403,15 @@ fn layer_moe_resident(
     )
     .map_err(g)?;
     moe_tail(c, pass, st, arch, slot, ip)
+}
+
+/// The fused decode kernels (oMLX 8dddad9a's launch-count work, ported):
+/// on unless `TURBOSPARK_INKLING2_FUSED=0`, which restores the separate
+/// kernels. Both forms are bit-identical; the switch exists for A/B timing
+/// and to bisect a regression.
+fn fused_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TURBOSPARK_INKLING2_FUSED").as_deref() != Ok("0"))
 }
 
 /// `TURBOSPARK_INKLING2_TRACE=1` prints one line per token: where the
