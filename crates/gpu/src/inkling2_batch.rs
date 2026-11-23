@@ -568,6 +568,79 @@ pub fn encode_inkling2_rel_table_rows(
     Ok(())
 }
 
+/// [`encode_inkling2_attention_rows`]' result through the tiled
+/// matrix-unit kernel (`inkling2_attention_prefill`): blocks of 32 query rows
+/// per head, each 32-key tile of K and V staged once for the block. NOT
+/// bit-identical to the rows kernel (prefill only, KL-bounded); a row's
+/// output depends only on its own query, keys and bias row. head_dim 128.
+#[allow(clippy::too_many_arguments)]
+pub fn encode_inkling2_attention_prefill(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    q: Buf<'_>,
+    k: Buf<'_>,
+    v: Buf<'_>,
+    table: Buf<'_>,
+    sinks: Buf<'_>,
+    out: Buf<'_>,
+    window: u32,
+    pos0: u32,
+    shape: crate::Inkling2AttnShape,
+    n_rows: u32,
+) -> Result<(), GpuError> {
+    rows_ok(n_rows)?;
+    let s = shape;
+    let last = pos0 + n_rows - 1;
+    let first0 = if window == 0 || pos0 < window {
+        0
+    } else {
+        pos0 + 1 - window
+    };
+    // The kernel stages key tiles from 32-aligned positions, up to 31 before
+    // the block's window: those must still be in the ring.
+    let tile0 = (first0 / 32) * 32;
+    if s.kv_heads == 0
+        || s.heads % s.kv_heads != 0
+        || s.head_dim != 128
+        || s.extent == 0
+        || s.ring == 0
+        || last - tile0 >= s.ring
+    {
+        return Err(invalid(format!(
+            "Inkling 2 attention prefill: shape {s:?}, positions {tile0}..={last} do not fit \
+             the ring (head_dim must be 128)"
+        )));
+    }
+    let group = s.heads / s.kv_heads;
+    let q_stride = s.heads * s.head_dim;
+    let p = pipeline(context, "inkling2_attention_prefill")?;
+    pass.encode_threadgroups_3d(
+        &p,
+        &[
+            (q.0, 0, q.1),
+            (k.0, 1, k.1),
+            (v.0, 2, v.1),
+            (table.0, 3, table.1),
+            (sinks.0, 4, sinks.1),
+            (out.0, 5, out.1),
+        ],
+        &[
+            (u32_bytes(&window), 6),
+            (u32_bytes(&pos0), 7),
+            (u32_bytes(&s.kv_heads), 8),
+            (u32_bytes(&group), 9),
+            (u32_bytes(&n_rows), 10),
+            (u32_bytes(&s.extent), 11),
+            (u32_bytes(&s.ring), 12),
+            (u32_bytes(&q_stride), 13),
+            (u32_bytes(&s.heads), 14),
+        ],
+        (u64::from(s.heads), u64::from(n_rows.div_ceil(32)), 1),
+        (128, 1, 1),
+    );
+    Ok(())
+}
+
 /// `encode_inkling2_attention_decode` for rows at positions `pos0 ..
 /// pos0 + n_rows`, each over its own range (`window` 0: from position 0, else
 /// the last `window` positions). `q` and `out` rows are `heads * head_dim`

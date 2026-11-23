@@ -11,7 +11,7 @@
 //! fresh session interleaves sequential steps, 8-row verifies and retaining
 //! rollbacks, and every logit row it produces must equal the reference's row
 //! for that position BIT FOR BIT. Blocks sit early, across the sliding-window
-//! ring's wrap (rows 1151 = window + slack), and right after a rollback, so
+//! ring's wrap (rows 1183 = window + slack), and right after a rollback, so
 //! KV slack, conv-tail restores and the cursor are all on the path: a wrong
 //! restore shows up as a mismatch in the NEXT pass, not in the verify itself.
 
@@ -81,7 +81,7 @@ fn verify_and_rollback_match_sequential_decode_bit_for_bit() {
     let mut ids = tok.encode(&text, false);
     let prompt_len = 1000usize.min(ids.len());
     ids.truncate(prompt_len);
-    let total = 1180usize;
+    let total = 1200usize;
     let open = || {
         RealForwardRunner::open_with_residency(
             &install,
@@ -130,9 +130,10 @@ fn verify_and_rollback_match_sequential_decode_bit_for_bit() {
         (1033, 2),
         (1035, 8),
         (1050, 6),
-        // The ring is window + 127 rows (the 128-row prefill panel's slack):
-        // 1,151. This block straddles that wrap with a rollback.
-        (1147, 5),
+        // The ring is window + 159 rows (the 128-row prefill panel's slack
+        // plus the tiled attention's 32): 1,183. This block straddles that
+        // wrap with a rollback.
+        (1179, 5),
     ];
     let mut block = vec![f16::ZERO; 8 * vocab];
     for &(start, keep) in plan {

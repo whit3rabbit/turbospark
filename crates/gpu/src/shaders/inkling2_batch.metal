@@ -353,6 +353,186 @@ kernel void inkling2_bf16_gemv_rows32(
     }
 }
 
+// --- Tiled attention for prefill panels (matrix units, KL-bounded) ----------
+//
+// `inkling2_attention_rows`' result for a block of 32 query rows of one head,
+// with each 32-key tile of K and V staged in threadgroup memory ONCE for all
+// 32 rows (the rows kernel reads a row's whole window per row). After oMLX's
+// flash banded attention (jundot/omlx 8d2c9c6, Apache-2.0); this port's own
+// code. Scores S = scale (q . k) + bias[pos - kp] (kp within the bias extent)
+// over keys first(pos) ..= pos, plus the head's sink logit with no value:
+// the online softmax starts from it (m = sink, l = 1), so m is never -inf.
+// QK^T and PV run on FP32 simdgroup_matrix with register operands; exp is
+// precise::exp as in the rows kernel (fast exp cost the KL gate) (the
+// `dequant_int4_mma8` lane layout; a score fragment is directly the A operand
+// of PV). Not bit-identical to the rows kernel, so prefill only, under the
+// prefill matrix-unit switch. Key tiles align to ABSOLUTE positions
+// (multiples of 32), and a tile fully masked for a row is an exact no-op for
+// it (correction 1, nothing added), so a row's arithmetic does not depend on
+// which rows share its block: row-independent (`tests/inkling2_attn_prefill.rs`).
+// 4 simdgroups x 8 query rows; head_dim 128.
+constant constexpr uint kInkFaBQ = 32;
+constant constexpr uint kInkFaBK = 32;
+constant constexpr uint kInkFaD = 128;
+constant constexpr uint kInkFaPad = 4;
+
+inline uint2 ink_fa_coord(uint lane) {
+    const uint q = lane >> 2;
+    return uint2((q & 4u) | ((lane >> 1) & 3u), ((q & 2u) << 1) | ((lane & 1u) << 1));
+}
+
+static inline float2 ink_fa_mac(float2 c, float a0, float a1, float b0, float b1) {
+    simdgroup_float8x8 A, B, C;
+    A.thread_elements()[0] = a0;
+    A.thread_elements()[1] = a1;
+    B.thread_elements()[0] = b0;
+    B.thread_elements()[1] = b1;
+    C.thread_elements()[0] = c.x;
+    C.thread_elements()[1] = c.y;
+    simdgroup_multiply_accumulate(C, A, B, C);
+    return float2(C.thread_elements()[0], C.thread_elements()[1]);
+}
+
+kernel void inkling2_attention_prefill(
+    device const half*   q        [[buffer(0)]],
+    device const half*   k        [[buffer(1)]],
+    device const half*   v        [[buffer(2)]],
+    device const float*  table    [[buffer(3)]],
+    device const half*   sinks    [[buffer(4)]],
+    device half*         out      [[buffer(5)]],
+    constant uint&       window   [[buffer(6)]],
+    constant uint&       pos0     [[buffer(7)]],
+    constant uint&       kv_heads [[buffer(8)]],
+    constant uint&       group    [[buffer(9)]],
+    constant uint&       n_rows   [[buffer(10)]],
+    constant uint&       extent   [[buffer(11)]],
+    constant uint&       ring     [[buffer(12)]],
+    constant uint&       q_stride [[buffer(13)]],
+    constant uint&       s_stride [[buffer(14)]],
+    uint2                tg       [[threadgroup_position_in_grid]],
+    uint                 tid      [[thread_index_in_threadgroup]],
+    uint                 sg       [[simdgroup_index_in_threadgroup]],
+    uint                 lane     [[thread_index_in_simdgroup]]
+) {
+    threadgroup half kt[kInkFaBK * (kInkFaD + kInkFaPad)];
+    threadgroup half vt[kInkFaBK * (kInkFaD + kInkFaPad)];
+    const uint KR = kInkFaD + kInkFaPad;
+    const uint h = tg.x;
+    const uint r0 = tg.y * kInkFaBQ;
+    const uint kvh = h / group;
+    const uint kvd = kv_heads * kInkFaD;
+    const float scale = rsqrt(float(kInkFaD));
+    const uint2 c = ink_fa_coord(lane);
+    const uint fm = c.x, fn = c.y;
+    // This lane's query row (fm) of the simdgroup's 8.
+    const uint rr = r0 + sg * 8u + fm;
+    const bool live = rr < n_rows;
+    const uint rq = live ? rr : r0;
+    const uint pos = pos0 + rq;
+    const uint first = (window == 0u || pos + 1u <= window) ? 0u : pos + 1u - window;
+    // Q fragments: A[fm][k-slot fn, fn + 1] of dim block db.
+    float qa[16], qb[16];
+    {
+        device const half* qr = q + ulong(rq) * q_stride + h * kInkFaD;
+        for (uint db = 0; db < 16u; ++db) {
+            qa[db] = float(qr[8u * db + fn]);
+            qb[db] = float(qr[8u * db + fn + 1u]);
+        }
+    }
+    device const float* tb = table + ulong(rq) * (ulong(s_stride) * extent) + h * extent;
+    // Online softmax state for row fm, started from the sink.
+    float m = float(sinks[ulong(rq) * s_stride + h]);
+    float l = 1.0f;
+    float2 o[16];
+    for (uint db = 0; db < 16u; ++db) o[db] = float2(0.0f);
+    // Key range of the block, tiles aligned to absolute positions.
+    const uint last_row = min(r0 + kInkFaBQ, n_rows) - 1u;
+    const uint pos_hi = pos0 + last_row;
+    const uint p_lo0 = pos0 + r0;
+    const uint first_lo = (window == 0u || p_lo0 + 1u <= window) ? 0u : p_lo0 + 1u - window;
+    const uint t_begin = (first_lo / kInkFaBK) * kInkFaBK;
+    for (uint t0 = t_begin; t0 <= pos_hi; t0 += kInkFaBK) {
+        // Stage K and V rows t0 .. t0 + 31 of this kv head (rows past pos_hi
+        // or before 0 never score: masked below; stage zeros for them).
+        for (uint e = tid; e < kInkFaBK * (kInkFaD / 4u); e += 128u) {
+            const uint kr = e / (kInkFaD / 4u), d4 = e % (kInkFaD / 4u);
+            const uint kp = t0 + kr;
+            half4 kv4 = half4(0.0h), vv4 = half4(0.0h);
+            if (kp <= pos_hi) {
+                const ulong row = ulong(kp % ring) * kvd + kvh * kInkFaD + 4u * d4;
+                kv4 = *(device const half4*)(k + row);
+                vv4 = *(device const half4*)(v + row);
+            }
+            *(threadgroup half4*)(kt + kr * KR + 4u * d4) = kv4;
+            *(threadgroup half4*)(vt + kr * KR + 4u * d4) = vv4;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        // S = Q K^T: 4 fragments of 8 keys. B[fm][fn] = K[key 8 j + fn][dim 8 db + fm].
+        float2 sc[4];
+        for (uint j = 0; j < 4u; ++j) {
+            float2 acc = float2(0.0f);
+            for (uint db = 0; db < 16u; ++db) {
+                const uint dd = 8u * db + fm;
+                const float b0 = float(kt[(8u * j + fn) * KR + dd]);
+                const float b1 = float(kt[(8u * j + fn + 1u) * KR + dd]);
+                acc = ink_fa_mac(acc, qa[db], qb[db], b0, b1);
+            }
+            sc[j] = acc;
+        }
+        // Scale, bias, mask; this lane holds row fm, keys 8 j + fn (+1).
+        float tmax = -INFINITY;
+        for (uint j = 0; j < 4u; ++j) {
+            for (uint e2 = 0; e2 < 2u; ++e2) {
+                const uint kp = t0 + 8u * j + fn + e2;
+                float s = (e2 == 0u ? sc[j].x : sc[j].y) * scale;
+                if (!live || kp < first || kp > pos) {
+                    s = -INFINITY;
+                } else {
+                    const uint d = pos - kp;
+                    if (d < extent) s += tb[d];
+                }
+                if (e2 == 0u) sc[j].x = s; else sc[j].y = s;
+                tmax = max(tmax, s);
+            }
+        }
+        // Row max over the lanes that share row fm (lane bits 0 and 3).
+        tmax = max(tmax, simd_shuffle_xor(tmax, 1u));
+        tmax = max(tmax, simd_shuffle_xor(tmax, 8u));
+        const float m_new = max(m, tmax);
+        const float corr = precise::exp(m - m_new);
+        float rsum = 0.0f;
+        for (uint j = 0; j < 4u; ++j) {
+            sc[j].x = precise::exp(sc[j].x - m_new);
+            sc[j].y = precise::exp(sc[j].y - m_new);
+            rsum += sc[j].x + sc[j].y;
+        }
+        rsum += simd_shuffle_xor(rsum, 1u);
+        rsum += simd_shuffle_xor(rsum, 8u);
+        l = l * corr + rsum;
+        m = m_new;
+        // O = O corr + P V: P's fragment j is A (row fm, keys 8 j + fn, +1);
+        // B[fm][fn] = V[key 8 j + fm][dim 8 db + fn].
+        for (uint db = 0; db < 16u; ++db) {
+            float2 acc = o[db] * corr;
+            for (uint j = 0; j < 4u; ++j) {
+                const uint kr = 8u * j + fm;
+                const float b0 = float(vt[kr * KR + 8u * db + fn]);
+                const float b1 = float(vt[kr * KR + 8u * db + fn + 1u]);
+                acc = ink_fa_mac(acc, sc[j].x, sc[j].y, b0, b1);
+            }
+            o[db] = acc;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+    if (!live) return;
+    device half* orow = out + ulong(rr) * q_stride + h * kInkFaD;
+    const float inv = 1.0f / l;
+    for (uint db = 0; db < 16u; ++db) {
+        orow[8u * db + fn] = half(o[db].x * inv);
+        orow[8u * db + fn + 1u] = half(o[db].y * inv);
+    }
+}
+
 // --- Matrix-unit BF16 GEMM for prefill panels (opt-in, KL-bounded) ---------
 //
 // The panel GEMV's job (`inkling2_bf16_gemv_rows32`) on simdgroup_matrix with

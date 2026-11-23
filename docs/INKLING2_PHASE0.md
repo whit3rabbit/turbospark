@@ -827,6 +827,61 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
     `tests/real_forward_inkling2_prewarm.rs` reads the first token after a
     5 s gap at 262 ms with it and 1,518 ms without. A one-shot CLI run gains
     nothing (its first pass queues straight behind the touch).
+- DONE (2026-11-23): chunked prefill, step 5: tiled attention.
+  - `inkling2_attention_prefill` (`encode_inkling2_attention_prefill`), the
+    prefill passes' attention under the same matrix-unit switch: a
+    threadgroup takes 32 query rows of one head and walks 32-key tiles of K
+    and V staged once in threadgroup memory (the rows kernel reads a row's
+    whole window per row and head). QK^T and PV on FP32 simdgroup_matrix
+    with register operands, online softmax started from the sink (m = sink,
+    l = 1), bias added in band, window and causality masked. After oMLX
+    8d2c9c6's flash banded attention (Apache-2.0); this port's own code.
+    `TURBOSPARK_INKLING2_PREFILL_ATTN=0` keeps the rows kernel for
+    attention while the GEMMs and experts stay on the matrix units.
+  - Row independence: key tiles align to ABSOLUTE positions, and a tile
+    fully masked for a row is an exact no-op for it, so a row's arithmetic
+    does not depend on its block. `gpu/tests/inkling2_attn_prefill.rs`: max
+    1.2e-4 to 2.4e-4 from the rows kernel (about one FP16 ulp), a row's bits
+    the same alone, in the panel and in a block starting at row 5, over an
+    SWA slot past two wraps, a full slot and the first rows of a sequence;
+    starting tiles at the block's own first key instead fails it.
+  - Found by the encoder's range check: aligned tiles reach up to 31 keys
+    before a block's window, so the SWA ring slack grew by 32 (window + 159
+    = 1,183 rows); the verify gate's wrap block moved with it.
+  - Speed (CLI, 3,088-token prompt, BF16 default): 14.0 s to 10.8 to
+    11.4 s; a 128-row panel's GPU time no longer grows with context (341 ms
+    at position 128, 359 ms at 2,944).
+  - Gates: exact arms bit-identical on both installs (BF16 130.5 tok/s,
+    mlx4 138.0 tok/s at 1,400 tokens); verify 72/72 and 1,154/1,154 on
+    both. `exp` in the tiled attention is `precise::exp`, as in the rows
+    kernel.
+- DONE (2026-11-23): the prefill KL gate redesigned
+  (`runtime/tests/real_forward_inkling2_prefill_mma.rs`). The first design
+  (one prompt, mean and max KL over the last prompt row plus 64
+  teacher-forced decode rows, 2x a floor measured in the same run) was not
+  a stable instrument: kernel variants with the same error against f64 read
+  1.26x to 3.45x the floor on one prompt, swapping fast `exp` for
+  `precise::exp` moved one from 2.07x to 3.45x, and the matrix-unit default
+  committed in 3a986ff7 read 13x on a low-entropy code prompt whose mean
+  came from one spike row (max 3.1e-2, p95 7.9e-4). A prompt the work itself
+  edited (`verify.rs`) also moved the floor between runs. The redesign:
+  four prompts frozen as fixtures (`runtime/tests/fixtures/inkling2_kl/`,
+  two prose, two code, cut from HEAD at 4b66ed46); per-row KL pooled over
+  all 260 rows and bounded at the MEDIAN and p90, each at most 3x the
+  floor's pooled value; pooled top-1 at most 2 rows below the floor's; each
+  prompt's last prompt row at most 3x the floor's pooled p90; chunking
+  independence bit for bit. The bounds were set before the first run. One
+  was changed after it: the last-row bound was an absolute 1e-3 nats, and
+  on `prose_lamq` (a high-entropy last position) the shipped floor itself
+  read 1.48e-3, so it is now relative to the floor's pooled p90 like the
+  others. Results (default prefill, tiled attention included):
+  BF16 pooled median 0.87x, p90 0.74x the floor, top-1 258 against 256,
+  worst last row 1.09e-3; mlx4 pooled median 1.61x, p90 1.34x, top-1 255
+  against 256, worst last row 3.4e-3 (the floor's own 6.0e-3). About 7
+  minutes per install; it opens a resident runner (about 17.7 GB) and then a
+  streamed one, so do not run it beside another resident-install test on a
+  36 GB machine (one such overlap probably took this machine down on
+  2026-11-23).
 - DONE (2026-11-23): batched affine projections for MLX-sourced installs in
   multi-row passes (`Ctx::gemv_rows`, `TURBOSPARK_INKLING2_BATCHED_AFFINE=0`
   restores one GEMV per row; tslab knob `inkling2_batched_affine`). The mlx4

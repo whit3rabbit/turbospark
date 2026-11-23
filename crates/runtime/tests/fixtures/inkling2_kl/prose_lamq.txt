@@ -1,0 +1,185 @@
+# LookAtMyQuant (LAMQ) formats
+
+STATUS: **runs on the 5.4 GB Inkling release; its loss against the original
+is in the release's weights (step 5).** This page
+is the spec the intake and kernels follow, and the record of their gates. The `inkling2-packed` section was checked on 2026-11-21 against the
+5.4 GB release (container layout, dtypes, shapes, maps, the name map). The
+math comes from the upstream source and is marked "from source" where no file
+can confirm it. The CPU reference and the logits gate are the real check.
+
+Upstream: `github.com/ShinMegamiBoson/lookatmyquant` (MIT). LAMQ is a
+quantization compiler: it measures the KL cost of each tensor (and of row
+buckets of the embedding and head) under candidate codes, then picks one code
+per piece under a size budget. The upstream numbers (KL against Q4_K_M,
+benchmark scores) are the authors' own and have not been reproduced here.
+
+Upstream Python is read, never run, in this repository. A bit-level
+cross-check against it is something a person runs by hand, outside the build.
+Sources: `runtime_mlx/inkling/kernels.py` (reference decoders, RHT,
+self-test), `model.py` (wiring), `fast_kernels.py` (Metal fast path).
+
+## Containers
+
+| Container | Releases | Status here |
+|---|---|---|
+| `inkling2-packed` | `shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-5.4GB` (1.63 bpw), `-8.9GB` (2.69 bpw) | 5.4 GB: intake, kernels and decode done (workstream A), loss against the original traced to the release's weights, catalog row `inkling2-mini-lamq54` at `verified`; 8.9 GB: not installed |
+| `lamq-1` | Gemma 4 E2B exports | planned (workstream C) |
+| `opgraph-packed-1` | Qwen3.5-4B (`lm2-qwen35-4b-1.2gb`), `shinmegamiboson/Qwen3.8-27B-LookAtMyQuant-7.2GB` | planned (workstream C) |
+| GGUF | Gemma 4 E2B compiled mixes | stock llama.cpp types per tensor, so it goes through the existing GGUF intake (`docs/GGUF.md`); no LAMQ code |
+
+## Shared decode math (from source)
+
+For an `m x n` matrix with per-row scale `scale`, input signs `s_in` (int8
++-1) and a code stream:
+
+```
+x~   = H_n (s_in * x) / sqrt(n)            input rotation, signs first
+y[o] = scale[o] * sum_j W~[o, j] * x~[j]   code GEMV, scale after the dot
+z    = s_out * (H_m^T y) / sqrt(m)         only when out_rot is set, signs last
+```
+
+The transform is orthonormal (1/sqrt(n) both ways). Upstream's self-test
+checks `out(in(x)) == x` within 3e-3 for n = 2304, 1152, 3072, 1024.
+
+### Hadamard `H_n`
+
+`H_n = kron(A, B)`. For `a` from `floor(log2 n)` down to 0, skip unless
+`2^a` divides `n`; let `p = n / 2^a`; take the first `a` where `p` is 1 or 2,
+or `p - 1` is a prime `q` with `q % 4 == 3`.
+
+- `p > 2`: `A = Sylvester(2^a)`, `B = Paley(q)`.
+- `p = 1`: `A = Sylvester(2^(a/2))`, `B = Sylvester(2^(a - a/2))` (integer
+  division).
+
+| n | A | B |
+|---|---|---|
+| 2304 | Sylvester 32 | Paley q=71 (72) |
+| 1152 | Sylvester 16 | Paley q=71 (72) |
+| 3072 | Sylvester 256 | Paley q=11 (12) |
+| 384 | Sylvester 32 | Paley q=11 (12) |
+| 1024 | Sylvester 32 | Sylvester 32 |
+
+- `Sylvester(N)[i][j] = (-1)^popcount(i & j)`, which is symmetric.
+- `Paley(q)` is `(q+1) x (q+1)`. `chi(0) = 0`, and `chi(a)` is +1 when `a` is
+  a nonzero square mod `q`, else -1. `Q[i][j] = chi((j - i) mod q)`.
+  `S[0][1..] = +1`, `S[1..][0] = -1`, `S[1..][1..] = Q`, `S[0][0] = 0`, and the
+  result is `S + I`. Field element `a` sits at index `a + 1`. Paley is not
+  symmetric, so the transposes in the output rotation matter.
+- Flat index is `i * |B| + j` (row-major `x` reshaped to `|A| x |B|`). The
+  input transform is `A X B^T` and the output transform is `A^T Y B`.
+
+`crates/gpu/src/hadamard.rs` is power-of-two only and is not reused.
+
+### Code stream
+
+Each row is a little-endian bit stream of `n * k` bits in `n * k / 32` u32
+words (every width here is a multiple of 32 bits). A 12-bit state for a group
+whose last column is `c` is read at bit `bp = (n - 1 - c) * k`:
+`s = ((w[bp >> 5] >> (bp & 31)) | (w[(bp >> 5) + 1] << (32 - (bp & 31)))) & 4095`.
+Words at index `>= n * k / 32` read as zero, which matters near column 0,
+where the window runs past the row end.
+
+| Code | k | g | LUT (`luts.npz`, f16) | Index |
+|---|---|---|---|---|
+| `rtr1`..`rtr4` | 1..4 | 1 | `(4096,)`, one table per code | `s` |
+| `ht2` | 2 | 4 | `(512, 4)` | `(s * 0x9E3779B1 mod 2^32) >> 23` |
+| `ht3` | 3 | 2 | `(1024, 2)` | `(s * 0x9E3779B1 mod 2^32) >> 22` |
+| `lm6` | 6 | 1 | per-matrix `levels` | 4 columns in 3 bytes: `v = b0 + (b1 << 8) + (b2 << 16)`, column `4i + t` is `(v >> 6t) & 63` |
+| `lm8` | 8 | 1 | per-matrix `levels` | one byte per column |
+
+- For `ht*`, a group covers columns `j..j+g-1`, so `c = j + g - 1`. Entry
+  element `t` multiplies column `j + t`.
+- `manifest.json` also names `ht1` (fid 0). No `ht1` LUT ships and no tensor
+  uses it, so the intake refuses it.
+- `levels` are F32 `(64,)` / `(256,)` for linears. lm buckets of the
+  embedding and head store theirs the same way (`b0_levels` is `<f4`).
+
+## `inkling2-packed` (Inkling 2 Mini), checked against the 5.4 GB release
+
+Files (63 in all): `manifest.json` (`"format": "inkling2-packed-v1-sqyfr"`,
+`fmt_ids`, LUT shapes, steering count 499), `config.json` (the HF config,
+text_config identical to `docs/INKLING2_PHASE0.md`), `luts.npz` (42 KB),
+`steering.safetensors` (122 MB, 499 uncoded tensors), `embed_meta.json` +
+`embed_packed.npz`, `head_meta.json` + `head_packed.npz`, and
+`layer_NN_meta.json` + `layer_NN_packed.npz` for 24 layers, plus tokenizer
+files. There is no vision tower or drafter, so an install is text-only.
+
+### npz container
+
+Every member of every file is STORED (zip method 0), with no zip64 and
+`.npy` v1 headers, little-endian, C order. Dtypes seen: `<f2`, `<f4`,
+`<i4`, `<i2`, `<u4`, `|u1`, `|i1`. Signs are int8 +1/-1 (`|i1`).
+
+### Linears (`layer_NN_*`)
+
+Meta: `linears[<hf name>] = {fmt, m, n, k, g, K, hash_mult, safe, out_rot?}`,
+plus `experts.gu` / `experts.dn` (count of experts per format). Arrays:
+`lin_<safe>_codes` (`<u4` `(m, n*k/32)` for trellis, `|u1` for lm),
+`_scales` (`<f2` `(m,)`), `_signs_in` (`(n,)`), and for lm6 `_levels`. Only
+`v_proj` uses `out_rot` in this release, and it carries `_signs_out`.
+
+### Experts
+
+- Per format `f`: `gu_<f>_codes` / `_scales` and `dn_<f>_codes` / `_scales`,
+  slabs of consecutive experts.
+- `gu_map` / `dn_map` are `<i2` `(128, 2)`: `(fid, slot)` per expert, fids
+  from `manifest.fmt_ids` (ht2 = 1, ht3 = 2, rtr1 = 3, ...). Slots are dense
+  `0..count-1` per fid (checked on layer 7).
+- `gu_signs_in` `(2304,)` is applied once per token and shared by all 8
+  slots. `dn_signs_in` `(1152,)` is applied per slot to the activation.
+- Gate-up rows: gate is rows `[0, 1152)` and up is `[1152, 2304)`, as
+  contiguous halves. This differs from the HF checkpoint's interleaved `w13`.
+- Activation (from source): `(tanh(g / 4) * 4) * sigmoid(g) * (tanh(u / 25) * 25)`,
+  where the sigmoid takes the uncapped `g`. No output rotation on experts.
+
+### Embedding and head buckets
+
+- `order` (`<i4`): packed position -> token id. It has 201024 entries in
+  the embedding and 200058 (unpadded vocab) in the head.
+- Buckets fill positions in meta order (`kb` 0..7). Bucket `b` covers
+  `[lo_b, lo_b + rows_b)`, and its row `r` is position `lo_b + r`. The row
+  counts sum to 201024 (embed) and 200058 (head).
+- Per bucket: `b<kb>_codes`, `_scales` (`<f2`), `_signs_in` (`(2304,)`), and
+  for lm buckets `_levels`.
+- Embedding row (from source): decode the row, `scale * W~`, then the output
+  rotation with the bucket's `signs_in`, then `embed_norm`.
+- Head (from source): per-bucket GEMV on `H(s_b * h)`, logits scattered to
+  token `order[p]`, then the final softcap 30.
+
+| Bucket rows | embed (5.4 GB) | head (5.4 GB) |
+|---|---|---|
+| 1024 | lm6 | lm8 |
+| 3072 | rtr4 | lm6 |
+| 4096 | rtr4 | lm6 |
+| 8192 | rtr3 | rtr4 |
+| 16384 | rtr3 | rtr4 |
+| 32768 | rtr2 | rtr3 |
+| 65536 | rtr1 | rtr2 |
+| tail | rtr1 (69952) | rtr2 (68986) |
+
+### Per-layer code mix (5.4 GB)
+
+- Attention projections other than `v_proj` use `ht2`, `ht3`, `rtr4`, and
+  `rtr1` twice (layer 2 `relative_position_bias`, layer 3 `q_proj`).
+- `v_proj` is `lm6` with `out_rot` on layers 7 to 19 and 23, and `rtr4` on
+  the rest.
+- Experts use `ht2`, `ht3` and `rtr1` only. `lm8` occurs only in the head.
+- Every format named above occurs somewhere, so the kernels need all of
+  `ht2`, `ht3`, `rtr1`..`rtr4`, `lm6` and `lm8`.
+
+### Name map
+
+All 646 resident tensors of the HF install map one to one (checked: none
+missing, extra or duplicated). Steering and linear names are HF-transformers
+names (`model.layers.N.self_attn.q_proj.linear`), which become the mlx-lm
+names that `inkling2_mlx.rs::mlx_to_hf` already inverts once these renames
+are applied:
+
+| LAMQ | install |
+|---|---|
+| `self_attn.{q,k,v}_proj.linear` | `attn.{wq_du,wk_dv,wv_dv}` |
+| `self_attn.relative_position_bias.linear` | `attn.wr_du` |
+| `self_attn.o_proj.gate_proj` | `attn.gate_attn` |
+| `self_attn.o_proj.linear` | `attn.wo_ud` |
+| `self_attn.q_proj.norm.scale` | `attn.q_l2_clip.scale` |
+| `self_attn.relative_posi

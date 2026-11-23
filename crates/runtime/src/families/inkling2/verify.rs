@@ -33,9 +33,11 @@ pub(crate) const VERIFY_MAX_ROWS: usize = 8;
 /// (`super::prefill`). Sizes the batch scratch and the ring slack.
 pub(crate) const PANEL_MAX_ROWS: usize = gpu::INKLING2_BATCH_MAX_ROWS;
 /// Extra rows on every sliding-window ring so a pass's rows never overwrite
-/// a position an earlier row of the same pass still attends to: every K/V
-/// row of a pass is written before its attention runs.
-pub(crate) const VERIFY_SLACK: usize = PANEL_MAX_ROWS - 1;
+/// a position an earlier row of the same pass still attends to (every K/V
+/// row of a pass is written before its attention runs), plus 32 for the
+/// tiled prefill attention, which stages key tiles from 32-aligned positions
+/// up to 31 before a block's window (`gpu::encode_inkling2_attention_prefill`).
+pub(crate) const VERIFY_SLACK: usize = PANEL_MAX_ROWS - 1 + 32;
 
 const M: usize = PANEL_MAX_ROWS;
 
@@ -103,7 +105,8 @@ const AFFINE_PACK_COLS: usize = 4 * 2304;
 
 /// The matrix units for prefill passes: the BF16 dense projections
 /// (`gpu::encode_inkling2_bf16_gemm_rows_mma`) and the routed experts
-/// (`gpu::encode_inkling2_moe_grouped_rows_mma`). The DEFAULT since 2026-11-23;
+/// (`gpu::encode_inkling2_moe_grouped_rows_mma`), and the tiled attention
+/// (`gpu::encode_inkling2_attention_prefill`). The DEFAULT since 2026-11-23;
 /// `TURBOSPARK_INKLING2_PREFILL_MMA=0` restores the bit-exact GEMV. Not
 /// bit-identical to the GEMV, so a prefill through it is KL-bounded against
 /// sequential decode (`tests/real_forward_inkling2_prefill_mma.rs`, bounded
@@ -129,6 +132,15 @@ fn prefill_mma_enabled() -> bool {
 fn batched_affine_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("TURBOSPARK_INKLING2_BATCHED_AFFINE").as_deref() != Ok("0"))
+}
+
+/// The tiled prefill attention on its own (inside the prefill matrix-unit
+/// switch): on unless `TURBOSPARK_INKLING2_PREFILL_ATTN=0`, which keeps the
+/// rows kernel for attention while the GEMMs and experts stay on the matrix
+/// units.
+fn prefill_attn_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TURBOSPARK_INKLING2_PREFILL_ATTN").as_deref() != Ok("0"))
 }
 
 /// Which rows of a multi-row pass get the output head.
@@ -1235,7 +1247,14 @@ fn layer_attention_rows(
         extent,
         ring: s.rows as u32,
     };
-    gpu::encode_inkling2_attention_rows(
+    // Prefill passes under the matrix-unit switch take the tiled kernel
+    // (KL-bounded, row-independent); verify keeps the rows kernel.
+    let attn = if c.prefill && prefill_mma_enabled() && prefill_attn_enabled() {
+        gpu::encode_inkling2_attention_prefill
+    } else {
+        gpu::encode_inkling2_attention_rows
+    };
+    attn(
         c.context,
         pass,
         (&b.q, 0),

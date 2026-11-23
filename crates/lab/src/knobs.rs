@@ -688,6 +688,36 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[off("0", "inkling2_prewarm")],
     },
     Knob {
+        // Inkling 2's tiled prefill attention inside the prefill matrix-unit
+        // switch, on by default; "0" keeps the rows kernel for attention
+        // while the GEMMs and experts stay on the matrix units. KL-bounded
+        // (`crates/runtime/tests/real_forward_inkling2_prefill_mma.rs`).
+        name: "inkling2_prefill_attn",
+        env: "TURBOSPARK_INKLING2_PREFILL_ATTN",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::KlBounded,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[],
+    },
+    Knob {
+        // Inkling 2 rows per chunked-prefill pass (1 to 128, default 128). A
+        // throughput choice only: both prefill arms give results independent
+        // of panel size (the exact arm bit for bit, the matrix-unit arm by
+        // row independence).
+        name: "inkling2_panel_rows",
+        env: "TURBOSPARK_INKLING2_PANEL_ROWS",
+        values: &["<unset>", "32", "64"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[],
+    },
+    Knob {
         // LFM3's M-row chunk driver, default on for INT4 installs; `0` is the
         // per-token loop behind the same entry point. KL-bounded because the
         // default arm takes Steel and the rows attention: with

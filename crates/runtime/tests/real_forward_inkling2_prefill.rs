@@ -53,8 +53,8 @@ fn chunked_prefill_matches_sequential_prefill_bit_for_bit() {
     )
     .expect("prose");
     let mut ids = tok.encode(&text, false);
-    // Past the window ring's wrap (window + the 128-row panel's slack = 1,151
-    // rows), so a panel crosses it.
+    // Past the window ring's wrap (window + the 128-row panel's slack + the
+    // tiled attention's 32 = 1,183 rows), so a panel crosses it.
     let prompt_len = 1400usize;
     assert!(ids.len() >= prompt_len, "fixture prose too short");
     ids.truncate(prompt_len);
