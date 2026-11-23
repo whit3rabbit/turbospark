@@ -236,27 +236,30 @@ Inkling 2 Mini (`thinkingmachines/Inkling-2-Mini`, a 24-layer MoE looped to
 `inkling2-mini` (the original checkpoint), `inkling2-mini-mlx4` and
 `inkling2-mini-lamq54`. `turbospark-model pull <alias>` downloads the whole
 repository at its pinned revision, then converts it on this Mac, so it
-needs about the download plus the install free while both exist. Its memory
-oracle and quality gates have not run, so `recommend` lists its fit as
-unknown. A GGUF installs with `turbospark model pull-local` or `pull --repo`.
-Indicative readings on a 36 GB M4 Max, from tslab development profiles with
-the experts resident and about 11 GB of swap in use. These are not frozen
-rows:
+needs about the download plus the install free while both exist. A GGUF
+installs with `turbospark model pull-local` or `pull --repo`.
 
-| Install | Disk | Decode, 64-token prompt | Prefill and decode, 3,252-token prompt | Peak footprint |
+Its experts run two ways. Streamed through 16 slots, the memory oracle's
+setting, each install peaks low. With `auto` residency on a Mac with room
+(36 GB here), the whole expert table goes into GPU memory instead, which
+is faster and takes about 17.7 GiB:
+
+| Install | Disk | Streamed peak (16 slots, 8,192 ctx) | Streamed decode | Resident decode, 64-token prompt |
 | --- | ---: | ---: | ---: | ---: |
-| Original (NVFP4 and MXFP8 experts, BF16 dense) | ~18 GB | 34.2 tok/s | 32.5 and 27.7 tok/s | 17.7 GiB |
-| MLX 4-bit (`mlx-community/Inkling-2-Mini-4bit`) | ~16 GB | 45.6 tok/s | 37.9 and 33.5 tok/s | 17.7 GiB |
-| LookAtMyQuant 5.4 GB release | ~6.9 GB | 30.5 tok/s | 27.7 and 24.3 tok/s | 8.4 GiB |
+| Original (NVFP4 and MXFP8 experts, BF16 dense) | ~18 GB | 2,662 MiB | 14.5-18.0 tok/s | 34.2 tok/s |
+| MLX 4-bit (`mlx-community/Inkling-2-Mini-4bit`) | ~16 GB | 2,663 MiB | 17.9-20.5 tok/s | 45.6 tok/s |
+| LookAtMyQuant 5.4 GB release | ~6.9 GB | 1,587 MiB | 16.5-18.9 tok/s | 30.5 tok/s |
 
-Inkling prefill is sequential, so a 3,252-token prompt takes about 100 s on
-the original install. The MLX build keeps the checkpoint's own NVFP4 and
-MXFP8 experts and shrinks only the dense weights, so it uses as much memory
-as the original. The LookAtMyQuant 5.4 GB release halves it but loses
-quality: against the original it agrees on about 80% of next tokens, with a
-mean KL of 0.25 on an English window. That loss is in the release's weights,
-not the runtime. See [`docs/INKLING2_PHASE0.md`](docs/INKLING2_PHASE0.md) and
-[`docs/LAMQ.md`](docs/LAMQ.md).
+The streamed columns are the frozen oracle rows (`crates/bench/tests/
+inkling2*_memory_oracle.rs`, two sessions each, AC); `recommend --context
+8192` fits these rows from them. The resident column is an indicative tslab
+reading with about 11 GB of swap in use, not a frozen row. Inkling prefill
+is sequential, so a 3,252-token prompt takes about 3 minutes streamed. The
+LookAtMyQuant release loses quality against the original (about 80%
+next-token agreement, mean KL 0.25 on an English window), and on the long
+protocol case it reasons past the 4,096-token budget, so its oracle drives
+the two shorter cases. See [`docs/INKLING2_PHASE0.md`](docs/INKLING2_PHASE0.md)
+and [`docs/LAMQ.md`](docs/LAMQ.md).
 
 ### Dense checkpoints (weights stay memory-mapped)
 

@@ -39,6 +39,13 @@ when this file gets updated relative to the version bump and the tag.
   directory too. Catalog rows of the family install the same way from the
   CLI and the app (`catalog::install_inkling2_row`, which refuses a Hub
   answer for any commit but the row's and records the row's status).
+- Memory oracles for the three Inkling 2 installs
+  (`inkling2_memory_oracle`, `inkling2_mlx4_memory_oracle`,
+  `inkling2_lamq54_memory_oracle`), streamed at 16 slots and 8,192 context:
+  peaks of 2,662, 2,663 and 1,587 MiB, frozen from two sessions each. The
+  catalog rows carry these as `measured`, so `recommend --context 8192` fits
+  them. The LookAtMyQuant oracle drives two of the three protocol cases: on
+  the long one that release reasons past the 4,096-token budget.
 - The app shows Inkling 2 rows with their own family tile, and Discover
   marks them as MoE before they are installed.
 - Inkling 2 LookAtMyQuant diagnostics in the runtime crate:

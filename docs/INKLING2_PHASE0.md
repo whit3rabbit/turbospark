@@ -9,9 +9,11 @@ and a Metal decode flow have landed. The flow is greedy-matched to the CPU
 reference and llama.cpp on real installs (Stage A below). Three catalog rows
 are at status `runs` (2026-11-22): `inkling2-mini` (the original at
 `ed40e7da`), `inkling2-mini-mlx4` and `inkling2-mini-lamq54`, each pulled
-by alias here and chatted. The memory oracle and the Phase 6 quality gates
-in `docs/NEW_MODEL.md` have not run, so no row is `verified` and none is
-featured. Do not call it supported until they have.
+by alias here and chatted. The memory oracle is frozen for all three
+(streamed at 16 slots, 8,192 context: 2,662, 2,663 and 1,587 MiB; see
+"Memory oracle" below). The Phase 6 quality gates in `docs/NEW_MODEL.md`
+have not run, so no row is `verified` and none is featured. Do not call it
+supported until they have.
 GGUF installs through its own intake (GGUF sections below). LookAtMyQuant
 packed releases install and decode with their codes native (`docs/LAMQ.md`,
 5.4 GB release: 19/19 and 183/232 top-1 against the BF16 install; the loss
@@ -278,6 +280,42 @@ per decode token on the short workload: 1.30 J (original), 0.80 J (MLX),
 1.02 J (LAMQ). An earlier experiment, `inkling2-install-bench`, ran a stale
 worker and a refused long workload; do not read it.
 
+## Memory oracle (2026-11-22)
+
+`crates/bench/tests/inkling2_memory_oracle.rs`,
+`inkling2_mlx4_memory_oracle.rs` and `inkling2_lamq54_memory_oracle.rs`,
+one target per install. Streamed at the protocol's 16 slots (the opener
+pins `Streamed`; `auto` would make a 36 GB Mac resident), 8,192 context,
+4,096 budget, two sessions each on AC, then a third asserting the frozen
+rows.
+
+| Install | Peak (two sessions) | Decode, slowest to fastest case | Ceiling / floor |
+|---|---|---|---|
+| `inkling2-mini` | 2,651 and 2,662 MiB | 14.51 to 17.98 tok/s | 2,800 MiB / 10.0 |
+| `inkling2-mini-mlx4` | 2,663 and 2,661 MiB | 17.94 to 20.52 tok/s | 2,800 MiB / 12.5 |
+| `inkling2-mini-lamq54` | 1,573 and 1,587 MiB | 16.51 to 18.95 tok/s | 1,680 MiB / 11.5 |
+
+Every case stopped at end of turn with the same token counts in both
+sessions, and a warm replay grew +0.00 MiB. The peak is the slot cache
+(16 x 24 layers x the expert stride: 4.49 MB for NVFP4 and MXFP8, 1.67 MB
+for LAMQ) plus KV (about 0.27 GB on the 8 full slots, 0.16 GB of SWA ring)
+plus about 0.6 GB that both kinds of install show alike; the resident core
+is mapped, not counted. LAMQ drives short-explanation and medium-review
+only: on long-synthesis it reasoned to the 4,096 budget (the original
+stops at 2,070 tokens, MLX at 1,943), and a larger budget does not fit the
+window over its 3,252-token prompt. That reads as the release's quality
+loss, not a footprint question. With experts resident (`auto` here) the
+peak is about 17.7 GiB and decode about twice as fast; that is a tslab
+reading, not a frozen row ("Speed and memory by install").
+
+The third session, asserting the frozen rows, passed for all three. One MLX
+attempt failed its floor first: medium-review read 11.5 tok/s against 19.6
+and 19.5 in calibration, the same 2,391 tokens in 207 s instead of 122,
+while `mediaanalysisd` ran at about 300% CPU; the other two cases and the
+peak were normal. Rerun once the daemon was idle, it read 19.0 tok/s and
+passed. The floor was not loosened: a contended host reads as a floor
+failure here, so check `ps` before reading one as a regression.
+
 ## Remaining work, in dependency order
 
 Stage A: reachable and correct (decode only)
@@ -413,8 +451,8 @@ Stage A: reachable and correct (decode only)
    release for a checkpoint (the catalog network guard caught it, and the
    fixture now ships a config so `tests/inkling2_repo.rs` does too).
 5. DONE: long-context check (above). Catalog rows landed at `runs`
-   (2026-11-22). Remaining: memory oracle and quality gates, which are what
-   would make a row `verified` and give `recommend` a fit.
+   (2026-11-22), and the memory oracle (below). Remaining: the Phase 6
+   quality gates, which are what would make a row `verified`.
 
 Stage B: speed and memory (after A's gates, each with a kill switch)
 - DONE (2026-11-21): GGUF name table (`crates/repack/src/inkling2_gguf_names.rs`),

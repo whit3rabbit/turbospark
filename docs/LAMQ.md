@@ -384,8 +384,11 @@ The intake must check every offset bound and every sha256.
    to 1 ulp, max relative change 7.8e-3, about 3x the nearest-even error)
    moved prose KL from 0.1543 to 0.1556 and top-1 from 182 to 181, and the two
    installs differ from each other by mean KL 1.5e-3. Not yet run:
-   the 8.9 GB release, the memory oracle, sampled generation. No catalog
-   row. Speed and peak footprint beside the other Inkling installs:
+   the 8.9 GB release, sampled generation. Memory oracle (2026-11-22,
+   `inkling2_lamq54_memory_oracle`): 1,587 MiB streamed at 16 slots; it
+   drives two of the three protocol cases, because the release reasons past
+   the 4,096-token budget on long-synthesis where the original stops at
+   2,070. Speed and peak footprint beside the other Inkling installs:
    `docs/INKLING2_PHASE0.md`, "Speed and memory by install".
 6. DONE (2026-11-21): Workstream B, Inkling 2 GGUF intake and decode
    (`docs/INKLING2_PHASE0.md`, GGUF sections). The unsloth UD files are not
