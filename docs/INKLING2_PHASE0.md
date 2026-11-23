@@ -780,8 +780,8 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
     the quality gates open streamed, which prefills sequentially, so they do
     not exercise either arm; the KL bound rests on one 1,100-token prompt.
     The mlx4 install's dense GEMVs are 4-bit affine (the switch does not
-    touch them) and its chunked prefill stays bit-exact; LAMQ installs refuse
-    chunked prefill by name. Correction to the 2026-11-22 entries: the mlx4
+    touch them) and its chunked prefill stays bit-exact; LAMQ installs refused
+    chunked prefill by name (until the 2026-11-23 LAMQ entry below). Correction to the 2026-11-22 entries: the mlx4
     and LAMQ installs are on this machine, under `~/.turbospark/models/text/`.
 - DONE (2026-11-23): chunked prefill, step 4: 128-row panels and matrix-unit
   experts.
@@ -967,6 +967,24 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   is still slower than plain greedy on every prompt (prose 29.9 against 46.3
   tok/s, code 40.5 against 46.3, long 33.4 against 34.0); acceptance 1.8 to
   2.7 per round of 7.
+- DONE (2026-11-23): multi-row forward on LookAtMyQuant installs (chunked
+  prefill, speculative verify, and the DSpark drafter's target embed and
+  head). Bit-exact by construction: every coded tensor (embed buckets,
+  dense projections, experts, head) runs decode's own `LamqRuntime` call
+  once per row on that row's slice; the BF16 tensors take the multi-row
+  kernels. `multi_row_refusal()` replaces the by-name LAMQ refusal (a LAMQ
+  install without coded experts still refuses). LAMQ does NOT take the
+  matrix-unit default (`Ctx::prefill_mma`): with it, the reference
+  perplexity moved 0.0087 against a bound of 0.0057 (the LAMQ floor is
+  0.0005, so the 0.1% term set the bound); the bound was not widened.
+  Gates on `inkling2-mini-lamq54` (M4 Max): prefill 1,400 tokens 28.7 to
+  53.0 tok/s, 32/32 decode rows bit-identical; verify 72/72 and 1,154/1,154;
+  reference perplexity 5.7377 sequential and chunked (diff 0); speculative
+  depth 3 lossless on all three prompts but slower than plain except long
+  context (prose 19.0 against 31.3 tok/s, code 25.2 against 31.2, long 27.2
+  against 25.1): the per-row coded GEMVs make a 4-row verify cost about
+  four tokens. DSpark stays opt-in, so no default changes. A multi-row coded
+  GEMV (decode each chunk once for N rows) is what would make it pay.
 - RESEARCH (2026-11-22): mtplx (github.com/youssofal/mtplx, Apache-2.0, MLX)
   runs Inkling 2 Mini with the same bundled DSpark drafter. Our port already
   has its Markov head (`dspark_markov_*`), so the draft logic matches.

@@ -280,6 +280,14 @@ fn plain<'a>(r: Rows<'a>) -> gpu::Inkling2Rows<'a> {
 }
 
 impl Ctx<'_> {
+    /// The KL-bounded matrix-unit prefill (GEMM and tiled attention). A
+    /// LookAtMyQuant install keeps the bit-exact path: its default prefill
+    /// moved the reference perplexity past the floor bound (0.0087 against
+    /// 0.0057, `inkling2_prefill_quality`), so it does not take the default.
+    fn prefill_mma(&self) -> bool {
+        self.prefill && self.lamq.is_none() && prefill_mma_enabled()
+    }
+
     /// Multi-row form of [`Ctx::gemv_group`]: BF16 segments in one
     /// `inkling2_bf16_gemv_rows` dispatch, each MLX affine one through the
     /// shared dispatcher once per row (the same kernel the single-token path
@@ -294,7 +302,37 @@ impl Ctx<'_> {
     ) -> Result<(), RealForwardError> {
         let mut v = Vec::with_capacity(segs.len());
         let (mut packed, mut packed_cols) = ([false; 3], [0usize; 3]);
+        // LookAtMyQuant coded matrices: decode's `gemv_batch` per row, on that
+        // row's input and output slices, so each row gets decode's bits.
+        let lq = self.lamq.clone();
+        if let Some(l) = lq.as_ref() {
+            let coded: Vec<_> = segs.iter().copied().filter(|s| l.has(s.0)).collect();
+            if !coded.is_empty() {
+                for m in 0..n {
+                    let xs_m: Vec<Buf<'_>> = xs
+                        .iter()
+                        .map(|&(bf, o, st)| (bf, o + (m as u64) * u64::from(st) * 2))
+                        .collect();
+                    let segs_m: Vec<(&str, usize, usize, usize, Buf<'_>)> = coded
+                        .iter()
+                        .map(|&(nm, rows, cols, x, y)| {
+                            (
+                                nm,
+                                rows,
+                                cols,
+                                x,
+                                (y.0, y.1 + (m as u64) * u64::from(y.2) * 2),
+                            )
+                        })
+                        .collect();
+                    l.gemv_batch(self.context, pass, self.weights.buffer(), &xs_m, &segs_m)?;
+                }
+            }
+        }
         for &(nm, rows, cols, x, y) in segs {
+            if lq.as_ref().is_some_and(|l| l.has(nm)) {
+                continue;
+            }
             if entry(self.index, nm)?.dtype != TAG_BF16 {
                 // Affine (MLX-sourced) weights: the batched dispatcher, bit-exact
                 // against the single-row GEMV at every width, when the rows are
@@ -429,7 +467,7 @@ impl Ctx<'_> {
         // Keyed on the pass kind, not the row count: every prefill row takes
         // the same kernel however the prompt is chunked (a tail panel of 8 or
         // fewer rows included), or the result would depend on the chunking.
-        if self.prefill && prefill_mma_enabled() && v.iter().all(|s| s.cols % 64 == 0) {
+        if self.prefill_mma() && v.iter().all(|s| s.cols % 64 == 0) {
             return gpu::encode_inkling2_bf16_gemm_rows_mma(
                 self.context,
                 pass,
@@ -669,7 +707,9 @@ impl RealForwardRunner {
                     .to_string(),
             ));
         }
-        st.native_expert_types().map_err(unsupported)?;
+        if let Some(why) = st.multi_row_refusal() {
+            return Err(unsupported(why));
+        }
         if base != self.kv.position() {
             return Err(unsupported(format!(
                 "verify at position {base}; KV cache is at {}",
@@ -742,7 +782,7 @@ impl RealForwardRunner {
             index: &self.index,
             h,
             eps: cfg.rms_eps,
-            // Refused above when set; carried so the struct stays one shape.
+            // LookAtMyQuant tensors run decode's own calls row by row.
             lamq: st.lamq.clone(),
             // A head on every row is speculative verify; prefill heads one
             // row or none.
@@ -752,6 +792,17 @@ impl RealForwardRunner {
         let t_encode = std::time::Instant::now();
         let pass = c.context.begin_pass_labeled("inkling2 verify");
         for (m, &t) in tokens.iter().enumerate() {
+            if let Some(l) = c.lamq.clone() {
+                // A LookAtMyQuant bucket row, as decode embeds it.
+                l.embed(
+                    c.context,
+                    &pass,
+                    c.weights.buffer(),
+                    t as u32,
+                    (&b.y, (m * h * 2) as u64),
+                )?;
+                continue;
+            }
             crate::real_forward_dispatch::encode_embed_any(
                 c.context,
                 &pass,
@@ -907,7 +958,20 @@ impl RealForwardRunner {
             HeadRows::Last => ((n - 1) * h * 2, 1),
             HeadRows::None => (0, 0),
         };
-        if head_n > 0 {
+        if head_n > 0 && c.lamq.is_some() {
+            // LookAtMyQuant: decode's head per row (its own rotations, coded
+            // GEMVs and scatter), row r into logits row r.
+            let l = c.lamq.clone().expect("checked");
+            for r in 0..head_n {
+                l.head(
+                    c.context,
+                    &pass,
+                    c.weights.buffer(),
+                    (&b.mn, (head_off + r * h * 2) as u64),
+                    (&b.logits, (r * vocab * 2) as u64),
+                )?;
+            }
+        } else if head_n > 0 {
             c.gemv_rows(
                 &pass,
                 &[(&b.mn, head_off as u64, hs)],
@@ -920,6 +984,8 @@ impl RealForwardRunner {
                 )],
                 head_n,
             )?;
+        }
+        if head_n > 0 {
             gpu::encode_logit_softcap(
                 c.context,
                 &pass,
@@ -1264,7 +1330,7 @@ fn layer_attention_rows(
     };
     // Prefill passes under the matrix-unit switch take the tiled kernel
     // (KL-bounded, row-independent); verify keeps the rows kernel.
-    let attn = if c.prefill && prefill_mma_enabled() && prefill_attn_enabled() {
+    let attn = if c.prefill_mma() && prefill_attn_enabled() {
         gpu::encode_inkling2_attention_prefill
     } else {
         gpu::encode_inkling2_attention_rows
@@ -1433,8 +1499,35 @@ fn layer_moe_rows(
         n_experts: r.n_experts,
         sel: (&b.sel, 0),
     };
-    // Native rows only: `native_expert_types` refused every other install at
-    // the verify entry.
+    if let Some(l) = st.lamq.clone().filter(|l| l.experts.is_some()) {
+        // LookAtMyQuant: decode's expert pair per row, on that row's slice of
+        // the multi-row router's selection and weights.
+        for m in 0..n {
+            let layer_m = gpu::Inkling2ResidentLayer {
+                buffer: &r.layers[ip],
+                stride: r.strides[ip],
+                n_experts: r.n_experts,
+                sel: (&b.sel, (m * gpu::INKLING2_MAX_SLOTS * 4) as u64),
+            };
+            l.moe(
+                c.context,
+                pass,
+                c.weights.buffer(),
+                &gpu::LamqExperts::Resident(&layer_m),
+                ip,
+                (&b.mn, (m * h * 2) as u64),
+                (&b.routing_w, (m * gpu::INKLING2_MAX_SLOTS * 2) as u64),
+                (&b.y, (m * h * 2) as u64),
+                h,
+                ffn,
+                top_k,
+                (cfg.gate_softcap, cfg.up_softcap),
+            )?;
+        }
+        return moe_rows_tail(c, pass, st, b, arch, slot, ip, n);
+    }
+    // Native rows only: `multi_row_refusal` refused GGUF installs at the
+    // verify entry.
     let kind = match st.kinds[ip] {
         ExpertKind::Native(t) => t,
         ExpertKind::Gguf { .. } => {
@@ -1524,6 +1617,25 @@ fn layer_moe_rows(
         )
         .map_err(g)?;
     }
+    moe_rows_tail(c, pass, st, b, arch, slot, ip, n)
+}
+
+/// The routed half's tail over `n` rows: the MLP short conv (snapshots on a
+/// verify pass) and the residual add.
+#[allow(clippy::too_many_arguments)]
+fn moe_rows_tail(
+    c: &mut Ctx<'_>,
+    pass: &gpu::PassEncoder,
+    st: &RealInkling2State,
+    b: &BatchScratch,
+    arch: &model_io::ArchConfig,
+    slot: usize,
+    ip: usize,
+    n: usize,
+) -> Result<(), RealForwardError> {
+    let g = RealForwardError::Gpu;
+    let h = c.h;
+    let hs = h as u32;
     let fw = view(c.weights, c.index, &name(ip, "mlp_sconv.weight"))?;
     let s = &st.slots[slot];
     gpu::encode_inkling2_short_conv_rows(

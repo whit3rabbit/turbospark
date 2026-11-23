@@ -22,6 +22,7 @@
 //! drafter is not part of the target's checkpoint), or the directory named
 //! by `TURBOSPARK_INKLING2_DSPARK`.
 
+use super::lamq::LamqRuntime;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -202,6 +203,7 @@ impl DsparkState {
         arch: &model_io::ArchConfig,
         dir: &Path,
         max_ctx: usize,
+        lamq: Option<&LamqRuntime>,
     ) -> Result<Self, RealForwardError> {
         let bad = |m: String| RealForwardError::Unsupported(format!("DSpark drafter: {m}"));
         let cfg = DsparkConfig::load(dir, arch)?;
@@ -327,7 +329,7 @@ impl DsparkState {
             ctx_rows: 0,
             source: TapSource::None,
         };
-        s.fold(context, weights, index, arch)?;
+        s.fold(context, weights, index, arch, lamq)?;
         Ok(s)
     }
 
@@ -347,6 +349,7 @@ impl DsparkState {
         weights: &gpu::ResidentGpuWeights,
         index: &model_io::ResidentIndex,
         arch: &model_io::ArchConfig,
+        lamq: Option<&LamqRuntime>,
     ) -> Result<(), RealForwardError> {
         let g = RealForwardError::Gpu;
         let (h, rank, vocab) = (self.cfg.h, self.cfg.rank, arch.vocab_size as usize);
@@ -381,6 +384,7 @@ impl DsparkState {
                 &pass,
                 weights,
                 index,
+                lamq,
                 head,
                 vocab,
                 h,
@@ -395,6 +399,7 @@ impl DsparkState {
             &pass,
             weights,
             index,
+            lamq,
             head,
             vocab,
             h,
@@ -413,13 +418,15 @@ impl DsparkState {
 }
 
 /// The target LM head over `n` FP16 rows: one multi-row dispatch on a BF16
-/// head, the shared dispatcher per row on an MLX affine one.
+/// head, the shared dispatcher per row on an MLX affine one, decode's coded
+/// head per row on a LookAtMyQuant install.
 #[allow(clippy::too_many_arguments)]
 fn head_rows(
     context: &mut gpu::MetalContext,
     pass: &gpu::PassEncoder,
     weights: &gpu::ResidentGpuWeights,
     index: &model_io::ResidentIndex,
+    lamq: Option<&LamqRuntime>,
     name: &str,
     rows: usize,
     cols: usize,
@@ -427,6 +434,18 @@ fn head_rows(
     y: (&gpu::MetalBuffer, u64, u32),
     n: usize,
 ) -> Result<(), RealForwardError> {
+    if let Some(l) = lamq {
+        for m in 0..n as u64 {
+            l.head(
+                context,
+                pass,
+                weights.buffer(),
+                (x.0, x.1 + m * u64::from(x.2) * 2),
+                (y.0, y.1 + m * u64::from(y.2) * 2),
+            )?;
+        }
+        return Ok(());
+    }
     let e = entry(index, name)?;
     if e.dtype == TAG_BF16 {
         let o = weights.gpu_offset(e.file_offset - index.header.index_size);
@@ -510,8 +529,11 @@ impl RealForwardRunner {
                     .to_string(),
             ));
         }
-        st.native_expert_types().map_err(unsupported)?;
+        if let Some(why) = st.multi_row_refusal() {
+            return Err(unsupported(why));
+        }
         let max_ctx = st.max_ctx;
+        let lamq = st.lamq.clone();
         let d = DsparkState::build(
             &mut self.context,
             &self.weights,
@@ -519,6 +541,7 @@ impl RealForwardRunner {
             &self.arch,
             &dir,
             max_ctx,
+            lamq.as_deref(),
         )?;
         if block == 0 || block > d.cfg.block - 1 {
             return Err(unsupported(format!(
@@ -806,18 +829,28 @@ impl RealForwardRunner {
         let ctx = &mut self.context;
 
         // Block input.
-        crate::real_forward_dispatch::encode_embed_any(
-            ctx,
-            &pass,
-            &self.weights,
-            &self.index,
-            "model.llm.embed.weight",
-            (&d.emb, 0),
-            anchor as u32,
-            h as u32,
-            vocab,
-            1.0,
-        )?;
+        if let Some(l) = st.lamq.as_deref() {
+            l.embed(
+                ctx,
+                &pass,
+                self.weights.buffer(),
+                anchor as u32,
+                (&d.emb, 0),
+            )?;
+        } else {
+            crate::real_forward_dispatch::encode_embed_any(
+                ctx,
+                &pass,
+                &self.weights,
+                &self.index,
+                "model.llm.embed.weight",
+                (&d.emb, 0),
+                anchor as u32,
+                h as u32,
+                vocab,
+                1.0,
+            )?;
+        }
         let en = entry(&self.index, "model.llm.embed_norm.weight")?;
         let en = (
             self.weights.buffer(),
@@ -994,6 +1027,7 @@ impl RealForwardRunner {
             &pass,
             &self.weights,
             &self.index,
+            st.lamq.as_deref(),
             "model.llm.unembed.weight",
             vocab,
             h,

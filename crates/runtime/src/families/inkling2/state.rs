@@ -652,6 +652,20 @@ impl RealInkling2State {
     /// drafter) has multi-row kernels for those rows only: a LookAtMyQuant
     /// install codes its matrices and experts, and a GGUF install's experts
     /// run the GGUF pairs, so both decode without speculation.
+    /// Why this install cannot run the multi-row forward (speculative verify,
+    /// chunked prefill), or `None`. A LookAtMyQuant install runs it with its
+    /// coded GEMVs, embedding, head and expert pair called per row (the same
+    /// calls decode makes, so the same bits); a GGUF install's experts have no
+    /// multi-row form.
+    pub(crate) fn multi_row_refusal(&self) -> Option<String> {
+        if let Some(l) = self.lamq.as_ref() {
+            return l.experts.is_none().then(|| {
+                "a LookAtMyQuant install without coded experts has no multi-row forward".to_string()
+            });
+        }
+        self.native_expert_types().err()
+    }
+
     pub(crate) fn native_expert_types(&self) -> Result<Vec<gpu::Inkling2ExpertType>, String> {
         if self.lamq.is_some() {
             return Err(

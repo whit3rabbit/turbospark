@@ -94,7 +94,7 @@ impl RealForwardRunner {
                     .to_string(),
             );
         }
-        st.native_expert_types().err()
+        st.multi_row_refusal()
     }
 
     pub(crate) fn prefill_chunk_real_inkling2(
