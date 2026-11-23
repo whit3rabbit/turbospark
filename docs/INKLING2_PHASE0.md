@@ -1082,6 +1082,11 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   | same | streamed | 180/189 | 6.2e-3 | 1.1e-1 |
 
   Not run on the ggml-org repo: its Q8_0 and BF16 files (27.8 and 52.2 GB).
+  An intake holds the raw file and an install of about its size at once
+  (about 55 and 100 GB), past this machine's free disk (about 30 GB). The
+  three gated files already cover the expert path every GGUF type shares
+  (blob tables over the decode pair), and Q8_0 experts run the same pair.
+  The raw GGUFs were deleted after intake; their installs remain.
 - DONE (2026-11-23): prompt-copy drafting, mtplx item (3)
   (`runtime/src/prompt_copy.rs`, wired in `speculative.rs`; on with the
   DSpark drafter, `TURBOSPARK_SPEC_PROMPT_COPY=0` turns it off). When the
