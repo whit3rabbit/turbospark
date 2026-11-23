@@ -1777,6 +1777,7 @@
     },
     {
       "alias": "inkling2-mini-mlx4",
+      "featured_rank": 9,
       "name": "Inkling 2 Mini (MLX 4-bit dense weights, native NVFP4 and MXFP8 experts)",
       "family": "inkling2_loop",
       "source": {

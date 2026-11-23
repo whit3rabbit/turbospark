@@ -30,8 +30,9 @@ when this file gets updated relative to the version bump and the tag.
   (the original checkpoint at `ed40e7da`), `inkling2-mini-mlx4`
   (`mlx-community/Inkling-2-Mini-4bit`) and `inkling2-mini-lamq54` (the
   LookAtMyQuant 5.4 GB release). Each was pulled by alias and chatted here,
-  and each has a frozen memory oracle and quality gate (below). None is
-  featured.
+  and each has a frozen memory oracle and quality gate (below).
+  `inkling2-mini-mlx4`, the fastest of the three, is featured at rank 9,
+  after the existing eight.
 - The original Inkling 2 checkpoint and its MLX conversions install from the
   Hub: the probe reports them runnable and `pull --repo` takes the
   whole-file route (download at a pinned commit, then convert; the DSpark
@@ -91,7 +92,8 @@ when this file gets updated relative to the version bump and the tag.
   never returned. FFI/app searches opt in with `HubQuery::with_vision_language`.
 - Catalog rows can carry `featured_rank`. Only a `verified` model row may be
   featured, and the embedded table must feature at least one row with
-  distinct ranks. Eight rows are featured, from LFM3 1.7B to Qwen 3.6 35B.
+  distinct ranks. Nine rows are featured, from LFM3 1.7B to Qwen 3.6 35B and
+  Inkling 2 Mini MLX 4-bit.
 - The app's Discover section opens on a Featured tab: the featured rows that
   are not too large for this Mac, grouped by fit and ordered by rank. It
   replaces the Recommended tab; every other row is under All models.

@@ -9,7 +9,9 @@ and a Metal decode flow have landed. The flow is greedy-matched to the CPU
 reference and llama.cpp on real installs (Stage A below). Three catalog rows
 are `verified` (2026-11-22): `inkling2-mini` (the original at `ed40e7da`),
 `inkling2-mini-mlx4` and `inkling2-mini-lamq54`, each pulled by alias here
-and chatted. None is featured yet. The memory oracle is frozen for all three
+and chatted. `inkling2-mini-mlx4` is featured at rank 9 (after the
+existing eight); at the app's default 4,096-token fit context it sits under
+"Not checked on this Mac yet", since its peak was measured at 8,192. The memory oracle is frozen for all three
 (streamed at 16 slots, 8,192 context: 2,662, 2,663 and 1,587 MiB; see
 "Memory oracle" below). The Phase 6 quality gates are frozen too
 (2026-11-22; see "Quality gate" below).
