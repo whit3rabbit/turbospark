@@ -260,8 +260,9 @@ pub fn detect_inkling2_repo(
 
 /// The original checkpoint or an MLX conversion, from its `config.json`;
 /// None for any other safetensors repository. Downloads the top-level JSON,
-/// safetensors and Jinja files except the DSpark drafter
-/// (`mtp.safetensors`), which the intake does not read.
+/// safetensors and Jinja files. The original checkpoint's DSpark block
+/// drafter (`mtp.safetensors`, 636 MB) comes along: the intake copies it
+/// into `<install>/dspark/`, and it is never counted as a weights file.
 fn detect_checkpoint(
     client: &Client,
     pinned: &RepoRef,
@@ -278,11 +279,11 @@ fn detect_checkpoint(
     };
     let files: Vec<(String, u64)> = lamq_release_files(pinned, listing)?
         .into_iter()
-        .filter(|(n, _)| n != "mtp.safetensors" && !n.ends_with(".npz"))
+        .filter(|(n, _)| !n.ends_with(".npz"))
         .collect();
     let weights = files
         .iter()
-        .filter(|(n, _)| n.ends_with(".safetensors"))
+        .filter(|(n, _)| n.ends_with(".safetensors") && n != "mtp.safetensors")
         .count();
     if !mlx && weights != 1 {
         return Err(format!(
@@ -618,6 +619,27 @@ pub fn install_inkling2_row(
             source.repo.revision, entry.source.revision
         )));
     }
+    let mut progress = progress;
+    if let Some(mtp) = &entry.mtp {
+        // The row names the repository its DSpark drafter comes from (an MLX
+        // conversion drops `mtp.safetensors`). Fetched into the download
+        // folder's `dspark/`, where the intake copies it from; the folder is
+        // removed with the rest of the download once the install is
+        // recorded.
+        let staging_parent = store.staging_parent_for(&target.root)?;
+        let into = download_dir(&staging_parent, &source).join("dspark");
+        fetch_drafter(
+            client,
+            &RepoRef::new(&mtp.repo, &mtp.revision),
+            &into,
+            cancel,
+        )
+        .map_err(|e| store.install_failure(&target.root, &target.root, &target.library_name, e))?;
+        progress(&format!(
+            "fetched the DSpark drafter from {}@{}",
+            mtp.repo, mtp.revision
+        ));
+    }
     let installed = install_inkling2_repo(
         &source,
         &entry.alias,
@@ -636,6 +658,41 @@ pub fn install_inkling2_row(
         model,
         arch: installed.arch,
     })
+}
+
+/// Downloads a drafter repository's `mtp.safetensors` and `config.json`
+/// (whose `mtp_config` the runtime reads) into `into`, at the pinned commit.
+fn fetch_drafter(
+    client: &Client,
+    repo: &RepoRef,
+    into: &Path,
+    cancel: Option<&CancelFlag>,
+) -> Result<(), String> {
+    let (pinned, listing) = pinned_listing(client, repo)?;
+    if pinned_to_other_commit(&repo.revision, &pinned.revision) {
+        return Err(format!(
+            "{repo}: the Hub answered for commit {}, not the drafter's pinned {}",
+            pinned.revision, repo.revision
+        ));
+    }
+    std::fs::create_dir_all(into).map_err(|e| format!("creating {}: {e}", into.display()))?;
+    for name in ["mtp.safetensors", "config.json"] {
+        let size = listing
+            .iter()
+            .find(|(n, _)| n == name)
+            .ok_or_else(|| format!("{pinned} has no {name}; it is not a DSpark drafter source"))?
+            .1;
+        fetch_file(
+            client,
+            &pinned,
+            name,
+            size,
+            &into.join(name),
+            &mut |_| {},
+            cancel,
+        )?;
+    }
+    Ok(())
 }
 
 /// A row pinned to a full commit id must install that commit; a row that

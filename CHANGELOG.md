@@ -35,8 +35,14 @@ when this file gets updated relative to the version bump and the tag.
   after the existing eight.
 - The original Inkling 2 checkpoint and its MLX conversions install from the
   Hub: the probe reports them runnable and `pull --repo` takes the
-  whole-file route (download at a pinned commit, then convert; the DSpark
-  drafter `mtp.safetensors` is not fetched). `pull-local` takes such a
+  whole-file route (download at a pinned commit, then convert). The
+  original's DSpark block drafter (`mtp.safetensors`, 636 MB) lands in the
+  install's `dspark/`, and the `inkling2-mini-mlx4` row fetches the same
+  drafter from the original through its `mtp` source (an MLX conversion
+  drops it). Speculative decoding stays opt-in. A first battery reading
+  (not quotable) has DSpark-7 about 24% faster on the original and 14%
+  slower on the MLX build, whose verify does not batch its 4-bit
+  projections (`docs/INKLING2_PHASE0.md`, Stage 5b). `pull-local` takes such a
   directory too. Catalog rows of the family install the same way from the
   CLI and the app (`catalog::install_inkling2_row`, which refuses a Hub
   answer for any commit but the row's and records the row's status).

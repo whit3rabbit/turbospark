@@ -1754,8 +1754,8 @@
           "generation_config.json"
         ]
       },
-      "download_bytes": 19552398983,
-      "install_bytes": 19500000000,
+      "download_bytes": 20188200399,
+      "install_bytes": 20200000000,
       "status": "verified",
       "gates": [
         "inkling2_quality_gate",
@@ -1773,7 +1773,7 @@
           "source": "this port, two oracle sessions, AC, streamed (inkling2_memory_oracle); all three protocol cases stop at end of turn; resident experts (auto on a 36 GB Mac) peak about 17.7 GiB instead"
         }
       ],
-      "notes": "The original 26B-physical MoE (24 layers, layers 6-17 looped 3x, 128 experts top-8). Downloaded whole at the pinned revision (the DSpark drafter mtp.safetensors is not fetched), then converted on this Mac; it needs about 37 GiB free while both exist. Logits match the CPU reference and llama.cpp (docs/INKLING2_PHASE0.md). The memory oracle (inkling2_memory_oracle) holds it streamed at 16 slots: 2,662 MiB peak at 8,192 context, 14.5 to 18.0 tok/s. The quality gate (inkling2_quality_gate) holds perplexity 4.7024 and both digests, so the status is verified. Prefill is sequential. With room (auto residency on a 36 GB Mac) the experts go resident instead: about 17.7 GiB and about 34 tok/s on a short prompt, an indicative reading."
+      "notes": "The original 26B-physical MoE (24 layers, layers 6-17 looped 3x, 128 experts top-8). Downloaded whole at the pinned revision, then converted on this Mac; it needs about 38 GiB free while both exist. The repository's DSpark block drafter (mtp.safetensors, 636 MB) lands in the install's dspark/; speculative decoding stays off unless asked for (greedy only, resident experts only). Logits match the CPU reference and llama.cpp (docs/INKLING2_PHASE0.md). The memory oracle (inkling2_memory_oracle) holds it streamed at 16 slots: 2,662 MiB peak at 8,192 context, 14.5 to 18.0 tok/s. The quality gate (inkling2_quality_gate) holds perplexity 4.7024 and both digests, so the status is verified. Prefill is sequential. With room (auto residency on a 36 GB Mac) the experts go resident instead: about 17.7 GiB and about 34 tok/s on a short prompt, an indicative reading."
     },
     {
       "alias": "inkling2-mini-mlx4",
@@ -1796,8 +1796,12 @@
           "generation_config.json"
         ]
       },
+      "mtp": {
+        "repo": "thinkingmachines/Inkling-2-Mini",
+        "revision": "ed40e7da625f594fc9c4990f5f66be24873c22d7"
+      },
       "download_bytes": 17334678817,
-      "install_bytes": 17200000000,
+      "install_bytes": 17900000000,
       "status": "verified",
       "gates": [
         "inkling2_mlx4_quality_gate",
@@ -1815,7 +1819,7 @@
           "source": "this port, two oracle sessions, AC, streamed (inkling2_mlx4_memory_oracle); all three protocol cases stop at end of turn; resident experts peak about 17.7 GiB instead"
         }
       ],
-      "notes": "mlx-lm's conversion (PR 2086): attention, embedding and head at affine 4-bit group 64, the experts kept as the original NVFP4 and MXFP8 bytes, so it saves disk but not expert memory. Downloaded whole at the pinned revision, then converted; it needs about 33 GiB free while both exist. Not bit-exact with inkling2-mini (4-bit dense weights). The memory oracle (inkling2_mlx4_memory_oracle) holds it streamed at 16 slots: 2,663 MiB peak, 17.9 to 20.5 tok/s, the fastest Inkling install streamed. The quality gate (inkling2_mlx4_quality_gate) holds perplexity 4.8026 and both digests, so the status is verified. Resident (auto with room), one indicative reading decoded about 46 tok/s at the original's 17.7 GiB."
+      "notes": "mlx-lm's conversion (PR 2086): attention, embedding and head at affine 4-bit group 64, the experts kept as the original NVFP4 and MXFP8 bytes, so it saves disk but not expert memory. Downloaded whole at the pinned revision, then converted; it needs about 33 GiB free while both exist. Not bit-exact with inkling2-mini (4-bit dense weights). The memory oracle (inkling2_mlx4_memory_oracle) holds it streamed at 16 slots: 2,663 MiB peak, 17.9 to 20.5 tok/s, the fastest Inkling install streamed. The quality gate (inkling2_mlx4_quality_gate) holds perplexity 4.8026 and both digests, so the status is verified. Resident (auto with room), one indicative reading decoded about 46 tok/s at the original's 17.7 GiB. The conversion drops mtp.safetensors, so the row's mtp source fetches the original's DSpark block drafter (636 MB) into the install's dspark/; speculative decoding stays off unless asked for."
     },
     {
       "alias": "inkling2-mini-lamq54",

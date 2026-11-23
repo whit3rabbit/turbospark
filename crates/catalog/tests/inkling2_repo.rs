@@ -450,7 +450,7 @@ fn an_mlx_conversion_is_detected_with_its_shards_and_index() {
 }
 
 #[test]
-fn the_original_checkpoint_skips_the_drafter_and_refuses_two_weights_files() {
+fn the_original_checkpoint_keeps_the_drafter_and_refuses_two_weights_files() {
     let _guard = ENDPOINT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let _server = serve(
         [
@@ -478,7 +478,9 @@ fn the_original_checkpoint_skips_the_drafter_and_refuses_two_weights_files() {
         .unwrap()
         .expect("the original Inkling checkpoint");
     assert_eq!(source.kind, Inkling2RepoKind::Hf);
-    assert!(source.files.iter().all(|(n, _)| n != "mtp.safetensors"));
+    // The DSpark drafter comes along (the intake copies it into dspark/),
+    // and it does not count as a second weights file.
+    assert!(source.files.iter().any(|(n, _)| n == "mtp.safetensors"));
     assert!(source
         .files
         .iter()
@@ -504,4 +506,118 @@ fn a_safetensors_repo_of_another_model_type_is_not_this_route() {
         detect_inkling2_repo(&client, &RepoRef::new("owner/llama", "main"), None, None).unwrap(),
         None
     );
+}
+
+fn inkling_row(
+    alias: &str,
+    repo: &str,
+    mtp: Option<(&str, &str)>,
+) -> turbospark_catalog::CatalogEntry {
+    let mtp = mtp.map_or("null".to_string(), |(r, rev)| {
+        format!(r#"{{"repo": "{r}", "revision": "{rev}"}}"#)
+    });
+    serde_json::from_str(&format!(
+        r#"{{"alias": "{alias}", "name": "test", "family": "inkling2_loop",
+            "source": {{"kind": "mlx", "repo": "{repo}", "revision": "{REVISION}", "file": null}},
+            "sidecars": {{"repo": null, "revision": null, "files": ["tokenizer.json"]}},
+            "download_bytes": 1, "install_bytes": 1, "status": "runs", "gates": [], "notes": "",
+            "mtp": {mtp}}}"#
+    ))
+    .expect("a test row parses")
+}
+
+fn drafter_repo() -> (String, (String, BTreeMap<String, Vec<u8>>)) {
+    (
+        "owner/drafter".to_string(),
+        (
+            TOK_REVISION.to_string(),
+            files(&[
+                ("mtp.safetensors", vec![5; 40]),
+                ("config.json", br#"{"mtp_config": {}}"#.to_vec()),
+                ("model.safetensors", vec![1; 10]),
+            ]),
+        ),
+    )
+}
+
+/// A row's `mtp` names where its DSpark drafter comes from; the row route
+/// fetches `mtp.safetensors` and `config.json` from that repository, at its
+/// pinned commit, into the download folder's `dspark/` before the intake
+/// runs (the intake then copies them into `<install>/dspark/`). The fixture
+/// weights make the intake refuse, which keeps the folder to inspect.
+#[test]
+fn a_rows_mtp_drafter_is_fetched_into_dspark_at_its_pinned_commit() {
+    let _guard = ENDPOINT_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let _server = serve(
+        [
+            checkpoint_repo(
+                "owner/mlx",
+                MLX_CONFIG,
+                &[("model-00001-of-00001.safetensors", vec![1; 30])],
+            ),
+            drafter_repo(),
+        ]
+        .into(),
+    );
+    let client = Client::with_timeout(Duration::from_secs(3));
+    let home = tmp("row-drafter");
+    let store = Store::new(home.join("store"));
+    let env = turbospark_catalog::library::LocationEnv::system(store.root()).unwrap();
+    let target = install_destination(&store, None, InstallKind::Text, "ink-row", &env).unwrap();
+
+    let row = inkling_row(
+        "ink-row",
+        "owner/mlx",
+        Some(("owner/drafter", TOK_REVISION)),
+    );
+    let err = turbospark_catalog::install_inkling2_row(
+        &row,
+        &target,
+        &client,
+        |_| {},
+        &mut |_| {},
+        None,
+        &store,
+        &env,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("kept in"), "the fixture intake refuses: {err}");
+    let dl = std::fs::read_dir(store.root())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .find(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().starts_with(".inkling2-download-"))
+        })
+        .expect("the download folder is kept");
+    assert_eq!(
+        std::fs::read(dl.join("dspark/mtp.safetensors")).unwrap(),
+        vec![5; 40]
+    );
+    assert!(dl.join("dspark/config.json").is_file());
+    assert!(
+        !dl.join("dspark/model.safetensors").exists(),
+        "only the drafter pair"
+    );
+
+    // A drafter pinned to a commit the Hub does not answer with is refused.
+    let target2 = install_destination(&store, None, InstallKind::Text, "ink-row2", &env).unwrap();
+    let wrong = "f".repeat(40);
+    let row2 = inkling_row("ink-row2", "owner/mlx", Some(("owner/drafter", &wrong)));
+    let err = turbospark_catalog::install_inkling2_row(
+        &row2,
+        &target2,
+        &client,
+        |_| {},
+        &mut |_| {},
+        None,
+        &store,
+        &env,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("drafter's pinned"), "{err}");
+    let _ = std::fs::remove_dir_all(&home);
 }

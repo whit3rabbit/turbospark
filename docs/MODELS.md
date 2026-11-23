@@ -402,8 +402,13 @@ the install exist side by side for a while, so the free-space check asks for
 both: about 1.5x the download for LAMQ and GGUF, the download plus 1 GiB for
 the checkpoint and MLX conversions. A failed conversion keeps the download,
 so a retry skips it. The rot guard measures these rows by the same file list
-(`detect_inkling2_repo`), not the generic shard sum: the original checkpoint
-also ships `mtp.safetensors`, which the route does not fetch.
+(`detect_inkling2_repo`), not the generic shard sum. The original
+checkpoint's DSpark block drafter (`mtp.safetensors`, 636 MB) comes with
+it and lands in `<install>/dspark/` beside the `config.json` whose
+`mtp_config` describes it. An MLX conversion drops that file, so the
+`inkling2-mini-mlx4` row names the original as its `mtp` source and the row
+route fetches the two files from there; for these rows `mtp` means "where
+the DSpark drafter comes from", not the MTP head the walk reads for Qwen.
 
 ### A row can pull a second repository for a drafter head
 

@@ -466,7 +466,8 @@ Stage A: reachable and correct (decode only)
    conversions. They take the same whole-file route as LAMQ and GGUF
    (`crates/catalog/src/inkling2_repo.rs`, kinds `Hf` and `Mlx`): the
    repository is downloaded whole at a pinned commit (the DSpark drafter
-   `mtp.safetensors` is not fetched), then converted by
+   `mtp.safetensors` is copied into `<install>/dspark/`, and an MLX row
+   fetches it through its `mtp` source), then converted by
    `write_inkling2_install(_from)`. A LAMQ release also ships an HF
    `config.json` declaring `inkling2_loop` and a `steering.safetensors`, so
    its manifest is read first; checking the checkpoint first took the
@@ -722,7 +723,27 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
     once per row in the verify (`Ctx::gemv_rows`), so they are not
     amortized; a batched affine GEMV that matches the per-row bits is the
     missing piece for a speedup on that install.
-  - Stage 5b, speed: NOT measured. Two tslab attempts (experiment
+  - Stage 5b, speed, FIRST READING (2026-11-22, M4 Max, ON BATTERY, so not
+    quotable; experiments `ink2-dspark-mlx-battery`,
+    `ink2-dspark-hf-battery`, `ink2-dspark-stats-battery`, worker at
+    `36c6dd58`): code workload, 256 greedy tokens, `--chunk off`, experts
+    resident, block 7. The drafter is the original's `mtp.safetensors` at
+    `ed40e7da` in each install's `dspark/`.
+
+    | install | plain decode | DSpark-7 decode | accepted / committed per round | draft | verify (8 rows) |
+    |---|---|---|---|---|---|
+    | `inkling2-mini` | 34.8 to 36.0 tok/s | 44.0 tok/s (clean); 42.5 to 44.7 dirty | 2.86 / 3.86 | 8.4 ms | 77 ms |
+    | `inkling2-mini-mlx4` | 45.8 to 47.2 tok/s | 38.8 to 39.7 tok/s | 2.94 / 3.94 | 10.7 ms | 90 ms |
+
+    The original gains about 24% (88 ms a round for 3.86 tokens against
+    28 ms a plain token); its A/B had no clean pair (foreign CPU), but the
+    stats run was clean and agrees. The MLX build loses 14.4% (3 clean
+    pairs, CI -15.3% to -14.1%): the same acceptance, but its plain token
+    is already 22 ms and its verify costs about four of them, because the
+    affine projections run once per row (`Ctx::gemv_rows`). A batched
+    affine GEMV matching the per-row bits is what would turn it into a win.
+    The drafter's state adds about 1.4 GB to the resident peak. Re-run on AC
+    before quoting any of this. Earlier attempts: two tslab attempts (experiment
     `ink2-dspark`, code workload, `--chunk off`, decode_tok_s, 30-minute
     quiet wait) got zero clean pairs: another session's Python job and
     mediaanalysisd held the host over 90% CPU. The candidate arm was also

@@ -173,6 +173,40 @@ pub fn inkling2_local_required_bytes(source: &Inkling2LocalSource) -> u64 {
     inkling2_install_estimate(packed, source_bytes(source))
 }
 
+/// Where a source's DSpark block drafter is, if it ships one: a `dspark/`
+/// folder holding `mtp.safetensors` and its `config.json` (what the Hub
+/// route assembles from a row's `mtp` repository), or, for the original
+/// checkpoint, its own top-level `mtp.safetensors` beside the `config.json`
+/// whose `mtp_config` describes it. The runtime loads `<install>/dspark/`
+/// (`runtime::families::inkling2::dspark`); a GGUF carries none.
+fn drafter_source(source: &Inkling2LocalSource) -> Option<(PathBuf, PathBuf)> {
+    let dir = match source {
+        Inkling2LocalSource::Gguf(_) => return None,
+        Inkling2LocalSource::Lamq(d) | Inkling2LocalSource::Hf(d) | Inkling2LocalSource::Mlx(d) => {
+            d
+        }
+    };
+    let pair = |d: &Path| {
+        let (w, c) = (d.join("mtp.safetensors"), d.join("config.json"));
+        (w.is_file() && c.is_file()).then_some((w, c))
+    };
+    pair(&dir.join("dspark")).or_else(|| match source {
+        Inkling2LocalSource::Hf(d) => pair(d),
+        _ => None,
+    })
+}
+
+/// Copies the drafter pair into `dest` (`<staging>/dspark`). A copy, not a
+/// move: a `pull-local` source is the user's own folder.
+fn copy_drafter((weights, config): &(PathBuf, PathBuf), dest: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(dest).map_err(|e| format!("creating {}: {e}", dest.display()))?;
+    for (from, name) in [(weights, "mtp.safetensors"), (config, "config.json")] {
+        std::fs::copy(from, dest.join(name))
+            .map_err(|e| format!("copying {} into {}: {e}", from.display(), dest.display()))?;
+    }
+    Ok(())
+}
+
 fn read_config(dir: &Path) -> Result<String, String> {
     let p = dir.join("config.json");
     std::fs::read_to_string(&p).map_err(|e| format!("{}: {e}", p.display()))
@@ -340,6 +374,10 @@ pub fn install_inkling2_local(
             }
         }
         repack::copy_inkling2_tokenizer_files(&tokenizer_dir, &staging).map_err(|e| e.0)?;
+        if let Some(from) = drafter_source(source) {
+            copy_drafter(&from, &staging.join("dspark"))?;
+            progress("copied the DSpark drafter (mtp.safetensors, config.json) into dspark/");
+        }
         verify_tokenizer(&staging, &mut progress)?;
         verify_install(&staging, &model_io::inkling2_mini(), &mut progress)?;
         refuse_existing(dest)?;
@@ -502,6 +540,47 @@ mod tests {
             inkling2_install_estimate(true, 10 << 30),
             (15 << 30) + (1 << 30)
         );
+    }
+
+    #[test]
+    fn the_drafter_comes_from_a_dspark_folder_or_the_checkpoints_own_file() {
+        let d = tmp("drafter");
+        std::fs::write(d.join("config.json"), r#"{"model_type": "inkling2_loop"}"#).unwrap();
+        let hf = Inkling2LocalSource::Hf(d.clone());
+        let mlx = Inkling2LocalSource::Mlx(d.clone());
+        assert_eq!(drafter_source(&hf), None, "no mtp.safetensors yet");
+        std::fs::write(d.join("mtp.safetensors"), b"w").unwrap();
+        assert_eq!(
+            drafter_source(&hf),
+            Some((d.join("mtp.safetensors"), d.join("config.json")))
+        );
+        // Only the original checkpoint's own file counts at the top level.
+        assert_eq!(drafter_source(&mlx), None);
+        let ds = d.join("dspark");
+        std::fs::create_dir_all(&ds).unwrap();
+        std::fs::write(ds.join("mtp.safetensors"), b"x").unwrap();
+        assert_eq!(
+            drafter_source(&mlx),
+            None,
+            "a dspark folder needs its config too"
+        );
+        std::fs::write(ds.join("config.json"), b"{}").unwrap();
+        let pair = (ds.join("mtp.safetensors"), ds.join("config.json"));
+        assert_eq!(drafter_source(&mlx), Some(pair.clone()));
+        assert_eq!(
+            drafter_source(&hf),
+            Some(pair.clone()),
+            "the dspark folder wins"
+        );
+        assert_eq!(
+            drafter_source(&Inkling2LocalSource::Gguf(d.join("m.gguf"))),
+            None
+        );
+
+        let out = d.join("out/dspark");
+        copy_drafter(&pair, &out).unwrap();
+        assert_eq!(std::fs::read(out.join("mtp.safetensors")).unwrap(), b"x");
+        assert_eq!(std::fs::read(out.join("config.json")).unwrap(), b"{}");
     }
 
     #[test]
