@@ -92,7 +92,14 @@ pub(crate) struct BatchScratch {
     group_offs: gpu::MetalBuffer,
     group_pairs: gpu::MetalBuffer,
     group_terms: gpu::MetalBuffer,
+    /// `[3][M][AFFINE_PACK_COLS]` halfs: the affine batched GEMM's packed
+    /// inputs, one region per input slot.
+    affine_pack: gpu::MetalBuffer,
 }
+
+/// Widest input the affine pack holds per row (4 x the Mini's hidden size;
+/// a wider input falls back to one GEMV per row).
+const AFFINE_PACK_COLS: usize = 4 * 2304;
 
 /// The matrix-unit BF16 GEMM for prefill panels
 /// (`gpu::encode_inkling2_bf16_gemm_rows_mma`): OFF unless
@@ -103,6 +110,16 @@ pub(crate) struct BatchScratch {
 fn prefill_mma_enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("TURBOSPARK_INKLING2_PREFILL_MMA").as_deref() == Ok("1"))
+}
+
+/// Batched affine GEMMs for an MLX-sourced install's dense projections in a
+/// multi-row pass: on unless `TURBOSPARK_INKLING2_BATCHED_AFFINE=0`, which
+/// restores one GEMV per row. Bit-exact either way (the batched kernels'
+/// parity tests; `real_forward_inkling2_prefill` and `_verify` on the mlx4
+/// install).
+fn batched_affine_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("TURBOSPARK_INKLING2_BATCHED_AFFINE").as_deref() != Ok("0"))
 }
 
 /// Which rows of a multi-row pass get the output head.
@@ -203,6 +220,7 @@ impl BatchScratch {
                 .new_output_buffer(((gpu::INKLING2_GROUP_MAX_EXPERTS as usize + 1) * 4) as u64),
             group_pairs: context.new_output_buffer((M * gpu::INKLING2_MAX_SLOTS * 4) as u64),
             group_terms: context.new_output_buffer((M * gpu::INKLING2_MAX_SLOTS * h * 4) as u64),
+            affine_pack: context.new_output_buffer((3 * M * AFFINE_PACK_COLS * 2) as u64),
         }
     }
 }
@@ -236,8 +254,72 @@ impl Ctx<'_> {
         n: usize,
     ) -> Result<(), RealForwardError> {
         let mut v = Vec::with_capacity(segs.len());
+        let (mut packed, mut packed_cols) = ([false; 3], [0usize; 3]);
         for &(nm, rows, cols, x, y) in segs {
             if entry(self.index, nm)?.dtype != TAG_BF16 {
+                // Affine (MLX-sourced) weights: the batched dispatcher, bit-exact
+                // against the single-row GEMV at every width, when the rows are
+                // token-major (stride == cols in, == rows out). Up to
+                // `gpu::MAX_BATCH_ROWS` rows per call, so each weight is read
+                // once per call rather than once per row.
+                // A strided input (the q/k/v inputs share one buffer, three
+                // rows per token) is first packed token-major into
+                // `affine_pack`: an exact copy, a few KB, against re-reading
+                // the weights once per row.
+                let out_major = y.2 as usize == rows;
+                let in_major = xs[x].2 as usize == cols;
+                let packable = self.pack.is_some() && cols <= AFFINE_PACK_COLS;
+                if out_major && (in_major || packable) && n > 1 && batched_affine_enabled() {
+                    foundation::engaged!("inkling2_batched_affine");
+                    let src = if in_major {
+                        (xs[x].0, xs[x].1)
+                    } else {
+                        let pack = self.pack.expect("packable checked");
+                        let region = (x * M * AFFINE_PACK_COLS * 2) as u64;
+                        if !packed[x] {
+                            gpu::encode_inkling2_copy_rows(
+                                self.context,
+                                pass,
+                                (xs[x].0, xs[x].1),
+                                xs[x].2,
+                                (pack, region),
+                                cols as u32,
+                                cols as u32,
+                                n as u32,
+                            )
+                            .map_err(RealForwardError::Gpu)?;
+                            packed[x] = true;
+                            packed_cols[x] = cols;
+                        }
+                        // One pack per input slot per call: every segment
+                        // reading slot x has the same width (the input's).
+                        if packed_cols[x] != cols {
+                            return Err(RealForwardError::Unsupported(format!(
+                                "affine pack: input {x} read at widths {} and {cols}",
+                                packed_cols[x]
+                            )));
+                        }
+                        (pack, region)
+                    };
+                    let mut m0 = 0usize;
+                    while m0 < n {
+                        let take = (n - m0).min(gpu::MAX_BATCH_ROWS);
+                        crate::real_forward_dispatch::encode_gemm_any(
+                            self.context,
+                            pass,
+                            self.weights,
+                            self.index,
+                            nm,
+                            rows,
+                            cols,
+                            (src.0, src.1 + (m0 * cols * 2) as u64),
+                            (y.0, y.1 + (m0 * rows * 2) as u64),
+                            take,
+                        )?;
+                        m0 += take;
+                    }
+                    continue;
+                }
                 for m in 0..n {
                     crate::real_forward_dispatch::encode_gemv_any(
                         self.context,
@@ -587,6 +669,7 @@ impl RealForwardRunner {
             // A head on every row is speculative verify; prefill heads one
             // row or none.
             prefill: head != HeadRows::All,
+            pack: Some(&b.affine_pack),
         };
         let pass = c.context.begin_pass_labeled("inkling2 verify");
         for (m, &t) in tokens.iter().enumerate() {

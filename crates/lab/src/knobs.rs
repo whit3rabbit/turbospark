@@ -654,6 +654,22 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[on("1", "inkling2_prefill_mma")],
     },
     Knob {
+        // Inkling 2 MLX-sourced installs: the dense affine projections of a
+        // multi-row pass (prefill panels, speculative verify) through the
+        // batched INT4/INT8 GEMMs, strided inputs packed token-major first;
+        // "0" restores one GEMV per row. Bit-exact (the batched kernels'
+        // parity tests; the prefill, verify and speculative gates on mlx4).
+        name: "inkling2_batched_affine",
+        env: "TURBOSPARK_INKLING2_BATCHED_AFFINE",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[off("0", "inkling2_batched_affine")],
+    },
+    Knob {
         // LFM3's M-row chunk driver, default on for INT4 installs; `0` is the
         // per-token loop behind the same entry point. KL-bounded because the
         // default arm takes Steel and the rows attention: with

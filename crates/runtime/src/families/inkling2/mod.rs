@@ -64,6 +64,9 @@ struct Ctx<'a> {
     /// matrix-unit GEMM (`verify::prefill_mma_enabled`). Never set for decode
     /// or speculative verify, whose rows must stay bit-exact to each other.
     prefill: bool,
+    /// Multi-row passes only: scratch the affine batched GEMM packs a
+    /// strided input into, token-major (`verify::BatchScratch::affine_pack`).
+    pack: Option<&'a gpu::MetalBuffer>,
 }
 
 impl Ctx<'_> {
@@ -373,6 +376,7 @@ impl RealForwardRunner {
             eps: cfg.rms_eps,
             lamq: st.lamq.clone(),
             prefill: false,
+            pack: None,
         };
         let mut pass = c.context.begin_pass_labeled("inkling2 attn+router");
         // BF16, MLX affine 4/8-bit on an MLX-sourced install, or a LAMQ

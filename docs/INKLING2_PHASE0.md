@@ -777,6 +777,24 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
     32/32 decode rows). LAMQ installs refuse chunked prefill by name.
     Correction to the 2026-11-22 entries: the mlx4 and LAMQ installs are on
     this machine, under `~/.turbospark/models/text/`.
+- DONE (2026-11-23): batched affine projections for MLX-sourced installs in
+  multi-row passes (`Ctx::gemv_rows`, `TURBOSPARK_INKLING2_BATCHED_AFFINE=0`
+  restores one GEMV per row; tslab knob `inkling2_batched_affine`). The mlx4
+  install's 4-bit dense projections went through one `dequant_int4_gemv` per
+  row (about 1,700 dispatches per 32-row panel) because the q/k/v inputs
+  share one buffer at three rows per token, which no token-major kernel
+  takes. They are now packed token-major (`affine_pack`, an exact copy) and
+  run through `encode_gemm_any`, the batched INT4/INT8 GEMMs that are
+  bit-exact against the GEMV at every width, in calls of up to 16 rows.
+  Gates on mlx4, all bit-exact: prefill 123.5 to 135.7 tok/s (32/32 decode
+  rows); verify 64/64 and 1,019/1,019; speculative lossless on all three
+  prompts (255 committed tokens identical), verify round 86 to about 80 ms.
+  CLI on the 3,088-token prompt: 28.3 s to 24.7 s, same text. The DSpark
+  drafter IS on this machine, in the mlx4 install's `dspark/`: the
+  speculative gate ran there for the first time since 2026-11-21. Speculative
+  is still slower than plain greedy on every prompt (prose 29.9 against 46.3
+  tok/s, code 40.5 against 46.3, long 33.4 against 34.0); acceptance 1.8 to
+  2.7 per round of 7.
 - RESEARCH (2026-11-22): mtplx (github.com/youssofal/mtplx, Apache-2.0, MLX)
   runs Inkling 2 Mini with the same bundled DSpark drafter. Our port already
   has its Markov head (`dspark_markov_*`), so the draft logic matches.

@@ -21,7 +21,8 @@ const SOURCE: &str = concat!(
 pub const INKLING2_BATCH_MAX_ROWS: usize = 32;
 /// Output rows per threadgroup of the matrix-unit GEMM: 8 simdgroups x
 /// `INK_MMA_NF` fragments of 8 (the shader's `kInkMmaRowsPerTG`).
-const INKLING2_MMA_ROWS_PER_TG: u32 = 8 * INKLING2_MMA_SG * 1;
+// One fragment per simdgroup (`INK_MMA_NF` 1): 8 rows per simdgroup.
+const INKLING2_MMA_ROWS_PER_TG: u32 = 8 * INKLING2_MMA_SG;
 /// Simdgroups per threadgroup of the matrix-unit GEMM (`INK_MMA_SG`).
 const INKLING2_MMA_SG: u32 = 4;
 /// Rows the 8-accumulator GEMV kernel serves (the verify block).
