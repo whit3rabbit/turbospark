@@ -984,7 +984,18 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   context (prose 19.0 against 31.3 tok/s, code 25.2 against 31.2, long 27.2
   against 25.1): the per-row coded GEMVs make a 4-row verify cost about
   four tokens. DSpark stays opt-in, so no default changes. A multi-row coded
-  GEMV (decode each chunk once for N rows) is what would make it pay.
+  GEMV (decode each chunk once for N rows) is what would make it pay, but
+  only partly: by parameter count the dense matrices are about 29% of a
+  visit's coded reads (about 26M against 64M for 8 experts), so batching
+  them caps near 1.35x while the experts still run per row. A grouped LAMQ
+  expert pair is the larger lever. Neither is built.
+- OPEN (2026-11-23): GGUF installs have no multi-row forward. The multi-row
+  pass reads experts from resident layers by index, and GGUF experts have no
+  resident kernels (`auto` streams such an install; `resident` is refused),
+  so verify, chunked prefill and DSpark refuse GGUF by name
+  (`multi_row_refusal`). Needs indexed GGUF Inkling pairs per GGUF type
+  (IQ2_XXS, IQ4_NL, Q2_0 in the gated file), then the bit-exact gates. The
+  gated IQ2_M file is no longer on this machine.
 - DONE (2026-11-23): prompt-copy drafting, mtplx item (3)
   (`runtime/src/prompt_copy.rs`, wired in `speculative.rs`; on with the
   DSpark drafter, `TURBOSPARK_SPEC_PROMPT_COPY=0` turns it off). When the
