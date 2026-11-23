@@ -30,18 +30,23 @@ const INKLING2_ASSISTANT_PREFIX: &str = "<|message_model|><|content_text|>";
 /// Per-chip rows, MOST SPECIFIC SUBSTRING FIRST. No Swift row exists:
 /// every row here is this port measuring itself.
 ///
-/// Frozen 2026-11-22 from TWO fresh processes on AC, release, 16 slots
-/// streamed, 8,192 context: perplexity 5.7382 and both digests agreed to the
-/// last digit and hex character, and the 8-slot digest EQUALS the 16-slot
-/// one in both (0.97x decode). 22% above the original's 4.7024 on the same
-/// corpus, the release's quality loss in this gate's terms (`docs/LAMQ.md`,
-/// step 5: about 80% next-token agreement, mean KL 0.25 to 0.31).
+/// Re-frozen 2026-11-23 from TWO fresh processes on AC, release, 16 slots
+/// streamed, 8,192 context, after decode's trellis GEMVs moved to
+/// `lamq_gemv_rows` (the kernel the multi-row passes share; the same sums in
+/// another order, within about 1e-6 of a row's RMS): perplexity 5.7391 and
+/// both digests agreed to the last digit and hex character, and the 8-slot
+/// digest EQUALS the 16-slot one in both (0.95x, 0.96x decode). The
+/// 2026-11-22 row, from the one-row kernel, was 5.7382 with greedy digest
+/// `47ac81ef...` and sampled `b3608a52...`; the move is +0.016%. 22% above
+/// the original's 4.7024 on the same corpus, the release's quality loss in
+/// this gate's terms (`docs/LAMQ.md`, step 5: about 80% next-token
+/// agreement, mean KL 0.25 to 0.31).
 const BASELINES: &[quality_common::ChipQuality] = &[quality_common::ChipQuality {
     brand_substr: "Apple M4 Max",
-    perplexity: 5.7382,
-    greedy_digest: "47ac81ef69ee72b2b1772babe83274b96ec6796fffee614a59bf52e3d2435600",
-    sampled_digest: "b3608a52f197793789891de45b6122939bbd4f163882d8b6d0bdb621821ee010",
-    source: "this port, 2026-11-22, Apple M4 Max, AC, 16 slots streamed, 8192 context",
+    perplexity: 5.7391,
+    greedy_digest: "90fe18b1690d4548c26e1c946aabb8ee63991ebb14d6aaf98397366bc1fad4aa",
+    sampled_digest: "ab0ffe261dfe294f2e0be7da3d586be6db23bfa60a9b9371dd820fee81fd36b9",
+    source: "this port, 2026-11-23, Apple M4 Max, AC, 16 slots streamed, 8192 context, lamq_gemv_rows decode",
 }];
 
 #[test]

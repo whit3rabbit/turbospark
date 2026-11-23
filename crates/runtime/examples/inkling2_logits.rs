@@ -12,6 +12,8 @@
 //! the padding rows are dropped). Without `stride` every position writes a
 //! row; with it, only positions `p % stride == stride - 1` and the last 16,
 //! the rule `~/models/oracles/dump_logits_sparse` uses for long prompts.
+//! `INKLING2_RESIDENCY=resident|streamed` pins the expert residency (unset:
+//! `auto`).
 
 use std::io::Write;
 use std::path::Path;
@@ -42,12 +44,33 @@ fn main() {
     let vocab = arch.vocab_size as usize;
     let unpadded = model_io::inkling2_config::Inkling2Config::mini().unpadded_vocab as usize;
     let t = Instant::now();
-    let mut runner = RealForwardRunner::open_with_slot_policy(
-        Path::new(&args[1]),
-        arch,
-        max_ctx,
-        ExpertCacheSlots::Fixed(slots),
-    )
+    // `INKLING2_RESIDENCY=resident|streamed` pins the expert residency;
+    // unset, the open takes `auto` as before.
+    let residency = match std::env::var("INKLING2_RESIDENCY").as_deref() {
+        Ok("resident") => Some(turbospark_runtime::ExpertResidency::Resident),
+        Ok("streamed") => Some(turbospark_runtime::ExpertResidency::Streamed),
+        Ok(other) => panic!("INKLING2_RESIDENCY must be resident or streamed, got {other}"),
+        Err(_) => None,
+    };
+    let mut runner = match residency {
+        None => RealForwardRunner::open_with_slot_policy(
+            Path::new(&args[1]),
+            arch,
+            max_ctx,
+            ExpertCacheSlots::Fixed(slots),
+        ),
+        Some(r) => RealForwardRunner::open_with_residency(
+            Path::new(&args[1]),
+            arch,
+            max_ctx,
+            ExpertCacheSlots::Fixed(slots),
+            turbospark_runtime::DraftPolicies::off(),
+            turbospark_runtime::SteeringPolicy::off(),
+            1,
+            turbospark_runtime::KvQuant::Off,
+            r,
+        ),
+    }
     .unwrap_or_else(|e| panic!("open: {e}"));
     eprintln!("open {:.1} s", t.elapsed().as_secs_f32());
     let mut out = std::io::BufWriter::new(std::fs::File::create(&args[3]).expect("create output"));

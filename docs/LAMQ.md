@@ -628,5 +628,6 @@ The intake must check every offset bound and every sha256.
 No catalog row beyond `runs`, and no change to any family's defaults, without
 its gate. The 5.4 GB release's row (`inkling2-mini-lamq54`) is `verified`
 (2026-11-22): its memory oracle and quality gate are frozen. Verified means
-those gates hold, not that it matches the original (perplexity 5.7382
-against 4.7024).
+those gates hold, not that it matches the original (perplexity 5.7391
+against 4.7024; re-frozen 2026-11-23 from 5.7382 when decode's trellis
+GEMVs moved to the multi-row kernel, `docs/INKLING2_PHASE0.md`).

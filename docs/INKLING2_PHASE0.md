@@ -330,7 +330,7 @@ encodes as those two special tokens. Streamed, 16 slots, 8,192 context.
 |---|---|---|---|
 | `inkling2-mini` | 4.7024 | yes | 0.89x |
 | `inkling2-mini-mlx4` | 4.8026 (+2.1%) | yes | 0.87x, 0.89x |
-| `inkling2-mini-lamq54` | 5.7382 (+22%) | yes | 0.97x |
+| `inkling2-mini-lamq54` | 5.7391 (+22%; 5.7382 before the 2026-11-23 GEMV move) | yes | 0.95x, 0.96x |
 
 Two fresh processes per install agreed on the perplexity's last digit and
 on both digests' every hex character; a third asserted the frozen rows. The
@@ -984,30 +984,35 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   context (prose 19.0 against 31.3 tok/s, code 25.2 against 31.2, long 27.2
   against 25.1): the per-row coded GEMVs make a 4-row verify cost about
   four tokens. DSpark stays opt-in, so no default changes.
-- BUILT, NOT WIRED (2026-11-23): a multi-row coded GEMV, `lamq_gemv_rows`
-  (`gpu::encode_lamq_gemv_rows`): each 16-column chunk is decoded once into
-  registers for a block of 8 token rows. GPU time at 32 rows (M4 Max,
-  `lamq_parity.rs` `gemv_rows_speed`): 2.3x to 3.2x faster than 32 one-row
-  dispatches for the trellis codes at the Mini's attention shapes, equal to
-  the decode kernel at one row; SLOWER for the level codes (lm6 0.63x to
-  0.73x, 2.6x slower at one row). Its rows are within about 1e-6 of a row's
-  RMS of `lamq_gemv` but not its bits (fast-math associates the chunk sum
+- DONE (2026-11-23): a multi-row coded GEMV, `lamq_gemv_rows`
+  (`gpu::encode_lamq_gemv_rows`), shared by decode and the multi-row passes.
+  Each 16-column chunk is decoded once into registers for a block of 8 token
+  rows. GPU time at 32 rows (M4 Max, `lamq_parity.rs` `gemv_rows_speed`):
+  2.3x to 3.2x faster than 32 one-row dispatches for the trellis codes at the
+  Mini's attention shapes, equal to `lamq_gemv` at one row; SLOWER for the
+  level codes (lm6 0.63x to 0.73x, 2.6x slower at one row), which keep
+  `lamq_gemv` everywhere. Its rows are within about 1e-6 of a row's RMS of
+  `lamq_gemv` but not its bits (fast-math associates the chunk sum
   differently; two rewrites, one with reassociation pinned off, still
   differed), and a row's bits do not depend on the other rows in the
-  dispatch. Wired into chunked prefill only, as a KL-bounded path behind
-  `TURBOSPARK_INKLING2_PREFILL_MMA` (rotations by a counted `encode_lamq_rht`,
-  bit-identical per vector), it FAILED the LAMQ perplexity bound: 0.0069 with
-  only `wo_ud`, 0.0367 with every trellis attention matrix, bound 0.0057.
-  Bisected: the same wiring with the old one-row GEMV over the rotated rows
-  scores diff 0.0000, so the shift is the kernel's summation order alone, not
-  a wiring bug; this install is that sensitive. The wiring was removed (a
-  patch is kept locally). The one remaining route to a bit-exact multi-row
-  GEMV is to move DECODE onto `lamq_gemv_rows` at one row (equal speed),
-  which changes LAMQ decode bits and needs the frozen
-  `inkling2_lamq54_quality_gate` digests re-frozen: not done without a
-  decision to re-freeze. Expected gain if done: coded attention is about
-  5.5 ms of a 32.6 ms token, so on the order of 10% of LAMQ prefill and
-  verify. A grouped LAMQ expert pair would be the larger lever.
+  dispatch.
+  - First wired into chunked prefill alone, as a KL-bounded path, it FAILED
+    the LAMQ perplexity bound (0.0069 with only `wo_ud`, 0.0367 with every
+    trellis attention matrix, bound 0.0057). Bisected: the same wiring with
+    the old GEMV over the rotated rows scores diff 0.0000, so the shift is the
+    summation order alone; this install is that sensitive.
+  - So decode moved onto it instead (`LamqRuntime::gemv_one`: trellis codes
+    through `lamq_gemv_rows` at one row), and verify and chunked prefill run
+    it over all rows (`LamqRuntime::gemv_rows`, a counted rotation per
+    matrix, bit-identical per vector), so every row gets decode's bits with
+    no switch. The head and level codes are unchanged.
+  - Gates on `inkling2-mini-lamq54`: prefill 1,400 tokens 32/32 decode rows
+    bit-identical, chunked 48.9 to 68.0 tok/s (+39%, read on a host with an
+    intake and a build running); verify 72/72 and 1,154/1,154.
+  - The quality gate was RE-FROZEN (`inkling2_lamq54_quality_gate.rs`): two
+    fresh processes agreed on perplexity 5.7391 (was 5.7382, +0.016%) and
+    both new digests, the 8-slot digest equals the 16-slot one, and a third
+    process asserted the row.
 - DONE (2026-11-23): resident GGUF experts and the multi-row forward on GGUF
   installs. No per-type kernels: `gpu::encode_inkling2_gguf_bind_rows` writes
   one `RoutedBlobs` table per row from the GPU router's ids
@@ -1039,9 +1044,26 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
     long 20.3 against 18.1, edit 29.2 against 19.7 (copy rounds accepted 211).
     GGUF experts run one row at a time in the verify, so short-answer rounds
     lose; DSpark stays opt-in.
-  Not run: logits against llama.cpp on the resident path (the dumper under
-  `~/models/oracles` is gone; resident is compared with streamed, which was
-  gated against llama.cpp), the unsloth and ggml-org files, a memory oracle.
+  Second file, unsloth `Inkling-2-Mini-UD-IQ1_S.gguf` @ `8078d149` (sha256
+  `17a7ff34...`; IQ1_S, IQ2_XXS, IQ2_XS and IQ2_S gate-up, Q2_0 and GGUF
+  NVFP4 down): intake OK (646 names); chunked prefill 1,400 tokens 22.8 to
+  39.2 tok/s, 32/32 rows bit-identical; verify 72/72 and 1,154/1,154.
+  Logits against llama.cpp master `c212d25` (2026-11-23, has #32694, #32704
+  and #32799; Homebrew's 1.0.0 bottle predates `inkling2_loop` and its HEAD
+  formula fails on a missing `tools/ui`, so built from source; Metal, one
+  batch, no zero rows), same file and ids, a 60-line `llama_get_logits_ith`
+  dumper:
+
+  | prompt | ours | top-1 | mean KL | max KL |
+  |---|---|---|---|---|
+  | 12 tokens | resident | 12/12 | 2.5e-5 | 2.3e-4 |
+  | 711 tokens, every 4th row and the last 16 | resident | 182/189 | 4.9e-3 | 7.1e-2 |
+  | same | streamed | 183/189 | 5.4e-3 | 1.3e-1 |
+
+  Resident sits where streamed does; a second resident run reproduced the
+  first byte for byte. `examples/inkling2_logits.rs` takes
+  `INKLING2_RESIDENCY=resident|streamed` for this. Not run: the ggml-org
+  files.
 - DONE (2026-11-23): prompt-copy drafting, mtplx item (3)
   (`runtime/src/prompt_copy.rs`, wired in `speculative.rs`; on with the
   DSpark drafter, `TURBOSPARK_SPEC_PROMPT_COPY=0` turns it off). When the

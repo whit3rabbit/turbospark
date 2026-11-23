@@ -56,7 +56,7 @@ when this file gets updated relative to the version bump and the tag.
 - Quality gates for the three Inkling 2 installs (`inkling2_quality_gate`,
   `inkling2_mlx4_quality_gate`, `inkling2_lamq54_quality_gate`): the
   reference answer scored in the `<|message_model|><|content_text|>` slot
-  (perplexity 4.7024, 4.8026 and 5.7382), greedy and sampled digests frozen
+  (perplexity 4.7024, 4.8026 and 5.7391), greedy and sampled digests frozen
   from two fresh processes each, and the 8-slot digest equal to the 16-slot
   one on all three.
 - The app shows Inkling 2 rows with their own family tile, and Discover

@@ -322,7 +322,32 @@ impl Ctx<'_> {
         // row's input and output slices, so each row gets decode's bits.
         let lq = self.lamq.clone();
         if let Some(l) = lq.as_ref() {
-            let coded: Vec<_> = segs.iter().copied().filter(|s| l.has(s.0)).collect();
+            // Trellis matrices take the multi-row GEMV (codes decoded once
+            // per block of rows), decode's own kernel, so verify and prefill
+            // both keep decode's bits. Level codes stay one row at a time.
+            let rows_path = n > 1;
+            if rows_path {
+                for &(nm, rows, cols, x, y) in segs {
+                    if l.rows_capable(nm) {
+                        l.gemv_rows(
+                            self.context,
+                            pass,
+                            self.weights.buffer(),
+                            nm,
+                            rows,
+                            cols,
+                            xs[x],
+                            y,
+                            n,
+                        )?;
+                    }
+                }
+            }
+            let coded: Vec<_> = segs
+                .iter()
+                .copied()
+                .filter(|s| l.has(s.0) && !(rows_path && l.rows_capable(s.0)))
+                .collect();
             if !coded.is_empty() {
                 for m in 0..n {
                     let xs_m: Vec<Buf<'_>> = xs

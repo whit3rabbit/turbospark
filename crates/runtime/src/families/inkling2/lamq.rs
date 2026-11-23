@@ -21,6 +21,10 @@ pub(crate) const TAG_LAMQ: u8 = 36;
 const TAG_FP16: u8 = 2;
 
 type Buf<'a> = (&'a gpu::MetalBuffer, u64);
+/// A row-strided view: buffer, byte offset of row 0, row stride in halfs.
+type Rows<'a> = (&'a gpu::MetalBuffer, u64, u32);
+/// Rows one multi-row prefill call takes (the panel, `PANEL_MAX_ROWS`).
+const ROWS_MAX: u64 = gpu::INKLING2_BATCH_MAX_ROWS as u64;
 
 fn bad(msg: String) -> RealForwardError {
     RealForwardError::Unsupported(msg)
@@ -69,6 +73,13 @@ pub(crate) struct LamqRuntime {
     x_rot_batch: gpu::MetalBuffer,
     y32: gpu::MetalBuffer,
     head32: gpu::MetalBuffer,
+    /// Multi-row scratch (`Self::gemv_rows`): packed FP16
+    /// inputs and outputs, rotated F32 inputs, F32 outputs before their
+    /// rotation, each `ROWS_MAX x widest`.
+    x_pack: gpu::MetalBuffer,
+    x_rot_rows: gpu::MetalBuffer,
+    y32_rows: gpu::MetalBuffer,
+    y_pack: gpu::MetalBuffer,
     pub(crate) experts: Option<LamqExpertRt>,
 }
 
@@ -324,6 +335,10 @@ impl LamqRuntime {
             x_rot_batch: context.new_output_buffer(gpu::LAMQ_RHT_BATCH_MAX as u64 * widest * 4),
             y32: context.new_output_buffer(widest * 4),
             head32: context.new_output_buffer(unpadded as u64 * 4),
+            x_pack: context.new_output_buffer(ROWS_MAX * widest * 2),
+            x_rot_rows: context.new_output_buffer(ROWS_MAX * widest * 4),
+            y32_rows: context.new_output_buffer(ROWS_MAX * widest * 4),
+            y_pack: context.new_output_buffer(ROWS_MAX * widest * 2),
             experts: None,
         }))
     }
@@ -442,6 +457,155 @@ impl LamqRuntime {
         Ok(())
     }
 
+    /// One row of `m` over a rotated F32 input: trellis codes through the
+    /// multi-row kernel at one row, so decode and the multi-row passes share
+    /// one kernel's bits (`lamq_gemv_rows`, equal speed to `lamq_gemv` at one
+    /// row); level codes through `lamq_gemv`, which they keep everywhere.
+    #[allow(clippy::too_many_arguments)]
+    fn gemv_one(
+        &self,
+        context: &mut gpu::MetalContext,
+        pass: &gpu::PassEncoder,
+        wb: &gpu::MetalBuffer,
+        m: &LamqMat,
+        x_rot: Buf<'_>,
+        y: Buf<'_>,
+        y_half: bool,
+    ) -> Result<(), gpu::GpuError> {
+        let view = self.view(wb, m);
+        if m.code.is_trellis() {
+            gpu::encode_lamq_gemv_rows(context, pass, &view, x_rot, m.cols, y, m.rows, 1, y_half)
+        } else {
+            gpu::encode_lamq_gemv(context, pass, &view, x_rot, y, y_half)
+        }
+    }
+
+    /// Whether `name` is a trellis-coded matrix, the codes the multi-row
+    /// GEMV serves (level codes stay one row at a time: the rows kernel is
+    /// slower on them, `lamq_parity.rs` `gemv_rows_speed`).
+    pub(crate) fn rows_capable(&self, name: &str) -> bool {
+        self.mats.get(name).is_some_and(|m| m.code.is_trellis())
+    }
+
+    /// `y = W x` for `n` token rows of one trellis-coded linear (speculative
+    /// verify and chunked prefill): the same rotations as decode (a counted
+    /// rotation is bit-identical per vector) and one `lamq_gemv_rows`
+    /// dispatch that decodes each chunk once for all the rows. Decode runs
+    /// the same kernel at one row (`Self::gemv_rotated`), and a row's bits do
+    /// not depend on the other rows, so every row gets decode's bits.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn gemv_rows(
+        &self,
+        context: &mut gpu::MetalContext,
+        pass: &gpu::PassEncoder,
+        wb: &gpu::MetalBuffer,
+        name: &str,
+        rows: usize,
+        cols: usize,
+        x: Rows<'_>,
+        y: Rows<'_>,
+        n: usize,
+    ) -> Result<(), RealForwardError> {
+        let g = RealForwardError::Gpu;
+        let m = self.mat(name, rows, cols)?;
+        if !m.code.is_trellis() || n == 0 || n as u64 > ROWS_MAX {
+            return Err(bad(format!("{name}: no multi-row LAMQ GEMV for {n} rows")));
+        }
+        let (rows32, cols32, n32) = (m.rows, m.cols, n as u32);
+        // Contiguous FP16 input rows for the counted rotation.
+        let xin = if x.2 == cols32 {
+            (x.0, x.1)
+        } else {
+            gpu::encode_inkling2_copy_rows(
+                context,
+                pass,
+                (x.0, x.1),
+                x.2,
+                (&self.x_pack, 0),
+                cols32,
+                cols32,
+                n32,
+            )
+            .map_err(g)?;
+            (&self.x_pack, 0)
+        };
+        gpu::encode_lamq_rht(
+            context,
+            pass,
+            self.factor(cols32),
+            gpu::LamqRhtDir::In,
+            xin,
+            true,
+            (wb, m.signs_in),
+            (&self.x_rot_rows, 0),
+            false,
+            n32,
+        )
+        .map_err(g)?;
+        let view = self.view(wb, m);
+        match m.signs_out {
+            None => gpu::encode_lamq_gemv_rows(
+                context,
+                pass,
+                &view,
+                (&self.x_rot_rows, 0),
+                cols32,
+                (y.0, y.1),
+                y.2,
+                n32,
+                true,
+            )
+            .map_err(g),
+            Some(so) => {
+                gpu::encode_lamq_gemv_rows(
+                    context,
+                    pass,
+                    &view,
+                    (&self.x_rot_rows, 0),
+                    cols32,
+                    (&self.y32_rows, 0),
+                    rows32,
+                    n32,
+                    false,
+                )
+                .map_err(g)?;
+                let direct = y.2 == rows32;
+                let out = if direct {
+                    (y.0, y.1)
+                } else {
+                    (&self.y_pack, 0)
+                };
+                gpu::encode_lamq_rht(
+                    context,
+                    pass,
+                    self.factor(rows32),
+                    gpu::LamqRhtDir::Out,
+                    (&self.y32_rows, 0),
+                    false,
+                    (wb, so),
+                    out,
+                    true,
+                    n32,
+                )
+                .map_err(g)?;
+                if !direct {
+                    gpu::encode_inkling2_copy_rows(
+                        context,
+                        pass,
+                        (&self.y_pack, 0),
+                        rows32,
+                        (y.0, y.1),
+                        y.2,
+                        rows32,
+                        n32,
+                    )
+                    .map_err(g)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
     /// The GEMV of an already input-rotated F32 `x_rot`, plus the output
     /// rotation when the matrix has one.
     fn gemv_rotated(
@@ -455,19 +619,12 @@ impl LamqRuntime {
     ) -> Result<(), RealForwardError> {
         let g = RealForwardError::Gpu;
         match m.signs_out {
-            None => {
-                gpu::encode_lamq_gemv(context, pass, &self.view(wb, m), x_rot, y, true).map_err(g)
-            }
+            None => self
+                .gemv_one(context, pass, wb, m, x_rot, y, true)
+                .map_err(g),
             Some(so) => {
-                gpu::encode_lamq_gemv(
-                    context,
-                    pass,
-                    &self.view(wb, m),
-                    x_rot,
-                    (&self.y32, 0),
-                    false,
-                )
-                .map_err(g)?;
+                self.gemv_one(context, pass, wb, m, x_rot, (&self.y32, 0), false)
+                    .map_err(g)?;
                 gpu::encode_lamq_rht(
                     context,
                     pass,
