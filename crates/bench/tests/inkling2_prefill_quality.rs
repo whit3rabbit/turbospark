@@ -76,10 +76,7 @@ fn perplexity(
     (sum / answer.len() as f64).exp()
 }
 
-fn open(
-    dir: &std::path::Path,
-    residency: runtime::ExpertResidency,
-) -> RealForwardRunner {
+fn open(dir: &std::path::Path, residency: runtime::ExpertResidency) -> RealForwardRunner {
     RealForwardRunner::open_with_residency(
         dir,
         model_io::inkling2_mini(),
