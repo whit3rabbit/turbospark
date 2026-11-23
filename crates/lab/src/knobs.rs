@@ -671,6 +671,23 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[off("0", "inkling2_batched_affine")],
     },
     Knob {
+        // Inkling 2 resident installs: a GPU touch of every resident buffer
+        // at open, not waited on, so the driver's 1 to 3 s first-use mapping
+        // overlaps the gap before the first request. "0" turns it off. Writes
+        // only a scratch buffer, so output is untouched; it moves time, it
+        // does not remove it (a one-shot CLI run queues straight behind it)
+        // (`crates/runtime/tests/real_forward_inkling2_prewarm.rs`).
+        name: "inkling2_prewarm",
+        env: "TURBOSPARK_INKLING2_PREWARM",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::Open,
+        exactness: Exactness::BitExact,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[off("0", "inkling2_prewarm")],
+    },
+    Knob {
         // LFM3's M-row chunk driver, default on for INT4 installs; `0` is the
         // per-token loop behind the same entry point. KL-bounded because the
         // default arm takes Steel and the rows attention: with

@@ -40,7 +40,49 @@ fn chunked_enabled() -> bool {
     *ON.get_or_init(|| std::env::var("TURBOSPARK_INKLING2_CHUNKED_PREFILL").as_deref() != Ok("0"))
 }
 
+/// The open-time GPU touch (`RealForwardRunner::inkling2_prewarm`): on unless
+/// `TURBOSPARK_INKLING2_PREWARM=0`.
+fn prewarm_enabled() -> bool {
+    std::env::var("TURBOSPARK_INKLING2_PREWARM").as_deref() != Ok("0")
+}
+
 impl RealForwardRunner {
+    /// The first command buffer that references the resident experts (about
+    /// 15.7 GB) and the dense weights waits about 1.2 to 2.8 s before its GPU
+    /// work starts, while the driver maps them; measured 2026-11-23, a first
+    /// decode token at 1.5 to 2.8 s wall for 30 ms of GPU. This submits one
+    /// tiny dispatch per buffer at the end of open WITHOUT waiting, so that
+    /// mapping overlaps whatever comes next (the rest of the caller's setup,
+    /// a user typing the first message). The first real pass queues behind
+    /// it on the same queue, so it is never slower than without. Resident
+    /// installs only (a streamed open has no expert buffers to map). Writes
+    /// one half into a scratch buffer; the model's buffers are only read.
+    pub(crate) fn inkling2_prewarm(&mut self) -> Result<(), RealForwardError> {
+        if !prewarm_enabled() {
+            return Ok(());
+        }
+        let Some(st) = self.real_inkling2.as_ref() else {
+            return Ok(());
+        };
+        let Some(res) = st.resident.as_ref() else {
+            return Ok(());
+        };
+        foundation::engaged!("inkling2_prewarm");
+        let scratch = self.context.new_output_buffer(16);
+        let pass = self.context.begin_pass_labeled("inkling2 prewarm");
+        let mut touch = |b: &gpu::MetalBuffer| {
+            gpu::encode_inkling2_copy_half(&mut self.context, &pass, (b, 0), (&scratch, 0), 1)
+                .map_err(RealForwardError::Gpu)
+        };
+        for b in &res.layers {
+            touch(b)?;
+        }
+        touch(self.weights.buffer())?;
+        // Not waited on: the command buffer retains what it references.
+        let _ = pass.commit();
+        Ok(())
+    }
+
     /// Why this install cannot take the chunked driver, or `None` when it
     /// can. Install-level only.
     pub(crate) fn inkling2_chunked_refusal(&self) -> Option<String> {

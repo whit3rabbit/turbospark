@@ -600,6 +600,9 @@ impl RealForwardRunner {
                 if let crate::families::qwen::DflashDraftPolicy::Fixed(block) = speculation.dflash {
                     runner.inkling2_open_dspark(block)?;
                 }
+                // Map the resident buffers in the background (no wait): the
+                // first pass otherwise stalls 1 to 3 s on it.
+                runner.inkling2_prewarm()?;
             }
             // Its own flow: short-conv layers, zero-tail per-class rope and
             // sandwich norms are each inside the layer, and a neighbour's flow

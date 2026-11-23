@@ -817,9 +817,16 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
     The mlx4 install's default prefill is now KL-bounded too (its experts
     take the matrix units); its exact arm stays bit-identical (prefill gate
     155.9 tok/s at 1,400 tokens, verify 72/72).
-  - Open: the first panel of a process waits about 1.9 s before its GPU
-    work starts (wait 2.5 s for 0.6 s of GPU), likely first touch of the
-    resident experts; sequential decode pays the same on its first token.
+  - The first pass of a process waits 1 to 3 s before its GPU work starts
+    (first decode token 1.5 to 2.8 s wall for 30 ms of GPU): the driver
+    mapping the freshly filled resident buffers on first use. Touching the
+    24 expert buffers at open moved about 1.2 s there. DONE: open now
+    submits that touch (every expert buffer and the dense weights) without
+    waiting (`inkling2_prewarm`, `TURBOSPARK_INKLING2_PREWARM=0` turns it
+    off), so an idle gap after open absorbs it:
+    `tests/real_forward_inkling2_prewarm.rs` reads the first token after a
+    5 s gap at 262 ms with it and 1,518 ms without. A one-shot CLI run gains
+    nothing (its first pass queues straight behind the touch).
 - DONE (2026-11-23): batched affine projections for MLX-sourced installs in
   multi-row passes (`Ctx::gemv_rows`, `TURBOSPARK_INKLING2_BATCHED_AFFINE=0`
   restores one GEMV per row; tslab knob `inkling2_batched_affine`). The mlx4
