@@ -174,6 +174,16 @@ pub(crate) fn kv_quant_unsupported_reason(
     if !kv_quant.is_on() {
         return None;
     }
+    // Inkling 2 keeps its K/V in its own per-slot rings and full-attention
+    // rows (`families/inkling2`), reading the shared cache's cursor only, so
+    // a quantized cache would quantize nothing it reads.
+    if expecting.family == model_io::ModelFamily::Inkling2Loop {
+        return Some(
+            "--kv-bits does not reach inkling2_loop: its K/V live in the family's own SWA \
+             rings and full-attention rows, not in the shared KV cache"
+                .to_string(),
+        );
+    }
     if !model_io::rht_supported(expecting.full_head_dim) {
         return Some(format!(
             "--kv-bits needs a full head_dim that is a power of two in 32..=512; this install's \
@@ -1052,11 +1062,23 @@ fn open_expert_streamers_with(
 #[cfg(test)]
 mod tests {
     use super::{
-        arch_dims, check_routing_fits_slots, guard_mapped_residency, mapped_residency_refusal,
-        mapped_residency_supported, resolve_expert_residency, validate_arch_config,
-        ARCH_DIM_CEILINGS,
+        arch_dims, check_routing_fits_slots, guard_mapped_residency, kv_quant_unsupported_reason,
+        mapped_residency_refusal, mapped_residency_supported, resolve_expert_residency,
+        validate_arch_config, ARCH_DIM_CEILINGS,
     };
     use model_io::ModelFamily;
+
+    #[test]
+    fn kv_bits_is_refused_by_name_on_inkling2() {
+        let on = model_io::KvQuant::parse("3").unwrap();
+        let why = kv_quant_unsupported_reason(&model_io::inkling2_mini(), on)
+            .expect("Inkling 2 must refuse --kv-bits");
+        assert!(why.contains("inkling2_loop"), "{why}");
+        assert_eq!(
+            kv_quant_unsupported_reason(&model_io::inkling2_mini(), model_io::KvQuant::Off),
+            None
+        );
+    }
 
     /// EVERY family is listed, not a sample, so adding a `ModelFamily`
     /// variant without deciding this question leaves it out of the sweep and

@@ -1213,6 +1213,20 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   16.16 to 19.02 tok/s); its `measured` block agrees with the oracle row.
   The network guard passes the row (header `inkling2_loop`, sidecars
   present, size as recorded).
+- CHECKED (2026-11-23), the rest of the unsloth fork's list:
+  - "One MoE cache entry per expert weight for looped layers": already so
+    here. The streamed path keys its expert streamer by PHYSICAL layer
+    (`layer_moe`: `streamers.get_mut(ip)`), so loop passes 2 and 3 hit the
+    slots pass 1 filled.
+  - Q8_0 KV for twice the context: not reachable. Inkling 2 keeps its K/V
+    in its own SWA rings and full-attention rows and reads only the shared
+    cache's cursor, so `--kv-bits` quantized nothing on this family and
+    reported nothing; it is now refused by name
+    (`kv_quant_unsupported_reason`). A family-local quantized ring is its
+    own work, with its own quality gate.
+  - Their drafter depth finding (2 beats 3) holds on UD-Q4_K_XL here except
+    on code (see above); on the mlx4 install depth 3 stays the measured
+    best. DSpark stays opt-in, so no depth knob is added.
 - DONE (2026-11-23): prompt-copy drafting, mtplx item (3)
   (`runtime/src/prompt_copy.rs`, wired in `speculative.rs`; on with the
   DSpark drafter, `TURBOSPARK_SPEC_PROMPT_COPY=0` turns it off). When the
