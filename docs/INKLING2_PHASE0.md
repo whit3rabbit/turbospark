@@ -1226,7 +1226,35 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
     own work, with its own quality gate.
   - Their drafter depth finding (2 beats 3) holds on UD-Q4_K_XL here except
     on code (see above); on the mlx4 install depth 3 stays the measured
-    best. DSpark stays opt-in, so no depth knob is added.
+    best. No separate depth knob: a tslab arm already carries the depth
+    (`~dflash:N`), so a depth sweep is one arm per value.
+- DONE (2026-11-23): DSpark drafter GGUFs. unsloth's OLD layout
+  (`dspark-Inkling-2-Mini-Q8_0_Old.gguf` @ `8078d149`, sha256 `2ec78510...`)
+  is the original release's drafter: every F32 and BF16 tensor is
+  byte-identical to `mtp.safetensors`, and the 27 projections are Q8_0 of
+  the same matrices (relative error 0.6%) in the same element order.
+  `repack::write_inkling2_dspark_from_gguf` (example
+  `inkling2_dspark_gguf`) maps the names
+  (`inkling2_dspark_gguf_to_hf`), dequantizes Q8_0 to BF16 and writes
+  `mtp.safetensors` plus a `config.json` whose `mtp_config` comes from the
+  GGUF metadata (equal to the original's, `rms_norm_eps` at f32). The NEW
+  layout (`dspark-Inkling-2-Mini-Q8_0.gguf`: `markov_ctx_mix`,
+  `markov_w1`/`markov_w2` over 200,058 with a bias, per-layer `ctx_mix`, a
+  7-row `mask_embd`) is a different drafter and is refused by name. A GGUF
+  `pull-local` converts a `dspark-*.gguf` beside the model into the
+  install's `dspark/` (the old layout first; a new-layout file is skipped
+  with a note). Gates: on the BF16 install the converted drafter and the
+  original give identical rounds, acceptance and rollbacks (code 81 rounds,
+  2.16 per round; edit 92, 1.78), lossless; a real `pull-local` of UD-IQ1_S
+  with the drafter GGUF beside it (isolated `TURBOSPARK_HOME`) converted it
+  and speculated losslessly from it.
+- DONE (2026-11-23): `tslab xengine-kl --model M --gguf F [--llama-cpp SRC]`
+  runs the cross-engine flow (`logit_dump` on the family's install env var,
+  then `scripts/kld_llamacpp.py`) under the machine lock and prints this
+  port against llama.cpp beside llama.cpp's own shape and backend floors;
+  the report lands in the experiment's `xengine/`. On UD-IQ1_S it
+  reproduced the standalone reading: 0.00182 mean KL, 98.2% top-1, under
+  the 0.00188 shape floor.
 - DONE (2026-11-23): prompt-copy drafting, mtplx item (3)
   (`runtime/src/prompt_copy.rs`, wired in `speculative.rs`; on with the
   DSpark drafter, `TURBOSPARK_SPEC_PROMPT_COPY=0` turns it off). When the

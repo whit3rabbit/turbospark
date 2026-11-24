@@ -66,7 +66,10 @@ when this file gets updated relative to the version bump and the tag.
   `TURBOSPARK_INKLING2_GGUF_NATIVE_NVFP4=0`), and a new verified catalog row
   `inkling2-mini-ud-q4kxl` for unsloth's recommended UD-Q4_K_XL, with its own
   memory oracle and quality gate. A GGUF source takes a `dspark/` folder
-  beside it as its DSpark drafter.
+  beside it as its DSpark drafter, or converts unsloth's old-layout drafter
+  GGUF (`dspark-*_Old.gguf`) beside it into one.
+- `tslab xengine-kl`: this port against llama.cpp on the same GGUF bytes,
+  with llama.cpp's own shape and backend floors, in one command.
 - The app shows Inkling 2 rows with their own family tile, and Discover
   marks them as MoE before they are installed.
 - Inkling 2 LookAtMyQuant diagnostics in the runtime crate:

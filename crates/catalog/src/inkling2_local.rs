@@ -204,6 +204,29 @@ fn drafter_source(source: &Inkling2LocalSource) -> Option<(PathBuf, PathBuf)> {
     })
 }
 
+/// A DSpark drafter GGUF beside a GGUF source (`dspark-*.gguf` in the same
+/// folder; the old layout first, since only it converts), or None.
+fn drafter_gguf_beside(source: &Inkling2LocalSource) -> Option<PathBuf> {
+    let Inkling2LocalSource::Gguf(f) = source else {
+        return None;
+    };
+    let mut found: Vec<PathBuf> = std::fs::read_dir(f.parent()?)
+        .ok()?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("dspark") && n.ends_with(".gguf"))
+        })
+        .collect();
+    found.sort_by_key(|p| {
+        !p.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.contains("_Old"))
+    });
+    found.into_iter().next()
+}
+
 /// Copies the drafter pair into `dest` (`<staging>/dspark`). A copy, not a
 /// move: a `pull-local` source is the user's own folder.
 fn copy_drafter((weights, config): &(PathBuf, PathBuf), dest: &Path) -> Result<(), String> {
@@ -385,6 +408,23 @@ pub fn install_inkling2_local(
         if let Some(from) = drafter_source(source) {
             copy_drafter(&from, &staging.join("dspark"))?;
             progress("copied the DSpark drafter (mtp.safetensors, config.json) into dspark/");
+        } else if let Some(gguf) = drafter_gguf_beside(source) {
+            // unsloth ships the drafter as its own GGUF beside the model; the
+            // old layout converts into the pair the runtime loads, the new
+            // one is a different drafter and the install goes on without it.
+            match repack::write_inkling2_dspark_from_gguf(&gguf, &staging.join("dspark")) {
+                Ok(r) => progress(&format!(
+                    "converted the DSpark drafter {} into dspark/ ({} tensors, {} dequantized \
+                     from Q8_0)",
+                    gguf.display(),
+                    r.tensors,
+                    r.dequantized_tensors
+                )),
+                Err(e) => {
+                    let _ = std::fs::remove_dir_all(staging.join("dspark"));
+                    progress(&format!("no DSpark drafter: {e}"));
+                }
+            }
         }
         verify_tokenizer(&staging, &mut progress)?;
         verify_install(&staging, &model_io::inkling2_mini(), &mut progress)?;
@@ -591,6 +631,23 @@ mod tests {
         std::fs::write(lone.join("config.json"), b"{}").unwrap();
         assert_eq!(
             drafter_source(&Inkling2LocalSource::Gguf(lone.join("m.gguf"))),
+            None
+        );
+
+        // A drafter GGUF beside a GGUF source: the old layout sorts first.
+        let g = tmp("drafter-gguf-beside");
+        assert_eq!(
+            drafter_gguf_beside(&Inkling2LocalSource::Gguf(g.join("m.gguf"))),
+            None
+        );
+        std::fs::write(g.join("dspark-Inkling-2-Mini-Q8_0.gguf"), b"n").unwrap();
+        std::fs::write(g.join("dspark-Inkling-2-Mini-Q8_0_Old.gguf"), b"o").unwrap();
+        assert_eq!(
+            drafter_gguf_beside(&Inkling2LocalSource::Gguf(g.join("m.gguf"))),
+            Some(g.join("dspark-Inkling-2-Mini-Q8_0_Old.gguf"))
+        );
+        assert_eq!(
+            drafter_gguf_beside(&Inkling2LocalSource::Hf(g.clone())),
             None
         );
 

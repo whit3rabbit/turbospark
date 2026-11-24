@@ -628,3 +628,237 @@ mod tests {
         assert!(e.0.contains("not an Inkling 2 one"), "{}", e.0);
     }
 }
+
+/// What [`write_inkling2_dspark_from_gguf`] wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Inkling2DsparkGgufReport {
+    pub tensors: usize,
+    /// Q8_0 tensors dequantized into BF16.
+    pub dequantized_tensors: usize,
+    /// Values BF16 could not hold exactly (dequantized Q8_0 products).
+    pub lossy_values: usize,
+}
+
+const GGML_Q8_0: u32 = 8;
+
+/// The safetensors name a DSpark drafter GGUF tensor maps to (unsloth's
+/// OLD layout, `dspark-Inkling-2-Mini-Q8_0_Old.gguf`: the original release's
+/// `mtp.safetensors` re-encoded, F32/BF16 tensors byte-for-byte and the
+/// projections as Q8_0). None for a name outside it.
+pub fn inkling2_dspark_gguf_to_hf(name: &str) -> Option<String> {
+    let global = match name {
+        "dspark_fuse.weight" => Some("fuse_weight"),
+        "dspark_hidden_out.weight" => Some("markov_head.hidden_out.weight"),
+        "dspark_hidden_out.bias" => Some("markov_head.hidden_out.bias"),
+        "dspark_norm.weight" => Some("markov_head.dflare_norm.weight"),
+        "joint_proj.weight" => Some("markov_head.rnn_proj.weight"),
+        "joint_proj.bias" => Some("markov_head.rnn_proj.bias"),
+        "markov_w1.weight" => Some("markov_head.markov_w1.weight"),
+        "mask_embd.weight" => Some("mask_embed"),
+        "output_norm.weight" => Some("norm.weight"),
+        _ => None,
+    };
+    if let Some(g) = global {
+        return Some(g.to_string());
+    }
+    let rest = name.strip_prefix("blk.")?;
+    let (layer, tail) = rest.split_once('.')?;
+    let layer: usize = layer.parse().ok()?;
+    let hf = match tail {
+        "attn_q.weight" => "self_attn.q_proj.weight",
+        "attn_k.weight" => "self_attn.k_proj.weight",
+        "attn_v.weight" => "self_attn.v_proj.weight",
+        "attn_output.weight" => "self_attn.o_proj.weight",
+        "attn_k_ctx.weight" => "self_attn.k_proj_ctx.weight",
+        "attn_v_ctx.weight" => "self_attn.v_proj_ctx.weight",
+        "attn_q_norm.weight" => "self_attn.q_norm.weight",
+        "attn_k_norm.weight" => "self_attn.k_norm.weight",
+        "attn_k_ctx_norm.weight" => "self_attn.k_norm_ctx.weight",
+        "attn_norm.weight" => "input_layernorm.weight",
+        "ffn_norm.weight" => "post_attention_layernorm.weight",
+        "dflare_norm.weight" => "dflare_norm.weight",
+        "ffn_gate.weight" => "mlp.gate_proj.weight",
+        "ffn_up.weight" => "mlp.up_proj.weight",
+        "ffn_down.weight" => "mlp.down_proj.weight",
+        _ => return None,
+    };
+    Some(format!("layers.{layer}.{hf}"))
+}
+
+/// Writes a DSpark drafter GGUF (architecture `dflash`, unsloth's OLD layout)
+/// as `out/mtp.safetensors` (BF16) plus `out/config.json` (its
+/// `mtp_config`, from the GGUF metadata): the pair the runtime loads from
+/// `<install>/dspark/`. Float tensors are copied (F32 narrowed to BF16, which
+/// the original release's values are); Q8_0 projections are dequantized to
+/// BF16 (`lossy_values` counts the inexact). unsloth's NEW layout
+/// (`markov_ctx_mix`, a two-matrix Markov head over the unpadded vocabulary)
+/// is a different drafter the Metal port does not implement, and is refused
+/// by name.
+pub fn write_inkling2_dspark_from_gguf(
+    gguf: &Path,
+    out: &Path,
+) -> Result<Inkling2DsparkGgufReport, Inkling2RepackError> {
+    let mut g = Gguf::open(gguf)?;
+    let h = &g.header;
+    if h.architecture() != Some("dflash") {
+        return err(format!(
+            "{}: architecture {:?} is not a DSpark drafter (dflash)",
+            gguf.display(),
+            h.architecture()
+        ));
+    }
+    if h.tensors.contains_key("markov_ctx_mix.weight")
+        || !h.tensors.contains_key("dspark_fuse.weight")
+    {
+        return err(
+            "this is unsloth's NEW DSpark layout (markov_ctx_mix, markov_w1/markov_w2 over the \
+             unpadded vocabulary): a different drafter from the one this port runs; use the old \
+             layout (dspark-Inkling-2-Mini-Q8_0_Old.gguf) or the original release's \
+             mtp.safetensors",
+        );
+    }
+    let u = |k: &str| {
+        h.metadata_u64(&format!("dflash.{k}"))
+            .ok_or_else(|| Inkling2RepackError(format!("drafter GGUF has no dflash.{k}")))
+    };
+    let f = |k: &str| {
+        h.metadata_f64(&format!("dflash.{k}"))
+            .ok_or_else(|| Inkling2RepackError(format!("drafter GGUF has no dflash.{k}")))
+    };
+    let arr = |k: &str| -> Result<Vec<crate::gguf_header::GgufValue>, Inkling2RepackError> {
+        h.metadata
+            .get(&format!("dflash.{k}"))
+            .and_then(|v| v.as_array())
+            .map(<[_]>::to_vec)
+            .ok_or_else(|| Inkling2RepackError(format!("drafter GGUF has no dflash.{k} array")))
+    };
+    let layers = u("block_count")?;
+    let local: Vec<u64> = arr("attention.sliding_window_pattern")?
+        .iter()
+        .enumerate()
+        .filter(|(_, v)| v.as_bool() == Some(true))
+        .map(|(i, _)| i as u64)
+        .collect();
+    let taps: Vec<u64> = arr("target_layers")?
+        .iter()
+        .filter_map(|v| v.as_u64())
+        .collect();
+    let config = serde_json::json!({
+        "mtp_config": {
+            "hidden_size": u("embedding_length")?,
+            "num_hidden_layers": layers,
+            "num_attention_heads": u("attention.head_count")?,
+            "num_key_value_heads": u("attention.head_count_kv")?,
+            "head_dim": u("attention.key_length")?,
+            "intermediate_size": u("feed_forward_length")?,
+            "max_position_embeddings": u("context_length")?,
+            "torch_dtype": "bfloat16",
+            "q_bias": false,
+            "o_bias": false,
+            "rms_norm_eps": f("attention.layer_norm_rms_epsilon")?,
+            "rope_theta": f("rope.freq_base")?,
+            "local_layer_ids": local,
+            "sliding_window_size": u("attention.sliding_window")?,
+            "block_size": u("block_size")?,
+            "markov_rank": u("dspark.markov_rank")?,
+            "markov_head_type": "rnn_hidden",
+            "target_layer_ids": taps,
+        }
+    });
+    let names: Vec<String> = h.tensors.keys().cloned().collect();
+    let mut entries: Vec<(String, Vec<u64>, Vec<u8>)> = Vec::with_capacity(names.len());
+    let (mut dequantized, mut lossy) = (0usize, 0usize);
+    for name in &names {
+        let hf = inkling2_dspark_gguf_to_hf(name)
+            .ok_or_else(|| Inkling2RepackError(format!("{name}: not a DSpark drafter tensor")))?;
+        let info = g.header.tensors[name].clone();
+        let n: u64 = info.dims.iter().product();
+        let values: Vec<f32> = match info.ggml_type {
+            GGML_Q8_0 => {
+                dequantized += 1;
+                compute::dequantize_q8_0(&g.read(name)?, n as usize)
+            }
+            t if is_float(t) => g.floats(name)?,
+            other => {
+                return err(format!(
+                    "{name}: ggml type {other} ({}) has no DSpark conversion",
+                    ggml_type_name(other).unwrap_or("?")
+                ))
+            }
+        };
+        let (bytes, l) = bf16_bytes(&values);
+        lossy += l;
+        // ggml dims run fastest-first; safetensors shapes slowest-first.
+        let shape: Vec<u64> = info.dims.iter().rev().copied().collect();
+        entries.push((hf, shape, bytes));
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut header = serde_json::Map::new();
+    header.insert("__metadata__".into(), serde_json::json!({ "format": "pt" }));
+    let mut at = 0u64;
+    for (name, shape, bytes) in &entries {
+        let end = at + bytes.len() as u64;
+        header.insert(
+            name.clone(),
+            serde_json::json!({ "dtype": "BF16", "shape": shape, "data_offsets": [at, end] }),
+        );
+        at = end;
+    }
+    let mut head = serde_json::to_vec(&Value::Object(header))
+        .map_err(|e| Inkling2RepackError(e.to_string()))?;
+    while head.len() % 8 != 0 {
+        head.push(b' ');
+    }
+    std::fs::create_dir_all(out)
+        .map_err(|e| Inkling2RepackError(format!("{}: {e}", out.display())))?;
+    let path = out.join("mtp.safetensors");
+    let mut file = std::io::BufWriter::new(
+        std::fs::File::create(&path)
+            .map_err(|e| Inkling2RepackError(format!("{}: {e}", path.display())))?,
+    );
+    use std::io::Write;
+    let w = |e: std::io::Error| Inkling2RepackError(format!("{}: {e}", path.display()));
+    file.write_all(&(head.len() as u64).to_le_bytes())
+        .map_err(w)?;
+    file.write_all(&head).map_err(w)?;
+    for (_, _, bytes) in &entries {
+        file.write_all(bytes).map_err(w)?;
+    }
+    file.flush().map_err(w)?;
+    let cfg =
+        serde_json::to_string_pretty(&config).map_err(|e| Inkling2RepackError(e.to_string()))?;
+    std::fs::write(out.join("config.json"), cfg + "\n")
+        .map_err(|e| Inkling2RepackError(format!("config.json: {e}")))?;
+    Ok(Inkling2DsparkGgufReport {
+        tensors: entries.len(),
+        dequantized_tensors: dequantized,
+        lossy_values: lossy,
+    })
+}
+
+#[cfg(test)]
+mod dspark_gguf_tests {
+    use super::inkling2_dspark_gguf_to_hf as m;
+
+    #[test]
+    fn old_layout_names_map_onto_the_safetensors_drafter() {
+        assert_eq!(m("dspark_fuse.weight").as_deref(), Some("fuse_weight"));
+        assert_eq!(m("mask_embd.weight").as_deref(), Some("mask_embed"));
+        assert_eq!(
+            m("markov_w1.weight").as_deref(),
+            Some("markov_head.markov_w1.weight")
+        );
+        assert_eq!(
+            m("blk.2.attn_k_ctx_norm.weight").as_deref(),
+            Some("layers.2.self_attn.k_norm_ctx.weight")
+        );
+        assert_eq!(
+            m("blk.0.ffn_down.weight").as_deref(),
+            Some("layers.0.mlp.down_proj.weight")
+        );
+        // The new layout's tensors have no mapping.
+        assert_eq!(m("markov_ctx_mix.weight"), None);
+        assert_eq!(m("markov_w2.weight"), None);
+        assert_eq!(m("blk.0.ctx_mix.weight"), None);
+    }
+}
