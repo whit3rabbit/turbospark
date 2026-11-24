@@ -1633,7 +1633,10 @@ fn layer_moe_rows(
     // Prefill passes take the matrix-unit pair whenever the prefill switch is
     // on, at every panel size (KL-bounded, row-independent, so chunking does
     // not change the result); speculative verify never does.
-    if c.prefill && prefill_mma_enabled() {
+    // `prefill_mma`, not the raw switch: an install that keeps the
+    // bit-exact prefill (LAMQ, GGUF, a GGUF whose NVFP4 layers open native)
+    // keeps it for its native layers too.
+    if c.prefill_mma() {
         gpu::encode_inkling2_moe_grouped_rows_mma(
             c.context,
             pass,

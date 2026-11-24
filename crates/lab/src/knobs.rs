@@ -688,6 +688,25 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[off("0", "spec_prompt_copy")],
     },
     Knob {
+        // Inkling 2 GGUF installs: a layer whose gate-up and down are both
+        // NVFP4 opens as the native NVFP4 kind (the same ggml block bytes),
+        // so it runs the native and grouped pairs instead of the generic
+        // GGUF NVFP4 pair. "0" keeps the GGUF pair. Each arm is bit-exact
+        // between decode, verify and chunked prefill; the two arms differ
+        // from each other at FP16 rounding (different kernels), so this is
+        // KL-bounded across values (unsloth UD-Q4_K_XL quality gate frozen
+        // with it on).
+        name: "inkling2_gguf_native_nvfp4",
+        env: "TURBOSPARK_INKLING2_GGUF_NATIVE_NVFP4",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::KlBounded,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[off("0", "inkling2_gguf_native_nvfp4")],
+    },
+    Knob {
         // Inkling 2 resident installs: a GPU touch of every resident buffer
         // at open, not waited on, so the driver's 1 to 3 s first-use mapping
         // overlaps the gap before the first request. "0" turns it off. Writes

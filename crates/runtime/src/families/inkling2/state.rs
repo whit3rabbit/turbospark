@@ -432,6 +432,17 @@ impl RealInkling2State {
                              down projection only)"
                         )))
                     }
+                    // A GGUF NVFP4 blob is a native one (ggml `block_nvfp4`
+                    // rows behind the same outer-scale record), so such a
+                    // layer runs the native pair: the grouped and matrix-unit
+                    // multi-row paths, and about 3.6x less GPU time than the
+                    // generic GGUF NVFP4 pair (`gguf_native_nvfp4_enabled`).
+                    (
+                        Some(gpu::Inkling2GgufExpertType::Ext(gpu::MoeExtType::Nvfp4)),
+                        Some(gpu::Inkling2GgufExpertType::Ext(gpu::MoeExtType::Nvfp4)),
+                    ) if gguf_native_nvfp4_enabled() => {
+                        ExpertKind::Native(gpu::Inkling2ExpertType::Nvfp4)
+                    }
                     (Some(gate_up), Some(down)) => ExpertKind::Gguf { gate_up, down },
                     _ => {
                         return Err(unsupported(format!(
@@ -533,26 +544,30 @@ impl RealInkling2State {
         } else {
             None
         };
+        // An install may mix GGUF and native layers (a GGUF whose NVFP4
+        // layers open native, and whose others stay GGUF); the streamed
+        // routed buffer carries an encoder for each kind present, and each
+        // layer binds through its own (`layer_moe_streamed`).
         let gguf_experts = kinds.iter().any(|k| matches!(k, ExpertKind::Gguf { .. }));
-        if gguf_experts && kinds.iter().any(|k| matches!(k, ExpertKind::Native(_))) {
-            return Err(unsupported(
-                "an install mixing GGUF and native expert layers".into(),
-            ));
-        }
-        let (source, function) = if lamq_experts {
-            (
+        let native_experts = kinds.iter().any(|k| matches!(k, ExpertKind::Native(_)));
+        let mut encoders: Vec<(&'static str, &'static str)> = Vec::new();
+        if lamq_experts {
+            encoders.push((
                 gpu::moe_inkling2_lamq_source(),
                 gpu::MOE_INKLING2_LAMQ_REFLECT_FUNCTION,
-            )
-        } else if gguf_experts {
-            (gpu::moe_gguf_source(), GGUF_REFLECT_FUNCTION)
+            ));
         } else {
-            (
-                gpu::moe_inkling2_source(),
-                gpu::MOE_INKLING2_REFLECT_FUNCTION,
-            )
-        };
-        let routed = gpu::RoutedBlobsBuffer::new_for(context, source, function, false)
+            if gguf_experts {
+                encoders.push((gpu::moe_gguf_source(), GGUF_REFLECT_FUNCTION));
+            }
+            if native_experts || !gguf_experts {
+                encoders.push((
+                    gpu::moe_inkling2_source(),
+                    gpu::MOE_INKLING2_REFLECT_FUNCTION,
+                ));
+            }
+        }
+        let routed = gpu::RoutedBlobsBuffer::new_for_encoders(context, &encoders, false)
             .map_err(RealForwardError::Gpu)?;
 
         let half = |context: &gpu::MetalContext, n: usize| {
@@ -763,4 +778,19 @@ impl ResidentExperts {
             n_experts: experts as u32,
         })
     }
+}
+
+/// Whether a GGUF layer whose gate-up and down are both NVFP4 opens as the
+/// native NVFP4 kind (the same bytes; `gpu/tests/inkling2_gguf_native_nvfp4.rs`).
+/// On unless `TURBOSPARK_INKLING2_GGUF_NATIVE_NVFP4=0`, which keeps the
+/// generic GGUF pair for A/B timing and to bisect.
+fn gguf_native_nvfp4_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        let on = std::env::var("TURBOSPARK_INKLING2_GGUF_NATIVE_NVFP4").as_deref() != Ok("0");
+        if on {
+            foundation::engaged!("inkling2_gguf_native_nvfp4");
+        }
+        on
+    })
 }

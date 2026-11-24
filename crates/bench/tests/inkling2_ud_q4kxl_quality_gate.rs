@@ -30,19 +30,25 @@ const INKLING2_ASSISTANT_PREFIX: &str = "<|message_model|><|content_text|>";
 /// Per-chip rows, MOST SPECIFIC SUBSTRING FIRST. No Swift row exists:
 /// every row here is this port measuring itself.
 ///
-/// Frozen 2026-11-23 from TWO fresh processes on AC, release, 16 slots
-/// streamed, 8,192 context: perplexity 4.6962 and both digests agreed to the
-/// last digit and hex character, and the 8-slot digest EQUALS the 16-slot
-/// one in both (0.97x, 0.95x decode). 0.13% under the original's 4.7024 on
-/// the same corpus: the experts are the original's NVFP4 bytes on layers
-/// 0-19 (with per-expert `.scale`), Q8_0 on 20-23 where the original is
-/// MXFP8, and the dense weights are block-quantized.
+/// Frozen 2026-11-23 from TWO fresh processes on battery (digests and
+/// perplexity do not depend on power; the oracle's tok/s does, and runs on
+/// AC),
+/// release, 16 slots streamed, 8,192 context, with the GGUF NVFP4 layers
+/// opened as the native kind (`TURBOSPARK_INKLING2_GGUF_NATIVE_NVFP4`, on):
+/// perplexity 4.6844 and both digests agreed to the last digit and hex
+/// character, and the 8-slot digest EQUALS the 16-slot one in both (0.92x,
+/// 0.96x decode). An earlier row the same day, from the generic GGUF NVFP4
+/// pair, was 4.6962 (greedy `082414f0...`, sampled `ec3a4bc5...`). 0.38%
+/// under the original's 4.7024 on the same corpus: the experts are the
+/// original's NVFP4 bytes on layers 0-19 (with per-expert `.scale`), Q8_0 on
+/// 20-23 where the original is MXFP8, and the dense weights are
+/// block-quantized.
 const BASELINES: &[quality_common::ChipQuality] = &[quality_common::ChipQuality {
     brand_substr: "Apple M4 Max",
-    perplexity: 4.6962,
-    greedy_digest: "082414f0e5376a0b3effbcf7a9a5639246612f30d29a00e889dcc0d37c3e2b63",
-    sampled_digest: "ec3a4bc569f58aacf5c805552bf3136662f170ab4af9629253b9af0102b13204",
-    source: "this port, 2026-11-23, Apple M4 Max, AC, 16 slots streamed, 8192 context",
+    perplexity: 4.6844,
+    greedy_digest: "6b94f1e022ee165fad748f8a883897510cc19f44574c829540939f75812856aa",
+    sampled_digest: "3e36ae69ca69a20dc41c8503ecdce210b668237b181361b004b3f5cb653b907f",
+    source: "this port, 2026-11-23, Apple M4 Max, 16 slots streamed, 8192 context, GGUF NVFP4 layers native",
 }];
 
 #[test]

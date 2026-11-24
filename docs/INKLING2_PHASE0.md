@@ -1163,6 +1163,44 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   own batched-against-cached floor (0.00188, 97.0%); its CPU-against-Metal
   floor is 0.0102 (95.5%). Perplexity on the corpus: ours 5.3340, llama.cpp
   cached Metal 5.3202, batched 5.3365, CPU 5.2941.
+- DONE (2026-11-23): GGUF NVFP4 expert layers run the native pair. A
+  GPU-time census (`TURBOSPARK_DISPATCH_PROFILE=1`, resident decode, 104
+  passes, one encoder per dispatch, so the shares rank and the absolute
+  times are inflated) priced the fork's ideas:
+
+  | class | BF16 | mlx4 | UD-Q4_K_XL (GGUF pair) |
+  |---|---|---|---|
+  | `inkling2_rel_table` | 1.7% | 1.8% | 0.9% |
+  | `inkling2_router_select_k8` | 1.9% | 2.4% | 1.2% |
+  | NVFP4 expert pair | 12.2 + 7.6% (native) | 16.0 + 10.3% (native) | 30.3 + 16.5% (GGUF) |
+
+  The rel-bias-inside-attention fusion is under the 2% rule and is not
+  built; the router fusion is marginal and not built. The real lever: UD-Q4_K_XL ships the original NVFP4
+  expert bytes, which ran through the generic GGUF NVFP4 pair at about
+  20.5 ms a token (inflated) where the native pair spends about 5.7 ms on
+  the same weights. A native Inkling NVFP4 row IS a ggml `block_nvfp4` row
+  behind the same outer-scale record, so a GGUF layer whose gate-up and
+  down are both NVFP4 now opens as the native kind
+  (`state.rs::gguf_native_nvfp4_enabled`, on unless
+  `TURBOSPARK_INKLING2_GGUF_NATIVE_NVFP4=0`; tslab knob
+  `inkling2_gguf_native_nvfp4`), and an install may mix native and GGUF
+  layers (the streamed routed buffer carries an encoder per kind).
+  `gpu/tests/inkling2_gguf_native_nvfp4.rs`: the same bytes through both
+  pairs agree to 1.9e-3 of the output RMS at the Mini's dims and top 8; a
+  mutant swapping gate and up fails at 5.7x. Gates on UD-Q4_K_XL, on
+  battery: prefill 1,400 tokens sequential 19.8 to 29.0 tok/s, chunked 34.8
+  to 89.5 (bit-exact, 32/32); verify 72/72 and 1,154/1,154; reference
+  perplexity 4.6768 sequential and chunked (diff 0), streamed floor 4.6844;
+  logits against llama.cpp 12/12 (KL 7.6e-5) and 180/189 resident (4.4e-3,
+  was 3.5e-3 through the GGUF pair, which shares llama.cpp's arithmetic).
+  The quality gate was RE-FROZEN: two fresh processes agreed on 4.6844 (was
+  4.6962 through the GGUF pair) and new digests, a third asserted them.
+  Also fixed on the way: the matrix-unit expert pair in a prefill keyed on
+  the raw switch, not `Ctx::prefill_mma`, so a GGUF install's native layers
+  would have left the bit-exact prefill.
+  Speculative, depth 2, with the switch on (tok/s plain, speculative; all
+  lossless): prose 33.3, 29.9; code 36.8, 37.4; long 28.1, 28.3; edit 30.9,
+  35.6. Plain decode was 19 to 23 tok/s through the GGUF pair.
 - DONE (2026-11-23): prompt-copy drafting, mtplx item (3)
   (`runtime/src/prompt_copy.rs`, wired in `speculative.rs`; on with the
   DSpark drafter, `TURBOSPARK_SPEC_PROMPT_COPY=0` turns it off). When the
