@@ -41,6 +41,11 @@ path = "src/bin/clone.rs"
 name = "turbospark-speak"
 path = "src/bin/speak.rs"
 
+# Speech enhancement (noise suppression) of a WAV file, 48 kHz out.
+[[bin]]
+name = "turbospark-enhance"
+path = "src/bin/enhance.rs"
+
 # Trait steering: extract a directional control vector from a model's own
 # activations against a built-in prompt contrast, then check the result.
 [[bin]]

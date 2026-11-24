@@ -187,7 +187,7 @@ jobs:
           # ocr and acp (`turbospark acp`) to the siblings, so all of them
           # ship (the same list as
           # make-app-bundle.sh).
-          bins=(turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-music turbospark-clone turbospark-speak turbospark-steer turbospark-ocr turbospark-acp-agent)
+          bins=(turbospark turbospark-check turbospark-model turbospark-server turbospark-image turbospark-music turbospark-clone turbospark-speak turbospark-enhance turbospark-steer turbospark-ocr turbospark-acp-agent)
           for bin in "${bins[@]}"; do
             cp "target/aarch64-apple-darwin/release/$bin" dist/stage/
           done
@@ -385,6 +385,7 @@ jobs:
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-music"
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-clone"
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-speak"
+            binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-enhance"
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-steer"
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-ocr"
             binary "#{appdir}/TurboSpark.app/Contents/MacOS/turbospark-acp-agent"
@@ -423,6 +424,7 @@ jobs:
             binary "turbospark-music"
             binary "turbospark-clone"
             binary "turbospark-speak"
+            binary "turbospark-enhance"
             binary "turbospark-steer"
             binary "turbospark-ocr"
             binary "turbospark-acp-agent"

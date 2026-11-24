@@ -2539,6 +2539,162 @@
         "max_input_seconds": null,
         "install_subdir": "Models/pocket-tts"
       }
+    },
+    {
+      "alias": "mossformer2-se-48k-fp16",
+      "assets": [
+        {
+          "path": "README.md",
+          "sha256": "38ea1a7dd9057e20229c6807f0c6856977e750bed167930314e983c0047df8ed",
+          "size": 279
+        },
+        {
+          "path": "model_fp16.safetensors",
+          "sha256": "61e63484df9c2be7e1111ca0346d431422a98b263331021a67c2d7ddb2f67a85",
+          "size": 110652628
+        }
+      ],
+      "source": {
+        "repository": "starkdmi/MossFormer2_SE_48K_MLX",
+        "revision": "ccd0ded00e26f38e9f5b0ba21608aa6a0bcd6434"
+      },
+      "metadata": {
+        "task": "enhancement",
+        "family": "mossformer2_se",
+        "display_name": "MossFormer2 SE 48 kHz FP16",
+        "required_files": [
+          "README.md",
+          "model_fp16.safetensors"
+        ],
+        "sample_rate": 48000,
+        "channels": 1,
+        "languages": [],
+        "voices": [],
+        "max_input_seconds": 600
+      }
+    },
+    {
+      "alias": "voice-isolator-v1",
+      "assets": [
+        {
+          "path": "LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "size": 11358
+        },
+        {
+          "path": "NOTICE",
+          "sha256": "86e7455d0804e20c3f31a84b10b9b5e39995a526dc9e4f1d210e64513c3f3e9b",
+          "size": 904
+        },
+        {
+          "path": "denoiser.safetensors",
+          "sha256": "647335a6aeb4dc706b895532c209d51e0e84a4849d17b339f00d4392a050ae53",
+          "size": 256260128
+        }
+      ],
+      "source": {
+        "repository": "inworld/voice-isolator",
+        "revision": "9b0285b3fe8403aa8e2f1dbb2165a80a4294c970"
+      },
+      "metadata": {
+        "task": "enhancement",
+        "family": "voice_isolator",
+        "display_name": "Inworld Voice Isolator v1",
+        "required_files": [
+          "LICENSE",
+          "NOTICE",
+          "denoiser.safetensors"
+        ],
+        "sample_rate": 48000,
+        "channels": 1,
+        "languages": [],
+        "voices": [],
+        "max_input_seconds": 600
+      }
+    },
+    {
+      "alias": "voice-isolator-v1-realtime",
+      "assets": [
+        {
+          "path": "LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "size": 11358
+        },
+        {
+          "path": "NOTICE",
+          "sha256": "86e7455d0804e20c3f31a84b10b9b5e39995a526dc9e4f1d210e64513c3f3e9b",
+          "size": 904
+        },
+        {
+          "path": "denoiser_realtime.safetensors",
+          "sha256": "76598f05523c0669e76562a8b2f31c9d395fca316e80c907ee11775e7497ae0f",
+          "size": 232780800
+        }
+      ],
+      "source": {
+        "repository": "inworld/voice-isolator",
+        "revision": "9b0285b3fe8403aa8e2f1dbb2165a80a4294c970"
+      },
+      "metadata": {
+        "task": "enhancement",
+        "family": "voice_isolator",
+        "display_name": "Inworld Voice Isolator v1 Realtime",
+        "required_files": [
+          "LICENSE",
+          "NOTICE",
+          "denoiser_realtime.safetensors"
+        ],
+        "sample_rate": 48000,
+        "channels": 1,
+        "languages": [],
+        "voices": [],
+        "max_input_seconds": 600
+      }
+    },
+    {
+      "alias": "mel-roformer-vocals-v1",
+      "assets": [
+        {
+          "path": "LICENSE",
+          "sha256": "2b55ae02dcfe9ac8454c41c5e235175512db7429ee7275bab4c4e566b3f80597",
+          "size": 1779
+        },
+        {
+          "path": "README.md",
+          "sha256": "6efa3a80deb2f4faed6d737b3737bfff4350529c9af360be35f1e4657b6d97d2",
+          "size": 11603
+        },
+        {
+          "path": "config.json",
+          "sha256": "d110ed4713b403d27e2ae6c7796b1a864576232de4a2070e9762108ca197caa6",
+          "size": 1016
+        },
+        {
+          "path": "model.safetensors",
+          "sha256": "ef4aa052845a868cfaff93611477bd8f54d8081bc32f2742a9b3c738f0821191",
+          "size": 67402202
+        }
+      ],
+      "source": {
+        "repository": "mlx-community/mel-roformer-zfturbo-vocals-v1-mlx",
+        "revision": "01bef2daebedf39937f552d6da68340fc979c9a0"
+      },
+      "metadata": {
+        "task": "separation",
+        "family": "mel_roformer",
+        "display_name": "Mel-Band RoFormer Vocals v1",
+        "required_files": [
+          "LICENSE",
+          "README.md",
+          "config.json",
+          "model.safetensors"
+        ],
+        "sample_rate": 44100,
+        "channels": 2,
+        "languages": [],
+        "voices": [],
+        "max_input_seconds": 326
+      }
     }
   ]
 }

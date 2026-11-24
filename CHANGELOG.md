@@ -14,6 +14,24 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Speech enhancement and voice isolation. The audio task `enhancement` runs
+  in a session (any input rate, 48 kHz mono out), with three pinned profiles:
+  `voice-isolator-v1` and `voice-isolator-v1-realtime` (inworld Voice
+  Isolator v1, Apache-2.0, ported from the reference with real-checkpoint
+  parity of 2.7e-7; projections, attention and the Mamba scan on Metal) and
+  `mossformer2-se-48k-fp16` (CPU). The app's Clean Up page offers "Enhance
+  speech", and `turbospark enhance` (new `turbospark-enhance` binary, in the
+  release archive and cask) cleans a WAV and can write the removed
+  background.
+- "Clean reference" on the Voice Cloning reference card removes background
+  noise from the selected region and uses the cleaned copy, saved as a new
+  take, as the reference. The source take is kept, and consent must be given
+  again for the cleaned reference.
+- Live voice isolation streams (`ts_audio_enhance_stream_*`): 48 kHz mono in,
+  the voice out as it becomes final, with per-push timing. They run a
+  stateful Core ML step when it is installed, else Metal, which is not real
+  time on its own.
+- `SafetensorsFile::metadata` exposes a checkpoint's header metadata.
 - PEFT LoRA adapter repositories install by merging into their base while it
   streams (`repack::lora_merge`, `docs/LORA_MERGE.md`):
   `harness-hub/Qwen3.8-27B-pi-adapted` probes runnable and merges into

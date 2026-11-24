@@ -219,7 +219,10 @@ staging files changed.
 - Voice cloning consent covers one exact reference region
   (`AudioCloneOptions.consentedReference`) and lapses on any retrim. A UI
   seam that sets the reference (drop, import, inline recording, reuse from a
-  take) never sets or copies consent. A voice reference recording captures
+  take, Clean reference) never sets or copies consent. Clean reference
+  enhances only the trimmed region into a new `.enhancement` take, leaves the
+  source take as it was, and clears consent when that take becomes the
+  reference (`AudioVoiceReferenceCleaningTests`). A voice reference recording captures
   the microphone through local flags and never writes the Record page's
   capture settings. `AudioVoiceCloneWorkspaceTests` pins all three. The
   reference transcript follows the region: choosing a take replaces it with
@@ -266,6 +269,16 @@ staging files changed.
   `item.transcriptText` or `item.userNotes`. The raw timestamped transcript
   remains immutable ground truth, and the user's notes are only ever written
   by the user. Ask answers are session-only and never saved.
+- Enhancement and separation (Clean Up, `AudioWorkspaceJobs`) save their
+  result as a new take; the source take is never changed. The request must
+  carry the rate (and, for separation, the channel layout) the take was read
+  in (`AudioEnhancementRequestTests`, `AudioSeparationRequestTests`).
+- Live noise reduction (`AudioLiveVoiceCleaner`, "Reduce background noise")
+  stays off by default and cleans only the microphone feed to live text. The
+  saved recording and the final pass keep the original audio, and running
+  late, a backed-up queue, or a failed open or push falls back to raw audio
+  for the rest of the take (`AudioLiveNoiseReductionTests`). It has no path
+  to voice cloning references, so the per-region consent rule is unchanged.
 - CoreAudio process tap vs ScreenCaptureKit: Meeting audio capture on macOS
   14.2+ uses native CoreAudio process tapping (`CATapDescription`) with
   `NSAudioCaptureUsageDescription` to isolate conference apps without

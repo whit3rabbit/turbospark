@@ -6,13 +6,14 @@ specialized binary when you need a lower-level check or benchmark. Run
 
 The binaries are:
 
-- `turbospark` -- the one command most people need: `run`, `pull`, `ls`, `search`, `show`, `rm`, `doctor`, the server (`serve`, `start`, `stop`, `restart`, `status`, `ps`), agents (`launch`), media (`image`, `music`, `speak`, `clone`, `ocr`), and `model` for everything advanced. It calls the binaries below; they keep their own command lines and output.
+- `turbospark` -- the one command most people need: `run`, `pull`, `ls`, `search`, `show`, `rm`, `doctor`, the server (`serve`, `start`, `stop`, `restart`, `status`, `ps`), agents (`launch`), media (`image`, `music`, `speak`, `clone`, `enhance`, `ocr`), and `model` for everything advanced. It calls the binaries below; they keep their own command lines and output.
 - `turbospark-check` -- run generation once against an install: a raw prompt, a rendered chat conversation, or an interactive REPL. See [`crates/cli/AGENTS.md`](../crates/cli/AGENTS.md).
 - `turbospark-model` -- find, inspect, and install text models into `~/.turbospark/models/text`, image models into `~/.turbospark/models/image`, and pinned MiniMax Music 3 profiles into `~/.turbospark/models/audio`, or into a model library on an external drive. See [`docs/MODELS.md`](MODELS.md) and [Model libraries](#model-libraries).
 - `turbospark-image` -- pack a local Diffusers image export or generate one PNG. See [`docs/IMAGE_GENERATION.md`](IMAGE_GENERATION.md).
 - `turbospark-music` -- generate MiniMax Music 3 WAV files from an installed profile or local model directory. Full-size converted profiles use the Metal runner on macOS; tiny fixtures also support the portable CPU reference path.
 - `turbospark-clone` -- clone a voice from a short reference recording and speak new English text with MegaTTS3 (Metal on macOS), from the installed `megatts3-f32` profile (install it in the app) or a local converted model directory. See [`crates/audio/src/tts/megatts3/README.md`](../crates/audio/src/tts/megatts3/README.md).
 - `turbospark-speak` -- speak text with Fish Audio Drama 3 (Metal on macOS, 44.1 kHz), optionally in a cloned voice, from a Drama 3 install directory. See [`docs/FISH_DRAMA3.md`](FISH_DRAMA3.md).
+- `turbospark-enhance` -- clean speech in a WAV recording (voice isolation, noise suppression), mono 48 kHz out, optionally writing the removed background too, from an installed enhancement profile (`voice-isolator-v1` and `voice-isolator-v1-realtime`, inworld Voice Isolator on Metal; `mossformer2-se-48k-fp16`, MossFormer2 SE on the CPU; `turbospark model pull-audio <alias>`) or a model directory. `--task separate` separates the vocals from music instead (stereo 44.1 kHz out, `--background` writes the instrumental) with the `mel-roformer-vocals-v1` profile (CPU). See [`crates/audio/src/sts/voice_isolator/README.md`](../crates/audio/src/sts/voice_isolator/README.md) and [`crates/audio/src/sts/mel_roformer/README.md`](../crates/audio/src/sts/mel_roformer/README.md).
 - `turbospark-steer` -- trait steering: list the built-in trait packs, extract a behavior direction from an install's own activations into a control-vector `.gguf`, and check it before and after. See [`docs/STEERING_TRAITS.md`](STEERING_TRAITS.md).
 - `turbospark-server` -- an OpenAI- and Anthropic-compatible HTTP server. See [`crates/server/AGENTS.md`](../crates/server/AGENTS.md).
 - `turbospark-acp-agent` -- the local engine behind `turbospark acp`, which lets an editor that speaks the Agent Client Protocol drive a local model over stdio. Verified with a scripted client only, not a real editor. See [`docs/ACP.md`](ACP.md).
@@ -73,7 +74,7 @@ and `turbospark` translates a tag before calling them.
 | | `turbospark status`, `ps` | The daemon's model, endpoints (OpenAI `/v1`, Anthropic, Ollama `/api`), pid and log. A foreground `serve` is not tracked |
 | **Agents** | `turbospark launch <agent> --model <m>` | Start `claude`, `codex`, `opencode`, `grok`, `gemini`, `hermes`, `openclaw` or `dsh` against the local server, starting or restarting the daemon on that model first. `turbospark <model> <agent>` and `turbospark start <agent>` are the same launch |
 | **Media** | `turbospark image [generate\|pack] ...` | `turbospark-image`; `generate` is the default |
-| | `turbospark music`, `speak`, `clone`, `ocr` | The matching `turbospark-*` binary, arguments unchanged |
+| | `turbospark music`, `speak`, `clone`, `enhance`, `ocr` | The matching `turbospark-*` binary, arguments unchanged |
 | **More** | `turbospark bench [options]` | Benchmark harness |
 | | `turbospark completions <shell>` | Shell completions (`zsh`, `bash`, `fish`, `elvish`, `powershell`) |
 

@@ -207,6 +207,20 @@ turbospark-clone speak --model ./megatts3-converted \
 
 `--quality` and `--steps` cannot be combined. `--text-file` is capped at 32768 bytes. The text must be English.
 
+## Clean speech or separate vocals
+
+```sh
+turbospark-model pull-audio voice-isolator-v1
+turbospark-enhance --model voice-isolator-v1 \
+  --input noisy.wav --output voice.wav --background noise.wav
+
+turbospark-model pull-audio mel-roformer-vocals-v1
+turbospark-enhance --task separate --model mel-roformer-vocals-v1 \
+  --input song.wav --output vocals.wav --background instrumental.wav
+```
+
+The voice isolator runs on Metal and falls back to the CPU; MossFormer2 SE and Mel-Band RoFormer run on the CPU.
+
 ## Run the server and connect an agent
 
 The server is `turbospark-server`, which this crate does not build. The front end finds it next to `turbospark` or on `PATH`.

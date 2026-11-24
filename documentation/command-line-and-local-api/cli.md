@@ -9,12 +9,13 @@ Installing `turbospark-cli` or the Homebrew cask provides these utilities on you
 
 | Binary | Primary Function |
 | --- | --- |
-| `turbospark` | Front-end command: chat and one-shot runs, the server daemon (`serve`/`start`/`stop`/`restart`/`status`), model management, image generation, OCR, humanize, benchmarks, and launching coding agents against the local server. Forwards model subcommands to `turbospark-model` and `ocr` to `turbospark-ocr`. |
+| `turbospark` | Front-end command: chat and one-shot runs, the server daemon (`serve`/`start`/`stop`/`restart`/`status`), model management, image generation, OCR, speech enhancement, humanize, benchmarks, and launching coding agents against the local server. Forwards model subcommands to `turbospark-model` and `ocr` to `turbospark-ocr`, `enhance` to `turbospark-enhance`. |
 | `turbospark-check` | Generates text, interactive chat sessions, and runs JSON prompt files. Owns the full `--speculative` grammar, including `adaptive`. |
 | `turbospark-model` | Explores the catalog, recommends models for this Mac, and installs models: text, image, vision, and every pinned audio row. |
 | `turbospark-server` | Starts the local HTTP API server for OpenAI, Anthropic, Ollama, embeddings, and audio routes. |
 | `turbospark-clone` | Clones target voices and speaks text via MegaTTS3 (requires `--consent`). |
 | `turbospark-speak` | Speaks text with Fish Audio Drama 3: free-reference speech or consented cloning. |
+| `turbospark-enhance` | Cleans speech in a WAV recording (voice isolation, noise suppression), or separates vocals from music with `--task separate`. |
 | `turbospark-steer` | Trait steering: extracts a behavior direction (refusals, slop, humor, sycophancy, emotional tone) from a model's own activations and checks it. |
 | `turbospark-music` | Generates 44.1 kHz stereo music tracks with MiniMax Music 3. |
 | `turbospark-image` | Native Metal image diffusion generator for Z-Image-Turbo. |
@@ -151,6 +152,25 @@ turbospark-speak \
 ```
 
 `--temperature`, `--top-p`, `--top-k` and `--max-frames` override Fish Audio's sampler recipe, and `--wav-format pcm16|float32` picks the output sample format. A run that stopped early (the model went silent at a pause and hit the frame cap) prints a warning with the seed used.
+
+---
+
+## 5a. `turbospark-enhance`
+
+Clean speech in a recording, or separate the vocals from music. Input is any WAV from 8 kHz to 192 kHz.
+
+```sh
+# Voice isolation (Metal), mono 48 kHz out; --background writes what was removed
+turbospark-model pull-audio voice-isolator-v1
+turbospark-enhance --model voice-isolator-v1 --input noisy.wav --output voice.wav --background noise.wav
+
+# Vocal separation (CPU), stereo 44.1 kHz vocals; --background writes the instrumental
+turbospark-model pull-audio mel-roformer-vocals-v1
+turbospark-enhance --task separate --model mel-roformer-vocals-v1 \
+  --input song.wav --output vocals.wav --background instrumental.wav
+```
+
+Enhancement profiles: `voice-isolator-v1`, `voice-isolator-v1-realtime` (inworld Voice Isolator, Metal with CPU fallback) and `mossformer2-se-48k-fp16` (MossFormer2 SE, CPU). Enhancement takes at most 661 s of input; separation writes at most 360 s and takes about 326 s of stereo 44.1 kHz input. `--wav-format pcm16|float32` picks the output sample format. The unified binary forwards the same command as `turbospark enhance`.
 
 ---
 

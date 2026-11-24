@@ -1,13 +1,14 @@
 # bin
 
 ## Overview
-Binary entry points of `turbospark-cli`: the `turbospark` front door and the peer tools `turbospark-model`, `turbospark-image`, `turbospark-music`, `turbospark-clone`, `turbospark-speak`, `turbospark-steer` and `turbospark-ocr`. `turbospark-check` is `src/main.rs`. Each is a thin shell: parse argv, call library crates, print, pick an exit code.
+Binary entry points of `turbospark-cli`: the `turbospark` front door and the peer tools `turbospark-model`, `turbospark-image`, `turbospark-music`, `turbospark-clone`, `turbospark-speak`, `turbospark-enhance`, `turbospark-steer` and `turbospark-ocr`. `turbospark-check` is `src/main.rs`. Each is a thin shell: parse argv, call library crates, print, pick an exit code.
 
 ## Interface
 - [turbospark.rs] front door; includes `../agent.rs`, `../daemon.rs`, `../ui/mod.rs`, `../front/models.rs`, `../front/server.rs` by `#[path]`.
 - [model.rs] catalog, probe, pull; delegates to `model_cmd`.
 - [steer.rs] trait steering; exit 0 success, 1 refused or failed, 2 invalid command line.
 - [image.rs], [music.rs], [clone.rs], [speak.rs], [ocr.rs]: per-modality commands.
+- [enhance.rs] speech enhancement (`--task enhance`, mono 48 kHz out) or vocal separation (`--task separate`, stereo 44.1 kHz vocals out); `--background` writes input minus result. The front door forwards `turbospark enhance` to it.
 - Children: [model_cmd](./model_cmd/EGM.md), [steer_cmd](./steer_cmd/EGM.md). `steer_data/` holds embedded pack data (no EGM.md).
 
 ## Invariants

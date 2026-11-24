@@ -36,11 +36,13 @@ Steering and capture
 - `dispatch_probe_count`, `encode_dispatch_probe` [lab_hooks.rs:dispatch_probe_count]: lab measurement hooks
 
 Audio, TTS and ASR
-- `AudioSession`, `AudioRequest` [native_audio.rs:AudioSession]: shared worker-thread session for STT, TTS, music, diarization
+- `AudioSession`, `AudioRequest` [native_audio.rs:AudioSession]: shared worker-thread session for STT, TTS, music, diarization, enhancement (`mossformer2_se` CPU, `voice_isolator` Metal with CPU fallback; 48 kHz mono out) and separation (`mel_roformer` CPU; 44.1 kHz interleaved stereo vocals out)
 - `MoonshineRunner` [moonshine.rs:MoonshineRunner], `Qwen3AsrRunner` [qwen3_asr.rs:Qwen3AsrRunner], `Qwen3AsrMetalEngine` [qwen3_asr_metal.rs:Qwen3AsrMetalEngine]
 - `MultitalkerEncoderMetal` [multitalker_metal.rs:MultitalkerEncoderMetal], `NemotronDiarMetal` [nemotron_diar_metal.rs:NemotronDiarMetal]
 - `KokoroRunner` [kokoro.rs:KokoroRunner], `MegaTts3Runner` [megatts3.rs:MegaTts3Runner], `OmniVoiceRunner` [omnivoice.rs:OmniVoiceRunner], `Music3Runner` [music3.rs:Music3Runner]
 - Fish Drama 3: `TrunkBackbone` [fish_drama3.rs:TrunkBackbone], `MetalTower` [fish_drama3_tower.rs:MetalTower], `CodecWorker` [fish_drama3_codec.rs:CodecWorker]
+- `voice_isolator::open`, `default_device`, `Device` [voice_isolator.rs]: voice isolator on `gpu::Music3Device` (projections, non-causal attention, selective scan in F32), CPU otherwise
+- `LiveDenoiser`, `LivePush`, `Backend` [voice_isolator_live.rs:LiveDenoiser]: realtime voice isolation on a worker thread; `auto` picks the Core ML step (`VoiceIsolatorStep.mlmodelc` or `.mlpackage` beside `denoiser_realtime.safetensors`, macOS 15+) else Metal; `coreml`, `metal`, `cpu` force one
 - `HeavyWorkGuard` [heavy.rs:HeavyWorkGuard]: process-wide single permit for heavyweight Metal work
 
 Power and startup
@@ -67,15 +69,16 @@ Subdirectories
 - Arch dimensions are validated against ceilings before any buffer is sized [real_forward_init.rs:validate_arch_config]
 - Steering Off is byte-identical to no steering; bad alpha/target/zero-norm directions fail at open [steering.rs:build]
 - Audio engines live on their worker thread only; Metal audio backends accept only F32 and refuse otherwise [native_audio.rs:AudioSession], [kokoro.rs:load_weight]
+- The live denoiser opens the Core ML step on CPU and GPU only: the fp16 program does not compile for the Neural Engine [voice_isolator_live.rs:Engine::open]. It takes no heavy-work guard; each push reports `processing_ms` and `late` (slower than the audio it carried) so the host can stop using its output [voice_isolator_live.rs:LiveDenoiser::push]
 - Model-dir reads are size-capped [model_dir_read.rs:read_bounded]
 - Env-gated diagnostics change no math; unwired families are ignored with a log [ffn_hist.rs:from_env], [resid_capture.rs:from_env]
 
 ## Side Effects
 - Open mmaps `model_weights.bin`, allocates Metal KV/scratch buffers, and does expert pread I/O on streamed installs [real_forward_open.rs:open_inner_with_role], [moe_prefill_pipeline.rs:plan_and_stream_union]
-- Env reads: TURBOSPARK_GDN_LAZY_TAPE, TURBOSPARK_GDN_TURN_SNAPSHOT, TURBOSPARK_ADAPTIVE_DEPTH, TURBOSPARK_SPEC_STATS, TURBOSPARK_EXPERT_RESIDENCY, TURBOSPARK_INT4_MMA8, TURBOSPARK_MOONSHINE_DEVICE, TURBOSPARK_METAL_KERNEL_WARMUP (opt-in JIT warmup, only "1" enables) [real_forward_rollback.rs:gdn_lazy_tape], [turn_snapshot.rs:turn_snapshot_enabled], [speculative_adaptive.rs:from_env], [real_forward_init.rs:mapped_residency_requested], [real_forward_dispatch.rs:int4_mma8_mode], [moonshine.rs:device_choice], [real_forward_open.rs:TURBOSPARK_METAL_KERNEL_WARMUP]
+- Env reads: TURBOSPARK_GDN_LAZY_TAPE, TURBOSPARK_GDN_TURN_SNAPSHOT, TURBOSPARK_ADAPTIVE_DEPTH, TURBOSPARK_SPEC_STATS, TURBOSPARK_EXPERT_RESIDENCY, TURBOSPARK_INT4_MMA8, TURBOSPARK_MOONSHINE_DEVICE, TURBOSPARK_VOICE_ISOLATOR_DEVICE (`cpu` forces the host port), TURBOSPARK_METAL_KERNEL_WARMUP (opt-in JIT warmup, only "1" enables) [real_forward_rollback.rs:gdn_lazy_tape], [turn_snapshot.rs:turn_snapshot_enabled], [speculative_adaptive.rs:from_env], [real_forward_init.rs:mapped_residency_requested], [real_forward_dispatch.rs:int4_mma8_mode], [moonshine.rs:device_choice], [voice_isolator.rs:default_device], [real_forward_open.rs:TURBOSPARK_METAL_KERNEL_WARMUP]
 - Diagnostics gated by TURBOSPARK_FFN_HIST, TURBOSPARK_RESID_CAPTURE, TURBOSPARK_ROUTER_HIST (writes a JSON file on Drop), TURBOSPARK_DISPATCH_PROBE [ffn_hist.rs:from_env], [resid_capture.rs:from_env], [router_hist.rs:drop], [lab_hooks.rs:dispatch_probe_count]
 - Process-global heavy-work permit (Mutex/Condvar) blocks or refuses concurrent heavy jobs [heavy.rs:STATE]
-- Spawns worker threads `native-audio` and `fish-drama3-codec` [native_audio.rs:AudioSession], [fish_drama3_codec.rs:CodecWorker::open]
+- Spawns worker threads `native-audio`, `fish-drama3-codec` and `voice-isolator-live` [native_audio.rs:AudioSession], [fish_drama3_codec.rs:CodecWorker::open], [voice_isolator_live.rs:LiveDenoiser::open]
 - Reads bounded model-dir files and resident indexes; writes the pipeline cache to disk [model_dir_read.rs:read_bounded], [startup.rs:flush_pipeline_cache]
 - Power probes call into `crates/gpu` for thermal and memory state; the decode loop's single sleep lives in [raw_completion.rs:decode] [power.rs:thermal_level]
 

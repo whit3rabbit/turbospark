@@ -258,10 +258,45 @@ modules and internal codecs are not presented as runnable jobs.
   speaker, so a voice that is silent in the shared span can appear twice (merge
   it in Name the Speakers), but voices are never joined on weaker evidence.
   The sheet says how many parts were used. See [Core ML models](COREML.md).
-- Enhancement, separation, alignment, speech detection, codecs, the CPU
-  diarization families (Sortformer, Nemotron), and other transcription families
-  stay unavailable until their native adapters and model gates exist. Their
-  source implementations alone do not enable controls.
+- Speech enhancement runs from the Clean Up page's "Enhance speech" with one
+  of three pinned profiles: `voice-isolator-v1` (inworld Voice Isolator,
+  offline, Metal projections, attention and scan), `voice-isolator-v1-realtime`
+  (its causal sibling), or `mossformer2-se-48k-fp16` (MossFormer2 SE,
+  portable CPU). The take is read at 48 kHz mono, at most 600 seconds, and
+  the cleaned voice is saved as a new take; the source take is never changed.
+  The same engines run from the command line as `turbospark enhance`. Quality
+  is not yet gated beyond reference parity (family READMEs under
+  `crates/audio/src/sts/`).
+- "Clean reference" on the Voice Cloning reference card runs the same
+  enhancement over only the trimmed reference region (best installed of
+  `voice-isolator-v1`, `voice-isolator-v1-realtime`,
+  `mossformer2-se-48k-fp16`; hidden when none is installed). The cleaned
+  region is saved as a new take that becomes the reference; the source take
+  is not changed. Consent is cleared, because consent covers one exact
+  region and the cleaned take is a new reference (`swift/AGENTS.md`).
+- Live voice isolation (`ts_audio_enhance_stream_*`) streams the realtime
+  profile at 48 kHz with 63 ms algorithmic latency, on a stateful Core ML
+  step when installed, else Metal. Every push reports whether it ran late;
+  the per-call Metal path is not real time on its own (RTF about 3 on an M4
+  Max), so a host falls back to raw audio while pushes run late
+  (`crates/audio/src/sts/voice_isolator/README.md`). In the app this is the
+  opt-in "Reduce background noise" for live text (off by default,
+  microphone only); the saved recording stays the original audio
+  ([meeting notes architecture](../swift/docs/SWIFT_AUDIO_MEETING_NOTES.md)).
+- Vocal separation runs the pinned Mel-Band RoFormer vocals profile
+  (`mel-roformer-vocals-v1`, portable CPU) from the Clean Up page's
+  "Separate stems". The take is read at 44.1 kHz stereo (a mono take is
+  upmixed), at most 326 seconds, and the vocals are saved as a new take; the
+  source take is never changed. The page does not save the instrumental;
+  `turbospark enhance --task separate --background` writes it (input minus
+  vocals). Expect about two to four times the take's length on the CPU.
+  Quality is not yet gated beyond reference parity
+  (`crates/audio/src/sts/mel_roformer/README.md`).
+- Alignment, speech detection, codecs, the other enhancement
+  families (DeepFilterNet), the CPU diarization families (Sortformer,
+  Nemotron), and other transcription families stay unavailable until their
+  native adapters and model gates exist. Their source implementations alone
+  do not enable controls.
 
 Downloads use the existing shared queue. Native text/audio and Swift MLX image
 execution share one heavyweight permit. An active operation retains the permit

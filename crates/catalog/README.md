@@ -41,7 +41,7 @@ catalog = { package = "turbospark-catalog", path = "../catalog" }
 - `vision.rs`: Matches and resolves vision tower sidecars for multimodal models.
 - `image.rs`: Curated Diffusers image sources (`image_models.json`) and their download pipeline.
 - `speech.rs`: Bundled speech model catalog (`speech_models.json`), `SpeechCatalogEntry`, speech directory probing (`SpeechProbeReport`), and install verification.
-- `audio_catalog.rs`: Task-aware pinned audio profiles (`audio_assets.json`, `audio_families.json`) and verified managed installs for speech models.
+- `audio_catalog.rs`: Task-aware pinned audio profiles (`audio_assets.json`, `audio_families.json`) and verified managed installs for speech models. Tasks include `enhancement` (`mossformer2-se-48k-fp16`, `voice-isolator-v1`, `voice-isolator-v1-realtime`) and `separation` (`mel-roformer-vocals-v1`, input capped at 326 s because of the PCM append limit for stereo).
 - `music.rs`: Curated, pinned MiniMax Music 3 profiles (`music_models.json`) and their install path.
 - `embedding.rs`: Pinned embedding-model profiles (`embedding_models.json`) and their install path.
 - `ocr.rs`: Pinned OCR-model profiles (`ocr_models.json`) and their install path.

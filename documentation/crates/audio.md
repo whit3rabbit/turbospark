@@ -65,7 +65,7 @@ Used by:
 | Speech-to-text | `src/stt/` | 30 | `whisper`, `parakeet`, `multitalker_asr`, `moonshine`, `qwen3_asr`, `canary`, `voxtral`, `granite_speech5_ctc`, `sensevoice`, `mms` |
 | Text-to-speech | `src/tts/` | 39 | `fish_drama3`, `omnivoice`, `kokoro`, `megatts3`, `arktts`, `voxcpm`, `chatterbox`, `irodori_tts`, `bark`, `zonos2` |
 | VAD and diarization | `src/vad/` | 3 | `silero_vad`, `sortformer`, `nemotron_diarization` |
-| Speech-to-speech and enhancement | `src/sts/` | 5 | `deepfilternet`, `mel_roformer`, `mossformer2_se`, `dialogue_sidon`, `sam_audio` |
+| Speech-to-speech and enhancement | `src/sts/` | 6 | `deepfilternet`, `mel_roformer`, `mossformer2_se`, `voice_isolator`, `dialogue_sidon`, `sam_audio` |
 | Codecs and vocoders | `src/codec/` | 17 | `encodec`, `descript` (DAC), `mimi`, `snac`, `bigvgan`, `vocos`, `wavvae`, `s3`, `ecapa_tdnn` |
 | Language identification | `src/lid/` | 0 ported | Reserved facade aligned with the mlx-audio `lid` layout; the ECAPA-TDNN backbone is ported under `codec/ecapa_tdnn` |
 

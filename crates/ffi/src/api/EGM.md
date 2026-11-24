@@ -10,11 +10,12 @@ The `extern "C"` entry points of the C ABI, grouped by domain and re-exported fr
 - Models and store: [models.rs:ts_catalog_json], [models.rs:ts_installed_json], [models.rs:ts_install], [models.rs:ts_probe_json], [models.rs:ts_hub_search_json], [models.rs:ts_recommend_json], [models.rs:ts_store_root_set]; libraries: [libraries.rs:ts_libraries_json], [libraries.rs:ts_library_add], [libraries.rs:ts_model_move].
 - Server: [server.rs:ts_server_start], [server.rs:ts_server_stop], [server.rs:ts_server_attach_session], [server.rs:ts_server_poll_events_json]; daemon: [daemon.rs:ts_daemon_start], [daemon.rs:ts_daemon_stop], [daemon.rs:ts_daemon_status_json].
 - Image: [image.rs:ts_image_session_open], [image.rs:ts_image_generate]. OCR: [ocr.rs:ts_ocr_open], [ocr.rs:ts_ocr_read_json]. Embedding: [embedding.rs:ts_embedding_encode_json], [embedding.rs:ts_cosine_similarity].
-- Speech: [stt.rs:ts_stt_open], [stt.rs:ts_stt_stream_open]; [stt_unsupported.rs] keeps the same ABI off macOS; [audio.rs:ts_audio_session_open], [audio.rs:ts_audio_catalog_json], [audio.rs:ts_audio_install]; [audio_stream.rs:ts_audio_stream_open].
+- Speech: [stt.rs:ts_stt_open], [stt.rs:ts_stt_stream_open]; [stt_unsupported.rs] keeps the same ABI off macOS; [audio.rs:ts_audio_session_open], [audio.rs:ts_audio_catalog_json], [audio.rs:ts_audio_install]; [audio_stream.rs:ts_audio_stream_open]; live voice isolation [enhance_stream.rs:ts_audio_enhance_stream_open], `ts_audio_enhance_stream_info`, `_push`, `_flush`, `_close` (additive; `TS_ABI_VERSION` stays 2). `ts_audio_session_open` accepts tasks `speech_to_text`, `text_to_speech`, `music`, `diarization`, `enhancement`, `separation`.
 
 ## Invariants
 - Every entry point except `ts_last_error` and `ts_peak_footprint_bytes` (deliberately unguarded, see their comments) must run inside the ABI guard so no panic unwinds across `extern "C"` [../abi.rs:guard], [../abi.rs:guard_value], [../abi.rs:guard_result].
 - `stt` is selected by cfg: real on macOS, [stt_unsupported.rs] elsewhere, with the same exported names [mod.rs].
+- An enhance stream, like a transcription stream, takes no heavy-work permit; one call at a time per stream (`TS_ERR_BUSY` otherwise), close refused while a call runs, and each push returns `{"released","processing_ms","late"}` so the host can fall back to raw input [enhance_stream.rs].
 - Strings returned through `char **` must be freed with `ts_string_free` [core.rs:ts_string_free].
 
 ## Side Effects
