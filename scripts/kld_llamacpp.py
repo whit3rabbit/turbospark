@@ -73,14 +73,26 @@ HARNESS_SRC = pathlib.Path(__file__).resolve().parent / "llamacpp_logits.c"
 
 
 def build_harness(harness_bin: pathlib.Path) -> None:
-    prefix = subprocess.run(
-        ["brew", "--prefix"], capture_output=True, text=True, check=True
-    ).stdout.strip()
+    # TURBOSPARK_LLAMACPP_PREFIX names a llama.cpp SOURCE checkout built with
+    # cmake (`include/`, `ggml/include/`, `build/bin/libllama.dylib`), for a
+    # model the Homebrew bottle predates: Inkling 2 (`inkling2_loop`) needs a
+    # master build, and brew's HEAD formula did not build on 2026-11-23.
+    # Unset, the harness links Homebrew's libllama as before.
+    src = os.environ.get("TURBOSPARK_LLAMACPP_PREFIX")
+    if src:
+        root = pathlib.Path(src).expanduser()
+        lib = root / "build" / "bin"
+        flags = [
+            f"-I{root}/include", f"-I{root}/ggml/include",
+            f"-L{lib}", "-lllama", f"-Wl,-rpath,{lib}",
+        ]
+    else:
+        prefix = subprocess.run(
+            ["brew", "--prefix"], capture_output=True, text=True, check=True
+        ).stdout.strip()
+        flags = [f"-I{prefix}/include", f"-L{prefix}/lib", "-lllama"]
     subprocess.run(
-        [
-            "cc", "-O2", "-o", str(harness_bin), str(HARNESS_SRC),
-            f"-I{prefix}/include", f"-L{prefix}/lib", "-lllama",
-        ],
+        ["cc", "-O2", "-o", str(harness_bin), str(HARNESS_SRC), *flags],
         check=True,
     )
 

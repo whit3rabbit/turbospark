@@ -85,6 +85,10 @@ struct DumpTarget {
     assistant_prefix: &'static str,
     pinned_chat_date: Option<&'static str>,
     max_context: u32,
+    /// Columns written per row when the head is padded past the tokenizer
+    /// (Inkling 2: 201,024 rows, 200,058 tokens), so the dump's vocab is
+    /// the one llama.cpp reports; None writes every column.
+    keep_vocab: Option<usize>,
 }
 
 fn resolve_target() -> Option<DumpTarget> {
@@ -94,6 +98,7 @@ fn resolve_target() -> Option<DumpTarget> {
             assistant_prefix: "",
             pinned_chat_date: None,
             max_context: PROTOCOL_MAX_CONTEXT,
+            keep_vocab: None,
         })
     };
     // Qwen4Exp's indexed-kernel budget is 2,048 tokens; keep the diagnostic
@@ -104,6 +109,7 @@ fn resolve_target() -> Option<DumpTarget> {
             assistant_prefix: "",
             pinned_chat_date: None,
             max_context: 2048,
+            keep_vocab: None,
         })
         .or_else(|| plain("TURBOSPARK_GEMMA4_INSTALL_DIR"))
         .or_else(|| plain("TURBOSPARK_QWEN2_DENSE_INSTALL_DIR"))
@@ -171,6 +177,27 @@ fn resolve_target() -> Option<DumpTarget> {
                 assistant_prefix: quality_common::HARMONY_ASSISTANT_PREFIX,
                 pinned_chat_date: Some(quality_common::GPTOSS_PINNED_CHAT_DATE),
                 max_context: PROTOCOL_MAX_CONTEXT,
+                keep_vocab: None,
+            })
+        })
+        // Inkling 2: the answer sits in the `<|content_text|>` segment the
+        // model opens after `<|message_model|>` (its quality gates' slot), at
+        // the family's 8,192 window, and only the unpadded vocabulary is
+        // written. Its reference is llama.cpp on the GGUF an install came
+        // from (`scripts/kld_llamacpp.py` with `TURBOSPARK_LLAMACPP_PREFIX`
+        // naming a build that has `inkling2_loop`).
+        .or_else(|| {
+            env_dir("TURBOSPARK_INKLING2_INSTALL_DIR").map(|install| DumpTarget {
+                install,
+                assistant_prefix: "<|message_model|><|content_text|>",
+                pinned_chat_date: None,
+                max_context: turbospark_bench::real_model::protocol_parameters(
+                    model_io::ModelFamily::Inkling2Loop,
+                )
+                .max_context,
+                keep_vocab: Some(
+                    model_io::inkling2_config::Inkling2Config::mini().unpadded_vocab as usize,
+                ),
             })
         })
 }
@@ -204,6 +231,7 @@ fn dump_reference_logits() {
         &out,
         target.assistant_prefix,
         target.max_context,
+        target.keep_vocab,
     );
 }
 
@@ -233,7 +261,13 @@ fn id_list_refuses_ids_outside_signed_32_bit() {
     assert!(id_list(&v, "missing").is_err());
 }
 
-fn dump(install: &Path, out: &Path, assistant_prefix: &str, max_context: u32) {
+fn dump(
+    install: &Path,
+    out: &Path,
+    assistant_prefix: &str,
+    max_context: u32,
+    keep_vocab: Option<usize>,
+) {
     std::fs::create_dir_all(out).expect("create the dump directory");
     let (mut runner, tokenizer) =
         open_model_runner_with_context(install, PROTOCOL_EXPERT_CACHE_SLOTS, max_context)
@@ -277,7 +311,8 @@ fn dump(install: &Path, out: &Path, assistant_prefix: &str, max_context: u32) {
     // Row i holds the next-token logits after consuming ids[i], so the last
     // id is fed to nobody and there is one row fewer than there are ids.
     let rows = ids.len() - 1;
-    let vocab = runner.vocab_size();
+    let head = runner.vocab_size();
+    let vocab = keep_vocab.map_or(head, |k| k.min(head));
     eprintln!(
         "logit_dump: {} prompt + {} answer = {} ids -> {rows} rows x {vocab} \
          {DUMP_DTYPE} = {:.1} MiB",
@@ -296,7 +331,7 @@ fn dump(install: &Path, out: &Path, assistant_prefix: &str, max_context: u32) {
     // COLD number and a warm dump will not reproduce it; running this
     // target both ways is what tells you the gap is cache state and not a
     // bug in one of them.
-    let mut logits = vec![LogitValue::from_f32(0.0); vocab];
+    let mut logits = vec![LogitValue::from_f32(0.0); head];
     let cold = std::env::var_os("TURBOSPARK_LOGIT_DUMP_COLD").is_some();
     if !cold {
         walk(&mut runner, &ids, &mut logits, |_, _| {});
@@ -306,8 +341,8 @@ fn dump(install: &Path, out: &Path, assistant_prefix: &str, max_context: u32) {
     let mut file = BufWriter::new(std::fs::File::create(&path).expect("create the logits file"));
     let mut written = 0usize;
     walk(&mut runner, &ids, &mut logits, |_, logits| {
-        let mut bytes = Vec::with_capacity(logits.len() * 2);
-        for value in logits {
+        let mut bytes = Vec::with_capacity(vocab * 2);
+        for value in &logits[..vocab] {
             bytes.extend_from_slice(&value.to_bits().to_le_bytes());
         }
         file.write_all(&bytes).expect("write a logit row");

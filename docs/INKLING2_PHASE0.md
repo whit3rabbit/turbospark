@@ -1153,6 +1153,16 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   `ctx_mix` per layer and a 7-row `mask_embd`, which our Metal drafter does
   not implement. Neither is loaded; the original BF16 drafter is the one
   gated here.
+- DONE (2026-11-23): Inkling 2 in the cross-engine KL flow
+  (`.claude/docs/cross-engine-kl.md`). `bench/tests/logit_dump.rs` takes
+  `TURBOSPARK_INKLING2_INSTALL_DIR` (answer in the `<|content_text|>` slot,
+  8,192 window, only the 200,058 unpadded columns written), and
+  `scripts/kld_llamacpp.py` links a llama.cpp source build named by
+  `TURBOSPARK_LLAMACPP_PREFIX`. On UD-IQ1_S, streamed, against llama.cpp
+  master on Metal: mean forward KL 0.00182, 98.2% top-1, under llama.cpp's
+  own batched-against-cached floor (0.00188, 97.0%); its CPU-against-Metal
+  floor is 0.0102 (95.5%). Perplexity on the corpus: ours 5.3340, llama.cpp
+  cached Metal 5.3202, batched 5.3365, CPU 5.2941.
 - DONE (2026-11-23): prompt-copy drafting, mtplx item (3)
   (`runtime/src/prompt_copy.rs`, wired in `speculative.rs`; on with the
   DSpark drafter, `TURBOSPARK_SPEC_PROMPT_COPY=0` turns it off). When the
