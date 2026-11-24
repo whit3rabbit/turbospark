@@ -13,6 +13,8 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-24
+
 ### Added
 - Inkling 2 Mini from LookAtMyQuant packed releases
   (`shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-*`), with the trellis and
