@@ -180,6 +180,18 @@ Cloning settings. Voice Design accepts a
 voice description. Generated speech can become a reusable cloning reference.
 Reference playback and trim controls are separate from generated-take playback.
 
+Text-to-Speech works before any download. With no runnable model chosen, the
+page resolves to the macOS system voice (`AudioSpeechEngine.systemVoice`,
+`AudioWorkspaceSystemVoice.swift`): Read aloud speaks the script, or one
+section, through `AppSpeechSynthesizer`, the engine chat read-aloud uses, in
+the system's default voice for its language. It plays live and saves no take,
+and the voice, language and speed controls stay hidden because they belong to
+a model. The model menu lists that choice as System voice, and a "Download a
+model for better voices" button opens Discover without blocking the page.
+An installed runnable model is chosen automatically and takes over. Voice
+Cloning and Voice Design have no system fallback: they keep their model gate,
+and cloning keeps its consent rules.
+
 ### The Voice Cloning page
 
 The page has two columns, and falls back to one for a narrow window or Extra
