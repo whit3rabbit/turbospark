@@ -79,13 +79,29 @@ when this file gets updated relative to the version bump and the tag.
   stream in as they are written, and Ask answers questions across meetings.
   Generated notes only fill `item.summary`; transcript segments are never
   changed (`swift/docs/SWIFT_AUDIO_MEETING_NOTES.md`).
+- Agent chat: artifact version history with a "Compare with Current" diff,
+  a hover peek on artifact chips, "View file" on file-tree rows, and an
+  "Other" answer on question cards. A plan waiting for approval blocks the
+  turn and counts as a pending approval in voice calls.
+- Checkpoint and restore for a turn's file changes. Restore is confirmed,
+  stays inside the project root and refuses sensitive paths.
+- Shell approvals can be edited before they run. An edited command is
+  re-checked as a new request, is approved once, and never gets a saved
+  grant.
 
 ### Changed
 - The app renders the offline Voice Isolator (`voice-isolator-v1`) on a
   vendored MLX port (VoiceIsolatorMLX, Apache-2.0) instead of the Rust Metal
   path, for Clean Up's "Enhance speech" and "Clean reference". It loads the
-  same verified `denoiser.safetensors`, so installs are unchanged. The CLI,
-  FFI, realtime profile and live streams keep the Rust engine.
+  same verified `denoiser.safetensors`, so installs are unchanged. The CLI
+  and FFI keep the Rust engine; live noise reduction is covered below.
+- Live "Reduce background noise" runs on the vendored MLX port first, with
+  the realtime denoiser at float16 and up to 10 frames per network call. The
+  Rust live stream runs only when the MLX model fails to load. A verification
+  or finding error does not fall back. Each take logs its push timings.
+- The chat transcript, composer, model picker, MCP settings and image
+  attachments were reworked. MCP env values are scrubbed from the command
+  summary and from stderr.
 - Rust API, source-breaking for struct literals: `catalog::ProbeReport` gains
   `speculation: Option<repack::GgufSpeculation>` (add `speculation: None`).
   FFI/Swift: the probe and Hub check JSON gain `speculation`
