@@ -42,6 +42,7 @@ pub(crate) fn family_capabilities_json(family: &str) -> String {
         "anePrefillSupported": parsed.map(ane_prefill_supported).unwrap_or(false),
         "mappedResidencySupported": parsed.map(mapped_residency_supported).unwrap_or(false),
         "mappedResidencyMeasured": parsed.map(mapped_residency_measured).unwrap_or(false),
+        "residentResidencySupported": parsed.map(resident_residency_supported).unwrap_or(false),
     })
     .to_string()
 }
@@ -61,6 +62,17 @@ fn mapped_residency_supported(family: ModelFamily) -> bool {
 /// Mapped residency is served only by the macOS engine.
 #[cfg(not(target_os = "macos"))]
 fn mapped_residency_supported(_family: ModelFamily) -> bool {
+    false
+}
+
+#[cfg(target_os = "macos")]
+fn resident_residency_supported(family: ModelFamily) -> bool {
+    runtime::resident_residency_supported(family)
+}
+
+/// Resident experts are served only by the macOS engine.
+#[cfg(not(target_os = "macos"))]
+fn resident_residency_supported(_family: ModelFamily) -> bool {
     false
 }
 
@@ -154,7 +166,7 @@ pub(crate) fn expert_residency_for_install_json(
         request,
         runtime::physical_memory(),
     );
-    Ok(residency_preflight_json(
+    let mut json = residency_preflight_json(
         routed,
         &requested.trim().to_ascii_lowercase(),
         runtime::mapped_residency_supported(arch.family),
@@ -162,8 +174,40 @@ pub(crate) fn expert_residency_for_install_json(
         runtime::mapped_residency_refusal(arch.family)
             .err()
             .map(|e| e.to_string()),
-    )
-    .to_string())
+    );
+    // The two numbers the resident decision compares, so a host can say why
+    // auto did or did not pick it. Only where resident can open at all: a
+    // family with a resident flow whose install's expert blobs have resident
+    // kernels (an expert format without them streams), or the host would explain a
+    // streamed choice by memory when the cause is the expert format.
+    let resident_supported =
+        routed && runtime::install_resident_experts_supported(dir, arch.family);
+    let (resident_bytes, working_set) = if resident_supported {
+        let weights = std::fs::metadata(dir.join("model_weights.bin"))
+            .map(|m| m.len())
+            .unwrap_or(0);
+        let table = model_io::load_packed_experts_layout(
+            dir,
+            model_io::PACKED_EXPERTS_LAYOUT_DEFAULT_MAX_BYTES,
+        )
+        .map(|l| {
+            l.layers
+                .iter()
+                .map(|x| x.expert_stride.saturating_mul(l.experts_per_layer as u64))
+                .sum::<u64>()
+        })
+        .unwrap_or(0);
+        (
+            Some(weights.saturating_add(table)),
+            runtime::recommended_max_working_set().map(|(bytes, _)| bytes),
+        )
+    } else {
+        (None, None)
+    };
+    json["residentSupported"] = json!(resident_supported);
+    json["residentBytes"] = json!(resident_bytes);
+    json["workingSetBytes"] = json!(working_set);
+    Ok(json.to_string())
 }
 
 #[cfg(target_os = "macos")]

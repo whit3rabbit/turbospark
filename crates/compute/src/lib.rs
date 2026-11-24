@@ -28,12 +28,17 @@ pub mod gdn;
 /// `qwen4_exp`'s hyper-connection mix (PORT-LOCAL; not `HyperConnectionConfig`'s
 /// Sinkhorn-normalised mHC).
 pub mod hyper_connection;
+/// Inkling 2 Mini building blocks (NVFP4/MXFP8 dequant, depth attention, loop controllers).
+pub mod inkling2;
 /// TurboQuant KV-cache codec: per-row norm, randomized Hadamard rotation,
 /// Lloyd-Max codebook quantization (ported from mlx-vlm's
 /// `_TurboQuantMSECodec`, see `docs/TRUBOQUANT.md`).
 pub mod kv_quant;
 /// CPU reference for causal attention over TurboQuant-quantized K/V rows.
 pub mod kv_quant_attention;
+/// LookAtMyQuant trellis and level weight codes under a Kronecker Hadamard
+/// rotation (CPU reference, `docs/LAMQ.md`).
+pub mod lamq;
 /// Mixture-of-Experts (MoE) routing and FFN compute kernels.
 pub mod mla;
 pub mod moe;

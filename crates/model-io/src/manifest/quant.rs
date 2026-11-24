@@ -131,6 +131,24 @@ pub const RESIDENT_ONLY_GGUF_TYPES: [&str; 0] = [];
 /// really did carry 1-bit routed experts passes here and fails at the routed
 /// dispatch, by name -- the same weaker footing Q6_K and the IQ types stand
 /// on, stated in [`EXECUTABLE_GGUF_TYPES`]'s doc.
+/// `manifest.quant.routedExpert.scheme` of an Inkling 2 install: per-layer
+/// NVFP4 or MXFP8 expert blobs in the `moe_inkling2` layout.
+pub const INKLING2_ROUTED_SCHEME: &str = "inkling2_nvfp4_mxfp8";
+/// `manifest.quant.{embedding,attention}.scheme` of a LookAtMyQuant install:
+/// resident `DTYPE_LAMQ` (36) entries whose aux header names each matrix's
+/// code (`docs/LAMQ.md`). The slot carries no bits or group: they vary per
+/// tensor and per embedding bucket.
+pub const LAMQ_SCHEME: &str = "lamq";
+/// `manifest.quant.routedExpert.scheme` of an Inkling 2 LookAtMyQuant
+/// install: per-expert trellis blobs in `packed_experts`, each opening with a
+/// format record.
+pub const INKLING2_LAMQ_ROUTED_SCHEME: &str = "inkling2_lamq";
+/// `manifest.quant.routedExpert.scheme` of an Inkling 2 GGUF install:
+/// ggml-block expert blobs behind an outer-scale record, run by the GGUF
+/// routed pairs' Inkling mode. Each layer's types are in `layout.json`; the
+/// runtime checks every one has a pair in that mode.
+pub const INKLING2_GGUF_ROUTED_SCHEME: &str = "inkling2_gguf";
+
 pub(crate) fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
     // Embedding and attention admit 8 as well as 4: the INT8 affine GEMV is
     // kernel-backed (`crates/gpu`'s `dequant_int8_gemv`, group 64, BF16
@@ -229,7 +247,51 @@ pub(crate) fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
             && slot.scale_type == "none"
             && slot.bias_type == "none"
             && slot.group_size == 0;
-        if !(affine || affine_1bit || affine_2bit || gguf || raw_router || raw_bf16) {
+        // Inkling 2's routed experts in their trained NVFP4 (ggml block_nvfp4
+        // rows plus a per-expert F32 outer-scale record) or MXFP8 (33-byte
+        // blocks) layouts, read by `gpu::moe_inkling2`. Each layer's format is
+        // in its `packed_experts/layout.json` entry (the `gate` sub-tensor's
+        // dtype), so the slot names only the scheme. Its own scheme string,
+        // not `gguf`: GGUF NVFP4 blobs carry no outer-scale record and run
+        // different kernels, and confusing the two decodes wrongly.
+        let inkling2_routed = name == "routedExpert"
+            && slot.scheme == INKLING2_ROUTED_SCHEME
+            && slot.weight_bits == 0
+            && slot.scale_type == "none"
+            && slot.bias_type == "none"
+            && slot.group_size == 0;
+        // LookAtMyQuant: the slot names only the scheme, every tensor's code is
+        // in its own aux header. Admitted on the slots LAMQ codes; the router
+        // stays raw F32 and there is no shared expert.
+        let lamq = matches!(name, "embedding" | "attention")
+            && slot.scheme == LAMQ_SCHEME
+            && slot.weight_bits == 0
+            && slot.scale_type == "none"
+            && slot.bias_type == "none"
+            && slot.group_size == 0;
+        let inkling2_gguf_routed = name == "routedExpert"
+            && slot.scheme == INKLING2_GGUF_ROUTED_SCHEME
+            && slot.weight_bits == 0
+            && slot.scale_type == "none"
+            && slot.bias_type == "none"
+            && slot.group_size == 0;
+        let inkling2_lamq_routed = name == "routedExpert"
+            && slot.scheme == INKLING2_LAMQ_ROUTED_SCHEME
+            && slot.weight_bits == 0
+            && slot.scale_type == "none"
+            && slot.bias_type == "none"
+            && slot.group_size == 0;
+        if !(affine
+            || lamq
+            || inkling2_lamq_routed
+            || inkling2_gguf_routed
+            || affine_1bit
+            || affine_2bit
+            || gguf
+            || raw_router
+            || raw_bf16
+            || inkling2_routed)
+        {
             let detail = match slot.scheme.to_lowercase().as_str() {
                 // An affine slot has four fields that can each be wrong and a
                 // bare "unsupported" names none of them. It matters most on
@@ -269,4 +331,76 @@ pub(crate) fn validate_quant(quant: &ManifestQuant) -> Result<(), ModelError> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod lamq_scheme_tests {
+    use super::*;
+    use crate::manifest::types::{ManifestQuant, ManifestQuantSlot};
+
+    fn slot(bits: i64, scheme: &str, kind: &str, group: i64) -> ManifestQuantSlot {
+        ManifestQuantSlot {
+            weight_bits: bits,
+            scheme: scheme.into(),
+            scale_type: kind.into(),
+            bias_type: kind.into(),
+            group_size: group,
+            ggml_type: None,
+            ggml_types: None,
+        }
+    }
+
+    /// The quant section `inkling2_lamq` writes: LAMQ embedding and
+    /// attention, raw F32 router, shared expert defaulted to attention.
+    fn lamq_install() -> ManifestQuant {
+        ManifestQuant {
+            embedding: slot(0, LAMQ_SCHEME, "none", 0),
+            attention: slot(0, LAMQ_SCHEME, "none", 0),
+            router: slot(32, "raw", "none", 0),
+            shared_expert: slot(0, LAMQ_SCHEME, "none", 0),
+            routed_expert: slot(0, INKLING2_LAMQ_ROUTED_SCHEME, "none", 0),
+        }
+    }
+
+    #[test]
+    fn the_lamq_install_quant_section_validates() {
+        validate_quant(&lamq_install()).unwrap();
+    }
+
+    #[test]
+    fn lamq_schemes_stay_on_their_slots_and_shapes() {
+        // A slot byte-equal to attention is defaulted and skipped (this
+        // function's rule for components a model lacks). With an affine
+        // attention slot nothing below can be mistaken for a default.
+        let affine = slot(4, "affine", "bf16", QUANT_GROUP_SIZE);
+        let base = || ManifestQuant {
+            attention: affine.clone(),
+            shared_expert: affine.clone(),
+            ..lamq_install()
+        };
+        validate_quant(&base()).unwrap();
+        type Case = (&'static str, fn(&mut ManifestQuant));
+        let cases: [Case; 5] = [
+            ("no LAMQ router kernel", |q| {
+                q.router = slot(0, LAMQ_SCHEME, "none", 0)
+            }),
+            ("experts need the Inkling LAMQ scheme", |q| {
+                q.routed_expert = slot(0, LAMQ_SCHEME, "none", 0)
+            }),
+            ("a LAMQ slot carries no bit width", |q| {
+                q.embedding = slot(4, LAMQ_SCHEME, "none", 0)
+            }),
+            ("nor companion types", |q| {
+                q.embedding = slot(0, LAMQ_SCHEME, "bf16", 0)
+            }),
+            ("the expert scheme is not a resident one", |q| {
+                q.embedding = slot(0, INKLING2_LAMQ_ROUTED_SCHEME, "none", 0)
+            }),
+        ];
+        for (why, mutate) in cases {
+            let mut q = base();
+            mutate(&mut q);
+            assert!(validate_quant(&q).is_err(), "{why}");
+        }
+    }
 }

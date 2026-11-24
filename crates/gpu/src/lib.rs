@@ -118,6 +118,12 @@ mod hadamard;
 #[cfg(target_os = "macos")]
 mod hyper_connection;
 #[cfg(target_os = "macos")]
+mod inkling2_batch;
+#[cfg(target_os = "macos")]
+mod inkling2_dspark;
+#[cfg(target_os = "macos")]
+mod inkling2_ops;
+#[cfg(target_os = "macos")]
 mod kv_cache;
 #[cfg(target_os = "macos")]
 mod kv_cache_mem;
@@ -126,6 +132,8 @@ mod kv_quant_tables;
 #[cfg(target_os = "macos")]
 mod kv_quantize;
 #[cfg(target_os = "macos")]
+mod lamq;
+#[cfg(target_os = "macos")]
 mod logit_softmax;
 #[cfg(target_os = "macos")]
 mod mla;
@@ -133,6 +141,10 @@ mod mla;
 mod moe_decode;
 #[cfg(target_os = "macos")]
 mod moe_gguf;
+#[cfg(target_os = "macos")]
+mod moe_inkling2;
+#[cfg(target_os = "macos")]
+mod moe_inkling2_lamq;
 #[cfg(target_os = "macos")]
 mod moe_prefill_batch;
 #[cfg(target_os = "macos")]
@@ -360,11 +372,47 @@ pub use hadamard::{
 #[cfg(target_os = "macos")]
 pub use hyper_connection::{encode_hc_inject_add, encode_hc_mix};
 #[cfg(target_os = "macos")]
+pub use inkling2_batch::{
+    encode_inkling2_attention_prefill, encode_inkling2_attention_rows,
+    encode_inkling2_bf16_gemm_rows_mma, encode_inkling2_bf16_gemv_rows,
+    encode_inkling2_control_combine_rows, encode_inkling2_copy_rows,
+    encode_inkling2_depth_mix_rows, encode_inkling2_l2_clip_rows, encode_inkling2_rel_table_rows,
+    encode_inkling2_rms_rows, encode_inkling2_router_rows, encode_inkling2_router_select_rows,
+    encode_inkling2_short_conv_rows, Inkling2GemvRowsSegment, Inkling2Rows,
+    INKLING2_BATCH_MAX_ROWS, INKLING2_GEMV_MAX_ROWS,
+};
+#[cfg(target_os = "macos")]
+pub use inkling2_dspark::{
+    encode_dspark_attention, encode_dspark_bf16_to_half, encode_dspark_ctx_store,
+    encode_dspark_init_x, encode_dspark_markov_argmax, encode_dspark_markov_gate,
+    encode_dspark_markov_input, encode_dspark_markov_logits, encode_dspark_residual,
+    encode_dspark_rms_f32, encode_dspark_rope_rows, encode_dspark_silu_mul,
+    encode_dspark_tap_mix_norm, encode_dspark_transpose_bf16, DsparkAttnShape,
+    DSPARK_LOGITS_PER_GROUP, DSPARK_MAX_RANK,
+};
+#[cfg(target_os = "macos")]
+pub use inkling2_ops::{
+    encode_inkling2_attention_decode, encode_inkling2_bf16_gemv_multi,
+    encode_inkling2_bf16_gemv_multi2, encode_inkling2_control_combine, encode_inkling2_copy_half,
+    encode_inkling2_depth_mix, encode_inkling2_depth_mix_norm, encode_inkling2_l2_clip,
+    encode_inkling2_qkv_post, encode_inkling2_rel_table, encode_inkling2_router_select,
+    encode_inkling2_short_conv_decode, encode_inkling2_short_conv_residual, Inkling2AttnShape,
+    Inkling2ConvResidual, Inkling2GemvSegment, Inkling2QkvPostBuffers, Inkling2QkvPostShape,
+    INKLING2_ATTN_MAX_HEAD_DIM, INKLING2_DEPTH_MAX_STATES, INKLING2_GEMV_MAX_SEGMENTS,
+    INKLING2_MIX_NORM_MAX_H, INKLING2_ROUTER_MAX_EXPERTS, INKLING2_ROUTER_TOP_K,
+};
+#[cfg(target_os = "macos")]
 pub use kv_cache::{KvCacheManager, LayerKind};
 #[cfg(target_os = "macos")]
 pub use kv_quant_tables::{KvQuantTables, TqSideTables};
 #[cfg(target_os = "macos")]
 pub use kv_quantize::encode_kv_quantize_tq;
+#[cfg(target_os = "macos")]
+pub use lamq::{
+    encode_lamq_decode_row, encode_lamq_gemv, encode_lamq_gemv_rows, encode_lamq_rht,
+    encode_lamq_rht_in_batch, encode_lamq_scatter, LamqMatrixView, LamqRhtDir, LamqRhtFactor,
+    LAMQ_MAX_N, LAMQ_MAX_TABLE, LAMQ_RHT_BATCH_MAX,
+};
 #[cfg(target_os = "macos")]
 pub use logit_softmax::{encode_logit_softcap_softmax, logit_softcap_softmax};
 #[cfg(target_os = "macos")]
@@ -381,13 +429,31 @@ pub use moe_decode::{
 };
 #[cfg(target_os = "macos")]
 pub use moe_gguf::{
-    encode_moe_phase1_ext, encode_moe_phase1_iq1_m, encode_moe_phase1_iq2_s,
-    encode_moe_phase1_iq2_xxs, encode_moe_phase1_iq3_xxs, encode_moe_phase1_iq4_xs,
-    encode_moe_phase1_mxfp4, encode_moe_phase1_q2_0, encode_moe_phase1_q4_k,
-    encode_moe_phase1_q8_0, encode_moe_phase2_ext, encode_moe_phase2_iq4_nl,
-    encode_moe_phase2_mxfp4, encode_moe_phase2_q2_0_top10, encode_moe_phase2_q4_k,
-    encode_moe_phase2_q6_k, encode_moe_phase2_q8_0, moe_gguf_source, mxfp4_row_bytes, MoeExtType,
-    Mxfp4Activation, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS, PHASE2_FIXED_SLOTS,
+    encode_inkling2_gguf_bind_rows, encode_inkling2_gguf_phase1, encode_inkling2_gguf_phase1_table,
+    encode_inkling2_gguf_phase2, encode_inkling2_gguf_phase2_table, encode_moe_phase1_ext,
+    encode_moe_phase1_iq1_m, encode_moe_phase1_iq2_s, encode_moe_phase1_iq2_xxs,
+    encode_moe_phase1_iq3_xxs, encode_moe_phase1_iq4_xs, encode_moe_phase1_mxfp4,
+    encode_moe_phase1_q2_0, encode_moe_phase1_q4_k, encode_moe_phase1_q8_0, encode_moe_phase2_ext,
+    encode_moe_phase2_iq4_nl, encode_moe_phase2_mxfp4, encode_moe_phase2_q2_0_top10,
+    encode_moe_phase2_q4_k, encode_moe_phase2_q6_k, encode_moe_phase2_q8_0, moe_gguf_source,
+    mxfp4_row_bytes, Inkling2GgufExpertType, MoeExtType, Mxfp4Activation,
+    INKLING2_GGUF_TABLE_BYTES, MXFP4_BLOCK_BYTES, MXFP4_BLOCK_ELEMS, PHASE2_FIXED_SLOTS,
+};
+#[cfg(target_os = "macos")]
+pub use moe_inkling2::{
+    encode_inkling2_moe_grouped_rows, encode_inkling2_moe_grouped_rows_mma,
+    encode_inkling2_moe_phase1, encode_inkling2_moe_phase1_indexed,
+    encode_inkling2_moe_phase1_indexed_rows, encode_inkling2_moe_phase2,
+    encode_inkling2_moe_phase2_indexed, encode_inkling2_moe_phase2_indexed_rows,
+    moe_inkling2_source, Inkling2ExpertType, Inkling2GroupScratch, Inkling2ResidentLayer,
+    INKLING2_GROUP_MAX_EXPERTS, INKLING2_MAX_SLOTS, INKLING2_MOE_MAX_ROWS,
+    INKLING2_OUTER_SCALE_BYTES, MOE_INKLING2_REFLECT_FUNCTION,
+};
+#[cfg(target_os = "macos")]
+pub use moe_inkling2_lamq::{
+    encode_inkling2_lamq_phase1, encode_inkling2_lamq_phase2, lamq_lut_pack,
+    moe_inkling2_lamq_source, LamqExpertOffsets, LamqExperts, INKLING2_LAMQ_MAX_SLOTS,
+    LAMQ_LUT_PACK, LAMQ_LUT_PACK_HALVES, MOE_INKLING2_LAMQ_REFLECT_FUNCTION,
 };
 #[cfg(target_os = "macos")]
 pub use moe_prefill_batch::{

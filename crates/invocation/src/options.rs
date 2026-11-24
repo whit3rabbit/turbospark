@@ -171,7 +171,7 @@ pub const OPTIONS: &[OptionDecl] = &[
         takes_value: true,
         is_required: false,
         is_mode_selecting: false,
-        usage_hint: "routed-expert residency mode: auto, streamed, mapped (default auto)",
+        usage_hint: "routed-expert residency mode: auto, streamed, mapped, resident (default auto)",
     },
     OptionDecl {
         flag: "--speculative",

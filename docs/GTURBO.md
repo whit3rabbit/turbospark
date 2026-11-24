@@ -200,6 +200,7 @@ four fields are zero and must not be dereferenced.
 | 13 / 14 | GGUF Q5_K / MXFP4 | inline |
 | 17 / 18 / 19 / 20 / 21 / 22 / 23 | GGUF Q2_K / IQ2_XXS / IQ2_XS / IQ1_S / IQ3_S / IQ2_S / IQ1_M | inline |
 | 24 | GGUF Q3_K | inline |
+| 36 | LookAtMyQuant coded entry (`docs/LAMQ.md`): code stream, bucket order or signs | f16 row scales; the "bias" region is an aux block opening with a `LamqAuxHeader` |
 
 A tag is not permission to run. The repack walk writes an install for every
 block type it can parse, and whether that install opens is decided separately

@@ -169,6 +169,38 @@ final class InstallDestinationRoutingTests: LibraryStateTestCase {
         XCTAssertEqual(model.modelDownloads.first?.library, "t7-id")
     }
 
+    func testALocalFilesInstallGoesToTheChosenLibraryWithItsPath() async throws {
+        let (model, _) = await makeInstallModel()
+        service.with { $0.textInstallScript = finishing(row("ink-local", library: t7)) }
+
+        model.installLocalFiles(
+            path: "/m/ink.gguf", alias: "ink-local", tokenizerFrom: "/m/tok", library: t7.id)
+        await model.installTask?.value
+
+        XCTAssertEqual(service.installCalls.map(\.kind), [.local])
+        XCTAssertEqual(service.installCalls.map(\.repo), ["/m/ink.gguf"])
+        XCTAssertEqual(service.installCalls.map(\.library), ["t7-id"])
+        // The saved row keeps the whole request, so Retry installs the same
+        // files with the same tokenizer folder.
+        let saved = try XCTUnwrap(model.modelDownloads.first)
+        XCTAssertEqual(
+            saved.request, .localFiles(path: "/m/ink.gguf", alias: "ink-local", tokenizerFrom: "/m/tok"))
+        let decoded = try JSONDecoder().decode(
+            ModelDownload.Request.self, from: JSONEncoder().encode(saved.request))
+        XCTAssertEqual(decoded, saved.request)
+        // Local and repository installs share the text alias namespace.
+        XCTAssertEqual(
+            saved.request.queueKey,
+            ModelDownload.Request.repository(repo: "o/r", alias: "Ink-Local", file: nil, sidecarRepo: nil).queueKey)
+    }
+
+    func testAnUnsafeAliasQueuesNoLocalInstall() async {
+        let (model, _) = await makeInstallModel()
+        model.installLocalFiles(path: "/m/ink.gguf", alias: "../x", tokenizerFrom: nil, library: nil)
+        XCTAssertEqual(service.installCalls, [])
+        XCTAssertTrue(model.modelDownloads.isEmpty)
+    }
+
     func testAnImageInstallGoesToTheChosenLibrary() async throws {
         let (model, _) = await makeInstallModel()
         let installed = imageRow(library: t7)

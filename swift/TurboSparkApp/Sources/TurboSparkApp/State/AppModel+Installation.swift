@@ -260,13 +260,61 @@ extension AppModel {
         sidecarRepo: String? = nil,
         library: String? = nil
     ) {
+        // Through the library seam, into the chosen library; the engine
+        // settles the destination before its first request.
+        runTextInstall(
+            alias: alias, library: library,
+            firstStage: AppStrings.localized("Connecting to Hugging Face...")
+        ) { service, destination in
+            service.installRepo(
+                repo: repo, alias: alias, file: file, sidecarRepo: sidecarRepo,
+                library: destination)
+        }
+    }
+
+    /// Installs Inkling 2 Mini from a LookAtMyQuant release folder or an
+    /// Inkling 2 GGUF on disk into `library` (nil is This Mac).
+    /// `tokenizerFrom` is required for a GGUF; see
+    /// `TurboSparkCatalog.localInstallKind(path:)`.
+    public func installLocalFiles(
+        path: String, alias: String, tokenizerFrom: String?, library: String? = nil
+    ) {
+        let trimmedAlias = alias.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty, !trimmedAlias.isEmpty,
+              Self.isSafeInstallAlias(trimmedAlias) else { return }
+        enqueueModelDownload(
+            .localFiles(path: path, alias: trimmedAlias, tokenizerFrom: tokenizerFrom),
+            library: library)
+    }
+
+    func startLocalModelInstall(
+        path: String, alias: String, tokenizerFrom: String?, library: String? = nil
+    ) {
+        runTextInstall(
+            alias: alias, library: library,
+            firstStage: AppStrings.localized("Reading the model files...")
+        ) { service, destination in
+            service.installLocal(
+                path: path, alias: alias, tokenizerFrom: tokenizerFrom, library: destination)
+        }
+    }
+
+    /// One text install's progress, completion, open, and failure handling,
+    /// for any stream of install events: a Hugging Face repository or files
+    /// on disk.
+    private func runTextInstall(
+        alias: String,
+        library: String?,
+        firstStage: String,
+        stream makeStream: @escaping (any ModelLibraryService, String?) -> AsyncThrowingStream<InstallEvent, Error>
+    ) {
         Self.modelInstallOwner = self
         installingAlias = alias
 
         installEpoch += 1
         let myEpoch = installEpoch
         isInstallingModel = true
-        installStageText = AppStrings.localized("Connecting to Hugging Face...")
+        installStageText = firstStage
         installProgressFraction = nil
         installDownloadedBytes = nil
         installTotalBytes = nil
@@ -282,14 +330,8 @@ extension AppModel {
             }
             do {
                 var maxBytes: UInt64 = 0
-                // Through the library seam, into the chosen library; the engine
-                // settles the destination before its first request.
-                for try await event in self.libraryState.service.installRepo(
-                    repo: repo,
-                    alias: alias,
-                    file: file,
-                    sidecarRepo: sidecarRepo,
-                    library: Self.destinationLibrary(library)
+                for try await event in makeStream(
+                    self.libraryState.service, Self.destinationLibrary(library)
                 ) {
                     guard self.installEpoch == myEpoch else { return }
                     if self.modelDownloadsShuttingDown {

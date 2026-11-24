@@ -22,6 +22,7 @@ struct ModelHubView: View {
     @State private var recommendationProgress: ModelRecommendationProbeProgress?
     @State private var recommendationError: String?
     @State private var showingProbeSheet = false
+    @State private var showingLocalInstallSheet = false
     /// Live Hugging Face search. It sends nothing until asked (Return in the
     /// search box, or the row in the list that says so).
     @StateObject private var hub = HubSearchController()
@@ -57,6 +58,9 @@ struct ModelHubView: View {
         .sheet(isPresented: $showingProbeSheet) {
             ModelProbeSheet(model: model)
         }
+        .sheet(isPresented: $showingLocalInstallSheet) {
+            LocalModelInstallSheet(model: model)
+        }
         .task(id: model.fitRecommendationConfigurationID) {
             await loadRecommendations()
             if selectedAlias == nil {
@@ -89,6 +93,13 @@ struct ModelHubView: View {
             }
             .appAction(.secondary)
             .help(Text("Probe an arbitrary Hugging Face repository by header alone", bundle: .module))
+            Button {
+                showingLocalInstallSheet = true
+            } label: {
+                Label { Text("Install from Files", bundle: .module) } icon: { Image(systemName: "folder") }
+            }
+            .appAction(.secondary)
+            .help(Text("Inkling 2 Mini from a LookAtMyQuant release folder or an Inkling 2 GGUF file.", bundle: .module))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

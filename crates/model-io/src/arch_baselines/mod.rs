@@ -8,6 +8,7 @@ mod flint;
 mod gemma;
 mod gemma3;
 mod gpt_oss;
+mod inkling2;
 mod lfm3;
 mod llama;
 mod minimax;
@@ -22,6 +23,7 @@ pub use flint::{flint_40b_a2_5b, flint_layer_mask};
 pub use gemma::{gemma4_12b_dense, gemma4_26b_a4b};
 pub use gemma3::{gemma3_1b, gemma3_layer_mask};
 pub use gpt_oss::gpt_oss_20b;
+pub use inkling2::{inkling2_layer_mask, inkling2_mini};
 pub use lfm3::{lfm3_1_7b, lfm3_layer_mask};
 pub use llama::mixtral_8x7b;
 pub use minimax::minimax_m2;
@@ -57,6 +59,7 @@ pub fn known_architecture(family: ModelFamily) -> ArchConfig {
         ModelFamily::Lfm3 => lfm3_1_7b(),
         ModelFamily::UnlimitedOcr2 => unlimited_ocr2_12l(),
         ModelFamily::Gemma3 => gemma3_1b(),
+        ModelFamily::Inkling2Loop => inkling2_mini(),
     }
 }
 
@@ -82,5 +85,6 @@ pub fn all_known_architectures() -> Vec<ArchConfig> {
         lfm3_1_7b(),
         unlimited_ocr2_12l(),
         gemma3_1b(),
+        inkling2_mini(),
     ]
 }

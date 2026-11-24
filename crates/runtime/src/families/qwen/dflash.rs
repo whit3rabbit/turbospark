@@ -325,6 +325,11 @@ impl RealForwardRunner {
     /// Why DFlash2 speculation cannot run on this runner, or `None` if it
     /// can; the CLI's hard-fail message for `--speculative-drafter dflash`.
     pub fn dflash_speculation_blocker(&self) -> Option<String> {
+        // Inkling 2's block drafter is DSpark, with its own batched verify:
+        // the routed-MoE refusal below is about Qwen's drafters.
+        if self.real_inkling2.is_some() {
+            return self.inkling2_speculation_blocker();
+        }
         dflash_speculation_blocker(&self.index, &self.arch, self.real_dflash.is_some())
     }
 }

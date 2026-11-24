@@ -1733,6 +1733,179 @@
         "server /v1/chat/completions and /v1/messages page transcription"
       ],
       "notes": "LFM3-VL: the lfm3 trunk (hidden 2048, 24 layers, the lfm3-1.7b baseline's shape) with the LFM3-VL tower: 14 RMSNorm blocks alternating a gated depthwise 3x3 conv (8 blocks) and grouped-query attention (6 blocks, 16 heads over 8 KV heads, per-head q/k norms, neox 2-D rope at theta 1e6), a SwiGLU MLP, and a pixel-unshuffle projector to the trunk width. VisionTowerKind::Lfm3Vl. THE 8-BIT BUILD ON PURPOSE: LiquidAI's MLX-4bit is affine group 32, which this port's kernels do not implement (4- and 8-bit at group 64 only), and its tower weights differ from the 8-bit build's by up to 1% per weight, so each build needs its own probe reference. The tower ships unquantized BF16 and is narrowed to FP16 at repack. Combined install only (no sidecar pairing). Image preprocessing is processor_config.json's image_processor object (the Qwen3-VL smart-resize, 0.5/0.5 normalization, patch 16, merge 2). The max_pixels ceiling is not memory-clamped for this tower. docs/LFM3_VL_VISION_PHASE0.md."
+    },
+    {
+      "alias": "inkling2-mini",
+      "name": "Inkling 2 Mini (original checkpoint: NVFP4 and MXFP8 experts, BF16 dense)",
+      "family": "inkling2_loop",
+      "source": {
+        "kind": "mlx",
+        "repo": "thinkingmachines/Inkling-2-Mini",
+        "revision": "ed40e7da625f594fc9c4990f5f66be24873c22d7",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 20188200399,
+      "install_bytes": 20200000000,
+      "status": "verified",
+      "gates": [
+        "inkling2_quality_gate",
+        "inkling2_memory_oracle"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 8192,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 2662,
+          "decode_tok_s_min": 14.511,
+          "decode_tok_s_max": 17.977,
+          "measured_on": "2026-11-22",
+          "source": "this port, two oracle sessions, AC, streamed (inkling2_memory_oracle); all three protocol cases stop at end of turn; resident experts (auto on a 36 GB Mac) peak about 17.7 GiB instead"
+        }
+      ],
+      "notes": "The original 26B-physical MoE (24 layers, layers 6-17 looped 3x, 128 experts top-8). Downloaded whole at the pinned revision, then converted on this Mac; it needs about 38 GiB free while both exist. The repository's DSpark block drafter (mtp.safetensors, 636 MB) lands in the install's dspark/; speculative decoding stays off unless asked for (greedy only, resident experts only). Logits match the CPU reference and llama.cpp (docs/INKLING2_PHASE0.md). The memory oracle (inkling2_memory_oracle) holds it streamed at 16 slots: 2,662 MiB peak at 8,192 context, 14.5 to 18.0 tok/s. The quality gate (inkling2_quality_gate) holds perplexity 4.7024 and both digests, so the status is verified. Prefill is sequential. With room (auto residency on a 36 GB Mac) the experts go resident instead: about 17.7 GiB and about 34 tok/s on a short prompt, an indicative reading."
+    },
+    {
+      "alias": "inkling2-mini-mlx4",
+      "featured_rank": 9,
+      "name": "Inkling 2 Mini (MLX 4-bit dense weights, native NVFP4 and MXFP8 experts)",
+      "family": "inkling2_loop",
+      "source": {
+        "kind": "mlx",
+        "repo": "mlx-community/Inkling-2-Mini-4bit",
+        "revision": "9c0e2960609ba7cb40daf92c6f7bf8ed56e1dd62",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "mtp": {
+        "repo": "thinkingmachines/Inkling-2-Mini",
+        "revision": "ed40e7da625f594fc9c4990f5f66be24873c22d7"
+      },
+      "download_bytes": 17334678817,
+      "install_bytes": 17900000000,
+      "status": "verified",
+      "gates": [
+        "inkling2_mlx4_quality_gate",
+        "inkling2_mlx4_memory_oracle"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 8192,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 2663,
+          "decode_tok_s_min": 17.937,
+          "decode_tok_s_max": 20.516,
+          "measured_on": "2026-11-22",
+          "source": "this port, two oracle sessions, AC, streamed (inkling2_mlx4_memory_oracle); all three protocol cases stop at end of turn; resident experts peak about 17.7 GiB instead"
+        }
+      ],
+      "notes": "mlx-lm's conversion (PR 2086): attention, embedding and head at affine 4-bit group 64, the experts kept as the original NVFP4 and MXFP8 bytes, so it saves disk but not expert memory. Downloaded whole at the pinned revision, then converted; it needs about 33 GiB free while both exist. Not bit-exact with inkling2-mini (4-bit dense weights). The memory oracle (inkling2_mlx4_memory_oracle) holds it streamed at 16 slots: 2,663 MiB peak, 17.9 to 20.5 tok/s, the fastest Inkling install streamed. The quality gate (inkling2_mlx4_quality_gate) holds perplexity 4.8026 and both digests, so the status is verified. Resident (auto with room), one indicative reading decoded about 46 tok/s at the original's 17.7 GiB. The conversion drops mtp.safetensors, so the row's mtp source fetches the original's DSpark block drafter (636 MB) into the install's dspark/; speculative decoding stays off unless asked for."
+    },
+    {
+      "alias": "inkling2-mini-lamq54",
+      "name": "Inkling 2 Mini (LookAtMyQuant 5.4 GB, 1.65 bits per weight)",
+      "family": "inkling2_loop",
+      "source": {
+        "kind": "lamq",
+        "repo": "shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-5.4GB",
+        "revision": "9af870917c5f3a2e26c6a305f82f27b4d350e9e1",
+        "file": null
+      },
+      "sidecars": {
+        "repo": null,
+        "revision": null,
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 5379987356,
+      "install_bytes": 7600000000,
+      "status": "verified",
+      "gates": [
+        "inkling2_lamq54_quality_gate",
+        "inkling2_lamq54_memory_oracle"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 8192,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 1587,
+          "decode_tok_s_min": 16.513,
+          "decode_tok_s_max": 18.947,
+          "measured_on": "2026-11-22",
+          "source": "this port, two oracle sessions, AC, streamed (inkling2_lamq54_memory_oracle), short-explanation and medium-review only: long-synthesis runs past the 4,096-token budget on this release"
+        }
+      ],
+      "notes": "The LookAtMyQuant packed release (MIT), trellis and Lloyd-Max codes kept native (docs/LAMQ.md). Downloaded whole at the pinned revision, then converted; the install is about 1.4x the release and needs about 13.5 GiB free while both exist. The smallest Inkling install: the memory oracle (inkling2_lamq54_memory_oracle) holds it at 1,587 MiB streamed at 16 slots, 16.5 to 18.9 tok/s, over short-explanation and medium-review only, since on long-synthesis it reasons past the 4,096-token budget where the original stops at 2,070. Resident, one indicative reading peaked at 8.4 GiB at about 30 tok/s. It loses quality against inkling2-mini: about 80 percent next-token agreement and mean KL 0.25 to 0.31 on English and code windows. That loss is in the release's weights, not the runtime (a CPU f32 forward on the same weights matches Metal at KL 1.4e-3). The quality gate (inkling2_lamq54_quality_gate) holds perplexity 5.7391 (22 percent over the original's 4.7024) and both digests, so the status is verified; verified means its gates hold, not that it matches the original."
+    },
+    {
+      "alias": "inkling2-mini-ud-q4kxl",
+      "name": "Inkling 2 Mini (unsloth UD-Q4_K_XL GGUF: original NVFP4 experts, Q8_0 on layers 20-23)",
+      "family": "inkling2_loop",
+      "source": {
+        "kind": "gguf",
+        "repo": "unsloth/Inkling-2-Mini-GGUF",
+        "revision": "8078d149286eec7193795413b9e0643da6d11fa1",
+        "file": "Inkling-2-Mini-UD-Q4_K_XL.gguf"
+      },
+      "sidecars": {
+        "repo": "thinkingmachines/Inkling-2-Mini",
+        "revision": "ed40e7da625f594fc9c4990f5f66be24873c22d7",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "mtp": {
+        "repo": "thinkingmachines/Inkling-2-Mini",
+        "revision": "ed40e7da625f594fc9c4990f5f66be24873c22d7"
+      },
+      "download_bytes": 17629760736,
+      "install_bytes": 17900000000,
+      "status": "verified",
+      "gates": [
+        "inkling2_ud_q4kxl_quality_gate",
+        "inkling2_ud_q4kxl_memory_oracle"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 8192,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 2705,
+          "decode_tok_s_min": 16.36,
+          "decode_tok_s_max": 19.675,
+          "measured_on": "2026-11-23",
+          "source": "this port, two oracle sessions, AC, streamed (inkling2_ud_q4kxl_memory_oracle); all three protocol cases stop at end of turn"
+        }
+      ],
+      "notes": "unsloth's recommended dynamic GGUF (UD-Q4_K_XL, Apache 2.0): the original NVFP4 expert bytes with per-expert scales on layers 0-19, Q8_0 experts on 20-23, block-quantized dense weights. Downloaded whole at the pinned revision, then converted; it needs about 35 GiB free while both exist. The NVFP4 layers run the native Inkling pair (a GGUF NVFP4 row is the native layout), so resident decode is about 29 tok/s on a 36 GB Mac and chunked prefill about 90 tok/s, bit-exact with sequential decode. The memory oracle (inkling2_ud_q4kxl_memory_oracle) holds it streamed at 16 slots: 2,705 MiB peak at 8,192 context, 16.4 to 19.7 tok/s. The quality gate (inkling2_ud_q4kxl_quality_gate) holds perplexity 4.6844 (0.4 percent under the original's 4.7024) and both digests, so the status is verified. Logits sit within llama.cpp's own noise on the same file (docs/INKLING2_PHASE0.md). The row's mtp source fetches the original's DSpark block drafter (636 MB) into the install's dspark/; unsloth's own drafter GGUFs are a different drafter and are not read. Speculative decoding stays off unless asked for."
     }
   ]
 }

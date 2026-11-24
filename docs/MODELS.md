@@ -387,6 +387,29 @@ for `merges.txt` **after** a 20-minute stream had written a perfectly good
 install (AGENTS.md Gotcha 47). By the time a byte of weight data moves, the
 install is known to have a tokenizer that loads and a template that renders.
 
+### Inkling 2 rows download whole, then convert
+
+No Inkling 2 Mini source has a streamed walk: the LookAtMyQuant intake reads
+npz members, the GGUF intake reads the file end to end, and the checkpoint
+and MLX intakes read every expert of a layer to write its blobs. So an
+`inkling2_loop` row (`inkling2-mini`, `inkling2-mini-mlx4`,
+`inkling2-mini-lamq54`) skips the steps above:
+`catalog::install_inkling2_row` resolves the repository at the row's pinned
+commit (refusing a Hub answer for any other), downloads its files into a
+hidden folder beside the install's staging, converts, verifies, records the
+install under the row's status, and removes the download. The download and
+the install exist side by side for a while, so the free-space check asks for
+both: about 1.5x the download for LAMQ and GGUF, the download plus 1 GiB for
+the checkpoint and MLX conversions. A failed conversion keeps the download,
+so a retry skips it. The rot guard measures these rows by the same file list
+(`detect_inkling2_repo`), not the generic shard sum. The original
+checkpoint's DSpark block drafter (`mtp.safetensors`, 636 MB) comes with
+it and lands in `<install>/dspark/` beside the `config.json` whose
+`mtp_config` describes it. An MLX conversion drops that file, so the
+`inkling2-mini-mlx4` row names the original as its `mtp` source and the row
+route fetches the two files from there; for these rows `mtp` means "where
+the DSpark drafter comes from", not the MTP head the walk reads for Qwen.
+
 ### A row can pull a second repository for a drafter head
 
 `CatalogEntry.mtp` (`repo`, `revision`) is optional and names a repository

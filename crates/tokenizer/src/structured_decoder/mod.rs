@@ -232,7 +232,11 @@ impl<'a> StructuredAssistantDecoder<'a> {
             // Flint shares this arm: its think pair is the only markup it
             // splits, keyed on the ids. Its GLM-style tool markup has no
             // parser and flows through as content (`Prompted`).
-            ChatDialect::MiniMax | ChatDialect::Flint => {
+            // Inkling 2 too: `<|content_thinking|>` opens the thought and the
+            // next `<|end_message|>` closes it; an `<|end_message|>` outside a
+            // thought only re-asserts visible. Its tool JSON segment has no
+            // parser yet (`Prompted`).
+            ChatDialect::MiniMax | ChatDialect::Flint | ChatDialect::Inkling2 => {
                 if Some(token_id) == self.tokenizer.think_start_id {
                     self.channel = Channel::Thought;
                 } else if Some(token_id) == self.tokenizer.think_end_id {

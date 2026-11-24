@@ -32,6 +32,7 @@
 //! of 256, which is the only difference visible from the host.
 
 mod ext;
+mod inkling;
 mod iq;
 mod kquants;
 mod mxfp4;
@@ -44,6 +45,11 @@ use crate::moe_decode::{
 };
 
 pub use ext::{encode_moe_phase1_ext, encode_moe_phase2_ext, MoeExtType};
+pub use inkling::{
+    encode_inkling2_gguf_bind_rows, encode_inkling2_gguf_phase1, encode_inkling2_gguf_phase1_table,
+    encode_inkling2_gguf_phase2, encode_inkling2_gguf_phase2_table, Inkling2GgufExpertType,
+    INKLING2_GGUF_TABLE_BYTES,
+};
 pub use iq::{
     encode_moe_phase1_iq1_m, encode_moe_phase1_iq2_s, encode_moe_phase1_iq2_xxs,
     encode_moe_phase1_iq3_xxs, encode_moe_phase1_iq4_xs, encode_moe_phase2_iq4_nl,
@@ -121,16 +127,44 @@ pub(crate) fn encode_phase1(
     top_k: u32,
     use_silu: bool,
 ) -> Result<(), GpuError> {
-    let pipeline = context.pipeline(
-        SOURCE,
+    encode_phase1_with(
+        context,
+        pass,
         kernel,
         &moe_function_constants(use_silu),
         &constants_key(use_silu),
-    )?;
+        (routed.buffer(), 0),
+        offsets,
+        x,
+        acts,
+        d_dim,
+        f_dim,
+        top_k,
+    )
+}
+
+/// [`encode_phase1`] with the function constants and their key given, so
+/// the Inkling mode (`inkling.rs`) shares this one copy of the bindings.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_phase1_with(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    kernel: &'static str,
+    constants: &metal::FunctionConstantValues,
+    key: &[u8],
+    routed: (&metal::Buffer, u64),
+    offsets: &MoeExpertOffsets,
+    x: (&metal::Buffer, u64),
+    acts: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(SOURCE, kernel, constants, key)?;
     let rows = (top_k * f_dim) as u64;
     pass.encode_threadgroups(
         &pipeline,
-        &[(routed.buffer(), 0, 0), (x.0, 2, x.1), (acts.0, 3, acts.1)],
+        &[(routed.0, 0, routed.1), (x.0, 2, x.1), (acts.0, 3, acts.1)],
         &[
             (&offsets.bytes(), 1),
             (u32_bytes(&d_dim), 4),
@@ -165,16 +199,46 @@ pub(crate) fn encode_phase2(
     use_silu: bool,
 ) -> Result<(), GpuError> {
     assert!(top_k as usize <= PHASE2_FIXED_SLOTS);
-    let pipeline = context.pipeline(
-        SOURCE,
+    encode_phase2_with(
+        context,
+        pass,
         kernel,
         &moe_function_constants(use_silu),
         &constants_key(use_silu),
-    )?;
+        (routed.buffer(), 0),
+        offsets,
+        acts,
+        routing_w,
+        residual,
+        y,
+        d_dim,
+        f_dim,
+    )
+}
+
+/// [`encode_phase2`] with the function constants and their key given; see
+/// [`encode_phase1_with`]. The caller checks `top_k`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_phase2_with(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    kernel: &'static str,
+    constants: &metal::FunctionConstantValues,
+    key: &[u8],
+    routed: (&metal::Buffer, u64),
+    offsets: &MoeExpertOffsets,
+    acts: (&metal::Buffer, u64),
+    routing_w: (&metal::Buffer, u64),
+    residual: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(SOURCE, kernel, constants, key)?;
     pass.encode_threadgroups(
         &pipeline,
         &[
-            (routed.buffer(), 0, 0),
+            (routed.0, 0, routed.1),
             (acts.0, 2, acts.1),
             (routing_w.0, 3, routing_w.1),
             (residual.0, 4, residual.1),

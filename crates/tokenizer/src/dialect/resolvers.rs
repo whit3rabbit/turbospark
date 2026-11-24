@@ -628,6 +628,51 @@ pub(crate) fn resolve_spark(tokenizer: &Tokenizer) -> Result<Resolved, Tokenizer
 /// the model emits `<think>` itself. The tool markup is added-but-not-special
 /// text with no parser, so every tool and channel id stays the sentinel and
 /// it flows as content.
+/// Inkling 2. `<|begin_of_text|>` is the BOS id but nothing prepends it: the
+/// template opens at the first role marker, and our ids matched llama.cpp's
+/// with none (docs/INKLING2_PHASE0.md). `<|content_model_end_sampling|>` is
+/// EOS, end of turn and the one stop (`generation_config.json`).
+/// `<|end_message|>` is NOT a stop: it closes every segment, the thinking one
+/// included, and the answer segment follows it. The thought span is
+/// `<|content_thinking|>` to the next `<|end_message|>`.
+pub(crate) fn resolve_inkling2(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
+    use super::resolve::{
+        INKLING2_BOS_MARK, INKLING2_END_MESSAGE_MARK, INKLING2_END_SAMPLING_MARK,
+        INKLING2_MODEL_MARK, INKLING2_PAD_MARK, INKLING2_TEXT_MARK, INKLING2_THINKING_MARK,
+        INKLING2_USER_MARK,
+    };
+    let bos = required_id(tokenizer, INKLING2_BOS_MARK)?;
+    let eos = required_id(tokenizer, INKLING2_END_SAMPLING_MARK)?;
+    let pad = required_id(tokenizer, INKLING2_PAD_MARK)?;
+    let think = required_id(tokenizer, INKLING2_THINKING_MARK)?;
+    let end_message = required_id(tokenizer, INKLING2_END_MESSAGE_MARK)?;
+    let _user = required_id(tokenizer, INKLING2_USER_MARK)?;
+    let _model = required_id(tokenizer, INKLING2_MODEL_MARK)?;
+    let _text = required_id(tokenizer, INKLING2_TEXT_MARK)?;
+    Ok(Resolved {
+        bos_id: bos,
+        bos_prefix_id: None,
+        eos_id: eos,
+        pad_id: pad,
+        end_of_turn_id: eos,
+        tool_call_start_id: NO_SUCH_TOKEN_ID,
+        tool_call_end_id: NO_SUCH_TOKEN_ID,
+        tool_response_id: NO_SUCH_TOKEN_ID,
+        tool_response_end_id: NO_SUCH_TOKEN_ID,
+        tool_call_stop_id: NO_SUCH_TOKEN_ID,
+        channel_start_id: NO_SUCH_TOKEN_ID,
+        channel_end_id: NO_SUCH_TOKEN_ID,
+        message_start_id: NO_SUCH_TOKEN_ID,
+        message_end_id: NO_SUCH_TOKEN_ID,
+        think_start_id: Some(think),
+        think_end_id: Some(end_message),
+        stop_token_ids: [eos].into_iter().collect(),
+        // The padded unembed row count (`model_io::inkling2_mini`), not the
+        // tokenizer's 200,058 real ids; the flow masks the padding rows.
+        vocab_size: 201_024,
+    })
+}
+
 pub(crate) fn resolve_flint(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
     use super::resolve::{FLINT_BOS_MARK, FLINT_DEVELOPER_MARK, FLINT_EOS_MARK};
     let bos = required_id(tokenizer, FLINT_BOS_MARK)?;

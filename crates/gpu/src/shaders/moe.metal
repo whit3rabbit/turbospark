@@ -100,6 +100,50 @@ struct ExpertOffsets {
     uint down_b_off;
 };
 
+// ---------------------------------------------------------------------------
+// Inkling 2's routed-expert mode for the GGUF pairs (moe_gguf.metal,
+// moe_gguf_ext.metal). Function constants 112-114, used by no other shader,
+// every one in the pipeline key (`moe_gguf::inkling_constants`). Unset, each
+// helper below is the exact expression the kernels used before, so every
+// other family's pipelines compute the same bits.
+//   * phase 1: per-expert outer scales (an f32 at gate_s_off / up_s_off; the
+//     repack writes 1.0 when the GGUF has no `.scale`), then
+//     softcap(g, gate_cap) * sigmoid(g) * softcap(u, up_cap), the sigmoid on
+//     the scaled but uncapped gate (`compute::inkling2::situ`);
+//   * phase 2: the down value times its outer scale (down_s_off), and the
+//     sum starts at zero: Inkling's short conv runs on the expert sum before
+//     the residual add, so the residual must not be folded in here.
+// ---------------------------------------------------------------------------
+constant bool  FC_MOE_INKLING      [[function_constant(112)]];
+constant float FC_MOE_INK_GATE_CAP [[function_constant(113)]];
+constant float FC_MOE_INK_UP_CAP   [[function_constant(114)]];
+
+static inline bool moe_inkling_mode() {
+    return is_function_constant_defined(FC_MOE_INKLING) && FC_MOE_INKLING;
+}
+
+static inline float moe_ink_softcap(float x, float cap) {
+    return cap * precise::tanh(x / cap);
+}
+
+static inline float moe_gguf_glu(float g, float u, device const uint8_t* base, ExpertOffsets re) {
+    if (moe_inkling_mode()) {
+        g *= *(device const float*)(base + re.gate_s_off);
+        u *= *(device const float*)(base + re.up_s_off);
+        const float sig = 1.0f / (1.0f + precise::exp(-g));
+        return moe_ink_softcap(g, FC_MOE_INK_GATE_CAP) * sig * moe_ink_softcap(u, FC_MOE_INK_UP_CAP);
+    }
+    return moe_hidden_activation(g) * u;
+}
+
+static inline float moe_gguf_down(float v, device const uint8_t* base, ExpertOffsets re) {
+    return moe_inkling_mode() ? v * *(device const float*)(base + re.down_s_off) : v;
+}
+
+static inline float moe_gguf_residual(device const half* residual, uint d) {
+    return moe_inkling_mode() ? 0.0f : float(residual[d]);
+}
+
 struct RoutedBlobs {
     device const uint8_t* blob[kMaxStreamedExperts];
 };

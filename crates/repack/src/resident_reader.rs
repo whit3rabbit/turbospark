@@ -15,7 +15,7 @@ use std::path::Path;
 
 use crate::resident_writer::{
     RawTensorSpec, ResidentEntrySpec, ResidentTensorSpec, DTYPE_BF16, DTYPE_FP16, DTYPE_FP32,
-    DTYPE_INT1_AFFINE, DTYPE_INT2_AFFINE, DTYPE_INT4_AFFINE, DTYPE_INT8_AFFINE,
+    DTYPE_INT1_AFFINE, DTYPE_INT2_AFFINE, DTYPE_INT4_AFFINE, DTYPE_INT8_AFFINE, DTYPE_LAMQ,
 };
 
 fn le_u16s(bytes: &[u8]) -> Vec<u16> {
@@ -65,7 +65,7 @@ pub fn read_resident_entries(dir: &Path) -> Result<Vec<ResidentEntrySpec>, Strin
                 shape: e.shape,
             }),
             tag @ (DTYPE_INT4_AFFINE | DTYPE_INT8_AFFINE | DTYPE_INT1_AFFINE
-            | DTYPE_INT2_AFFINE) => {
+            | DTYPE_INT2_AFFINE | DTYPE_LAMQ) => {
                 let scales = le_u16s(&read_at(e.scale_offset, e.scale_size)?);
                 let biases = le_u16s(&read_at(e.bias_offset, e.bias_size)?);
                 let t = ResidentTensorSpec {
@@ -80,6 +80,7 @@ pub fn read_resident_entries(dir: &Path) -> Result<Vec<ResidentEntrySpec>, Strin
                     DTYPE_INT4_AFFINE => ResidentEntrySpec::Int4(t),
                     DTYPE_INT8_AFFINE => ResidentEntrySpec::Int8(t),
                     DTYPE_INT1_AFFINE => ResidentEntrySpec::Int1(t),
+                    DTYPE_LAMQ => ResidentEntrySpec::Lamq(t),
                     _ => ResidentEntrySpec::Int2(t),
                 }
             }

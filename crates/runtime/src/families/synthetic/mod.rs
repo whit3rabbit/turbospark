@@ -111,6 +111,9 @@ impl RealForwardRunner {
         if self.real_flint.is_some() {
             return self.produce_real_flint(token, position, logits);
         }
+        if self.real_inkling2.is_some() {
+            return self.produce_real_inkling2(token, position, logits);
+        }
         if self.real_muse.is_some() {
             return self.produce_real_muse(token, position, logits);
         }

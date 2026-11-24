@@ -94,6 +94,16 @@ pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
             max_context: 8192,
             max_new: 4096,
         },
+        // `inkling2_loop`, provisional: the chat template carries a
+        // reasoning-effort system line and the model reasons before it
+        // answers, so the shared 1,024 budget is expected to truncate it (the
+        // `muse_glimmer` lesson). No decode flow yet; freeze only after real
+        // completions are measured.
+        ModelFamily::Inkling2Loop => ProtocolParameters {
+            family,
+            max_context: 8192,
+            max_new: 4096,
+        },
         // `lfm3`: the model reasons in a think block before answering, so the
         // shared 1,024 budget truncates. Measured 2026-10-27 on the MLX 4-bit
         // install: short-explanation ends at 419 tokens and long-synthesis at

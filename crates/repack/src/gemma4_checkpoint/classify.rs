@@ -351,6 +351,11 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
         | ModelFamily::Flint
         // The MLX conversion's stacked `switch_mlp` planes, as Flint's.
         | ModelFamily::UnlimitedOcr2 => ".mlp.switch_mlp.",
+        // `inkling2_loop` does not go through this classifier: its experts are
+        // one stacked tensor per projection (`mlp.experts.w13_weight`), which
+        // its own repack splits into blobs. A marker that matches nothing is
+        // the safe answer if a caller ever routes it here.
+        ModelFamily::Inkling2Loop => ".mlp.experts.inkling2_unrouted.",
         // A GGUF-derived Llama or Qwen3-MoE never reaches this classifier
         // (the GGUF walk maps routed tensors by NAME, in `gguf_names.rs`),
         // and neither has a safetensors path. DeepSeek V4 has no repack path

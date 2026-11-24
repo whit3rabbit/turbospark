@@ -69,7 +69,7 @@ pub fn expert_residency(value: &Option<String>) -> Result<model_io::ExpertReside
     match value.as_deref() {
         None => Ok(model_io::ExpertResidency::Auto),
         Some(raw) => model_io::ExpertResidency::parse(raw).ok_or_else(|| {
-            format!("expertResidency must be auto, streamed or mapped, got {raw:?}")
+            format!("expertResidency must be auto, streamed, mapped or resident, got {raw:?}")
         }),
     }
 }

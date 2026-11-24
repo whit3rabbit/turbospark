@@ -263,9 +263,14 @@ void ts_string_free(char *s);
  *                       one of 8, 16, 24, 32, 48, 64, 96, 128 (the set is
  *                       foundation::runtime_config::ALLOWED_CACHE_SLOTS);
  *                       "auto" climbs through 8/16/24/32 only.
- *   expertResidency   "auto" | "streamed" | "mapped" | null (default auto)
- *                       "auto" maps the routed experts only when the minimum
- *                       streamed cache cannot fit the measured headroom. The
+ *   expertResidency   "auto" | "streamed" | "mapped" | "resident" | null
+ *                       (default auto). "auto" maps the routed experts only
+ *                       when the minimum streamed cache cannot fit the
+ *                       measured headroom, and picks "resident" (every expert
+ *                       copied into GPU memory, routed on the GPU) on a family
+ *                       with a resident flow when the resident weights, the
+ *                       expert table and a 10 GiB reserve fit Metal's
+ *                       recommended working set. The
  *                       mode the session ACTUALLY opened with is reported as
  *                       sessionInfo.expertResidency. A misspelling is refused
  *                       before the install is opened.
@@ -562,8 +567,8 @@ void ts_image_buffer_free(uint8_t *bytes, size_t len);
  * value this session's loadGuard tier and committed memory could afford. It
  * is null exactly when vision.active is false.
  *
- * expertResidency is the residency mode the session opened with ("streamed"
- * or "mapped"), and expertCacheSlots the RESOLVED slot count: read both
+ * expertResidency is the residency mode the session opened with ("streamed",
+ * "mapped" or "resident"), and expertCacheSlots the RESOLVED slot count: read both
  * before quoting any throughput or footprint, because one install differs by
  * 44.2 against 51.2 tok/s across slot counts.
  *
@@ -1727,7 +1732,9 @@ int32_t ts_kv_quant_supported(int64_t full_head_dim, const uint8_t *layer_mask,
  * manifest.json carry (ModelFamily::as_str, e.g. "gemma4", "gptOss"):
  *   { "family": "gemma4", "known": true, "steeringSupported": true,
  *     "anePrefillSupported": false, "mappedResidencySupported": true,
- *     "mappedResidencyMeasured": true }
+ *     "mappedResidencyMeasured": true, "residentResidencySupported": false }
+ * residentResidencySupported: the family can open with expertResidency
+ * "resident" (inkling2_loop only), false off macOS.
  * mappedResidencyMeasured: a real-install memory and speed measurement exists
  * for mapped residency on this family, not only a correctness check.
  * A family this build does not recognise is "known": false with every
@@ -1757,13 +1764,24 @@ int32_t ts_chip_supports_ane_prefill(void);
 
 /*
  * What ts_session_open would do with an expertResidency request ("auto",
- * "streamed" or "mapped") on the install at `path`, without opening it:
+ * "streamed", "mapped" or "resident") on the install at `path`, without
+ * opening it:
  *   { "applicable": true, "requested": "mapped",
- *     "resolved": "mapped" | "streamed" | null, "refusal": null | "..." }
+ *     "resolved": "mapped" | "streamed" | "resident" | null,
+ *     "refusal": null | "...",
+ *     "residentSupported": bool,
+ *     "residentBytes": null | number, "workingSetBytes": null | number }
+ * residentSupported: this install can open with "resident" at all (its family
+ * has a resident flow and its expert blobs have resident kernels; an expert
+ * format without them streams). residentBytes is what "resident" would place in
+ * GPU memory (the resident weights plus the whole expert table) and
+ * workingSetBytes Metal's recommended working set, both set only when
+ * residentSupported, so a host can say why "auto" did or did not pick it.
  * applicable is false on an install with no routed experts (send "auto").
  * resolved is null and refusal names why when the open would refuse the
  * request: a family with no mapped arm, or an expert table past Metal's
- * working set. A typo in `requested` is TS_ERR_INVALID_ARGUMENT. Always
+ * working set, or a "resident" request on a family without the flow or past
+ * the working set. A typo in `requested` is TS_ERR_INVALID_ARGUMENT. Always
  * applicable: false off macOS.
  */
 int32_t ts_expert_residency_for_install_json(const char *path, const char *requested,
@@ -1829,6 +1847,31 @@ int32_t ts_install_repo_with_options(const char *repo, const char *alias,
                                      const char *file, const char *sidecar_repo,
                                      const char *options_json, TsInstallCallback cb,
                                      void *userdata, char **result_json);
+
+/*
+ * Installs Inkling 2 Mini from files on disk as `alias`: a LookAtMyQuant
+ * packed release directory, or an Inkling 2 GGUF (general.architecture
+ * "inkling2_loop" or "inkling2"). `tokenizer_from` (nullable) is a directory
+ * holding tokenizer.json and the chat files, required for a GGUF, which
+ * carries none (an HF install, or a download of thinkingmachines/Inkling-2-Mini).
+ * `options_json` picks the library as for ts_install_repo_with_options.
+ * Progress arrives as TS_INSTALL_STAGE lines. The install is written to a
+ * staging folder, read back (tokenizer, manifest, resident index, expert
+ * layout), then moved into place and recorded; any failure leaves nothing.
+ * The result is the recorded row, with the library keys.
+ */
+int32_t ts_install_local_with_options(const char *path, const char *alias,
+                                      const char *tokenizer_from,
+                                      const char *options_json, TsInstallCallback cb,
+                                      void *userdata, char **result_json);
+
+/*
+ * Whether `path` is a local source ts_install_local_with_options takes, as
+ * JSON: { "kind": "lamq" | "gguf" | null, "family": "inkling2_loop" | null,
+ *         "needsTokenizer": bool }. Reads only a manifest.json or a GGUF
+ * header. Any other file or folder is kind null; an unreadable path fails.
+ */
+int32_t ts_local_install_kind_json(const char *path, char **out);
 
 /*
  * Signals every in-flight install walk to stop. Returns 1 when at least one

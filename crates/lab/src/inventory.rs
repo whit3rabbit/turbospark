@@ -21,6 +21,8 @@ pub const DTYPE_INT4_AFFINE: u8 = 4;
 pub const DTYPE_INT8_AFFINE: u8 = 5;
 pub const DTYPE_INT1_AFFINE: u8 = 15;
 pub const DTYPE_INT2_AFFINE: u8 = 16;
+/// LookAtMyQuant coded entry (`docs/LAMQ.md`).
+pub const DTYPE_LAMQ: u8 = 36;
 
 pub fn dtype_name(tag: u8) -> String {
     match tag {
@@ -28,6 +30,7 @@ pub fn dtype_name(tag: u8) -> String {
         DTYPE_INT8_AFFINE => "int8_affine".into(),
         DTYPE_INT1_AFFINE => "int1_affine".into(),
         DTYPE_INT2_AFFINE => "int2_affine".into(),
+        DTYPE_LAMQ => "lamq".into(),
         other => format!("dtype_{other}"),
     }
 }

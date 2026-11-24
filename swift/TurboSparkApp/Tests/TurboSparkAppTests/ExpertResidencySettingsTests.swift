@@ -72,6 +72,47 @@ final class ExpertResidencySettingsTests: XCTestCase {
         XCTAssertNil(AppExpertResidencyOption.auto.fallback(preflight: nil))
     }
 
+    /// Resident is one global setting too: only one family has the flow, so
+    /// it is sent only where the install's pre-open answer resolves resident.
+    func testResidentIsSentOnlyWhereTheOpenWouldTakeIt() {
+        let resident = AppExpertResidencyOption.resident
+        XCTAssertEqual(resident.openOption(preflight: preflight(resolved: "resident")), .resident)
+        XCTAssertNil(resident.fallback(preflight: preflight(resolved: "resident")))
+
+        let refused = preflight(resolved: nil, refusal: "resident expert residency is not wired for gemma4")
+        XCTAssertEqual(resident.openOption(preflight: refused), .auto)
+        XCTAssertEqual(
+            resident.fallback(preflight: refused),
+            .refused("resident expert residency is not wired for gemma4"))
+        // A preflight that resolves another mode is not a resident open.
+        XCTAssertEqual(resident.openOption(preflight: preflight(resolved: "streamed")), .auto)
+        XCTAssertEqual(resident.openOption(preflight: nil), .auto)
+        XCTAssertEqual(resident.fallback(preflight: nil), .unreadable)
+        // Mapped's fallback is unchanged by the generalization.
+        XCTAssertNil(AppExpertResidencyOption.mapped.fallback(preflight: preflight(resolved: "mapped")))
+    }
+
+    func testPreflightDecodesTheResidentDetectionFields() throws {
+        let json = Data(
+            #"{"applicable":true,"requested":"auto","resolved":"resident","refusal":null,"residentBytes":18930000000,"workingSetBytes":30150000000}"#
+                .utf8)
+        let decoded = try JSONDecoder().decode(ExpertResidencyPreflight.self, from: json)
+        XCTAssertEqual(decoded.resolved, "resident")
+        XCTAssertEqual(decoded.residentBytes, 18_930_000_000)
+        XCTAssertEqual(decoded.workingSetBytes, 30_150_000_000)
+    }
+
+    /// An engine built before the resident flag answers without it; that
+    /// reads as unsupported rather than failing the whole decode.
+    func testFamilyCapabilitiesWithoutTheResidentKeyDecodeAsUnsupported() throws {
+        let json = Data(
+            #"{"family":"gemma4","known":true,"steeringSupported":true,"anePrefillSupported":false,"mappedResidencySupported":true,"mappedResidencyMeasured":true}"#
+                .utf8)
+        let decoded = try JSONDecoder().decode(FamilyCapabilities.self, from: json)
+        XCTAssertFalse(decoded.residentResidencySupported)
+        XCTAssertTrue(decoded.mappedResidencySupported)
+    }
+
     func testPreflightDecodesTheEngineShape() throws {
         let json = Data(#"{"applicable":true,"requested":"mapped","resolved":null,"refusal":"too big"}"#.utf8)
         let decoded = try JSONDecoder().decode(ExpertResidencyPreflight.self, from: json)

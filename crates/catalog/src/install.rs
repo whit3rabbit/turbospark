@@ -424,6 +424,16 @@ fn install_with_selected_files(
             return cancelled();
         }
     }
+    // Before any folder or sidecar: a LookAtMyQuant release has no streamed
+    // walk. The CLI and FFI route it to `install_inkling2_repo` first, so
+    // this is reached only by a caller that skipped that routing.
+    if plan.kind == SourceKind::Lamq {
+        return Err(format!(
+            "{} is a LookAtMyQuant release, which installs through \
+             install_inkling2_repo (a whole-file download), not the streamed walk",
+            plan.weights
+        ));
+    }
     std::fs::create_dir_all(dir).map_err(|e| format!("creating {}: {e}", dir.display()))?;
 
     progress(&format!(
@@ -475,6 +485,7 @@ fn install_with_selected_files(
             byte_progress.as_ref(),
             cancel,
         )?,
+        SourceKind::Lamq => unreachable!("refused at the top of this function"),
     };
 
     // Step 3: read it back through the loaders a real run uses. Every
@@ -685,7 +696,7 @@ fn remove_stale_sidecars(plan: &InstallPlan, dir: &Path) -> Result<(), String> {
 /// template or no template; the render is what says an instruction-tuned
 /// checkpoint will be framed the way it was trained rather than falling
 /// through to a dialect default.
-fn verify_tokenizer(dir: &Path, progress: &mut impl FnMut(&str)) -> Result<(), String> {
+pub(crate) fn verify_tokenizer(dir: &Path, progress: &mut impl FnMut(&str)) -> Result<(), String> {
     let tokenizer = MfTokenizer::load_from_dir(dir).map_err(|e| {
         format!(
             "the sidecars in {} do not load as a tokenizer: {e}. Nothing was streamed.",
@@ -713,7 +724,7 @@ fn verify_tokenizer(dir: &Path, progress: &mut impl FnMut(&str)) -> Result<(), S
 }
 
 /// Read the install back through the loaders a real run uses.
-fn verify_install(
+pub(crate) fn verify_install(
     dir: &Path,
     arch: &ArchConfig,
     progress: &mut impl FnMut(&str),

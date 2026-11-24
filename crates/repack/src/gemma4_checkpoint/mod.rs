@@ -974,7 +974,7 @@ pub fn write_vision_sidecar(
 fn resident_entry_name(spec: &crate::resident_writer::ResidentEntrySpec) -> &str {
     use crate::resident_writer::ResidentEntrySpec::*;
     match spec {
-        Int4(t) | Int8(t) | Int1(t) | Int2(t) => &t.name,
+        Int4(t) | Int8(t) | Int1(t) | Int2(t) | Lamq(t) => &t.name,
         Raw(r) => &r.name,
     }
 }

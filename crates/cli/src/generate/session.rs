@@ -504,6 +504,7 @@ fn map_expert_residency(residency: invocation::ExpertResidency) -> runtime::Expe
         invocation::ExpertResidency::Auto => runtime::ExpertResidency::Auto,
         invocation::ExpertResidency::Streamed => runtime::ExpertResidency::Streamed,
         invocation::ExpertResidency::Mapped => runtime::ExpertResidency::Mapped,
+        invocation::ExpertResidency::Resident => runtime::ExpertResidency::Resident,
     }
 }
 

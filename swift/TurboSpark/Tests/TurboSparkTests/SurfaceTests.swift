@@ -1521,4 +1521,75 @@ final class SurfaceTests: XCTestCase {
                 + "\"echo \\\"a\\\\\\\\b\\\" && turbospark start claude\"")
     }
 
+
+    /// The residency preflight carries `residentSupported` (false on an
+    /// Inkling 2 GGUF install, whose experts have no resident kernels), and an
+    /// older engine's JSON without the field still decodes, as nil.
+    func testExpertResidencyPreflightDecodesResidentSupported() throws {
+        let gguf = Data("""
+            {"applicable":true,"requested":"auto","resolved":"streamed","refusal":null,
+             "residentSupported":false,"residentBytes":null,"workingSetBytes":null}
+            """.utf8)
+        let p = try JSONDecoder().decode(ExpertResidencyPreflight.self, from: gguf)
+        XCTAssertEqual(p.residentSupported, false)
+        XCTAssertNil(p.residentBytes)
+        XCTAssertEqual(p.resolved, "streamed")
+        let older = Data("""
+            {"applicable":true,"requested":"auto","resolved":"resident","refusal":null,
+             "residentBytes":100,"workingSetBytes":200}
+            """.utf8)
+        let q = try JSONDecoder().decode(ExpertResidencyPreflight.self, from: older)
+        XCTAssertNil(q.residentSupported)
+        XCTAssertEqual(q.residentBytes, 100)
+    }
+
+    /// Through the real FFI: a LookAtMyQuant release is recognized by its
+    /// manifest format alone, an Inkling GGUF header by its architecture and
+    /// needs a tokenizer, and anything else answers kind nil.
+    func testLocalInstallKindThroughFFI() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ts-local-kind-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let none = try TurboSparkCatalog.localInstallKind(path: dir.path)
+        XCTAssertEqual(none, LocalInstallKind(kind: nil, family: nil, needsTokenizer: false))
+
+        try Data(#"{"format": "inkling2-packed-v1-sqyfr"}"#.utf8)
+            .write(to: dir.appendingPathComponent("manifest.json"))
+        let lamq = try TurboSparkCatalog.localInstallKind(path: dir.path)
+        XCTAssertEqual(
+            lamq, LocalInstallKind(kind: "lamq", family: "inkling2_loop", needsTokenizer: false))
+
+        // GGUF v3, 0 tensors, 1 kv: general.architecture = "inkling2_loop".
+        var b = Data("GGUF".utf8)
+        func le<T: FixedWidthInteger>(_ v: T) { withUnsafeBytes(of: v.littleEndian) { b.append(contentsOf: $0) } }
+        le(UInt32(3)); le(UInt64(0)); le(UInt64(1))
+        let key = Data("general.architecture".utf8), arch = Data("inkling2_loop".utf8)
+        le(UInt64(key.count)); b.append(key); le(UInt32(8)); le(UInt64(arch.count)); b.append(arch)
+        let gguf = dir.appendingPathComponent("m.gguf")
+        try b.write(to: gguf)
+        let g = try TurboSparkCatalog.localInstallKind(path: gguf.path)
+        XCTAssertEqual(g, LocalInstallKind(kind: "gguf", family: "inkling2_loop", needsTokenizer: true))
+
+        XCTAssertThrowsError(
+            try TurboSparkCatalog.localInstallKind(path: dir.appendingPathComponent("gone").path))
+    }
+
+    /// A local install of something that is not an Inkling source fails
+    /// through the stream, with nothing recorded.
+    func testLocalInstallRefusesANonInklingFolder() async throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ts-local-refuse-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        do {
+            for try await _ in TurboSparkCatalog.install(
+                localPath: dir.path, alias: "ts-local-refuse-test")
+            {}
+            XCTFail("expected a refusal")
+        } catch {
+            XCTAssertTrue("\(error)".contains("Inkling"), "\(error)")
+        }
+    }
 }

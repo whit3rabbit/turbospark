@@ -59,7 +59,7 @@ kernel void moe_phase1_gate_up_act_##NAME(                                      
     const ExpertOffsets re = routed_offsets;                                             \
     const float g = ROWFN(base + re.gate_W_off + f * row_bytes, x, DD, lane);            \
     const float u = ROWFN(base + re.up_W_off + f * row_bytes, x, DD, lane);              \
-    if (lane == 0) acts[slot * FF + f] = half(moe_hidden_activation(g) * u);             \
+    if (lane == 0) acts[slot * FF + f] = half(moe_gguf_glu(g, u, base, re));             \
 }
 
 #define MOE_PHASE2(NAME, BLOCK_ELEMS, BLOCK_BYTES, ROWFN)                                \
@@ -86,10 +86,10 @@ kernel void moe_phase2_down_reduce_k8_##NAME(                                   
     device const half* act_slot = acts + sg_idx * FF;                                    \
     const ulong row_bytes = ulong(FF / BLOCK_ELEMS) * BLOCK_BYTES;                       \
     const float value = ROWFN(base + re.down_W_off + d * row_bytes, act_slot, FF, lane); \
-    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * value;                   \
+    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * moe_gguf_down(value, base, re); \
     threadgroup_barrier(mem_flags::mem_threadgroup);                                     \
     if (sg_idx == 0 && lane == 0) {                                                      \
-        float acc = float(residual[d]);                                                  \
+        float acc = moe_gguf_residual(residual, d);                                      \
         acc += partial[0]; acc += partial[1]; acc += partial[2]; acc += partial[3];      \
         acc += partial[4]; acc += partial[5]; acc += partial[6]; acc += partial[7];      \
         y[d] = half(acc);                                                                \
@@ -147,3 +147,25 @@ MOE_ELEM_ROW(iq1_xxxs, 256, 38, iq1_xxxs_elem)
 MOE_PAIR(iq1_xs, 256, 46, moe_iq1_xs_row_simd)
 MOE_PAIR(iq1_xxs, 256, 42, moe_iq1_xxs_row_simd)
 MOE_PAIR(iq1_xxxs, 256, 38, moe_iq1_xxxs_row_simd)
+
+// Inkling 2 resident GGUF experts: one RoutedBlobs table per token row, from
+// that row's expert ids, so the streamed decode pair above runs unchanged on
+// a resident layer (`layer + id * stride`). Slots past top_k repeat the last
+// one, as RoutedBlobsBuffer::bind_for fills them. On Apple GPUs (argument
+// buffers tier 2) a table entry is the blob's GPU address, what the argument
+// encoder writes; `inkling2_gguf_tables.rs` checks the two byte for byte.
+kernel void inkling2_gguf_bind_rows(
+    device const uint8_t* layer      [[buffer(0)]],
+    device const uint*    sel        [[buffer(1)]],
+    device RoutedBlobs*   tables     [[buffer(2)]],
+    constant ulong&       stride     [[buffer(3)]],
+    constant uint&        top_k      [[buffer(4)]],
+    constant uint&        sel_stride [[buffer(5)]],
+    constant uint&        n_rows     [[buffer(6)]],
+    uint                  gid        [[thread_position_in_grid]]
+) {
+    const uint row = gid / kMaxStreamedExperts, k = gid % kMaxStreamedExperts;
+    if (row >= n_rows) return;
+    const uint e = sel[row * sel_stride + min(k, top_k - 1u)];
+    tables[row].blob[k] = layer + ulong(e) * stride;
+}

@@ -143,6 +143,11 @@ pub(crate) fn build_manifest_json(
             // Same species as the gotcha the block comment above describes,
             // one field further along.
             "swigluLimit": arch.swiglu_limit,
+            // Validated against `unwrap_or(1.0)` and never written, the
+            // `swigluLimit` gotcha again: every writable family was at 1.0
+            // until `inkling2_loop` (route scale 8.0), whose correct install
+            // would otherwise be refused at open.
+            "routedScalingFactor": arch.routed_scaling_factor,
             "ropeScalingFactor": arch.rope_scaling.factor,
             "ropeScalingOriginalContext": arch.rope_scaling.original_context,
             "ropeScalingBetaFast": arch.rope_scaling.beta_fast,

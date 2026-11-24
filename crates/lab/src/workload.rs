@@ -59,6 +59,8 @@ pub enum Residency {
     Auto,
     Streamed,
     Mapped,
+    /// Every expert in GPU memory (`runtime::resident_residency_supported`).
+    Resident,
 }
 
 /// Parameters that are part of the OPEN rather than the environment.

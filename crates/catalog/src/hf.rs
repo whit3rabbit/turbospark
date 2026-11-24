@@ -556,6 +556,20 @@ impl Client {
     /// its packer can emit the checked image payload. The response body is
     /// copied in bounded chunks rather than collected as one large allocation.
     pub fn download_to(&self, url: &str, destination: &std::path::Path) -> Result<u64, String> {
+        self.download_to_with(url, destination, &mut |_| {}, None)
+    }
+
+    /// [`Self::download_to`] reporting each chunk's bytes to `on_bytes` and
+    /// honouring `cancel` (pause waits, cancel fails with
+    /// [`crate::install::INSTALL_CANCELLED`]) between chunks, for the
+    /// whole-file installs a user watches and may stop.
+    pub fn download_to_with(
+        &self,
+        url: &str,
+        destination: &std::path::Path,
+        on_bytes: &mut dyn FnMut(u64),
+        cancel: Option<&repack::CancelFlag>,
+    ) -> Result<u64, String> {
         let mut response = self.send_retrying(url)?;
         let status = response.status().as_u16();
         if status != 200 {
@@ -584,8 +598,15 @@ impl Client {
         ));
         let mut file = std::fs::File::create(&partial)
             .map_err(|e| format!("creating download {}: {e}", partial.display()))?;
-        let bytes =
-            std::io::copy(&mut response, &mut file).map_err(|e| format!("reading {url}: {e}"))?;
+        let copied = copy_chunks(&mut response, &mut file, url, on_bytes, cancel);
+        let bytes = match copied {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                drop(file);
+                let _ = std::fs::remove_file(&partial);
+                return Err(e);
+            }
+        };
         file.sync_all()
             .map_err(|e| format!("syncing download {}: {e}", partial.display()))?;
         drop(file);
@@ -980,6 +1001,34 @@ fn base_model(value: serde_json::Value) -> Option<String> {
             _ => None,
         }),
         _ => None,
+    }
+}
+
+/// Copies `from` into `to` in 8 MiB chunks, reporting each and checking
+/// `cancel` between them.
+fn copy_chunks(
+    from: &mut impl std::io::Read,
+    to: &mut impl std::io::Write,
+    url: &str,
+    on_bytes: &mut dyn FnMut(u64),
+    cancel: Option<&repack::CancelFlag>,
+) -> Result<u64, String> {
+    let mut buf = vec![0u8; 8 << 20];
+    let mut total = 0u64;
+    loop {
+        if cancel.is_some_and(|c| c.checkpoint().is_err()) {
+            return Err(crate::install::INSTALL_CANCELLED.to_string());
+        }
+        let n = from
+            .read(&mut buf)
+            .map_err(|e| format!("reading {url}: {e}"))?;
+        if n == 0 {
+            return Ok(total);
+        }
+        to.write_all(&buf[..n])
+            .map_err(|e| format!("writing the download of {url}: {e}"))?;
+        total += n as u64;
+        on_bytes(n as u64);
     }
 }
 

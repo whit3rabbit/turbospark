@@ -204,6 +204,27 @@ pub fn facts(f: ModelFamily) -> FamilyFacts {
             probe_and_standin: false,
             notes: &["open refuses it: only kernel benches at its shapes can run"],
         },
+        Inkling2Loop => FamilyFacts {
+            flow: "inkling2",
+            chunked_prefill: Support::Conditional(
+                "resident residency only (128-row multi-row panels): native, MLX, LAMQ and GGUF installs all run it; a streamed open refuses it by name, use --chunk off there. Native experts take the matrix-unit default, LAMQ and GGUF the bit-exact path"
+                    .into(),
+            ),
+            // The DSpark block drafter, through the dflash policy
+            // (`~dflash:N` arms); it needs `<install>/dspark/` and resident experts.
+            drafters: &["dflash"],
+            steel_prefill: false,
+            decode_attention: "inkling2_rel_bias",
+            phase_buckets: "none",
+            probe_and_standin: false,
+            notes: &[
+                "24 physical layers run as 48 applications (layers 6-17 loop three times)",
+                "phase buckets are not filled; TURBOSPARK_INKLING2_TRACE=1 prints a per-token split",
+                "residency resident keeps every expert in GPU memory (about 15.7 GB) and runs a token as one command buffer; auto picks it where it fits, so streamed needs an explicit @N/streamed arm",
+                "chunked prefill defaults to the matrix units (KL-bounded, row-independent); TURBOSPARK_INKLING2_PREFILL_MMA=0 is the bit-exact arm; decode and speculative verify stay bit-exact either way",
+                "a resident open's first pass waits 1-3 s on GPU mapping, inside the first prompt's prefill_s; the open-time prewarm only helps when the first request comes after an idle gap",
+            ],
+        },
         Flint => FamilyFacts {
             flow: "flint",
             chunked_prefill: Support::Yes,
@@ -341,7 +362,15 @@ pub fn text_coverage(subject: &Subject, arch: &ArchConfig) -> Coverage {
                 if f.drafters.contains(&"mtp") && runtime::install_has_mtp_head(&ix) {
                     d.push("mtp");
                 }
-                if f.drafters.contains(&"dflash") && runtime::install_has_dflash(&ix) {
+                // Inkling 2's DSpark drafter is a `dspark/` folder beside the
+                // weights (`runtime::families::inkling2::dspark`), not tensors
+                // in the index.
+                let inkling_dspark = arch.family == ModelFamily::Inkling2Loop
+                    && subject.dir.join("dspark").join("mtp.safetensors").is_file()
+                    && subject.dir.join("dspark").join("config.json").is_file();
+                if f.drafters.contains(&"dflash")
+                    && (runtime::install_has_dflash(&ix) || inkling_dspark)
+                {
                     d.push("dflash");
                 }
                 d

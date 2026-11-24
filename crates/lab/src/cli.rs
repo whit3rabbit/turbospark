@@ -48,6 +48,10 @@ tslab: the evaluator for kernel and method experiments (macOS).
                 (join a projection to the verdict that followed; --all lists every miss and the bias)
   tslab tree-replay --model M --drafter mtp|dflash [--prompt ...]... [--generate 512]
                 [--depth 8|7] [--blocks 2,4,DEPTH] [--serve-block 2] [--top-k 4] [--slots 16] [--experiment NAME]
+  tslab xengine-kl --model M --gguf FILE.gguf [--llama-cpp LLAMA_SRC] [--install-env KEY] [--experiment NAME]
+                (this port against llama.cpp on the same GGUF: logit_dump, then scripts/kld_llamacpp.py
+                 with llama.cpp's shape and backend floors; --llama-cpp names a source build for a
+                 family the Homebrew bottle predates, such as Inkling 2)
   tslab ane-plan --path PROGRAM.mlpackage|MANIFEST_DIR [--units ane|all|gpu|cpu] [--function NAME]
   tslab expert-census --model M [workload] [host] [--experiment NAME]
                 (one router capture run, then how experts repeat within batches, the union per
@@ -209,6 +213,7 @@ pub fn dispatch(cmd: &str, args: Args) -> Result<CmdOutput, String> {
         "depth-replay" => unit(crate::depth_replay::depth_replay_cmd(args)),
         "hybrid-replay" => unit(crate::hybrid_replay::hybrid_replay_cmd(args)),
         "tree-replay" => unit(crate::tree_replay::tree_replay_cmd(args)),
+        "xengine-kl" => unit(crate::xengine::xengine_kl_cmd(args)),
         other => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     }
 }

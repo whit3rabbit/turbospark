@@ -279,10 +279,15 @@ pub enum ExpertResidency {
     /// cache, no streamer (families wired for it are admitted by
     /// `mapped_residency_refusal`, the rest are refused by name).
     Mapped,
+    /// Copy every routed expert into GPU memory at open and route on the GPU,
+    /// so a token needs no host round trip per layer. Only families with a
+    /// resident flow take it (`runtime::resident_residency_supported`); the
+    /// rest are refused by name. Costs the whole expert table in memory.
+    Resident,
 }
 
 impl ExpertResidency {
-    /// The flag's value set, `auto|streamed|mapped`, case-insensitive.
+    /// The flag's value set, `auto|streamed|mapped|resident`, case-insensitive.
     /// None rather than a fallback so the parsers can refuse a typo by name
     /// (AGENTS.md Gotcha 2's const-set discipline, one allowed-value set per
     /// knob).
@@ -291,6 +296,7 @@ impl ExpertResidency {
             "auto" => Some(Self::Auto),
             "streamed" => Some(Self::Streamed),
             "mapped" => Some(Self::Mapped),
+            "resident" => Some(Self::Resident),
             _ => None,
         }
     }
@@ -303,6 +309,9 @@ impl ExpertResidency {
 pub enum ResolvedExpertResidency {
     Streamed,
     Mapped,
+    /// Every expert copied into a family-owned GPU buffer; the streamer is
+    /// kept at the smallest cache the open allows and is not read.
+    Resident,
 }
 
 impl ResolvedExpertResidency {
@@ -311,6 +320,7 @@ impl ResolvedExpertResidency {
         match self {
             Self::Streamed => "streamed",
             Self::Mapped => "mapped",
+            Self::Resident => "resident",
         }
     }
 }
@@ -568,8 +578,12 @@ mod tests {
     /// case-insensitively, everything else refused (None) so the parsers
     /// can reject a typo by name rather than silently streaming.
     #[test]
-    fn residency_parses_its_three_spellings_and_refuses_everything_else() {
+    fn residency_parses_its_four_spellings_and_refuses_everything_else() {
         assert_eq!(ExpertResidency::parse("auto"), Some(ExpertResidency::Auto));
+        assert_eq!(
+            ExpertResidency::parse("Resident"),
+            Some(ExpertResidency::Resident)
+        );
         assert_eq!(
             ExpertResidency::parse("Mapped"),
             Some(ExpertResidency::Mapped)
@@ -581,7 +595,7 @@ mod tests {
         // No whitespace-only variants here: `parse` trims, so "auto" and
         // " auto " are the same spelling by design and the positive case
         // above asserts that.
-        for bad in ["", "map", "mmap", "0", "resident", "Automatic"] {
+        for bad in ["", "map", "mmap", "0", "residency", "Automatic"] {
             assert_eq!(ExpertResidency::parse(bad), None, "{bad:?}");
         }
     }

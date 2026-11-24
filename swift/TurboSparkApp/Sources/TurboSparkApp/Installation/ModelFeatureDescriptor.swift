@@ -212,6 +212,8 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
         "flint",
         // minimax_m2: routed MoE architecture.
         "minimax_m2",
+        // inkling2_loop: 128 experts top-8 (Inkling 2 Mini).
+        "inkling2_loop",
     ]
 
     /// True when `lowercasedPath` is a root or lies below one, matched on a path

@@ -119,7 +119,7 @@ kernel void moe_phase1_gate_up_act_q8_0(
     const ExpertOffsets re = routed_offsets;
     const float2 gu = moe_q8_0_gate_up_rows_simd(
         base + re.gate_W_off, base + re.up_W_off, x, f, DD, lane);
-    if (lane == 0) acts[slot * FF + f] = half(moe_hidden_activation(gu.x) * gu.y);
+    if (lane == 0) acts[slot * FF + f] = half(moe_gguf_glu(gu.x, gu.y, base, re));
 }
 
 // Phase 2, Q8_0: y[d] = residual[d] + sum_slot routing_w[slot] *
@@ -150,11 +150,11 @@ kernel void moe_phase2_down_reduce_k8_q8_0(
     device const half* act_slot = acts + sg_idx * FF;
 
     const float value = moe_q8_0_gemv_row_simd(base + re.down_W_off, act_slot, d, FF, lane);
-    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * value;
+    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * moe_gguf_down(value, base, re);
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (sg_idx == 0 && lane == 0) {
-        float acc = float(residual[d]);
+        float acc = moe_gguf_residual(residual, d);
         acc += partial[0]; acc += partial[1]; acc += partial[2]; acc += partial[3];
         acc += partial[4]; acc += partial[5]; acc += partial[6]; acc += partial[7];
         y[d] = half(acc);
@@ -204,7 +204,7 @@ kernel void moe_phase1_gate_up_act_q4_k(
         base + re.gate_W_off + f * row_bytes, x, DD, lane);
     const float up = dequant_q4_k_row_simd(
         base + re.up_W_off + f * row_bytes, x, DD, lane);
-    if (lane == 0) acts[slot * FF + f] = half(moe_hidden_activation(gate) * up);
+    if (lane == 0) acts[slot * FF + f] = half(moe_gguf_glu(gate, up, base, re));
 }
 
 // Phase 2, Q4_K. Reduces ALL EIGHT slots unconditionally, exactly like the
@@ -235,11 +235,11 @@ kernel void moe_phase2_down_reduce_k8_q4_k(
 
     const float value = dequant_q4_k_row_simd(
         base + re.down_W_off + d * q4_k_row_bytes(FF), act_slot, FF, lane);
-    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * value;
+    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * moe_gguf_down(value, base, re);
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (sg_idx == 0 && lane == 0) {
-        float acc = float(residual[d]);
+        float acc = moe_gguf_residual(residual, d);
         acc += partial[0]; acc += partial[1]; acc += partial[2]; acc += partial[3];
         acc += partial[4]; acc += partial[5]; acc += partial[6]; acc += partial[7];
         y[d] = half(acc);
@@ -301,7 +301,7 @@ kernel void moe_phase1_gate_up_act_iq3_xxs(
         base + re.gate_W_off + f * row_bytes, x, DD, lane);
     const float up = dequant_iq3_xxs_row_simd(
         base + re.up_W_off + f * row_bytes, x, DD, lane);
-    if (lane == 0) acts[slot * FF + f] = half(moe_hidden_activation(gate) * up);
+    if (lane == 0) acts[slot * FF + f] = half(moe_gguf_glu(gate, up, base, re));
 }
 
 // Phase 1, IQ4_XS. One layer of the candidate uses this and twenty-nine use
@@ -334,7 +334,7 @@ kernel void moe_phase1_gate_up_act_iq4_xs(
         base + re.gate_W_off + f * row_bytes, x, DD, lane);
     const float up = dequant_iq4_xs_row_simd(
         base + re.up_W_off + f * row_bytes, x, DD, lane);
-    if (lane == 0) acts[slot * FF + f] = half(moe_hidden_activation(gate) * up);
+    if (lane == 0) acts[slot * FF + f] = half(moe_gguf_glu(gate, up, base, re));
 }
 
 // Phase 2, IQ4_NL. Reduces ALL EIGHT slots unconditionally, exactly like every
@@ -365,11 +365,11 @@ kernel void moe_phase2_down_reduce_k8_iq4_nl(
 
     const float value = dequant_iq4_nl_row_simd(
         base + re.down_W_off + d * iq4_nl_row_bytes(FF), act_slot, FF, lane);
-    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * value;
+    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * moe_gguf_down(value, base, re);
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (sg_idx == 0 && lane == 0) {
-        float acc = float(residual[d]);
+        float acc = moe_gguf_residual(residual, d);
         acc += partial[0]; acc += partial[1]; acc += partial[2]; acc += partial[3];
         acc += partial[4]; acc += partial[5]; acc += partial[6]; acc += partial[7];
         y[d] = half(acc);
@@ -418,11 +418,11 @@ kernel void moe_phase2_down_reduce_k8_q6_k(
 
     const float value = dequant_q6_k_row_simd(
         base + re.down_W_off + d * q6_k_row_bytes_msl(FF), act_slot, FF, lane);
-    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * value;
+    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * moe_gguf_down(value, base, re);
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (sg_idx == 0 && lane == 0) {
-        float acc = float(residual[d]);
+        float acc = moe_gguf_residual(residual, d);
         acc += partial[0]; acc += partial[1]; acc += partial[2]; acc += partial[3];
         acc += partial[4]; acc += partial[5]; acc += partial[6]; acc += partial[7];
         y[d] = half(acc);
@@ -665,12 +665,14 @@ kernel void moe_phase2_down_reduce_k8_mxfp4(
             device const float* db = (device const float*)(base + re.down_b_off);
             value += db[d];
         }
+        // Inkling's per-expert outer scale; a no-op for every other family.
+        value = moe_gguf_down(value, base, re);
     }
     if (lane == 0) partial[sg_idx] = (sg_idx < KK) ? float(routing_w[sg_idx]) * value : 0.0f;
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (sg_idx == 0 && lane == 0) {
-        float acc = float(residual[d]);
+        float acc = moe_gguf_residual(residual, d);
         acc += partial[0]; acc += partial[1]; acc += partial[2]; acc += partial[3];
         acc += partial[4]; acc += partial[5]; acc += partial[6]; acc += partial[7];
         y[d] = half(acc);
@@ -727,7 +729,7 @@ kernel void moe_phase1_gate_up_act_iq2_s(
     device const uint8_t* base = routed.blob[slot];
     const float2 gu = moe_iq2_s_gate_up_rows_simd(
         base + routed_offsets.gate_W_off, base + routed_offsets.up_W_off, x, f, DD, lane);
-    if (lane == 0) acts[slot * FF + f] = half(moe_hidden_activation(gu.x) * gu.y);
+    if (lane == 0) acts[slot * FF + f] = half(moe_gguf_glu(gu.x, gu.y, base, routed_offsets));
 }
 
 [[kernel, max_total_threads_per_threadgroup(256)]]
@@ -747,7 +749,7 @@ kernel void moe_phase1_gate_up_act_iq2_xxs(
     device const uint8_t* base = routed.blob[slot];
     const float2 gu = moe_iq2_xxs_gate_up_rows_simd(
         base + routed_offsets.gate_W_off, base + routed_offsets.up_W_off, x, f, DD, lane);
-    if (lane == 0) acts[slot * FF + f] = half(moe_hidden_activation(gu.x) * gu.y);
+    if (lane == 0) acts[slot * FF + f] = half(moe_gguf_glu(gu.x, gu.y, base, routed_offsets));
 }
 
 [[kernel, max_total_threads_per_threadgroup(256)]]
@@ -767,7 +769,7 @@ kernel void moe_phase1_gate_up_act_iq1_m(
     device const uint8_t* base = routed.blob[slot];
     const float2 gu = moe_iq1_m_gate_up_rows_simd(
         base + routed_offsets.gate_W_off, base + routed_offsets.up_W_off, x, f, DD, lane);
-    if (lane == 0) acts[slot * FF + f] = half(moe_hidden_activation(gu.x) * gu.y);
+    if (lane == 0) acts[slot * FF + f] = half(moe_gguf_glu(gu.x, gu.y, base, routed_offsets));
 }
 
 // Qwen4Exp's routed down projection uses Q2_0 and top-10. Keep this as a
@@ -826,7 +828,7 @@ kernel void moe_phase1_gate_up_act_q2_0(
         base + re.gate_W_off, x, f, DD, lane);
     const float up = moe_q2_0_gemv_row_simd(
         base + re.up_W_off, x, f, DD, lane);
-    if (lane == 0) acts[slot * FF + f] = half(moe_hidden_activation(gate) * up);
+    if (lane == 0) acts[slot * FF + f] = half(moe_gguf_glu(gate, up, base, re));
 }
 
 [[kernel, max_total_threads_per_threadgroup(320)]]
@@ -853,11 +855,11 @@ kernel void moe_phase2_down_reduce_k10_q2_0(
     device const half* act_slot = acts + sg_idx * FF;
     const float value = moe_q2_0_gemv_row_simd(
         base + re.down_W_off, act_slot, d, FF, lane);
-    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * value;
+    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * moe_gguf_down(value, base, re);
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     if (sg_idx == 0 && lane == 0) {
-        float acc = float(residual[d]);
+        float acc = moe_gguf_residual(residual, d);
         acc += partial[0]; acc += partial[1]; acc += partial[2]; acc += partial[3];
         acc += partial[4]; acc += partial[5]; acc += partial[6]; acc += partial[7];
         acc += partial[8]; acc += partial[9];

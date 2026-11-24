@@ -22,7 +22,7 @@ impl ModelArgs {
 pub fn usage() -> String {
     USAGE.replace(
         "[--expert-cache-slots auto|N]",
-        "[--expert-cache-slots auto|N] [--expert-residency auto|streamed|mapped]",
+        "[--expert-cache-slots auto|N] [--expert-residency auto|streamed|mapped|resident]",
     )
 }
 
@@ -264,7 +264,9 @@ pub fn parse_model_args(args: &[String]) -> Result<Option<ModelArgs>, String> {
             "--expert-residency" => {
                 parsed.expert_residency =
                     runtime::ExpertResidency::parse(value).ok_or_else(|| {
-                        format!("--expert-residency must be auto, streamed or mapped, not {value}")
+                        format!(
+                            "--expert-residency must be auto, streamed, mapped or resident, not {value}"
+                        )
                     })?;
             }
             "--bind" => {

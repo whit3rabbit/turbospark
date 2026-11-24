@@ -14,6 +14,89 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Inkling 2 Mini from LookAtMyQuant packed releases
+  (`shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-*`), with the trellis and
+  Lloyd-Max codes kept native (`docs/LAMQ.md`): a stored-only `.npz` reader,
+  the `compute::lamq` CPU reference, resident tag 36, Metal kernels for the
+  Kronecker Hadamard rotation, the coded GEMVs and a mixed-format expert pair,
+  and `examples/inkling2_lamq_install.rs`. On the 5.4 GB release: 19/19 and
+  183/232 top-1 against the BF16 install (mean KL 2.8e-2 and 0.154), and
+  80% top-1 at mean KL 0.25 to 0.31 on 450-token English and Rust windows.
+  That loss is in the release's weights: every coded tensor decodes within
+  its code's error band, and a CPU f32 forward on the same weights matches
+  the Metal path at mean KL 1.4e-3. The authors' lower KL (0.0895) comes from
+  their own harness, which is not public.
+- Catalog rows for Inkling 2 Mini at status `verified`: `inkling2-mini`
+  (the original checkpoint at `ed40e7da`), `inkling2-mini-mlx4`
+  (`mlx-community/Inkling-2-Mini-4bit`) and `inkling2-mini-lamq54` (the
+  LookAtMyQuant 5.4 GB release). Each was pulled by alias and chatted here,
+  and each has a frozen memory oracle and quality gate (below).
+  `inkling2-mini-mlx4`, the fastest of the three, is featured at rank 9,
+  after the existing eight.
+- The original Inkling 2 checkpoint and its MLX conversions install from the
+  Hub: the probe reports them runnable and `pull --repo` takes the
+  whole-file route (download at a pinned commit, then convert). The
+  original's DSpark block drafter (`mtp.safetensors`, 636 MB) lands in the
+  install's `dspark/`, and the `inkling2-mini-mlx4` row fetches the same
+  drafter from the original through its `mtp` source (an MLX conversion
+  drops it). Speculative decoding stays opt-in. A first battery reading
+  (not quotable) has DSpark-7 about 24% faster on the original and 14%
+  slower on the MLX build, whose verify does not batch its 4-bit
+  projections (`docs/INKLING2_PHASE0.md`, Stage 5b). `pull-local` takes such a
+  directory too. Catalog rows of the family install the same way from the
+  CLI and the app (`catalog::install_inkling2_row`, which refuses a Hub
+  answer for any commit but the row's and records the row's status).
+- Memory oracles for the three Inkling 2 installs
+  (`inkling2_memory_oracle`, `inkling2_mlx4_memory_oracle`,
+  `inkling2_lamq54_memory_oracle`), streamed at 16 slots and 8,192 context:
+  peaks of 2,662, 2,663 and 1,587 MiB, frozen from two sessions each. The
+  catalog rows carry these as `measured`, so `recommend --context 8192` fits
+  them. The LookAtMyQuant oracle drives two of the three protocol cases: on
+  the long one that release reasons past the 4,096-token budget.
+- Quality gates for the three Inkling 2 installs (`inkling2_quality_gate`,
+  `inkling2_mlx4_quality_gate`, `inkling2_lamq54_quality_gate`): the
+  reference answer scored in the `<|message_model|><|content_text|>` slot
+  (perplexity 4.7024, 4.8026 and 5.7391), greedy and sampled digests frozen
+  from two fresh processes each, and the 8-slot digest equal to the 16-slot
+  one on all three.
+- unsloth GGUFs for Inkling 2: every expert type unsloth ships runs (the
+  sub-IQ1_S types IQ1_XS, IQ1_XXS and IQ1_XXXS, and MXFP4 as a down
+  projection), GGUF NVFP4 expert layers run the native Inkling pair (about
+  1.5x decode and 2.6x chunked prefill on UD-Q4_K_XL; off with
+  `TURBOSPARK_INKLING2_GGUF_NATIVE_NVFP4=0`), and a new verified catalog row
+  `inkling2-mini-ud-q4kxl` for unsloth's recommended UD-Q4_K_XL, with its own
+  memory oracle and quality gate. A GGUF source takes a `dspark/` folder
+  beside it as its DSpark drafter, or converts unsloth's old-layout drafter
+  GGUF (`dspark-*_Old.gguf`) beside it into one.
+- `tslab xengine-kl`: this port against llama.cpp on the same GGUF bytes,
+  with llama.cpp's own shape and backend floors, in one command.
+- The app shows Inkling 2 rows with their own family tile, and Discover
+  marks them as MoE before they are installed.
+- Inkling 2 LookAtMyQuant diagnostics in the runtime crate:
+  `examples/inkling2_lamq_weight_err.rs` (every coded matrix against the
+  original weights on random probes) and
+  `examples/inkling2_lamq_reference_logits.rs` (the CPU reference forward on a
+  LAMQ install). `compute::inkling2::forward::WeightSource` gains default
+  `matvec`, `embed_row`, `expert_gate_up` and `expert_down` hooks for coded
+  sources; existing sources are unchanged.
+- Ignored GPU microbenches `gemv_bandwidth` (`lamq_parity`) and
+  `expert_pair_bandwidth` (`moe_inkling2_lamq_parity`), for telling a
+  bandwidth-bound LAMQ kernel from a lookup-bound one. Not gates.
+- Inkling 2 Mini from GGUF (`inkling2_loop` and the older `inkling2` arch),
+  `examples/inkling2_gguf_install.rs`: block-quantized matrices kept, experts
+  run by a new Inkling mode of the shared GGUF routed pairs (function
+  constants 112-114; other families' pipelines unchanged). On a local IQ2_M
+  file: 19/19 and 228/232 top-1 against llama.cpp on the same file.
+- Inkling 2 LookAtMyQuant releases and GGUFs install from the CLI, the
+  FFI and the app: `turbospark model pull-local <PATH>` (with
+  `--tokenizer-from DIR` for a GGUF), `pull --repo` of such a repository
+  (whole-file download at the pinned commit, resumable), Swift
+  `TurboSparkCatalog.install(localPath:)` and `localInstallKind(path:)`, and
+  Discover > Install from Files in the app. The probe reports these
+  repositories as runnable (`SourceKind::Lamq` for a LAMQ release).
+- The expert residency preflight reports `residentSupported` per install
+  (Swift `ExpertResidencyPreflight.residentSupported`); auto residency streams
+  an Inkling GGUF install, whose experts have no resident kernels.
 - Speech enhancement and voice isolation. The audio task `enhancement` runs
   in a session (any input rate, 48 kHz mono out), with three pinned profiles:
   `voice-isolator-v1` and `voice-isolator-v1-realtime` (inworld Voice
@@ -44,7 +127,8 @@ when this file gets updated relative to the version bump and the tag.
   never returned. FFI/app searches opt in with `HubQuery::with_vision_language`.
 - Catalog rows can carry `featured_rank`. Only a `verified` model row may be
   featured, and the embedded table must feature at least one row with
-  distinct ranks. Eight rows are featured, from LFM3 1.7B to Qwen 3.6 35B.
+  distinct ranks. Nine rows are featured, from LFM3 1.7B to Qwen 3.6 35B and
+  Inkling 2 Mini MLX 4-bit.
 - The app's Discover section opens on a Featured tab: the featured rows that
   are not too large for this Mac, grouped by fit and ordered by rank. It
   replaces the Recommended tab; every other row is under All models.
@@ -122,8 +206,21 @@ when this file gets updated relative to the version bump and the tag.
 - Discover's search box says Search, a search with no catalog match leads
   with the Hugging Face search, and the header badge reads Tested on Mac
   instead of Online catalog (the catalog ships with the app).
+- Inkling 2 LookAtMyQuant decode on the 5.4 GB release went from about 17.8
+  to a 30.5 tok/s median on an M4 Max (tslab dev profiles, not frozen rows):
+  batched input rotations, 16-column chunk decode, per-format expert decode
+  specialized at compile time, a staged ht2/ht3 table, and rotations split
+  across threadgroups (`docs/LAMQ.md` steps 10 to 14). Output moves by
+  summation order and FMA contraction only (48-token mean KL 1.3e-3 against
+  the first bit-exact kernels).
 
 ### Fixed
+- The catalog rot guard measures Inkling 2 rows by the files their install
+  route downloads, and no longer panics on a `lamq` row (it had no branch
+  for that kind).
+- Inkling 2 chat failed on every install ("score vector must not contain a
+  non-finite entry"): the padded vocabulary rows were -inf. They are now the
+  most negative finite f16.
 - A standard llama.cpp K-quant GGUF of a Qwen gated-DeltaNet model (Q4_K_M and
   friends store `ssm_out` at Q4_K/Q6_K) no longer fails mid-install with "a
   128-column V head is not a whole number of 256-element blocks". The walk
@@ -133,6 +230,10 @@ when this file gets updated relative to the version bump and the tag.
   decode, and with speculation on, greedy output identical to plain decode)
   and on the 2B MTP Q4_K_M and Q4_K_S (Q5_K `ssm_out`). Q3_K, Q6_K and IQ
   `ssm_out` take the same path and have no real-file run yet.
+
+### Security
+- `url` 2.5.9 and `form_urlencoded` 1.2.3 in `Cargo.lock` for
+  RUSTSEC-2026-0592.
 
 ## [0.9.0] - 2026-11-15
 

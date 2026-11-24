@@ -225,6 +225,24 @@ pub enum ChatDialect {
     /// wired: the dialect is `Prompted` and the tool markup flows as content. Like Harmony and GLM it has no fallback renderer; the
     /// checkpoint's own template decides things a hand-rolled one would guess.
     Flint,
+    /// Thinking Machines' Inkling 2 (`inkling2_loop`): a message is a role
+    /// marker (`<|message_user|>` / `<|message_model|>` / `<|message_system|>`
+    /// / `<|message_tool|>`) followed by typed segments, each opened by a
+    /// content marker (`<|content_text|>`, `<|content_thinking|>`,
+    /// `<|content_invoke_tool_json|>`, ...) and closed by `<|end_message|>`.
+    /// A model turn ends with `<|content_model_end_sampling|>` (200006,
+    /// `generation_config.json`'s only stop). The template writes no
+    /// generation prompt and no BOS: the prompt ends after the last user
+    /// segment and the model writes `<|message_model|>` itself.
+    ///
+    /// Reasoning is the `<|content_thinking|>` segment, so the thought span
+    /// is `<|content_thinking|>` up to the next `<|end_message|>`. That close
+    /// also ends text segments, where it leaves the channel visible, so the
+    /// MiniMax/Flint id arm splits it as is. Tool calls are a JSON segment
+    /// with no parser checked against real output: `Prompted`. No fallback
+    /// renderer: the template's effort header and segment framing are the
+    /// checkpoint's to decide.
+    Inkling2,
     /// Moonshot's Kimi K2 line (`KimiK25ForConditionalGeneration` / the
     /// DeepSeek-V3-line MLA MoE behind it): turns frame as the special tokens
     /// `<|im_user|>` / `<|im_assistant|>` / `<|im_system|>` with a Kimi-owned
@@ -377,6 +395,9 @@ impl ChatDialect {
             // checked against Flint's real output, so it flows as content
             // where a rescue layer can reach it.
             ChatDialect::Flint => ToolCallSupport::Prompted,
+            // `<|content_invoke_tool_json|>{"name":..,"args":..}<|end_message|>`
+            // exists, but no parser has met the model's real output.
+            ChatDialect::Inkling2 => ToolCallSupport::Prompted,
         }
     }
 

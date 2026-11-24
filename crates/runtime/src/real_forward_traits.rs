@@ -61,6 +61,11 @@ impl LogitProducer for RealForwardRunner {
         if let Some(lfm3) = self.real_lfm3.as_mut() {
             lfm3.reset();
         }
+        // Inkling 2's 48 slots each carry four conv tails, which a new
+        // generation must not inherit.
+        if let Some(ink) = self.real_inkling2.as_mut() {
+            ink.reset();
+        }
         // The router's block summaries are per-generation context, and an
         // image row's key is not a function of its token id, so nothing this
         // family produces is eligible for token-prefix reuse.
@@ -221,6 +226,20 @@ impl LogitProducer for RealForwardRunner {
         {
             if let Some(at) = self.try_restore_turn_snapshot(keep) {
                 return at;
+            }
+        }
+        // Inkling 2's conv tails advance in place and have no snapshot at an
+        // earlier position, so only a pure continuation keeps them right; its
+        // DSpark context may lag the reuse point by the one pending row the
+        // next draft writes from the last pass's taps.
+        if let Some(ink) = &self.real_inkling2 {
+            if back != 0 || swapped {
+                return 0;
+            }
+            if let Some(d) = &ink.dspark {
+                if keep.saturating_sub(d.ctx_rows) > 1 {
+                    return 0;
+                }
             }
         }
         if self.real_dflash.is_some() || self.real_mtp.is_some() {
@@ -405,7 +424,11 @@ impl SpeculativeProducer for RealForwardRunner {
 
     fn prime_drafter(&mut self, next: i32, position: usize) -> Result<(), String> {
         gpu::autorelease_pool(|| {
-            if self.real_dflash.is_some() {
+            if self.inkling2_dspark_open() {
+                // The context row needs only the taps of `position`.
+                self.inkling2_dspark_prime(position)
+                    .map_err(|e| e.to_string())
+            } else if self.real_dflash.is_some() {
                 // The DFlash2 context write needs only the captured states for
                 // `position`; `next` is an MTP-head input it has no use for.
                 self.dflash_prime_from_capture(position)
@@ -430,7 +453,23 @@ impl SpeculativeProducer for RealForwardRunner {
     }
 
     fn drafts_block_passes(&self) -> bool {
-        self.real_dflash.is_some()
+        self.real_dflash.is_some() || self.inkling2_dspark_open()
+    }
+
+    fn copy_draft_max(&self) -> usize {
+        if self.inkling2_dspark_open() {
+            self.inkling2_copy_draft_max()
+        } else {
+            0
+        }
+    }
+
+    fn skip_drafter_round(&mut self, base: usize) -> Result<(), String> {
+        if self.inkling2_dspark_open() {
+            gpu::autorelease_pool(|| self.inkling2_dspark_sync(base).map_err(|e| e.to_string()))
+        } else {
+            Ok(())
+        }
     }
 
     fn draft_block(
@@ -440,6 +479,22 @@ impl SpeculativeProducer for RealForwardRunner {
         block: usize,
         proposals: &mut Vec<i32>,
     ) -> Result<(), String> {
+        if self.inkling2_dspark_open() {
+            let want = self.inkling2_dspark_block();
+            if block == 0 || block > want {
+                return Err(format!(
+                    "the DSpark drafter proposes at most {want} tokens, and the loop asked for \
+                     {block}"
+                ));
+            }
+            let drafted = gpu::autorelease_pool(|| {
+                self.inkling2_dspark_draft(anchor, base)
+                    .map_err(|e| e.to_string())
+            })?;
+            proposals.clear();
+            proposals.extend_from_slice(&drafted[..block]);
+            return Ok(());
+        }
         let want = self.real_dflash.as_ref().map_or(0, |d| d.block);
         // A SHORTER round is the normal end of a run, not a caller error:
         // `run_raw_completion_speculative` shrinks `round_block` against
@@ -506,7 +561,9 @@ impl SpeculativeProducer for RealForwardRunner {
     }
 
     fn rewind_drafter(&mut self, position: usize) -> Result<(), String> {
-        if self.real_dflash.is_some() {
+        if self.inkling2_dspark_open() {
+            self.inkling2_dspark_rewind(position)
+        } else if self.real_dflash.is_some() {
             self.dflash_rewind_to(position).map_err(|e| e.to_string())
         } else {
             self.mtp_rewind_to(position).map_err(|e| e.to_string())
@@ -528,8 +585,9 @@ impl SpeculativeProducer for RealForwardRunner {
         // The tape replays LINEAR-layer state, so it is meaningful only on
         // the GDN flow; `produce_batched` refuses everything else anyway,
         // so a verify -- the only thing that records a tape -- cannot have
-        // run without it.
-        self.real_qwen.is_some()
+        // run without it. Inkling 2 keeps per-row conv-tail snapshots
+        // instead (`families/inkling2/verify.rs`).
+        self.real_qwen.is_some() || self.real_inkling2.is_some()
     }
 
     fn rollback_retaining(
@@ -804,6 +862,14 @@ impl RealForwardRunner {
                 "deepseek2 does not support chunked prefill; the sequential path serves it"
                     .to_string(),
             );
+        }
+        if self.real_inkling2.is_some() {
+            // Resident, native-expert installs only; the driver refuses any
+            // other by name (`families/inkling2/prefill.rs`).
+            return gpu::autorelease_pool(|| {
+                self.prefill_chunk_real_inkling2(tokens, start_position, logits)
+            })
+            .map_err(|e| e.to_string());
         }
         if self.real_flint.is_some() {
             // Always a chunk driver; the layer-batched one is the default and

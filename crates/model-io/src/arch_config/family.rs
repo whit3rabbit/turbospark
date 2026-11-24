@@ -343,11 +343,31 @@ pub enum ModelFamily {
     /// 4B and up (linear rope scaling factor 8 on the global layers) are
     /// refused, not decoded wrongly.
     Gemma3,
+    /// Thinking Machines Inkling 2 Mini (`inkling2_loop`, HF
+    /// `Inkling2LoopForConditionalGeneration`). Witnessed on
+    /// `thinkingmachines/Inkling-2-Mini` at `ed40e7da`.
+    ///
+    /// **ITS OWN FLOW, NOT A VARIANT OF ANY OTHER.** 24 physical layers run
+    /// as 48 applications per token: layers 6-17 loop three times with
+    /// cross-pass messages and learned controllers. No RoPE (a per-head
+    /// relative-position bias carries position), per-token attention sinks,
+    /// L2-clipped q/k/r, causal short convolutions around attention and the
+    /// MoE, block attention residuals over earlier blocks, a sigmoid router
+    /// with a selection-only bias, and routed experts kept in their trained
+    /// NVFP4 (layers 0-19) or MXFP8 (20-23) formats.
+    ///
+    /// `ArchConfig.num_layers` is the PHYSICAL count (24): the expert
+    /// streamer opens one layout entry per checkpoint layer and the flow maps
+    /// each application back to its layer. The loop and the other
+    /// Inkling-only settings live in the install's `inkling2.json` sidecar
+    /// (`crate::inkling2_config`), not in `ArchConfig`.
+    /// Facts: `docs/INKLING2_PHASE0.md`.
+    Inkling2Loop,
 }
 
 impl ModelFamily {
-    /// Exhaustive list of all 19 model families.
-    pub const ALL: [ModelFamily; 19] = [
+    /// Exhaustive list of all 20 model families.
+    pub const ALL: [ModelFamily; 20] = [
         ModelFamily::Gemma4,
         ModelFamily::QwenGdnMoe,
         ModelFamily::DeepseekV4Flash,
@@ -367,6 +387,7 @@ impl ModelFamily {
         ModelFamily::Lfm3,
         ModelFamily::UnlimitedOcr2,
         ModelFamily::Gemma3,
+        ModelFamily::Inkling2Loop,
     ];
 
     /// Returns static string identifier for the model family.
@@ -426,6 +447,8 @@ impl ModelFamily {
             // New, and it matches the GGUF `general.architecture` string
             // ("gemma3"); the HF `model_type` is `gemma3_text` / `gemma3`.
             ModelFamily::Gemma3 => "gemma3",
+            // New, and it matches the HF `model_type` ("inkling2_loop").
+            ModelFamily::Inkling2Loop => "inkling2_loop",
         }
     }
 
@@ -451,6 +474,7 @@ impl ModelFamily {
             "lfm3" => Some(ModelFamily::Lfm3),
             "unlimited_ocr2" => Some(ModelFamily::UnlimitedOcr2),
             "gemma3" => Some(ModelFamily::Gemma3),
+            "inkling2_loop" => Some(ModelFamily::Inkling2Loop),
             _ => None,
         }
     }
@@ -483,9 +507,10 @@ mod tests {
                 ModelFamily::Lfm3 => 16,
                 ModelFamily::UnlimitedOcr2 => 17,
                 ModelFamily::Gemma3 => 18,
+                ModelFamily::Inkling2Loop => 19,
             };
             assert_eq!(idx, expected_idx);
         }
-        assert_eq!(ModelFamily::ALL.len(), 19);
+        assert_eq!(ModelFamily::ALL.len(), 20);
     }
 }

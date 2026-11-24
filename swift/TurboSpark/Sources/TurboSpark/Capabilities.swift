@@ -21,6 +21,43 @@ public struct FamilyCapabilities: Decodable, Sendable, Equatable {
     /// Whether mapped residency has a real-install memory and speed
     /// measurement on this family, not only a correctness check.
     public let mappedResidencyMeasured: Bool
+    /// Whether the family can open with every expert resident in GPU memory
+    /// (`OpenOptions.ExpertResidency.resident`). An install also needs that
+    /// memory; `expertResidency(forInstallAt:requested:)` answers for one.
+    public let residentResidencySupported: Bool
+
+    public init(
+        family: String, known: Bool, steeringSupported: Bool, anePrefillSupported: Bool,
+        mappedResidencySupported: Bool, mappedResidencyMeasured: Bool,
+        residentResidencySupported: Bool = false
+    ) {
+        self.family = family
+        self.known = known
+        self.steeringSupported = steeringSupported
+        self.anePrefillSupported = anePrefillSupported
+        self.mappedResidencySupported = mappedResidencySupported
+        self.mappedResidencyMeasured = mappedResidencyMeasured
+        self.residentResidencySupported = residentResidencySupported
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case family, known, steeringSupported, anePrefillSupported
+        case mappedResidencySupported, mappedResidencyMeasured, residentResidencySupported
+    }
+
+    /// `residentResidencySupported` is read leniently: an engine built before
+    /// it existed answers without the key, and the safe reading is "no".
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        family = try c.decode(String.self, forKey: .family)
+        known = try c.decode(Bool.self, forKey: .known)
+        steeringSupported = try c.decode(Bool.self, forKey: .steeringSupported)
+        anePrefillSupported = try c.decode(Bool.self, forKey: .anePrefillSupported)
+        mappedResidencySupported = try c.decode(Bool.self, forKey: .mappedResidencySupported)
+        mappedResidencyMeasured = try c.decode(Bool.self, forKey: .mappedResidencyMeasured)
+        residentResidencySupported =
+            try c.decodeIfPresent(Bool.self, forKey: .residentResidencySupported) ?? false
+    }
 }
 
 /// What opening one install would do with an expert residency request.
@@ -29,18 +66,40 @@ public struct ExpertResidencyPreflight: Decodable, Sendable, Equatable {
     /// so send `.auto`.
     public let applicable: Bool
     public let requested: String
-    /// `"streamed"` or `"mapped"` when the open would take the request, nil
-    /// when it would refuse it.
+    /// `"streamed"`, `"mapped"` or `"resident"` when the open would take the
+    /// request, nil when it would refuse it.
     public let resolved: String?
     /// Why the open would refuse the request, or nil.
     public let refusal: String?
+    /// Whether this install can open with `.resident` at all: its family has
+    /// a resident flow and its expert blobs have resident kernels (an Inkling
+    /// 2 GGUF install's do not). Nil from an engine that predates the field.
+    public let residentSupported: Bool?
+    /// What resident experts would place in GPU memory (the resident weights
+    /// plus the whole expert table), only when `residentSupported`.
+    public let residentBytes: UInt64?
+    /// Metal's recommended working set on this Mac, only when
+    /// `residentSupported`. Auto picks resident when `residentBytes` plus a
+    /// 10 GiB reserve fits it.
+    public let workingSetBytes: UInt64?
 
-    public init(applicable: Bool, requested: String, resolved: String?, refusal: String?) {
+    public init(
+        applicable: Bool, requested: String, resolved: String?, refusal: String?,
+        residentSupported: Bool? = nil, residentBytes: UInt64? = nil,
+        workingSetBytes: UInt64? = nil
+    ) {
         self.applicable = applicable
         self.requested = requested
         self.resolved = resolved
         self.refusal = refusal
+        self.residentSupported = residentSupported
+        self.residentBytes = residentBytes
+        self.workingSetBytes = workingSetBytes
     }
+
+    /// The reserve the engine keeps beside resident or mapped experts
+    /// (`model_io::MAPPED_WIRED_RESERVE_BYTES`).
+    public static let residencyReserveBytes: UInt64 = 10 * 1024 * 1024 * 1024
 }
 
 /// Whether an install, or a GGUF before its download, would speculate (MTP)

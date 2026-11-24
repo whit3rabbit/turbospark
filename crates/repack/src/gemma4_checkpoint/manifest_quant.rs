@@ -195,6 +195,18 @@ pub fn manifest_quant_for(
                 format!("{l1}.mlp.switch_mlp.gate_proj"),
             )
         }
+        // `inkling2_loop` has its own writer; these name its real layer-0
+        // tensors so a probe reports the checkpoint's truth (BF16 attention
+        // and router, no shared expert, stacked routed experts) if ever run.
+        ModelFamily::Inkling2Loop => {
+            let p = "model.llm.layers.0";
+            (
+                format!("{p}.attn.wq_du"),
+                format!("{p}.mlp.gate"),
+                format!("{p}.mlp.shared_expert.gate_proj"),
+                format!("{p}.mlp.experts.w13_weight"),
+            )
+        }
         ModelFamily::Flint => {
             let l2 = "language_model.model.layers.2";
             (

@@ -308,6 +308,8 @@ pub(crate) fn may_produce_reasoning(model: &AppState, effort: ReasoningEffort) -
     matches!(dialect, ChatDialect::Harmony | ChatDialect::MuseGlimmer)
         // Flint thinks on every turn: its template has no off switch.
         || matches!(dialect, ChatDialect::Flint)
+        // Inkling 2 writes its own thinking segment at the default effort.
+        || matches!(dialect, ChatDialect::Inkling2)
         || (effort != ReasoningEffort::Off
             && matches!(
                 dialect,

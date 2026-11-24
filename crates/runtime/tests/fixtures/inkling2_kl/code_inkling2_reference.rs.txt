@@ -1,0 +1,231 @@
+//! CPU reference for the Inkling 2 Mini ("inkling2_loop") building blocks.
+//!
+//! PORT-LOCAL and UNVERIFIED AGAINST WEIGHTS: the formulas are transcribed from
+//! the public reference implementations (Hugging Face `modeling_inkling2.py`
+//! for the layer math, llama.cpp `inkling2.cpp` / `inkling2-loop.cpp` for the
+//! loop, the controllers and the checkpoint conventions). No logit parity with
+//! a real checkpoint has been run. See `docs/INKLING2_PHASE0.md`.
+//!
+//! Checkpoint conventions that are easy to get fluently wrong:
+//!
+//! * NVFP4 expert weights: value = `E2M1[nibble] * E4M3(block_scale) *
+//!   amax[expert] / outer_scale_denominator`, 16-element blocks, the LOW
+//!   nibble is the EVEN element.
+//! * MXFP8 expert weights: value = `E4M3(byte) * 2^(scale_byte - 127)`,
+//!   32-element blocks; scale byte 255 is NaN.
+//! * `w13` rows are INTERLEAVED gate/up: row `2k` is gate `k`, row `2k+1` is
+//!   up `k`.
+//! * Short convolutions finish with `(conv + residual) / sqrt(K + 1)`, or
+//!   `sqrt(2K + 1)` for the dynamic (full-attention K/V) variant.
+
+pub mod forward;
+
+/// E2M1 (FP4) codebook, index = 4-bit code.
+pub const E2M1: [f32; 16] = [
+    0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0,
+];
+
+/// Decodes an E4M3FN byte (bias 7, no infinities, 0x7F / 0xFF are NaN).
+pub fn e4m3_to_f32(code: u8) -> f32 {
+    if code & 0x7F == 0x7F {
+        return f32::NAN;
+    }
+    let exp = i32::from((code & 0x7F) >> 3);
+    let man = f32::from(code & 7);
+    let mag = if exp == 0 {
+        man * 2f32.powi(-9)
+    } else {
+        (1.0 + man / 8.0) * 2f32.powi(exp - 7)
+    };
+    if code & 0x80 != 0 {
+        -mag
+    } else {
+        mag
+    }
+}
+
+/// Dequantizes one NVFP4 row. `packed` holds `cols / 2` bytes, `block_scales`
+/// holds `cols / 16` E4M3 bytes. `outer` is `amax[expert] / denominator`.
+pub fn dequant_nvfp4_row(packed: &[u8], block_scales: &[u8], outer: f32, out: &mut [f32]) {
+    assert_eq!(out.len(), packed.len() * 2);
+    assert_eq!(out.len() % 16, 0);
+    assert_eq!(block_scales.len(), out.len() / 16);
+    for (i, &b) in packed.iter().enumerate() {
+        let s = e4m3_to_f32(block_scales[(2 * i) / 16]) * outer;
+        out[2 * i] = E2M1[usize::from(b & 15)] * s;
+        out[2 * i + 1] = E2M1[usize::from(b >> 4)] * s;
+    }
+}
+
+/// Dequantizes one MXFP8 row (`cols` E4M3 bytes, `cols / 32` E8M0 scales).
+pub fn dequant_mxfp8_row(bytes: &[u8], scales: &[u8], out: &mut [f32]) {
+    assert_eq!(out.len(), bytes.len());
+    assert_eq!(out.len() % 32, 0);
+    assert_eq!(scales.len(), out.len() / 32);
+    for (i, &b) in bytes.iter().enumerate() {
+        let e = scales[i / 32];
+        let scale = if e == 255 {
+            f32::NAN
+        } else {
+            2f32.powi(i32::from(e) - 127)
+        };
+        out[i] = e4m3_to_f32(b) * scale;
+    }
+}
+
+/// Elements in one transcoded NVFP4 block (ggml `block_nvfp4`).
+pub const NVFP4_BLOCK_ELEMS: usize = 64;
+/// Bytes in one transcoded NVFP4 block: 4 E4M3 scales, then 32 code bytes.
+pub const NVFP4_BLOCK_BYTES: usize = 36;
+/// Elements in one transcoded MXFP8 block.
+pub const MXFP8_BLOCK_ELEMS: usize = 32;
+/// Bytes in one transcoded MXFP8 block: the E8M0 exponent, then 32 E4M3 bytes.
+pub const MXFP8_BLOCK_BYTES: usize = 33;
+
+/// Repacks one HF NVFP4 row into ggml `block_nvfp4` blocks, so the routed
+/// expert kernels reuse the GGUF NVFP4 decoder (`crate::dequantize_nvfp4`).
+///
+/// Lossless: the codes and scale bytes are moved, never re-rounded. Only the
+/// nibble order changes (HF packs element `2i` low / `2i+1` high in byte `i`;
+/// ggml packs `s*16 + j` low / `s*16 + j + 8` high in `qs[s*8 + j]`). The HF
+/// code 8 (-0) becomes ggml's +0, which is the same value in any dot product.
+/// The per-expert outer scale is NOT folded in: it is stored beside the row,
+/// because folding it into the E4M3 scales would re-round them.
+///
+/// Refuses a scale byte with the sign bit set or the E4M3 NaN code: ggml's
+/// decoder ignores bit 7 and reads `0x7F` as zero, so either would silently
+/// change the weight rather than fail.
+pub fn nvfp4_row_to_blocks(packed: &[u8], block_scales: &[u8]) -> Result<Vec<u8>, String> {
+    let n = packed.len() * 2;
+    if n % NVFP4_BLOCK_ELEMS != 0 {
+        return Err(format!(
+            "NVFP4 row of {n} elements is not a multiple of {NVFP4_BLOCK_ELEMS}"
+        ));
+    }
+    if block_scales.len() != n / 16 {
+        return Err(format!(
+            "NVFP4 row of {n} elements needs {} scales, got {}",
+            n / 16,
+            block_scales.len()
+        ));
+    }
+    let nibble = |e: usize| (packed[e / 2] >> (4 * (e % 2))) & 15;
+    let mut out = Vec::with_capacity(n / NVFP4_BLOCK_ELEMS * NVFP4_BLOCK_BYTES);
+    for b in 0..n / NVFP4_BLOCK_ELEMS {
+        for s in 0..4 {
+            let i = b * 4 + s;
+            let byte = block_scales[i];
+            if byte & 0x80 != 0 || byte == 0x7F {
+                return Err(format!("NVFP4 scale {i} is 0x{byte:02x} (negative or NaN)"));
+            }
+            out.push(byte);
+        }
+        for s in 0..4 {
+            for j in 0..8 {
+                let lo = b * NVFP4_BLOCK_ELEMS + s * 16 + j;
+                out.push(nibble(lo) | (nibble(lo + 8) << 4));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Repacks one MXFP8 row into 33-byte blocks (exponent byte first, then the
+/// block's 32 E4M3 bytes), so a routed row is one contiguous run the way the
+/// GGUF blobs are. Lossless. Refuses the E8M0 NaN exponent (255) and E4M3 NaN
+/// codes: a NaN weight is a corrupt checkpoint, not something to stream.
+pub fn mxfp8_row_to_blocks(bytes: &[u8], scales: &[u8]) -> Result<Vec<u8>, String> {
+    let n = bytes.len();
+    if n % MXFP8_BLOCK_ELEMS != 0 {
+        return Err(format!(
+            "MXFP8 row of {n} elements is not a multiple of {MXFP8_BLOCK_ELEMS}"
+        ));
+    }
+    if scales.len() != n / MXFP8_BLOCK_ELEMS {
+        return Err(format!(
+            "MXFP8 row of {n} elements needs {} scales, got {}",
+            n / MXFP8_BLOCK_ELEMS,
+            scales.len()
+        ));
+    }
+    let mut out = Vec::with_capacity(n / MXFP8_BLOCK_ELEMS * MXFP8_BLOCK_BYTES);
+    for (b, (block, &e)) in bytes
+        .chunks_exact(MXFP8_BLOCK_ELEMS)
+        .zip(scales)
+        .enumerate()
+    {
+        if e == 255 {
+            return Err(format!("MXFP8 scale {b} is the E8M0 NaN code"));
+        }
+        if let Some(k) = block.iter().position(|&c| c & 0x7F == 0x7F) {
+            return Err(format!(
+                "MXFP8 element {} is an E4M3 NaN code",
+                b * MXFP8_BLOCK_ELEMS + k
+            ));
+        }
+        out.push(e);
+        out.extend_from_slice(block);
+    }
+    Ok(out)
+}
+
+/// Decodes `n` elements of [`mxfp8_row_to_blocks`] output: the CPU reference
+/// for the transcoded layout the GPU reads.
+pub fn dequantize_mxfp8_blocks(blocks: &[u8], n: usize) -> Vec<f32> {
+    assert_eq!(n % MXFP8_BLOCK_ELEMS, 0);
+    assert_eq!(blocks.len(), n / MXFP8_BLOCK_ELEMS * MXFP8_BLOCK_BYTES);
+    let mut out = Vec::with_capacity(n);
+    for block in blocks.chunks_exact(MXFP8_BLOCK_BYTES) {
+        let scale = 2f32.powi(i32::from(block[0]) - 127);
+        out.extend(block[1..].iter().map(|&c| e4m3_to_f32(c) * scale));
+    }
+    out
+}
+
+/// Splits interleaved `w13` rows into `(gate_rows, up_rows)` row indices.
+pub fn w13_gate_up_rows(rows: usize) -> (Vec<usize>, Vec<usize>) {
+    assert_eq!(rows % 2, 0);
+    (
+        (0..rows / 2).map(|k| 2 * k).collect(),
+        (0..rows / 2).map(|k| 2 * k + 1).collect(),
+    )
+}
+
+/// RMS norm with no learned scale.
+pub fn rms_norm_unweighted(x: &[f32], eps: f32) -> Vec<f32> {
+    let ms = x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32;
+    let r = 1.0 / (ms + eps).sqrt();
+    x.iter().map(|v| v * r).collect()
+}
+
+/// RMS norm with a learned scale `w` (plain `w`, not `1 + w`).
+pub fn rms_norm(x: &[f32], w: &[f32], eps: f32) -> Vec<f32> {
+    rms_norm_unweighted(x, eps)
+        .iter()
+        .zip(w)
+        .map(|(a, b)| a * b)
+        .collect()
+}
+
+/// Per-vector L2 clip: scales down to `threshold` when the norm exceeds it,
+/// after an optional per-channel `scale`. Shorter vectors are unchanged.
+pub fn l2_clip(x: &[f32], scale: Option<&[f32]>, threshold: f32) -> Vec<f32> {
+    let y: Vec<f32> = match scale {
+        Some(s) => x.iter().zip(s).map(|(a, b)| a * b).collect(),
+        None => x.to_vec(),
+    };
+    let norm = y.iter().map(|v| v * v).sum::<f32>().sqrt();
+    let f = (threshold / (norm + 1e-6)).clamp(0.0, 1.0);
+    y.iter().map(|v| v * f).collect()
+}
+
+/// `1 + alpha * ln(max(1, (pos + 1) / floor))`, the full-attention log scale
+/// that multiplies Q and the relative states.
+pub fn log_scale_tau(pos: usize, floor: f32, alpha: f32) -> f32 {
+    1.0 + alpha * (((pos + 1) as f32) / floor).max(1.0).ln()
+}
+
+/// Relative-position bias for one query head: `rel = r @ proj` is a profile
+/// over distance; the bias at distance `d` is `rel[d]` for `0 <= d < extent`,
+/// else 0. `proj` is `[d_rel, extent]` row-major.
+pub fn relati

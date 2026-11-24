@@ -590,6 +590,199 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[off("0", "flint_chunked_prefill")],
     },
     Knob {
+        // Inkling 2's fused decode kernels (qkv_post, depth mix + norm,
+        // conv + residual), the default; "0" restores the separate kernels.
+        // Bit-identical by construction and by test
+        // (`crates/gpu/tests/inkling2_fused_parity.rs`), so the arms must
+        // share a digest.
+        name: "inkling2_fused",
+        env: "TURBOSPARK_INKLING2_FUSED",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[off("0", "inkling2_fused")],
+    },
+    Knob {
+        // Inkling 2's chunked prefill through the 8-row verify forward, the
+        // default on resident native-expert installs; "0" is the per-token
+        // loop behind the same entry point. Bit-exact
+        // (`crates/runtime/tests/real_forward_inkling2_prefill.rs`).
+        name: "inkling2_chunked_prefill",
+        env: "TURBOSPARK_INKLING2_CHUNKED_PREFILL",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[off("0", "inkling2_chunked_prefill")],
+    },
+    Knob {
+        // Inkling 2's expert-grouped MoE pair for multi-row passes above the
+        // verify block (chunked prefill panels): each distinct expert decoded
+        // once for all its (row, slot) pairs. "0" restores the per-pair
+        // `_idx_rows` pair. Bit-exact
+        // (`crates/gpu/tests/moe_inkling2_grouped_parity.rs`).
+        name: "inkling2_grouped_moe",
+        env: "TURBOSPARK_INKLING2_GROUPED_MOE",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[off("0", "inkling2_grouped_moe")],
+    },
+    Knob {
+        // Inkling 2's matrix units for chunked-prefill passes (the BF16
+        // dense GEMM and the routed experts), the DEFAULT; "0" restores the bit-exact GEMV. KL-bounded against
+        // sequential decode, gated relative to the shipped
+        // streamed-vs-resident deviation
+        // (`crates/runtime/tests/real_forward_inkling2_prefill_mma.rs`); a
+        // row's output depends only on its own input, so chunking does not
+        // change the result. Speculative verify never takes it.
+        name: "inkling2_prefill_mma",
+        env: "TURBOSPARK_INKLING2_PREFILL_MMA",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::KlBounded,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[off("0", "inkling2_prefill_mma")],
+    },
+    Knob {
+        // Inkling 2 MLX-sourced installs: the dense affine projections of a
+        // multi-row pass (prefill panels, speculative verify) through the
+        // batched INT4/INT8 GEMMs, strided inputs packed token-major first;
+        // "0" restores one GEMV per row. Bit-exact (the batched kernels'
+        // parity tests; the prefill, verify and speculative gates on mlx4).
+        name: "inkling2_batched_affine",
+        env: "TURBOSPARK_INKLING2_BATCHED_AFFINE",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[off("0", "inkling2_batched_affine")],
+    },
+    Knob {
+        // Prompt-copy rounds in greedy speculation (`runtime/src/prompt_copy.rs`):
+        // when the history repeats, propose its continuation instead of
+        // drafting, at up to 24 proposals. On for producers that take copy
+        // rounds (Inkling 2 with its DSpark drafter); "0" turns them off.
+        // Lossless (the speculative gate on BF16 and mlx4), so output bits
+        // are the plain greedy stream either way.
+        name: "spec_prompt_copy",
+        env: "TURBOSPARK_SPEC_PROMPT_COPY",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::PerCall,
+        exactness: Exactness::BitExact,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[off("0", "spec_prompt_copy")],
+    },
+    Knob {
+        // Inkling 2 GGUF installs: a layer whose gate-up and down are both
+        // NVFP4 opens as the native NVFP4 kind (the same ggml block bytes),
+        // so it runs the native and grouped pairs instead of the generic
+        // GGUF NVFP4 pair. "0" keeps the GGUF pair. Each arm is bit-exact
+        // between decode, verify and chunked prefill; the two arms differ
+        // from each other at FP16 rounding (different kernels), so this is
+        // KL-bounded across values (unsloth UD-Q4_K_XL quality gate frozen
+        // with it on).
+        name: "inkling2_gguf_native_nvfp4",
+        env: "TURBOSPARK_INKLING2_GGUF_NATIVE_NVFP4",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::KlBounded,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[off("0", "inkling2_gguf_native_nvfp4")],
+    },
+    Knob {
+        // Inkling 2 resident installs: a GPU touch of every resident buffer
+        // at open, not waited on, so the driver's 1 to 3 s first-use mapping
+        // overlaps the gap before the first request. "0" turns it off. Writes
+        // only a scratch buffer, so output is untouched; it moves time, it
+        // does not remove it (a one-shot CLI run queues straight behind it)
+        // (`crates/runtime/tests/real_forward_inkling2_prewarm.rs`).
+        name: "inkling2_prewarm",
+        env: "TURBOSPARK_INKLING2_PREWARM",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::Open,
+        exactness: Exactness::BitExact,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[off("0", "inkling2_prewarm")],
+    },
+    Knob {
+        // Inkling 2's tiled prefill attention inside the prefill matrix-unit
+        // switch, on by default; "0" keeps the rows kernel for attention
+        // while the GEMMs and experts stay on the matrix units. KL-bounded
+        // (`crates/runtime/tests/real_forward_inkling2_prefill_mma.rs`).
+        name: "inkling2_prefill_attn",
+        env: "TURBOSPARK_INKLING2_PREFILL_ATTN",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::KlBounded,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[],
+    },
+    Knob {
+        // Inkling 2 rows per chunked-prefill pass (1 to 128, default 128). A
+        // throughput choice only: both prefill arms give results independent
+        // of panel size (the exact arm bit for bit, the matrix-unit arm by
+        // row independence).
+        name: "inkling2_panel_rows",
+        env: "TURBOSPARK_INKLING2_PANEL_ROWS",
+        values: &["<unset>", "32", "64"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[],
+    },
+    Knob {
+        // Inkling 2 rows from which an exact multi-row pass (speculative
+        // verify, the exact prefill arm) takes the expert-grouped MoE pair;
+        // default 2. Both pairs give the same bits, so this moves time only
+        // (`crates/gpu/tests/moe_inkling2_grouped_parity.rs`).
+        name: "inkling2_grouped_min_rows",
+        env: "TURBOSPARK_INKLING2_GROUPED_MIN_ROWS",
+        values: &["<unset>", "9"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[],
+    },
+    Knob {
+        // Inkling 2's decode BF16 GEMV with two weight rows per simdgroup,
+        // the default; "0" restores one row per simdgroup. The same bits per
+        // row (`crates/gpu/tests/inkling2_fused_parity.rs`).
+        name: "inkling2_gemv2",
+        env: "TURBOSPARK_INKLING2_GEMV2",
+        values: &["<unset>", "0"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &["inkling2_loop"],
+        quotable: true,
+        doc: "docs/INKLING2_PHASE0.md",
+        engagement: &[],
+    },
+    Knob {
         // LFM3's M-row chunk driver, default on for INT4 installs; `0` is the
         // per-token loop behind the same entry point. KL-bounded because the
         // default arm takes Steel and the rows attention: with

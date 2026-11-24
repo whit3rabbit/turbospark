@@ -43,14 +43,20 @@ pub enum SourceKind {
     /// A single `.gguf` file, installed through
     /// `repack::write_gguf_install_streamed`.
     Gguf,
+    /// A LookAtMyQuant packed Inkling release (`docs/LAMQ.md`). Never a
+    /// catalog row's kind: only a probe of such a repository reports it, and
+    /// it installs through [`crate::install_inkling2_repo`], which downloads
+    /// the whole release first, never through the streamed walk.
+    Lamq,
 }
 
 impl SourceKind {
-    /// String identifier for this packaging format ("mlx" or "gguf").
+    /// String identifier for this packaging format ("mlx", "gguf" or "lamq").
     pub fn as_str(self) -> &'static str {
         match self {
             SourceKind::Mlx => "mlx",
             SourceKind::Gguf => "gguf",
+            SourceKind::Lamq => "lamq",
         }
     }
 }

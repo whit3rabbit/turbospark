@@ -353,7 +353,9 @@ public enum AppExpertSlotsWiringOption: String, CaseIterable, Identifiable, Send
 /// all. `openOption(preflight:)` sends mapped only where
 /// `TurboSparkCapabilities.expertResidency(forInstallAt:requested:)` says the
 /// open would take it, and auto elsewhere; the Engine pane's Resolved row
-/// shows the reason, so the fallback is not silent.
+/// shows the reason, so the fallback is not silent. `.resident` follows the
+/// same rule: only one family has a resident flow, and an install it does not
+/// fit is refused.
 public enum AppExpertResidencyOption: String, CaseIterable, Identifiable, Sendable {
     /// Read experts in place where the family supports it and memory calls
     /// for it, the streamed cache otherwise. The default.
@@ -362,6 +364,9 @@ public enum AppExpertResidencyOption: String, CaseIterable, Identifiable, Sendab
     case streamed = "streamed"
     /// Read experts in place from the mapped file, where the model allows it.
     case mapped = "mapped"
+    /// Every expert in GPU memory, routed on the GPU, where the model allows
+    /// it and it fits.
+    case resident = "resident"
 
     public var id: String { rawValue }
 
@@ -370,6 +375,7 @@ public enum AppExpertResidencyOption: String, CaseIterable, Identifiable, Sendab
         case .auto: return "Auto"
         case .streamed: return "Streamed"
         case .mapped: return "Mapped"
+        case .resident: return "Resident"
         }
     }
 
@@ -379,6 +385,7 @@ public enum AppExpertResidencyOption: String, CaseIterable, Identifiable, Sendab
         case .auto: return .auto
         case .streamed: return .streamed
         case .mapped: return .mapped
+        case .resident: return .resident
         }
     }
 
@@ -393,26 +400,31 @@ public enum AppExpertResidencyOption: String, CaseIterable, Identifiable, Sendab
             return preflight?.applicable == false ? .auto : .streamed
         case .mapped:
             return preflight?.resolved == "mapped" ? .mapped : .auto
+        case .resident:
+            return preflight?.resolved == "resident" ? .resident : .auto
         }
     }
 
-    /// Why `.mapped` fell back to auto on this install, or nil when it did
-    /// not (another option, or the open takes mapped).
+    /// Why `.mapped` or `.resident` fell back to auto on this install, or nil
+    /// when it did not (another option, or the open takes the request).
     public func fallback(preflight: ExpertResidencyPreflight?) -> ExpertResidencyFallback? {
-        guard self == .mapped, preflight?.resolved != "mapped" else { return nil }
+        guard self == .mapped || self == .resident, preflight?.resolved != rawValue else {
+            return nil
+        }
         guard let preflight else { return .unreadable }
         if !preflight.applicable { return .noRoutedExperts }
         return .refused(preflight.refusal)
     }
 }
 
-/// Why a Mapped residency request was opened as auto.
+/// Why a Mapped or Resident residency request was opened as auto.
 public enum ExpertResidencyFallback: Equatable, Sendable {
     /// The install's manifest could not be read before open.
     case unreadable
     /// A dense model: there are no routed experts to place.
     case noRoutedExperts
-    /// The open would refuse mapped; the engine's reason, when it gave one.
+    /// The open would refuse the request; the engine's reason, when it gave
+    /// one.
     case refused(String?)
 }
 

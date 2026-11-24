@@ -231,6 +231,36 @@ listed configurations, not guarantees for other machines or settings. See
 the slot arithmetic in [`docs/MODEL_FAMILY.md`](docs/MODEL_FAMILY.md) and use
 `turbospark-model recommend` for the active machine and context.
 
+Inkling 2 Mini (`thinkingmachines/Inkling-2-Mini`, a 24-layer MoE looped to
+48 layer applications) is in the catalog at status `verified`, as
+`inkling2-mini` (the original checkpoint), `inkling2-mini-mlx4` and
+`inkling2-mini-lamq54`; the MLX row is featured in the app. `turbospark-model pull <alias>` downloads the whole
+repository at its pinned revision, then converts it on this Mac, so it
+needs about the download plus the install free while both exist. A GGUF
+installs with `turbospark model pull-local` or `pull --repo`.
+
+Its experts run two ways. Streamed through 16 slots, the memory oracle's
+setting, each install peaks low. With `auto` residency on a Mac with room
+(36 GB here), the whole expert table goes into GPU memory instead, which
+is faster and takes about 17.7 GiB:
+
+| Install | Disk | Streamed peak (16 slots, 8,192 ctx) | Streamed decode | Resident decode, 64-token prompt |
+| --- | ---: | ---: | ---: | ---: |
+| Original (NVFP4 and MXFP8 experts, BF16 dense) | ~18 GB | 2,662 MiB | 14.5-18.0 tok/s | 34.2 tok/s |
+| MLX 4-bit (`mlx-community/Inkling-2-Mini-4bit`) | ~16 GB | 2,663 MiB | 17.9-20.5 tok/s | 45.6 tok/s |
+| LookAtMyQuant 5.4 GB release | ~6.9 GB | 1,587 MiB | 16.5-18.9 tok/s | 30.5 tok/s |
+
+The streamed columns are the frozen oracle rows (`crates/bench/tests/
+inkling2*_memory_oracle.rs`, two sessions each, AC); `recommend --context
+8192` fits these rows from them. The resident column is an indicative tslab
+reading with about 11 GB of swap in use, not a frozen row. Inkling prefill
+is sequential, so a 3,252-token prompt takes about 3 minutes streamed. The
+LookAtMyQuant release loses quality against the original (about 80%
+next-token agreement, mean KL 0.25 on an English window), and on the long
+protocol case it reasons past the 4,096-token budget, so its oracle drives
+the two shorter cases. See [`docs/INKLING2_PHASE0.md`](docs/INKLING2_PHASE0.md)
+and [`docs/LAMQ.md`](docs/LAMQ.md).
+
 ### Dense checkpoints (weights stay memory-mapped)
 
 Dense models do not stream, so budget roughly the on-disk size plus KV and scratch that grow with context. The small "peak footprint" numbers in [`docs/BENCHMARKS.md`](docs/BENCHMARKS.md) for these rows are a leak sentinel, not a capacity number: mapped weights do not appear in them.

@@ -12,11 +12,14 @@ public struct ModelDownload: Identifiable, Codable, Equatable {
         /// user saw. `revision` is nil only on rows saved before it was
         /// recorded; those install the current pin.
         case embedding(alias: String, revision: String?)
+        /// Inkling 2 Mini from files on disk: a LookAtMyQuant release folder
+        /// or an Inkling 2 GGUF, with the tokenizer folder a GGUF needs.
+        case localFiles(path: String, alias: String, tokenizerFrom: String?)
 
         var alias: String {
             switch self {
             case .catalog(let alias), .repository(_, let alias, _, _), .image(let alias),
-                 .embedding(let alias, _):
+                 .embedding(let alias, _), .localFiles(_, let alias, _):
                 return alias
             case .audio(let identity): return identity.alias
             }
@@ -34,7 +37,7 @@ public struct ModelDownload: Identifiable, Codable, Equatable {
         var queueKey: String {
             let normalized = alias.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             switch self {
-            case .catalog, .repository: return "text:\(normalized)"
+            case .catalog, .repository, .localFiles: return "text:\(normalized)"
             case .image: return "image:\(normalized)"
             case .embedding(_, let revision):
                 // Like audio: a retry must not silently adopt a new catalog pin.

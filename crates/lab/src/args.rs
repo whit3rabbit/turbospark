@@ -112,7 +112,10 @@ pub fn parse_residency(s: &str) -> Result<Residency, String> {
         "auto" => Ok(Residency::Auto),
         "streamed" => Ok(Residency::Streamed),
         "mapped" => Ok(Residency::Mapped),
-        _ => Err(format!("residency {s:?}: auto, streamed or mapped")),
+        "resident" => Ok(Residency::Resident),
+        _ => Err(format!(
+            "residency {s:?}: auto, streamed, mapped or resident"
+        )),
     }
 }
 

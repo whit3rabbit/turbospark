@@ -230,6 +230,23 @@ pub trait SpeculativeProducer: LogitProducer {
         false
     }
 
+    /// The most proposals a prompt-copy round may verify
+    /// (`crate::prompt_copy`), 0 when this producer takes none. A copy round
+    /// feeds up to this many proposals plus the confirmed token in one
+    /// verify, so a producer returns at most its verify width minus one.
+    fn copy_draft_max(&self) -> usize {
+        0
+    }
+
+    /// Called on a round the loop drafts by prompt copy instead of through
+    /// the drafter, before that round's verify: a drafter whose context is
+    /// filled from the PREVIOUS verify's captures takes them now, because
+    /// this round's verify overwrites them.
+    fn skip_drafter_round(&mut self, base: usize) -> Result<(), String> {
+        let _ = base;
+        Ok(())
+    }
+
     /// One whole-block draft: `block` proposals for positions `base + 1 ..=
     /// base + block`, written in order into `proposals` (cleared first).
     ///

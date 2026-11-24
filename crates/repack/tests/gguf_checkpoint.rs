@@ -101,7 +101,8 @@ fn resident_tensors_keep_their_bytes_names_and_logical_shapes() {
             ResidentEntrySpec::Int8(t) => (t.name.as_str(), e),
             ResidentEntrySpec::Int4(_)
             | ResidentEntrySpec::Int1(_)
-            | ResidentEntrySpec::Int2(_) => {
+            | ResidentEntrySpec::Int2(_)
+            | ResidentEntrySpec::Lamq(_) => {
                 panic!(
                     "nothing in a GGUF becomes an MLX affine width; transcode targets are INT8 only"
                 )

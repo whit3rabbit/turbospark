@@ -344,7 +344,13 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         // intake this port built.
         // `flint` has no GGUF intake here (Q4_1 is not an executable block
         // type and the llama.cpp port is unmerged): refuse, never invent.
-        ModelFamily::DeepseekV4Flash | ModelFamily::Flint | ModelFamily::UnlimitedOcr2 => {
+        // `inkling2_loop` GGUFs exist (llama.cpp#32694), but this port ingests
+        // the HF safetensors and keeps the trained NVFP4/MXFP8 experts; the
+        // GGUFs carry re-quantized or dequantized experts. Refuse, never invent.
+        ModelFamily::DeepseekV4Flash
+        | ModelFamily::Flint
+        | ModelFamily::UnlimitedOcr2
+        | ModelFamily::Inkling2Loop => {
             return Err(GgufConfigError::UnsupportedArchitecture {
                 architecture: architecture.to_string(),
             })

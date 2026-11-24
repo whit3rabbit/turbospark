@@ -235,6 +235,9 @@ pub enum ExpertResidency {
     Streamed,
     /// Mapped mode reading experts directly out of mapped memory.
     Mapped,
+    /// Every expert resident in GPU memory, routed on the GPU (families with
+    /// a resident flow only).
+    Resident,
 }
 
 impl ExpertResidency {
@@ -244,6 +247,7 @@ impl ExpertResidency {
             "auto" => Some(Self::Auto),
             "streamed" => Some(Self::Streamed),
             "mapped" => Some(Self::Mapped),
+            "resident" => Some(Self::Resident),
             _ => None,
         }
     }
@@ -254,6 +258,7 @@ impl ExpertResidency {
             Self::Auto => "auto",
             Self::Streamed => "streamed",
             Self::Mapped => "mapped",
+            Self::Resident => "resident",
         }
     }
 }

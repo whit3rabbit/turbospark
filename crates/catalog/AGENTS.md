@@ -41,6 +41,11 @@ measure, so a convenient approximation is still a broken row.
   before the shared walk. Do not fold these into the generic safetensors path.
 - An existing directory argument wins over an alias. Preserve that CLI
   compatibility.
+- Every Inkling 2 source installs whole-file (`inkling2_repo.rs`), rows
+  included. A LookAtMyQuant release also ships an HF `config.json` declaring
+  `inkling2_loop` and a `steering.safetensors`, so detection reads its
+  `manifest.json` before trying the repository as a checkpoint; the other
+  order takes the release for a checkpoint and downloads 3% of it.
 
 ## Checks
 

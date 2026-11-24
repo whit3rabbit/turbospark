@@ -144,4 +144,25 @@ TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/flint-mixed-warm \
   cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
 uv run --python 3.12 --with 'mlx-vlm==0.7.10' --with numpy \
   scripts/kld_flint_mlx_vlm.py /tmp/kld/flint-mixed-warm ~/models/flint-mixed-3-4bit
+
+# Inkling 2 (`inkling2_loop`) against llama.cpp on the GGUF an install came
+# from. The Homebrew bottle predates `inkling2_loop` and brew's HEAD formula
+# did not build (2026-11-23), so the harness links a llama.cpp SOURCE build
+# named by TURBOSPARK_LLAMACPP_PREFIX (master with #32694, #32704, #32799;
+# `cmake -B build -DGGML_METAL=ON -DBUILD_SHARED_LIBS=ON` then
+# `cmake --build build --target llama`). The dump writes only the 200,058
+# unpadded columns, the vocabulary llama.cpp reports.
+TURBOSPARK_INKLING2_INSTALL_DIR=~/.turbospark/models/text/inkling2-mini-gguf-ud-iq1s.gturbo \
+TURBOSPARK_LOGIT_DUMP_DIR=/tmp/kld/inkling2-ud-iq1s \
+  cargo test -p turbospark-bench --test logit_dump --release -- --ignored --nocapture
+TURBOSPARK_LLAMACPP_PREFIX=~/src/llama.cpp \
+  uv run --python 3.12 --with numpy scripts/kld_llamacpp.py \
+  ~/models/Inkling-2-Mini-UD-IQ1_S.gguf /tmp/kld/inkling2-ud-iq1s
 ```
+
+Inkling 2 reading (2026-11-23, M4 Max, unsloth UD-IQ1_S @ `8078d149`,
+llama.cpp master `c212d25`, quality corpus, 597 rows, this port streamed):
+mean forward KL 0.00182 against llama.cpp cached on Metal, 98.2% top-1.
+llama.cpp's own shape floor (batched against cached, Metal) is 0.00188 at
+97.0%, and its backend floor (CPU against Metal) 0.0102 at 95.5%. The gap
+to llama.cpp sits under llama.cpp's own shape floor.
