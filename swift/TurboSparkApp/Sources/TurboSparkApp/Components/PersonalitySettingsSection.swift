@@ -16,7 +16,9 @@ struct PersonalitySettingsSection: View {
             Picker(selection: selectedPersonalityBinding) {
                 Text("None", bundle: .module).tag(UUID?.none)
                 ForEach(model.personalities) { personality in
-                    Text(verbatim: personality.name).tag(Optional(personality.id))
+                    // Built-in names are catalog keys; a custom name has no key, so
+                    // it shows as typed.
+                    Text(LocalizedStringKey(personality.name), bundle: .module).tag(Optional(personality.id))
                 }
             } label: { Text("Personality", bundle: .module) }
             .labelsHidden()

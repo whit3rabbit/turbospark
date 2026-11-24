@@ -14,6 +14,7 @@ struct ImageGalleryCard: View {
     let reuse: () -> Void
     @State private var thumbnail: NSImage?
     @State private var confirmingTrash = false
+    @State private var hovering = false
 
     private var openLabel: Text {
         selecting ? Text("Select", bundle: .module) : Text("Open image", bundle: .module)
@@ -50,6 +51,13 @@ struct ImageGalleryCard: View {
                 .accessibilityLabel(openLabel)
                 .accessibilityValue(Text(artifact.imageRequest?.prompt ?? artifact.title))
                 .accessibilityAddTraits(selected ? .isSelected : [])
+                // The hover bar is pointer-only, so VoiceOver gets the same
+                // actions here; the context menu covers the keyboard.
+                .accessibilityAction(named: Text("Use prompt", bundle: .module)) { reuse() }
+                .accessibilityAction(named: Text("Regenerate", bundle: .module)) {
+                    model.regenerateImage(from: artifact)
+                }
+                .accessibilityAction(named: Text("Vary", bundle: .module)) { model.varyImage(from: artifact) }
 
                 if selecting {
                     Image(systemName: selected ? "checkmark.circle.fill" : "circle")
@@ -67,6 +75,13 @@ struct ImageGalleryCard: View {
                     .accessibilityLabel(Text("Image actions", bundle: .module))
                 }
             }
+            .overlay(alignment: .bottom) {
+                if hovering && !selecting {
+                    hoverActions.transition(.opacity)
+                }
+            }
+            .onHover { hovering = $0 }
+            .tsAnimation(TSMotion.hover, value: hovering)
             Text(artifact.imageRequest?.prompt ?? artifact.title)
                 .themedFont(.small).lineLimit(compact ? 1 : 2)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -104,6 +119,33 @@ struct ImageGalleryCard: View {
             thumbnail = NSImage(cgImage: image, size: .zero)
         }
     }
+
+    /// The menu's most used actions, one click away on pointer hover.
+    /// Hidden from VoiceOver: the open button carries the same actions.
+    private var hoverActions: some View {
+        HStack(spacing: 4) {
+            AppIconButton("text.bubble", label: Text("Use prompt", bundle: .module), action: reuse)
+            AppIconButton("arrow.clockwise", label: Text("Regenerate", bundle: .module)) {
+                model.regenerateImage(from: artifact)
+            }
+            .disabled(!model.canRegenerateImage(from: artifact))
+            AppIconButton("shuffle", label: Text("Vary", bundle: .module)) {
+                model.varyImage(from: artifact)
+            }
+            .disabled(!model.canRegenerateImage(from: artifact))
+            AppIconButton("folder", label: Text("Show in Finder", bundle: .module)) {
+                if let url = artifact.url { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            }
+            .disabled(!artifact.existsOnDisk)
+        }
+        .buttonStyle(.borderless)
+        .themedFont(.small)
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .background(.appPage, in: Capsule())
+        .overlay { Capsule().stroke(.appBorder, lineWidth: 0.75) }
+        .padding(8)
+        .accessibilityHidden(true)
+    }
 }
 
 @MainActor
@@ -120,11 +162,12 @@ struct ImageGalleryActions: View {
         Button { model.regenerateImage(from: artifact) } label: {
             Label { Text("Regenerate", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
         }
-        .disabled(
-            !model.canStartImageGeneration
-                || !model.hasSupportedSelectedImageModel
-                || model.imageModelPath.isEmpty
-                || artifact.imageRequest == nil)
+        .disabled(!model.canRegenerateImage(from: artifact))
+        Button { model.varyImage(from: artifact) } label: {
+            Label { Text("Vary", bundle: .module) } icon: { Image(systemName: "shuffle") }
+        }
+        .help(Text("Same prompt and settings with a new random seed", bundle: .module))
+        .disabled(!model.canRegenerateImage(from: artifact))
         Divider()
         Button { export() } label: {
             Label { Text("Save As...", bundle: .module) } icon: { Image(systemName: "square.and.arrow.up") }

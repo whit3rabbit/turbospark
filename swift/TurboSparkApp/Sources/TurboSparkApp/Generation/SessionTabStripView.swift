@@ -99,6 +99,9 @@ private struct SessionTabItemView: View {
     let chat: AppChat
     let isSelected: Bool
     @State private var isHovered = false
+    /// The widest a tab title draws before it truncates. Scaled, so larger
+    /// text sizes keep about the same number of characters.
+    @ScaledMetric private var maxTitleWidth: CGFloat = 200
 
     private var badge: WorkspaceTabBadge { model.sessionTabBadge(for: chat.id) }
     private var isDraft: Bool { chat.messages.isEmpty }
@@ -114,11 +117,17 @@ private struct SessionTabItemView: View {
                         .font(theme.ui(.tiny))
                         .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
                         .accessibilityHidden(true)
-                    Text(verbatim: title)
-                        .font(theme.ui(.small, weight: isSelected ? .semibold : nil))
-                        .foregroundStyle(.appText)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    // The strip's ScrollView proposes no width, so without
+                    // the cap a long title never truncates and one tab can
+                    // run past the window. The tooltip and the All Tabs menu
+                    // carry the full title.
+                    TabTitleWidthCap(maxWidth: maxTitleWidth).callAsFunction {
+                        Text(verbatim: title)
+                            .font(theme.ui(.small, weight: isSelected ? .semibold : nil))
+                            .foregroundStyle(.appText)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
                     badgeGlyph
                 }
                 .contentShape(.rect)
@@ -198,5 +207,33 @@ private struct SessionTabItemView: View {
         case .unread: return Text("Unread", bundle: .module)
         case .none: return isDraft ? Text("Draft", bundle: .module) : Text(verbatim: "")
         }
+    }
+}
+
+/// Sizes its one child to its ideal width, capped at `maxWidth`, and proposes
+/// that width so the child truncates. A `.frame(maxWidth:)` cannot do this
+/// inside a horizontal ScrollView: there the proposal is unspecified, the
+/// frame passes that on, and the text draws at full width past the frame.
+private struct TabTitleWidthCap: Layout {
+    let maxWidth: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let child = subviews.first else { return .zero }
+        let width = cappedWidth(child, proposal: proposal)
+        return child.sizeThatFits(ProposedViewSize(width: width, height: proposal.height))
+    }
+
+    func placeSubviews(
+        in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()
+    ) {
+        guard let child = subviews.first else { return }
+        child.place(
+            at: CGPoint(x: bounds.minX, y: bounds.midY), anchor: .leading,
+            proposal: ProposedViewSize(width: bounds.width, height: bounds.height))
+    }
+
+    private func cappedWidth(_ child: LayoutSubview, proposal: ProposedViewSize) -> CGFloat {
+        let ideal = child.sizeThatFits(.unspecified).width
+        return min(ideal, maxWidth, proposal.width ?? .infinity)
     }
 }

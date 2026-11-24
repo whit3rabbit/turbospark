@@ -24,6 +24,8 @@ struct ActiveStreamingRowView: View {
 
             if showsReasoning && !reasoning.isEmpty {
                 ReasoningTraceView(reasoning: reasoning)
+            } else if showsFoldedPreview {
+                ReasoningTraceView(reasoning: reasoning, folded: true)
             }
             if let pending = model.pendingToolCall {
                 ToolCallCardView(model: model, call: pending, result: nil)
@@ -35,13 +37,23 @@ struct ActiveStreamingRowView: View {
                 SubagentLiveCardView(state: state)
             }
             if !output.isEmpty {
-                ChatMessageMarkdownView(output)
+                // Live text only: a dangling `**` or backtick at the tail
+                // waits for its next token instead of flashing as literal.
+                ChatMessageMarkdownView(isRunning ? StreamingMarkdownTail.visible(output) : output)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .onChange(of: isRunning) { wasRunning, running in
             if running && !wasRunning { startedAt = Date() }
         }
+    }
+
+    /// While the model is still thinking and the trace is closed, the rail
+    /// shows the newest lines folded to 72 pt instead of nothing.
+    private var showsFoldedPreview: Bool {
+        guard isRunning, !showsReasoning else { return false }
+        if case .thinking = status { return true }
+        return false
     }
 
     private var status: ChatActivityStatus {
@@ -113,9 +125,11 @@ struct ActiveStreamingRowView: View {
             line.detailIsCode = true
         case .task(let task):
             line.label = Text(verbatim: task)
-        case .thinking(let latestLine):
+        case .thinking:
+            // No one-line detail: the trace below, folded or open, already
+            // ends on the latest line, so the header would repeat it.
             line.label = Text("Thinking...", bundle: .module)
-            line.detail = latestLine
+            line.labelShimmers = true
         case .generating:
             line.label = Text("Generating response...", bundle: .module)
         }

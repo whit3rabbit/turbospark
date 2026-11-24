@@ -92,6 +92,15 @@ struct ToolsPopoverView: View {
             .disabled(!masterOn)
             .opacity(masterOn ? 1 : 0.5)
 
+            if masterOn {
+                Text("Built-in tool definitions: about \(model.enabledToolPromptTokenEstimate) tokens (estimate)",
+                     bundle: .module)
+                    .font(theme.ui(.tiny))
+                    .foregroundStyle(.appSecondary)
+                    .monospacedDigit()
+                    .help(Text("Estimated at four characters per token from each enabled tool's definition. The exact count depends on the model's chat template.", bundle: .module))
+            }
+
             Divider()
 
             Button {
@@ -177,10 +186,44 @@ struct ToolsPopoverView: View {
                     .font(theme.ui(.tiny))
                     .foregroundStyle(.appSecondary)
                     .lineLimit(2)
+                HStack(spacing: 8) {
+                    permissionLabel(model.pickerPermission(forToolNamed: entry.name))
+                    if let tokens = entry.estimatedPromptTokens {
+                        // "~" marks the figure as an estimate; the footer says how.
+                        (Text(verbatim: "~") + Text("\(tokens) tokens", bundle: .module))
+                            .font(theme.ui(.tiny))
+                            .foregroundStyle(.appSecondary)
+                            .monospacedDigit()
+                    }
+                }
             }
         }
         .toggleStyle(.checkbox)
         .accessibilityElement(children: .combine)
+    }
+
+    /// Glyph plus word, so the state never rests on color alone.
+    private func permissionLabel(_ permission: AppToolPermission) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: permission.systemImage)
+                .accessibilityHidden(true)
+            switch permission {
+            case .allow: Text("Allowed", bundle: .module)
+            case .ask: Text("Asks first", bundle: .module)
+            case .deny: Text("Blocked", bundle: .module)
+            }
+        }
+        .font(theme.ui(.tiny))
+        .foregroundStyle(permissionStyle(permission))
+        .help(Text("What your permission settings do with an ordinary call to this tool. A risky call or a new website can still ask.", bundle: .module))
+    }
+
+    private func permissionStyle(_ permission: AppToolPermission) -> AnyShapeStyle {
+        switch permission {
+        case .allow: return AnyShapeStyle(.appSuccess)
+        case .ask: return AnyShapeStyle(.appWarning)
+        case .deny: return AnyShapeStyle(.appDanger)
+        }
     }
 
     private var mcpRow: some View {
@@ -194,6 +237,8 @@ struct ToolsPopoverView: View {
                         .font(theme.ui(.tiny))
                         .foregroundStyle(.appSecondary)
                         .lineLimit(2)
+                    // `tool_call` is the MCP front, so it carries the MCP row.
+                    permissionLabel(model.pickerPermission(forToolNamed: "tool_call"))
                 }
             }
             .toggleStyle(.checkbox)

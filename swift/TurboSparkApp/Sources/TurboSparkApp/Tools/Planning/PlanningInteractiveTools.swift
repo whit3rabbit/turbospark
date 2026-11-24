@@ -322,7 +322,7 @@ public enum PlanningInteractiveToolDefinitions {
     /// Tool schema definition for AskUserQuestion.
     public static let askUserQuestion = OpenAITool.function(
         name: "AskUserQuestion",
-        description: "Prompt the user with 1-4 multiple-choice or interactive questions to clarify requirements.",
+        description: "Prompt the user with 1-4 multiple-choice or interactive questions to clarify requirements. The user may also answer in their own words.",
         parameters: .object(
             properties: [
                 "questions": .array(

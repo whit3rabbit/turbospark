@@ -29,6 +29,7 @@ struct StatusBarView: View {
             }
             FanReadoutView(model: model, showsLeadingDivider: contextFill != nil)
             Spacer(minLength: 12)
+            BackgroundTasksTrayView(model: model)
             throughputReadout
             barDivider
             tokenReadout

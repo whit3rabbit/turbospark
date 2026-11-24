@@ -48,6 +48,10 @@ final class LoadPathSourceScanTests: XCTestCase {
             2,
             "Looks up the installed row of a hub entry for Delete and for Load and Chat; "
                 + "Load and Chat goes through the gated openChatWithModel"),
+        "Installation/HubResultDetailView.swift": (
+            1,
+            "The aliases a new install must not reuse. A model on a drive that is away still holds its alias, "
+                + "so loadableModels would suggest a colliding one. It loads nothing and offers nothing to load"),
         "Installation/ModelHubView.swift": (4, "Installed badges, the installed count and the Installed filter"),
         "Installation/ModelManagerHeaderView.swift": (2, "The count and size in the manager's header"),
         "Installation/ModelManagerView.swift": (1, "Which row the manager list selects first"),

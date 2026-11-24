@@ -3,6 +3,8 @@ import SwiftUI
 
 /// Settings section for live repository instructions and saved project guidance.
 struct ProjectRulesSectionView: View {
+    /// For the token caption only: the loaded session and its window.
+    @ObservedObject var model: AppModel
     let rootDirectoryPath: String
     @Binding var rulePreference: AppRulePreference
     @Binding var customInstructions: String
@@ -63,6 +65,7 @@ struct ProjectRulesSectionView: View {
                 .appEditorSurface(minHeight: 100)
                 .accessibilityLabel(Text("Additional project instructions", bundle: .module))
                 .accessibilityHint(Text("Guidance stored with this project; repository instruction files are read live", bundle: .module))
+            InstructionTokenCaptionView(model: model, text: customInstructions)
         }
     }
 }

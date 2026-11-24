@@ -17,6 +17,9 @@ enum AttachmentImporter {
         /// a caller that post-processes content (the mention resolver's
         /// line ranges) can find them on the chat row.
         var importedIDs: [UUID] = []
+        /// One result per URL in the order given, for the Files section's
+        /// staging list. Derived from the same results as `failures`.
+        var fileResults: [FileResult] = []
 
         /// A single newline-joined error string, or nil when nothing failed.
         var errorText: String? {
@@ -24,57 +27,51 @@ enum AttachmentImporter {
         }
     }
 
+    /// The outcome for one URL. `failure` is nil when it was attached.
+    struct FileResult: Sendable, Equatable {
+        struct Failure: Sendable, Equatable {
+            /// The same text that `Outcome.failures` carries, minus the
+            /// file-name prefix (the staging row shows the name already).
+            var message: String
+            /// Kept typed so the staging list can tell a refusal that will
+            /// repeat (unsupported, too large) from one worth a retry.
+            var extractionError: DocumentTextExtractionError?
+        }
+
+        var url: URL
+        var failure: Failure?
+    }
+
     /// Extracts every URL and attaches the successes to the given chat.
     ///
     /// `allowDuringSubmission` is for `MentionResolver`, which imports while
     /// the submission it belongs to is already `submitting`; every
     /// interactive caller leaves it false and keeps the guard.
+    ///
+    /// `onReading` is observation only: it is told which file extraction is
+    /// about to start on, and changes nothing about the import.
     static func importDocuments(
         _ urls: [URL],
         into model: AppModel,
         chatID: UUID?,
-        allowDuringSubmission: Bool = false
+        allowDuringSubmission: Bool = false,
+        onReading: (@MainActor @Sendable (URL) -> Void)? = nil
     ) async -> Outcome {
         guard !urls.isEmpty else { return Outcome(importedCount: 0, failures: []) }
 
         let outcomes = await Task.detached(priority: .userInitiated) {
-            urls.map { url -> (URL, Result<(ExtractedPromptDocument, ManagedAssetDescriptor), Error>) in
-                // **A PICTURE IS NOT EXTRACTED, IT IS CARRIED BY PATH.**
-                // `DocumentTextExtractor` throws `unsupportedFormat` on every
-                // image type, which is correct for its own job and is why
-                // images could not be attached at all before the engine took
-                // them: the pixels go to the vision tower, and the only thing
-                // the prompt needs is where to find them.
-                if AppPromptAttachment.imageFileExtensions.contains(
-                    url.pathExtension.lowercased())
-                {
-                    do {
-                        let document = ExtractedPromptDocument(
-                                fileName: url.lastPathComponent,
-                                formatLabel: "Image",
-                                text: "",
-                                wasTruncated: false)
-                        let asset = try ManagedAssetStore.shared.store(
-                            fileURL: url, fileName: document.fileName)
-                        return (url, .success((document, asset)))
-                    } catch {
-                        return (url, .failure(error))
-                    }
-                }
-                do {
-                    let document = try DocumentTextExtractor.extract(from: url)
-                    let asset = try ManagedAssetStore.shared.store(
-                        fileURL: url, fileName: document.fileName)
-                    return (url, .success((document, asset)))
-                } catch {
-                    return (url, .failure(error))
-                }
+            var results: [(URL, Result<(ExtractedPromptDocument, ManagedAssetDescriptor), Error>)] = []
+            for url in urls {
+                if let onReading { await onReading(url) }
+                results.append(Self.extractForImport(url))
             }
+            return results
         }.value
 
         var imported = 0
         var failures: [String] = []
         var importedIDs: [UUID] = []
+        var fileResults: [FileResult] = []
         var overContextCount = 0
         let freeTokens = max(0, model.resolvedContextTokens - model.maxNewTokens)
         for (url, outcome) in outcomes {
@@ -105,8 +102,14 @@ enum AttachmentImporter {
                 }
                 importedIDs.append(attachment.id)
                 imported += 1
+                fileResults.append(FileResult(url: url, failure: nil))
             case .failure(let error):
                 failures.append("\(url.lastPathComponent): \(error.localizedDescription)")
+                fileResults.append(FileResult(
+                    url: url,
+                    failure: .init(
+                        message: error.localizedDescription,
+                        extractionError: error as? DocumentTextExtractionError)))
             }
         }
         if overContextCount > 0 {
@@ -115,7 +118,46 @@ enum AttachmentImporter {
                 style: .warning,
                 duration: 6)
         }
-        return Outcome(importedCount: imported, failures: failures, importedIDs: importedIDs)
+        return Outcome(
+            importedCount: imported, failures: failures, importedIDs: importedIDs,
+            fileResults: fileResults)
+    }
+
+    /// One file's extraction and asset copy, unchanged from the batch map it
+    /// was lifted out of so the reading callback can run between files.
+    nonisolated private static func extractForImport(
+        _ url: URL
+    ) -> (URL, Result<(ExtractedPromptDocument, ManagedAssetDescriptor), Error>) {
+        // **A PICTURE IS NOT EXTRACTED, IT IS CARRIED BY PATH.**
+        // `DocumentTextExtractor` throws `unsupportedFormat` on every
+        // image type, which is correct for its own job and is why
+        // images could not be attached at all before the engine took
+        // them: the pixels go to the vision tower, and the only thing
+        // the prompt needs is where to find them.
+        if AppPromptAttachment.imageFileExtensions.contains(
+            url.pathExtension.lowercased())
+        {
+            do {
+                let document = ExtractedPromptDocument(
+                        fileName: url.lastPathComponent,
+                        formatLabel: "Image",
+                        text: "",
+                        wasTruncated: false)
+                let asset = try ManagedAssetStore.shared.store(
+                    fileURL: url, fileName: document.fileName)
+                return (url, .success((document, asset)))
+            } catch {
+                return (url, .failure(error))
+            }
+        }
+        do {
+            let document = try DocumentTextExtractor.extract(from: url)
+            let asset = try ManagedAssetStore.shared.store(
+                fileURL: url, fileName: document.fileName)
+            return (url, .success((document, asset)))
+        } catch {
+            return (url, .failure(error))
+        }
     }
 
     /// Recursively scans a directory for supported text, code, document, and image files.

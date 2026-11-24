@@ -66,6 +66,8 @@ struct PromptComposerFooter: View {
 
     private var trailing: some View {
         HStack(spacing: 6) {
+            SamplingTonePillControl(model: model)
+
             SteeringPillControl(model: model)
 
             // First, not last: `clearAction` below is conditional on the

@@ -111,6 +111,7 @@ extension AppModel {
         self.voiceCallEnabled = settings.voiceCallEnabled
         self.voiceCallAutoSendEnabled = settings.voiceCallAutoSendEnabled
         self.voiceCallDeciderModelID = settings.voiceCallDeciderModelID
+        self.voiceCallMicrophoneUID = settings.voiceCallMicrophoneUID
         self.browserSettings = settings.browser
         self.computerUseSettings = settings.computerUse
         self.networkPolicy = settings.networkPolicy
@@ -146,6 +147,7 @@ extension AppModel {
         self.autoContinuationEnabled = settings.autoContinuationEnabled
         self.nativeToolCallingEnabled = settings.nativeToolCallingEnabled
         self.nativeToolCallingIgnoresSpeed = settings.nativeToolCallingIgnoresSpeed
+        self.followUpSuggestionsEnabled = settings.followUpSuggestionsEnabled
         self.instructionPinningEnabled = settings.instructionPinningEnabled
         self.microcompactMinimumSavingsTokens = settings.microcompactMinimumSavingsTokens
         self.instructionPinTokenCeiling = settings.instructionPinTokenCeiling
@@ -300,6 +302,7 @@ extension AppModel {
             voiceCallEnabled: voiceCallEnabled,
             voiceCallAutoSendEnabled: voiceCallAutoSendEnabled,
             voiceCallDeciderModelID: voiceCallDeciderModelID,
+            voiceCallMicrophoneUID: voiceCallMicrophoneUID,
             alwaysStartInGhostMode: alwaysStartInGhostMode,
             offPeakEnabled: offPeakEnabled,
             rootlessPermissionMode: activePermissionMode.rawValue,
@@ -319,6 +322,7 @@ extension AppModel {
             instructionPinningEnabled: instructionPinningEnabled,
             microcompactMinimumSavingsTokens: microcompactMinimumSavingsTokens,
             instructionPinTokenCeiling: instructionPinTokenCeiling,
+            followUpSuggestionsEnabled: followUpSuggestionsEnabled,
             serverHost: serverHost,
             serverFavorites: serverFavorites,
             serverPinnedPort: serverPinnedPort,

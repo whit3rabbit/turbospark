@@ -155,6 +155,7 @@ extension AppModel {
         // holds the lane (the question blocks inside its tool task) but what
         // the chat is waiting for is the user.
         if pendingUserQuestions?.chatID == chatID { return .awaitingQuestion }
+        if pendingPlanApproval?.chatID == chatID { return .awaitingQuestion }
         if generating && generatingChatID == chatID { return .generating }
         if !(pendingUserMessages[chatID] ?? []).isEmpty
             || !(pendingTaskNotifications[chatID] ?? []).isEmpty

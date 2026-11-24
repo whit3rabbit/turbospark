@@ -16,6 +16,12 @@ final class ComposerAutocompleteController: ObservableObject {
     @Published private(set) var hint: String?
     /// Highlighted row, an index into `suggestions`.
     @Published private(set) var selectedIndex: Int = 0
+    /// The `/` menu's kind chip; nil is "All", the flat-ranked menu.
+    /// Cleared whenever the popup closes, so each `/` starts at All.
+    @Published private(set) var slashFilter: ComposerSuggestionGroup?
+    /// The chips to offer beside "All"; empty hides the chip row (the `@`
+    /// menu, or a `/` query matching only one kind).
+    @Published private(set) var slashFilterGroups: [ComposerSuggestionGroup] = []
 
     private(set) var triggerMatch: ComposerTriggerMatch?
     /// The trigger Escape dismissed. Stays closed while that exact trigger
@@ -26,6 +32,21 @@ final class ComposerAutocompleteController: ObservableObject {
     private var scanGeneration = 0
     private var lastSkills: [AppSkill] = []
     private var lastProjectRoot: URL?
+
+    /// True for the `@` menu, whose rows are stored in grouped order. The
+    /// `/` menu keeps its flat prefix-first ranking: commands and skills
+    /// interleave by match quality there, and grouping would bury a better
+    /// skill match under a weaker command.
+    var showsGroupHeaders: Bool {
+        if case .mention = triggerMatch?.trigger { return true }
+        return false
+    }
+
+    /// The popup's sections. `suggestions` is already in this order for the
+    /// `@` menu, so each section's `startIndex` is a `selectedIndex` value.
+    var sections: [ComposerSuggestionSection] {
+        showsGroupHeaders ? ComposerSuggestionGrouping.sections(suggestions) : []
+    }
 
     var isVisible: Bool {
         triggerMatch != nil && dismissedMatch != triggerMatch
@@ -63,6 +84,14 @@ final class ComposerAutocompleteController: ObservableObject {
     func dismiss() {
         dismissedMatch = triggerMatch
         objectWillChange.send()
+    }
+
+    /// A chip click. The highlight returns to the top row, like a new query.
+    func setSlashFilter(_ group: ComposerSuggestionGroup?) {
+        guard slashFilter != group else { return }
+        slashFilter = group
+        selectedIndex = 0
+        recompute()
     }
 
     /// Moves the highlight, wrapping at both ends.
@@ -107,9 +136,16 @@ final class ComposerAutocompleteController: ObservableObject {
         switch match.trigger {
         case .slash(let prefix):
             hint = nil
-            setSuggestions(
-                ComposerAutocompleteEngine.slashCandidates(prefix: prefix, skills: lastSkills))
+            // Ranked uncapped so a chip can reach rows the "All" cap cut
+            // (an empty prefix fills the cap with commands alone).
+            let ranked = ComposerAutocompleteEngine.slashCandidates(
+                prefix: prefix, skills: lastSkills, limit: .max)
+            slashFilterGroups = ComposerSuggestionGrouping.filterGroups(ranked)
+            setSuggestions(Array(
+                ComposerSuggestionGrouping.filtered(ranked, to: slashFilter)
+                    .prefix(ComposerAutocompleteEngine.maxSuggestions)))
         case .mention(let query):
+            slashFilterGroups = []
             recomputeMention(query: query, projectRoot: lastProjectRoot)
         }
     }
@@ -127,7 +163,7 @@ final class ComposerAutocompleteController: ObservableObject {
         // a flash of empty), plus the scanning hint while a rebuild runs.
         let known = ProjectFileIndex.shared.cachedEntries(for: projectRoot)
         hint = known == nil ? "Scanning project files..." : nil
-        setSuggestions(ComposerAutocompleteEngine.mentionCandidates(query: query, entries: known ?? []))
+        setSuggestions(Self.groupedMentionCandidates(query: query, entries: known ?? []))
 
         let generation = scanGeneration
         let match = triggerMatch
@@ -135,10 +171,18 @@ final class ComposerAutocompleteController: ObservableObject {
             let entries = await ProjectFileIndex.shared.entries(for: projectRoot)
             guard let self else { return }
             guard self.scanGeneration == generation, self.triggerMatch == match else { return }
-            self.setSuggestions(
-                ComposerAutocompleteEngine.mentionCandidates(query: query, entries: entries))
+            self.setSuggestions(Self.groupedMentionCandidates(query: query, entries: entries))
             self.hint = nil
         }
+    }
+
+    /// Mention rows in grouped display order, so the flat `selectedIndex`
+    /// the arrows move walks the menu the way it reads.
+    private static func groupedMentionCandidates(
+        query: String, entries: [ProjectFileEntry]
+    ) -> [ComposerSuggestion] {
+        ComposerSuggestionGrouping.flattened(
+            ComposerAutocompleteEngine.mentionCandidates(query: query, entries: entries))
     }
 
     private func setSuggestions(_ updated: [ComposerSuggestion]) {
@@ -159,5 +203,7 @@ final class ComposerAutocompleteController: ObservableObject {
         suggestions = []
         hint = nil
         selectedIndex = 0
+        slashFilter = nil
+        slashFilterGroups = []
     }
 }
