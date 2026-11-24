@@ -1861,6 +1861,51 @@
         }
       ],
       "notes": "The LookAtMyQuant packed release (MIT), trellis and Lloyd-Max codes kept native (docs/LAMQ.md). Downloaded whole at the pinned revision, then converted; the install is about 1.4x the release and needs about 13.5 GiB free while both exist. The smallest Inkling install: the memory oracle (inkling2_lamq54_memory_oracle) holds it at 1,587 MiB streamed at 16 slots, 16.5 to 18.9 tok/s, over short-explanation and medium-review only, since on long-synthesis it reasons past the 4,096-token budget where the original stops at 2,070. Resident, one indicative reading peaked at 8.4 GiB at about 30 tok/s. It loses quality against inkling2-mini: about 80 percent next-token agreement and mean KL 0.25 to 0.31 on English and code windows. That loss is in the release's weights, not the runtime (a CPU f32 forward on the same weights matches Metal at KL 1.4e-3). The quality gate (inkling2_lamq54_quality_gate) holds perplexity 5.7391 (22 percent over the original's 4.7024) and both digests, so the status is verified; verified means its gates hold, not that it matches the original."
+    },
+    {
+      "alias": "inkling2-mini-ud-q4kxl",
+      "name": "Inkling 2 Mini (unsloth UD-Q4_K_XL GGUF: original NVFP4 experts, Q8_0 on layers 20-23)",
+      "family": "inkling2_loop",
+      "source": {
+        "kind": "gguf",
+        "repo": "unsloth/Inkling-2-Mini-GGUF",
+        "revision": "8078d149286eec7193795413b9e0643da6d11fa1",
+        "file": "Inkling-2-Mini-UD-Q4_K_XL.gguf"
+      },
+      "sidecars": {
+        "repo": "thinkingmachines/Inkling-2-Mini",
+        "revision": "ed40e7da625f594fc9c4990f5f66be24873c22d7",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "chat_template.jinja",
+          "generation_config.json"
+        ]
+      },
+      "mtp": {
+        "repo": "thinkingmachines/Inkling-2-Mini",
+        "revision": "ed40e7da625f594fc9c4990f5f66be24873c22d7"
+      },
+      "download_bytes": 17629760736,
+      "install_bytes": 17900000000,
+      "status": "verified",
+      "gates": [
+        "inkling2_ud_q4kxl_quality_gate",
+        "inkling2_ud_q4kxl_memory_oracle"
+      ],
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 8192,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 2705,
+          "decode_tok_s_min": 16.36,
+          "decode_tok_s_max": 19.675,
+          "measured_on": "2026-11-23",
+          "source": "this port, two oracle sessions, AC, streamed (inkling2_ud_q4kxl_memory_oracle); all three protocol cases stop at end of turn"
+        }
+      ],
+      "notes": "unsloth's recommended dynamic GGUF (UD-Q4_K_XL, Apache 2.0): the original NVFP4 expert bytes with per-expert scales on layers 0-19, Q8_0 experts on 20-23, block-quantized dense weights. Downloaded whole at the pinned revision, then converted; it needs about 35 GiB free while both exist. The NVFP4 layers run the native Inkling pair (a GGUF NVFP4 row is the native layout), so resident decode is about 29 tok/s on a 36 GB Mac and chunked prefill about 90 tok/s, bit-exact with sequential decode. The memory oracle (inkling2_ud_q4kxl_memory_oracle) holds it streamed at 16 slots: 2,705 MiB peak at 8,192 context, 16.4 to 19.7 tok/s. The quality gate (inkling2_ud_q4kxl_quality_gate) holds perplexity 4.6844 (0.4 percent under the original's 4.7024) and both digests, so the status is verified. Logits sit within llama.cpp's own noise on the same file (docs/INKLING2_PHASE0.md). The row's mtp source fetches the original's DSpark block drafter (636 MB) into the install's dspark/; unsloth's own drafter GGUFs are a different drafter and are not read. Speculative decoding stays off unless asked for."
     }
   ]
 }

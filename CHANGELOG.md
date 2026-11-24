@@ -59,6 +59,14 @@ when this file gets updated relative to the version bump and the tag.
   (perplexity 4.7024, 4.8026 and 5.7391), greedy and sampled digests frozen
   from two fresh processes each, and the 8-slot digest equal to the 16-slot
   one on all three.
+- unsloth GGUFs for Inkling 2: every expert type unsloth ships runs (the
+  sub-IQ1_S types IQ1_XS, IQ1_XXS and IQ1_XXXS, and MXFP4 as a down
+  projection), GGUF NVFP4 expert layers run the native Inkling pair (about
+  1.5x decode and 2.6x chunked prefill on UD-Q4_K_XL; off with
+  `TURBOSPARK_INKLING2_GGUF_NATIVE_NVFP4=0`), and a new verified catalog row
+  `inkling2-mini-ud-q4kxl` for unsloth's recommended UD-Q4_K_XL, with its own
+  memory oracle and quality gate. A GGUF source takes a `dspark/` folder
+  beside it as its DSpark drafter.
 - The app shows Inkling 2 rows with their own family tile, and Discover
   marks them as MoE before they are installed.
 - Inkling 2 LookAtMyQuant diagnostics in the runtime crate:

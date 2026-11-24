@@ -295,6 +295,7 @@ rows.
 | `inkling2-mini` | 2,651 and 2,662 MiB | 14.51 to 17.98 tok/s | 2,800 MiB / 10.0 |
 | `inkling2-mini-mlx4` | 2,663 and 2,661 MiB | 17.94 to 20.52 tok/s | 2,800 MiB / 12.5 |
 | `inkling2-mini-lamq54` | 1,573 and 1,587 MiB | 16.51 to 18.95 tok/s | 1,680 MiB / 11.5 |
+| `inkling2-mini-ud-q4kxl` (2026-11-23) | 2,701 and 2,705 MiB | 16.36 to 19.68 tok/s | 2,870 MiB / 11.4 |
 
 Every case stopped at end of turn with the same token counts in both
 sessions, and a warm replay grew +0.00 MiB. The peak is the slot cache
@@ -331,6 +332,7 @@ encodes as those two special tokens. Streamed, 16 slots, 8,192 context.
 | `inkling2-mini` | 4.7024 | yes | 0.89x |
 | `inkling2-mini-mlx4` | 4.8026 (+2.1%) | yes | 0.87x, 0.89x |
 | `inkling2-mini-lamq54` | 5.7391 (+22%; 5.7382 before the 2026-11-23 GEMV move) | yes | 0.95x, 0.96x |
+| `inkling2-mini-ud-q4kxl` (2026-11-23) | 4.6844 (-0.4%) | yes | 0.92x, 0.96x |
 
 Two fresh processes per install agreed on the perplexity's last digit and
 on both digests' every hex character; a third asserted the frozen rows. The
@@ -1201,6 +1203,16 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   Speculative, depth 2, with the switch on (tok/s plain, speculative; all
   lossless): prose 33.3, 29.9; code 36.8, 37.4; long 28.1, 28.3; edit 30.9,
   35.6. Plain decode was 19 to 23 tok/s through the GGUF pair.
+- DONE (2026-11-23): catalog row `inkling2-mini-ud-q4kxl` (unsloth
+  `Inkling-2-Mini-UD-Q4_K_XL.gguf` @ `8078d149`, sidecars and the DSpark
+  drafter from the original release at `ed40e7da`), status `verified`. Memory
+  oracle (`bench/tests/inkling2_ud_q4kxl_memory_oracle.rs`, streamed, 16
+  slots, 8,192 context, all three cases): frozen from two AC runs (peaks
+  2,701 and 2,705 MiB, 16.36 to 19.68 tok/s, same token counts, flat
+  replay), ceiling 2,870 and floor 11.4, asserted by a third (2,704 MiB,
+  16.16 to 19.02 tok/s); its `measured` block agrees with the oracle row.
+  The network guard passes the row (header `inkling2_loop`, sidecars
+  present, size as recorded).
 - DONE (2026-11-23): prompt-copy drafting, mtplx item (3)
   (`runtime/src/prompt_copy.rs`, wired in `speculative.rs`; on with the
   DSpark drafter, `TURBOSPARK_SPEC_PROMPT_COPY=0` turns it off). When the
