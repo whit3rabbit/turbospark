@@ -285,6 +285,11 @@ staging files changed.
   late, a backed-up queue, or a failed open or push falls back to raw audio
   for the rest of the take (`AudioLiveNoiseReductionTests`). It has no path
   to voice cloning references, so the per-region consent rule is unchanged.
+  It streams on MLX (`Audio/VoiceIsolatorMLXLive.swift`) first, even with
+  the Core ML step installed; the Rust stream opens only when the MLX load
+  fails. The MLX model has its own slot (`liveVoiceIsolator`), so
+  a take never evicts the resident model, and is released wherever
+  `qwenModel` is (`VoiceIsolatorMLXLiveTests`).
 - CoreAudio process tap vs ScreenCaptureKit: Meeting audio capture on macOS
   14.2+ uses native CoreAudio process tapping (`CATapDescription`) with
   `NSAudioCaptureUsageDescription` to isolate conference apps without

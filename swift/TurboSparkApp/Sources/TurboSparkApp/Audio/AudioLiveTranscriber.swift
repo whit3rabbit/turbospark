@@ -40,7 +40,7 @@ final class AudioLiveTranscriber: @unchecked Sendable {
     private let open: @Sendable () throws -> AudioLiveStreaming
     private let onEvent: @Sendable (Event) -> Void
     /// Opens the live voice isolation stream, when the take reduces noise.
-    private let openCleaner: (@Sendable () throws -> AudioLiveEnhancing)?
+    private let openCleaner: (@Sendable () async throws -> AudioLiveEnhancing)?
     private var cleaner: AudioLiveVoiceCleaner
     private let backlogLimit: Int
     /// Audio handed to the model per append: big enough to catch up fast
@@ -68,7 +68,7 @@ final class AudioLiveTranscriber: @unchecked Sendable {
     ///   (`AudioLiveVoiceCleaner`) before live text hears it.
     init(feed: AudioLiveFeed, backlogSeconds: Double = 600,
          cleaner: AudioLiveVoiceCleaner = AudioLiveVoiceCleaner(),
-         openCleaner: (@Sendable () throws -> AudioLiveEnhancing)? = nil,
+         openCleaner: (@Sendable () async throws -> AudioLiveEnhancing)? = nil,
          open: @escaping @Sendable () throws -> AudioLiveStreaming,
          onEvent: @escaping @Sendable (Event) -> Void) {
         self.feed = feed; self.open = open; self.onEvent = onEvent
@@ -89,11 +89,12 @@ final class AudioLiveTranscriber: @unchecked Sendable {
             let result = Result { try open() }
             queue.async { [self] in opened(result) }
         }
-        // Its own thread, so a slow first load of either model never holds
+        // Its own task, so a slow first load of either model never holds
         // the other back. The microphone passes raw until it is ready.
         if let openCleaner {
-            Thread.detachNewThread { [self] in
-                let result = Result { try openCleaner() }
+            Task.detached { [self] in
+                let result: Result<AudioLiveEnhancing, Error>
+                do { result = .success(try await openCleaner()) } catch { result = .failure(error) }
                 queue.async { [self] in cleanerOpened(result) }
             }
         }
@@ -227,5 +228,6 @@ final class AudioLiveTranscriber: @unchecked Sendable {
     func pumpForTesting() { queue.sync { pump(flush: false) } }
     var isOpenForTesting: Bool { queue.sync { stream != nil } }
     var isCleaningForTesting: Bool { queue.sync { cleaner.stream != nil } }
+    var cleaningTimingsForTesting: AudioLivePushTimings { queue.sync { cleaner.timings } }
     #endif
 }

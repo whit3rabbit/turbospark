@@ -1,4 +1,5 @@
 import Foundation
+import os
 import TurboSpark
 
 /// The calls voice cleaning needs from a live isolation stream, so tests can
@@ -7,8 +8,47 @@ protocol AudioLiveEnhancing: AnyObject, Sendable {
     func push(_ pcm: [Float]) throws -> AudioEnhancePush
     func flush() throws -> [Float]
     func close()
+    /// The network that runs it, for the take's timing log.
+    var backend: String { get }
+}
+extension AudioLiveEnhancing {
+    var backend: String { "unknown" }
 }
 extension AudioEnhanceStream: AudioLiveEnhancing {}
+
+/// Wall time of every push in a take, against the audio each carried.
+struct AudioLivePushTimings: Equatable {
+    private(set) var processingMs: [Double] = []
+    private(set) var lateCount = 0
+    private(set) var audioSeconds = 0.0
+    var backend = ""
+
+    mutating func record(_ push: AudioEnhancePush, frames: Int, sampleRate: Double) {
+        processingMs.append(push.processingMs)
+        if push.late { lateCount += 1 }
+        audioSeconds += Double(frames) / sampleRate
+    }
+
+    /// Nearest-rank percentile, nil before the first push.
+    func percentile(_ p: Double) -> Double? {
+        guard !processingMs.isEmpty else { return nil }
+        let sorted = processingMs.sorted()
+        let rank = Int((p / 100 * Double(sorted.count)).rounded(.up)) - 1
+        return sorted[min(sorted.count - 1, max(0, rank))]
+    }
+
+    var summary: String {
+        guard let median = percentile(50), let p95 = percentile(95), let worst = processingMs.max() else {
+            return "backend \(backend), no pushes"
+        }
+        let total = processingMs.reduce(0, +)
+        return String(format: "backend %@, %d pushes, %.1f s audio, median %.2f ms, p95 %.2f ms, max %.2f ms, %d late, RTF %.3f",
+                      backend, processingMs.count, audioSeconds, median, p95, worst, lateCount,
+                      audioSeconds > 0 ? total / 1000 / audioSeconds : 0)
+    }
+}
+
+private let liveCleanerLog = Logger(subsystem: "com.turbospark.app", category: "LiveNoiseReduction")
 
 /// "Reduce background noise" for live text: the microphone's packets pass
 /// through a live isolation stream before the mixer, so live text hears the
@@ -47,6 +87,8 @@ struct AudioLiveVoiceCleaner {
     /// Pushed input not yet released: its timeline offset and 48 kHz frames.
     private var spans: [(offset: Double, frames: Int)] = []
     private var lateRun = 0.0
+    /// This take's pushes, logged when the stream closes.
+    private(set) var timings = AudioLivePushTimings()
 
     init(source: String = "microphone", lateLimitSeconds: Double = 1, backlogLimitSeconds: Double = 2) {
         self.source = source; self.lateLimitSeconds = lateLimitSeconds; self.backlogLimitSeconds = backlogLimitSeconds
@@ -57,6 +99,7 @@ struct AudioLiveVoiceCleaner {
     mutating func attach(_ stream: AudioLiveEnhancing) {
         guard !gaveUp, self.stream == nil else { stream.close(); return }
         self.stream = stream
+        timings = AudioLivePushTimings(backend: stream.backend)
     }
 
     /// The packets to mix: cleaned microphone voice, everything else as
@@ -78,6 +121,7 @@ struct AudioLiveVoiceCleaner {
             do {
                 let push = try stream.push(mono)
                 spans.append((packet.offset, mono.count))
+                timings.record(push, frames: mono.count, sampleRate: Self.sampleRate)
                 out += place(push.voice)
                 lateRun = push.late ? lateRun + Double(mono.count) / Self.sampleRate : 0
                 if lateRun > lateLimitSeconds {
@@ -103,7 +147,12 @@ struct AudioLiveVoiceCleaner {
     }
 
     mutating func close() {
-        stream?.close(); stream = nil
+        if let stream {
+            stream.close()
+            let summary = timings.summary
+            liveCleanerLog.info("live noise reduction: \(summary, privacy: .public)")
+        }
+        stream = nil
         spans = []
     }
 

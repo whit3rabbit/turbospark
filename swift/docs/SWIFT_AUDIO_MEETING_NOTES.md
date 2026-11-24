@@ -77,7 +77,7 @@ by default, shown beside the live text model only when the
 `voice-isolator-v1-realtime` install is present and can run) cleans the
 microphone for live text only (`Audio/AudioLiveVoiceCleaner.swift`):
 - On the transcriber's queue, microphone packets from the live feed are
-  converted to 48 kHz mono, pushed through `AudioEnhanceStream`, and the
+  converted to 48 kHz mono, pushed through a live isolation stream, and the
   released voice goes to the mixer, which resamples it to 16 kHz. The system
   audio tap is never cleaned. Capture persists its own copy of every packet,
   so the saved recording and the final pass are the original audio.
@@ -91,6 +91,13 @@ microphone for live text only (`Audio/AudioLiveVoiceCleaner.swift`):
   stops for the rest of the take, live text hears the raw microphone, and
   `AudioLiveText.cleaningStatus` shows one line. A failed open or push does
   the same. Tests: `AudioLiveNoiseReductionTests`.
+- Engine (`Audio/VoiceIsolatorMLXLive.swift`): the vendored MLX port, even
+  when the Core ML step is installed (faster at capture packet sizes), loaded
+  once after the install's bytes verify and kept in its own slot
+  (`liveVoiceIsolator`) so a take never evicts the resident model. Only an
+  MLX load failure opens the Rust `AudioEnhanceStream` instead, on its Core
+  ML step when installed (macOS 15+), else Metal, which is not real time. Each take logs its push timings on close
+  (category `LiveNoiseReduction`). Tests: `VoiceIsolatorMLXLiveTests`.
 
 ---
 

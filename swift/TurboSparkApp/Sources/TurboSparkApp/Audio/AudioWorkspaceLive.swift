@@ -107,8 +107,12 @@ extension AudioWorkspaceController {
         let token = epoch
         // Cleans only what live text hears; capture saves the original.
         let cleanerPath = reducesLiveNoise ? liveNoiseReductionPath : nil
-        let openCleaner: (@Sendable () throws -> AudioLiveEnhancing)? = cleanerPath.map { path in
-            { try AudioEnhanceStream(path: path) }
+        // Core ML when its step is installed, else MLX (openLiveCleaner).
+        let openCleaner: (@Sendable () async throws -> AudioLiveEnhancing)? = cleanerPath.map { path in
+            { [weak self] in
+                guard let self else { throw CancellationError() }
+                return try await self.openLiveCleaner(path: path)
+            }
         }
         let transcriber = AudioLiveTranscriber(feed: feed, openCleaner: openCleaner,
                                                open: { try AudioStreamSession(modelPath: path) }) { [weak self] event in

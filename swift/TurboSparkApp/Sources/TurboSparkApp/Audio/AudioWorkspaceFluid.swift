@@ -20,7 +20,7 @@ extension AudioWorkspaceController {
         if let previous = session { await Task.detached { previous.close() }.value }
         session = nil
         modelAccessURL?.stopAccessingSecurityScopedResource(); modelAccessURL = nil
-        if qwenModel != nil || voiceIsolatorModel != nil { qwenModel = nil; voiceIsolatorModel = nil; MLX.Memory.clearCache() }
+        if qwenModel != nil || voiceIsolatorModel != nil || liveVoiceIsolator != nil { qwenModel = nil; voiceIsolatorModel = nil; liveVoiceIsolator = nil; MLX.Memory.clearCache() }
         fluidTranscriber = nil; sessionKey = nil; loadedModelAlias = nil
 
         let budget = min(ProcessInfo.processInfo.physicalMemory * 3 / 4, MTLCreateSystemDefaultDevice()?.recommendedMaxWorkingSetSize ?? 0)
