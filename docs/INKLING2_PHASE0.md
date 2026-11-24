@@ -1081,12 +1081,23 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   | 711 tokens, every 4th row and the last 16 | resident | 183/189 | 5.9e-3 | 6.9e-2 |
   | same | streamed | 180/189 | 6.2e-3 | 1.1e-1 |
 
-  Not run on the ggml-org repo: its Q8_0 and BF16 files (27.8 and 52.2 GB).
-  An intake holds the raw file and an install of about its size at once
-  (about 55 and 100 GB), past this machine's free disk (about 30 GB). The
-  three gated files already cover the expert path every GGUF type shares
-  (blob tables over the decode pair), and Q8_0 experts run the same pair.
-  The raw GGUFs were deleted after intake; their installs remain.
+  ggml-org `Inkling-2-Mini-Q8_0.gguf` @ `e8a2cecf` (sha256 `d57542f8...`; Q8_0
+  experts in every layer): intake OK (646 names, 26 GB). Resident is REFUSED
+  on this 36 GB machine by the working-set rule (24.23 GiB experts + 1.64
+  GiB weights + the 10 GiB reserve over Metal's 28.08 GiB), so `auto`
+  streams it and the multi-row gates, which need resident experts, cannot
+  run here; on a larger machine they would take the same blob-table path.
+  Streamed logits against llama.cpp master `c212d25` (all 49 layers on
+  Metal, no zero rows): 12 tokens 12/12 top-1, mean KL 4.8e-6; 711 tokens
+  (every 4th row and the last 16) 182/189, mean KL 4.0e-3, max 3.4e-2.
+  The ggml-org BF16 file (52.2 GB, `7074c976...`) is refused BY DESIGN: its
+  header (read from the first 48 MB with an HTTP range request; 704
+  tensors) stores every layer's `ffn_gate_up_exps` and `ffn_down_exps` as
+  BF16, the converter's full-precision dequantization of the original
+  experts, and `write_inkling2_gguf_install` refuses float expert types by
+  name ("has no Inkling expert pair"). Those weights are the original's,
+  which the HF install serves. The raw GGUFs were deleted after intake;
+  their installs remain.
 - DONE (2026-11-23): prompt-copy drafting, mtplx item (3)
   (`runtime/src/prompt_copy.rs`, wired in `speculative.rs`; on with the
   DSpark drafter, `TURBOSPARK_SPEC_PROMPT_COPY=0` turns it off). When the
