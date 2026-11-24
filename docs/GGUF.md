@@ -98,6 +98,10 @@ authoritative list. At the time of writing:
 | `general.architecture` | Family |
 |---|---|
 | `gemma4` | Gemma 4 |
+| `gemma3` | Gemma 3 (1B and 270M unscaled; 4B and 12B with linear rope scaling, see below) |
+| `qwen3next` | Qwen 3.6 GDN MoE flow (`QwenGdnMoe`), 512 experts top-10; see below |
+| `phi3` | Llama flow: Phi-3, Phi-3.5 (LongRoPE, fused tensors split at repack); see below |
+| `gemma2` | Gemma flow dense arm, no q/k norm, attention-score soft cap (2B and 9B head width); see below |
 | `llama` | Llama flow (Mixtral-style MoE, and families that share it) |
 | `granite` | Llama flow |
 | `qwen35`, `qwen35moe` | Qwen 3.5 dense, Qwen 3.5/3.6 GDN MoE |
@@ -129,7 +133,9 @@ Vision towers are not in a GGUF (llama.cpp keeps them in a separate `mmproj`
 file), so a VL GGUF installs its text trunk.
 
 The quantizer refuses a split GGUF (`-0000N-of-0000M.gguf`) and discovery skips
-one. Merge it first with `llama-gguf-split`.
+one; merge it first with `llama-gguf-split` for those two. The install walk reads
+split metadata (`gguf_set.rs`) and MiniMax-M2 installs from three shards, but
+that path has not been re-run for this edit.
 
 ## Unsloth Dynamic (UD) files
 
@@ -243,6 +249,136 @@ writable types with `executable` and `readableByStockLlamaCpp`). See
   layouts install on the per-token path.
 - **Q2_0 routed phase 2** serves a `top_k` of 10 (hand-written kernel) or at most
   8 (generated kernel). Other values are refused at open.
+- **Gated-DeltaNet `ssm_out` block size.** llama.cpp stores the V heads of
+  `qwen35` / `qwen35moe` `ssm_out` (`linear_attn.out_proj`) tiled, and the walk
+  restores them by moving column bytes. That works only when a 128-column V
+  head is a whole number of blocks. Q8_0, Q4_0 and Q5_0 (32-element blocks)
+  pass. K-quants and IQ types (256-element blocks) on that tensor are refused,
+  and the probe reports the same refusal from the header
+  (`repack::gguf_v_head_block_split`). Qwen4Exp is the exception: it
+  dequantizes a Q3_K to Q6_K, IQ3_S or IQ4_XS `ssm_out`, permutes it and stores
+  BF16. That is about 3.6x the bytes of a Q4_K source and about 2.4x of a Q6_K.
+  It is also how Gemma 3 handles Q5_0 matrices (about 2.9x).
+- **Llama 3.1/3.2/3.3 scaled RoPE is wired and NOT run against a real file.**
+  `rope_freqs.weight` on a `llama` file is read by value and fitted to Llama 3
+  parameters (ramp 1..4 over 8192, only `factor` free: 8 for 3.1 and 3.3, 32 for
+  3.2's 1B and 3B). A vector that fits no known set refuses the install. The fit
+  is `compute::llama3_rope_factors` against the file's own vector, so a
+  mismatch is caught at install, not at decode. Decode applies it through
+  `rope_neox_freqs`. Evidence is a synthetic Metal test that the branch is taken
+  (it fails with the branch disabled) and a CPU formula test; no real Llama 3
+  GGUF has been installed or compared with llama.cpp, so long-context quality
+  is unmeasured. The batched dense-Llama attention under construction must take
+  the same branch (`RealLlamaState::rope_frequencies`).
+- **Gemma 3 4B and 12B (linear rope scaling) are wired and NOT run against a
+  real file.** `rope.scaling.type = linear` is carried as
+  `rope_scaling.linear_factor` and applied to the global layers only through a
+  per-pair table; sliding layers stay unscaled. Same evidence level as Llama 3
+  above. The 27B (`key_length` 128, a different attention scale) is still
+  refused.
+- **Tokenizer rebuilt from the GGUF.** `tokenizer_files_from_gguf` builds an HF
+  `tokenizer.json` and `tokenizer_config.json` (chat template, bos/eos) from
+  `tokenizer.ggml.*`, so a GGUF no longer needs its source repository for a
+  tokenizer. Only byte-level BPE (`tokenizer.ggml.model = gpt2`) with a
+  `tokenizer.ggml.pre` of `gpt-2`, `llama-bpe` or `qwen2` is built; every other
+  model (SentencePiece: Llama 2, Mistral, Gemma) or pre-tokenizer name is
+  refused by name. Unit tests check structure only. Encode equality IS now checked for
+  Qwen3-0.6B (pre `qwen2`): 21 corpus strings (code, digits, whitespace runs,
+  contractions, CJK, Cyrillic, Arabic, emoji, special tokens) encode to identical
+  ids through this crate's loader
+  (`crates/tokenizer/tests/gguf_tokenizer_encode_equality.rs`, ignored and
+  env-gated). The `llama-bpe` and `gpt-2` pre-tokenizer regexes are NOT yet
+  checked this way (Llama 3's HF repo is gated), and neither is the one known
+  deviation: Qwen's FIM and repo tokens are special in the GGUF and not in HF. Only the local install example
+  uses it so far (`gguf_local_install`, when the sidecar directory has no
+  `tokenizer.json`); the catalog pull still requires `sidecars.repo`.
+- **`qwen3next` (Qwen3-Next-80B-A3B) runs, and is the one new family here with a
+  real cross-engine gate.** It is the `qwen35moe` decode flow with three source
+  differences handled at repack and invisible to the runtime: a fused `ssm_ba`
+  split into beta and alpha rows by key-head group, V heads already grouped (no
+  tiled restore, `source_v_heads_grouped`), and a layer mask read from which
+  tensors each layer has (`attn_q` against `attn_qkv`), because Unsloth's
+  conversion predates the `full_attention_interval` key. Top-10 routing needed
+  ten-slot phase-2 kernels (`MOE_PHASE2_K10`, 21 types, 320 threads); the
+  hand-written phase-2 types (Q8_0, Q4_K, Q6_K, IQ4_NL, MXFP4) still serve at
+  most 8 and are refused at 10 by name. Evidence on
+  `Qwen3-Next-80B-A3B-Instruct-UD-TQ1_0.gguf` (19.1 GiB, IQ1_S dominant), M4 Max
+  Metal: a 320-token greedy generation is coherent and correct (about 11.7
+  tok/s decode), and `scripts/kld_llamacpp.py` against llama.cpp b12359 on the
+  SAME bytes and the SAME 558 ids reads a mean KL of 0.00312 nats at 97.5% top-1,
+  between a 0.00135 shape floor (98.0%) and a 0.00665 backend floor (95.7%);
+  perplexity 13.856 against llama.cpp's 13.819 cached and 13.855 batched Metal.
+  NOT done: other quants of this model, the BF16 and Q8_0 split files, a
+  catalog row (no pins or license review), memory-oracle and performance gates,
+  and the Qwen3-Next-Thinking variant. Its tokenizer still comes from
+  `--sidecar-repo Qwen/Qwen3-Next-80B-A3B-Instruct`.
+- **`phi3` (Phi-3.5-mini) runs and is gated against llama.cpp.** It is the dense
+  `llama` flow with the fused `attn_qkv` and `ffn_up` split by rows at repack
+  (q, k, v; gate FIRST then up, HF's `chunk(2)`), LongRoPE carried as two exact
+  FP32 residents (`rope_factors_short` and `rope_factors_long`) plus
+  `rope_scaling.longrope_attn_factor` (the cos/sin magnitude), and the
+  short/long table picked once at open from `max_context` against
+  `rope.scaling.original_context_length`, as llama.cpp does per context. A real
+  sliding window (Phi-3-mini-4k's 2047) is refused. On
+  `Phi-3.5-mini-instruct-Q4_K_M.gguf` (2.2 GiB, M4 Max Metal): `scripts/
+  kld_llamacpp.py` against llama.cpp b12359 on the SAME bytes and 652 ids reads
+  a mean KL of 0.0000333 nats at 99.69% top-1 (shape floor 0.0000173 and 99.85%,
+  backend floor 0.00675 and 94.6%), perplexity 8.2529 against llama.cpp's 8.2545,
+  at about 55 tok/s decode. **Only the SHORT table is compared**: the harness
+  context (n_ids + 8) is under the 4096 original context, so the LONG table
+  (contexts above 4096) is checked for coherence only (an 8192 context, a
+  correct 200-token answer) and has no cross-engine number. Phi-4 and the
+  larger Phi-3 sizes are untested. It needed a `Phi3` chat dialect: the table
+  carries `<s>` and `</s>`, so it used to resolve Mistral, whose only stop is
+  `</s>`, and the model ran past `<|end|>` into an invented next turn.
+- **`gemma2` (Gemma 2 2B) runs and is gated against llama.cpp.** It is the Gemma
+  flow's dense arm with no q/k norm tensors (Gemma 3 added them), local and
+  global layers alternating one for one (even layers slide, odd are global) at
+  the SAME rope base, the final-logit cap 30, and the ATTENTION-SCORE soft cap
+  `50 * tanh(s / 50)`. That cap is a new default-off function constant
+  (`FC_ATTN_SOFTCAP`, index 81) in `attention_decode_partial` only, carried on
+  `AttentionScratch::with_softcap` so no other family's pipeline changes (a
+  zero cap sets no constant and is bit-identical to before, tested). A nonzero
+  cap forces the barrier kernel and REFUSES TurboQuant KV (`--kv-bits`), whose
+  kernel has no cap. Both caps must equal the family constants in the file or
+  `arch_from_gguf` refuses; the 27B (head_dim 128, a different attention scale)
+  is refused. On `gemma-2-2b-it-Q4_K_M.gguf` (1.6 GiB, M4 Max Metal):
+  `scripts/kld_llamacpp.py` against llama.cpp b12359 on the SAME bytes and 547
+  ids reads a mean KL of 0.0000079 nats at 99.27% top-1 (shape floor 0.00043 and
+  98.5%, backend floor 0.0043 and 96.9%), perplexity 19.6696 against 19.6686,
+  about 67 tok/s decode. The cap is exercised and correct: with it disabled the
+  same run reads 0.0000768 nats and perplexity 19.694. NOT done: the 9B, a
+  catalog row (the checkpoint is under the Gemma Terms of Use, which needs a
+  license decision, and the tokenizer comes from the `unsloth/gemma-2-2b-it`
+  mirror because Google's repo is gated), memory-oracle and performance gates.
+- **Memory-oracle rows for the three new families (2026-11-20, Apple M4 Max,
+  AC, two back-to-back readings each; the machine was NOT idle, other processes
+  held the load average near 5 to 6).** Frozen targets
+  `crates/bench/tests/{phi3,gemma2,qwen3next}_memory_oracle.rs`, each verified
+  to pass against its real install:
+  - Phi-3.5 (8192 context, MHA KV is 3,072 MiB of it): peak 3,230 / 3,246 MiB,
+    decode 51.7 (short) and 24.4 (long) tok/s, ceiling 3,500, floor 17.8. Only
+    `short-explanation` and `long-synthesis` are driven: `medium-review` stops on
+    `maxTokens` at the shared 1,024 budget on both readings.
+  - Gemma 2 2B (4096): peak 630.7 / 631.0 MiB, decode 57.9 / 56.1 / 45.9 tok/s,
+    ceiling 680, floor 33.4, barrier decode kernel (forced by the cap).
+  - Qwen3-Next TQ1_0 (4096, 16 slots): peak 946.6 / 947.2 MiB, decode 20.2 /
+    20.8 / 18.6 tok/s, ceiling 1,020, floor 13.2. Its `long-synthesis` prefill
+    runs at about 17 tok/s (per-token routed path), recorded and not gated.
+  Catalog `measured` rows exist for `phi35-mini` and `qwen3next-tq1`
+  (their offline agreement tests run on every `cargo test`); Gemma 2 has none
+  because it has no catalog row.
+- **FIXED, and it affects other models: the plain `llama` architecture's
+  attention scale was Mixtral's, not the file's.** `arch_from_gguf` left
+  `attention_scale` at the baseline's 1/sqrt(128) for every `llama` file, so any
+  head width other than 128 (Phi-3.5 at 96, TinyLlama and Llama 3.2 1B at 64)
+  decoded with the wrong score scale. Measured on Phi-3.5 before the fix: 0.0160
+  nats and 92.5% top-1 against llama.cpp (above the 0.00675 backend floor),
+  after: 0.0000333 and 99.69%. The fix derives 1/sqrt(head_dim) for head widths
+  other than 128 and leaves 128 on the baseline's exact literal so existing
+  manifests keep validating. Existing installs of such models keep the old scale
+  until re-installed. Only Phi-3.5 was re-measured; the other head widths are
+  covered by the formula and a header test, not by a cross-engine run.
 - **Quality of UD mixes at runtime** has not been compared against llama.cpp
   perplexity on a real UD file here. The KL and perplexity numbers above compare
   this crate's quantizer with Unsloth's files, not this engine's forward pass.

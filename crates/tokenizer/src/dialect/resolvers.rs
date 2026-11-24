@@ -11,7 +11,8 @@ use super::resolve::{
     KIMI_IM_USER_MARK, LLAMA3_BOS_MARK, LLAMA3_END_HEADER_MARK, LLAMA3_EOS_MARK, LLAMA3_EOT_MARK,
     LLAMA3_START_HEADER_MARK, MISTRAL_BOS_MARK, MISTRAL_EOS_MARK, MISTRAL_TOOL_CALLS_MARK,
     MUSE_BOS_MARK, MUSE_EOM_MARK, MUSE_EOS_MARK, MUSE_EOT_MARK, MUSE_MESSAGE_MARK, MUSE_PAD_MARK,
-    MUSE_START_MARK, SPARK_BOS_MARK, SPARK_BOT_MARK, SPARK_EOS_MARK, SPARK_USER_MARK,
+    MUSE_START_MARK, PHI3_ASSISTANT_MARK, PHI3_END_MARK, PHI3_EOS_MARK, PHI3_USER_MARK,
+    SPARK_BOS_MARK, SPARK_BOT_MARK, SPARK_EOS_MARK, SPARK_USER_MARK,
 };
 use super::NO_SUCH_TOKEN_ID;
 use crate::error::TokenizerError;
@@ -233,6 +234,42 @@ pub(crate) fn resolve_mistral(tokenizer: &Tokenizer) -> Result<Resolved, Tokeniz
         think_end_id: None,
         stop_token_ids: [eos].into_iter().collect(),
         vocab_size: 32_000,
+    })
+}
+
+/// Microsoft Phi-3 / Phi-3.5 (`<|user|>` / `<|assistant|>` / `<|end|>`).
+///
+/// Every id is looked up by name. The stop set is `<|endoftext|>` (the
+/// checkpoint's eos) and `<|end|>`, which closes every turn including the
+/// assistant's: the instruction-tuned model emits `<|end|>`, never `<|endoftext|>`,
+/// at the end of a reply, so a stop set without it runs on into an invented
+/// next turn. The BOS `<s>` is NOT in the template text (Phi-3.5's template
+/// renders turns only) and is prepended by the encoder, as Mistral's is.
+pub(crate) fn resolve_phi3(tokenizer: &Tokenizer) -> Result<Resolved, TokenizerError> {
+    let bos = required_id(tokenizer, MISTRAL_BOS_MARK)?;
+    let eos = required_id(tokenizer, PHI3_EOS_MARK)?;
+    let eot = required_id(tokenizer, PHI3_END_MARK)?;
+    let _user = required_id(tokenizer, PHI3_USER_MARK)?;
+    let _assistant = required_id(tokenizer, PHI3_ASSISTANT_MARK)?;
+    Ok(Resolved {
+        bos_id: bos,
+        bos_prefix_id: Some(bos),
+        eos_id: eos,
+        pad_id: eos,
+        end_of_turn_id: eot,
+        tool_call_start_id: NO_SUCH_TOKEN_ID,
+        tool_call_end_id: NO_SUCH_TOKEN_ID,
+        tool_response_id: NO_SUCH_TOKEN_ID,
+        tool_response_end_id: NO_SUCH_TOKEN_ID,
+        tool_call_stop_id: NO_SUCH_TOKEN_ID,
+        channel_start_id: NO_SUCH_TOKEN_ID,
+        channel_end_id: NO_SUCH_TOKEN_ID,
+        message_start_id: NO_SUCH_TOKEN_ID,
+        message_end_id: NO_SUCH_TOKEN_ID,
+        think_start_id: None,
+        think_end_id: None,
+        stop_token_ids: [eos, eot].into_iter().collect(),
+        vocab_size: 32_064,
     })
 }
 

@@ -181,6 +181,14 @@ fn map_top_level(name: &str) -> Option<GgufMapping> {
             GgufMapping::Resident("language_model.model.norm.weight".to_string())
         }
         "output.weight" => GgufMapping::Resident("language_model.lm_head.weight".to_string()),
+        // `phi3`'s LongRoPE factor vectors: learned per-pair divisors, stored
+        // as exact FP32 residents (a BF16 round would move every angle).
+        "rope_factors_short.weight" => {
+            GgufMapping::Resident("language_model.model.rope_factors_short".to_string())
+        }
+        "rope_factors_long.weight" => {
+            GgufMapping::Resident("language_model.model.rope_factors_long".to_string())
+        }
         _ => return None,
     })
 }
@@ -209,6 +217,9 @@ pub fn map_gguf_name(name: &str, family: ModelFamily) -> Result<GgufMapping, Ggu
         return match family {
             ModelFamily::Gemma4 => gemma4::map_gemma4_layer(suffix, layer),
             ModelFamily::Gemma3 => gemma3::map_gemma3_layer(suffix, layer),
+            // Gemma 2's tensors are Gemma 3's minus the q/k norms, which a
+            // Gemma 2 file simply does not carry.
+            ModelFamily::Gemma2 => gemma3::map_gemma3_layer(suffix, layer),
             ModelFamily::Qwen4Exp => qwen::map_qwen4_exp_layer(suffix, layer),
             ModelFamily::QwenGdnMoe => qwen::map_qwen_gdn_moe_layer(suffix, layer),
             ModelFamily::Llama => llama::map_llama_layer(suffix, layer),
@@ -297,6 +308,7 @@ pub fn gguf_architecture(family: ModelFamily) -> Option<&'static str> {
         ModelFamily::Gemma4 => Some("gemma4"),
         // Read off `ggml-org/gemma-3-1b-it-GGUF`.
         ModelFamily::Gemma3 => Some("gemma3"),
+        ModelFamily::Gemma2 => Some("gemma2"),
         ModelFamily::QwenGdnMoe => Some("qwen35moe"),
         ModelFamily::Llama => Some("llama"),
         ModelFamily::Qwen3Moe => Some("qwen3moe"),

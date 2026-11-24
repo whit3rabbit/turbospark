@@ -143,6 +143,16 @@ pub(crate) fn encode_attention_any(
     let (k_buf, _) = kv.k_slot(layer, position);
     let (v_buf, _) = kv.v_slot(layer, position);
     if kv.layer_quant(layer).is_some() {
+        // The TurboQuant attention kernel has no score soft cap, so a capped
+        // family on a quantized KV layer would decode with the cap silently
+        // missing: fluent and wrong. Refused by name, loudly, per dispatch.
+        if scratch.attn.softcap() != 0.0 {
+            return Err(RealForwardError::Unsupported(
+                "this family's attention-score soft cap (Gemma 2) is not implemented for \
+                 TurboQuant-quantized KV; run with --kv-bits off"
+                    .to_string(),
+            ));
+        }
         assert_eq!(
             ring_capacity, 0,
             "a TurboQuant-quantized layer is never a sliding-window ring"

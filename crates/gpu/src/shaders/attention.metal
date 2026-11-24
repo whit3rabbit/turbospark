@@ -53,6 +53,22 @@ constant uint FC_ATTN_RING_CAP [[function_constant(69)]];
 // of their dispatch sites. Its byte is in `attention_constants_key`, without
 // which a sink dispatch would silently reuse the sink-free pipeline.
 constant bool FC_ATTN_HAS_SINKS [[function_constant(70)]];
+// Gemma 2's ATTENTION-SCORE soft cap: `s = cap * tanh(s / cap)` on every score
+// after the scale and before the softmax (`attn_logit_softcapping` 50). A
+// function constant, like the sinks, so only a dispatch that asks for it has
+// the instruction at all: every other family compiles the same code it always
+// did, and its byte pattern is in `attention_constants_key_cap` so a capped
+// dispatch cannot silently reuse an uncapped pipeline. Wired into
+// `attention_decode_partial` ONLY; the GQA, rows, tree and TurboQuant variants
+// do not reference it, and the host refuses to select them when a cap is set.
+constant float FC_ATTN_SOFTCAP [[function_constant(80)]];
+
+static inline float attn_apply_softcap(float s) {
+    if (is_function_constant_defined(FC_ATTN_SOFTCAP)) {
+        return FC_ATTN_SOFTCAP * precise::tanh(s / FC_ATTN_SOFTCAP);
+    }
+    return s;
+}
 
 static inline uint attn_fc_head_dim(constant uint& head_dim) {
     return (is_function_constant_defined(FC_ATTN_USE_FC) &&
@@ -207,6 +223,7 @@ void attention_decode_partial(
                                    simd_lane_id, simd_group_id, simdgroups,
                                    reduce_scratch, &bcast);
         s *= attn_fc_scale(scale);
+        s = attn_apply_softcap(s);
 
         const float m_new = max(m_run, s);
         const float alpha = attn_softmax_exp(m_run - m_new);

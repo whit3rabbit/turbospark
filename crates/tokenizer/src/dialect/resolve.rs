@@ -19,6 +19,12 @@ pub(crate) const GEMMA_TURN_MARK: &str = "<turn|>";
 /// exists in Gemma 4's, which uses `<|turn>` / `<turn|>`.
 pub(crate) const GEMMA3_START_MARK: &str = "<start_of_turn>";
 pub(crate) const GEMMA3_END_MARK: &str = "<end_of_turn>";
+/// Phi-3's turn frame: `<|user|>` / `<|assistant|>` open turns and `<|end|>`
+/// closes them. All three are SPECIAL in its table.
+pub(crate) const PHI3_USER_MARK: &str = "<|user|>";
+pub(crate) const PHI3_ASSISTANT_MARK: &str = "<|assistant|>";
+pub(crate) const PHI3_END_MARK: &str = "<|end|>";
+pub(crate) const PHI3_EOS_MARK: &str = "<|endoftext|>";
 /// Mistral / Mixtral frame turns as PLAIN TEXT (`[INST] ... [/INST]`), so
 /// there is no instruction marker in the special-token table to key on and
 /// the only reliable witness is the sentence pair.
@@ -317,6 +323,18 @@ pub(crate) fn detect_dialect(tokenizer: &Tokenizer) -> ChatDialect {
         // still has to come before Gemma's fallback and before Mistral, whose
         // `<s>`/`</s>` probe this table does not carry at all.
         ChatDialect::Llama3
+    } else if special_token_id(tokenizer, PHI3_USER_MARK).is_some()
+        && special_token_id(tokenizer, PHI3_ASSISTANT_MARK).is_some()
+        && special_token_id(tokenizer, PHI3_END_MARK).is_some()
+        && special_token_id(tokenizer, PHI3_EOS_MARK).is_some()
+    {
+        // Phi-3 family. Probed AFTER GLM/Flint (which carry `<|observation|>`
+        // beside `<|assistant|>`), Kimi and Harmony (whose `<|end|>` comes with
+        // `<|start|>`/`<|channel|>`), and BEFORE ChatML and Mistral, whose
+        // probes (`<|im_end|>`; `<s>` plus `</s>`) this table would otherwise
+        // satisfy: Phi-3.5 carries `<s>` and `</s>` and used to resolve
+        // Mistral, with `</s>` as its only stop.
+        ChatDialect::Phi3
     } else if special_token_id(tokenizer, GEMMA3_START_MARK).is_some()
         && special_token_id(tokenizer, GEMMA3_END_MARK).is_some()
         && special_token_id(tokenizer, GEMMA_TURN_MARK).is_none()
@@ -341,7 +359,7 @@ pub(crate) fn detect_dialect(tokenizer: &Tokenizer) -> ChatDialect {
 use super::resolvers::{
     resolve_chatml, resolve_deepseek, resolve_deepseek_v2, resolve_flint, resolve_gemma,
     resolve_gemma3, resolve_glm, resolve_harmony, resolve_inkling2, resolve_kimi, resolve_llama3,
-    resolve_mistral, resolve_muse_glimmer, resolve_spark,
+    resolve_mistral, resolve_muse_glimmer, resolve_phi3, resolve_spark,
 };
 
 pub(crate) fn resolve_dialect(
@@ -352,6 +370,7 @@ pub(crate) fn resolve_dialect(
     match dialect {
         ChatDialect::Gemma => resolve_gemma(tokenizer, config),
         ChatDialect::Gemma3 => resolve_gemma3(tokenizer, config),
+        ChatDialect::Phi3 => resolve_phi3(tokenizer),
         ChatDialect::ChatMl => resolve_chatml(tokenizer, config),
         ChatDialect::Deepseek => resolve_deepseek(tokenizer),
         ChatDialect::DeepseekV2 => resolve_deepseek_v2(tokenizer),

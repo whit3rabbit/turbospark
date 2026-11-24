@@ -270,11 +270,14 @@ fn architecture_strings_are_the_converters_names_not_the_familys() {
     );
     assert_eq!(family_for_architecture("qwen36"), None);
     // `llama` is the one architecture whose GGUF string EQUALS its family
-    // name, and it gained a flow in ROADMAP Phase M2. `phi3` stands in as
-    // the recognized-but-unported case this line used to make.
+    // name, and it gained a flow in ROADMAP Phase M2. `llama4` stands in as
+    // the recognized-but-unported case this line used to make (it was `phi3`
+    // until phi3 became a supported row on the same flow, which is why the
+    // REVERSE lookup of the family still says `llama`).
     assert_eq!(gguf_architecture(ModelFamily::Llama), Some("llama"));
     assert_eq!(family_for_architecture("llama"), Some(ModelFamily::Llama));
-    assert_eq!(family_for_architecture("phi3"), None);
+    assert_eq!(family_for_architecture("phi3"), Some(ModelFamily::Llama));
+    assert_eq!(family_for_architecture("llama4"), None);
     // The second architecture whose GGUF string equals its family name.
     assert_eq!(gguf_architecture(ModelFamily::Qwen3Moe), Some("qwen3moe"));
     assert_eq!(

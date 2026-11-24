@@ -44,6 +44,7 @@ fn qwen_style_arch() -> model_io::ArchConfig {
             value_head_dim: 8,
             conv_kernel_size: 4,
             output_gate_sigmoid: false,
+            source_v_heads_grouped: false,
         },
         mla: model_io::MlaConfig::NONE,
         compressed_attention: model_io::CompressedAttentionConfig::NONE,

@@ -96,6 +96,12 @@ pub fn evaluate_gguf(
     match repack::arch_from_gguf(header) {
         Ok(arch) => {
             report.expert_stride = gguf_expert_stride(header, &arch);
+            // Types alone said RUNNABLE for an Ornith `qwen3_5` whose Q4_K
+            // `ssm_out` the install walk then refused: the V-head reorder
+            // cannot split a 256-element block across 128-column heads.
+            for reason in v_head_block_refusals(header, &arch) {
+                report.refuse(reason);
+            }
             if arch.family == model_io::ModelFamily::MiniMaxM2 {
                 match repack::minimax_gguf_sizing(header) {
                     Ok(size) => {
@@ -167,6 +173,27 @@ pub fn evaluate_gguf(
     report
 }
 
+/// The install walk's whole-block V-head refusal, applied to the header so
+/// the probe and the walk give one answer (`repack::gguf_v_head_block_split`).
+fn v_head_block_refusals(header: &repack::GgufHeader, arch: &ArchConfig) -> Vec<String> {
+    header
+        .tensors
+        .iter()
+        .filter_map(|(name, info)| {
+            let Ok(repack::GgufMapping::Resident(canonical)) =
+                repack::map_gguf_name(name, arch.family)
+            else {
+                return None;
+            };
+            let reason = repack::gguf_v_head_block_split(name, &canonical, arch, info.ggml_type)?;
+            let type_name = repack::ggml_type_name(info.ggml_type)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("type {}", info.ggml_type));
+            Some(format!("{name} ({type_name}): {reason}"))
+        })
+        .collect()
+}
+
 /// Per-block-type tensor counts and byte shares, descending by bytes with
 /// unsized types last.
 fn type_shares(header: &repack::GgufHeader, family: model_io::ModelFamily) -> Vec<TypeShare> {
@@ -175,8 +202,10 @@ fn type_shares(header: &repack::GgufHeader, family: model_io::ModelFamily) -> Ve
         std::collections::BTreeMap::new();
     for (name, info) in &header.tensors {
         let source_transcoded = TRANSCODED_GGML_TYPES.contains(&info.ggml_type)
-            || (family == model_io::ModelFamily::Gemma3
-                && repack::gemma3_tensor_is_transcoded(info.ggml_type))
+            || (matches!(
+                family,
+                model_io::ModelFamily::Gemma3 | model_io::ModelFamily::Gemma2
+            ) && repack::gemma3_tensor_is_transcoded(info.ggml_type))
             || (family == model_io::ModelFamily::Qwen4Exp
                 && matches!(
                     repack::map_gguf_name(name, family),
@@ -244,7 +273,7 @@ fn gguf_expert_stride(header: &repack::GgufHeader, arch: &ArchConfig) -> Option<
 
 #[cfg(test)]
 mod tests {
-    use super::type_shares;
+    use super::{type_shares, v_head_block_refusals};
     use model_io::ModelFamily;
     use repack::{GgufHeader, GgufTensorInfo};
     use std::collections::BTreeMap;
@@ -505,5 +534,28 @@ mod tests {
                 "{name} experts have a routed kernel"
             );
         }
+    }
+
+    #[test]
+    fn gdn_superblock_ssm_out_is_refused_by_the_probe() {
+        let mut arch = model_io::known_architecture(ModelFamily::QwenGdnDense);
+        arch.linear_attention.value_head_dim = 128;
+        let mut header = header(&[]);
+        for (name, ggml_type) in [("blk.0.ssm_out.weight", 12u32), ("blk.1.ssm_out.weight", 8)] {
+            header.tensors.insert(
+                name.to_string(),
+                GgufTensorInfo {
+                    ggml_type,
+                    dims: vec![256, 4],
+                    offset: 0,
+                },
+            );
+        }
+        let refusals = v_head_block_refusals(&header, &arch);
+        assert_eq!(refusals.len(), 1, "{refusals:?}");
+        assert!(
+            refusals[0].starts_with("blk.0.ssm_out.weight (Q4_K)"),
+            "{refusals:?}"
+        );
     }
 }

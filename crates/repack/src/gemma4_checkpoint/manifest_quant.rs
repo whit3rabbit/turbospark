@@ -168,7 +168,9 @@ pub fn manifest_quant_for(
         ModelFamily::MuseGlimmer
         | ModelFamily::Spark25
         | ModelFamily::Qwen3Vl
-        | ModelFamily::Gemma3 => (
+        | ModelFamily::Gemma3
+        // `gemma2` is GGUF-only and dense, the same probe shape.
+        | ModelFamily::Gemma2 => (
             format!("{l0}.self_attn.q_proj"),
             format!("{l0}.mlp.gate"),
             format!("{l0}.mlp.gate_proj"),

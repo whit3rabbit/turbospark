@@ -355,7 +355,18 @@ fn run_case(gate_up: MoeExtType, down: MoeExtType, use_silu: bool, top_k: usize)
     for d in 0..d_dim {
         let want = expected[d];
         peak = peak.max(want.abs());
-        let tol = 5e-2_f32.max(want.abs() * 3e-2);
+        // The eight-slot cases keep exactly the thresholds they were set with.
+        // Past eight slots (the ten-slot kernels) the fixtures' partial sums
+        // can be thousands (NVFP4's scales) while an output lands near zero by
+        // cancellation, and FP16 rounding of those partials is proportional to
+        // THEIR size, not the result's: so the floor also gets a term of 0.1%
+        // of the largest expected output. A layout or order bug is O(1) of the
+        // output, not 0.1% of its peak.
+        let mut tol = 5e-2_f32.max(want.abs() * 3e-2);
+        if top_k > FIXED_SLOTS {
+            let peak_all = expected.iter().fold(0f32, |m, v| m.max(v.abs()));
+            tol = tol.max(peak_all * 1e-3);
+        }
         assert!(
             (got[d] - want).abs() <= tol,
             "{gate_up:?}/{down:?} silu={use_silu} top_k={top_k} d={d}: got {} want {want}",
@@ -397,6 +408,26 @@ fn mixed_layouts_decode_independently() {
     run_case(MoeExtType::Q4_0, MoeExtType::Tq2_0, false, 3);
     run_case(MoeExtType::Tq1_0, MoeExtType::Q5_1, false, 3);
     run_case(MoeExtType::Nvfp4, MoeExtType::Q1_0, true, 3);
+}
+
+/// Exactly ten routed experts (Qwen3-Next's top-10) take the ten-slot kernel
+/// for every macro-generated type, against the same CPU reference as the
+/// eight-slot cases. The hand-written phase 2 types (IQ4_NL, Q6_K) and Q2_0
+/// (its own `encode_moe_phase2_q2_0_top10`) have no ext k10 and are refused.
+#[test]
+fn ten_slots_participate_for_every_ext_type_with_a_k10_kernel() {
+    for kind in MoeExtType::ALL {
+        if matches!(kind, MoeExtType::Iq4Nl | MoeExtType::Q6K | MoeExtType::Q2_0) {
+            continue;
+        }
+        run_case(kind, kind, false, 10);
+    }
+}
+
+#[test]
+#[should_panic]
+fn ten_slots_are_refused_for_a_hand_written_phase_two_type() {
+    run_case(MoeExtType::Q4_0, MoeExtType::Iq4Nl, false, 10);
 }
 
 #[test]

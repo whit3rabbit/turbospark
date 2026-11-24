@@ -104,6 +104,7 @@ pub fn qwen_gdn_dense_27b() -> ArchConfig {
             value_head_dim: 128,
             conv_kernel_size: 4,
             output_gate_sigmoid: false,
+            source_v_heads_grouped: false,
         },
         mla: MlaConfig::NONE,
         compressed_attention: CompressedAttentionConfig::NONE,
@@ -164,6 +165,7 @@ pub fn qwen_gdn_moe_35b_a3b() -> ArchConfig {
             value_head_dim: 128,
             conv_kernel_size: 4,
             output_gate_sigmoid: false,
+            source_v_heads_grouped: false,
         },
         mla: MlaConfig::NONE,
         compressed_attention: CompressedAttentionConfig::NONE,
@@ -494,6 +496,7 @@ pub fn qwen4_exp_125b_a6b() -> ArchConfig {
             value_head_dim: 128,
             conv_kernel_size: 4,
             output_gate_sigmoid: true,
+            source_v_heads_grouped: false,
         },
         mla: MlaConfig::NONE,
         compressed_attention: CompressedAttentionConfig {

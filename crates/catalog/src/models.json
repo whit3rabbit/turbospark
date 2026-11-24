@@ -1576,6 +1576,86 @@
       "notes": "The cheapest real install here, ~3 minutes. Its chat framing is Zephyr and its special-token table is Mistral's, which is why framing comes from the checkpoint's own template and not from the dialect probe."
     },
     {
+      "alias": "phi35-mini",
+      "name": "Phi-3.5 mini Instruct (GGUF Q4_K_M, dense, LongRoPE)",
+      "family": "llama",
+      "source": {
+        "kind": "gguf",
+        "repo": "bartowski/Phi-3.5-mini-instruct-GGUF",
+        "revision": "6d70da17e749a471ccb62ade694486011a75cda3",
+        "file": "Phi-3.5-mini-instruct-Q4_K_M.gguf"
+      },
+      "sidecars": {
+        "repo": "microsoft/Phi-3.5-mini-instruct",
+        "revision": "2fe192450127e6a83f7441aef6e3ca586c338b77",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "generation_config.json"
+        ]
+      },
+      "download_bytes": 2393232672,
+      "install_bytes": 2394013696,
+      "status": "runs",
+      "gates": [
+        "phi3_memory_oracle"
+      ],
+      "notes": "MIT. Dense, so nothing streams. The fused attn_qkv and ffn_up are split by rows at repack and LongRoPE rides two exact FP32 resident factor tensors (docs/GGUF.md). Evidence, not a frozen gate: against llama.cpp on the SAME bytes and 652 ids, mean KL 0.0000333 nats at 99.69% top-1 (shape floor 0.0000173, backend floor 0.00675), perplexity 8.2529 against 8.2545, about 55 tok/s decode on an M4 Max. Only the SHORT LongRoPE table (contexts up to 4096) was compared; the long table is checked for coherence only. No memory oracle or frozen quality row, so the status stays runs. Installs made before the attention-scale fix (2026-11-20) carry the Mixtral scale and must be re-installed.",
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 8192,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 3246,
+          "decode_tok_s_min": 24.392,
+          "decode_tok_s_max": 51.712,
+          "measured_on": "2026-11-20",
+          "source": "this port, two readings, AC, short-explanation and long-synthesis only (medium-review stops on maxTokens at the shared budget); load average about 5 to 6 from other processes; the peak is 3,072 MiB of MHA KV at 8,192 context"
+        }
+      ]
+    },
+    {
+      "alias": "qwen3next-tq1",
+      "name": "Qwen3-Next 80B-A3B Instruct (Unsloth UD-TQ1_0, GGUF, 512 experts top-10)",
+      "family": "qwen36",
+      "source": {
+        "kind": "gguf",
+        "repo": "unsloth/Qwen3-Next-80B-A3B-Instruct-GGUF",
+        "revision": "6688872b7a4e5eb8a121ceea08009530a024ba1d",
+        "file": "Qwen3-Next-80B-A3B-Instruct-UD-TQ1_0.gguf"
+      },
+      "sidecars": {
+        "repo": "Qwen/Qwen3-Next-80B-A3B-Instruct",
+        "revision": "9c7f2fbe84465e40164a94cc16cd30b6999b0cc7",
+        "files": [
+          "tokenizer.json",
+          "tokenizer_config.json",
+          "generation_config.json",
+          "vocab.json",
+          "merges.txt"
+        ]
+      },
+      "download_bytes": 20466297632,
+      "install_bytes": 20504076288,
+      "status": "runs",
+      "gates": [
+        "qwen3next_memory_oracle"
+      ],
+      "notes": "Apache 2.0. The Qwen 3.6 gated-DeltaNet MoE flow with source conventions handled at repack (fused ssm_ba split, grouped V heads, layer kinds read from the tensor list) and ten-slot routed phase-2 kernels. Evidence, not a frozen gate: against llama.cpp on the SAME bytes and 558 ids, mean KL 0.00312 nats at 97.5% top-1 between a 0.00135 shape floor and a 0.00665 backend floor, perplexity 13.856 against 13.819 (cached) and 13.855 (batched), about 11.7 tok/s decode on an M4 Max at a 2048 context. About 1.5 bits per weight, so expect degraded quality as for any IQ1 mix. No memory oracle or frozen quality row, so the status stays runs. Needs the sidecar repo for its tokenizer.",
+      "measured": [
+        {
+          "chip": "Apple M4 Max",
+          "context": 4096,
+          "expert_cache_slots": 16,
+          "peak_footprint_mib": 947,
+          "decode_tok_s_min": 18.117,
+          "decode_tok_s_max": 20.807,
+          "measured_on": "2026-11-20",
+          "source": "this port, two readings, AC, all three cases endOfTurn; load average about 5 to 6 from other processes; long-synthesis prefill is about 17 tok/s (per-token routed path)"
+        }
+      ]
+    },
+    {
       "alias": "humanizer-12b",
       "name": "Humanizer 12B (dense Gemma 4, MLX INT8, group 64)",
       "family": "gemma4",

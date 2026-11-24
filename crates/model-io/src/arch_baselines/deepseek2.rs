@@ -108,6 +108,7 @@ pub fn deepseek_v2_lite_16b() -> ArchConfig {
             beta_slow: 1.0,
             // The checkpoint's own value (yarn_log_multiplier 0.0707).
             mscale: 0.707,
+            ..RopeScalingConfig::NONE
         },
         vision: VisionConfig::NONE,
         short_conv_kernel_size: 0,

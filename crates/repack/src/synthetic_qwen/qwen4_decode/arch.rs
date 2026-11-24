@@ -69,6 +69,7 @@ fn linear_attention() -> LinearAttentionConfig {
         // The SIGMOID variant -- this fixture's whole reason for not being
         // `synthetic_qwen::dense`'s GDN shape reused verbatim.
         output_gate_sigmoid: true,
+        source_v_heads_grouped: false,
     }
 }
 

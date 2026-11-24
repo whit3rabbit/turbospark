@@ -12,6 +12,9 @@ struct VHeadAxis {
 
 #[derive(Clone, Copy)]
 struct VHeadLayout {
+    /// The source already stores grouped V heads (`qwen3next`), so the restore
+    /// is the identity. Only `ssm_a` -> `A_log` still needs the walk.
+    already_grouped: bool,
     num_k_heads: usize,
     num_v_heads: usize,
     values_per_k_head: usize,
@@ -60,6 +63,13 @@ fn v_head_axis(
     let Some((_, suffix)) = canonical.rsplit_once("linear_attn.") else {
         return Ok(None);
     };
+    // A `qwen3next` GGUF keeps HF's grouped V-head order (llama.cpp reorders
+    // to tiled only for Qwen 3.5), so nothing but the `A_log` value transform
+    // applies to it. Returning `None` here also keeps the block-split refusal
+    // away from tensors that are never shuffled.
+    if la.source_v_heads_grouped && suffix != "A_log" {
+        return Ok(None);
+    }
     match suffix {
         "A_log" | "dt_bias" | "in_proj_a.weight" | "in_proj_b.weight" => rows(0, 1),
         "conv1d.weight" | "in_proj_qkv.weight" => rows(v_at, width),
@@ -102,6 +112,7 @@ fn v_head_layout(name: &str, arch: &ArchConfig) -> Result<VHeadLayout, GgufRepac
         });
     }
     Ok(VHeadLayout {
+        already_grouped: arch.linear_attention.source_v_heads_grouped,
         num_k_heads,
         num_v_heads,
         values_per_k_head: num_v_heads / num_k_heads,
@@ -111,6 +122,9 @@ fn v_head_layout(name: &str, arch: &ArchConfig) -> Result<VHeadLayout, GgufRepac
 /// Restore grouped `[key_head, value_head_within_key, span]` order from the
 /// converter's tiled `[value_head_within_key, key_head, span]` order.
 fn restore_grouped_v_heads<T: Copy>(data: &mut [T], base: usize, span: usize, layout: VHeadLayout) {
+    if layout.already_grouped {
+        return;
+    }
     let end = base + layout.num_v_heads * span;
     let source = data[base..end].to_vec();
     for key_head in 0..layout.num_k_heads {
@@ -185,7 +199,9 @@ fn is_muse_centered_norm(canonical: &str, arch: &ArchConfig) -> bool {
 /// (`encode_rms_norm_bf16w_centered`), so the install needs the stored value
 /// back. Unlike Muse Glimmer the FINAL norm is shifted too.
 fn is_gemma3_centered_norm(canonical: &str, arch: &ArchConfig) -> bool {
-    arch.family == ModelFamily::Gemma3 && canonical.ends_with("norm.weight")
+    // Gemma 2 bakes `+1` into every norm the same way (`GemmaModel`).
+    matches!(arch.family, ModelFamily::Gemma3 | ModelFamily::Gemma2)
+        && canonical.ends_with("norm.weight")
 }
 
 /// The dense `qwen35` multi-token-prediction head's seven norms. llama.cpp's
@@ -330,6 +346,49 @@ pub(crate) fn apply_source_convention(
     Ok(())
 }
 
+/// The refusal text when a `span`-column V head is not a whole number of
+/// `ggml_type` blocks, or `None` when the byte de-interleave is safe.
+fn block_split_detail(span: usize, ggml_type: u32) -> Option<String> {
+    let block_elements = crate::gguf_header::ggml_type_block(ggml_type)
+        .map(|(elements, _)| elements as usize)
+        .unwrap_or(1);
+    (block_elements > 1 && span % block_elements != 0).then(|| {
+        format!(
+            "a {span}-column V head is not a whole number of {block_elements}-element \
+             blocks, so the de-interleave would split one: dequantizing is the only \
+             way to permute this tensor, and this walk copies bytes"
+        )
+    })
+}
+
+/// Header-only form of the whole-block refusal in
+/// `apply_source_convention_bytes`: `Some(reason)` when the install walk
+/// would refuse this tensor because a V head splits a quantization block.
+///
+/// The catalog probe calls this so it cannot report RUNNABLE for a file the
+/// walk refuses (an Ornith `qwen3_5` with a Q4_K `ssm_out` did exactly that:
+/// every type had a kernel, and the probe only checked types). Qwen4Exp's
+/// dequantized types never reach the byte path, so they return `None`.
+pub fn gguf_v_head_block_split(
+    name: &str,
+    canonical: &str,
+    arch: &ArchConfig,
+    ggml_type: u32,
+) -> Option<String> {
+    if arch.family == ModelFamily::Qwen4Exp
+        && super::transcode::qwen4exp_tensor_is_transcoded(canonical, ggml_type)
+    {
+        return None;
+    }
+    // A malformed axis is refused by the walk's own shape checks; this
+    // predicate answers only the block question.
+    let axis = v_head_axis(name, canonical, arch).ok()??;
+    if !axis.columns {
+        return None;
+    }
+    block_split_detail(axis.span, ggml_type)
+}
+
 pub(crate) fn apply_source_convention_bytes(
     name: &str,
     canonical: &str,
@@ -391,16 +450,8 @@ pub(crate) fn apply_source_convention_bytes(
     // REFUSED rather than shuffled by bytes when a block spans heads from
     // different key-head groups. The inverse tile-to-grouped permutation
     // would split the source block, so dequantizing is required.
-    let block_elements = crate::gguf_header::ggml_type_block(ggml_type)
-        .map(|(elements, _)| elements as usize)
-        .unwrap_or(1);
-    if block_elements > 1 && axis.span % block_elements != 0 {
-        return Err(shape_err(format!(
-            "a {}-column V head is not a whole number of {block_elements}-element \
-             blocks, so the de-interleave would split one: dequantizing is the only \
-             way to permute this tensor, and this walk copies bytes",
-            axis.span
-        )));
+    if let Some(detail) = block_split_detail(axis.span, ggml_type) {
+        return Err(shape_err(detail));
     }
     if row_bytes * axis.span % cols != 0 {
         return Err(shape_err(format!(
@@ -424,6 +475,76 @@ pub(crate) fn apply_source_convention_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ggml type ids: Q8_0 = 8, Q4_K = 12, Q6_K = 14, IQ4_XS = 23.
+    const OUT_PROJ: &str = "model.layers.0.linear_attn.out_proj.weight";
+
+    #[test]
+    fn v_head_block_split_refuses_superblock_types_on_a_gdn_out_projection() {
+        for family in [ModelFamily::QwenGdnDense, ModelFamily::QwenGdnMoe] {
+            let mut arch = model_io::known_architecture(family);
+            arch.linear_attention.value_head_dim = 128;
+            for ggml_type in [12, 14, 23] {
+                let reason =
+                    gguf_v_head_block_split("blk.0.ssm_out.weight", OUT_PROJ, &arch, ggml_type)
+                        .unwrap_or_else(|| panic!("{family:?} type {ggml_type} splits a block"));
+                assert!(reason.contains("128-column V head"), "{reason}");
+            }
+            assert_eq!(
+                gguf_v_head_block_split("blk.0.ssm_out.weight", OUT_PROJ, &arch, 8),
+                None,
+                "a 32-element Q8_0 block fits a 128-column head"
+            );
+        }
+    }
+
+    #[test]
+    fn v_head_block_split_matches_the_walk_refusal() {
+        // The probe's answer and the byte walk's must be the same answer.
+        let mut arch = model_io::known_architecture(ModelFamily::QwenGdnDense);
+        arch.linear_attention.num_k_heads = 1;
+        arch.linear_attention.num_v_heads = 2;
+        arch.linear_attention.value_head_dim = 128;
+        // One Q4_K row of 256 columns: one 144-byte superblock.
+        let mut bytes = vec![0u8; 144];
+        let walk = apply_source_convention_bytes(
+            "blk.0.ssm_out.weight",
+            OUT_PROJ,
+            &arch,
+            (1, 256),
+            12,
+            &mut bytes,
+        );
+        let probe = gguf_v_head_block_split("blk.0.ssm_out.weight", OUT_PROJ, &arch, 12);
+        match walk {
+            Err(GgufRepackError::ShapeMismatch { detail, .. }) => {
+                assert_eq!(Some(detail), probe)
+            }
+            other => panic!("the walk must refuse, got {:?}", other.is_ok()),
+        }
+    }
+
+    #[test]
+    fn v_head_block_split_skips_qwen4exp_dequantized_types_and_row_axis_tensors() {
+        let mut arch = model_io::known_architecture(ModelFamily::Qwen4Exp);
+        arch.linear_attention.value_head_dim = 128;
+        assert_eq!(
+            gguf_v_head_block_split("blk.0.ssm_out.weight", OUT_PROJ, &arch, 12),
+            None,
+            "Qwen4Exp dequantizes a Q4_K out_proj before permuting"
+        );
+        let dense = model_io::known_architecture(ModelFamily::QwenGdnDense);
+        assert_eq!(
+            gguf_v_head_block_split(
+                "blk.0.attn_gate.weight",
+                "model.layers.0.linear_attn.in_proj_z.weight",
+                &dense,
+                12
+            ),
+            None,
+            "row-axis permutations move whole rows and never split a block"
+        );
+    }
 
     #[test]
     fn qwen4_out_projection_restores_three_v_heads_per_key_per_output_row() {

@@ -1313,3 +1313,160 @@ fn a_llama_gguf_without_rope_freqs_keeps_the_base_minor() {
     );
     assert!(manifest["arch"].get("ropeFreqFactors").is_none());
 }
+
+/// A `phi3` GGUF installs on the Llama flow: the fused `attn_qkv` and `ffn_up`
+/// split by ROWS into q/k/v and gate/up (byte-exact against separately
+/// quantized parts, so a mis-ordered split shows), the two LongRoPE factor
+/// vectors land as exact FP32, and the LongRoPE scalars round-trip through the
+/// manifest.
+#[test]
+fn a_phi3_gguf_splits_its_fused_tensors_and_carries_longrope() {
+    const HIDDEN: u64 = 256;
+    const HEADS: u32 = 4;
+    const FFN: u64 = 256;
+    const HEAD_DIM: u64 = 64; // HIDDEN / HEADS
+    let weights = |rows: u64, seed: u32| -> Vec<f32> {
+        (0..rows * HIDDEN)
+            .map(|i| {
+                (((i as u32)
+                    .wrapping_mul(2_654_435_761)
+                    .wrapping_add(seed * 977))
+                    >> 20) as f32
+                    / 2048.0
+                    - 1.0
+            })
+            .collect()
+    };
+    let (q, k, v) = (weights(HIDDEN, 1), weights(HIDDEN, 2), weights(HIDDEN, 3));
+    let (gate, up) = (weights(FFN, 4), weights(FFN, 5));
+    let enc = |w: &[f32]| compute::quantize_q4_k(w);
+    let cat = |parts: &[&[u8]]| {
+        parts
+            .iter()
+            .flat_map(|p| p.iter().copied())
+            .collect::<Vec<u8>>()
+    };
+    let (qb, kb, vb, gb, ub) = (enc(&q), enc(&k), enc(&v), enc(&gate), enc(&up));
+    let short: Vec<f32> = (0..32).map(|i| 1.0 + i as f32 * 0.03125).collect();
+    let long: Vec<f32> = (0..32).map(|i| 2.0 + i as f32 * 0.0625).collect();
+    let f32b = |v: &[f32]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+
+    let bytes = turbospark_repack::GgufBuilder::new()
+        .metadata_str("general.architecture", "phi3")
+        .metadata_u32("phi3.block_count", 1)
+        .metadata_u32("phi3.context_length", 8192)
+        .metadata_u32("phi3.embedding_length", HIDDEN as u32)
+        .metadata_u32("phi3.feed_forward_length", FFN as u32)
+        .metadata_u32("phi3.attention.head_count", HEADS)
+        .metadata_u32("phi3.attention.head_count_kv", HEADS)
+        .metadata_u32("phi3.rope.dimension_count", HEAD_DIM as u32)
+        .metadata_f32("phi3.rope.freq_base", 10000.0)
+        .metadata_f32("phi3.attention.layer_norm_rms_epsilon", 1e-5)
+        .metadata_u32("phi3.attention.sliding_window", 8192)
+        .metadata_u32("phi3.rope.scaling.original_context_length", 64)
+        .metadata_f32("phi3.rope.scaling.attn_factor", 1.25)
+        .q4_k_tensor("token_embd.weight", &[HIDDEN, 512], 1)
+        .q6_k_tensor("output.weight", &[HIDDEN, 512], 2)
+        .f32_upcast_bf16_tensor("output_norm.weight", &[HIDDEN], 3)
+        .f32_upcast_bf16_tensor("blk.0.attn_norm.weight", &[HIDDEN], 4)
+        .f32_upcast_bf16_tensor("blk.0.ffn_norm.weight", &[HIDDEN], 5)
+        .tensor(
+            "blk.0.attn_qkv.weight",
+            12,
+            &[HIDDEN, 3 * HIDDEN],
+            cat(&[&qb, &kb, &vb]),
+        )
+        .q4_k_tensor("blk.0.attn_output.weight", &[HIDDEN, HIDDEN], 9)
+        .tensor(
+            "blk.0.ffn_up.weight",
+            12,
+            &[HIDDEN, 2 * FFN],
+            cat(&[&gb, &ub]),
+        )
+        .q4_k_tensor("blk.0.ffn_down.weight", &[FFN, HIDDEN], 12)
+        .tensor("rope_factors_short.weight", 0, &[32], f32b(&short))
+        .tensor("rope_factors_long.weight", 0, &[32], f32b(&long))
+        .build()
+        .0;
+    let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+    let out = orchestrate_gguf_checkpoint(&h, &MemoryRangeSource::new(&bytes)).expect("walk");
+    let raw = |name: &str| -> &Vec<u8> {
+        out.resident
+            .iter()
+            .find_map(|e| match e {
+                ResidentEntrySpec::Raw(r) if r.name == name => Some(&r.bytes),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{name} missing from the install"))
+    };
+    let p = "language_model.model.layers.0.";
+    assert_eq!(raw(&format!("{p}self_attn.q_proj.weight")), &qb);
+    assert_eq!(raw(&format!("{p}self_attn.k_proj.weight")), &kb);
+    assert_eq!(raw(&format!("{p}self_attn.v_proj.weight")), &vb);
+    // Gate is the FIRST half of the fused ffn_up (HF `gate, up = chunk(2)`).
+    assert_eq!(raw(&format!("{p}mlp.gate_proj.weight")), &gb);
+    assert_eq!(raw(&format!("{p}mlp.up_proj.weight")), &ub);
+    assert_eq!(
+        raw("language_model.model.rope_factors_short"),
+        &f32b(&short)
+    );
+    assert_eq!(raw("language_model.model.rope_factors_long"), &f32b(&long));
+    assert!(out
+        .resident
+        .iter()
+        .all(|e| !matches!(e, ResidentEntrySpec::Raw(r) if r.name.ends_with("qkv_proj.weight"))));
+
+    // The installed arch and manifest carry LongRoPE and the manifest loads.
+    let dir = tempdir();
+    let arch =
+        write_gguf_install_streamed(&dir, &h, &MemoryRangeSource::new(&bytes), "phi3", |_| {})
+            .expect("phi3 install writes");
+    assert!(arch.rope_scaling.is_longrope() && !arch.rope_scaling.is_active());
+    assert_eq!(arch.rope_scaling.original_context, 64);
+    assert_eq!(arch.rope_scaling.longrope_attn_factor, 1.25);
+    assert_eq!(arch.head_dim, HEAD_DIM as i64);
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["arch"]["ropeScalingLongropeAttnFactor"], 1.25);
+    model_io::load_manifest(&dir, &arch, model_io::DEFAULT_MAX_BYTES)
+        .expect("the phi3 manifest loads against its own arch");
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The plain `llama` architecture's attention scale is 1/sqrt(head_dim). The
+/// baseline carries Mixtral's (head_dim 128), and until Phi-3.5 (head_dim 96)
+/// was measured against llama.cpp nothing re-derived it, so every other head
+/// width decoded with the wrong score scale: fluent and measurably off
+/// (0.0160 nats and 92.5% top-1 against llama.cpp on the same bytes, where the
+/// fixed code reads 0.0000333 and 99.7%). Only the checkpoint's own head_dim
+/// can be wrong here, which is why this reads it off a header.
+#[test]
+fn a_llama_files_attention_scale_follows_its_head_dim() {
+    let arch_for = |hidden: u32, heads: u32| {
+        let bytes = turbospark_repack::GgufBuilder::new()
+            .metadata_str("general.architecture", "llama")
+            .metadata_u32("llama.block_count", 1)
+            .metadata_u32("llama.embedding_length", hidden)
+            .metadata_u32("llama.feed_forward_length", 256)
+            .metadata_u32("llama.attention.head_count", heads)
+            .metadata_u32("llama.attention.head_count_kv", heads)
+            .metadata_f32("llama.rope.freq_base", 10000.0)
+            .metadata_f32("llama.attention.layer_norm_rms_epsilon", 1e-5)
+            .q8_0_tensor("token_embd.weight", &[hidden as u64, 512], 1)
+            .build()
+            .0;
+        let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
+        turbospark_repack::arch_from_gguf(&h).expect("derives")
+    };
+    // 64-wide heads (TinyLlama, Llama 3.2 1B) and 96-wide (Phi-3.5).
+    assert_eq!(arch_for(256, 4).attention_scale, 0.125);
+    let phi = arch_for(384, 4); // 96
+    assert_eq!(phi.head_dim, 96);
+    assert!((phi.attention_scale - 96f64.powf(-0.5)).abs() < 1e-15);
+    // 128-wide heads keep the baseline's exact literal, so manifests written
+    // before this line keep validating bit for bit.
+    assert_eq!(
+        arch_for(512, 4).attention_scale,
+        model_io::known_architecture(model_io::ModelFamily::Llama).attention_scale
+    );
+}

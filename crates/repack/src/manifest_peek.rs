@@ -108,6 +108,7 @@ pub fn peek_manifest_arch(model_dir: &Path) -> Result<ArchConfig, String> {
         value_head_dim: m.linear_value_head_dim.unwrap_or(0),
         conv_kernel_size: m.linear_conv_kernel_size.unwrap_or(0),
         output_gate_sigmoid: m.linear_output_gate_sigmoid.unwrap_or(false),
+        source_v_heads_grouped: false,
     };
 
     // THE THREE `qwen4_exp` BLOCKS, and `unwrap_or` on the ZERO rather than on
@@ -185,6 +186,10 @@ pub fn peek_manifest_arch(model_dir: &Path) -> Result<ArchConfig, String> {
         beta_fast: m.rope_scaling_beta_fast.unwrap_or(0.0),
         beta_slow: m.rope_scaling_beta_slow.unwrap_or(0.0),
         mscale: m.rope_scaling_mscale.unwrap_or(0.0),
+        low_freq_factor: m.rope_scaling_low_freq_factor.unwrap_or(0.0),
+        high_freq_factor: m.rope_scaling_high_freq_factor.unwrap_or(0.0),
+        linear_factor: m.rope_scaling_linear_factor.unwrap_or(0.0),
+        longrope_attn_factor: m.rope_scaling_longrope_attn_factor.unwrap_or(0.0),
     };
     // Llama 3.x per-pair rope divisors. Absent means none, never another
     // family's table: an omitted field is a pre-minor-2 install, and no

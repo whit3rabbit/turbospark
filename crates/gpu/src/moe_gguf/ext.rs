@@ -172,6 +172,37 @@ impl MoeExtType {
         }
     }
 
+    /// The ten-slot phase 2, for a model that routes exactly ten experts.
+    /// `None` for the types whose phase 2 is hand-written (Q8_0, Q4_K, Q6_K,
+    /// IQ4_NL, MXFP4) and for Q2_0, which has its own k10 entry point.
+    fn phase2_kernel_k10(self) -> Option<&'static str> {
+        Some(match self {
+            MoeExtType::Q4_0 => "moe_phase2_down_reduce_k10_q4_0",
+            MoeExtType::Q4_1 => "moe_phase2_down_reduce_k10_q4_1",
+            MoeExtType::Q5_0 => "moe_phase2_down_reduce_k10_q5_0",
+            MoeExtType::Q5_1 => "moe_phase2_down_reduce_k10_q5_1",
+            MoeExtType::Q1_0 => "moe_phase2_down_reduce_k10_q1_0",
+            MoeExtType::Tq2_0 => "moe_phase2_down_reduce_k10_tq2_0",
+            MoeExtType::Tq1_0 => "moe_phase2_down_reduce_k10_tq1_0",
+            MoeExtType::Nvfp4 => "moe_phase2_down_reduce_k10_nvfp4",
+            MoeExtType::Q5K => "moe_phase2_down_reduce_k10_q5_k",
+            MoeExtType::Q3K => "moe_phase2_down_reduce_k10_q3_k",
+            MoeExtType::Q2K => "moe_phase2_down_reduce_k10_q2_k",
+            MoeExtType::Iq2Xs => "moe_phase2_down_reduce_k10_iq2_xs",
+            MoeExtType::Iq1S => "moe_phase2_down_reduce_k10_iq1_s",
+            MoeExtType::Iq3S => "moe_phase2_down_reduce_k10_iq3_s",
+            MoeExtType::Iq3Xxs => "moe_phase2_down_reduce_k10_iq3_xxs",
+            MoeExtType::Iq4Xs => "moe_phase2_down_reduce_k10_iq4_xs",
+            MoeExtType::Iq2S => "moe_phase2_down_reduce_k10_iq2_s",
+            MoeExtType::Iq2Xxs => "moe_phase2_down_reduce_k10_iq2_xxs",
+            MoeExtType::Iq1M => "moe_phase2_down_reduce_k10_iq1_m",
+            MoeExtType::Iq1Xs => "moe_phase2_down_reduce_k10_iq1_xs",
+            MoeExtType::Iq1Xxs => "moe_phase2_down_reduce_k10_iq1_xxs",
+            MoeExtType::Iq1Xxxs => "moe_phase2_down_reduce_k10_iq1_xxxs",
+            MoeExtType::Iq4Nl | MoeExtType::Q6K | MoeExtType::Q2_0 => return None,
+        })
+    }
+
     pub(crate) fn phase2_kernel(self) -> &'static str {
         match self {
             MoeExtType::Q4_0 => "moe_phase2_down_reduce_k8_q4_0",
@@ -262,6 +293,25 @@ pub fn encode_moe_phase2_ext(
     use_silu: bool,
 ) -> Result<(), GpuError> {
     require_tiling(kind, "f_dim", f_dim)?;
+    // Exactly ten routed experts take the ten-slot kernel; 9 would reduce a
+    // slot nothing wrote, so it is refused rather than padded.
+    if top_k > super::PHASE2_FIXED_SLOTS as u32 {
+        let kernel = kind.phase2_kernel_k10().ok_or_else(|| {
+            GpuError::InvalidInput(format!(
+                "no ten-slot routed phase 2 exists for {kind:?}; top_k {top_k} exceeds the \
+                 eight-slot kernel"
+            ))
+        })?;
+        if top_k != 10 {
+            return Err(GpuError::InvalidInput(format!(
+                "routed phase 2 serves top_k up to 8 or exactly 10, got {top_k}"
+            )));
+        }
+        return super::encode_phase2_k10(
+            context, pass, kernel, routed, offsets, acts, routing_w, residual, y, d_dim, f_dim,
+            use_silu,
+        );
+    }
     encode_phase2(
         context,
         pass,

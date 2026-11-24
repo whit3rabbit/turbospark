@@ -19,6 +19,10 @@ pub fn map_llama_layer(suffix: &str, layer: usize) -> Option<GgufMapping> {
         "attn_k.weight" => resident("self_attn.k_proj.weight"),
         "attn_v.weight" => resident("self_attn.v_proj.weight"),
         "attn_output.weight" => resident("self_attn.o_proj.weight"),
+        // `phi3`'s fused q, k and v. The canonical name is a MARKER the
+        // resident walk splits by rows (`transcode::split_phi3_fused`); no
+        // install holds a tensor with this name.
+        "attn_qkv.weight" => resident("self_attn.qkv_proj.weight"),
         "attn_norm.weight" => resident("input_layernorm.weight"),
         // GGUF's `ffn_norm` is the PRE-FFN norm, which HF and this install
         // spell `post_attention_layernorm`. The two names describe the same

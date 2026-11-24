@@ -376,6 +376,28 @@ pub(crate) fn validate_arch(a: &ManifestArch, e: &ArchConfig) -> Result<(), Mode
         a.rope_freq_factors.clone().unwrap_or_default(),
         e.rope_freq_factors
     );
+    // LongRoPE / Gemma 3 linear scaling factors. Zero-fallback rule: silence
+    // means inactive.
+    check!(
+        "ropeScalingLowFreqFactor",
+        a.rope_scaling_low_freq_factor.unwrap_or(0.0),
+        e.rope_scaling.low_freq_factor
+    );
+    check!(
+        "ropeScalingHighFreqFactor",
+        a.rope_scaling_high_freq_factor.unwrap_or(0.0),
+        e.rope_scaling.high_freq_factor
+    );
+    check!(
+        "ropeScalingLongropeAttnFactor",
+        a.rope_scaling_longrope_attn_factor.unwrap_or(0.0),
+        e.rope_scaling.longrope_attn_factor
+    );
+    check!(
+        "ropeScalingLinearFactor",
+        a.rope_scaling_linear_factor.unwrap_or(0.0),
+        e.rope_scaling.linear_factor
+    );
     // Multi-head latent attention (`deepseek2`). Zero fallback, same rule
     // as the linear* block above: silence means `MlaConfig::NONE`, and no
     // other family's answer about ITS attention is evidence.

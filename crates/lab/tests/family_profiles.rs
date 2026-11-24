@@ -94,6 +94,7 @@ fn profile_when_tags_are_tags_coverage_can_produce() {
             ModelFamily::UnlimitedOcr2 => model_io::unlimited_ocr2_12l(),
             ModelFamily::Gemma3 => model_io::gemma3_1b(),
             ModelFamily::Inkling2Loop => model_io::inkling2_mini(),
+            ModelFamily::Gemma2 => model_io::gemma2_2b(),
         };
         arch.family = f;
         let s = turbospark_lab::kernel::Subject {

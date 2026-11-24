@@ -118,19 +118,21 @@ fn an_moe_fixture_reports_an_expert_stride_and_a_slot_cache_that_scales() {
 #[test]
 fn a_planned_architecture_is_refused_with_what_it_would_need() {
     let (bytes, _) = GgufBuilder::new()
-        .metadata_str("general.architecture", "phi3")
+        // `llama4`, not `phi3`: phi3 became a supported row (2026-11-20), and
+        // this test needs an architecture that is recognized but unported.
+        .metadata_str("general.architecture", "llama4")
         .build();
     let report = evaluate_gguf(&header_of(&bytes), &repo(), "f.gguf", None);
     match &report.verdict {
         Verdict::Refused(why) => {
-            assert!(why.contains("phi3"), "{why}");
+            assert!(why.contains("llama4"), "{why}");
             assert!(
                 why.contains("recognized but has no complete ingest-and-run path"),
                 "a PLANNED architecture must not read as an unknown one: {why}"
             );
             assert!(why.contains("docs/NEW_MODEL.md"), "{why}");
         }
-        other => panic!("phi3 should be refused, got {other:?}"),
+        other => panic!("llama4 should be refused, got {other:?}"),
     }
 }
 

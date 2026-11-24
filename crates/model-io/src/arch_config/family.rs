@@ -363,11 +363,21 @@ pub enum ModelFamily {
     /// (`crate::inkling2_config`), not in `ArchConfig`.
     /// Facts: `docs/INKLING2_PHASE0.md`.
     Inkling2Loop,
+    /// Gemma 2 (2B, 9B, 27B). The Gemma 3 flow's ancestor: sandwich norms,
+    /// centered `1 + w` norms, tied head, embedding scaled by sqrt(hidden),
+    /// GELU, NO V norm, NO `layer_scalar`; but NO per-head q/k norms (Gemma 3
+    /// added them), the ATTENTION-SCORE soft cap `50 * tanh(s / 50)`
+    /// (`GEMMA2_ATTN_LOGIT_SOFTCAP`, applied by the barrier decode kernel only),
+    /// the final-logit cap 30, and local and global layers alternating one for
+    /// one with the SAME rope base. Runs on the Gemma flow, keyed on this
+    /// family; refuses the TurboQuant KV path, which does not apply the cap.
+    /// Facts: the header read in `arch_baselines/gemma2.rs`.
+    Gemma2,
 }
 
 impl ModelFamily {
-    /// Exhaustive list of all 20 model families.
-    pub const ALL: [ModelFamily; 20] = [
+    /// Exhaustive list of all 21 model families.
+    pub const ALL: [ModelFamily; 21] = [
         ModelFamily::Gemma4,
         ModelFamily::QwenGdnMoe,
         ModelFamily::DeepseekV4Flash,
@@ -388,6 +398,7 @@ impl ModelFamily {
         ModelFamily::UnlimitedOcr2,
         ModelFamily::Gemma3,
         ModelFamily::Inkling2Loop,
+        ModelFamily::Gemma2,
     ];
 
     /// Returns static string identifier for the model family.
@@ -449,6 +460,7 @@ impl ModelFamily {
             ModelFamily::Gemma3 => "gemma3",
             // New, and it matches the HF `model_type` ("inkling2_loop").
             ModelFamily::Inkling2Loop => "inkling2_loop",
+            ModelFamily::Gemma2 => "gemma2",
         }
     }
 
@@ -475,6 +487,7 @@ impl ModelFamily {
             "unlimited_ocr2" => Some(ModelFamily::UnlimitedOcr2),
             "gemma3" => Some(ModelFamily::Gemma3),
             "inkling2_loop" => Some(ModelFamily::Inkling2Loop),
+            "gemma2" => Some(ModelFamily::Gemma2),
             _ => None,
         }
     }
@@ -508,9 +521,10 @@ mod tests {
                 ModelFamily::UnlimitedOcr2 => 17,
                 ModelFamily::Gemma3 => 18,
                 ModelFamily::Inkling2Loop => 19,
+                ModelFamily::Gemma2 => 20,
             };
             assert_eq!(idx, expected_idx);
         }
-        assert_eq!(ModelFamily::ALL.len(), 20);
+        assert_eq!(ModelFamily::ALL.len(), 21);
     }
 }

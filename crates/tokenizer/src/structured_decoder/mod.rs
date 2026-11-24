@@ -296,7 +296,7 @@ impl<'a> StructuredAssistantDecoder<'a> {
             // ids are all `NO_SUCH_TOKEN_ID` and falling through to the
             // Gemma arm below would compare every token against that
             // sentinel harmlessly but say something untrue about the dialect.
-            ChatDialect::Llama3 | ChatDialect::Gemma3 => {
+            ChatDialect::Llama3 | ChatDialect::Gemma3 | ChatDialect::Phi3 => {
                 return Ok(if delta.is_empty() {
                     Vec::new()
                 } else {

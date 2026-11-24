@@ -96,6 +96,48 @@ kernel void moe_phase2_down_reduce_k8_##NAME(                                   
     }                                                                                    \
 }
 
+// Phase 2 for a model that routes EXACTLY ten experts (Qwen3-Next's top-10 of
+// 512): ten simdgroups, 320 threads, the k8 kernel's row dot and its
+// sequential left-to-right reduction extended by two terms. Slot order is
+// reduction order, as in the k8 kernels. Generated for the macro types only;
+// the hand-written phase-2 kernels (Q8_0, Q4_K, Q6_K, IQ4_NL, MXFP4) and
+// Q2_0's own k10 stay as they are, which is why `ext.rs` refuses a top-10 for
+// them by name instead of guessing.
+#define MOE_PHASE2_K10(NAME, BLOCK_ELEMS, BLOCK_BYTES, ROWFN)                            \
+[[kernel, max_total_threads_per_threadgroup(320)]]                                       \
+kernel void moe_phase2_down_reduce_k10_##NAME(                                           \
+    device const RoutedBlobs& routed          [[buffer(0)]],                             \
+    constant ExpertOffsets&   routed_offsets  [[buffer(1)]],                             \
+    device const half*        acts            [[buffer(2)]],                             \
+    device const half*        routing_w       [[buffer(3)]],                             \
+    device const half*        residual        [[buffer(4)]],                             \
+    device half*              y               [[buffer(5)]],                             \
+    constant uint&            D               [[buffer(6)]],                             \
+    constant uint&            F               [[buffer(7)]],                             \
+    uint                      d               [[threadgroup_position_in_grid]],          \
+    uint                      sg_idx          [[simdgroup_index_in_threadgroup]],        \
+    uint                      lane            [[thread_index_in_simdgroup]]              \
+) {                                                                                      \
+    threadgroup float partial[10];                                                       \
+    const uint DD = moe_fc_d(D);                                                         \
+    const uint FF = moe_fc_f(F);                                                         \
+    if (d >= DD) return;                                                                 \
+    device const uint8_t* base = routed.blob[sg_idx];                                    \
+    const ExpertOffsets re = routed_offsets;                                             \
+    device const half* act_slot = acts + sg_idx * FF;                                    \
+    const ulong row_bytes = ulong(FF / BLOCK_ELEMS) * BLOCK_BYTES;                       \
+    const float value = ROWFN(base + re.down_W_off + d * row_bytes, act_slot, FF, lane); \
+    if (lane == 0) partial[sg_idx] = float(routing_w[sg_idx]) * value;                   \
+    threadgroup_barrier(mem_flags::mem_threadgroup);                                     \
+    if (sg_idx == 0 && lane == 0) {                                                      \
+        float acc = float(residual[d]);                                                  \
+        acc += partial[0]; acc += partial[1]; acc += partial[2]; acc += partial[3];      \
+        acc += partial[4]; acc += partial[5]; acc += partial[6]; acc += partial[7];      \
+        acc += partial[8]; acc += partial[9];                                            \
+        y[d] = half(acc);                                                                \
+    }                                                                                    \
+}
+
 #define MOE_PAIR(NAME, BLOCK_ELEMS, BLOCK_BYTES, ROWFN)                                  \
     MOE_PHASE1(NAME, BLOCK_ELEMS, BLOCK_BYTES, ROWFN)                                    \
     MOE_PHASE2(NAME, BLOCK_ELEMS, BLOCK_BYTES, ROWFN)
@@ -148,12 +190,6 @@ MOE_PAIR(iq1_xs, 256, 46, moe_iq1_xs_row_simd)
 MOE_PAIR(iq1_xxs, 256, 42, moe_iq1_xxs_row_simd)
 MOE_PAIR(iq1_xxxs, 256, 38, moe_iq1_xxxs_row_simd)
 
-// Inkling 2 resident GGUF experts: one RoutedBlobs table per token row, from
-// that row's expert ids, so the streamed decode pair above runs unchanged on
-// a resident layer (`layer + id * stride`). Slots past top_k repeat the last
-// one, as RoutedBlobsBuffer::bind_for fills them. On Apple GPUs (argument
-// buffers tier 2) a table entry is the blob's GPU address, what the argument
-// encoder writes; `inkling2_gguf_tables.rs` checks the two byte for byte.
 kernel void inkling2_gguf_bind_rows(
     device const uint8_t* layer      [[buffer(0)]],
     device const uint*    sel        [[buffer(1)]],
@@ -169,3 +205,27 @@ kernel void inkling2_gguf_bind_rows(
     const uint e = sel[row * sel_stride + min(k, top_k - 1u)];
     tables[row].blob[k] = layer + ulong(e) * stride;
 }
+
+// Ten-slot phase 2 for every type whose k8 phase 2 is macro-generated above.
+MOE_PHASE2_K10(q4_0, 32, 18, moe_q4_0_row_simd)
+MOE_PHASE2_K10(q4_1, 32, 20, moe_q4_1_row_simd)
+MOE_PHASE2_K10(q5_0, 32, 22, moe_q5_0_row_simd)
+MOE_PHASE2_K10(q5_1, 32, 24, moe_q5_1_row_simd)
+MOE_PHASE2_K10(q1_0, 128, 18, moe_q1_0_row_simd)
+MOE_PHASE2_K10(tq2_0, 256, 66, moe_tq2_0_row_simd)
+MOE_PHASE2_K10(tq1_0, 256, 54, moe_tq1_0_row_simd)
+MOE_PHASE2_K10(nvfp4, 64, 36, moe_nvfp4_row_simd)
+MOE_PHASE2_K10(q5_k, 256, 176, dequant_q5_k_row_simd)
+MOE_PHASE2_K10(q3_k, 256, 110, dequant_q3_k_row_simd)
+MOE_PHASE2_K10(q2_k, 256, 84, dequant_q2_k_row_simd)
+MOE_PHASE2_K10(iq2_xs, 256, 74, dequant_iq2_xs_row_simd)
+MOE_PHASE2_K10(iq1_s, 256, 50, dequant_iq1_s_row_simd)
+MOE_PHASE2_K10(iq3_s, 256, 110, dequant_iq3_s_row_simd)
+MOE_PHASE2_K10(iq3_xxs, 256, 98, dequant_iq3_xxs_row_simd)
+MOE_PHASE2_K10(iq4_xs, 256, 136, dequant_iq4_xs_row_simd)
+MOE_PHASE2_K10(iq2_s, 256, 82, dequant_iq2_s_row_simd)
+MOE_PHASE2_K10(iq2_xxs, 256, 66, dequant_iq2_xxs_row_simd)
+MOE_PHASE2_K10(iq1_m, 256, 56, dequant_iq1_m_row_simd)
+MOE_PHASE2_K10(iq1_xs, 256, 46, moe_iq1_xs_row_simd)
+MOE_PHASE2_K10(iq1_xxs, 256, 42, moe_iq1_xxs_row_simd)
+MOE_PHASE2_K10(iq1_xxxs, 256, 38, moe_iq1_xxxs_row_simd)

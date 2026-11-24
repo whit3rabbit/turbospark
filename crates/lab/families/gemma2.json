@@ -1,0 +1,24 @@
+{
+  "schema": "turbospark.lab.family/1",
+  "family": "gemma2",
+  "kind": "text",
+  "title": "Gemma 2 text (2B): dense, alternating local and global attention at one rope base, sandwich norms, centered RMSNorm, NO q/k norm, attention-score soft cap 50 and final-logit cap 30; runs the Gemma 4 flow's dense arm",
+  "flow": "gemma4",
+  "installs": [],
+  "recommended": [],
+  "sweeps": [],
+  "findings": [],
+  "open_questions": [
+    "correctness is recorded in docs/GGUF.md (llama.cpp cross-engine KL on the same bytes), not here: this profile holds no lab measurement yet",
+    "no lab performance measurement yet: the gate was a cross-engine correctness check, not a benchmark",
+    "the cap forces the barrier decode kernel and refuses TurboQuant KV; the GQA-shared kernel and a quantized-KV cap are unmeasured and unimplemented"
+  ],
+  "traps": [
+    "the attention-score cap exists only in attention_decode_partial: any other decode variant would silently skip it, which is why a nonzero cap forces the barrier kernel and refuses --kv-bits",
+    "no q/k norm tensors: the flow keys the skip on the family (families/gemma4/norm.rs applies_qk_norm), never on tensor presence",
+    "even layers slide and odd layers are global, the opposite phase to Gemma 3's 5:1 schedule, and both use the same rope base"
+  ],
+  "docs": [
+    "docs/GGUF.md"
+  ]
+}

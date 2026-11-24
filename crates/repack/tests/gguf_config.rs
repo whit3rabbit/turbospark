@@ -209,16 +209,17 @@ fn rejects_an_architecture_with_no_family() {
     // The exemplar has to be a string with NO family, and it has to be
     // re-picked whenever one gains a flow: this used to be "llama", which
     // ROADMAP Phase M2 made supported. Same maintenance as
-    // `names_an_unsupported_but_real_ggml_type`. `phi3` is a registry row
-    // with no decode flow; if that ever changes, pick another.
+    // `names_an_unsupported_but_real_ggml_type`. `llama4` is a registry row
+    // with no decode flow (it replaced `phi3`, which gained one on 2026-11-20);
+    // if that ever changes, pick another.
     let (bytes, _) = GgufBuilder::new()
-        .metadata_str("general.architecture", "phi3")
+        .metadata_str("general.architecture", "llama4")
         .q8_0_tensor("token_embd.weight", &[64, 128], 1)
         .build();
     let h = parse_gguf_header(&bytes, GGUF_DEFAULT_MAX_HEADER_BYTES).unwrap();
     match arch_from_gguf(&h) {
         Err(GgufConfigError::UnsupportedArchitecture { architecture }) => {
-            assert_eq!(architecture, "phi3");
+            assert_eq!(architecture, "llama4");
         }
         other => panic!("expected UnsupportedArchitecture, got {other:?}"),
     }
