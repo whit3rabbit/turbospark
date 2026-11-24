@@ -1177,7 +1177,14 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   | NVFP4 expert pair | 12.2 + 7.6% (native) | 16.0 + 10.3% (native) | 30.3 + 16.5% (GGUF) |
 
   The rel-bias-inside-attention fusion is under the 2% rule and is not
-  built; the router fusion is marginal and not built. The real lever: UD-Q4_K_XL ships the original NVFP4
+  built. The router class read 2.4% on mlx4, but those shares come from one
+  encoder per dispatch, which inflates small kernels: measured in one pass
+  as decode encodes it (`gpu/tests/inkling2_router_select_cost.rs`, 48
+  dispatches a token at 128 experts, the empty pass subtracted), the select
+  costs 0.147 ms a token (3.07 us a dispatch), about 0.7% of mlx4's ~21 ms
+  of decode GPU time, 0.5% of BF16's and 0.4% of UD-Q4_K_XL's. Under the 2%
+  rule, so the router fusion is dropped: even a free fusion would win under
+  1%. The real lever: UD-Q4_K_XL ships the original NVFP4
   expert bytes, which ran through the generic GGUF NVFP4 pair at about
   20.5 ms a token (inflated) where the native pair spends about 5.7 ms on
   the same weights. A native Inkling NVFP4 row IS a ggml `block_nvfp4` row
