@@ -425,6 +425,13 @@ impl RealInkling2State {
                     gpu::Inkling2GgufExpertType::from_dtype(other),
                     gpu::Inkling2GgufExpertType::from_dtype(&down.dtype),
                 ) {
+                    // MXFP4 has an Inkling pair as a down projection only.
+                    (Some(gpu::Inkling2GgufExpertType::Mxfp4), _) => {
+                        return Err(unsupported(format!(
+                            "layer {l}: an MXFP4 gate-up has no Inkling pair (MXFP4 runs as a \
+                             down projection only)"
+                        )))
+                    }
                     (Some(gate_up), Some(down)) => ExpertKind::Gguf { gate_up, down },
                     _ => {
                         return Err(unsupported(format!(

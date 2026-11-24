@@ -413,8 +413,11 @@ pub fn write_inkling2_gguf_install(
             ));
         }
         for (n, i) in [(&gu, &gi), (&dn, &di)] {
+            // MXFP4 runs as a down projection only (its gate-up kernel has
+            // its own activation); one UD mix ships it on one layer's down.
+            let mxfp4_gate_up = i.ggml_type == GGML_MXFP4 && std::ptr::eq(n, &gu);
             if is_float(i.ggml_type)
-                || i.ggml_type == GGML_MXFP4
+                || mxfp4_gate_up
                 || dtype_tag_for_ggml_type(i.ggml_type).is_none()
             {
                 return err(format!(

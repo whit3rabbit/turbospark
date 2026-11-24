@@ -633,7 +633,8 @@ fn resident_blobs_supported(
     first.sub_tensors.contains_key("lamq_fmt")
         || first.sub_tensors.get("gate").is_some_and(|g| {
             matches!(g.dtype.as_str(), "inkling2_nvfp4" | "inkling2_mxfp8")
-                || gpu::Inkling2GgufExpertType::from_dtype(&g.dtype).is_some()
+                || gpu::Inkling2GgufExpertType::from_dtype(&g.dtype)
+                    .is_some_and(|t| t != gpu::Inkling2GgufExpertType::Mxfp4)
         })
 }
 

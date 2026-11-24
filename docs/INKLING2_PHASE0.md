@@ -1098,6 +1098,30 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   name ("has no Inkling expert pair"). Those weights are the original's,
   which the HF install serves. The raw GGUFs were deleted after intake;
   their installs remain.
+- DONE (2026-11-23): every unsloth expert type the intake takes now runs.
+  Header inventory (HTTP range reads) of all ten unsloth UD mixes @
+  `8078d149`: gate-up IQ1_S, IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ3_S, Q3_K,
+  Q4_K, Q5_K, IQ4_XS or NVFP4; down Q2_0, NVFP4, IQ4_NL, Q5_0, Q8_0 or, on
+  one layer of one file (UD-Q2_K_XL layer 20), MXFP4. UD-Q4_K_XL, the
+  recommended mix, is the original NVFP4 experts with per-expert F32
+  `.scale` on layers 0 to 19 and Q8_0 on 20 to 23. UD-Q8_K_XL stores
+  layers 20 to 23 as BF16 experts and is refused by design, like the
+  ggml-org BF16 file.
+  - `Inkling2GgufExpertType::from_dtype` lacked Q1_0, TQ1_0, TQ2_0 and
+    unsloth's IQ1_XS, IQ1_XXS and IQ1_XXXS, whose Inkling-mode kernels the
+    parity sweep already covered; a file with them passed the intake and
+    failed at open. Mapped now, with a guard test whose exhaustive match
+    over `MoeExtType` fails to compile on a new type and fails at run time
+    on an unmapped one (mutant dropping `iq1_xxs` fails).
+  - MXFP4 runs as a DOWN projection: its phase-2 kernel already applies
+    the outer scale and skips the residual through the Inkling helpers, so
+    the mode is function constant 112 on its own constants, with an
+    Inkling byte in the pipeline key and no bias
+    (`moe_gguf/mxfp4.rs::encode_phase2_mxfp4_inkling`). An MXFP4 gate-up
+    (its phase 1 has its own activation) is refused by name in the intake,
+    the state build and the encoder. Parity: IQ2_S over MXFP4 (the
+    published layer), Q8_0 over MXFP4 at eight slots, the gate-up refusal;
+    a mutant without constant 112 fails both MXFP4 cases.
 - DONE (2026-11-23): prompt-copy drafting, mtplx item (3)
   (`runtime/src/prompt_copy.rs`, wired in `speculative.rs`; on with the
   DSpark drafter, `TURBOSPARK_SPEC_PROMPT_COPY=0` turns it off). When the

@@ -12,8 +12,9 @@
 //! writes it from the file's per-expert `.scale` tensors, or 1.0.
 //!
 //! Types: every [`MoeExtType`] plus the hand-written Q8_0 and Q4_K pairs.
-//! MXFP4 is refused: its pair binds a bias plane and bakes `top_k` into a
-//! function constant, and its phase 1 has its own activation.
+//! MXFP4 runs as a DOWN projection only, through its own phase 2 with
+//! constant 112 and no bias (`mxfp4::encode_phase2_mxfp4_inkling`); its
+//! phase 1 has its own activation, so an MXFP4 gate-up is refused.
 
 use metal::{FunctionConstantValues, MTLDataType};
 
@@ -28,6 +29,10 @@ pub enum Inkling2GgufExpertType {
     Q8_0,
     Q4K,
     Ext(MoeExtType),
+    /// MXFP4, as a DOWN projection only (one published UD mix ships it on
+    /// one layer's down). Its phase 1 has its own activation, so a gate-up
+    /// of this type has no Inkling pair and is refused.
+    Mxfp4,
 }
 
 impl Inkling2GgufExpertType {
@@ -57,6 +62,14 @@ impl Inkling2GgufExpertType {
             "q5_1" => Self::Ext(E::Q5_1),
             "q2_0" => Self::Ext(E::Q2_0),
             "nvfp4" => Self::Ext(E::Nvfp4),
+            "q1_0" => Self::Ext(E::Q1_0),
+            "tq1_0" => Self::Ext(E::Tq1_0),
+            "tq2_0" => Self::Ext(E::Tq2_0),
+            // Unsloth fork types below IQ1_S (ggml 64 to 66).
+            "iq1_xs" => Self::Ext(E::Iq1Xs),
+            "iq1_xxs" => Self::Ext(E::Iq1Xxs),
+            "iq1_xxxs" => Self::Ext(E::Iq1Xxxs),
+            "mxfp4" => Self::Mxfp4,
             _ => return None,
         })
     }
@@ -66,6 +79,7 @@ impl Inkling2GgufExpertType {
             Self::Q8_0 => 32,
             Self::Q4K => 256,
             Self::Ext(e) => e.block_elems(),
+            Self::Mxfp4 => super::MXFP4_BLOCK_ELEMS,
         }
     }
 
@@ -75,6 +89,7 @@ impl Inkling2GgufExpertType {
             Self::Q8_0 => n / 32 * 34,
             Self::Q4K => n / 256 * 144,
             Self::Ext(e) => e.row_bytes(n),
+            Self::Mxfp4 => super::mxfp4_row_bytes(n),
         }
     }
 
@@ -85,6 +100,8 @@ impl Inkling2GgufExpertType {
             Self::Q8_0 => "moe_phase1_gate_up_act_q8_0",
             Self::Q4K => "moe_phase1_gate_up_act_q4_k",
             Self::Ext(e) => e.phase1_kernel(),
+            // Refused before any dispatch (see `encode_inkling2_gguf_phase1_table`).
+            Self::Mxfp4 => "moe_phase1_gate_up_act_mxfp4",
         }
     }
 
@@ -93,6 +110,8 @@ impl Inkling2GgufExpertType {
             Self::Q8_0 => "moe_phase2_down_reduce_k8_q8_0",
             Self::Q4K => "moe_phase2_down_reduce_k8_q4_k",
             Self::Ext(e) => e.phase2_kernel(),
+            // Dispatched by its own encoder (different bindings).
+            Self::Mxfp4 => "moe_phase2_down_reduce_k8_mxfp4",
         }
     }
 }
@@ -193,6 +212,13 @@ pub fn encode_inkling2_gguf_phase1_table(
     gate_cap: f32,
     up_cap: f32,
 ) -> Result<(), GpuError> {
+    if kind == Inkling2GgufExpertType::Mxfp4 {
+        return Err(GpuError::InvalidInput(
+            "MXFP4 has no Inkling gate-up pair (its phase 1 has its own activation); only an \
+             MXFP4 down projection runs"
+                .into(),
+        ));
+    }
     check(kind, "d_dim", d_dim, top_k)?;
     check_caps(gate_cap, up_cap)?;
     if f_dim == 0 {
@@ -266,6 +292,11 @@ pub fn encode_inkling2_gguf_phase2_table(
     check(kind, "f_dim", f_dim, top_k)?;
     if d_dim == 0 {
         return Err(GpuError::InvalidInput("d_dim must be positive".into()));
+    }
+    if kind == Inkling2GgufExpertType::Mxfp4 {
+        return super::mxfp4::encode_phase2_mxfp4_inkling(
+            context, pass, routed, offsets, acts, routing_w, y, d_dim, f_dim, top_k,
+        );
     }
     // The residual slot is bound to `acts` and never read in this mode.
     let (values, key) = inkling_constants(None);
@@ -341,4 +372,69 @@ pub fn encode_inkling2_gguf_bind_rows(
         64,
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The repack's lowercase ggml name for each type. Exhaustive on
+    /// purpose: a new `MoeExtType` does not compile until it is named here,
+    /// and the test below then fails until `from_dtype` maps it, so a file
+    /// cannot pass the intake and fail at open for want of a name.
+    fn name(e: MoeExtType) -> &'static str {
+        use MoeExtType as E;
+        match e {
+            E::Q4_0 => "q4_0",
+            E::Q4_1 => "q4_1",
+            E::Q5_0 => "q5_0",
+            E::Q5_1 => "q5_1",
+            E::Q1_0 => "q1_0",
+            E::Tq2_0 => "tq2_0",
+            E::Tq1_0 => "tq1_0",
+            E::Nvfp4 => "nvfp4",
+            E::Q5K => "q5_k",
+            E::Q3K => "q3_k",
+            E::Q2K => "q2_k",
+            E::Iq2Xs => "iq2_xs",
+            E::Iq1S => "iq1_s",
+            E::Iq3S => "iq3_s",
+            E::Iq3Xxs => "iq3_xxs",
+            E::Iq4Xs => "iq4_xs",
+            E::Iq2S => "iq2_s",
+            E::Iq2Xxs => "iq2_xxs",
+            E::Iq1M => "iq1_m",
+            E::Iq4Nl => "iq4_nl",
+            E::Q6K => "q6_k",
+            E::Q2_0 => "q2_0",
+            E::Iq1Xs => "iq1_xs",
+            E::Iq1Xxs => "iq1_xxs",
+            E::Iq1Xxxs => "iq1_xxxs",
+        }
+    }
+
+    #[test]
+    fn every_ext_type_with_an_inkling_pair_is_named() {
+        for &e in &MoeExtType::ALL {
+            assert_eq!(
+                Inkling2GgufExpertType::from_dtype(name(e)),
+                Some(Inkling2GgufExpertType::Ext(e)),
+                "{e:?} has Inkling-mode kernels but from_dtype does not map {:?}",
+                name(e)
+            );
+        }
+        assert_eq!(
+            Inkling2GgufExpertType::from_dtype("q8_0"),
+            Some(Inkling2GgufExpertType::Q8_0)
+        );
+        assert_eq!(
+            Inkling2GgufExpertType::from_dtype("q4_k"),
+            Some(Inkling2GgufExpertType::Q4K)
+        );
+        // MXFP4 maps (down only; its gate-up is refused at dispatch).
+        assert_eq!(
+            Inkling2GgufExpertType::from_dtype("mxfp4"),
+            Some(Inkling2GgufExpertType::Mxfp4)
+        );
+    }
 }

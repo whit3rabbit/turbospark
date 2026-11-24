@@ -420,7 +420,26 @@ fn ink_row(kind: Ink, cols: usize, seed: u32) -> Vec<u8> {
         Ink::Q8_0 => turbospark_compute::quantize_q8_0(&smooth(cols, seed)),
         Ink::Q4K => turbospark_compute::quantize_q4_k(&smooth(cols, seed)),
         Ink::Ext(e) => row(e, cols, seed),
+        Ink::Mxfp4 => mxfp4_row(cols, seed),
     }
+}
+
+/// Random MXFP4 blocks: an E8M0 scale near 2^-5 then 16 bytes of E2M1
+/// nibble pairs, so the dequantized weights are a few tenths at most.
+fn mxfp4_row(cols: usize, seed: u32) -> Vec<u8> {
+    let mut s = seed.wrapping_mul(2_654_435_761).wrapping_add(1);
+    let mut next = || {
+        s = s.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (s >> 8) as u8
+    };
+    let mut v = Vec::with_capacity(cols / 32 * 17);
+    for _ in 0..cols / 32 {
+        v.push(120 + next() % 4);
+        for _ in 0..16 {
+            v.push(next());
+        }
+    }
+    v
 }
 
 fn ink_decode(kind: Ink, bytes: &[u8], n: usize) -> Vec<f32> {
@@ -428,6 +447,7 @@ fn ink_decode(kind: Ink, bytes: &[u8], n: usize) -> Vec<f32> {
         Ink::Q8_0 => turbospark_compute::dequantize_q8_0(bytes, n),
         Ink::Q4K => turbospark_compute::dequantize_q4_k(bytes, n),
         Ink::Ext(e) => decode(e, bytes, n),
+        Ink::Mxfp4 => turbospark_compute::dequantize_mxfp4(bytes, n),
     }
 }
 
@@ -662,7 +682,50 @@ fn inkling_mode_published_mixes() {
         (Ink::Ext(E::Iq3Xxs), Ink::Ext(E::Nvfp4)),
         (Ink::Q4K, Ink::Ext(E::Q5_0)),
         (Ink::Ext(E::Nvfp4), Ink::Q8_0),
+        // UD-Q2_K_XL layer 20.
+        (Ink::Ext(E::Iq2S), Ink::Mxfp4),
     ] {
         run_inkling_case(g, d, 3);
     }
+}
+
+/// MXFP4 down reduces all eight slots in the mode, like the other types.
+#[test]
+fn inkling_mode_mxfp4_down_reduces_all_eight_slots() {
+    run_inkling_case(Ink::Q8_0, Ink::Mxfp4, FIXED_SLOTS);
+}
+
+/// An MXFP4 gate-up has no Inkling pair: phase 1 refuses it by name.
+#[test]
+fn inkling_mode_refuses_an_mxfp4_gate_up() {
+    let mut context = MetalContext::new().expect("Metal device");
+    let buf = context.new_output_buffer(4096);
+    let pass = context.begin_pass();
+    let offsets = MoeExpertOffsets {
+        gate_w: 16,
+        gate_s: 0,
+        gate_b: 0,
+        up_w: 16,
+        up_s: 4,
+        up_b: 0,
+        down_w: 16,
+        down_s: 8,
+        down_b: 0,
+    };
+    let err = turbospark_gpu::encode_inkling2_gguf_phase1_table(
+        &mut context,
+        &pass,
+        Ink::Mxfp4,
+        (&buf, 0),
+        &offsets,
+        (&buf, 0),
+        (&buf, 0),
+        64,
+        64,
+        2,
+        4.0,
+        25.0,
+    )
+    .expect_err("an MXFP4 gate-up must be refused");
+    assert!(format!("{err}").contains("MXFP4"), "{err}");
 }

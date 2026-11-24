@@ -153,6 +153,60 @@ fn phase2_function_constants(use_silu: bool, top_k: u32) -> FunctionConstantValu
     values
 }
 
+/// Phase 2 over MXFP4 DOWN rows in Inkling 2's mode (function constant 112:
+/// the per-expert outer scale on the down value, no residual), no biases,
+/// over a blob table at `routed` (a bound `RoutedBlobsBuffer` at offset 0,
+/// or one row of `encode_inkling2_gguf_bind_rows`). The kernel already
+/// applies both through `moe_gguf_down` / `moe_gguf_residual`; the key adds
+/// an Inkling byte so this pipeline is never handed to gpt-oss or back.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_phase2_mxfp4_inkling(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    routed: (&metal::Buffer, u64),
+    offsets: &MoeExpertOffsets,
+    acts: (&metal::Buffer, u64),
+    routing_w: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    top_k: u32,
+) -> Result<(), GpuError> {
+    if f_dim == 0 || f_dim as usize % MXFP4_BLOCK_ELEMS != 0 {
+        return Err(GpuError::InvalidInput(format!(
+            "MXFP4 down width {f_dim} must be a positive multiple of {MXFP4_BLOCK_ELEMS}"
+        )));
+    }
+    let values = phase2_function_constants(false, top_k);
+    let on = true;
+    values.set_constant_value_at_index((&on as *const bool).cast(), MTLDataType::Bool, 112);
+    let [s, k] = phase2_constants_key(false, top_k);
+    let key = [s, k, 1u8];
+    let pipeline = context.pipeline(SOURCE, "moe_phase2_down_reduce_k8_mxfp4", &values, &key)?;
+    let has_bias = 0u32;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[
+            (routed.0, 0, routed.1),
+            (acts.0, 2, acts.1),
+            (routing_w.0, 3, routing_w.1),
+            // Never read in this mode; bound so the slot is valid.
+            (acts.0, 4, acts.1),
+            (y.0, 5, y.1),
+        ],
+        &[
+            (&offsets.bytes(), 1),
+            (u32_bytes(&d_dim), 6),
+            (u32_bytes(&f_dim), 7),
+            (u32_bytes(&has_bias), 8),
+            (u32_bytes(&top_k), 9),
+        ],
+        d_dim as u64,
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
 fn phase2_constants_key(use_silu: bool, top_k: u32) -> [u8; 2] {
     // `top_k` never exceeds `MAX_STREAMED_EXPERTS` (16 as of qwen4_exp's
     // bring-up, and MXFP4/gpt-oss's own top_k is 4 regardless), so one byte
