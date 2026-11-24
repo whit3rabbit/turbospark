@@ -1176,8 +1176,13 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
   | `inkling2_router_select_k8` | 1.9% | 2.4% | 1.2% |
   | NVFP4 expert pair | 12.2 + 7.6% (native) | 16.0 + 10.3% (native) | 30.3 + 16.5% (GGUF) |
 
-  The rel-bias-inside-attention fusion is under the 2% rule and is not
-  built. The router class read 2.4% on mlx4, but those shares come from one
+  The rel-bias-inside-attention fusion is under the 2% rule on a real
+  reading too and is not built: in one pass, as decode encodes it, the table
+  costs 0.186 ms a token (48 dispatches, 3.87 us each), 0.9% of mlx4's
+  decode GPU time, 0.6% of BF16's, 0.55% of UD-Q4_K_XL's. Folding it into
+  attention would not even recover that: the kernel would recompute the
+  `r . proj` dot product for every key it visits, where the table computes
+  each (head, distance) once. The router class read 2.4% on mlx4, but those shares come from one
   encoder per dispatch, which inflates small kernels: measured in one pass
   as decode encodes it (`gpu/tests/inkling2_router_select_cost.rs`, 48
   dispatches a token at 128 experts, the empty pass subtracted), the select
