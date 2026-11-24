@@ -112,9 +112,14 @@ extension AudioWorkspaceController {
                     output = try await runner(profile, plan.request, pcm, report)
                 } else {
                     self.status = AppStrings.localized("Loading model")
-                    let session = try await self.residentSession(for: profile)
-                    self.status = AppStrings.localized("Cleaning reference")
-                    output = try await session.execute(plan.request, pcm: pcm, progress: report)
+                    if let isolator = try await self.offlineVoiceIsolator(for: profile) {
+                        self.status = AppStrings.localized("Cleaning reference")
+                        output = try await isolator.enhance(plan.request, pcm: pcm, progress: report)
+                    } else {
+                        let session = try await self.residentSession(for: profile)
+                        self.status = AppStrings.localized("Cleaning reference")
+                        output = try await session.execute(plan.request, pcm: pcm, progress: report)
+                    }
                 }
                 try Task.checkCancellation()
                 guard self.valid(token) else { return }

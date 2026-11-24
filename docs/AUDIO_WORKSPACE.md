@@ -264,9 +264,13 @@ modules and internal codecs are not presented as runnable jobs.
   (its causal sibling), or `mossformer2-se-48k-fp16` (MossFormer2 SE,
   portable CPU). The take is read at 48 kHz mono, at most 600 seconds, and
   the cleaned voice is saved as a new take; the source take is never changed.
-  The same engines run from the command line as `turbospark enhance`. Quality
-  is not yet gated beyond reference parity (family READMEs under
-  `crates/audio/src/sts/`).
+  The same engines run from the command line as `turbospark enhance`. In the
+  app, `voice-isolator-v1` renders on the vendored MLX port
+  (`swift/TurboSparkApp/Vendor/VoiceIsolatorMLX`, float16) instead of the
+  Rust Metal path, which is per-call and far slower; an MLX load failure
+  falls back to the Rust session. The CLI, FFI, realtime profile and live
+  streams stay on Rust. Quality is not yet gated beyond reference parity
+  (family READMEs under `crates/audio/src/sts/`).
 - "Clean reference" on the Voice Cloning reference card runs the same
   enhancement over only the trimmed reference region (best installed of
   `voice-isolator-v1`, `voice-isolator-v1-realtime`,

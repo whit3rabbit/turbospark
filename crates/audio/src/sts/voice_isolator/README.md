@@ -87,3 +87,25 @@ yet a pinned catalog asset): place `VoiceIsolatorStep.mlmodelc` beside
 `denoiser_realtime.safetensors` and the live session takes it.
 Quality beyond reference parity (PESQ/DNSMOS on real recordings) is not
 measured here.
+
+### MLX port in the app
+
+The app renders `voice-isolator-v1` on the vendored MLX port
+(`swift/TurboSparkApp/Vendor/VoiceIsolatorMLX`, starkdmi/VoiceIsolatorMLX,
+Apache-2.0), not on this crate: it loads the same `denoiser.safetensors`
+and converts it in memory. This crate stays the engine for the CLI, the FFI,
+the realtime file and live streams. Against the torch CPU reference above
+(`VoiceIsolatorMLXTests.testRealCheckpointMatchesTheTorchReference`,
+`TURBOSPARK_VOICE_ISOLATOR_MODEL`): float32 max abs 2.7e-7, the app's float16
+68.9 dB SNR.
+
+Same M4 Max, AC power, one run (load average about 8 from other sessions),
+first pass discarded, float16 and float32 interleaved, not benchmark rows:
+
+| MLX port | 10 s offline file, median of 5 | Realtime stream, 20 ms pushes, lookahead 2, 500 pushes |
+|---|---|---|
+| float16 | 1.01 s (RTF 0.10) | median 5.8 ms, p95 7.9 ms, 1 push over 20 ms |
+| float32 | 1.18 s (RTF 0.12) | median 6.8 ms, p95 9.3 ms, 1 push over 20 ms |
+
+The stream numbers are the library alone, not yet wired to the app's live
+path.
