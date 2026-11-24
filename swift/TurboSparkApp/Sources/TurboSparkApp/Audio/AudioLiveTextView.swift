@@ -24,6 +24,15 @@ struct AudioLiveTextView: View {
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
             }
+            if let cleaning = live.cleaningStatus {
+                Label {
+                    Text(cleaning).fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.circle").accessibilityHidden(true)
+                }
+                .themedFont(.small)
+                .foregroundStyle(.appSecondary)
+            }
             if !live.text.isEmpty || live.isStreaming {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -55,6 +64,10 @@ struct AudioLiveTextView: View {
     @ViewBuilder private var transcript: some View {
         if live.text.isEmpty && live.isStreaming {
             Text("Listening...", bundle: .module).foregroundStyle(.appSecondary)
+        } else if let open = live.openWord, !open.isEmpty {
+            // The word still being heard, lighter, so the line keeps moving
+            // between commits without claiming the word is settled.
+            Text(verbatim: live.text) + Text(verbatim: (live.text.isEmpty ? "" : " ") + open).foregroundStyle(.appSecondary)
         } else {
             Text(verbatim: live.text)
         }
@@ -100,7 +113,26 @@ struct AudioLiveTextModelRow: View {
                 } icon: { Image(systemName: "text.bubble.fill").accessibilityHidden(true) }
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
+                if controller.offersLiveNoiseReduction { noiseReduction }
             }
+        }
+    }
+
+    /// Shown only with the realtime voice isolator installed and runnable.
+    /// It applies when a take starts, so it is locked while one runs.
+    private var noiseReduction: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle(isOn: Binding(get: { controller.reduceLiveNoise }, set: { controller.reduceLiveNoise = $0 })) {
+                Text("Reduce background noise", bundle: .module)
+            }
+            .disabled(controller.hasRecordingActivity)
+            .help(controller.hasRecordingActivity
+                ? Text("Change this before you start recording.", bundle: .module)
+                : Text("Live text hears your microphone with background noise reduced. The saved recording keeps the original audio.", bundle: .module))
+            Text("Live text hears your microphone with background noise reduced. The saved recording keeps the original audio.", bundle: .module)
+                .themedFont(.small)
+                .foregroundStyle(.appSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

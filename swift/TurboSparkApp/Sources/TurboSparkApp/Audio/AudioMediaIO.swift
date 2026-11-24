@@ -109,6 +109,44 @@ enum AudioMediaIO {
         return samples
     }
 
+    /// A take at 48 kHz mono for enhancement, from `start` on, read in 30 s
+    /// windows like `readMono16kTake`. 48 kHz is the engine's rate, so the
+    /// runtime does not resample it. Clean reference passes the region.
+    static func readMono48kTake(_ clips: [AudioLibraryClip], store: ManagedAssetStore, start: Double = 0, duration: Double, limit: Double, cancel: () throws -> Void = {}) throws -> [Float] {
+        guard start.isFinite, start >= 0, duration.isFinite, duration > 0, duration <= limit else { throw MediaError.tooLong }
+        var output: [Float] = []
+        output.reserveCapacity(Int(ceil(duration * 48_000)))
+        var read = 0.0
+        while read < duration {
+            try cancel()
+            let window = min(30, duration - read)
+            try streamMix(clips, resolve: store.materializedURL(for:), sampleRate: 48_000, channels: 1, start: start + read, duration: window, cancel: cancel) {
+                output.append(contentsOf: $0)
+            }
+            read += 30
+        }
+        return output
+    }
+
+    /// A whole take at 44.1 kHz interleaved stereo for vocal separation, read
+    /// in 30 s windows like `readMono48kTake`. 44.1 kHz stereo is the engine's
+    /// layout, so the runtime does not resample it; a mono take is upmixed.
+    static func readStereo44kTake(_ clips: [AudioLibraryClip], store: ManagedAssetStore, duration: Double, limit: Double, cancel: () throws -> Void = {}) throws -> [Float] {
+        guard duration.isFinite, duration > 0, duration <= limit else { throw MediaError.tooLong }
+        var output: [Float] = []
+        output.reserveCapacity(Int(ceil(duration * 44_100)) * 2)
+        var read = 0.0
+        while read < duration {
+            try cancel()
+            let window = min(30, duration - read)
+            try streamMix(clips, resolve: store.materializedURL(for:), sampleRate: 44_100, channels: 2, start: read, duration: window, cancel: cancel) {
+                output.append(contentsOf: $0)
+            }
+            read += 30
+        }
+        return output
+    }
+
     /// A playback overview uses the same timeline and mix as playback. Bound the
     /// preview's materialization cost so browsing a long meeting stays cheap.
     static func waveformPeaks(_ clips: [AudioLibraryClip], duration: Double, count: Int,

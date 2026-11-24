@@ -61,10 +61,12 @@ public enum MemoryToolExecutor {
     /// a bad name, an unknown memory, or a malformed action; `AppToolRegistry`
     /// wraps the throw into an error result. The store is a parameter with a
     /// `.shared` default so tests can point the executor at a scratch
-    /// directory instead of the process-wide one.
+    /// directory instead of the process-wide one. `toolCallID` is recorded
+    /// on a staged save (`MemoryClaim.sourceToolCallID`) and never echoed in
+    /// the output, so the model-visible result is unchanged.
     public static func execute(
         arguments: [String: String], project: AppProject?, store: MemoryStore = .shared,
-        ledger: MemoryLedgerStore = .shared
+        ledger: MemoryLedgerStore = .shared, toolCallID: UUID? = nil
     ) throws -> String {
         guard store.isModelEnabled else {
             throw NSError(domain: "TurboSparkMemory", code: 7, userInfo: [
@@ -74,7 +76,7 @@ public enum MemoryToolExecutor {
         }
         let scope = (arguments["scope"] ?? "project").lowercased()
         if scope == "profile" {
-            return try executeProfile(arguments: arguments, ledger: ledger)
+            return try executeProfile(arguments: arguments, ledger: ledger, toolCallID: toolCallID)
         }
         guard let root = project?.rootDirectoryURL else {
             throw NSError(domain: "TurboSparkMemory", code: 3, userInfo: [
@@ -116,6 +118,7 @@ public enum MemoryToolExecutor {
             var proposal = MemoryClaim(scope: scope, kind: type.rawValue,
                                        text: "\(description)\n\(body)", projectTopicName: name)
             proposal.confidence = "agent-proposed"
+            proposal.sourceToolCallID = toolCallID
             try ledger.propose(proposal)
             return "Proposed memory '\(name)' for review in Settings. It is not active yet."
 
@@ -161,7 +164,7 @@ public enum MemoryToolExecutor {
     }
 
     private static func executeProfile(
-        arguments: [String: String], ledger: MemoryLedgerStore
+        arguments: [String: String], ledger: MemoryLedgerStore, toolCallID: UUID?
     ) throws -> String {
         let action = (arguments["action"] ?? "read").lowercased()
         switch action {
@@ -172,6 +175,7 @@ public enum MemoryToolExecutor {
             }
             var proposal = MemoryClaim(scope: "profile", kind: "preference", text: text)
             proposal.confidence = "agent-proposed"
+            proposal.sourceToolCallID = toolCallID
             try ledger.propose(proposal)
             return "Proposed a profile memory for review in Settings. It is not active yet."
         case "read", "list", "index":

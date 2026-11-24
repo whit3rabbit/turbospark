@@ -6,6 +6,9 @@ public struct ToolProfileEntry: Identifiable, Equatable, Sendable {
     public let id: String
     public let name: String
     public let summary: String
+    /// Rough prompt tokens for this tool's definition
+    /// (`ToolPromptCostEstimate`). Nil when it could not be estimated.
+    public var estimatedPromptTokens: Int? = nil
 }
 
 /// A titled run of tools. `title` is a localization key, not display text.
@@ -125,7 +128,8 @@ extension AppToolCatalog {
                 else { continue }
                 entries.append(ToolProfileEntry(
                     id: key, name: tool.function.name,
-                    summary: firstSentence(of: tool.function.description)))
+                    summary: firstSentence(of: tool.function.description),
+                    estimatedPromptTokens: cachedPromptTokenEstimate(for: tool)))
             }
             if !entries.isEmpty { groups.append(ToolProfileGroup(title: source.title, entries: entries)) }
         }
@@ -161,6 +165,28 @@ extension AppToolCatalog {
         offeredKeysCache[cacheKey] = keys
         offeredKeysLock.unlock()
         return keys
+    }
+
+    private static let promptEstimateLock = NSLock()
+    private static nonisolated(unsafe) var promptEstimateCache: [String: Int] = [:]
+
+    /// Cached because the composer chip rebuilds these groups on every
+    /// redraw and the estimate encodes the whole definition. Keyed by name
+    /// and description, which is what differs between two definitions that
+    /// share a name.
+    private static func cachedPromptTokenEstimate(for tool: OpenAITool) -> Int? {
+        let key = tool.function.name + "\u{0}" + tool.function.description
+        promptEstimateLock.lock()
+        if let known = promptEstimateCache[key] {
+            promptEstimateLock.unlock()
+            return known
+        }
+        promptEstimateLock.unlock()
+        guard let estimate = ToolPromptCostEstimate.tokens(for: tool) else { return nil }
+        promptEstimateLock.lock()
+        promptEstimateCache[key] = estimate
+        promptEstimateLock.unlock()
+        return estimate
     }
 
     private static func firstSentence(of text: String) -> String {

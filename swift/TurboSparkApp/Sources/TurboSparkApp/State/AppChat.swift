@@ -301,6 +301,11 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
     public var isSynthetic: Bool
     /// Optional thinking or reasoning output preceding the response.
     public var reasoning: String
+    /// Seconds the model spent reasoning, measured from the first to the last
+    /// streamed reasoning chunk (`ReasoningClock`). Nil on every row written
+    /// before this field existed and on rows whose reasoning was not timed;
+    /// those show no duration rather than an estimate.
+    public var reasoningSeconds: Double?
     /// Reason why generation stopped for this message turn.
     public var stopReason: String?
     /// Parsed tool calls requested in this message turn.
@@ -397,6 +402,7 @@ public struct AppChatMessage: Identifiable, Codable, Equatable, Sendable {
         isStandingInstruction = (try? container.decode(Bool.self, forKey: .isStandingInstruction)) ?? false
         isSynthetic = (try? container.decode(Bool.self, forKey: .isSynthetic)) ?? false
         reasoning = try container.decodeIfPresent(String.self, forKey: .reasoning) ?? ""
+        reasoningSeconds = try? container.decodeIfPresent(Double.self, forKey: .reasoningSeconds)
         stopReason = try container.decodeIfPresent(String.self, forKey: .stopReason)
         // Lossy: one malformed call must not take the whole archive down.
         toolCalls = try container.decodeLossyArray(AppToolCall.self, forKey: .toolCalls)

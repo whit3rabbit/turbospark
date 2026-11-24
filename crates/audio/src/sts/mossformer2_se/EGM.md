@@ -9,6 +9,8 @@ MossFormer2 speech enhancement with Kaldi fbank front end, mask net, and iSTFT; 
 - `MossFormer2Se::load`
 - `MossFormer2Se::enhance`
 - `MossFormer2Se::enhance_with_mode`
+- `MossFormer2Se::enhance_controlled`: progress hook between model passes; false stops with `SpeechError::Input`, output otherwise identical
+- `WEIGHT_FILES`: `model.safetensors`, then the published `model_fp32`, `model_fp16`, `model_int8` files
 - `MossFormer2Se::process_chunk`
 - `MossFormer2Se::kaldi_fbank`
 - `MossFormer2Se::kaldi_deltas`
@@ -21,7 +23,7 @@ MossFormer2 speech enhancement with Kaldi fbank front end, mask net, and iSTFT; 
 - Inference is CPU f32 over host `Vec<f32>` buffers; no GPU state is held here.
 
 ## Side Effects
-- Reads `model.safetensors` and an optional `config.json` (reference defaults when absent) from the model directory in `open` [mod.rs:open]; no writes, network, or env access.
+- Reads the first present `WEIGHT_FILES` entry and an optional `config.json` (reference defaults when absent) from the model directory in `open` [mod.rs:open]; no writes, network, or env access.
 
 ## Verification
 - Run: `cargo test -p turbospark-audio sts::mossformer2_se`

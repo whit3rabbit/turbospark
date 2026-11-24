@@ -12,17 +12,26 @@ final class AudioVoiceTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let vault = ProfileVaultStore(rootProvider: { root }, profileIDProvider: { "voices" }, migrateLegacyData: false)
         _ = try vault.prepareForLaunch()
-        let controller = AudioWorkspaceController(library: AudioLibraryStore(repository: ProfileRepository(store: vault)), assets: ManagedAssetStore(vault: vault))
+        // The bundled catalog's profiles, never the Mac's real installs: the
+        // installed set below is the fixture's.
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let empty = try decoder.decode(AudioInstalledReport.self, from: Data(
+            #"{"installed":[],"needs_adoption":[],"incompatible":[],"other_audio":[],"not_connected":[]}"#.utf8))
+        let controller = AudioWorkspaceController(
+            library: AudioLibraryStore(repository: ProfileRepository(store: vault)), assets: ManagedAssetStore(vault: vault),
+            catalogReader: { AudioCatalogSnapshot(profiles: [], installed: empty, capabilities: []) })
         defer { controller.shutdown() }
         controller.profiles = try AudioCatalog.profiles()
         // The model menu lists installed models, and a page selects only one of those.
         controller.installedPaths = Dictionary(uniqueKeysWithValues: controller.profiles.map { ($0.identity.alias, "/test/\($0.identity.alias)") })
         controller.selectPage(.voiceClone)
-        // Two Qwen3-TTS Base profiles clone in Swift MLX; MegaTTS3, both OmniVoice
-        // rows and Drama 3 clone natively on Metal, each with its own request shape.
-        XCTAssertEqual(Set(controller.availableProfiles.map(\.identity.alias)), [
-            "qwen3-tts-12hz-06b-base-8bit", "qwen3-tts-12hz-17b-base-8bit",
-            "megatts3-f32", "omnivoice-8bit", "omnivoice-bf16", "fish-drama3-4bit",
+        // The page lists one size per engine, in `curatedCloneAliases` order (#257):
+        // Qwen3-TTS 1.7B Base clones in Swift MLX; OmniVoice 8-bit, Drama 3 and
+        // MegaTTS3 clone natively on Metal, each with its own request shape. The
+        // other Qwen3 Base and OmniVoice sizes stay on Advanced and Voiceover.
+        XCTAssertEqual(controller.availableProfiles.map(\.identity.alias), [
+            "omnivoice-8bit", "qwen3-tts-12hz-17b-base-8bit", "fish-drama3-4bit", "megatts3-f32",
         ])
         XCTAssertTrue(controller.availableProfiles.allSatisfy { AudioWorkspaceController.speechMode(for: $0) == .clone })
         let base = try XCTUnwrap(controller.availableProfiles.last { $0.family == "qwen3_tts" })

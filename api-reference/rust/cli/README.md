@@ -1,5 +1,5 @@
 ---
-description: "The turbospark-cli package: six command-line binaries for model management, text generation and chat, images, music, voice cloning, and the server."
+description: "The turbospark-cli package: command-line binaries for model management, text generation and chat, images, music, voice cloning, speech enhancement, and the server."
 icon: terminal
 ---
 
@@ -18,20 +18,21 @@ Generation needs macOS on Apple Silicon with a Metal-capable device. On other pl
 | `turbospark-image` | Generate one PNG, or pack a Diffusers export into an install. | `src/bin/image.rs` |
 | `turbospark-music` | Generate a WAV file with MiniMax Music 3. | `src/bin/music.rs` |
 | `turbospark-clone` | Clone a voice from a short reference recording and speak English text with MegaTTS3. | `src/bin/clone.rs` |
+| `turbospark-enhance` | Clean speech in a WAV file, or separate vocals from music with `--task separate`. | `src/bin/enhance.rs` |
 | `turbospark` | Front end. Routes subcommands to the binaries above, manages the background server, and connects coding agents. | `src/bin/turbospark.rs` |
 
-The package declares these six binaries in `Cargo.toml`. The `turbospark` front end also calls two binaries this package does not build: `turbospark-server` (for `serve`, `start`, and `restart`) and `turbospark-bench` (for `bench`). See [Commands overview](commands-overview.md#turbospark-front-end) for how it finds them.
+The package declares these binaries in `Cargo.toml`, plus `turbospark-speak`, `turbospark-steer`, `turbospark-ocr`, and `turbospark-acp-agent`, which these pages do not cover. The `turbospark` front end also calls two binaries this package does not build: `turbospark-server` (for `serve`, `start`, and `restart`) and `turbospark-bench` (for `bench`). See [Commands overview](commands-overview.md#turbospark-front-end) for how it finds them.
 
 ## How the pieces fit
 
 - **Parsing.** `turbospark-check` hands its argument list to [`turbospark-invocation`](../invocation/README.md). That crate is a pure function from tokens to one outcome: a validated request, a help request, a version request, or one of six typed failures.
 - **Exit status and stream routing.** The binary applies the exit status and stream routing that `invocation` computes. It does not decide them itself. The option table is in [`options.md`](../invocation/options.md).
-- **Other binaries.** `turbospark-model`, `turbospark-image`, `turbospark-music`, and `turbospark-clone` parse their own arguments. They do not use `turbospark-invocation`.
+- **Other binaries.** `turbospark-model`, `turbospark-image`, `turbospark-music`, `turbospark-clone`, and `turbospark-enhance` parse their own arguments. They do not use `turbospark-invocation`.
 - **Library crates.** The binaries call the library crates for the real work. Model catalog, probing, and installs come from [`turbospark-catalog`](../catalog/README.md). Image generation comes from [`turbospark-image`](../image/README.md). Music and voice cloning come from [`turbospark-audio`](../audio/README.md). Text generation uses the runtime, tokenizer, and selection crates.
 
 ## Exit status and output
 
-Success exits `0`. The binaries differ on failures. `turbospark-model`, `turbospark-music`, and `turbospark-clone` exit `2` for a malformed invocation and `1` for a run that failed. `turbospark-image` exits `1` for both. `turbospark-check` exits `0` or `2` only, so a generation failure does not change its exit status.
+Success exits `0`. The binaries differ on failures. `turbospark-model`, `turbospark-music`, `turbospark-clone`, and `turbospark-enhance` exit `2` for a malformed invocation and `1` for a run that failed. `turbospark-image` exits `1` for both. `turbospark-check` exits `0` or `2` only, so a generation failure does not change its exit status.
 
 Read [Exit status and output](exit-status-and-output.md) before you script against any of these binaries.
 
@@ -49,6 +50,7 @@ Read [Exit status and output](exit-status-and-output.md) before you script again
 | Generate an image | `turbospark-image generate` | [Commands overview](commands-overview.md#turbospark-image) |
 | Generate music | `turbospark-music generate` | [Commands overview](commands-overview.md#turbospark-music) |
 | Clone a voice | `turbospark-clone speak` | [Commands overview](commands-overview.md#turbospark-clone) |
+| Clean speech or separate vocals | `turbospark-enhance` | [Commands overview](commands-overview.md#turbospark-enhance) |
 | Run a local server and point a coding agent at it | `turbospark start AGENT` | [Examples](examples.md#run-the-server-and-connect-an-agent) |
 | Use these tools from a script | Exit codes and stream routing | [Exit status and output](exit-status-and-output.md) |
 

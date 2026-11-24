@@ -254,7 +254,13 @@ struct AudioLibraryItem: Codable, Equatable, Identifiable, Sendable {
     /// Extracted voiceprints for speakers in this take, keyed by speaker key.
     /// Used by `AudioSpeakerMemory` for cross-meeting recognition and naming suggestions.
     var speakerVoiceprints: [String: AudioSpeakerVoiceprint]? = nil
+    /// What the user typed during or after the take. Kept apart from the
+    /// transcripts and the generated summary: no model output ever writes it,
+    /// and summarizing only reads it. Optional so older records decode.
+    var userNotes: String? = nil
     var tagList: [String] { tags ?? [] }
+    /// Notes with only whitespace count as none.
+    var hasUserNotes: Bool { !(userNotes ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var preferredTranscript: AudioTranscriptRevision? {
         transcripts.last(where: { $0.source == .user }) ?? transcripts.last
     }
@@ -281,8 +287,11 @@ struct AudioLibraryItem: Codable, Equatable, Identifiable, Sendable {
               // Only sizes no editor can produce: ordinary tags never fail a load.
               tagList.count <= 256, tagList.allSatisfy({ $0.utf8.count <= 1_024 }),
               Self.isBounded(speakerNames), Self.isBounded(speakerMerges),
+              (userNotes?.utf8.count ?? 0) <= Self.maxUserNotesBytes,
               Self.isBoundedVoiceprints(speakerVoiceprints) else { throw CocoaError(.coderReadCorrupt) }
     }
+    /// Far beyond anything typed in a meeting; only a corrupt record exceeds it.
+    static let maxUserNotesBytes = 4 * 1_024 * 1_024
     private static func isBounded(_ map: [String: String]?) -> Bool {
         guard let map else { return true }
         return map.count <= 10_000 && map.allSatisfy { $0.key.utf8.count <= 1_024 && $0.value.utf8.count <= 1_024 }
@@ -327,9 +336,15 @@ struct AudioWorkspacePreferences: Codable, Sendable {
     /// Whether each Speech-to-Text mode labels speakers, by mode raw value.
     /// Optional so older profiles decode. A missing mode uses its default.
     var speakerLabels: [String: Bool]? = nil
+    /// Write meeting notes once a Meeting take's final transcript is saved.
+    /// Optional so older profiles decode; nil is off.
+    var autoMeetingNotes: Bool? = nil
     /// Each preset's collection name, localized once at first use and kept,
     /// so changing the app language does not split a collection.
     var presetCollections: [String: String]? = nil
+    /// Clean the microphone for live text while recording (the saved audio
+    /// is never cleaned). Optional so older profiles decode; nil is off.
+    var reduceLiveNoise: Bool? = nil
 }
 
 final class AudioLibraryStore: @unchecked Sendable {
@@ -438,6 +453,18 @@ enum AudioTranscriptExport {
         let ms = Int64(min(value, Double(Int32.max)) * 1000)
         return String(format: "%02lld:%02lld:%02lld%@%03lld", ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, separator, ms % 1000)
     }
+}
+
+/// Where notes generation is: a stage line while long meetings are read in
+/// parts, then the final notes as they stream.
+struct AudioSummaryProgress: Equatable, Sendable {
+    var stage: String?
+    var text: String
+}
+
+struct AudioSummaryPreview: Equatable {
+    var itemID: UUID
+    var progress: AudioSummaryProgress
 }
 
 struct AudioMeetingSummary: Codable, Equatable, Sendable {

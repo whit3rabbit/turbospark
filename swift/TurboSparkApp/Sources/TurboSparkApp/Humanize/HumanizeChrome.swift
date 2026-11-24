@@ -331,32 +331,18 @@ private struct RunRipple: View {
 /// Placeholder lines with a passing shimmer, shown before the first words of
 /// a rewrite arrive.
 struct HumanizeSkeleton: View {
-    @Environment(\.appTheme) private var theme
     private static let widths: [CGFloat] = [0.94, 0.86, 0.97, 0.58, 0.9, 0.76, 0.42]
 
     var body: some View {
-        TSMotionContext { reduceMotion in
-            GeometryReader { geometry in
-                let width = geometry.size.width
-                ZStack(alignment: .topLeading) {
-                    bars(width).foregroundStyle(.appSecondary.opacity(0.15))
-                    if !reduceMotion {
-                        Color.clear
-                            .overlay(alignment: .leading) {
-                                LinearGradient(
-                                    colors: [.clear, theme.accent.opacity(0.25), .clear],
-                                    startPoint: .leading, endPoint: .trailing)
-                                .frame(width: width * 0.4)
-                                .phaseAnimator([false, true]) { view, moved in
-                                    view.offset(x: moved ? width : -width * 0.4)
-                                } animation: { moved in
-                                    moved ? TSMotion.sweep : TSMotion.snap
-                                }
-                            }
-                            .mask(alignment: .topLeading) { bars(width) }
-                    }
-                }
-            }
+        GeometryReader { geometry in
+            let width = geometry.size.width
+            // Framed to the full width first so the sweep travels the same
+            // span it did when it was drawn here inline; the base tint goes
+            // outside the shimmer so its mask stays opaque.
+            bars(width)
+                .frame(width: width, alignment: .topLeading)
+                .appShimmer()
+                .foregroundStyle(.appSecondary.opacity(0.15))
         }
         .frame(height: CGFloat(Self.widths.count) * 21)
         .accessibilityHidden(true)

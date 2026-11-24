@@ -41,7 +41,7 @@ Every tagged release produces exactly these, all Apple Silicon:
 
 | Asset | Contains | Installed by |
 |---|---|---|
-| `turbospark-<ver>-macos-arm64.zip` | `turbospark`, `turbospark-check`, `turbospark-model`, `turbospark-server`, `turbospark-image`, `turbospark-music`, `turbospark-clone`, `turbospark-speak`, `turbospark-steer`, `turbospark-ocr`, `turbospark-acp-agent` | `brew install --cask whit3rabbit/tap/turbospark-cli`, or by hand |
+| `turbospark-<ver>-macos-arm64.zip` | `turbospark`, `turbospark-check`, `turbospark-model`, `turbospark-server`, `turbospark-image`, `turbospark-music`, `turbospark-clone`, `turbospark-speak`, `turbospark-enhance`, `turbospark-steer`, `turbospark-ocr`, `turbospark-acp-agent` | `brew install --cask whit3rabbit/tap/turbospark-cli`, or by hand |
 | `TurboSpark-<ver>-arm64.dmg` | `TurboSpark.app`, with those same binaries inside it | `brew install --cask whit3rabbit/tap/turbospark` |
 | `SHA256SUMS` | one line per asset above | nothing; it is for humans |
 

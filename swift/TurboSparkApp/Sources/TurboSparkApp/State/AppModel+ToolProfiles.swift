@@ -66,6 +66,27 @@ extension AppModel {
         return activeToolCounts.enabled > 0 || mcp
     }
 
+    /// The permission row the picker labels a tool with: this turn's project
+    /// settings, or the rootless mode's preset, under the network policy.
+    /// Display only; `AppToolPermissionEngine` still decides every call.
+    func pickerPermission(forToolNamed name: String) -> AppToolPermission {
+        ToolPermissionSummary.typicalDecision(
+            toolName: name,
+            permissions: turnProject(chatID: selectedChatID)?.permissions
+                ?? AppProjectPermissions.preset(for: activePermissionMode),
+            networkPolicy: AppNetworkPolicyStore.current)
+    }
+
+    /// Estimated prompt tokens for the built-in tools this mode lists and the
+    /// active profile offers. MCP and custom tools are not counted: their
+    /// definitions are not known until their servers answer.
+    var enabledToolPromptTokenEstimate: Int {
+        toolGroupsForContext.flatMap(\.entries)
+            .filter { isToolEnabled($0.id) }
+            .compactMap(\.estimatedPromptTokens)
+            .reduce(0, +)
+    }
+
     public func isToolEnabled(_ key: String) -> Bool {
         guard let allowed = activeToolProfile.allowedTools else { return true }
         return allowed.contains(key)

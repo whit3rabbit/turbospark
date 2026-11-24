@@ -53,8 +53,24 @@ cargo test -p turbospark-audio --release --lib real_checkpoint -- --nocapture`:
 max abs diff 1.6e-5 on the enhanced waveform; reference RMS
 0.383 -> 0.040 (noise suppression works).
 
-Not yet verified: task quality (PEM/PESQ-style), Metal offload, runtime,
-catalog, FFI, Swift gates. Compilation and parity do not establish quality.
+Integration (2026-11-20): the runtime session task `enhancement`
+(`crates/runtime/src/native_audio.rs`), the pinned catalog profile
+`mossformer2-se-48k-fp16` (`starkdmi/MossFormer2_SE_48K_MLX` at
+`ccd0ded00e26f38e9f5b0ba21608aa6a0bcd6434`, `model_fp16.safetensors`), the
+C ABI job path, `turbospark enhance`, and the app's Clean Up page. The real
+gate above was rerun against that managed install: 1.58e-5. One
+LibriSpeech clip mixed with seeded white noise at 0 dB SNR plus a 120 Hz hum
+went from -0.91 to 8.89 dB SI-SNR against the clean clip, 6.2 s of CPU for
+17.95 s of audio on an M4 Max (one run, not a benchmark row).
+
+The runtime pads the voice with silence to the input's length: on the full
+path the reference iSTFT stops at the last whole frame, up to one hop (384
+samples) short. `enhance_controlled` reports one progress step per model
+pass and stops between passes; its output is bit-identical to `enhance`.
+
+Not yet verified: task quality (PESQ/DNSMOS-style on real recordings), Metal
+offload, memory admission (the estimate is unmeasured). Compilation and
+parity do not establish quality.
 
 ## Architecture
 

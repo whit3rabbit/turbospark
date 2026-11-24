@@ -1,26 +1,51 @@
 import SwiftUI
 
 /// The reply row's sources chip (OC-09): a glyph and the count, shown only
-/// when the turn used web sources. It opens `SourcesPopoverView`.
+/// when the turn used web sources or conversation recall ran for it. It
+/// opens `SourcesPopoverView`.
 struct SourcesChipView: View {
     @ObservedObject var model: AppModel
     let sources: TurnSources
+    /// In-memory recall inspection for this turn (`RecallInspection`).
+    var inspection: RecallInspection?
     @State private var showingPopover = false
 
     var body: some View {
+        chip
+            .popover(isPresented: $showingPopover, arrowEdge: .bottom) {
+                SourcesPopoverView(model: model, sources: sources, inspection: inspection) {
+                    showingPopover = false
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var chip: some View {
         let count = sources.totalCount
-        AppChip(
-            Text("Sources \(count)", bundle: .module),
-            systemImage: "link",
-            isOn: showingPopover
-        ) {
-            showingPopover.toggle()
-        }
-        .help(Text("Show the web sources this reply used", bundle: .module))
-        .accessibilityLabel(Text("Web sources used in this reply: \(count)", bundle: .module))
-        .accessibilityHint(Text("Opens the list of sources", bundle: .module))
-        .popover(isPresented: $showingPopover, arrowEdge: .bottom) {
-            SourcesPopoverView(model: model, sources: sources) { showingPopover = false }
+        if sources.isEmpty {
+            // Recall only: no web sources to count, so the chip names the
+            // group it opens.
+            AppChip(
+                Text("Context", bundle: .module),
+                systemImage: "clock.arrow.circlepath",
+                isOn: showingPopover
+            ) {
+                showingPopover.toggle()
+            }
+            .help(Text("Show the earlier turns recalled for this reply", bundle: .module))
+            .accessibilityLabel(Text("Recalled context for this reply", bundle: .module))
+            .accessibilityHint(Text("Opens the recalled context", bundle: .module))
+        } else {
+            AppChip(
+                Text("Sources \(count)", bundle: .module),
+                systemImage: "link",
+                isOn: showingPopover
+            ) {
+                showingPopover.toggle()
+            }
+            .help(Text("Show the web sources this reply used", bundle: .module))
+            .accessibilityLabel(Text("Web sources used in this reply: \(count)", bundle: .module))
+            .accessibilityHint(Text("Opens the list of sources", bundle: .module))
         }
     }
 }
@@ -31,17 +56,23 @@ struct SourcesChipView: View {
 struct SourcesPopoverView: View {
     @ObservedObject var model: AppModel
     let sources: TurnSources
+    var inspection: RecallInspection?
     let dismiss: () -> Void
     @Environment(\.appTheme) private var theme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Sources", bundle: .module)
-                .themedFont(.callout, weight: .semibold)
-                .accessibilityAddTraits(.isHeader)
+            if !sources.isEmpty {
+                Text("Sources", bundle: .module)
+                    .themedFont(.callout, weight: .semibold)
+                    .accessibilityAddTraits(.isHeader)
+            }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    if let inspection {
+                        RecallInspectionGroupView(inspection: inspection)
+                    }
                     ForEach(sources.groups) { group in
                         VStack(alignment: .leading, spacing: 4) {
                             groupHeader(group)
@@ -59,7 +90,7 @@ struct SourcesPopoverView: View {
             }
             .frame(maxHeight: 360)
 
-            if !model.canOpenSourcesInBrowserPane {
+            if !sources.isEmpty, !model.canOpenSourcesInBrowserPane {
                 Text("Turn on the browser in Settings to open sources in the browser pane.", bundle: .module)
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)

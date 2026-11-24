@@ -1875,7 +1875,7 @@ reachable from Swift.
 
 The native path is `ts_audio_*` in the header, wrapped by `Audio.swift`
 (`AudioCatalog`, `AudioSession`, `AudioJob`). The runtime opens a session for
-exactly three tasks:
+exactly six tasks:
 
 | Task (`AudioTask`) | Family reached today | Notes |
 |---|---|---|
@@ -1883,14 +1883,24 @@ exactly three tasks:
 | `.textToSpeech` | Kokoro, MegaTTS3, OmniVoice | Kokoro: portable CPU path behind an explicit opt-in at the time of writing; the current backend list is in `crates/audio/MODELS.md`. MegaTTS3 and OmniVoice clone a voice: see [Voice cloning](#voice-cloning). OmniVoice is multilingual (auto voice without a reference) and runs on Metal by default with portable CPU fallback. |
 | `.music` | MiniMax Music 3 | Catalog install covers `minimax-music3-4bit`. |
 | `.diarization` | pyannote community-1 on Core ML | Catalog install `speaker-diarization-coreml`, macOS 15+. Takes 16 kHz mono PCM; the result is a transcript whose segments are speaker turns with empty text and speakers `S1`, `S2`, ... |
+| `.enhancement` | Inworld Voice Isolator (Metal, CPU fallback), MossFormer2 SE (CPU) | Catalog installs `voice-isolator-v1`, `voice-isolator-v1-realtime`, `mossformer2-se-48k-fp16`. Set `AudioRequest.inputSampleRate` (8 kHz to 192 kHz) for the appended mono PCM; the result is 48 kHz mono, as long as the resampled input. The removed part is input minus voice at 48 kHz. |
+| `.separation` | Mel-Band RoFormer vocals (CPU) | Catalog install `mel-roformer-vocals-v1`. Set `inputSampleRate` and `inputChannels` (1 or 2, interleaved); the result is the vocals as interleaved 44.1 kHz stereo. The instrumental is input minus vocals at that rate and layout. |
+
+Live voice isolation is a separate stream, `AudioEnhanceStream`
+(`ts_audio_enhance_stream_*`) over the `voice-isolator-v1-realtime` install:
+48 kHz mono in, the voice out time-aligned and about 63 ms later.
+`Backend` is `.auto` (Core ML step when installed on macOS 15+, else Metal),
+`.coreml`, `.metal` or `.cpu`. Calls are synchronous: keep them off the main
+actor. Each `push` returns `AudioEnhancePush(voice:late:processingMs:)`; a
+host feeding the voice onward should use the raw input while pushes run
+`late`. Like `AudioStreamSession`, it takes no heavy-work permit.
 
 `AudioTask` has ten cases because the catalog and capability rows describe
 families the engine has code for but no session entry point yet (VAD,
-alignment, enhancement, separation, codec, language ID). Opening
+alignment, codec, language ID). Opening
 one is refused at `ts_audio_session_open` as an unknown task. **Use
 `AudioTask.isRunnable` (and `AudioTask.runnable`) before offering a control**:
-the app's Clean Up page and the unrunnable Advanced operations are hidden for
-exactly this reason, and `crates/ffi/tests/audio_surface.rs` pins the accepted
+the unrunnable Advanced operations are hidden for exactly this reason, and `crates/ffi/tests/audio_surface.rs` pins the accepted
 names so the Swift predicate cannot drift from the runtime.
 
 ```swift
@@ -2191,7 +2201,7 @@ purpose. Each would need new evidence or an explicit decision to change.
   supported (see "Known limits"), but caching a successful result would weaken
   an integrity check and is not offered.
 - **VAD, the CPU diarization families (Sortformer, Nemotron), Moonshine,
-  enhancement and separation** have Rust model code but no `Engine` variant in
+  DeepFilterNet, SAM-Audio and DialogueSidon** have Rust model code but no `Engine` variant in
   `runtime::native_audio`, so there is no session to open
   (`AudioTask.isRunnable` reports it). Diarization itself runs through the
   Core ML pyannote community-1 export. They also need catalog

@@ -2155,23 +2155,47 @@ typedef struct TsAudioJob TsAudioJob;
  * is 16 kHz mono f32. For a voice-cloning text_to_speech model (family
  * "megatts3" or "fish_drama3") the appended PCM is the mono reference voice
  * at the request's reference_sample_rate, 1 to 30 seconds. Drama 3 also
- * speaks without a reference, so appending nothing is valid there. One append
+ * speaks without a reference, so appending nothing is valid there. For
+ * "enhancement" the appended PCM is mono at the request's input_sample_rate
+ * (8,000 to 192,000 Hz), which the runtime resamples to the model's 48 kHz.
+ * For "separation" it is input_channels (1 or 2) interleaved at the request's
+ * input_sample_rate, resampled to the model's 44.1 kHz stereo.
+ * One append
  * carries at most 32,000
  * samples and the whole job at most 30 minutes. Appends after run has started
  * are refused.
  *
- * Tasks the runtime can open are "speech_to_text", "text_to_speech" and
- * "music". Any other task name (the catalog describes more families than the
+ * Tasks the runtime can open are "speech_to_text", "text_to_speech",
+ * "music", "diarization", "enhancement" and "separation". Any other task name (the catalog describes more families than the
  * runtime has session entry points for) is refused at open as an unknown
  * variant. Request keys: task, language, text, voice, speed, caption, lyrics,
  * duration_seconds, steps, seed, instruction, reference_text, p_w, t_w,
- * temperature, top_p, top_k, max_frames, reference_sample_rate, consent; an
+ * temperature, top_p, top_k, max_frames, reference_sample_rate,
+ * input_sample_rate, input_channels, consent; an
  * unrecognised key is refused. Voice
  * cloning requires consent: true (the caller has the right to use the
  * reference voice), reference_sample_rate, and English text; p_w (0.1 to 5)
  * and t_w (0.1 to 10) weigh intelligibility and similarity. Send steps (1 to
  * 100) explicitly: an omitted steps means the request type's 30, not the
  * model's default of 16 (8, 16 and 32 are the app's Fast, Balanced and Best).
+ *
+ * SPEECH ENHANCEMENT (task "enhancement", families "voice_isolator" on Metal
+ * and "mossformer2_se" on the CPU, mono 48 kHz out). input_sample_rate is
+ * required. The run returns the
+ * cleaned voice as kind 2 PCM, as long as the input resampled to 48 kHz and
+ * at most 661 seconds of it; the removed part is input minus voice at 48 kHz.
+ * Progress is kind 1 {"stage":"enhance","completed":n,"total":m}, one step
+ * per model pass, and cancel is honoured between passes.
+ *
+ * VOCAL SEPARATION (task "separation", family "mel_roformer", portable CPU,
+ * interleaved stereo 44.1 kHz out). input_sample_rate and input_channels
+ * are required; mono input is duplicated to both channels. The run returns
+ * the vocal stem as kind 2 PCM, as many frames as the input resampled to
+ * 44.1 kHz and at most 360 seconds of them (the 30-minute append limit caps
+ * stereo 44.1 kHz input near 326 seconds). The instrumental is input minus
+ * vocals at 44.1 kHz stereo. Progress is kind 1
+ * {"stage":"separate","completed":n,"total":m}, one step per 8 s chunk (50%
+ * overlap), and cancel is honoured between chunks.
  *
  * FISH AUDIO DRAMA 3 (family "fish_drama3", Metal only, mono 44.1 kHz). Text
  * is at most 32,768 bytes and may carry inline cues such as [whispers] and
@@ -2337,6 +2361,35 @@ int ts_audio_stream_append(const TsAudioStream *stream, const float *pcm, size_t
 int ts_audio_stream_finish(const TsAudioStream *stream, char **out);
 int ts_audio_stream_cancel(const TsAudioStream *stream);
 int ts_audio_stream_close(TsAudioStream *stream);
+
+/* LIVE VOICE ISOLATION STREAMS over the inworld realtime install
+ * (denoiser_realtime.safetensors, optionally with the stateful Core ML step
+ * VoiceIsolatorStep.mlmodelc beside it). 48 kHz mono f32 in; the isolated
+ * voice out as kind 2 PCM through cb as it becomes final (about 63 ms
+ * behind the input, plus compute). Like a transcription stream it takes no
+ * heavy-work permit.
+ *
+ * open verifies a managed install as ts_audio_session_open_cancellable does
+ * (token and cb may be NULL); options_json may be NULL or
+ * {"backend":"auto"|"coreml"|"metal"|"cpu"}; auto takes Core ML when the
+ * step is installed on macOS 15+, else Metal. info returns {"backend":...}.
+ * push takes 1..32000 samples and returns {"released","processing_ms",
+ * "late"} in *out (free with ts_string_free); late means the push took
+ * longer than its audio, and a host feeding the voice onward should use the
+ * raw input while pushes run late. flush delivers the remaining voice and
+ * ends the stream. A call while another runs on the same stream fails with
+ * TS_ERR_BUSY; close is refused while a call runs. */
+typedef struct TsAudioEnhanceStream TsAudioEnhanceStream;
+int ts_audio_enhance_stream_open(const char *path, const char *options_json,
+                                 const TsAudioOpenToken *token, TsAudioCallback cb,
+                                 void *userdata, TsAudioEnhanceStream **out);
+int ts_audio_enhance_stream_info(const TsAudioEnhanceStream *stream, char **out);
+int ts_audio_enhance_stream_push(const TsAudioEnhanceStream *stream, const float *pcm,
+                                 size_t count, TsAudioCallback cb, void *userdata,
+                                 char **out);
+int ts_audio_enhance_stream_flush(const TsAudioEnhanceStream *stream, TsAudioCallback cb,
+                                  void *userdata);
+int ts_audio_enhance_stream_close(TsAudioEnhanceStream *stream);
 
 /* ---- GGUF quantizer ---- */
 

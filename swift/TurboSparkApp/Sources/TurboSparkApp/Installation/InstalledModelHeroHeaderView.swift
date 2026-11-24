@@ -37,8 +37,8 @@ struct InstalledModelHeroHeaderView: View {
                             .foregroundStyle(isFavorite ? AnyShapeStyle(.appWarning) : AnyShapeStyle(.appSecondary))
                     }
                     .buttonStyle(.plain)
-                    .help(isFavorite ? "Remove from Favorites" : "Mark as Favorite")
-                    .accessibilityLabel(isFavorite ? "Favorited" : "Favorite")
+                    .help(isFavorite ? Text("Remove from Favorites", bundle: .module) : Text("Mark as Favorite", bundle: .module))
+                    .accessibilityLabel(isFavorite ? Text("Favorited", bundle: .module) : Text("Favorite", bundle: .module))
 
                     Spacer(minLength: 4)
 

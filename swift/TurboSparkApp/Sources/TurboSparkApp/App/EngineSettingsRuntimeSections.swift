@@ -214,8 +214,10 @@ extension EngineSettingsPaneView {
 
     @ViewBuilder
     var moePrefillBankSection: some View {
+        // `loadableModels`, not `installed`: the toggle takes effect on the next
+        // load, so only a model that can load now should bring it on screen.
         if model.session?.info.moePrefillBankSupported == true
-            || model.installed.contains(where: {
+            || model.loadableModels.contains(where: {
                 ModelFeatureDescriptor.supportsMoEPrefillBank(atInstallPath: $0.path)
             }) {
             Section {

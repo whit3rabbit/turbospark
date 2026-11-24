@@ -31,7 +31,15 @@ extension AudioWorkspaceController {
     /// passes its reference as PCM (`runClonesNatively`), or speaks with no
     /// reference.
     static func runRequest(_ recipe: AudioRecipe, task: AudioTask, profile: AudioProfile) -> AudioRequest {
-        let base = request(from: recipe, task: task)
+        var base = request(from: recipe, task: task)
+        // The Clean Up page reads the take at 48 kHz mono (`readMono48kTake`)
+        // to enhance it and at 44.1 kHz stereo (`readStereo44kTake`) to
+        // separate it.
+        if task == .enhancement { base.inputSampleRate = 48_000 }
+        if task == .separation {
+            base.inputSampleRate = 44_100
+            base.inputChannels = 2
+        }
         guard task == .textToSpeech, clonesNatively(profile) else { return base }
         return runClonesNatively(profile, speech: recipe.speech)
             ? nativeCloneRequest(base, family: profile.family, speech: recipe.speech)
@@ -210,7 +218,10 @@ extension AudioWorkspaceController {
                 if provider != .rust && provider != .qwenMLX {
                     throw AudioWorkspaceError.message(AppStrings.localized("Runtime unavailable"))
                 }
-                let session = provider == .qwenMLX ? nil : try await self.residentSession(for: profile, portable: portable, experimentalMetal: experimentalMetal, source: result)
+                // The offline Voice Isolator renders on MLX, about 13x faster
+                // than the Rust Metal path; nil keeps the Rust session.
+                let isolator = currentTask == .enhancement ? try await self.offlineVoiceIsolator(for: profile, source: result) : nil
+                let session = provider == .qwenMLX || isolator != nil ? nil : try await self.residentSession(for: profile, portable: portable, experimentalMetal: experimentalMetal, source: result)
                 let request = Self.runRequest(inputs, task: currentTask, profile: profile)
                 var labelFailure: String?
                 var stoppedEarly = false
@@ -231,6 +242,12 @@ extension AudioWorkspaceController {
                         if currentTask == .diarization {
                             let limit = Double(profile.capabilities.maxInputSeconds ?? 30)
                             pcm = try await Task.detached { try AudioMediaIO.readMono16kTake(selected.clips, store: assets, duration: selected.duration, limit: limit, cancel: lifetime.check) }.value
+                        } else if currentTask == .enhancement {
+                            let limit = Double(profile.capabilities.maxInputSeconds ?? 30)
+                            pcm = try await Task.detached { try AudioMediaIO.readMono48kTake(selected.clips, store: assets, duration: selected.duration, limit: limit, cancel: lifetime.check) }.value
+                        } else if currentTask == .separation {
+                            let limit = Double(profile.capabilities.maxInputSeconds ?? 30)
+                            pcm = try await Task.detached { try AudioMediaIO.readStereo44kTake(selected.clips, store: assets, duration: selected.duration, limit: limit, cancel: lifetime.check) }.value
                         } else {
                             pcm = try await Task.detached { try AudioMediaIO.readMono16k(selected.clips, store: assets, start: 0, duration: selected.duration, cancel: lifetime.check) }.value
                         }
@@ -252,6 +269,8 @@ extension AudioWorkspaceController {
                     var output: AudioResult
                     if provider == .qwenMLX {
                         output = try await self.synthesizeQwenSpeech(inputs, profile: profile, source: result, report: report)
+                    } else if let isolator {
+                        output = try await isolator.enhance(request, pcm: pcm, progress: report)
                     } else {
                         guard let session else { throw CancellationError() }
                         var sent = request
@@ -358,10 +377,20 @@ extension AudioWorkspaceController {
         let assets = self.assets; let lifetime = self.lifetime
         // Each window has a known recording offset. Model window extents remain
         // extents in the editor; they are never presented as word alignment.
-        for window in windows {
+        let clips = item.clips
+        func read(_ window: AudioTranscriptionWindow) -> Task<[Float], Error> {
+            Task.detached { try AudioMediaIO.readMono16k(clips, store: assets, start: window.start, duration: window.duration, cancel: lifetime.check) }
+        }
+        // Read and decrypt the next window while the recognizer runs this
+        // one. Same windows, same order, same results: only the wait moves.
+        var pending = windows.first.map(read)
+        defer { pending?.cancel() }
+        for (index, window) in windows.enumerated() {
             try Task.checkCancellation()
             let offset = window.start, seconds = window.duration
-            let pcm = try await Task.detached { try AudioMediaIO.readMono16k(item.clips, store: assets, start: offset, duration: seconds, cancel: lifetime.check) }.value
+            guard let current = pending else { break }
+            let pcm = try await current.value
+            pending = index + 1 < windows.count ? read(windows[index + 1]) : nil
             let transcript = try await run(pcm, window)
             try Task.checkCancellation()
             guard valid(token) else { throw CancellationError() }
@@ -418,18 +447,54 @@ extension AudioWorkspaceController {
 
 extension AudioWorkspaceController {
     func summarizeMeeting(with targetModel: InstalledModel? = nil) {
-        guard !isBusy, !hasRecordingActivity, canSummarizeMeeting, let item = selectedItem, let summaryHandler else { return }
+        guard let item = selectedItem else { return }
+        summarizeMeeting(item.id, with: targetModel)
+    }
+
+    /// Writes notes for one take. Only `item.summary` changes; the preview
+    /// shows the stream and is cleared however the run ends.
+    func summarizeMeeting(_ id: UUID, with targetModel: InstalledModel?) {
+        guard !isBusy, !hasRecordingActivity, let item = items.first(where: { $0.id == id }),
+              item.preferredTranscript != nil, canSummarize, let summaryHandler else { return }
         isBusy = true; error = nil
+        summaryPreview = AudioSummaryPreview(itemID: id, progress: AudioSummaryProgress(stage: AppStrings.localized("Starting the model"), text: ""))
         let token = epoch
         jobTask = Task { [weak self] in
             guard let self else { return }
-            defer { if self.valid(token) { self.isBusy = false } }
+            defer { if self.valid(token) { self.isBusy = false; self.summaryPreview = nil } }
             do {
-                let summary = try await summaryHandler(item, targetModel)
+                let summary = try await summaryHandler(item, targetModel) { [weak self] progress in
+                    guard let self, self.valid(token), self.summaryPreview?.itemID == id else { return }
+                    self.summaryPreview?.progress = progress
+                }
                 try Task.checkCancellation()
                 guard self.valid(token) else { return }
-                try self.persistMutation(item.id) { $0.summary = summary; $0.updatedAt = Date() }
+                try self.persistMutation(id) { $0.summary = summary; $0.updatedAt = Date() }
+                if self.selectedID != id { self.status = AppStrings.localized("Meeting notes are ready for \(item.title).") }
             } catch { if self.valid(token), !Task.isCancelled { self.error = error.localizedDescription } }
         }
+    }
+
+    /// Whether any chat model could write notes: one loaded, or one installed.
+    var canSummarize: Bool {
+        summaryAvailable?() == true || selectedChatModel?() != nil || !(availableChatModels?().isEmpty ?? true)
+    }
+
+    var autoMeetingNotes: Bool {
+        get { preferences.autoMeetingNotes ?? false }
+        set { preferences.autoMeetingNotes = newValue; persistPreferences() }
+    }
+
+    /// After a Meeting take's final pass, when the user turned it on.
+    func autoSummarizeIfWanted(_ id: UUID) {
+        guard autoMeetingNotes, let item = items.first(where: { $0.id == id }),
+              item.recordingPreset == AudioRecordingPreset.meeting.rawValue, item.summary == nil else { return }
+        summarizeMeeting(id, with: notesModel)
+    }
+
+    /// The chat model notes and Ask run on: the chosen one, else the one the
+    /// notes advisor recommends. The runner loads it when it is not loaded.
+    var notesModel: InstalledModel? {
+        selectedChatModel?() ?? AudioMeetingNotesAdvisor.defaultModel(from: availableChatModels?() ?? [], currentSelected: nil)
     }
 }

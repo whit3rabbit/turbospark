@@ -122,6 +122,25 @@ else (frontend, windows, rerank, CTC) is portable Rust. The programs are
 - How it works, what was verified, and what was measured:
   [EMBEDDINGGEMMA2_WORD_CTC.md](EMBEDDINGGEMMA2_WORD_CTC.md).
 
+## Local export: voice isolator streaming step
+
+`runtime::voice_isolator_live` can run the inworld realtime voice isolator
+as one stateful Core ML program per 20 ms push (two STFT frames, KV caches
+and Mamba states in `MLState`, macOS 15+). It is not a FluidInference export
+and not a catalog pin: export it with
+`crates/audio/tools/export_voice_isolator_coreml.py` and place
+`VoiceIsolatorStep.mlmodelc` (or `.mlpackage`) beside
+`denoiser_realtime.safetensors`. The `auto` backend then picks it, else
+Metal. Contract, export command and measurements:
+[voice isolator COREML.md](../crates/audio/src/sts/voice_isolator/COREML.md).
+
+- The fp16 program does not compile for the Neural Engine (ANECCompile,
+  load error -14), and `ALL` fails to load rather than fall back, so the
+  host asks for CPU and GPU explicitly.
+- One run on an M4 Max through `LiveDenoiser`, 500 pushes of 20 ms: median
+  15.8 ms, p95 16.1 ms, output 67.6 dB above its difference from the CPU
+  port. Not a benchmark row.
+
 ## Placement and first loads
 
 | Model | Default compute units | Override |
@@ -132,6 +151,7 @@ else (frontend, windows, rerank, CTC) is portable Rust. The programs are
 | Unlimited OCR | page encoder GPU (fixed), decoder GPU | none; Neural Engine refused |
 | eg2demo word CTC (experiment) | encoder, reader, scorer `all` | `TURBOSPARK_EG2_CTC_{ENCODER,READER,SCORER}_UNITS` |
 | Speaker diarization | segmentation, FBank and PldaRho CPU, embedding Neural Engine | `TURBOSPARK_DIARIZATION_COREML_EMBEDDING_UNITS` (GPU refused) |
+| Voice isolator step (local export) | CPU and GPU (Neural Engine refuses the fp16 program) | none; `ts_audio_enhance_stream_open` `backend` picks Core ML, Metal or CPU |
 
 Override values are `cpu`, `cpu_gpu`, `cpu_ane` and `all`.
 
@@ -609,6 +629,11 @@ now; the note is here so the guard is not removed.
   explicitly, or check sizes after the download.
 
 ## Not done
+
+- **Voice isolator step:** a local export, not a pinned catalog asset
+  (publishing it needs approval). The ring-buffer variant (about 10.6 ms per
+  call against the shift-append contract's cost) is measured but not
+  adopted. Quality beyond reference parity is not measured.
 
 - **App:** there is no OCR in the app. `DocumentTextExtractor` is
   synchronous with a 30 s limit, and the model loads for several seconds and

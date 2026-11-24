@@ -70,6 +70,35 @@ Microphone input (`AVAudioEngine`) and system audio (`CATapDescription` or
 3. Pause intervals are excised cleanly from the persistent timeline, ensuring
    recording markers and transcript offsets correspond strictly to active audio.
 
+### Live background-noise reduction
+
+"Reduce background noise" (`AudioWorkspacePreferences.reduceLiveNoise`, off
+by default, shown beside the live text model only when the
+`voice-isolator-v1-realtime` install is present and can run) cleans the
+microphone for live text only (`Audio/AudioLiveVoiceCleaner.swift`):
+- On the transcriber's queue, microphone packets from the live feed are
+  converted to 48 kHz mono, pushed through a live isolation stream, and the
+  released voice goes to the mixer, which resamples it to 16 kHz. The system
+  audio tap is never cleaned. Capture persists its own copy of every packet,
+  so the saved recording and the final pass are the original audio.
+- Timing: the stream's output is sample-aligned with its input and released
+  about 63 ms (plus compute) later. Each released sample is placed back at
+  its input's timeline offset, so live word times stay on the recording
+  timeline; words only appear that much later.
+- Until the stream opens, the microphone passes raw. If pushes report `late`
+  for more than 1 s of audio in a row, the feed dropped packets, or more than
+  2 s of microphone audio waits in one drain, the tail is flushed, cleaning
+  stops for the rest of the take, live text hears the raw microphone, and
+  `AudioLiveText.cleaningStatus` shows one line. A failed open or push does
+  the same. Tests: `AudioLiveNoiseReductionTests`.
+- Engine (`Audio/VoiceIsolatorMLXLive.swift`): the vendored MLX port, even
+  when the Core ML step is installed (faster at capture packet sizes), loaded
+  once after the install's bytes verify and kept in its own slot
+  (`liveVoiceIsolator`) so a take never evicts the resident model. Only an
+  MLX load failure opens the Rust `AudioEnhanceStream` instead, on its Core
+  ML step when installed (macOS 15+), else Metal, which is not real time. Each take logs its push timings on close
+  (category `LiveNoiseReduction`). Tests: `VoiceIsolatorMLXLiveTests`.
+
 ---
 
 ## 3. Phase 4: Speaker Intelligence & Memory
@@ -113,14 +142,62 @@ Speaker profiles are persisted in `~/Library/Application Support/TurboSpark/spea
 
 ## 4. Phase 2: Post-Meeting Notes & Summary
 
-### Segmented Detail Content Switcher
+### Meeting layout: the user's notes beside the transcript
 
-In `AudioLibraryView`, selected takes offer a segmented control:
-`[ Transcript | Notes & Summary ]`:
-- **Transcript Tab**: Full verbatim conversation transcript, word-level timing,
-  speaker renaming, and export.
-- **Notes & Summary Tab**: Structured Markdown executive summary, action items,
-  decisions, model selector, and interactive jump chips.
+Speech-to-Text's Meeting mode shows a take in two columns
+(`AudioMeetingColumns`, `Audio/AudioMeetingLayout.swift`): the user's own
+notes on the leading side, and `[ Transcript | Summary | Ask ]` on the
+trailing side. The columns state ideal widths scaled by text size, so the pair
+stacks under Extra Large text or a narrow window. The Library and the other
+modes keep the single column with `[ Transcript | Notes & Summary ]`.
+
+- **My notes** (`AudioMeetingNotesEditor`) works during the recording too: the
+  live view puts it beside the words as they are heard, and the word still
+  being heard (`AudioLiveText.openWord`) is drawn lighter after the committed
+  text. Typing stages `pendingUserNotes`; a 600 ms debounce, losing focus,
+  leaving the view, Retry, and shutdown save it through `persistMutation`,
+  which re-reads the record, so capture autosaves and notes saves never
+  overwrite each other (`AudioMeetingWorkspaceTests`).
+- `item.userNotes` is the user's text only. No model output writes it; notes
+  generation and Ask read it.
+- The Meeting and Voice Notes lists have their own search field, a scan of
+  title, notes, summary, tags and transcript (`SpeechToTextLibrary.matching`).
+  The Library keeps the indexed words, meaning and sound search.
+
+### Generating notes
+
+`AppModel.summarizeAudioTranscript` (prompts in `AudioMeetingNotesPrompt`):
+- A transcript that fits one chunk (about 8k characters) gets the final format
+  in one call: Summary, Key Decisions, Action Items, Discussion.
+- A longer one is read in parts (terse bullets with `[m:ss]` times), then
+  merged six at a time, level by level. Only the last merge writes the final
+  format.
+- The user's notes go into the final step as the points that matter most.
+- The final call streams into `summaryPreview`, which the Summary tab draws
+  while it runs; a stage line covers the part and merge calls. Only the
+  finished result is saved, into `item.summary`.
+- "Write notes after each meeting" (`AudioWorkspacePreferences.autoMeetingNotes`,
+  off by default) runs this after a Meeting take's final pass, with the loaded
+  chat model or the advisor's pick.
+
+### Ask
+
+The Ask tab answers questions from one meeting, or with "Search all meetings"
+from every Meeting take (`Audio/AudioMeetingAsk.swift`,
+`AudioMeetingAskView.swift`):
+- Passages are the user's notes, the summary, and transcript runs of about 360
+  words with speaker names, built in memory from the take.
+- When they fit about 14k characters the model gets all of them. Past that,
+  BM25 over the question's words and EmbeddingGemma 2 meaning hits from the
+  library index (`AudioLibrarySearch.meaningHits`) are fused by reciprocal
+  rank (k = 60), the user's notes always kept, and the chosen passages are
+  sent in meeting and time order.
+- The answer streams through `AppModel.runAudioPrompt`, cites `[m:ss]`, and
+  lists the moments it drew on as buttons that play from there. Answers live
+  for the session only and are never saved.
+- Ask runs after a recording ends. Meaning hits need the take indexed, which
+  happens after the final pass; until then, and without EmbeddingGemma 2
+  installed, ranking is by words.
 
 ### Model Recommendation & Advisor
 
@@ -144,7 +221,7 @@ The summary Markdown parser extracts temporal references and speaker attribution
 
 A fundamental architectural constraint:
 - Generating, regenerating, or editing meeting notes **must never** mutate or
-  overwrite `item.transcripts`.
+  overwrite `item.transcripts` or `item.userNotes`.
 - `AudioWorkspaceController.saveSummaryText(_:for:)` mutates only `item.summary`.
 - `item.summary` stores `transcriptRevisionID` to keep summaries explicitly tied
   to the transcript revision they were generated from.
@@ -183,7 +260,7 @@ All persistent data structures conform to `Codable`, `Sendable`, and `Equatable`
 
 | Structure | Storage Path / Location | Purpose |
 | :--- | :--- | :--- |
-| `AudioLibraryItem` | Encrypted SQLite / JSON | Library metadata, clips, transcripts, summary, speaker names |
+| `AudioLibraryItem` | Encrypted SQLite / JSON | Library metadata, clips, transcripts, the user's notes, summary, speaker names |
 | `AudioSpeakerVoiceprint` | `item.speakerVoiceprints` | 64-band log-mel voiceprint vectors on take |
 | `AudioSpeakerProfileStore` | `speaker_profiles.json` | Cross-meeting learned speaker acoustic embeddings |
 | `AudioCustomVocabularyStore`| `custom_vocabulary.json`| Custom jargon terms and aliases |
@@ -196,5 +273,6 @@ When modifying audio meeting or notes infrastructure, verify:
 1. `swift test --filter AudioCaptureTests`: Validates ring buffer bounding and packet timing.
 2. `swift test --filter AudioSpeakerMemoryTests`: Validates voiceprint generation, vector normalization, and cosine matching.
 3. `swift test --filter AudioMeetingNotesTests`: Validates advisor model tiers, chunking, and transcript immutability.
+   `swift test --filter AudioMeetingWorkspaceTests`: Validates user notes saving beside capture writes, the list filter, notes prompts, and Ask retrieval.
 4. `swift test --filter AudioCustomVocabularyTests`: Validates regex word boundary safety and serialization round-trip.
 5. `swift test --filter AudioSpeakerRosterTests`: Validates roster naming, merging, and cycle prevention.

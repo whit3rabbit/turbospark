@@ -172,6 +172,16 @@ chord, so each chord has exactly one owner on the page.
    - **Reduce Transparency (`accessibilityReduceTransparency`)**: Disables frosted glass and translucent materials, replacing sidebar and card backgrounds with solid high-contrast surfaces.
    - **Dynamic Type & Larger Text (`dynamicTypeSize`)**: Font sizes in UI controls and code snippets scale proportionally with system-wide text size adjustments set in macOS Accessibility Settings.
 
+## The question card
+
+While a model's `AskUserQuestion` card has focus (click an option, or Tab to
+it), `1` to `9` pick its options, numbered straight through the card, and
+`Escape` sends Skip. A key does what a click on that option does: a lone
+single-select question answers at once, a multi-select option toggles, and a
+card with several questions still waits for Submit Answers. The keys act only
+while the card has focus, so digits typed in the composer never answer. There
+is no free-text "Other" row: the tool's schema offers fixed options only.
+
 ## The model move sheet
 
 "Move to..." in the Installed Models list and the Audio picker opens

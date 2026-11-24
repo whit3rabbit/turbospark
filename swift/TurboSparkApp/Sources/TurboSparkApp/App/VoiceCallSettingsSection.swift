@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// OC-08: the one setting for voice call mode. Off by default. Turning it on
@@ -8,6 +9,8 @@ import SwiftUI
 struct VoiceCallSettingsSection: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
+    /// Read on appear from the Core Audio device list, which opens no input.
+    @State private var microphones: [MicrophoneSelection.Device] = []
 
     var body: some View {
         Section(header: Text("Voice call", bundle: .module)) {
@@ -25,6 +28,7 @@ struct VoiceCallSettingsSection: View {
             .font(theme.ui(.small))
             .foregroundStyle(.appSecondary)
             .fixedSize(horizontal: false, vertical: true)
+            microphonePicker
 
             Toggle(isOn: Binding(
                 get: { model.voiceCallAutoSendEnabled },
@@ -60,6 +64,50 @@ struct VoiceCallSettingsSection: View {
                 .foregroundStyle(.appWarning)
                 .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+
+    /// The call's input, saved by device UID. A saved device that is not
+    /// connected shows Default (which is what a call then uses) plus a note,
+    /// and stays saved for when it returns.
+    @ViewBuilder
+    private var microphonePicker: some View {
+        let resolution = model.voiceCallMicrophoneResolution(available: microphones)
+        Picker(selection: Binding<String?>(
+            get: { resolution.savedDeviceMissing ? nil : model.voiceCallMicrophoneUID },
+            set: { model.setVoiceCallMicrophoneUID($0) })
+        ) {
+            Text("Default microphone", bundle: .module).tag(String?.none)
+            ForEach(microphones) { device in
+                Text(verbatim: device.name).tag(Optional(device.uid))
+            }
+        } label: {
+            Text("Microphone", bundle: .module)
+        }
+        .disabled(!model.voiceCallEnabled)
+        .settingsControl("Microphone", pane: .general, timing: .immediate)
+        .onAppear { microphones = model.voiceCallMicrophones() }
+        // A device plugged in while Settings was in the background shows up
+        // when the user switches back.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            microphones = model.voiceCallMicrophones()
+        }
+        if resolution.savedDeviceMissing {
+            Text(
+                "The microphone you chose is not connected, so calls use the default microphone.",
+                bundle: .module
+            )
+            .font(theme.ui(.small))
+            .foregroundStyle(.appWarning)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        if model.voiceCallEnabled {
+            MicrophoneTestMeter(
+                deviceID: resolution.deviceID,
+                blocked: model.voiceCallActive,
+                accessHint: Text(
+                    "To test the input level, allow microphone access first. TurboSpark asks when you start a call.",
+                    bundle: .module))
         }
     }
 

@@ -19,6 +19,8 @@ final class PlanningAndInteractiveToolTests: XCTestCase {
         // leaked waiter would route this suite's question calls through a
         // dead model and park forever, so every test starts with it unset.
         AskUserQuestionExecutor.answerWaiter = nil
+        // The plan gate is the same kind of static hook.
+        PlanModeExecutor.decisionWaiter = nil
     }
 
     private func makeProject() throws -> (AppProject, URL) {

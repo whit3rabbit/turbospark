@@ -114,6 +114,7 @@ extension AppModel {
         outputPromptText = turnMessages(for: chatID).last(where: { $0.role == .user })?.content ?? ""
         outputText = ""
         outputReasoningText = ""
+        reasoningClock = ReasoningClock(chatID: chatID)
         generating = true
         claimLane(for: chatID)
         phase = .prefill
@@ -373,6 +374,7 @@ extension AppModel {
                                 self.decodeStartTime = Date()
                             }
                             self.outputReasoningText += chunk
+                            self.reasoningClock.note(at: Date())
                             self.liveTokenCount += 1
                             if let start = self.decodeStartTime {
                                 self.liveElapsedDecodeSeconds = Date().timeIntervalSince(start)

@@ -26,7 +26,7 @@ every platform. The crate forbids unsafe code [src/lib.rs:forbid(unsafe_code)].
 - Store root is the process-global override set by `relocate_default_store`, else `$TURBOSPARK_HOME`, else `$HOME/.turbospark` [src/store.rs:default_root].
 - Hub metadata is untrusted and validated without owning any HTTP [src/hub_validation.rs: module docs].
 - Cancellation surfaces as the exact error string `install cancelled` [src/install.rs:INSTALL_CANCELLED].
-- Audio rows are pinned profiles whose pins come from a resolved commit with per-file SHA-256 [src/audio_catalog.rs: module docs, examples/audio_pin.rs].
+- Audio rows are pinned profiles whose pins come from a resolved commit with per-file SHA-256 [src/audio_catalog.rs: module docs, examples/audio_pin.rs]. `max_input_seconds` must fit the runtime PCM append limit (the stereo separation profile is capped at 326 s) [src/audio_assets.json].
 
 ## Side Effects
 - Network to the Hugging Face endpoint (probe, file lists, downloads, token validation) [src/hf.rs:Client, src/auth.rs:validate_hf_token].

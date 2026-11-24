@@ -18,6 +18,10 @@ public struct McpSettingsPaneView: View {
     @State private var expandedServerIDs: Set<UUID> = []
     @State private var testingServerID: UUID?
     @State private var testResultToast: (id: UUID, message: String, isError: Bool)?
+    /// Bumped by the catalog cache's change notification. The cache is not
+    /// observable, so reading this in `body` is what redraws the statuses
+    /// when a background discovery starts, succeeds, or fails.
+    @State private var catalogRevision = 0
     /// Backed by the same `UserDefaults` key `CodemodeSettings.isEnabled`
     /// reads. A `Binding(get:set:)` over `UserDefaults` is invisible to
     /// SwiftUI, so the switch never redrew after a tap; `@AppStorage` is
@@ -110,6 +114,13 @@ public struct McpSettingsPaneView: View {
         }
         .sheet(isPresented: $showingImportSheet) {
             McpImportSheet(model: model) { showingImportSheet = false }
+        }
+        .onReceive(
+            NotificationCenter.default
+                .publisher(for: McpToolCatalogCache.didChangeNotification, object: McpToolCatalogCache.shared)
+                .receive(on: RunLoop.main)
+        ) { _ in
+            catalogRevision &+= 1
         }
         .sheet(isPresented: $showingAgentImportSheet) {
             AgentContentImportSheet(
@@ -231,6 +242,7 @@ public struct McpSettingsPaneView: View {
                     }
                 }),
             isTesting: testingServerID == server.id,
+            status: runtimeStatus(for: server),
             result: testResult(for: server),
             onTest: { Task { await testServer(server) } },
             onEdit: {
@@ -239,9 +251,25 @@ public struct McpSettingsPaneView: View {
             })
     }
 
+    private func runtimeStatus(for server: McpServerConfig) -> McpServerRuntimeStatus {
+        _ = catalogRevision
+        let cache = McpToolCatalogCache.shared
+        return .resolve(
+            isEnabled: server.isEnabled,
+            isTesting: testingServerID == server.id,
+            isDiscovering: cache.isDiscovering(server),
+            cachedToolCount: cache.cachedToolCount(for: server),
+            // A server can echo its own env (a bad token) into the error.
+            lastFailure: cache.lastFailure(for: server).map {
+                McpEnvMasking.scrub($0, secrets: server.envSecretValues)
+            })
+    }
+
     private func testResult(for server: McpServerConfig) -> (message: String, isError: Bool)? {
         guard let toast = testResultToast, toast.id == server.id else { return nil }
-        return (message: toast.message, isError: toast.isError)
+        return (
+            message: McpEnvMasking.scrub(toast.message, secrets: server.envSecretValues),
+            isError: toast.isError)
     }
 
     /// Empty-state actions are secondary: the header already carries the one

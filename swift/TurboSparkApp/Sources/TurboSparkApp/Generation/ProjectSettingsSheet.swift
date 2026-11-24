@@ -78,6 +78,7 @@ struct ProjectSettingsSheet: View {
                                 }
                             }
                             ProjectRulesSectionView(
+                                model: model,
                                 rootDirectoryPath: rootDirectoryPath,
                                 rulePreference: $rulePreference,
                                 customInstructions: $customInstructions,

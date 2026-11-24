@@ -51,6 +51,10 @@ struct ModelLoaderControl: View {
     @ObservedObject var model: AppModel
     var density: Density = .regular
 
+    /// The chooser's popover. Its list keeps the loadable-only rule the old
+    /// menu had (requirement 3.3): see `ModelPickerPopover`.
+    @State private var isPickerPresented = false
+
     // Both densities are declared and one is selected, rather than feeding
     // `density` into a single metric: a property wrapper's initial value
     // cannot read another stored property, and writing the init by hand to
@@ -104,37 +108,8 @@ struct ModelLoaderControl: View {
     // MARK: - Chooser
 
     private var chooser: some View {
-        Menu {
-            installedModelsSection
-
-            Divider()
-
-            Button {
-                model.activeSection = .modelManager
-            } label: {
-                Label { Text("Manage installed models\u{2026}", bundle: .module) } icon: { Image(systemName: "internaldrive") }
-            }
-
-            Button {
-                model.activeSection = .modelHub
-            } label: {
-                Label { Text("Discover new models\u{2026}", bundle: .module) } icon: { Image(systemName: "shippingbox") }
-            }
-
-            Button {
-                ModelLocationPicker.choose(for: model)
-            } label: {
-                Label { Text("Open model folder\u{2026}", bundle: .module) } icon: { Image(systemName: "folder") }
-            }
-
-            if model.canReloadModel {
-                Divider()
-                Button {
-                    model.reloadModel()
-                } label: {
-                    Label { Text("Reload model", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
-                }
-            }
+        Button {
+            isPickerPresented.toggle()
         } label: {
             HStack(spacing: density == .compact ? 6 : 8) {
                 ModelStatusDot(state: loaderState, accent: theme.accent)
@@ -192,20 +167,16 @@ struct ModelLoaderControl: View {
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
         }
-        // `.button` rather than `.borderlessButton`, which FLATTENS a custom
-        // label on the macOS 14 SDK: AppKit renders a pull-down whose title
-        // is the label's first Text plus its own indicator, and discards the
-        // rest. The status dot, the secondary line and the progress bar were
-        // all dropped, and `.menuIndicator(.hidden)` was ignored with it.
-        // Verified by screenshot: `.borderlessButton` drew `<> gptoss-20b`,
-        // `.button` draws the dot, `gptoss-20b`, `Not loaded` and the chevron.
-        // The file this replaced had the same two-line VStack and had never
-        // rendered its second line either, so this is older than the redesign.
-        // `ToolApprovalDropdown` sidesteps the same limit a different way, by
-        // being a Button with a popover rather than a Menu.
-        .menuStyle(.button)
+        // A Button with a popover, not a Menu: a native menu cannot hold the
+        // filter field, and as a pull-down it FLATTENS a custom label on the
+        // macOS 14 SDK (`.borderlessButton` drew only `<> gptoss-20b`, losing
+        // the status dot, the secondary line and the progress bar). A plain
+        // Button draws its label as written. `ToolApprovalDropdown` takes the
+        // same route for the same reason.
         .buttonStyle(.plain)
-        .menuIndicator(.hidden)
+        .popover(isPresented: $isPickerPresented, arrowEdge: .top) {
+            ModelPickerPopover(model: model, remote: model.remoteProviders, isPresented: $isPickerPresented)
+        }
         // Honor the available width so long model aliases cannot draw
         // outside the capsule in a narrow conversation column.
         .frame(maxWidth: density == .compact ? 420 : 320)
@@ -217,39 +188,6 @@ struct ModelLoaderControl: View {
         .accessibilityLabel(Text("Active model", bundle: .module))
         .accessibilityValue(accessibilityValue)
         .accessibilityHint(Text("Choose which installed model to use", bundle: .module))
-    }
-
-    /// The loadable list only (requirement 3.3): a model on a drive that is away
-    /// is not offered here, and with nothing else to offer the menu says why.
-    @ViewBuilder
-    private var installedModelsSection: some View {
-        let loadable = model.loadableModels
-        if loadable.isEmpty {
-            if let statement = model.notConnectedStatement {
-                Text(verbatim: statement)
-            } else {
-                Text("No models installed yet", bundle: .module)
-            }
-        } else {
-            Section(header: Text("Installed", bundle: .module)) {
-                ForEach(loadable) { item in
-                    Button {
-                        model.openChatWithModel(item)
-                    } label: {
-                        // Alias and family are identifiers: nothing to translate.
-                        if model.selected?.alias == item.alias {
-                            Label {
-                                Text(verbatim: "\(item.alias)  (\(item.family))")
-                            } icon: {
-                                Image(systemName: "checkmark")
-                            }
-                        } else {
-                            Text(verbatim: "\(item.alias)  (\(item.family))")
-                        }
-                    }
-                }
-            }
-        }
     }
 
     // MARK: - Reasoning

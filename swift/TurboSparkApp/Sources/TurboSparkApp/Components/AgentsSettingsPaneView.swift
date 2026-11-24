@@ -284,7 +284,9 @@ public struct AgentsSettingsPaneView: View {
                         get: { agent.isEnabled },
                         set: { _ in model.toggleAgentEnabled(agent) }
                     )) {
-                        Text(agent.displayName)
+                        // Built-in agent names are catalog keys; a custom name has no
+                        // key, so it shows as typed.
+                        Text(LocalizedStringKey(agent.displayName), bundle: .module)
                     }
                     .toggleStyle(.checkbox)
                     .labelsHidden()

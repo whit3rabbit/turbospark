@@ -40,3 +40,5 @@ mod audio;
 pub use audio::*;
 mod audio_stream;
 pub use audio_stream::*;
+mod enhance_stream;
+pub use enhance_stream::*;

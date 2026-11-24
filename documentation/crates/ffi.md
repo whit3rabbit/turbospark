@@ -36,6 +36,7 @@ JSON request and result shapes), and the opaque handle types
 | `embedding.rs` | Embedding encode, probe, install, and cosine similarity |
 | `audio.rs` | Audio model catalog, installs, sessions and jobs, the heavy-work gate |
 | `audio_stream.rs` | Live streaming transcription sessions |
+| `enhance_stream.rs` | Live voice isolation streams (`ts_audio_enhance_stream_*`) |
 | `stt.rs` | Resident speech-to-text models and PCM streams (macOS; refused by name elsewhere) |
 | `server.rs` | In-process HTTP server sharing already-open models |
 | `daemon.rs` | Managed background daemon status, start, stop, restart |
@@ -101,7 +102,7 @@ Representative entry points, all prefixed `ts_`:
 | Standalone tokenizer | `ts_tokenizer_open`, `ts_tokenizer_count_text_tokens`, `ts_tokenizer_tokenize_json` | `crates/ffi/src/api/tokenizer.rs` |
 | Model management | `ts_catalog_json`, `ts_probe_json`, `ts_recommend_json`, `ts_install`, `ts_install_cancel`, `ts_installed_json`, `ts_hf_token_set`, `ts_store_root_get` | `crates/ffi/src/api/models.rs` |
 | Images, OCR, embeddings | `ts_image_session_open`, `ts_image_generate`, `ts_ocr_open`, `ts_ocr_read_json`, `ts_embedding_encode_json`, `ts_cosine_similarity` | `crates/ffi/src/api/image.rs`, `ocr.rs`, `embedding.rs` |
-| Audio and speech | `ts_audio_session_open`, `ts_audio_job_run`, `ts_audio_stream_open`, `ts_stt_open`, `ts_stt_stream_append` | `crates/ffi/src/api/audio.rs`, `audio_stream.rs`, `stt.rs` |
+| Audio and speech | `ts_audio_session_open`, `ts_audio_job_run`, `ts_audio_stream_open`, `ts_audio_enhance_stream_open`, `ts_stt_open`, `ts_stt_stream_append` | `crates/ffi/src/api/audio.rs`, `audio_stream.rs`, `enhance_stream.rs`, `stt.rs` |
 | Servers | `ts_server_start`, `ts_server_attach_session`, `ts_server_stop`, `ts_daemon_status_json` | `crates/ffi/src/api/server.rs`, `daemon.rs` |
 
 Off macOS, engine entry points such as `ts_session_open` fail with

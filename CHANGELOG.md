@@ -94,6 +94,24 @@ when this file gets updated relative to the version bump and the tag.
 - The expert residency preflight reports `residentSupported` per install
   (Swift `ExpertResidencyPreflight.residentSupported`); auto residency streams
   an Inkling GGUF install, whose experts have no resident kernels.
+- Speech enhancement and voice isolation. The audio task `enhancement` runs
+  in a session (any input rate, 48 kHz mono out), with three pinned profiles:
+  `voice-isolator-v1` and `voice-isolator-v1-realtime` (inworld Voice
+  Isolator v1, Apache-2.0, ported from the reference with real-checkpoint
+  parity of 2.7e-7; projections, attention and the Mamba scan on Metal) and
+  `mossformer2-se-48k-fp16` (CPU). The app's Clean Up page offers "Enhance
+  speech", and `turbospark enhance` (new `turbospark-enhance` binary, in the
+  release archive and cask) cleans a WAV and can write the removed
+  background.
+- "Clean reference" on the Voice Cloning reference card removes background
+  noise from the selected region and uses the cleaned copy, saved as a new
+  take, as the reference. The source take is kept, and consent must be given
+  again for the cleaned reference.
+- Live voice isolation streams (`ts_audio_enhance_stream_*`): 48 kHz mono in,
+  the voice out as it becomes final, with per-push timing. They run a
+  stateful Core ML step when it is installed, else Metal, which is not real
+  time on its own.
+- `SafetensorsFile::metadata` exposes a checkpoint's header metadata.
 - PEFT LoRA adapter repositories install by merging into their base while it
   streams (`repack::lora_merge`, `docs/LORA_MERGE.md`):
   `harness-hub/Qwen3.8-27B-pi-adapted` probes runnable and merges into
@@ -138,8 +156,33 @@ when this file gets updated relative to the version bump and the tag.
   models now follows that answer instead of the model's name, so a headless or
   Q3_K GGUF named "MTP" is no longer badged, and the Hub detail shows the badge
   for a file that would speculate.
+- Meetings: your own notes sit beside the transcript, generated notes
+  stream in as they are written, and Ask answers questions across meetings.
+  Generated notes only fill `item.summary`; transcript segments are never
+  changed (`swift/docs/SWIFT_AUDIO_MEETING_NOTES.md`).
+- Agent chat: artifact version history with a "Compare with Current" diff,
+  a hover peek on artifact chips, "View file" on file-tree rows, and an
+  "Other" answer on question cards. A plan waiting for approval blocks the
+  turn and counts as a pending approval in voice calls.
+- Checkpoint and restore for a turn's file changes. Restore is confirmed,
+  stays inside the project root and refuses sensitive paths.
+- Shell approvals can be edited before they run. An edited command is
+  re-checked as a new request, is approved once, and never gets a saved
+  grant.
 
 ### Changed
+- The app renders the offline Voice Isolator (`voice-isolator-v1`) on a
+  vendored MLX port (VoiceIsolatorMLX, Apache-2.0) instead of the Rust Metal
+  path, for Clean Up's "Enhance speech" and "Clean reference". It loads the
+  same verified `denoiser.safetensors`, so installs are unchanged. The CLI
+  and FFI keep the Rust engine; live noise reduction is covered below.
+- Live "Reduce background noise" runs on the vendored MLX port first, with
+  the realtime denoiser at float16 and up to 10 frames per network call. The
+  Rust live stream runs only when the MLX model fails to load. A verification
+  or finding error does not fall back. Each take logs its push timings.
+- The chat transcript, composer, model picker, MCP settings and image
+  attachments were reworked. MCP env values are scrubbed from the command
+  summary and from stderr.
 - Rust API, source-breaking for struct literals: `catalog::ProbeReport` gains
   `speculation: Option<repack::GgufSpeculation>` (add `speculation: None`).
   FFI/Swift: the probe and Hub check JSON gain `speculation`

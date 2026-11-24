@@ -20,6 +20,9 @@ import ComputerUseKit
 /// cannot hold anyway: stored properties.
 @MainActor
 public final class AppModel: ObservableObject {
+    /// Per-turn file checkpoints shown above each turn (`AppModel+Checkpoints`).
+    /// Its own observable so a capture redraws only the divider rows.
+    let turnCheckpoints = TurnCheckpointIndex()
     /// Currently active navigation section in the main window.
     var audioSummaryInFlight = false
     /// Whether `audioWorkspace` has been built. The eject coordinator asks
@@ -58,9 +61,13 @@ public final class AppModel: ObservableObject {
         workspace.summaryAvailable = { [weak self] in
             self?.canSummarizeAudio == true || (self?.loadableModels.contains(where: { $0.modality == "text" }) == true)
         }
-        workspace.summaryHandler = { [weak self] item, targetModel in
+        workspace.summaryHandler = { [weak self] item, targetModel, progress in
             guard let self else { throw CancellationError() }
-            return try await self.summarizeAudioTranscript(item, targetModel: targetModel)
+            return try await self.summarizeAudioTranscript(item, targetModel: targetModel, progress: progress)
+        }
+        workspace.promptHandler = { [weak self] system, user, targetModel, progress in
+            guard let self else { throw CancellationError() }
+            return try await self.runAudioPrompt(system: system, user: user, targetModel: targetModel, progress: progress)
         }
         forwardAudioUnloadChanges(from: workspace)
         return workspace
@@ -471,6 +478,8 @@ public final class AppModel: ObservableObject {
     /// The installed model (`installId`) that answers the auto-send check, or
     /// nil for Automatic (the loaded chat model).
     @Published var voiceCallDeciderModelID: String?
+    /// The call's microphone by Core Audio UID, or nil for the system default.
+    @Published var voiceCallMicrophoneUID: String?
     /// The second resident session for a dedicated decider model. Built on
     /// first use and empty until a call with auto-send on asks for it.
     lazy var voiceCallDeciderHost: VoiceCallDeciderHost = makeVoiceCallDeciderHost()
@@ -559,6 +568,8 @@ public final class AppModel: ObservableObject {
     /// Use native tool calling even when the definitions would take longer than
     /// the prefill-time budget to process the first time. Off by default.
     @Published public var nativeToolCallingIgnoresSpeed: Bool = false
+    /// Fixed follow-up chips under the newest reply. Off by default.
+    @Published public var followUpSuggestionsEnabled: Bool = false
     /// What a tool set costs in prompt tokens, measured once per (session,
     /// tool set) by `nativeToolTokenCost`. Not published: nothing renders it.
     var nativeToolCostCache: [Int: Int] = [:]
@@ -789,6 +800,9 @@ public final class AppModel: ObservableObject {
     /// suspended inside the tool waiting for the user's pick; the
     /// transcript card renders tappable options while it is set.
     @Published public var pendingUserQuestions: PendingUserQuestions? = nil
+    /// The plan an `ExitPlanMode` call is parked on: non-nil while the turn
+    /// waits inside the tool for Start or Request changes on the plan card.
+    @Published public var pendingPlanApproval: PendingPlanApproval? = nil
     /// Whether the git info sheet (`/diff`, `/log`, `/prs`) is showing.
     @Published public var showGitSheet: Bool = false
     @Published public var gitInfoTab: GitInfoTab = .diff
@@ -1070,12 +1084,18 @@ public final class AppModel: ObservableObject {
     @Published public var outputText: String = ""
     /// Streamed reasoning text for the active turn.
     @Published public var outputReasoningText: String = ""
+    /// Times the active turn's reasoning for the committed row's "Thought
+    /// for N" label. Not published: no view reads it while streaming.
+    var reasoningClock = ReasoningClock()
 
     // Status & Diagnostics
     /// Diagnostics summary from the last generation run.
     @Published public var diagnostics: AppDiagnostics?
     /// Request-only microcompact notices, kept out of transcript persistence.
     @Published var compactionBoundaryEvents: [UUID: CompactionBoundaryEvent] = [:]
+    /// What conversation recall did per turn, for the reply's Context group.
+    /// In memory only, never on a message (`RecallInspection`).
+    @Published var recallInspections = RecallInspectionLog()
     /// Typed stream-recovery events awaiting transcript and diagnostics presentation.
     @Published var streamRecoveryEvents: [UUID: [StreamRecoveryEvent]] = [:]
     /// Estimated token count of the current prompt draft.
@@ -1088,6 +1108,10 @@ public final class AppModel: ObservableObject {
     @Published public var telemetry: SystemTelemetry?
     /// Active error banner message, if any.
     @Published public var error: String?
+    /// The last chat-model load that failed, typed for the strip above the
+    /// composer. Takes the place of `error` for that event so the two banners
+    /// never say the same thing twice. Cleared when the next load starts.
+    @Published var modelLoadFailure: ModelLoadFailure?
     /// Active toast notification displayed on screen and announced to assistive technologies.
     @Published public var activeToast: AppToast? = nil
 
@@ -1491,6 +1515,7 @@ public final class AppModel: ObservableObject {
             }
             return try await self.postSubagentMessage(childID: childID, chatID: chatID, text: text)
         }
+        installTurnCheckpointCapture()
         AppToolRegistry.observationRecaller = { [weak self] chatID, id, offset, maximum in
             guard let self else {
                 throw ToolObservationStore.ObservationError.invalidRange
@@ -1544,6 +1569,13 @@ public final class AppModel: ObservableObject {
             }
             return await self.waitForUserAnswers(
                 chatID: chatID, items: items, toolCallID: toolCallID)
+        }
+        // The blocking ExitPlanMode gate, the same shape as the question
+        // waiter: the plan card's Start or Request changes is the result.
+        PlanModeExecutor.decisionWaiter = { [weak self] chatID, plan, toolCallID in
+            guard let self else { return .cancelled }
+            return await self.waitForPlanDecision(
+                chatID: chatID, plan: plan, toolCallID: toolCallID)
         }
         AppHookStore.shared.refresh(projectDirectory: selectedProject?.rootDirectoryPath)
         // A quarantined settings, chat or project file is the one thing the

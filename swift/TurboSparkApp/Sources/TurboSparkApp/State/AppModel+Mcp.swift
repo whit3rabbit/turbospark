@@ -146,6 +146,8 @@ extension AppModel {
             McpToolCatalogCache.shared.setTools(tools, for: config)
             return .success(tools)
         } catch {
+            // Only the settings status reads this; advertising is unchanged.
+            McpToolCatalogCache.shared.recordFailure(error.localizedDescription, for: config)
             return .failure(error)
         }
     }

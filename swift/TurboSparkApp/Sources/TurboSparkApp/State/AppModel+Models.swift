@@ -336,6 +336,7 @@ extension AppModel {
     /// cannot drift apart again. The caller owns `opening`.
     func openSession(_ model: InstalledModel) async {
         error = nil
+        modelLoadFailure = nil
         // **DETACHED RATHER THAN MERELY DROPPED, and detached rather than
         // stopping the whole server.** `session = nil` alone leaves the OLD
         // model resident and served: the server holds its own reference
@@ -382,7 +383,16 @@ extension AppModel {
             }
         } catch {
             let msg = AppStrings.localized("Failed to load model: \(error.localizedDescription)")
+            // `error` is kept for every reader that waits on it; the typed
+            // strip names the cause and offers the fix, and ErrorBanner hides
+            // for this exact text (`covers(error:)`) so only one notice shows.
+            // The toast stays for a load started from another pane.
             self.error = msg
+            self.modelLoadFailure = ModelLoadFailure(
+                model: model,
+                kind: .classify(engineMessage: error.localizedDescription),
+                detail: error.localizedDescription,
+                errorText: msg)
             showToast(msg, style: .error)
         }
     }

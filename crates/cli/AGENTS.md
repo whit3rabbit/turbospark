@@ -7,6 +7,8 @@ User-facing model, generation, image, music, voice cloning, and server command e
 - `turbospark-music`: Music generation via MiniMax Music 3.
 - `turbospark-clone`: Zero-shot voice cloning and speech synthesis via MegaTTS3.
 - `turbospark-speak`: Speech with Fish Audio Drama 3, optionally in a cloned voice.
+- `turbospark-enhance`: Speech enhancement of a WAV file (task `enhancement`),
+  or vocal separation with `--task separate` (task `separation`).
 - `turbospark-steer`: Trait steering: extract a behavior direction from a
   model's own activations against a built-in prompt contrast, then check it
   (`docs/STEERING_TRAITS.md`).

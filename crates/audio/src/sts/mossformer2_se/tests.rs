@@ -281,6 +281,47 @@ fn chunked_reassembly_invariants() {
     assert!(out.iter().all(|v| v.is_finite()));
 }
 
+/// The controlled entry is the uncontrolled one plus a hook between passes:
+/// same output bits, progress that ends at its total on each path, and a
+/// false return that stops before the next pass.
+#[test]
+fn controlled_enhance_reports_progress_and_stops() {
+    let model = load_model();
+    let rate = model.config.sample_rate;
+    let tone = |seconds: usize| -> Vec<f32> {
+        (0..seconds * rate)
+            .map(|i| ((i as f32) * 180.0 * std::f32::consts::TAU / rate as f32).sin() * 0.2)
+            .collect()
+    };
+    // Full path, segmented path (above 20 s), chunked path (forced).
+    for (audio, chunked) in [(tone(1), None), (tone(22), None), (tone(9), Some(true))] {
+        let plain = model.enhance_with_mode(&audio, chunked).unwrap();
+        let mut seen = Vec::new();
+        let controlled = model
+            .enhance_controlled(&audio, chunked, &mut |done, total| {
+                seen.push((done, total));
+                true
+            })
+            .unwrap();
+        assert_eq!(plain, controlled);
+        let total = seen[0].1;
+        assert!(total >= 1);
+        assert_eq!(seen.len(), total + 1, "{seen:?}");
+        assert!(seen
+            .iter()
+            .enumerate()
+            .all(|(i, &(d, t))| d == i && t == total));
+
+        let mut calls = 0;
+        let stopped = model.enhance_controlled(&audio, chunked, &mut |_, _| {
+            calls += 1;
+            false
+        });
+        assert!(matches!(stopped, Err(crate::SpeechError::Input { .. })));
+        assert_eq!(calls, 1, "stops before the first pass");
+    }
+}
+
 /// Real-checkpoint gate; opt-in via TURBOSPARK_MOSSFORMER2_SE_MODEL
 /// pointing at a directory with model.safetensors (fp32 or fp16, or
 /// int8; config.json optional). Skips when unset.

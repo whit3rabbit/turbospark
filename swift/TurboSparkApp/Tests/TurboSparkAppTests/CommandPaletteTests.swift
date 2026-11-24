@@ -130,9 +130,18 @@ final class CommandPaletteTests: XCTestCase {
     }
 
     func testNavigationRowsCarryTheirChord() {
-        let chat = PaletteCommandCatalog.commands(skills: [], canCheckForUpdates: true)
-            .first { $0.action == .navigate(.chat) }
+        // The caller resolves chords from KeybindOverrideStore; the catalog
+        // only carries what it is given, and a missing section has no chord.
+        let commands = PaletteCommandCatalog.commands(
+            skills: [], canCheckForUpdates: true, navigationBindings: [.chat: "\u{2318}1"])
+        let chat = commands.first { $0.action == .navigate(.chat) }
         XCTAssertEqual(chat?.binding, "\u{2318}1")
+        let other = commands.first {
+            if case .navigate(let section) = $0.action { return section != .chat }
+            return false
+        }
+        XCTAssertNotNil(other)
+        XCTAssertNil(other?.binding)
     }
 
     func testPluginCommandsAppearNamespacedAndOnlyWhenInvocable() {

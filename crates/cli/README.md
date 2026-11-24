@@ -10,6 +10,7 @@ Command-line binaries for [turbospark](https://github.com/whit3rabbit/turbospark
 - `turbospark-music`: Generates music audio via MiniMax Music 3 (autoregressive backbone, flow-matching DiT, and vocoder).
 - `turbospark-clone`: Zero-shot voice cloning and speech synthesis via MegaTTS3.
 - `turbospark-speak`: Speech synthesis with Fish Audio Drama 3, optionally in a cloned voice.
+- `turbospark-enhance`: Speech enhancement of a WAV file (inworld Voice Isolator, MossFormer2 SE), or vocal separation with `--task separate` (Mel-Band RoFormer).
 - `turbospark-steer`: Trait steering: extracts a behavior direction from a model's own activations and checks it (`docs/STEERING_TRAITS.md`).
 - `turbospark-ocr`: Document OCR with Unlimited-OCR-2 on Metal, or the Core ML Unlimited OCR export (macOS 15+).
 - `turbospark`: Unified front end over all subcommands, the HTTP server, and external coding agents.

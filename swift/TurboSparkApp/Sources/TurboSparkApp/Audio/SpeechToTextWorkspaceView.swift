@@ -98,6 +98,9 @@ struct SpeechToTextWorkspaceView: View {
 @MainActor
 struct SpeechToTextSplit<Rows: View, Detail: View>: View {
     var selectionID: UUID?
+    /// The detail's reading measure in design points. A meeting is wider:
+    /// its notes sit beside the transcript.
+    var detailMaxWidth: CGFloat = 900
     @ViewBuilder let list: () -> Rows
     @ViewBuilder let detail: () -> Detail
     @Environment(\.appTheme) private var theme
@@ -111,7 +114,7 @@ struct SpeechToTextSplit<Rows: View, Detail: View>: View {
                     ScrollView { list().padding(16) }
                         .frame(minWidth: 240 * scale, idealWidth: 300 * scale, maxWidth: 420 * scale)
                     ScrollView {
-                        detail().padding(24).frame(maxWidth: 900 * scale, alignment: .leading).frame(maxWidth: .infinity)
+                        detail().padding(24).frame(maxWidth: detailMaxWidth * scale, alignment: .leading).frame(maxWidth: .infinity)
                     }
                     .frame(minWidth: 360 * scale)
                 }
@@ -157,6 +160,8 @@ struct SpeechToTextLiveTranscript: View {
     @ObservedObject var model: AppModel
     @ObservedObject var controller: AudioWorkspaceController
     let item: AudioLibraryItem
+    /// A meeting puts the user's notes beside the words as they are heard.
+    var withNotes = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -166,6 +171,20 @@ struct SpeechToTextLiveTranscript: View {
                     Text(item.collection).themedFont(.small).foregroundStyle(.appSecondary)
                 }
             }
+            if withNotes {
+                AudioMeetingColumns {
+                    AudioMeetingNotesEditor(controller: controller, item: item)
+                } panel: {
+                    liveColumn
+                }
+            } else {
+                liveColumn
+            }
+        }
+    }
+
+    private var liveColumn: some View {
+        VStack(alignment: .leading, spacing: 16) {
             AudioLiveTextView(live: controller.live, maxHeight: 420)
             if !controller.live.isStreaming, let draft = item.preferredTranscript, !draft.segments.isEmpty {
                 VStack(alignment: .leading, spacing: 10) {

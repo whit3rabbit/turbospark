@@ -33,6 +33,19 @@ public final class McpToolCatalogCache: @unchecked Sendable {
         let transport: McpTransportSpec
     }
     private var inFlight: [String: Request] = [:]
+    /// The newest discovery failure per server, kept beside (not instead of)
+    /// `entries` so a failed refresh still re-queues exactly as before and an
+    /// older tools list stays advertised. Read only by the settings status.
+    private struct Failure {
+        var message: String
+        var transport: McpTransportSpec
+    }
+    private var failures: [String: Failure] = [:]
+
+    /// Posted (object: the cache) after any change the status UI reads:
+    /// discovery start, success, failure, removal. Lets the pane redraw on
+    /// events instead of polling. May arrive on any thread.
+    public static let didChangeNotification = Notification.Name("McpToolCatalogCacheDidChange")
     public typealias Discovery = @Sendable (McpServerConfig, URL?) async throws -> [McpDiscoveredTool]
     private let discover: Discovery
 
@@ -57,26 +70,75 @@ public final class McpToolCatalogCache: @unchecked Sendable {
     }
 
     public func setTools(_ tools: [McpDiscoveredTool], for config: McpServerConfig) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
         let key = McpServerConfig.normalizedName(config.name)
         inFlight.removeValue(forKey: key)
         entries[key] = Entry(tools: tools, transport: config.transport)
+        failures.removeValue(forKey: key)
+        lock.unlock()
+        postChange()
+    }
+
+    /// Records a failed explicit connection test so the status reads Failed
+    /// until the next success. Leaves cached tools in place: advertising is
+    /// unchanged by a test, exactly as before.
+    public func recordFailure(_ message: String, for config: McpServerConfig) {
+        lock.lock()
+        failures[McpServerConfig.normalizedName(config.name)] =
+            Failure(message: message, transport: config.transport)
+        lock.unlock()
+        postChange()
+    }
+
+    /// The newest failure message for `config`, or nil when the last finished
+    /// attempt succeeded or the failure was for a different transport.
+    public func lastFailure(for config: McpServerConfig) -> String? {
+        lock.lock(); defer { lock.unlock() }
+        guard let failure = failures[McpServerConfig.normalizedName(config.name)],
+            failure.transport == config.transport
+        else { return nil }
+        return failure.message
+    }
+
+    /// Whether a background discovery for `config`'s current transport is
+    /// in flight.
+    public func isDiscovering(_ config: McpServerConfig) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return inFlight[McpServerConfig.normalizedName(config.name)]?.transport == config.transport
+    }
+
+    /// The cached tool count for `config`, or nil when none is cached for
+    /// its current transport.
+    public func cachedToolCount(for config: McpServerConfig) -> Int? {
+        lock.lock(); defer { lock.unlock() }
+        guard isStaleLocked(for: config) == false else { return nil }
+        return entries[McpServerConfig.normalizedName(config.name)]?.tools.count
+    }
+
+    private func postChange() {
+        NotificationCenter.default.post(name: Self.didChangeNotification, object: self)
     }
 
     public func removeServer(named serverName: String) {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
         let key = McpServerConfig.normalizedName(serverName)
         entries.removeValue(forKey: key)
         inFlight.removeValue(forKey: key)
+        failures.removeValue(forKey: key)
         // Removal, rename and disable all land here: the persistent session
         // for that server must not keep running under a config that is gone.
         Task { await McpClientEngine.shared.invalidateSessions(serverName: serverName) }
+        lock.unlock()
+        postChange()
     }
 
     public func removeAll() {
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
         entries.removeAll()
         inFlight.removeAll()
+        failures.removeAll()
+        lock.unlock()
+        postChange()
     }
 
     /// Kicks off background discovery for every ENABLED server in `servers`
@@ -100,6 +162,7 @@ public final class McpToolCatalogCache: @unchecked Sendable {
         let liveKeys = Set(enabled.map { McpServerConfig.normalizedName($0.name) })
         entries = entries.filter { liveKeys.contains($0.key) }
         inFlight = inFlight.filter { liveKeys.contains($0.key) }
+        failures = failures.filter { liveKeys.contains($0.key) }
         for config in enabled {
             let key = McpServerConfig.normalizedName(config.name)
             if let request = inFlight[key] {
@@ -112,12 +175,19 @@ public final class McpToolCatalogCache: @unchecked Sendable {
             queued.append((config, id))
         }
         lock.unlock()
+        // Pruning or queueing can both change what the status shows.
+        postChange()
 
         return queued.map { config, id in
             let discover = self.discover
             let task = Task { [weak self] in
-                let tools = try? await discover(config, workingDirectory)
-                self?.complete(config: config, id: id, tools: tools)
+                let outcome: Result<[McpDiscoveredTool], Error>
+                do {
+                    outcome = .success(try await discover(config, workingDirectory))
+                } catch {
+                    outcome = .failure(error)
+                }
+                self?.complete(config: config, id: id, outcome: outcome)
             }
             return (config.name, task)
         }
@@ -129,12 +199,27 @@ public final class McpToolCatalogCache: @unchecked Sendable {
         return entry.transport != config.transport
     }
 
-    private func complete(config: McpServerConfig, id: UUID, tools: [McpDiscoveredTool]?) {
-        lock.lock(); defer { lock.unlock() }
+    private func complete(
+        config: McpServerConfig, id: UUID, outcome: Result<[McpDiscoveredTool], Error>
+    ) {
+        lock.lock()
         let key = McpServerConfig.normalizedName(config.name)
         // Reset, removal, or replacement revokes both publication and cleanup.
-        guard inFlight[key]?.id == id else { return }
+        guard inFlight[key]?.id == id else {
+            lock.unlock()
+            return
+        }
         inFlight.removeValue(forKey: key)
-        if let tools { entries[key] = Entry(tools: tools, transport: config.transport) }
+        switch outcome {
+        case .success(let tools):
+            entries[key] = Entry(tools: tools, transport: config.transport)
+            failures.removeValue(forKey: key)
+        case .failure(let error):
+            // Entries are untouched, as with the old `try?`: a failure keeps
+            // the server stale so the next refresh retries it.
+            failures[key] = Failure(message: error.localizedDescription, transport: config.transport)
+        }
+        lock.unlock()
+        postChange()
     }
 }

@@ -1,5 +1,5 @@
 ---
-description: "Unified audio processing suite: speech-to-text, text-to-speech, zero-shot voice cloning, speaker diarization, meeting notes, and music generation."
+description: "Unified audio processing suite: speech-to-text, text-to-speech, zero-shot voice cloning, speaker diarization, meeting notes, speech enhancement, vocal separation, and music generation."
 icon: headphones
 ---
 
@@ -19,9 +19,11 @@ Run `turbospark-model list-audio` for the full pinned table; the `RUNS IN` colum
 | **Text-to-Speech** | Fish Audio Drama 3, OmniVoice, Kokoro-82M, PocketTTS (install-only) | Metal GPU, portable CPU | App Audio, `turbospark-speak`, `turbospark-server` |
 | **Voice Design & TTS** | Qwen3-TTS 0.6B & 1.7B (Base, CustomVoice, VoiceDesign), Kokoro on the ANE | Swift MLX; Core ML | App Audio |
 | **Zero-Shot Voice Cloning** | Fish Audio Drama 3, OmniVoice, MegaTTS3 | Metal GPU (default), CPU (`--cpu`) | App Voice Cloning, `turbospark-clone`, `turbospark-speak`, `turbospark-server` |
+| **Speech Enhancement** | Inworld Voice Isolator v1 (offline and realtime), MossFormer2 SE 48K | Metal GPU (CPU fallback), CPU; live streams also Core ML | App Clean Up and live text, `turbospark enhance` |
+| **Vocal Separation** | Mel-Band RoFormer vocals | CPU | App Clean Up, `turbospark enhance --task separate` |
 | **Music Generation** | MiniMax Music 3 (4-bit, Turbo 8-step, bf16, 8/6-bit, MXFP8/MXFP4/NVFP4) | Metal GPU | App Audio, `turbospark-music`, `turbospark-server` |
 
-Rows with license terms (MegaTTS3's community encoder, OmniVoice's Higgs tokenizer, Drama 3's Fish Audio license, Paraformer's FunASR license) print them and need an `--accept <id>` on install. See [Speech to Text](speech-to-text.md), [Text to Speech and Voice Cloning](text-to-speech.md) and [Music Generation](music-generation.md) for each surface.
+Rows with license terms (MegaTTS3's community encoder, OmniVoice's Higgs tokenizer, Drama 3's Fish Audio license, Paraformer's FunASR license) print them and need an `--accept <id>` on install. See [Speech to Text](speech-to-text.md), [Text to Speech and Voice Cloning](text-to-speech.md), [Speech Enhancement and Separation](speech-enhancement.md) and [Music Generation](music-generation.md) for each surface.
 
 ---
 
@@ -31,7 +33,8 @@ The **Audio** workspace in `TurboSpark.app` provides an integrated sound worksta
 
 1. **Record & Transcribe**: three modes (Voice Notes, Meeting, Any Audio), each with its own takes and models. Live text appears while recording, finished takes get speaker labels you can name and merge, and a meeting take grows a Notes view with a summary, timestamp chips and a model recommendation.
 2. **Voiceover, Voice Cloning & Voice Design**: speak a script in a voice the model picks (Drama 3, OmniVoice), clone a voice from a consented reference (Drama 3, OmniVoice, MegaTTS3, Qwen3-TTS Base), or describe a voice in words (Qwen3-TTS VoiceDesign). Built-in consent gates cover every reference, and consent is never carried over between reference regions.
-3. **Music Generation**: enter natural language prompts (e.g. "90s grunge guitar with energetic drums"), assemble genre, mood, tempo and instrumentation with the prompt builder, and structure lyrics with `[verse]`, `[chorus]` and `[instrumental]` markers.
+3. **Clean Up**: enhance speech in a take or separate its vocals, saved as a new take (the source take is never changed). Live text can optionally reduce microphone background noise; the saved recording stays original.
+4. **Music Generation**: enter natural language prompts (e.g. "90s grunge guitar with energetic drums"), assemble genre, mood, tempo and instrumentation with the prompt builder, and structure lyrics with `[verse]`, `[chorus]` and `[instrumental]` markers.
 
 ---
 

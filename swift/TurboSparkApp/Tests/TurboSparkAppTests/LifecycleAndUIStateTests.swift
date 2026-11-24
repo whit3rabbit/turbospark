@@ -251,8 +251,11 @@ final class LifecycleAndUIStateModelTests: XCTestCase {
 
     /// `createChat` had no `pendingToolCall` guard where `selectChat` did, so
     /// starting a new chat stranded the approval card on a conversation the
-    /// user could no longer see.
-    func testANewChatIsRefusedWhileACallAwaitsApproval() {
+    /// user could no longer see. Since ZP-23's second pass a card that has a
+    /// chat of its own is not stranded: leaving the chat parks it there
+    /// (`parkSlotApproval`), so the new chat is created and the card waits
+    /// in its own chat, never answerable from the new one.
+    func testANewChatParksACallAwaitingApprovalInItsOwnChat() {
         let model = AppModel()
         var chat = AppChat(title: "waiting")
         // A message, or `createChat`'s own "reuse the empty selected chat"
@@ -262,14 +265,36 @@ final class LifecycleAndUIStateModelTests: XCTestCase {
         chat.messages = [AppChatMessage(role: .user, content: "hi")]
         model.chats = [chat]
         model.selectedChatID = chat.id
+        let call = AppToolCall(name: "read_file", arguments: ["path": "a"], category: .fileRead)
+        model.pendingToolCall = call
+        model.pendingToolCallChatID = chat.id
+
+        let created = model.createChat()
+
+        XCTAssertNotEqual(created, chat.id)
+        XCTAssertEqual(model.chats.count, 2)
+        XCTAssertEqual(model.selectedChatID, created)
+        XCTAssertNil(model.pendingToolCall, "the new chat shows no card")
+        XCTAssertEqual(model.parkedApprovals[chat.id]?.call.id, call.id, "the card waits in its own chat")
+    }
+
+    /// The state#49 refusal still holds for a card with no chat of its own:
+    /// leaving cannot park it, so a new chat would strand it.
+    func testANewChatIsRefusedWhileAnUnattributedCallAwaitsApproval() {
+        let model = AppModel()
+        var chat = AppChat(title: "waiting")
+        chat.messages = [AppChatMessage(role: .user, content: "hi")]
+        model.chats = [chat]
+        model.selectedChatID = chat.id
         model.pendingToolCall = AppToolCall(
             name: "read_file", arguments: ["path": "a"], category: .fileRead)
-        model.pendingToolCallChatID = chat.id
+        model.pendingToolCallChatID = nil
 
         let created = model.createChat()
 
         XCTAssertEqual(created, chat.id)
         XCTAssertEqual(model.chats.count, 1)
+        XCTAssertNotNil(model.pendingToolCall)
     }
 
     // MARK: - state#63: the draft chat is not lost on quit

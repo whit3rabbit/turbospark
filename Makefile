@@ -1,4 +1,4 @@
-.PHONY: all build build-debug build-release test test-debug test-release fmt fmt-check clippy check catalog-guard swift-lib swift-lib-app compile-strings swift-test swift-test-app swift-test-qwenimage design-check design-check-full swift-test-real swift-app-build swift-app-release swift-app swift-demo app-bundle dmg clean clean-cargo clean-swift clean-dist clean-tmp install uninstall
+.PHONY: all build build-debug build-release test test-debug test-release fmt fmt-check clippy check catalog-guard swift-lib swift-lib-app compile-strings swift-test swift-test-app swift-test-qwenimage swift-test-voiceisolator design-check design-check-full swift-test-real swift-app-build swift-app-release swift-app swift-demo app-bundle dmg clean clean-cargo clean-swift clean-dist clean-tmp install uninstall
 
 PREFIX ?= $(HOME)/.local
 BINDIR ?= $(PREFIX)/bin
@@ -125,6 +125,9 @@ design-check-full: design-check
 
 swift-test-qwenimage:
 	cd swift/TurboSparkApp/Vendor/QwenImage && swift test
+
+swift-test-voiceisolator:
+	cd swift/TurboSparkApp/Vendor/VoiceIsolatorMLX && swift test
 
 swift-app-build: swift-lib-app compile-strings
 	cd swift/TurboSparkApp && swift build -Xbuild-tools-swiftc -suppress-warnings
