@@ -178,10 +178,18 @@ pub fn inkling2_local_required_bytes(source: &Inkling2LocalSource) -> u64 {
 /// route assembles from a row's `mtp` repository), or, for the original
 /// checkpoint, its own top-level `mtp.safetensors` beside the `config.json`
 /// whose `mtp_config` describes it. The runtime loads `<install>/dspark/`
-/// (`runtime::families::inkling2::dspark`); a GGUF carries none.
+/// (`runtime::families::inkling2::dspark`). A GGUF carries none of its own,
+/// so for one the `dspark/` folder beside the file counts: where the Hub
+/// route puts a row's `mtp` drafter, the original release's BF16 weights
+/// (unsloth's own drafter GGUFs are a Q8_0 copy of those, or a different
+/// drafter; `docs/INKLING2_PHASE0.md`).
 fn drafter_source(source: &Inkling2LocalSource) -> Option<(PathBuf, PathBuf)> {
+    let gguf_dir;
     let dir = match source {
-        Inkling2LocalSource::Gguf(_) => return None,
+        Inkling2LocalSource::Gguf(f) => {
+            gguf_dir = f.parent()?.to_path_buf();
+            &gguf_dir
+        }
         Inkling2LocalSource::Lamq(d) | Inkling2LocalSource::Hf(d) | Inkling2LocalSource::Mlx(d) => {
             d
         }
@@ -572,8 +580,17 @@ mod tests {
             Some(pair.clone()),
             "the dspark folder wins"
         );
+        // A GGUF's drafter is the dspark folder beside the file, never a
+        // top-level mtp.safetensors (that rule is the original checkpoint's).
         assert_eq!(
             drafter_source(&Inkling2LocalSource::Gguf(d.join("m.gguf"))),
+            Some(pair.clone())
+        );
+        let lone = tmp("drafter-gguf-alone");
+        std::fs::write(lone.join("mtp.safetensors"), b"w").unwrap();
+        std::fs::write(lone.join("config.json"), b"{}").unwrap();
+        assert_eq!(
+            drafter_source(&Inkling2LocalSource::Gguf(lone.join("m.gguf"))),
             None
         );
 

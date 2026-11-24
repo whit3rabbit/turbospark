@@ -9,15 +9,55 @@
       "name": "inkling2-mini-gturbo",
       "quant": "native NVFP4 (layers 0-19) and MXFP8 (20-23) experts, BF16 resident weights (thinkingmachines/inkling-2-mini, repacked)",
       "machine": "Apple M4 Max 36 GB",
-      "drafters": [],
+      "drafters": [
+        "dflash"
+      ],
       "note": "18 GB install: 15.7 GB packed experts, about 3.5 GB resident"
     },
     {
       "name": "inkling2-mini-mlx4-gturbo",
       "quant": "MLX conversion (mlx-community/Inkling-2-Mini-4bit, mlx-lm PR 2086): native NVFP4/MXFP8 experts, affine 4-bit g64 attention, embedding and head",
       "machine": "Apple M4 Max 36 GB",
-      "drafters": [],
+      "drafters": [
+        "dflash"
+      ],
       "note": "16 GB install via repack examples/inkling2_mlx_install; not bit-exact with the BF16 install (4-bit dense weights)"
+    },
+    {
+      "name": "inkling2-mini-lamq54",
+      "quant": "LookAtMyQuant 5.4 GB release: trellis and Lloyd-Max codes native (docs/LAMQ.md)",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [
+        "dflash"
+      ],
+      "note": "6.9 GB install; multi-row passes share decode's lamq_gemv_rows, bit-exact; no dspark/ of its own (point TURBOSPARK_INKLING2_DSPARK at another install's)"
+    },
+    {
+      "name": "inkling2-mini-gguf-iq2m",
+      "quant": "GGUF AtomicChat Inkling-2-Mini-Uncensored-AD-IQ2_M (a fine-tune): IQ2_XXS gate-up, Q2_0/IQ4_NL down, Q8_0 dense",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [
+        "dflash"
+      ],
+      "note": "8.1 GB; resident experts through GPU-written blob tables; frozen GGUF memory oracle (bench/tests/inkling2_gguf_memory_oracle.rs)"
+    },
+    {
+      "name": "inkling2-mini-gguf-ud-iq1s",
+      "quant": "GGUF unsloth UD-IQ1_S: IQ1_S/IQ2_* gate-up, Q2_0/NVFP4 down",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [
+        "dflash"
+      ],
+      "note": "7.2 GB"
+    },
+    {
+      "name": "inkling2-mini-gguf-iq4nl",
+      "quant": "GGUF ggml-org IQ4_NL (llama.cpp's own conversion)",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [
+        "dflash"
+      ],
+      "note": "16 GB"
     }
   ],
   "recommended": [],

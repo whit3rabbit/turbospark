@@ -207,10 +207,12 @@ pub fn facts(f: ModelFamily) -> FamilyFacts {
         Inkling2Loop => FamilyFacts {
             flow: "inkling2",
             chunked_prefill: Support::Conditional(
-                "resident residency with native NVFP4/MXFP8 experts only (32-row multi-row panels); streamed, GGUF and LAMQ installs refuse it by name, use --chunk off there"
+                "resident residency only (128-row multi-row panels): native, MLX, LAMQ and GGUF installs all run it; a streamed open refuses it by name, use --chunk off there. Native experts take the matrix-unit default, LAMQ and GGUF the bit-exact path"
                     .into(),
             ),
-            drafters: &[],
+            // The DSpark block drafter, through the dflash policy
+            // (`~dflash:N` arms); it needs `<install>/dspark/` and resident experts.
+            drafters: &["dflash"],
             steel_prefill: false,
             decode_attention: "inkling2_rel_bias",
             phase_buckets: "none",
@@ -360,7 +362,15 @@ pub fn text_coverage(subject: &Subject, arch: &ArchConfig) -> Coverage {
                 if f.drafters.contains(&"mtp") && runtime::install_has_mtp_head(&ix) {
                     d.push("mtp");
                 }
-                if f.drafters.contains(&"dflash") && runtime::install_has_dflash(&ix) {
+                // Inkling 2's DSpark drafter is a `dspark/` folder beside the
+                // weights (`runtime::families::inkling2::dspark`), not tensors
+                // in the index.
+                let inkling_dspark = arch.family == ModelFamily::Inkling2Loop
+                    && subject.dir.join("dspark").join("mtp.safetensors").is_file()
+                    && subject.dir.join("dspark").join("config.json").is_file();
+                if f.drafters.contains(&"dflash")
+                    && (runtime::install_has_dflash(&ix) || inkling_dspark)
+                {
                     d.push("dflash");
                 }
                 d

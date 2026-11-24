@@ -130,11 +130,15 @@ fn deepseek2_gets_latent_projections_not_generic_attention() {
 }
 
 #[test]
-fn drafters_and_chunking_are_qwen_only() {
+fn drafters_are_qwen_and_inkling_only() {
     for f in ModelFamily::ALL {
         let fa = facts(f);
-        let qwen = matches!(f, ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe);
-        assert_eq!(!fa.drafters.is_empty(), qwen, "{f:?}");
+        // Qwen's MTP head and DFlash2; Inkling 2's DSpark block drafter.
+        let has = matches!(
+            f,
+            ModelFamily::QwenGdnDense | ModelFamily::QwenGdnMoe | ModelFamily::Inkling2Loop
+        );
+        assert_eq!(!fa.drafters.is_empty(), has, "{f:?}");
         if matches!(
             f,
             ModelFamily::Spark25 | ModelFamily::Deepseek2 | ModelFamily::DeepseekV4Flash

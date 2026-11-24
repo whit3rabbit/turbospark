@@ -1122,6 +1122,37 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
     the state build and the encoder. Parity: IQ2_S over MXFP4 (the
     published layer), Q8_0 over MXFP4 at eight slots, the gate-up refusal;
     a mutant without constant 112 fails both MXFP4 cases.
+- DONE (2026-11-23): unsloth's recommended UD-Q4_K_XL (`Inkling-2-Mini-UD-Q4_K_XL.gguf`
+  @ `8078d149`, sha256 `e6427665...`; the original NVFP4 experts with
+  per-expert F32 `.scale` on layers 0-19, Q8_0 on 20-23), installed with the
+  original release's BF16 drafter in `dspark/`: intake OK (646 names, 0
+  lossy values, `has_expert_scales` true, so the real `.scale` path runs).
+  Gates, M4 Max:
+  - chunked prefill 1,400 tokens 19.8 to 34.8 tok/s, 32/32 rows
+    bit-identical; verify 72/72 and 1,154/1,154;
+  - reference perplexity: resident sequential and chunked 4.6748 (diff 0),
+    streamed floor 4.6962;
+  - logits against llama.cpp master `c212d25`, same file and ids: 12
+    tokens 12/12 top-1, mean KL 1.2e-4; 711 tokens resident 181/189, mean
+    KL 3.5e-3, max 2.4e-2; streamed 182/189, 4.2e-3, 4.6e-2;
+  - speculative, both depths lossless on all four prompts (tok/s plain,
+    depth 2, depth 3): prose 22.3, 17.1, 15.6; code 23.1, 21.3, 23.0; long
+    19.1, 17.1, 15.7; edit 19.8, 23.2, 22.0. Depth 2 beats 3 except on code,
+    unsloth's finding; GGUF experts run per row in the verify, so most
+    prompts lose and DSpark stays opt-in;
+  - quality gate (`bench/tests/inkling2_ud_q4kxl_quality_gate.rs`) frozen
+    from two fresh processes (perplexity 4.6962, 0.13% under the original's
+    4.7024; both digests; 8-slot digest equals 16-slot) and asserted by a
+    third.
+  A GGUF source now takes a `dspark/` folder beside the file as its drafter
+  (`catalog/src/inkling2_local.rs::drafter_source`). Unsloth's own drafter
+  GGUFs are a different drafter: architecture `dflash`, Q8_0 projections,
+  and either the old layout (`dspark_fuse`, `dspark_hidden_out`,
+  `markov_w1` over the padded 201,024 vocabulary, close to ours) or the new
+  `markov_ctx_mix`, `markov_w1`/`markov_w2` over 200,058 with a bias,
+  `ctx_mix` per layer and a 7-row `mask_embd`, which our Metal drafter does
+  not implement. Neither is loaded; the original BF16 drafter is the one
+  gated here.
 - DONE (2026-11-23): prompt-copy drafting, mtplx item (3)
   (`runtime/src/prompt_copy.rs`, wired in `speculative.rs`; on with the
   DSpark drafter, `TURBOSPARK_SPEC_PROMPT_COPY=0` turns it off). When the
