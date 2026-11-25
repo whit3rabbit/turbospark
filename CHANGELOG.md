@@ -13,6 +13,25 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-24
+
+### Added
+- GGUF support for Gemma 2, Phi-3 LongRoPE/dialect, Gemma 3 linear RoPE,
+  Qwen3-Next k10 MoE, and GGUF tokenizer (#324).
+- Apple Speech (built-in) zero-download final-pass STT, macOS system voice
+  TTS fallback, and Help-menu Welcome tour popup (#325).
+
+### Fixed
+- `inkling2_loop` KV-cache quantization auto-selection: `AppKvBitsOption.auto`
+  now queries `kvQuantSupported` per family so `Auto` stays off on
+  `inkling2_loop` instead of sending `--kv-bits 4`.
+- Cleared stale model load failure banners when starting a new install or
+  deleting the failed model.
+- Cleaned up unused Cargo workspace package fields, unread
+  `MiniCpmScratch.seq`, SwiftPM unhandled `EGM.md` warnings, and Swift 6
+  concurrency/compiler warnings.
+- Removed stale root reports and outdated kiro spec (#323).
+
 ## [0.10.0] - 2026-11-24
 
 ### Added

@@ -2337,7 +2337,7 @@ dependencies = [
 
 [[package]]
 name = "turbospark-acp"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2345,7 +2345,7 @@ dependencies = [
 
 [[package]]
 name = "turbospark-audio"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "half",
  "rayon",
@@ -2360,7 +2360,7 @@ dependencies = [
 
 [[package]]
 name = "turbospark-bench"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "half",
  "libc",
@@ -2378,7 +2378,7 @@ dependencies = [
 
 [[package]]
 name = "turbospark-catalog"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "reqwest",
  "serde",
@@ -2394,7 +2394,7 @@ dependencies = [
 
 [[package]]
 name = "turbospark-cli"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "anstyle",
  "clap",
@@ -2423,14 +2423,14 @@ dependencies = [
 
 [[package]]
 name = "turbospark-compute"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "turbospark-core",
 ]
 
 [[package]]
 name = "turbospark-core"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "half",
  "sha2",
@@ -2438,7 +2438,7 @@ dependencies = [
 
 [[package]]
 name = "turbospark-coreml"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "block2",
  "half",
@@ -2450,7 +2450,7 @@ dependencies = [
 
 [[package]]
 name = "turbospark-embeddings"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2463,7 +2463,7 @@ dependencies = [
 
 [[package]]
 name = "turbospark-ffi"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "axum",
  "http-body-util",
@@ -2489,7 +2489,7 @@ dependencies = [
 
 [[package]]
 name = "turbospark-gpu"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "half",
  "libc",
@@ -2506,7 +2506,7 @@ dependencies = [
 
 [[package]]
 name = "turbospark-image"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "metal",
  "ndarray",
@@ -2525,14 +2525,14 @@ dependencies = [
 
 [[package]]
 name = "turbospark-invocation"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "turbospark-core",
 ]
 
 [[package]]
 name = "turbospark-lab"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "axum",
  "half",
@@ -2558,7 +2558,7 @@ dependencies = [
 
 [[package]]
 name = "turbospark-model-io"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "libc",
  "memmap2",
@@ -2570,7 +2570,7 @@ dependencies = [
 
 [[package]]
 name = "turbospark-repack"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "reqwest",
  "serde",
@@ -2582,7 +2582,7 @@ dependencies = [
 
 [[package]]
 name = "turbospark-runtime"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "half",
  "memmap2",
@@ -2604,14 +2604,14 @@ dependencies = [
 
 [[package]]
 name = "turbospark-selection"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "turbospark-core",
 ]
 
 [[package]]
 name = "turbospark-server"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "anyllm_translate",
  "axum",
@@ -2638,7 +2638,7 @@ dependencies = [
 
 [[package]]
 name = "turbospark-streaming"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "libc",
  "turbospark-core",
@@ -2647,7 +2647,7 @@ dependencies = [
 
 [[package]]
 name = "turbospark-tokenizer"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "minijinja",
  "minijinja-contrib",
@@ -2659,7 +2659,7 @@ dependencies = [
 
 [[package]]
 name = "turbospark-vision-io"
-version = "0.10.0"
+version = "0.10.1"
 dependencies = [
  "image",
  "serde_json",
@@ -2668,7 +2668,7 @@ dependencies = [
 
 [[package]]
 name = "turbospark-window-fit"
-version = "0.10.0"
+version = "0.10.1"
 
 [[package]]
 name = "typenum"
