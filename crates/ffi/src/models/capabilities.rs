@@ -43,8 +43,15 @@ pub(crate) fn family_capabilities_json(family: &str) -> String {
         "mappedResidencySupported": parsed.map(mapped_residency_supported).unwrap_or(false),
         "mappedResidencyMeasured": parsed.map(mapped_residency_measured).unwrap_or(false),
         "residentResidencySupported": parsed.map(resident_residency_supported).unwrap_or(false),
+        "kvQuantSupported": parsed.map(kv_quant_family_supported).unwrap_or(false),
     })
     .to_string()
+}
+
+/// Whether `--kv-bits` reaches this family's K/V cache. Mirrors
+/// `runtime::real_forward_init::kv_quant_unsupported_reason`'s family check.
+fn kv_quant_family_supported(family: ModelFamily) -> bool {
+    family != ModelFamily::Inkling2Loop
 }
 
 /// The family and this build only. The chip is deliberately not part of it:
@@ -252,6 +259,7 @@ mod tests {
         assert_eq!(v["anePrefillSupported"], false);
         assert_eq!(v["mappedResidencySupported"], false);
         assert_eq!(v["mappedResidencyMeasured"], false);
+        assert_eq!(v["kvQuantSupported"], false);
         assert_eq!(v["family"], "not-a-family");
     }
 
@@ -345,6 +353,12 @@ mod tests {
             // for a mode its open refuses.
             assert!(
                 v["mappedResidencyMeasured"] == false || v["mappedResidencySupported"] == true,
+                "{}",
+                family.as_str()
+            );
+            assert_eq!(
+                v["kvQuantSupported"],
+                family != ModelFamily::Inkling2Loop,
                 "{}",
                 family.as_str()
             );

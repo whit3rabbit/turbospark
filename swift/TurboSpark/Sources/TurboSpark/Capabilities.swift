@@ -25,11 +25,14 @@ public struct FamilyCapabilities: Decodable, Sendable, Equatable {
     /// (`OpenOptions.ExpertResidency.resident`). An install also needs that
     /// memory; `expertResidency(forInstallAt:requested:)` answers for one.
     public let residentResidencySupported: Bool
+    /// Whether `--kv-bits` reaches this family's K/V cache.
+    public let kvQuantSupported: Bool
 
     public init(
         family: String, known: Bool, steeringSupported: Bool, anePrefillSupported: Bool,
         mappedResidencySupported: Bool, mappedResidencyMeasured: Bool,
-        residentResidencySupported: Bool = false
+        residentResidencySupported: Bool = false,
+        kvQuantSupported: Bool = false
     ) {
         self.family = family
         self.known = known
@@ -38,15 +41,18 @@ public struct FamilyCapabilities: Decodable, Sendable, Equatable {
         self.mappedResidencySupported = mappedResidencySupported
         self.mappedResidencyMeasured = mappedResidencyMeasured
         self.residentResidencySupported = residentResidencySupported
+        self.kvQuantSupported = kvQuantSupported
     }
 
     private enum CodingKeys: String, CodingKey {
         case family, known, steeringSupported, anePrefillSupported
         case mappedResidencySupported, mappedResidencyMeasured, residentResidencySupported
+        case kvQuantSupported
     }
 
-    /// `residentResidencySupported` is read leniently: an engine built before
-    /// it existed answers without the key, and the safe reading is "no".
+    /// `residentResidencySupported` and `kvQuantSupported` are read leniently:
+    /// an engine built before a key existed answers without it, and the safe
+    /// reading is "no".
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         family = try c.decode(String.self, forKey: .family)
@@ -57,6 +63,8 @@ public struct FamilyCapabilities: Decodable, Sendable, Equatable {
         mappedResidencyMeasured = try c.decode(Bool.self, forKey: .mappedResidencyMeasured)
         residentResidencySupported =
             try c.decodeIfPresent(Bool.self, forKey: .residentResidencySupported) ?? false
+        kvQuantSupported =
+            try c.decodeIfPresent(Bool.self, forKey: .kvQuantSupported) ?? false
     }
 }
 

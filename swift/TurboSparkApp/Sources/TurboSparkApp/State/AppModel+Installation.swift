@@ -114,6 +114,7 @@ extension AppModel {
         installTotalBytes = nil
         installETAText = nil
         error = nil
+        modelLoadFailure = nil
 
         let startedAt = Date()
         installTask = Task {
@@ -320,6 +321,7 @@ extension AppModel {
         installTotalBytes = nil
         installETAText = nil
         error = nil
+        modelLoadFailure = nil
 
         let startedAt = Date()
         installTask = Task {

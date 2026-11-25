@@ -160,7 +160,7 @@ enum PdfWriter {
         var headIndent = CGFloat(hangingIndent)
         var firstLine = CGFloat(0)
         var lineSpacing = CGFloat(2)
-        var tab = CGFloat(hangingIndent)
+        let tab = CGFloat(hangingIndent)
         let tabStop = CTTextTabCreate(.left, Double(tab), nil)
         var tabs = [tabStop] as CFArray
         return withUnsafeMutablePointer(to: &textAlignment) { alignPointer in

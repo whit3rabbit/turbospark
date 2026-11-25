@@ -224,7 +224,7 @@ public struct ChatGenerationCoordinator: Equatable, Sendable {
             if snapshot.generating { return .refused(blockingChat: snapshot.generatingChatID) }
             if snapshot.submitting { return .refused(blockingChat: nil) }
             return .allowed
-        case .select(let target):
+        case .select:
             if snapshot.submitting { return .refused(blockingChat: nil) }
             if snapshot.generating && snapshot.generatingChatID == nil {
                 return .refused(blockingChat: nil)

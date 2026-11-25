@@ -11,7 +11,7 @@ struct PluginUiOptInArchive: Codable, Equatable {
 
 @MainActor
 final class PluginUiOptInStore: ObservableObject {
-    static let fileName = "plugin_ui_optin.json"
+    nonisolated static let fileName = "plugin_ui_optin.json"
 
     @Published private(set) var enabledIDs: Set<String>
     private let fileURL: URL?

@@ -1,7 +1,7 @@
 import SwiftUI
 
 extension AppSettingsView {
-    public enum SettingsTab: String, CaseIterable, Identifiable {
+    public enum SettingsTab: String, CaseIterable, Identifiable, Sendable {
         case general = "General"
         case profiles = "Profiles"
         case appearance = "Appearance"

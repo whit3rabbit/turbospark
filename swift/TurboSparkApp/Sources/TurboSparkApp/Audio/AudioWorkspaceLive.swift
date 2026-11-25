@@ -109,7 +109,7 @@ extension AudioWorkspaceController {
         let cleanerPath = reducesLiveNoise ? liveNoiseReductionPath : nil
         // Core ML when its step is installed, else MLX (openLiveCleaner).
         let openCleaner: (@Sendable () async throws -> AudioLiveEnhancing)? = cleanerPath.map { path in
-            { [weak self] in
+            { @Sendable [weak self] in
                 guard let self else { throw CancellationError() }
                 return try await self.openLiveCleaner(path: path)
             }

@@ -51,7 +51,7 @@ struct ImageSearchSettingsSectionView: View {
             }
 
             VStack(alignment: .leading, spacing: 4) {
-                Toggle(isOn: Binding(get: { rememberInKeychain }, set: setRemember)) {
+                Toggle(isOn: Binding(get: { rememberInKeychain }, set: { setRemember($0) })) {
                     Text("Remember this key in the Keychain", bundle: .module)
                 }
                 .toggleStyle(.checkbox)

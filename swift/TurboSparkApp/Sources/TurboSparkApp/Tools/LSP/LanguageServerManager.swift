@@ -439,6 +439,7 @@ actor LanguageServerRegistry {
 
 /// The real transport: policy-checked launch with a scrubbed environment.
 enum LSPProductionTransport {
+    @Sendable
     static func make(config: LSPServerConfig, root: URL) async throws -> any LSPTransport {
         try make(config: config, root: root, searchPath: await LoginShellPath.resolved())
     }

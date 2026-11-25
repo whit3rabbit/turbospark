@@ -49,9 +49,10 @@ final class VoiceIsolatorMLXModel: @unchecked Sendable {
         // Detached so the render leaves the main actor; the handler forwards
         // a cancel, which the library honours between render windows.
         let work = Task.detached(priority: .userInitiated) { [self] () throws -> [Float] in
-            lock.lock(); defer { lock.unlock() }
-            return try isolator.isolate(pcm, sampleRate: Self.sampleRate) { done in
-                progress(AudioProgress(stage: "enhance", completed: Int((done * 1000).rounded()), total: 1000))
+            try lock.withLock {
+                try isolator.isolate(pcm, sampleRate: Self.sampleRate) { done in
+                    progress(AudioProgress(stage: "enhance", completed: Int((done * 1000).rounded()), total: 1000))
+                }
             }
         }
         let voice = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }

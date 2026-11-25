@@ -21,11 +21,11 @@ final class BrowserPaneModel: ObservableObject {
 
     init(
         engine: WebKitBrowserEngine,
-        recording: BrowserRecordingController = .shared,
+        recording: BrowserRecordingController? = nil,
         externalBrowserOpener: @escaping (URL) -> Void = { _ = NSWorkspace.shared.open($0) }
     ) {
         self.engine = engine
-        self.recording = recording
+        self.recording = recording ?? .shared
         self.externalBrowserOpener = externalBrowserOpener
         self.tabs = engine.tabStore.tabs
         self.selectedTabID = engine.tabStore.activeTabID

@@ -75,7 +75,7 @@ final class AppNotificationCenter: ObservableObject {
 
     init(
         backend: AttentionNotificationBackend? = nil,
-        isActive: @escaping () -> Bool = { NSApp?.isActive ?? true },
+        isActive: @escaping () -> Bool = { MainActor.assumeIsolated { NSApp?.isActive ?? true } },
         playSound: @escaping (String) -> Void = { name in NSSound(named: name)?.play() }
     ) {
         let resolved = backend ?? SystemAttentionBackend()
@@ -215,7 +215,7 @@ final class SystemAttentionBackend: NSObject, AttentionNotificationBackend,
             .removeDeliveredNotifications(withIdentifiers: chatIDs.map(\.uuidString))
     }
 
-    static let chatKey = "turbospark.chatID"
+    nonisolated static let chatKey = "turbospark.chatID"
 
     // The app only posts while inactive, so a banner arriving while active
     // is a race with activation: show nothing.

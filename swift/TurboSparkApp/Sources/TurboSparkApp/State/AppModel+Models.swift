@@ -659,6 +659,9 @@ extension AppModel {
                 unloadModel()
                 if session == nil { selected = nil }
             }
+            if modelLoadFailure?.model.path == model.path {
+                modelLoadFailure = nil
+            }
             // The remembered reasoning level is part of the same record (task
             // 5.5), so it goes with the notes and tags. A legacy path entry that
             // was never read is pruned too: nothing used to prune it, so

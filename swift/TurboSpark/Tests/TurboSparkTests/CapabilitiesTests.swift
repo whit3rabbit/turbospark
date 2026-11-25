@@ -49,4 +49,9 @@ final class CapabilitiesTests: XCTestCase {
         XCTAssertFalse(TurboSparkCapabilities.family("qwen3moe").anePrefillSupported)
         _ = TurboSparkCapabilities.chipSupportsAnePrefill
     }
+
+    func testKvQuantFamilyCapabilityRejectsInkling2Loop() {
+        XCTAssertFalse(TurboSparkCapabilities.family("inkling2_loop").kvQuantSupported)
+        XCTAssertTrue(TurboSparkCapabilities.family("qwen3").kvQuantSupported)
+    }
 }

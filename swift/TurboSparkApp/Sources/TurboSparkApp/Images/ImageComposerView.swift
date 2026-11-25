@@ -240,7 +240,7 @@ struct ImageComposerView: View {
     }
 
     private func announce(_ message: String) {
-        _ = AccessibilityNotification.Announcement(message).post()
+        AccessibilityNotification.Announcement(message).post()
     }
 
     /// Names only controls that are on screen: the Download action (empty

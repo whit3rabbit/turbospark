@@ -240,8 +240,13 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
     /// safe direction when the answer is unknown, matching every other
     /// `nil`-means-unknown field on this descriptor (U3).
     static func kvQuantEligible(
-        fullHeadDim: Int?, fullAttentionLayerMask: [Int]?, numLayers: Int?
+        family: String? = nil, fullHeadDim: Int?, fullAttentionLayerMask: [Int]?, numLayers: Int?
     ) -> Bool {
+        if let family, !family.isEmpty,
+           !TurboSparkCapabilities.family(family).kvQuantSupported
+        {
+            return false
+        }
         guard let fullHeadDim, let numLayers, numLayers > 0, let mask = fullAttentionLayerMask
         else { return false }
         return TurboSparkCapabilities.kvQuantSupported(
@@ -261,6 +266,7 @@ public struct ModelFeatureDescriptor: Sendable, Equatable {
               let arch = json["arch"] as? [String: Any]
         else { return false }
         return Self.kvQuantEligible(
+            family: arch["family"] as? String,
             fullHeadDim: arch["fullHeadDim"] as? Int,
             fullAttentionLayerMask: arch["fullAttentionLayerMask"] as? [Int],
             numLayers: arch["numLayers"] as? Int)
@@ -505,6 +511,7 @@ struct ManifestFacts: Equatable {
         facts.topK = arch["topKExperts"] as? Int
         facts.supportsMoEPrefillBank = arch["family"] as? String == "qwen4exp" && (facts.experts ?? 0) > 1
         facts.supportsKvQuant = ModelFeatureDescriptor.kvQuantEligible(
+            family: arch["family"] as? String,
             fullHeadDim: arch["fullHeadDim"] as? Int,
             fullAttentionLayerMask: arch["fullAttentionLayerMask"] as? [Int],
             numLayers: facts.layers)

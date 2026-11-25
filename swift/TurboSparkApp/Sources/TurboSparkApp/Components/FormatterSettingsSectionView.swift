@@ -16,7 +16,7 @@ struct FormatterSettingsSectionView: View {
 
     var body: some View {
         Section(header: Text("Formatters", bundle: .module)) {
-            Toggle(isOn: Binding(get: { enabled }, set: setEnabled)) {
+            Toggle(isOn: Binding(get: { enabled }, set: { setEnabled($0) })) {
                 Text("Format files after the agent edits them", bundle: .module)
             }
             .settingsControl("Format files after the agent edits them", pane: .general, timing: .nextTurn)

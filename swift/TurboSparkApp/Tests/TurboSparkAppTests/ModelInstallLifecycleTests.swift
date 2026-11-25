@@ -57,6 +57,51 @@ final class ModelInstallLifecycleTests: XCTestCase {
         XCTAssertNil(appModel.error)
     }
 
+    func testInstallClearsStaleLoadFailureAndDoesNotLoadBeforeFinished() async {
+        let appModel = AppModel()
+        defer { appModel.stopCronScheduler() }
+        var loadCalls: [InstalledModel] = []
+        appModel.loadObserver = { loadCalls.append($0) }
+        appModel.modelLoadFailure = ModelLoadFailure(
+            model: model(alias: "inkling2-mini-mlx4", path: "/tmp/inkling2-mini-mlx4"),
+            kind: .other,
+            detail: "stale failure"
+        )
+
+        let (events, continuation) = AsyncThrowingStream<InstallEvent, Error>.makeStream()
+        appModel.installModel(alias: "inkling2-mini-mlx4", stream: { _ in events })
+        let task = appModel.installTask
+        await Task.yield()
+
+        XCTAssertNil(appModel.modelLoadFailure, "starting an install must clear any stale load failure")
+        continuation.yield(.bytes(done: 1024, total: 4096))
+        await Task.yield()
+        XCTAssertTrue(loadCalls.isEmpty, "install must not attempt to load while still downloading")
+
+        appModel.cancelInstall()
+        continuation.finish(throwing: NSError(domain: "install cancelled", code: 1))
+        await task?.value
+    }
+
+    func testKvQuantEligibleRejectsInkling2LoopFamily() {
+        XCTAssertFalse(
+            ModelFeatureDescriptor.kvQuantEligible(
+                family: "inkling2_loop",
+                fullHeadDim: 128,
+                fullAttentionLayerMask: [1, 1, 1, 1],
+                numLayers: 4
+            )
+        )
+        XCTAssertTrue(
+            ModelFeatureDescriptor.kvQuantEligible(
+                family: "qwen3",
+                fullHeadDim: 128,
+                fullAttentionLayerMask: [1, 1, 1, 1],
+                numLayers: 4
+            )
+        )
+    }
+
     // MARK: - E6: delete matches on path, never on a colliding alias
 
     private func model(alias: String, path: String) -> InstalledModel {

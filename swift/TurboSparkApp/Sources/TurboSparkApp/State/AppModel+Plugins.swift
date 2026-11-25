@@ -34,7 +34,7 @@ extension AppModel {
         Task.detached(priority: .utility) { [weak self] in
             let report = try? await BuiltinPluginSeeder.shared.seed()
             guard let report, !report.seeded.isEmpty else { return }
-            await MainActor.run { self?.pluginStateChanged() }
+            await MainActor.run { [weak self] in self?.pluginStateChanged() }
         }
     }
 

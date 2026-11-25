@@ -45,6 +45,7 @@ let package = Package(
         // with the forwarding one in Theme/ResourceBundle.swift.
         .target(
             name: "TurboSparkAppResources",
+            exclude: ["EGM.md"],
             resources: [
                 .process("Resources"),
                 // Kept apart from `Resources` because `.process` flattens
@@ -56,13 +57,14 @@ let package = Package(
         // Foundation only: the helper links nothing else of TurboSpark, so
         // its binary (and with it its macOS grants) changes only when this
         // module or the helper's own source does.
-        .target(name: "ComputerUseKit"),
+        .target(name: "ComputerUseKit", exclude: ["EGM.md"]),
         // The helper that owns the Accessibility and Screen Recording grants.
         // `scripts/make-app-bundle.sh` wraps it in its own .app; see
         // docs/COMPUTER_USE.md for why it is a separate app.
         .executableTarget(
             name: "TurboSparkComputerUse",
-            dependencies: ["ComputerUseKit"]
+            dependencies: ["ComputerUseKit"],
+            exclude: ["EGM.md"]
         ),
         .executableTarget(
             name: "TurboSparkApp",
@@ -83,7 +85,51 @@ let package = Package(
                 .product(name: "FluidAudio", package: "FluidAudio")
             ],
             exclude: [
-                "Tools/Codemode/README.md"
+                "Tools/Codemode/README.md",
+                "App/EGM.md",
+                "App/Updates/EGM.md",
+                "Audio/EGM.md",
+                "Audio/FluidAudio/EGM.md",
+                "Browser/EGM.md",
+                "BrowserAutomation/EGM.md",
+                "Chrome/EGM.md",
+                "Components/EGM.md",
+                "Components/Hooks/EGM.md",
+                "ComputerUse/EGM.md",
+                "Diagnostics/EGM.md",
+                "EGM.md",
+                "Files/EGM.md",
+                "Generation/EGM.md",
+                "Humanize/EGM.md",
+                "Images/EGM.md",
+                "Import/EGM.md",
+                "Installation/EGM.md",
+                "Presentation/EGM.md",
+                "Server/EGM.md",
+                "State/ChatRecall/EGM.md",
+                "State/EGM.md",
+                "Theme/EGM.md",
+                "Tools/Automation/EGM.md",
+                "Tools/Browser/EGM.md",
+                "Tools/Codemode/EGM.md",
+                "Tools/ComputerUse/EGM.md",
+                "Tools/Core/AgentMode/EGM.md",
+                "Tools/Core/EGM.md",
+                "Tools/Custom/EGM.md",
+                "Tools/EGM.md",
+                "Tools/File/EGM.md",
+                "Tools/Guardrails/EGM.md",
+                "Tools/Hooks/EGM.md",
+                "Tools/MCP/EGM.md",
+                "Tools/Memory/EGM.md",
+                "Tools/Planning/EGM.md",
+                "Tools/Projects/EGM.md",
+                "Tools/Registry/EGM.md",
+                "Tools/Repl/EGM.md",
+                "Tools/Tasks/EGM.md",
+                "Tools/Terminal/EGM.md",
+                "Tools/Web/EGM.md",
+                "Workflows/EGM.md"
             ],
             cSettings: [
                 .define("SQLITE_HAS_CODEC")
@@ -119,12 +165,14 @@ let package = Package(
         .executableTarget(
             name: "ZImageMLXBenchmark",
             dependencies: [.product(name: "ZImage", package: "zimage")],
-            path: "Benchmarks/ZImageMLXBenchmark"
+            path: "Benchmarks/ZImageMLXBenchmark",
+            exclude: ["EGM.md"]
         ),
         .executableTarget(
             name: "QwenImageMLXBenchmark",
             dependencies: [.product(name: "QwenImage", package: "qwenimage")],
-            path: "Benchmarks/QwenImageMLXBenchmark"
+            path: "Benchmarks/QwenImageMLXBenchmark",
+            exclude: ["EGM.md"]
         ),
         .target(
             name: "DOMSnapshotFixtures",

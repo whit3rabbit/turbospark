@@ -44,7 +44,7 @@ enum RemoteSendDecision: Equatable {
 /// runs.
 @MainActor
 final class RemoteProviderStore: ObservableObject {
-    static let fileName = "remote_providers.json"
+    nonisolated static let fileName = "remote_providers.json"
 
     @Published private(set) var providers: [RemoteProvider]
     @Published private(set) var consent = RemoteConsentLedger()

@@ -119,7 +119,7 @@ final class VoiceCallTalkSwitch: ObservableObject {
             while !Task.isCancelled {
                 try? await tick(.seconds(1))
                 if Task.isCancelled { return }
-                await self?.checkIdle()
+                self?.checkIdle()
             }
         }
         onStarted?()

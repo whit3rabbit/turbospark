@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 /// The off-peak half of the Scheduled Tasks pane: the on/off switch, a

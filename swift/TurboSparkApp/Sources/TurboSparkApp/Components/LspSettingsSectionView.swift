@@ -23,7 +23,7 @@ struct LspSettingsSectionView: View {
 
     var body: some View {
         Section(header: Text("Language servers", bundle: .module)) {
-            Toggle(isOn: Binding(get: { enabled }, set: setEnabled)) {
+            Toggle(isOn: Binding(get: { enabled }, set: { setEnabled($0) })) {
                 Text("Use language servers", bundle: .module)
             }
             .settingsControl("Use language servers", pane: .general, timing: .nextTurn)

@@ -400,7 +400,6 @@ pub(crate) fn position_buckets(n: usize, side: usize) -> Vec<usize> {
 /// Per-image GPU scratch. The five `seq x hidden` buffers are reused for the
 /// quarter-size token set after the window merger.
 pub(crate) struct MiniCpmScratch {
-    seq: usize,
     tile: usize,
     rows: gpu::MetalBuffer,
     pos: gpu::MetalBuffer,
@@ -431,7 +430,6 @@ impl MiniCpmScratch {
         let windows = seq / 4;
         let tokens = seq / 16;
         Self {
-            seq,
             tile,
             rows: context.new_buffer_with_data(rows),
             pos: context.new_buffer_with_data(pos),

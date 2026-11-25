@@ -237,7 +237,7 @@ struct KeyboardShortcutsSettingsPaneView: View {
     }
 
     private func announce(_ text: String) {
-        _ = AccessibilityNotification.Announcement(text).post()
+        AccessibilityNotification.Announcement(text).post()
     }
 }
 

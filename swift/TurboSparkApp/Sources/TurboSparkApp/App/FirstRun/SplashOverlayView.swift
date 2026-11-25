@@ -78,6 +78,7 @@ struct SplashOverlayView: View {
             }
         }
         .task(id: stateReady) {
+            let launchedAt = self.launchedAt
             func elapsed() -> TimeInterval { Date().timeIntervalSince(launchedAt) }
             func sleep(_ seconds: TimeInterval) async {
                 if seconds > 0 { try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) }

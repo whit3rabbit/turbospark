@@ -163,9 +163,15 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
+    private func setPersistsChunks(_ value: Bool) {
+        lock.lock()
+        persistsChunks = value
+        lock.unlock()
+    }
+
     func start(configuration: Configuration) async throws {
         guard let generation = try reserveStart() else { throw CaptureError.alreadyRecording }
-        lock.lock(); persistsChunks = configuration.persistsChunks; lock.unlock()
+        setPersistsChunks(configuration.persistsChunks)
         var newStream: SCStream?
         var newSysTap: (engine: AVAudioEngine, tapID: AudioObjectID, aggID: AudioObjectID)? = nil
         do {

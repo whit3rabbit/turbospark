@@ -18,7 +18,8 @@ struct FirstRunHost: ViewModifier {
                         .transition(.opacity)
                 }
             }
-            .onAppear {
+            .onAppear { [weak model] in
+                guard let model else { return }
                 coordinator.onExit = { [weak model] exit in
                     guard let model else { return }
                     switch exit {

@@ -243,7 +243,7 @@ extension AppModel {
         host.open = { [weak self] path in
             // Same resource policy as the chat session and Humanize, read on
             // the main actor at open time.
-            let (options, moving): (OpenOptions, Bool) = await MainActor.run {
+            let (options, moving): (OpenOptions, Bool) = await MainActor.run { [weak self] in
                 var options = OpenOptions()
                 guard let self else { return (options, true) }
                 options.powerProfile = self.runtimeOptions.powerProfile.powerProfile
