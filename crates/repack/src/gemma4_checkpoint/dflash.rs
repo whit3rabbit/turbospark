@@ -61,56 +61,75 @@ pub fn read_dflash_entries(
 
     for &name in dflash_bases {
         let t = shards.info(name)?;
-        match t.shape.len() {
-            // A PROJECTION, quantized like the head's.
-            2 if !is_codebook(name) => {
-                let rows = t.shape[0] as usize;
-                let cols = t.shape[1] as usize;
-                let data = decode_bf16(name, &t.dtype, shards.read(name)?)?;
-                if data.len() != rows * cols {
-                    return Err(Gemma4Error::ShapeMismatch {
-                        tensor: name.to_string(),
-                        detail: format!(
-                            "{} values does not match the declared {rows}x{cols}",
-                            data.len()
-                        ),
-                    });
-                }
-                let quantized = quantize_matrix_int4(&data, rows, cols).map_err(|e| {
-                    Gemma4Error::ShapeMismatch {
-                        tensor: name.to_string(),
-                        detail: e.to_string(),
+        if !matches!(t.shape.len(), 1..=3) {
+            return Err(Gemma4Error::ShapeMismatch {
+                tensor: name.to_string(),
+                detail: format!(
+                    "a DFlash2 tensor of rank {}, expected 1, 2 or 3",
+                    t.shape.len()
+                ),
+            });
+        }
+    }
+
+    let mut cursor = 0usize;
+    while cursor < dflash_bases.len() {
+        let wave_start = cursor;
+        let mut wave_bytes = 0u64;
+        while cursor < dflash_bases.len() {
+            let item_bytes = shards
+                .location_of(dflash_bases[cursor])
+                .map(|(_, s, e)| e.saturating_sub(s))
+                .unwrap_or(0);
+            if cursor > wave_start
+                && wave_bytes.saturating_add(item_bytes) > super::shards::PREFETCH_WINDOW_BYTES
+            {
+                break;
+            }
+            wave_bytes = wave_bytes.saturating_add(item_bytes);
+            cursor += 1;
+        }
+        let wave = &dflash_bases[wave_start..cursor];
+        let _guard = shards.prefetch_guard(wave)?;
+        for &name in wave {
+            let t = shards.info(name)?;
+            match t.shape.len() {
+                2 if !is_codebook(name) => {
+                    let rows = t.shape[0] as usize;
+                    let cols = t.shape[1] as usize;
+                    let data = decode_bf16(name, &t.dtype, shards.read(name)?)?;
+                    if data.len() != rows * cols {
+                        return Err(Gemma4Error::ShapeMismatch {
+                            tensor: name.to_string(),
+                            detail: format!(
+                                "{} values does not match the declared {rows}x{cols}",
+                                data.len()
+                            ),
+                        });
                     }
-                })?;
-                entries.push(ResidentEntrySpec::Int4(
-                    crate::repack::resident_spec_from_int4_rows(name, &quantized, cols),
-                ));
-            }
-            // A CODEBOOK, a CONV BASE KERNEL, or an RMS NORM: narrowed
-            // verbatim rather than quantized, each for its own reason (see
-            // the module header). One arm covers all three because the
-            // treatment is identical; what differs is why, and that lives
-            // with each tensor's reader in the runtime.
-            1..=3 => {
-                let narrowed = narrow_raw_to_bf16(name, &t.dtype, shards.read(name)?)?;
-                if narrowed.lossy > 0 {
-                    lossy_narrowing.push((name.to_string(), narrowed.lossy));
+                    let quantized = quantize_matrix_int4(&data, rows, cols).map_err(|e| {
+                        Gemma4Error::ShapeMismatch {
+                            tensor: name.to_string(),
+                            detail: e.to_string(),
+                        }
+                    })?;
+                    entries.push(ResidentEntrySpec::Int4(
+                        crate::repack::resident_spec_from_int4_rows(name, &quantized, cols),
+                    ));
                 }
-                entries.push(ResidentEntrySpec::Raw(RawTensorSpec {
-                    name: name.to_string(),
-                    dtype: narrowed.dtype,
-                    bytes: narrowed.bytes,
-                    shape: shape4(&t.shape),
-                }));
-            }
-            // Refused rather than guessed at. The published drafter is 81
-            // tensors of rank 1, 2 and 3; a rank-4 one is a different
-            // drafter and not a wider version of this ingest.
-            other => {
-                return Err(Gemma4Error::ShapeMismatch {
-                    tensor: name.to_string(),
-                    detail: format!("a DFlash2 tensor of rank {other}, expected 1, 2 or 3"),
-                })
+                1..=3 => {
+                    let narrowed = narrow_raw_to_bf16(name, &t.dtype, shards.read(name)?)?;
+                    if narrowed.lossy > 0 {
+                        lossy_narrowing.push((name.to_string(), narrowed.lossy));
+                    }
+                    entries.push(ResidentEntrySpec::Raw(RawTensorSpec {
+                        name: name.to_string(),
+                        dtype: narrowed.dtype,
+                        bytes: narrowed.bytes,
+                        shape: shape4(&t.shape),
+                    }));
+                }
+                _ => unreachable!("rank checked above"),
             }
         }
     }

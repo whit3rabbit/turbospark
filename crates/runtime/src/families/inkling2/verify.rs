@@ -814,6 +814,9 @@ impl RealForwardRunner {
         let result = self.verify_encode(st, &b, tokens, base, logits, head);
         st.batch = Some(b);
         result?;
+        if let Some(capture) = self.resid_capture.as_mut() {
+            capture.record_pass(base + n - 1, head == HeadRows::None);
+        }
         st.verify = Some(InklingVerifyRecord { base, rows: n });
         if let Some(d) = st.dspark.as_mut() {
             d.source = super::dspark::TapSource::Verify { base, rows: n };
@@ -904,6 +907,7 @@ impl RealForwardRunner {
                 None => Ok(()),
             }
         };
+        let (steering, resid_capture) = (self.steering.as_ref(), self.resid_capture.as_ref());
         let mut visit = 0usize;
         let apply = |c: &mut Ctx<'_>,
                      st: &RealInkling2State,
@@ -915,7 +919,36 @@ impl RealForwardRunner {
             layer_attention_rows(
                 c, &pass, st, b, &arch, &cfg, n_blocks, slot, ip, msgs, base, n,
             )?;
-            layer_moe_rows(c, &pass, st, b, &arch, &cfg, slot, ip, n)
+            layer_moe_rows(c, &pass, st, b, &arch, &cfg, slot, ip, n)?;
+            let mut row_off = 0usize;
+            while row_off < n {
+                let take = (n - row_off).min(crate::steering::MAX_STEER_ROWS);
+                crate::steering::encode_steering_buf(
+                    c.context,
+                    &pass,
+                    &b.cur,
+                    steering,
+                    ip,
+                    h,
+                    take,
+                    (row_off * h * 2) as u64,
+                )?;
+                row_off += take;
+            }
+            if resid_capture.is_some() {
+                for t in 0..n {
+                    crate::resid_capture::encode_resid_capture_buf(
+                        c.context,
+                        &pass,
+                        &b.cur,
+                        resid_capture,
+                        ip,
+                        h,
+                        (t * h * 2) as u64,
+                    )?;
+                }
+            }
+            Ok(())
         };
         for ip in 0..core_start {
             tap(&mut c, visit)?;

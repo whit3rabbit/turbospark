@@ -370,6 +370,26 @@ impl<'a> LoraMergedSource<'a> {
 impl RangeSource for LoraMergedSource<'_> {
     fn read_range(&self, start: u64, end_exclusive: u64) -> Result<Vec<u8>, DownloadError> {
         let mut out = self.inner.read_range(start, end_exclusive)?;
+        self.apply_targets(start, end_exclusive, &mut out)?;
+        Ok(out)
+    }
+
+    fn read_ranges(&self, ranges: &[(u64, u64)]) -> Result<Vec<Vec<u8>>, DownloadError> {
+        let mut results = self.inner.read_ranges(ranges)?;
+        for (&(start, end_exclusive), out) in ranges.iter().zip(results.iter_mut()) {
+            self.apply_targets(start, end_exclusive, out)?;
+        }
+        Ok(results)
+    }
+}
+
+impl LoraMergedSource<'_> {
+    fn apply_targets(
+        &self,
+        start: u64,
+        end_exclusive: u64,
+        out: &mut [u8],
+    ) -> Result<(), DownloadError> {
         // Targets are disjoint and sorted, so the overlapping ones are a
         // contiguous run.
         let first = self.targets.partition_point(|t| t.1 <= start);
@@ -391,7 +411,7 @@ impl RangeSource for LoraMergedSource<'_> {
             out[(lo - start) as usize..(hi - start) as usize]
                 .copy_from_slice(&merged[(lo - ts) as usize..(hi - ts) as usize]);
         }
-        Ok(out)
+        Ok(())
     }
 }
 

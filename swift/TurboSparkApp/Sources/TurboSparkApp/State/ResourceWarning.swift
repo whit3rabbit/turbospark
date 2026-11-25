@@ -9,10 +9,9 @@ import Foundation
 /// (`model.telemetry` and the context meter's fraction); nothing here polls.
 enum ResourceWarning {
     /// Declaration order is the tie-break when two resources share a level:
-    /// memory pressure can end the process, a full window stops the reply,
-    /// and heat only slows it.
+    /// a full window stops the reply, while heat only slows it.
     enum Kind: Int, CaseIterable, Comparable {
-        case memory, context, thermal
+        case context, thermal
 
         static func < (lhs: Kind, rhs: Kind) -> Bool { lhs.rawValue < rhs.rawValue }
     }
@@ -36,16 +35,6 @@ enum ResourceWarning {
     static let contextWarningFraction = 0.85
     static let contextCriticalFraction = 0.95
 
-    /// The engine's `MemoryPressure` case names (`normal`, `warn`,
-    /// `critical`). An unknown word is nil: never warn on a guess.
-    static func memoryLevel(_ reading: String?) -> Level? {
-        switch reading?.lowercased() {
-        case "warn", "warning": return .warning
-        case "critical": return .critical
-        default: return nil
-        }
-    }
-
     /// `ProcessInfo.ThermalState` names. `fair` is ordinary load on a laptop
     /// and stays in the status bar only; `serious` is where macOS throttles.
     static func thermalLevel(_ reading: String?) -> Level? {
@@ -68,12 +57,11 @@ enum ResourceWarning {
     /// Every resource's level, nil for a fine one. Empty without a loaded
     /// local model: no strip for a feature the user is not using.
     static func levels(
-        hasSession: Bool, memoryPressure: String?, thermalLevel: String?,
+        hasSession: Bool, thermalLevel: String?,
         contextFraction: Double?, isCompacting: Bool
     ) -> [Kind: Level] {
         guard hasSession else { return [:] }
         var out: [Kind: Level] = [:]
-        out[.memory] = memoryLevel(memoryPressure)
         out[.thermal] = self.thermalLevel(thermalLevel)
         out[.context] = contextLevel(fraction: contextFraction, isCompacting: isCompacting)
         return out

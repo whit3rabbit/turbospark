@@ -305,7 +305,7 @@ struct StatusBarView: View {
                 .accessibilityHidden(true)
             isCritical ? Text("Memory Critical", bundle: .module) : Text("Memory Warning", bundle: .module)
         }
-        .foregroundStyle(AppAttention.color)
+        .foregroundStyle(.appDanger)
         .help(Text("The system is short of memory. Generation is being paced down; closing an idle model or another app will relieve it.", bundle: .module))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text("Memory pressure", bundle: .module))

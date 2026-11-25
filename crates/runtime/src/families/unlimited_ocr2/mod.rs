@@ -478,6 +478,25 @@ impl RealForwardRunner {
                     hidden as u32,
                 )
                 .map_err(gpu_err)?;
+                crate::steering::encode_steering(
+                    &mut self.context,
+                    &pass,
+                    &self.scratch,
+                    self.steering.as_ref(),
+                    layer,
+                    hidden,
+                    1,
+                    0,
+                )?;
+                crate::resid_capture::encode_resid_capture(
+                    &mut self.context,
+                    &pass,
+                    &self.scratch,
+                    self.resid_capture.as_ref(),
+                    layer,
+                    hidden,
+                    0,
+                )?;
                 continue;
             }
 
@@ -518,6 +537,25 @@ impl RealForwardRunner {
                 arch.num_experts as usize,
                 arch.top_k_experts as usize,
             )?;
+            crate::steering::encode_steering(
+                &mut self.context,
+                &pass,
+                &self.scratch,
+                self.steering.as_ref(),
+                layer,
+                hidden,
+                1,
+                0,
+            )?;
+            crate::resid_capture::encode_resid_capture(
+                &mut self.context,
+                &pass,
+                &self.scratch,
+                self.resid_capture.as_ref(),
+                layer,
+                hidden,
+                0,
+            )?;
         }
 
         if !self.skip_head {
@@ -554,6 +592,9 @@ impl RealForwardRunner {
         self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
         self.phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance();
+        if let Some(capture) = self.resid_capture.as_mut() {
+            capture.record_pass(position, self.skip_head);
+        }
 
         if self.skip_head {
             return Ok(());

@@ -72,6 +72,51 @@ pub const RANGE_ATTEMPTS: usize = 8;
 /// multiplexed HTTP/2 one.
 pub const RANGE_CONCURRENCY: usize = 8;
 
+/// Maximum byte gap bridged when coalescing multiple nearby tensor ranges into
+/// a single contiguous HTTP span. Safetensors tensors sit back to back (0-byte
+/// gap) and GGUF tensors align to 32 bytes; 64 KiB absorbs small skipped norms
+/// or padding without pulling excluded multimodal/vision regions.
+pub const COALESCE_MAX_GAP_BYTES: u64 = 64 * 1024;
+
+/// A contiguous remote span covering one or more caller-requested ranges.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CoalescedSpan {
+    pub start: u64,
+    pub end_exclusive: u64,
+    /// Indices into the caller's `ranges` slice covered by this span.
+    pub members: Vec<usize>,
+}
+
+/// Groups non-empty `(start, end_exclusive)` ranges into sorted, non-overlapping
+/// spans, merging adjacent ranges separated by at most `max_gap` bytes.
+pub fn coalesce_ranges(ranges: &[(u64, u64)], max_gap: u64) -> Vec<CoalescedSpan> {
+    let mut ordered: Vec<(u64, u64, usize)> = ranges
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &(start, end))| (start < end).then_some((start, end, index)))
+        .collect();
+    if ordered.is_empty() {
+        return Vec::new();
+    }
+    ordered.sort_unstable_by_key(|&(start, end, index)| (start, end, index));
+
+    let mut spans: Vec<CoalescedSpan> = Vec::new();
+    for (start, end, index) in ordered {
+        match spans.last_mut() {
+            Some(last) if start <= last.end_exclusive.saturating_add(max_gap) => {
+                last.end_exclusive = last.end_exclusive.max(end);
+                last.members.push(index);
+            }
+            _ => spans.push(CoalescedSpan {
+                start,
+                end_exclusive: end,
+                members: vec![index],
+            }),
+        }
+    }
+    spans
+}
+
 /// Splits `[start, end_exclusive)` into successive chunks of at most `cap`
 /// bytes. Pure, so the boundary arithmetic is testable without a network.
 pub fn chunk_ranges(start: u64, end_exclusive: u64, cap: u64) -> Vec<(u64, u64)> {
@@ -88,7 +133,7 @@ pub fn chunk_ranges(start: u64, end_exclusive: u64, cap: u64) -> Vec<(u64, u64)>
 
 /// One chunk's index, its half-open byte range, and the slice of the output
 /// buffer it owns.
-type ChunkJob<'a> = (usize, u64, u64, &'a mut [u8]);
+pub type ChunkJob<'a> = (usize, u64, u64, &'a mut [u8]);
 
 /// Fills `out` by running `fetch` over `chunks`, up to `concurrency` at a
 /// time. `chunks` must partition `out` in order, which is what
@@ -122,7 +167,21 @@ where
         jobs.push((index, start, end_exclusive, head));
         rest = tail;
     }
+    fill_chunk_jobs(jobs, concurrency, fetch)
+}
 
+/// Runs a pre-carved list of disjoint [`ChunkJob`] slices through a shared
+/// bounded worker pool, preserving deterministic lowest-indexed error
+/// reporting. Used both by [`fill_chunks`] (single contiguous span) and by
+/// batched [`super::RangeSource::read_ranges`] (multiple coalesced spans).
+pub fn fill_chunk_jobs<F>(
+    mut jobs: Vec<ChunkJob<'_>>,
+    concurrency: usize,
+    fetch: F,
+) -> Result<(), DownloadError>
+where
+    F: Fn(u64, u64, &mut [u8]) -> Result<(), DownloadError> + Sync,
+{
     // A single chunk is the COMMON case, not a degenerate one:
     // `fetch_gguf_header` reads a megabyte at a time and every norm and
     // router tensor in a walk is far under the cap. It must not pay for a
@@ -138,11 +197,12 @@ where
     // chunk taken after a failure therefore has a higher index than every
     // chunk already dispatched, so stopping then cannot change which failure
     // is the lowest-indexed one.
+    let job_count = jobs.len();
     jobs.reverse();
     let failed = std::sync::atomic::AtomicBool::new(false);
     let queue = std::sync::Mutex::new(jobs);
     let failures = std::sync::Mutex::new(Vec::<(usize, DownloadError)>::new());
-    let workers = concurrency.clamp(1, chunks.len());
+    let workers = concurrency.clamp(1, job_count);
     std::thread::scope(|scope| {
         for _ in 0..workers {
             scope.spawn(|| {
@@ -309,5 +369,24 @@ mod tests {
             panic!("an empty range must not fetch")
         })
         .expect("empty range succeeds");
+    }
+
+    #[test]
+    fn coalesce_ranges_merges_within_gap_and_keeps_large_gaps_separate() {
+        let ranges = vec![
+            (200, 260),
+            (10, 40),
+            (40, 80),   // 0-byte gap from (10, 40)
+            (100, 120), // 20-byte gap (<= 32)
+            (50, 50),   // empty, ignored
+        ];
+        let spans = coalesce_ranges(&ranges, 32);
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].start, 10);
+        assert_eq!(spans[0].end_exclusive, 120);
+        assert_eq!(spans[0].members, vec![1, 2, 3]);
+        assert_eq!(spans[1].start, 200);
+        assert_eq!(spans[1].end_exclusive, 260);
+        assert_eq!(spans[1].members, vec![0]);
     }
 }

@@ -65,56 +65,81 @@ pub fn read_mtp_entries(
     let mut entries = Vec::with_capacity(mtp_bases.len());
     let mut lossy_narrowing = Vec::new();
 
+    // Validate ranks upfront so a bad checkpoint fails before any bytes move.
     for &name in mtp_bases {
         let t = shards.info(name)?;
-        match t.shape.len() {
-            // A PROJECTION. Quantized, because the alternative is an install
-            // the engine cannot dispatch.
-            2 => {
-                let rows = t.shape[0] as usize;
-                let cols = t.shape[1] as usize;
-                let data = decode_bf16(name, &t.dtype, shards.read(name)?)?;
-                if data.len() != rows * cols {
-                    return Err(Gemma4Error::ShapeMismatch {
-                        tensor: name.to_string(),
-                        detail: format!(
-                            "{} values does not match the declared {rows}x{cols}",
-                            data.len()
-                        ),
-                    });
-                }
-                let quantized = quantize_matrix_int4(&data, rows, cols).map_err(|e| {
-                    Gemma4Error::ShapeMismatch {
-                        tensor: name.to_string(),
-                        detail: e.to_string(),
+        if !matches!(t.shape.len(), 1 | 2) {
+            return Err(Gemma4Error::ShapeMismatch {
+                tensor: name.to_string(),
+                detail: format!(
+                    "an MTP head tensor of rank {}, expected 1 or 2",
+                    t.shape.len()
+                ),
+            });
+        }
+    }
+
+    let mut cursor = 0usize;
+    while cursor < mtp_bases.len() {
+        let wave_start = cursor;
+        let mut wave_bytes = 0u64;
+        while cursor < mtp_bases.len() {
+            let item_bytes = shards
+                .location_of(mtp_bases[cursor])
+                .map(|(_, s, e)| e.saturating_sub(s))
+                .unwrap_or(0);
+            if cursor > wave_start
+                && wave_bytes.saturating_add(item_bytes) > super::shards::PREFETCH_WINDOW_BYTES
+            {
+                break;
+            }
+            wave_bytes = wave_bytes.saturating_add(item_bytes);
+            cursor += 1;
+        }
+        let wave = &mtp_bases[wave_start..cursor];
+        let _guard = shards.prefetch_guard(wave)?;
+        for &name in wave {
+            let t = shards.info(name)?;
+            match t.shape.len() {
+                // A PROJECTION. Quantized, because the alternative is an install
+                // the engine cannot dispatch.
+                2 => {
+                    let rows = t.shape[0] as usize;
+                    let cols = t.shape[1] as usize;
+                    let data = decode_bf16(name, &t.dtype, shards.read(name)?)?;
+                    if data.len() != rows * cols {
+                        return Err(Gemma4Error::ShapeMismatch {
+                            tensor: name.to_string(),
+                            detail: format!(
+                                "{} values does not match the declared {rows}x{cols}",
+                                data.len()
+                            ),
+                        });
                     }
-                })?;
-                entries.push(ResidentEntrySpec::Int4(
-                    crate::repack::resident_spec_from_int4_rows(name, &quantized, cols),
-                ));
-            }
-            // AN RMS NORM. Narrowed, exactly as the trunk's norms are.
-            1 => {
-                let narrowed = narrow_raw_to_bf16(name, &t.dtype, shards.read(name)?)?;
-                if narrowed.lossy > 0 {
-                    lossy_narrowing.push((name.to_string(), narrowed.lossy));
+                    let quantized = quantize_matrix_int4(&data, rows, cols).map_err(|e| {
+                        Gemma4Error::ShapeMismatch {
+                            tensor: name.to_string(),
+                            detail: e.to_string(),
+                        }
+                    })?;
+                    entries.push(ResidentEntrySpec::Int4(
+                        crate::repack::resident_spec_from_int4_rows(name, &quantized, cols),
+                    ));
                 }
-                entries.push(ResidentEntrySpec::Raw(RawTensorSpec {
-                    name: name.to_string(),
-                    dtype: narrowed.dtype,
-                    bytes: narrowed.bytes,
-                    shape: shape4(&t.shape),
-                }));
-            }
-            // Refused rather than guessed at. The published head is fifteen
-            // tensors of rank 1 and 2; a rank-3 one would mean a head with
-            // more than one block bundled per tensor, which is a different
-            // ingest and not a wider version of this one.
-            other => {
-                return Err(Gemma4Error::ShapeMismatch {
-                    tensor: name.to_string(),
-                    detail: format!("an MTP head tensor of rank {other}, expected 1 or 2"),
-                })
+                // AN RMS NORM. Narrowed, exactly as the trunk's norms are.
+                1 => {
+                    let narrowed = narrow_raw_to_bf16(name, &t.dtype, shards.read(name)?)?;
+                    if narrowed.lossy > 0 {
+                        lossy_narrowing.push((name.to_string(), narrowed.lossy));
+                    }
+                    entries.push(ResidentEntrySpec::Raw(RawTensorSpec {
+                        name: name.to_string(),
+                        dtype: narrowed.dtype,
+                        bytes: narrowed.bytes,
+                        shape: shape4(&t.shape),
+                    }));
+                }
+                _ => unreachable!("rank checked above"),
             }
         }
     }

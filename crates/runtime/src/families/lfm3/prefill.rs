@@ -262,13 +262,15 @@ impl RealForwardRunner {
             }
         }
 
-        let (context, weights, index, scratch, kv, lfm3) = (
+        let (context, weights, index, scratch, kv, lfm3, steering, resid_capture) = (
             &mut self.context,
             &self.weights,
             &self.index,
             &self.scratch,
             &self.kv,
             self.real_lfm3.as_ref().expect("real lfm3 state present"),
+            self.steering.as_ref(),
+            self.resid_capture.as_ref(),
         );
         let b = lfm3
             .batched
@@ -445,6 +447,34 @@ impl RealForwardRunner {
                 (m * hidden) as u32,
             )
             .map_err(gpu_err)?;
+            let mut row_off = 0usize;
+            while row_off < m {
+                let take = (m - row_off).min(crate::steering::MAX_STEER_ROWS);
+                crate::steering::encode_steering(
+                    context,
+                    &pass,
+                    scratch,
+                    steering,
+                    layer,
+                    hidden,
+                    take,
+                    (row_off * hidden * 2) as u64,
+                )?;
+                row_off += take;
+            }
+            if resid_capture.is_some() {
+                for t in 0..m {
+                    crate::resid_capture::encode_resid_capture(
+                        context,
+                        &pass,
+                        scratch,
+                        resid_capture,
+                        layer,
+                        hidden,
+                        (t * hidden * 2) as u64,
+                    )?;
+                }
+            }
         }
 
         if want_head {
@@ -484,6 +514,9 @@ impl RealForwardRunner {
         self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
         self.phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance_by(m);
+        if let Some(capture) = self.resid_capture.as_mut() {
+            capture.record_pass(start_position + m - 1, !want_head);
+        }
 
         if !want_head {
             return Ok(());

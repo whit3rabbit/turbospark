@@ -1,12 +1,12 @@
 import SwiftUI
 
 /// Sits above the composer while a local resource is past its warning line:
-/// memory pressure, thermal state or a nearly full context window. The
-/// readings are the status bar's own (`model.telemetry`, refreshed by the
-/// chrome's existing 2 s poll, and the context meter's fraction), so this
-/// adds no polling; it only moves the signal next to where the user is
-/// typing. Which notice shows, and when a dismissed one comes back, is
-/// `ResourceWarning`.
+/// thermal state or a nearly full context window. The readings are the status
+/// bar's own (`model.telemetry`, refreshed by the chrome's existing 2 s poll,
+/// and the context meter's fraction), so this adds no polling; it only moves
+/// the signal next to where the user is typing. Which notice shows, and when a
+/// dismissed one comes back, is `ResourceWarning`. Memory pressure stays in
+/// the bottom status bar (`StatusBarView`) rather than popping up here.
 ///
 /// Modeled on `ModelLoadFailureBannerView` and `StallRecoveryBannerView`,
 /// which win over it (it waits rather than stacking under them). A glyph and
@@ -32,7 +32,6 @@ struct ResourceWarningStripView: View {
     static func levels(for model: AppModel) -> [ResourceWarning.Kind: ResourceWarning.Level] {
         ResourceWarning.levels(
             hasSession: model.session != nil,
-            memoryPressure: model.telemetry?.memoryPressure,
             thermalLevel: model.telemetry?.thermalLevel,
             contextFraction: contextFraction(for: model),
             isCompacting: model.isCompacting)
@@ -128,18 +127,6 @@ struct ResourceWarningStripView: View {
             .disabled(blocker != nil)
             .help(blocker?.helpText
                 ?? Text("Summarize older messages now and keep recent turns verbatim", bundle: .module))
-        case .memory:
-            Button {
-                model.unloadModel()
-            } label: {
-                Label { Text("Unload model", bundle: .module) } icon: { Image(systemName: "eject.fill") }
-                    .themedFont(.small, weight: .semibold)
-            }
-            .appAction(.primary, size: .small)
-            .disabled(!model.canUnloadModel)
-            .help(model.canUnloadModel
-                ? Text("Free this model's memory. Load it again from the model picker.", bundle: .module)
-                : Text("Wait for the current turn to finish before unloading.", bundle: .module))
         case .thermal:
             EmptyView()
         }
@@ -147,7 +134,6 @@ struct ResourceWarningStripView: View {
 
     private static func symbol(_ notice: ResourceWarning.Notice) -> String {
         switch notice.kind {
-        case .memory: return "memorychip"
         case .thermal: return "thermometer.high"
         case .context: return "text.alignleft"
         }
@@ -157,8 +143,6 @@ struct ResourceWarningStripView: View {
         _ notice: ResourceWarning.Notice, language: AppLanguage = AppStrings.currentLanguage
     ) -> String {
         switch (notice.kind, notice.level) {
-        case (.memory, .warning): return AppStrings.localized("Memory is running low", language: language)
-        case (.memory, .critical): return AppStrings.localized("Memory is critically low", language: language)
         case (.thermal, .warning): return AppStrings.localized("This Mac is running hot", language: language)
         case (.thermal, .critical): return AppStrings.localized("This Mac is overheating", language: language)
         case (.context, .warning): return AppStrings.localized("Context is almost full", language: language)
@@ -172,14 +156,6 @@ struct ResourceWarningStripView: View {
         language: AppLanguage = AppStrings.currentLanguage
     ) -> String {
         switch (notice.kind, notice.level) {
-        case (.memory, .warning):
-            return AppStrings.localized(
-                "macOS reports memory pressure, so replies are paced down. Unloading the model or closing other apps frees memory.",
-                language: language)
-        case (.memory, .critical):
-            return AppStrings.localized(
-                "macOS reports critical memory pressure. The model may stall or be stopped. Unload it or close other apps now.",
-                language: language)
         case (.thermal, .warning):
             return AppStrings.localized(
                 "macOS is slowing the chip to cool down, so replies will be slower than usual.",

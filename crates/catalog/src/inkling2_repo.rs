@@ -390,12 +390,17 @@ pub(crate) fn download_dir(staging_parent: &Path, source: &Inkling2RepoSource) -
 /// Downloads `name` from `repo` to `dest` unless a file of `size` bytes is
 /// already there. Reports the bytes either way, so a resumed install's bar
 /// starts where the last one stopped.
+///
+/// Sized non-empty files use `repack::HttpRangeSource` (8-way concurrent 16 MiB
+/// HTTP/1.1 ranges with resume cache on immutable revisions) so multi-GB
+/// checkpoints saturate the link instead of crawling on one HTTP/2 stream.
 fn fetch_file(
     client: &Client,
     repo: &RepoRef,
     name: &str,
     size: Option<u64>,
     dest: &Path,
+    cache_dir: Option<&Path>,
     on_bytes: &mut dyn FnMut(u64),
     cancel: Option<&CancelFlag>,
 ) -> Result<bool, String> {
@@ -409,16 +414,92 @@ fn fetch_file(
         // A short or foreign leftover; this folder is this route's own.
         std::fs::remove_file(dest).map_err(|e| format!("replacing {}: {e}", dest.display()))?;
     }
-    let got = client.download_to_with(&repo.file_url(name), dest, on_bytes, cancel)?;
-    if let Some(size) = size {
-        if got != size {
-            let _ = std::fs::remove_file(dest);
-            return Err(format!(
-                "{name}: downloaded {got} bytes where the Hub listed {size}"
-            ));
+    if let Some(expected_size) = size {
+        if expected_size == 0 {
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("creating {}: {e}", parent.display()))?;
+            }
+            std::fs::File::create(dest).map_err(|e| format!("creating {}: {e}", dest.display()))?;
+            return Ok(true);
         }
+        download_sized_batch(
+            client,
+            repo,
+            &[(name, dest, expected_size)],
+            cache_dir,
+            on_bytes,
+            cancel,
+        )?;
+        return Ok(true);
     }
+    let got = client.download_to_with(&repo.file_url(name), dest, on_bytes, cancel)?;
+    let _ = got;
     Ok(true)
+}
+
+/// Downloads up to `HttpRangeSource::FILE_DOWNLOAD_WORKERS` sized files in
+/// parallel through `HttpRangeSource::download_batch`, forwarding chunk byte
+/// counts onto the caller's `on_bytes` callback.
+fn download_sized_batch(
+    client: &Client,
+    repo: &RepoRef,
+    files: &[(&str, &Path, u64)],
+    cache_dir: Option<&Path>,
+    on_bytes: &mut dyn FnMut(u64),
+    cancel: Option<&CancelFlag>,
+) -> Result<(), String> {
+    if files.is_empty() {
+        return Ok(());
+    }
+    enum Event {
+        Bytes(u64),
+        Finished(Result<(), (usize, repack::DownloadError)>),
+    }
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let sender = std::sync::Arc::new(sender);
+    let mut sources = Vec::with_capacity(files.len());
+    for &(name, dest, size) in files {
+        let byte_sender = std::sync::Arc::downgrade(&sender);
+        let mut range = repack::HttpRangeSource::with_progress(
+            repo.file_url(name),
+            std::sync::Arc::new(move |delta| {
+                if let Some(sender) = byte_sender.upgrade() {
+                    let _ = sender.send(Event::Bytes(delta));
+                }
+            }),
+        )
+        .with_optional_token(client.token());
+        if let Some(cache) = cache_dir {
+            range = range.with_cache_dir(cache);
+        }
+        if let Some(flag) = cancel {
+            range = range.with_cancel(flag.clone());
+        }
+        sources.push((range, dest, size));
+    }
+    let result = std::thread::scope(|scope| {
+        let downloads: Vec<_> = sources
+            .iter()
+            .map(|(source, dest, size)| (source, *dest, *size))
+            .collect();
+        scope.spawn(move || {
+            let _ = sender.send(Event::Finished(repack::HttpRangeSource::download_batch(
+                &downloads,
+            )));
+        });
+        for event in receiver {
+            match event {
+                Event::Bytes(delta) => on_bytes(delta),
+                Event::Finished(res) => return res,
+            }
+        }
+        unreachable!("the batch worker owns the completion sender");
+    });
+    result.map_err(|(index, error)| match error {
+        repack::DownloadError::Cancelled => INSTALL_CANCELLED.to_string(),
+        other => format!("downloading {}: {other}", files[index].0),
+    })
 }
 
 /// Downloads, installs and records `source` at `target`, then removes the
@@ -486,21 +567,49 @@ pub fn install_inkling2_repo(
             dl.display()
         ))
     };
+    let range_cache = crate::stream::immutable_download_cache(&dl, &source.repo);
+    let mut pending: Vec<(&str, PathBuf, u64)> = Vec::new();
     for (name, size) in &source.files {
         if cancel.is_some_and(|c| c.checkpoint().is_err()) {
             return Err(kept(INSTALL_CANCELLED.to_string()));
         }
-        let fetched = fetch_file(
+        let dest = dl.join(local_name(name));
+        if let Ok(meta) = std::fs::metadata(&dest) {
+            if meta.is_file() && meta.len() == *size {
+                on_bytes(*size);
+                continue;
+            }
+        }
+        if std::fs::symlink_metadata(&dest).is_ok() {
+            std::fs::remove_file(&dest)
+                .map_err(|e| kept(format!("replacing {}: {e}", dest.display())))?;
+        }
+        if *size == 0 {
+            std::fs::File::create(&dest)
+                .map_err(|e| kept(format!("creating {}: {e}", dest.display())))?;
+            progress(&format!("downloaded {name} ({})", human_bytes(*size)));
+            continue;
+        }
+        pending.push((name.as_str(), dest, *size));
+    }
+    for batch in pending.chunks(repack::HttpRangeSource::FILE_DOWNLOAD_WORKERS) {
+        if cancel.is_some_and(|c| c.checkpoint().is_err()) {
+            return Err(kept(INSTALL_CANCELLED.to_string()));
+        }
+        let entries: Vec<(&str, &Path, u64)> = batch
+            .iter()
+            .map(|(name, dest, size)| (*name, dest.as_path(), *size))
+            .collect();
+        download_sized_batch(
             client,
             &source.repo,
-            name,
-            Some(*size),
-            &dl.join(local_name(name)),
+            &entries,
+            range_cache.as_deref(),
             on_bytes,
             cancel,
         )
         .map_err(&kept)?;
-        if fetched {
+        for (name, _, size) in batch {
             progress(&format!("downloaded {name} ({})", human_bytes(*size)));
         }
     }
@@ -515,6 +624,7 @@ pub fn install_inkling2_repo(
                 name,
                 None,
                 &tokenizer_dir.join(name),
+                None,
                 &mut |_| {},
                 cancel,
             )
@@ -676,6 +786,7 @@ fn fetch_drafter(
         ));
     }
     std::fs::create_dir_all(into).map_err(|e| format!("creating {}: {e}", into.display()))?;
+    let range_cache = crate::stream::immutable_download_cache(into, &pinned);
     for name in ["mtp.safetensors", "config.json"] {
         let size = listing
             .iter()
@@ -688,6 +799,7 @@ fn fetch_drafter(
             name,
             size,
             &into.join(name),
+            range_cache.as_deref(),
             &mut |_| {},
             cancel,
         )?;

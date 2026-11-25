@@ -13,6 +13,21 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-11-24
+
+### Added
+- Steering support across `spark2_5`, `flint`, `lfm3`, `unlimited_ocr2`, and
+  `inkling2_loop` families, with steered forward tests and updated Swift
+  capability checks.
+- Prefetched ranged downloads in `crates/repack` and updated download manager
+  documentation.
+
+### Changed
+- Improved Inkling 2 repository resolution and verification, GGUF/Gemma 4
+  checkpoint transcoding, and LoRA merge handling.
+- Moved the macOS app memory-pressure warning from the popup strip above the
+  chat composer to the bottom status bar in red (`.appDanger`).
+
 ## [0.10.1] - 2026-11-24
 
 ### Added

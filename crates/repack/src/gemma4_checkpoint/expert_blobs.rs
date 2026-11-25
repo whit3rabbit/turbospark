@@ -147,6 +147,11 @@ pub fn plan_one_expert_layer(
         });
     }
 
+    // Validate all three roles' headers before issuing any network transfer,
+    // then prefetch all nine planes (gate/up/down weight, scales, biases) in
+    // one coalesced concurrent batch.
+    let mut role_plans = Vec::with_capacity(3);
+    let mut prefetch_names = Vec::with_capacity(9);
     for role in ["gate", "up", "down"] {
         let name = *bundle
             .get(role)
@@ -218,7 +223,16 @@ pub fn plan_one_expert_layer(
                 });
             }
         }
+        prefetch_names.push(name.to_string());
+        prefetch_names.push(s_name.clone());
+        prefetch_names.push(b_name.clone());
+        role_plans.push((role, name, w, s_name, s, b_name, b, in_dim));
+    }
 
+    let prefetch_refs: Vec<&str> = prefetch_names.iter().map(String::as_str).collect();
+    let _guard = shards.prefetch_guard(&prefetch_refs)?;
+
+    for (role, name, w, s_name, s, b_name, b, in_dim) in role_plans {
         let w_bytes = shards.read(name)?;
         let mut s_bytes = shards.read(&s_name)?;
         let mut b_bytes = shards.read(&b_name)?;
@@ -341,6 +355,8 @@ fn plan_mxfp4_expert_layer(
     expert_count: usize,
 ) -> Result<(LayerBlobs, u64), Gemma4Error> {
     let mut blob_used = 0u64;
+    let mut role_plans = Vec::with_capacity(3);
+    let mut prefetch_names = Vec::with_capacity(6);
     for role in ["gate", "up", "down"] {
         let name = *bundle
             .get(role)
@@ -383,12 +399,20 @@ fn plan_mxfp4_expert_layer(
                 detail: "mxfp4 experts carry a .biases plane, so they are affine".to_string(),
             });
         }
-        let (rows, cols) = (rows as usize, cols as usize);
+        prefetch_names.push(name.to_string());
+        prefetch_names.push(scales_name.clone());
+        role_plans.push((role, name, scales_name, rows as usize, cols as usize));
+    }
+
+    let prefetch_refs: Vec<&str> = prefetch_names.iter().map(String::as_str).collect();
+    let _guard = shards.prefetch_guard(&prefetch_refs)?;
+
+    for (role, name, scales_name, rows, cols) in role_plans {
         let all_rows = rows * expert_count;
         let gguf = super::mlx_mxfp4::reblock_to_gguf_mxfp4(
             name,
             &shards.read(name)?,
-            &shards.read(&format!("{base}.scales"))?,
+            &shards.read(&scales_name)?,
             all_rows,
             cols,
         )?;

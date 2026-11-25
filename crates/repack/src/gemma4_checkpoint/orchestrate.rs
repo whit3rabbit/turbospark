@@ -8,7 +8,7 @@ use super::classify::{classify_for_family, lm_order_key, Gemma4Bucket, NGRAM_CON
 use super::config::{Gemma4Error, Gemma4Quant};
 use super::expert_blobs::{expert_stride_from_headers, plan_one_expert_layer};
 use super::narrow::narrow_raw_to_bf16;
-use super::shards::{shape4, Gemma4Shards};
+use super::shards::{shape4, Gemma4Shards, PREFETCH_WINDOW_BYTES};
 use super::vision::VisionRead;
 use crate::gturbo_writer::LayerBlobs;
 use crate::ranged_download::RangeSource;
@@ -373,105 +373,204 @@ fn int8_force_targets(family: ModelFamily) -> &'static [&'static str] {
 }
 
 /// Reads resident weight and norm entries for the classified base names.
+///
+/// Entries are fetched in file-offset-ordered windows of up to
+/// [`PREFETCH_WINDOW_BYTES`] so adjacent small tensors (weights, scales,
+/// biases, norms) coalesce into concurrent HTTP range transfers, while the
+/// returned `entries` and `lossy_narrowing` vectors preserve the exact input
+/// order of `resident_bases`.
 pub fn read_resident_entries_from_shards(
     shards: &Gemma4Shards<'_>,
     resident_bases: &[&str],
     quant: &Gemma4Quant,
     arch: &ArchConfig,
 ) -> Result<ResidentRead, Gemma4Error> {
-    let mut entries = Vec::with_capacity(resident_bases.len());
-    let mut lossy_narrowing = Vec::new();
-    for &name in resident_bases {
+    if resident_bases.is_empty() {
+        return Ok(ResidentRead {
+            entries: Vec::new(),
+            lossy_narrowing: Vec::new(),
+        });
+    }
+
+    struct PlannedResident<'a> {
+        orig_idx: usize,
+        name: &'a str,
+        shard_idx: usize,
+        start: u64,
+        bytes: u64,
+        prefetch_names: Vec<String>,
+    }
+
+    let mut planned: Vec<PlannedResident<'_>> = Vec::with_capacity(resident_bases.len());
+    for (orig_idx, &name) in resident_bases.iter().enumerate() {
         let t = shards.info(name)?;
+        let (shard_idx, start, end) = shards.location_of(name)?;
+        let mut bytes = end.saturating_sub(start);
+        let mut prefetch_names = vec![name.to_string()];
         let base = name.strip_suffix(".weight").unwrap_or(name);
-        if t.dtype == "U32" && name.ends_with(".weight") && quant.is_mxfp4(base) {
-            // No resident MXFP4 GEMV exists, so the matrix is written as the
-            // BF16 it decodes to, which is exact (`mlx_mxfp4`'s header).
-            entries.push(read_mxfp4_as_bf16(shards, name, base, &t.shape)?);
-        } else if t.dtype == "U32" && name.ends_with(".weight") {
-            // F16 companions are narrowed to BF16 (Qwen2's MLX planes and the
-            // DeepSeek-VL2 conversion both ship them that way).
-            let (entry, companion_loss) = if matches!(
-                arch.family,
-                ModelFamily::Qwen2Dense | ModelFamily::Deepseek2 | ModelFamily::Llama
-            ) {
-                super::narrow::pass_through_packed_qwen2_with_loss(shards, name, quant)?
+        if t.dtype == "U32" && name.ends_with(".weight") {
+            let companions: &[&str] = if quant.is_mxfp4(base) {
+                &[".scales"]
             } else {
-                (
-                    super::narrow::pass_through_packed(shards, name, quant)?,
-                    Vec::new(),
-                )
+                &[".scales", ".biases"]
             };
-            let mut entry = entry;
-            // Flint's dense lead and shared expert get the same `up`/`down`
-            // rebalance as its routed experts (`crate::flint_rebalance`).
-            if arch.family == ModelFamily::Flint {
-                if let Some(role) = crate::flint_rebalance::SwigluRole::of_resident(name) {
-                    let delta = role.delta(crate::flint_rebalance::FLINT_SWIGLU_SHIFT);
-                    if let ResidentEntrySpec::Int1(spec)
-                    | ResidentEntrySpec::Int2(spec)
-                    | ResidentEntrySpec::Int4(spec)
-                    | ResidentEntrySpec::Int8(spec) = &mut entry
-                    {
-                        crate::flint_rebalance::shift_bf16_plane(&mut spec.scales, delta);
-                        crate::flint_rebalance::shift_bf16_plane(&mut spec.biases, delta);
-                    }
+            for suffix in companions {
+                let comp = format!("{base}{suffix}");
+                if let Ok((_, cs, ce)) = shards.location_of(&comp) {
+                    bytes = bytes.saturating_add(ce.saturating_sub(cs));
+                    prefetch_names.push(comp);
                 }
             }
-            entries.push(entry);
-            lossy_narrowing.extend(companion_loss);
-        } else if int8_force_targets(arch.family)
-            .iter()
-            .any(|suffix| name.ends_with(suffix))
-        {
-            // The real checkpoint ships these small gating matrices raw (not
-            // U32-prepacked, unlike every other safetensors MoE family this
-            // walk has seen), so they are force-quantized here to match the
-            // INT8-affine layout `crates/runtime`'s GEMV kernels require --
-            // mirroring the GGUF walk's `transcode_f32` router target
-            // (`crates/repack` CLAUDE.md Gotcha 6).
-            let rows = if name.ends_with(".mlp.shared_expert_gate.weight") {
-                1
-            } else {
-                usize::try_from(arch.num_experts).map_err(|_| Gemma4Error::ShapeMismatch {
-                    tensor: name.to_string(),
-                    detail: format!("invalid architecture expert count {}", arch.num_experts),
-                })?
-            };
-            let cols =
-                usize::try_from(arch.hidden_size).map_err(|_| Gemma4Error::ShapeMismatch {
-                    tensor: name.to_string(),
-                    detail: format!("invalid architecture hidden size {}", arch.hidden_size),
-                })?;
-            entries.push(super::narrow::quantize_gating_matrix_int8(
-                shards,
-                name,
-                &t.dtype,
-                (rows, cols),
-            )?);
-        } else {
-            // NARROWED, not tagged. The deleted `raw_dtype_tag` recorded F16
-            // or F32 and nothing downstream reads either tag: every consumer
-            // of an unquantized tensor decodes it as BF16 off its byte size,
-            // so an F16 norm written verbatim is misread rather than
-            // refused. See `narrow_raw_to_bf16` for the measurement behind
-            // accepting the loss.
-            let narrowed = narrow_raw_to_bf16(name, &t.dtype, shards.read(name)?)?;
-            if narrowed.lossy > 0 {
-                lossy_narrowing.push((name.to_string(), narrowed.lossy));
+        }
+        planned.push(PlannedResident {
+            orig_idx,
+            name,
+            shard_idx,
+            start,
+            bytes,
+            prefetch_names,
+        });
+    }
+
+    planned.sort_by_key(|p| (p.shard_idx, p.start, p.orig_idx));
+
+    let mut entry_slots: Vec<Option<ResidentEntrySpec>> =
+        (0..resident_bases.len()).map(|_| None).collect();
+    let mut lossy_slots: Vec<Vec<(String, usize)>> =
+        (0..resident_bases.len()).map(|_| Vec::new()).collect();
+
+    let mut cursor = 0usize;
+    while cursor < planned.len() {
+        let batch_start = cursor;
+        let mut batch_bytes = 0u64;
+        while cursor < planned.len() {
+            let item_bytes = planned[cursor].bytes;
+            if cursor > batch_start
+                && batch_bytes.saturating_add(item_bytes) > PREFETCH_WINDOW_BYTES
+            {
+                break;
             }
-            entries.push(ResidentEntrySpec::Raw(RawTensorSpec {
-                name: name.to_string(),
-                dtype: narrowed.dtype,
-                bytes: narrowed.bytes,
-                shape: shape4(&t.shape),
-            }));
+            batch_bytes = batch_bytes.saturating_add(item_bytes);
+            cursor += 1;
+        }
+        let batch = &planned[batch_start..cursor];
+        let prefetch_refs: Vec<&str> = batch
+            .iter()
+            .flat_map(|item| item.prefetch_names.iter().map(String::as_str))
+            .collect();
+        let _guard = shards.prefetch_guard(&prefetch_refs)?;
+        for item in batch {
+            let (entry, losses) = read_one_resident_entry(shards, item.name, quant, arch)?;
+            entry_slots[item.orig_idx] = Some(entry);
+            lossy_slots[item.orig_idx] = losses;
         }
     }
+
+    let entries = entry_slots
+        .into_iter()
+        .map(|slot| slot.expect("every resident slot was populated"))
+        .collect();
+    let lossy_narrowing = lossy_slots.into_iter().flatten().collect();
     Ok(ResidentRead {
         entries,
         lossy_narrowing,
     })
+}
+
+fn read_one_resident_entry(
+    shards: &Gemma4Shards<'_>,
+    name: &str,
+    quant: &Gemma4Quant,
+    arch: &ArchConfig,
+) -> Result<(ResidentEntrySpec, Vec<(String, usize)>), Gemma4Error> {
+    let t = shards.info(name)?;
+    let base = name.strip_suffix(".weight").unwrap_or(name);
+    if t.dtype == "U32" && name.ends_with(".weight") && quant.is_mxfp4(base) {
+        // No resident MXFP4 GEMV exists, so the matrix is written as the
+        // BF16 it decodes to, which is exact (`mlx_mxfp4`'s header).
+        Ok((
+            read_mxfp4_as_bf16(shards, name, base, &t.shape)?,
+            Vec::new(),
+        ))
+    } else if t.dtype == "U32" && name.ends_with(".weight") {
+        // F16 companions are narrowed to BF16 (Qwen2's MLX planes and the
+        // DeepSeek-VL2 conversion both ship them that way).
+        let (mut entry, companion_loss) = if matches!(
+            arch.family,
+            ModelFamily::Qwen2Dense | ModelFamily::Deepseek2 | ModelFamily::Llama
+        ) {
+            super::narrow::pass_through_packed_qwen2_with_loss(shards, name, quant)?
+        } else {
+            (
+                super::narrow::pass_through_packed(shards, name, quant)?,
+                Vec::new(),
+            )
+        };
+        // Flint's dense lead and shared expert get the same `up`/`down`
+        // rebalance as its routed experts (`crate::flint_rebalance`).
+        if arch.family == ModelFamily::Flint {
+            if let Some(role) = crate::flint_rebalance::SwigluRole::of_resident(name) {
+                let delta = role.delta(crate::flint_rebalance::FLINT_SWIGLU_SHIFT);
+                if let ResidentEntrySpec::Int1(spec)
+                | ResidentEntrySpec::Int2(spec)
+                | ResidentEntrySpec::Int4(spec)
+                | ResidentEntrySpec::Int8(spec) = &mut entry
+                {
+                    crate::flint_rebalance::shift_bf16_plane(&mut spec.scales, delta);
+                    crate::flint_rebalance::shift_bf16_plane(&mut spec.biases, delta);
+                }
+            }
+        }
+        Ok((entry, companion_loss))
+    } else if int8_force_targets(arch.family)
+        .iter()
+        .any(|suffix| name.ends_with(suffix))
+    {
+        // The real checkpoint ships these small gating matrices raw (not
+        // U32-prepacked, unlike every other safetensors MoE family this
+        // walk has seen), so they are force-quantized here to match the
+        // INT8-affine layout `crates/runtime`'s GEMV kernels require --
+        // mirroring the GGUF walk's `transcode_f32` router target
+        // (`crates/repack` CLAUDE.md Gotcha 6).
+        let rows = if name.ends_with(".mlp.shared_expert_gate.weight") {
+            1
+        } else {
+            usize::try_from(arch.num_experts).map_err(|_| Gemma4Error::ShapeMismatch {
+                tensor: name.to_string(),
+                detail: format!("invalid architecture expert count {}", arch.num_experts),
+            })?
+        };
+        let cols = usize::try_from(arch.hidden_size).map_err(|_| Gemma4Error::ShapeMismatch {
+            tensor: name.to_string(),
+            detail: format!("invalid architecture hidden size {}", arch.hidden_size),
+        })?;
+        Ok((
+            super::narrow::quantize_gating_matrix_int8(shards, name, &t.dtype, (rows, cols))?,
+            Vec::new(),
+        ))
+    } else {
+        // NARROWED, not tagged. The deleted `raw_dtype_tag` recorded F16
+        // or F32 and nothing downstream reads either tag: every consumer
+        // of an unquantized tensor decodes it as BF16 off its byte size,
+        // so an F16 norm written verbatim is misread rather than
+        // refused. See `narrow_raw_to_bf16` for the measurement behind
+        // accepting the loss.
+        let narrowed = narrow_raw_to_bf16(name, &t.dtype, shards.read(name)?)?;
+        let losses = if narrowed.lossy > 0 {
+            vec![(name.to_string(), narrowed.lossy)]
+        } else {
+            Vec::new()
+        };
+        Ok((
+            ResidentEntrySpec::Raw(RawTensorSpec {
+                name: name.to_string(),
+                dtype: narrowed.dtype,
+                bytes: narrowed.bytes,
+                shape: shape4(&t.shape),
+            }),
+            losses,
+        ))
+    }
 }
 
 /// Reads one MLX mxfp4 `(weight, scales)` pair and returns it as a raw BF16

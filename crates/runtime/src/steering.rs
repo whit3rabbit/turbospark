@@ -465,6 +465,18 @@ pub fn family_dispatches_steering(family: model_io::ModelFamily) -> bool {
         // the post-FFN add is the layer's whole contribution). Wired with the
         // flow.
         F::Spark25 => true,
+        // `families/flint/`, decode and chunked prefill both dispatch at the
+        // dense-lead and routed-MoE residual adds.
+        F::Flint => true,
+        // `families/lfm3/`, decode and chunked prefill both dispatch after
+        // the post-FFN sandwich residual add.
+        F::Lfm3 => true,
+        // `families/unlimited_ocr2/`, dense-lead and routed-MoE residual adds.
+        F::UnlimitedOcr2 => true,
+        // `families/inkling2/`, decode (`mod.rs`) and multi-row verify/prefill
+        // (`verify.rs`) both dispatch on `cur` after `moe_tail`, indexed by
+        // physical layer `ip`.
+        F::Inkling2Loop => true,
         // `gemma3` shares the Gemma 4 dense tail, but steering has not been run
         // against a real Gemma 3 install, so the gate stays shut.
         F::Gemma3 | F::Gemma2 => false,
@@ -472,10 +484,6 @@ pub fn family_dispatches_steering(family: model_io::ModelFamily) -> bool {
         // kernels are unported, so it is refused at open before any decode
         // flow -- there is no layer loop for a hook to sit in.
         F::DeepseekV4Flash => false,
-        // No decode flow yet, so no layer loop for a hook to sit in. When it
-        // lands, a looped layer joins the residual stream three times per
-        // token, so the hook needs a per-application decision first.
-        F::Inkling2Loop => false,
         // The flow carries the hooks (both of its joins are one-stream
         // residual adds like the muse/spark shape, and
         // `families/deepseek2/mod.rs` encodes at each), but the gate stays
@@ -490,12 +498,6 @@ pub fn family_dispatches_steering(family: model_io::ModelFamily) -> bool {
         // the wrong side of it would steer a per-stream mix rather than the
         // stream. Decide it with the flow, not ahead of it.
         F::Qwen4Exp => false,
-        // Flint's decode flow carries no steering hook yet; gate stays shut.
-        F::Flint => false,
-        // No decode flow yet, so no layer loop for a hook to sit in.
-        F::Lfm3 => false,
-        // Its flow carries no steering hook yet; gate stays shut.
-        F::UnlimitedOcr2 => false,
     }
 }
 
@@ -519,12 +521,12 @@ pub fn steering_unsupported_reason(family: model_io::ModelFamily) -> Option<Stri
          (both halves), the llama flow (Mixtral, Qwen3-MoE, dense qwen3, Qwen2, \
          MiniMax-M2, Qwen3-VL, and the dense Llama / Mistral half), Gemma 4 \
          (sequential decode and chunked prefill, both batched-routed and \
-         per-token), gpt-oss, museGlimmer, and spark2_5. Unwired: \
-         DeepSeek-V4-Flash (no decode flow exists to hook), deepseek2 (the flow \
-         carries the hooks; the gate stays shut until a real MLA steering gate \
-         runs), qwen4_exp (its residual is hc_count streams wide, \
-         so the boundary is a different shape), and flint (its decode flow \
-         carries no steering hook yet)"
+         per-token), gpt-oss, museGlimmer, spark2_5, flint, lfm3, unlimited_ocr2, \
+         and inkling2_loop. Unwired: DeepSeek-V4-Flash (no decode flow exists to hook), \
+         deepseek2 (the flow carries the hooks; the gate stays shut until a real MLA \
+         steering gate runs), gemma3/gemma2 (the flow carries the hooks; the gate stays \
+         shut until a real install steering gate runs), and qwen4_exp (its residual is \
+         hc_count streams wide, so the boundary is a different shape)"
     ))
 }
 
@@ -575,6 +577,25 @@ pub(crate) fn encode_steering(
     rows: usize,
     x_off: u64,
 ) -> Result<(), RealForwardError> {
+    encode_steering_buf(
+        context, pass, &scratch.x, steering, layer, hidden, rows, x_off,
+    )
+}
+
+/// [`encode_steering`] against an explicit residual-stream buffer (for families
+/// such as `inkling2` that hold the active stream in a state buffer rather than
+/// `scratch.x`).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_steering_buf(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    x_buf: &gpu::MetalBuffer,
+    steering: Option<&SteeringState>,
+    layer: usize,
+    hidden: usize,
+    rows: usize,
+    x_off: u64,
+) -> Result<(), RealForwardError> {
     let Some(s) = steering else {
         return Ok(());
     };
@@ -595,7 +616,7 @@ pub(crate) fn encode_steering(
         gpu::encode_steer_direction(
             context,
             pass,
-            (&scratch.x, x_off),
+            (x_buf, x_off),
             (&s.directions, entry.offset),
             // A block of FP32 slots per (layer, vector), so the coefficients
             // of a whole pass survive to be read back together after the

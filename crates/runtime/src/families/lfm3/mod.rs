@@ -125,7 +125,19 @@ impl RealForwardRunner {
             )?,
         }
 
-        let (context, weights, index, arch, scratch, kv, lfm3, phases, ffn_hist) = (
+        let (
+            context,
+            weights,
+            index,
+            arch,
+            scratch,
+            kv,
+            lfm3,
+            phases,
+            ffn_hist,
+            steering,
+            resid_capture,
+        ) = (
             &mut self.context,
             &self.weights,
             &self.index,
@@ -135,6 +147,8 @@ impl RealForwardRunner {
             self.real_lfm3.as_ref().expect("real lfm3 state present"),
             &mut self.phases,
             self.ffn_hist.as_ref(),
+            self.steering.as_ref(),
+            self.resid_capture.as_ref(),
         );
 
         for layer in 0..arch.num_layers as usize {
@@ -204,6 +218,18 @@ impl RealForwardRunner {
                 inter,
                 lfm3.fused_ffn,
             )?;
+            crate::steering::encode_steering(
+                context, &pass, scratch, steering, layer, hidden, 1, 0,
+            )?;
+            crate::resid_capture::encode_resid_capture(
+                context,
+                &pass,
+                scratch,
+                resid_capture,
+                layer,
+                hidden,
+                0,
+            )?;
         }
 
         if !self.skip_head {
@@ -242,6 +268,9 @@ impl RealForwardRunner {
         phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
         phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance();
+        if let Some(capture) = self.resid_capture.as_mut() {
+            capture.record_pass(position, self.skip_head);
+        }
         if let Some(hist) = self.ffn_hist.as_mut() {
             if self.skip_head {
                 hist.note_prefill_pass();

@@ -50,14 +50,24 @@ Text GGUF and safetensors reads and curated image files share
 `repack::HttpRangeSource`.
 
 - Files are split into 16 MiB HTTP ranges.
-- Up to eight HTTP/1.1 requests run concurrently. HTTP/1.1 is intentional for
-  the Xet CDN path because HTTP/2 can multiplex the requests onto one edge.
+- Up to eight HTTP/1.1 requests run concurrently over a shared process-wide
+  connection pool. HTTP/1.1 is intentional for the Xet CDN path because HTTP/2
+  can multiplex the requests onto one edge.
+- Each `HttpRangeSource` caches its resolved unauthenticated CDN redirect URL
+  (such as the presigned Xet/CloudFront URL) across ranges, avoiding repeated
+  302 round trips to `huggingface.co`, and refreshes automatically if expired
+  or rejected.
+- Streamed text checkpoint walks (safetensors/MLX and GGUF) prefetch resident
+  tensors, vision blocks, drafters, and routed expert layers in file-offset
+  coalesced windows (up to 128 MiB per wave, bridging gaps up to 64 KiB) so
+  small tensors (weights, scales, biases, norms) share the eight-way 16 MiB
+  HTTP/1.1 pool instead of issuing serial per-tensor requests.
 - Each range has bounded retries. HTTP 429 and selected 5xx responses back off;
   permanent statuses fail immediately.
-- Full-file downloads for pinned artifacts and image models take up to eight
-  files at a time. They share eight range workers, so small files can transfer
-  alongside large shards. Each worker holds at most one 16 MiB range, for at
-  most 128 MiB of range buffers per batch.
+- Full-file downloads for pinned artifacts, Inkling 2 releases, and image
+  models take up to eight files at a time. They share eight range workers, so
+  small files can transfer alongside large shards. Each worker holds at most
+  one 16 MiB range, for at most 128 MiB of range buffers per batch.
 - Whole files are written into pre-sized sibling partial files and renamed
   into place after the batch finishes fetching. Pinned artifact receipts
   still require verification of every staged file.

@@ -7,12 +7,25 @@ import XCTest
 final class CapabilitiesTests: XCTestCase {
 
     func testSteeringFollowsTheEnginesFamilyTable() {
-        for family in ["gemma4", "llama", "qwen3moe", "qwen3", "qwen2", "gptOss", "museGlimmer"] {
+        for family in [
+            "gemma4",
+            "llama",
+            "qwen3moe",
+            "qwen3",
+            "qwen2",
+            "gptOss",
+            "museGlimmer",
+            "spark2_5",
+            "flint",
+            "lfm3",
+            "unlimited_ocr2",
+            "inkling2_loop",
+        ] {
             XCTAssertTrue(
                 TurboSparkCapabilities.family(family).steeringSupported, "\(family) dispatches steering")
         }
-        // The two families the app's old copy documented as deliberately absent.
-        for family in ["deepseekV4Flash", "qwen4exp"] {
+        // Families without steering enabled yet.
+        for family in ["deepseekV4Flash", "qwen4exp", "deepseek2", "gemma3", "gemma2"] {
             let c = TurboSparkCapabilities.family(family)
             XCTAssertFalse(c.steeringSupported, family)
         }

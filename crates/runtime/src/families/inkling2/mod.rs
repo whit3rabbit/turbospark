@@ -428,6 +428,7 @@ impl RealForwardRunner {
         let trace = trace_enabled();
         let t_token = std::time::Instant::now();
         let mut tr = TokenTrace::default();
+        let (steering, resid_capture) = (self.steering.as_ref(), self.resid_capture.as_ref());
         let mut apply = |c: &mut Ctx<'_>,
                          pass: &mut gpu::PassEncoder,
                          st: &mut RealInkling2State,
@@ -443,31 +444,57 @@ impl RealForwardRunner {
                 // Every expert is resident and the router runs on the GPU,
                 // so the application stays in this pass: no commit, no wait.
                 layer_moe_resident(c, pass, st, &arch, &cfg, slot, ip)?;
-                tr.encode_ms += t0.elapsed().as_secs_f64() * 1e3;
+            } else {
+                let committed =
+                    std::mem::replace(pass, c.context.begin_pass_labeled("inkling2 routed"))
+                        .commit();
+                let t1 = std::time::Instant::now();
+                tr.gpu_ms += committed.wait_with_gpu_time() * 1e3;
+                let t2 = std::time::Instant::now();
+                let (hits, misses) = layer_moe(
+                    c,
+                    pass,
+                    st,
+                    &arch,
+                    &cfg,
+                    &mut self.streamers,
+                    &self.slot_buffers,
+                    slot,
+                    ip,
+                    tr,
+                )?;
+                tr.encode_ms += (t1 - t0).as_secs_f64() * 1e3;
+                tr.wait_ms += (t2 - t1).as_secs_f64() * 1e3;
+                tr.moe_host_ms += t2.elapsed().as_secs_f64() * 1e3;
+                tr.hits += hits;
+                tr.misses += misses;
+                crate::steering::encode_steering_buf(
+                    c.context, pass, &st.cur, steering, ip, c.h, 1, 0,
+                )?;
+                crate::resid_capture::encode_resid_capture_buf(
+                    c.context,
+                    pass,
+                    &st.cur,
+                    resid_capture,
+                    ip,
+                    c.h,
+                    0,
+                )?;
                 return Ok(());
             }
-            let committed =
-                std::mem::replace(pass, c.context.begin_pass_labeled("inkling2 routed")).commit();
-            let t1 = std::time::Instant::now();
-            tr.gpu_ms += committed.wait_with_gpu_time() * 1e3;
-            let t2 = std::time::Instant::now();
-            let (hits, misses) = layer_moe(
-                c,
-                pass,
-                st,
-                &arch,
-                &cfg,
-                &mut self.streamers,
-                &self.slot_buffers,
-                slot,
-                ip,
-                tr,
+            crate::steering::encode_steering_buf(
+                c.context, pass, &st.cur, steering, ip, c.h, 1, 0,
             )?;
-            tr.encode_ms += (t1 - t0).as_secs_f64() * 1e3;
-            tr.wait_ms += (t2 - t1).as_secs_f64() * 1e3;
-            tr.moe_host_ms += t2.elapsed().as_secs_f64() * 1e3;
-            tr.hits += hits;
-            tr.misses += misses;
+            crate::resid_capture::encode_resid_capture_buf(
+                c.context,
+                pass,
+                &st.cur,
+                resid_capture,
+                ip,
+                c.h,
+                0,
+            )?;
+            tr.encode_ms += t0.elapsed().as_secs_f64() * 1e3;
             Ok(())
         };
 
@@ -607,6 +634,9 @@ impl RealForwardRunner {
             tr.report(position, t_token.elapsed().as_secs_f64() * 1e3);
         }
         self.kv.advance();
+        if let Some(capture) = self.resid_capture.as_mut() {
+            capture.record_pass(position, self.skip_head);
+        }
         if self.skip_head {
             return Ok(());
         }

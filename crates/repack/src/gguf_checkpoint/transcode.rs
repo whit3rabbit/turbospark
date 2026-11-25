@@ -449,19 +449,35 @@ fn raw_bf16_spec(canonical: String, values: &[f32], dims: &[u64]) -> (ResidentEn
 pub type ResidentSet = (Vec<ResidentEntrySpec>, Vec<(String, usize)>);
 
 /// Reads and transcodes the requested resident tensors from a GGUF checkpoint.
+///
+/// Validates all headers in input order before fetching bytes, then streams
+/// tensors in file-offset-ordered ~128 MiB coalesced windows so small resident
+/// tensors share the concurrent HTTP range pool while preserving exact output
+/// and lossy-narrowing ordering.
 pub fn resident_entries(
     header: &GgufHeader,
     source: &dyn RangeSource,
     arch: &ArchConfig,
     names: &[&str],
 ) -> Result<ResidentSet, GgufRepackError> {
+    const PREFETCH_WINDOW_BYTES: u64 = 128 * 1024 * 1024;
     let family = arch.family;
-    let mut out = Vec::with_capacity(names.len());
-    let mut lossy = Vec::new();
     let mut indexer_projection_parts: BTreeMap<usize, (Option<&str>, Option<&str>)> =
         BTreeMap::new();
-    for name in names {
-        let info = &header.tensors[*name];
+
+    struct PlannedGguf<'a> {
+        orig_idx: usize,
+        name: &'a str,
+        canonical: String,
+        dtype: u8,
+        gemma3_q5_0: bool,
+        start: u64,
+        end: u64,
+    }
+
+    let mut planned: Vec<PlannedGguf<'_>> = Vec::with_capacity(names.len());
+    for (orig_idx, &name) in names.iter().enumerate() {
+        let info = &header.tensors[name];
         let GgufMapping::Resident(canonical) =
             crate::gguf_names::map_gguf_name_with_head(name, family, arch.num_layers as usize)?
         else {
@@ -477,7 +493,7 @@ pub fn resident_entries(
         } else {
             dtype_tag_for_ggml_type(info.ggml_type).ok_or_else(|| {
                 GgufRepackError::UnsupportedType {
-                    tensor: (*name).to_string(),
+                    tensor: name.to_string(),
                     ggml_type: info.ggml_type,
                 }
             })?
@@ -486,284 +502,383 @@ pub fn resident_entries(
             if let Some((layer, is_query)) = qwen4_indexer_projection_part(name) {
                 if arch.layer_is_linear(layer) {
                     return Err(GgufRepackError::ShapeMismatch {
-                        tensor: (*name).to_string(),
+                        tensor: name.to_string(),
                         detail: "Qwen4Exp indexer projections occur only on full-attention layers"
                             .to_string(),
                     });
                 }
                 let parts = indexer_projection_parts.entry(layer).or_default();
                 let slot = if is_query { &mut parts.0 } else { &mut parts.1 };
-                if slot.replace(*name).is_some() {
+                if slot.replace(name).is_some() {
                     return Err(GgufRepackError::ShapeMismatch {
-                        tensor: (*name).to_string(),
+                        tensor: name.to_string(),
                         detail: "duplicate Qwen4Exp indexer projection part".to_string(),
                     });
                 }
                 continue;
             }
         }
-        if family == ModelFamily::Llama {
-            if canonical.ends_with("rope_factors_short") || canonical.ends_with("rope_factors_long")
-            {
-                // Exact F32, never narrowed: these ARE the rotation angles.
-                if info.ggml_type != GGML_TYPE_F32 {
-                    return Err(GgufRepackError::UnsupportedType {
-                        tensor: (*name).to_string(),
-                        ggml_type: info.ggml_type,
-                    });
-                }
-                out.push(ResidentEntrySpec::Raw(RawTensorSpec {
-                    name: canonical,
-                    dtype: crate::resident_writer::DTYPE_FP32,
-                    bytes: read_tensor(header, source, name)?,
-                    shape: logical_shape(&info.dims),
-                }));
-                continue;
-            }
-            let fused = canonical.ends_with("self_attn.qkv_proj.weight")
-                || (canonical.ends_with("mlp.up_proj.weight")
-                    && arch.num_experts == 0
-                    && row_and_col(&info.dims).0 as i64 == 2 * arch.intermediate_size);
-            if fused {
-                let bytes = read_tensor(header, source, name)?;
-                let (specs, narrowed) =
-                    split_phi3_fused(name, &canonical, info.ggml_type, &info.dims, &bytes, arch)?;
-                lossy.extend(narrowed);
-                out.extend(specs);
-                continue;
-            }
-        }
-        if canonical.ends_with("linear_attn.in_proj_ba.weight") {
-            let bytes = read_tensor(header, source, name)?;
-            let (specs, narrowed) =
-                split_fused_ba(name, &canonical, info.ggml_type, &info.dims, &bytes, arch)?;
-            lossy.extend(narrowed);
-            out.extend(specs);
-            continue;
-        }
-        let bytes = read_tensor(header, source, name)?;
-        if family == ModelFamily::Qwen4Exp || gemma3_q5_0 {
-            let t = match info.ggml_type {
-                GGML_TYPE_F16 => Some(transcode_f16(
-                    name,
-                    canonical.clone(),
-                    &bytes,
-                    &info.dims,
-                    arch,
-                )?),
-                GGML_TYPE_Q2_0 => Some(transcode_q2_0(
-                    name,
-                    canonical.clone(),
-                    &bytes,
-                    &info.dims,
-                    arch,
-                )?),
-                GGML_TYPE_Q4_0 => Some(transcode_q4_0(
-                    name,
-                    canonical.clone(),
-                    &bytes,
-                    &info.dims,
-                    arch,
-                )?),
-                GGML_TYPE_Q5_0 => Some(transcode_q5_0(
-                    name,
-                    canonical.clone(),
-                    &bytes,
-                    &info.dims,
-                    arch,
-                )?),
-                _ => None,
-            };
-            if let Some(t) = t {
-                if t.lossy > 0 {
-                    lossy.push(((*name).to_string(), t.lossy));
-                }
-                out.push(t.spec);
-                continue;
-            }
-        }
-        if info.ggml_type == GGML_TYPE_F32 {
-            let t = transcode_f32(name, canonical, &bytes, &info.dims, arch)?;
-            if t.lossy > 0 {
-                lossy.push(((*name).to_string(), t.lossy));
-            }
-            out.push(t.spec);
-            continue;
-        }
-        if gdn_out_proj_needs_q8_0_requant(&canonical, info.ggml_type, arch) {
-            // A standard llama.cpp K-quant recipe stores `ssm_out` as Q4_K or
-            // Q6_K, whose 256-element block is wider than one 128-column V
-            // head, so the column de-interleave cannot be a byte shuffle (the
-            // refusal in `apply_source_convention_bytes`). Dequantize this one
-            // tensor, permute in f32 with the same routine the other paths
-            // use, and store Q8_0: a dtype the dense GDN families already
-            // read for this tensor (older recipes ship it at Q8_0), whose
-            // 32-element blocks hold the source values to ~0.4% of the block
-            // maximum, far below the K-quant's own step. Not byte-lossless,
-            // and counted as lossy.
-            let (rows, cols) = row_and_col(&info.dims);
-            let elements =
-                rows.checked_mul(cols)
-                    .ok_or_else(|| GgufRepackError::ShapeMismatch {
-                        tensor: (*name).to_string(),
-                        detail: "V-head output projection element count overflows".to_string(),
-                    })?;
-            let mut values = dequantize_ssm_out(info.ggml_type, &bytes, elements);
-            if values.len() != elements || values.iter().any(|value| !value.is_finite()) {
-                return Err(GgufRepackError::ShapeMismatch {
-                    tensor: (*name).to_string(),
-                    detail: format!(
-                        "type {} dequantized to {} finite values, expected {elements}",
-                        info.ggml_type,
-                        values.len()
-                    ),
-                });
-            }
-            apply_source_convention(name, &canonical, arch, cols, &mut values)?;
-            let mut packed = Vec::new();
-            for row in values.chunks_exact(cols) {
-                packed.extend_from_slice(&compute::quant_gguf::quantize_q8_0(row));
-            }
-            lossy.push(((*name).to_string(), elements));
-            out.push(ResidentEntrySpec::Raw(RawTensorSpec {
-                name: canonical,
-                dtype: crate::resident_writer::DTYPE_GGUF_Q8_0,
-                bytes: packed,
-                shape: logical_shape(&info.dims),
-            }));
-            continue;
-        }
-        if family == ModelFamily::Qwen4Exp
-            && canonical.ends_with("linear_attn.out_proj.weight")
-            && QWEN4EXP_SSM_OUT_TRANSCODE_TYPES.contains(&info.ggml_type)
+        if family == ModelFamily::Llama
+            && (canonical.ends_with("rope_factors_short")
+                || canonical.ends_with("rope_factors_long"))
+            && info.ggml_type != GGML_TYPE_F32
         {
-            // Qwen3.8's 48 V heads are 128 columns wide, while this artifact
-            // quantizes `ssm_out` in 256-element blocks. A block spans two
-            // heads, so no byte permutation can restore the runtime's
-            // even/odd V-head order. Dequantize one matrix, permute its
-            // columns, and carry the values as BF16; this keeps the source
-            // quantization values while avoiding a false byte-level shuffle.
-            let elements = info
-                .dims
-                .iter()
-                .try_fold(1u64, |count, &dim| count.checked_mul(dim))
-                .and_then(|count| usize::try_from(count).ok())
-                .ok_or_else(|| GgufRepackError::ShapeMismatch {
-                    tensor: (*name).to_string(),
-                    detail: "V-head output projection element count overflows".to_string(),
-                })?;
-            let values = dequantize_ssm_out(info.ggml_type, &bytes, elements);
-            if values.len() != elements || values.iter().any(|value| !value.is_finite()) {
-                return Err(GgufRepackError::ShapeMismatch {
-                    tensor: (*name).to_string(),
-                    detail: format!(
-                        "type {} dequantized to {} finite values, expected {elements}",
-                        info.ggml_type,
-                        values.len()
-                    ),
-                });
-            }
-            let mut values = values;
-            apply_source_convention(
-                name,
-                &canonical,
-                arch,
-                row_and_col(&info.dims).1,
-                &mut values,
-            )?;
-            let (spec, precision_loss) = raw_bf16_spec(canonical, &values, &info.dims);
-            if precision_loss > 0 {
-                lossy.push(((*name).to_string(), precision_loss));
-            }
-            out.push(spec);
-            continue;
-        }
-        let mut bytes = bytes;
-        apply_source_convention_bytes(
-            name,
-            &canonical,
-            arch,
-            row_and_col(&info.dims),
-            info.ggml_type,
-            &mut bytes,
-        )?;
-        out.push(ResidentEntrySpec::Raw(RawTensorSpec {
-            name: canonical,
-            dtype,
-            bytes,
-            shape: logical_shape(&info.dims),
-        }));
-    }
-    for (layer, (query_name, key_name)) in indexer_projection_parts {
-        let query_name = query_name.ok_or_else(|| GgufRepackError::MissingTensor {
-            name: format!("blk.{layer}.indexer.q_proj.weight"),
-        })?;
-        let key_name = key_name.ok_or_else(|| GgufRepackError::MissingTensor {
-            name: format!("blk.{layer}.indexer.k_proj.weight"),
-        })?;
-        let query_info = &header.tensors[query_name];
-        let key_info = &header.tensors[key_name];
-        let expected_q = arch
-            .compressed_attention
-            .index_n_heads
-            .checked_mul(arch.compressed_attention.index_head_dim)
-            .ok_or_else(|| GgufRepackError::ShapeMismatch {
-                tensor: query_name.to_string(),
-                detail: "QSA query projection width overflows".to_string(),
-            })?;
-        let hidden =
-            u64::try_from(arch.hidden_size).map_err(|_| GgufRepackError::ShapeMismatch {
-                tensor: query_name.to_string(),
-                detail: "hidden size is negative".to_string(),
-            })?;
-        let query_rows = u64::try_from(expected_q).map_err(|_| GgufRepackError::ShapeMismatch {
-            tensor: query_name.to_string(),
-            detail: "QSA query projection width is negative".to_string(),
-        })?;
-        let key_rows = u64::try_from(arch.compressed_attention.index_head_dim).map_err(|_| {
-            GgufRepackError::ShapeMismatch {
-                tensor: key_name.to_string(),
-                detail: "QSA key projection width is negative".to_string(),
-            }
-        })?;
-        for (name, info, output_rows) in [
-            (query_name, query_info, query_rows),
-            (key_name, key_info, key_rows),
-        ] {
-            if info.dims != [hidden, output_rows] || info.ggml_type != 30 {
-                return Err(GgufRepackError::ShapeMismatch {
-                    tensor: name.to_string(),
-                    detail: format!(
-                        "Qwen4Exp QSA parts must be BF16 type 30 with GGUF shape \
-                         [{hidden}, {output_rows}], got type {} shape {:?}",
-                        info.ggml_type, info.dims
-                    ),
-                });
-            }
-        }
-        if query_info.ggml_type != key_info.ggml_type {
-            return Err(GgufRepackError::ShapeMismatch {
-                tensor: key_name.to_string(),
-                detail: "Qwen4Exp QSA query and key projections use different dtypes".to_string(),
+            return Err(GgufRepackError::UnsupportedType {
+                tensor: name.to_string(),
+                ggml_type: info.ggml_type,
             });
         }
-        let mut bytes = read_tensor(header, source, query_name)?;
-        bytes.extend_from_slice(&read_tensor(header, source, key_name)?);
-        let combined_rows =
-            query_rows
-                .checked_add(key_rows)
+        let (start, end) =
+            header
+                .absolute_range(name)
+                .ok_or_else(|| GgufRepackError::MissingTensor {
+                    name: name.to_string(),
+                })??;
+        planned.push(PlannedGguf {
+            orig_idx,
+            name,
+            canonical,
+            dtype,
+            gemma3_q5_0,
+            start,
+            end,
+        });
+    }
+
+    planned.sort_by_key(|item| (item.start, item.orig_idx));
+
+    let mut out_slots: Vec<Vec<ResidentEntrySpec>> = (0..names.len()).map(|_| Vec::new()).collect();
+    let mut lossy_slots: Vec<Vec<(String, usize)>> = (0..names.len()).map(|_| Vec::new()).collect();
+    let prefetched = crate::ranged_download::PrefetchedRangeSource::new(source);
+
+    let mut cursor = 0usize;
+    while cursor < planned.len() {
+        let batch_start = cursor;
+        let mut batch_bytes = 0u64;
+        while cursor < planned.len() {
+            let item_bytes = planned[cursor].end.saturating_sub(planned[cursor].start);
+            if cursor > batch_start
+                && batch_bytes.saturating_add(item_bytes) > PREFETCH_WINDOW_BYTES
+            {
+                break;
+            }
+            batch_bytes = batch_bytes.saturating_add(item_bytes);
+            cursor += 1;
+        }
+        let batch = &planned[batch_start..cursor];
+        let ranges: Vec<(u64, u64)> = batch.iter().map(|item| (item.start, item.end)).collect();
+        prefetched.prefetch(&ranges)?;
+        let step_result = (|| -> Result<(), GgufRepackError> {
+            for item in batch {
+                let name = item.name;
+                let info = &header.tensors[name];
+                let canonical = item.canonical.clone();
+                let dtype = item.dtype;
+                let gemma3_q5_0 = item.gemma3_q5_0;
+                let slot_out = &mut out_slots[item.orig_idx];
+                let slot_lossy = &mut lossy_slots[item.orig_idx];
+
+                if family == ModelFamily::Llama {
+                    if canonical.ends_with("rope_factors_short")
+                        || canonical.ends_with("rope_factors_long")
+                    {
+                        // Exact F32, never narrowed: these ARE the rotation angles.
+                        slot_out.push(ResidentEntrySpec::Raw(RawTensorSpec {
+                            name: canonical,
+                            dtype: crate::resident_writer::DTYPE_FP32,
+                            bytes: read_tensor(header, &prefetched, name)?,
+                            shape: logical_shape(&info.dims),
+                        }));
+                        continue;
+                    }
+                    let fused = canonical.ends_with("self_attn.qkv_proj.weight")
+                        || (canonical.ends_with("mlp.up_proj.weight")
+                            && arch.num_experts == 0
+                            && row_and_col(&info.dims).0 as i64 == 2 * arch.intermediate_size);
+                    if fused {
+                        let bytes = read_tensor(header, &prefetched, name)?;
+                        let (specs, narrowed) = split_phi3_fused(
+                            name,
+                            &canonical,
+                            info.ggml_type,
+                            &info.dims,
+                            &bytes,
+                            arch,
+                        )?;
+                        slot_lossy.extend(narrowed);
+                        slot_out.extend(specs);
+                        continue;
+                    }
+                }
+                if canonical.ends_with("linear_attn.in_proj_ba.weight") {
+                    let bytes = read_tensor(header, &prefetched, name)?;
+                    let (specs, narrowed) =
+                        split_fused_ba(name, &canonical, info.ggml_type, &info.dims, &bytes, arch)?;
+                    slot_lossy.extend(narrowed);
+                    slot_out.extend(specs);
+                    continue;
+                }
+                let bytes = read_tensor(header, &prefetched, name)?;
+                if family == ModelFamily::Qwen4Exp || gemma3_q5_0 {
+                    let t = match info.ggml_type {
+                        GGML_TYPE_F16 => Some(transcode_f16(
+                            name,
+                            canonical.clone(),
+                            &bytes,
+                            &info.dims,
+                            arch,
+                        )?),
+                        GGML_TYPE_Q2_0 => Some(transcode_q2_0(
+                            name,
+                            canonical.clone(),
+                            &bytes,
+                            &info.dims,
+                            arch,
+                        )?),
+                        GGML_TYPE_Q4_0 => Some(transcode_q4_0(
+                            name,
+                            canonical.clone(),
+                            &bytes,
+                            &info.dims,
+                            arch,
+                        )?),
+                        GGML_TYPE_Q5_0 => Some(transcode_q5_0(
+                            name,
+                            canonical.clone(),
+                            &bytes,
+                            &info.dims,
+                            arch,
+                        )?),
+                        _ => None,
+                    };
+                    if let Some(t) = t {
+                        if t.lossy > 0 {
+                            slot_lossy.push((name.to_string(), t.lossy));
+                        }
+                        slot_out.push(t.spec);
+                        continue;
+                    }
+                }
+                if info.ggml_type == GGML_TYPE_F32 {
+                    let t = transcode_f32(name, canonical, &bytes, &info.dims, arch)?;
+                    if t.lossy > 0 {
+                        slot_lossy.push((name.to_string(), t.lossy));
+                    }
+                    slot_out.push(t.spec);
+                    continue;
+                }
+                if gdn_out_proj_needs_q8_0_requant(&canonical, info.ggml_type, arch) {
+                    // A standard llama.cpp K-quant recipe stores `ssm_out` as Q4_K or
+                    // Q6_K, whose 256-element block is wider than one 128-column V
+                    // head, so the column de-interleave cannot be a byte shuffle (the
+                    // refusal in `apply_source_convention_bytes`). Dequantize this one
+                    // tensor, permute in f32 with the same routine the other paths
+                    // use, and store Q8_0: a dtype the dense GDN families already
+                    // read for this tensor (older recipes ship it at Q8_0), whose
+                    // 32-element blocks hold the source values to ~0.4% of the block
+                    // maximum, far below the K-quant's own step. Not byte-lossless,
+                    // and counted as lossy.
+                    let (rows, cols) = row_and_col(&info.dims);
+                    let elements =
+                        rows.checked_mul(cols)
+                            .ok_or_else(|| GgufRepackError::ShapeMismatch {
+                                tensor: name.to_string(),
+                                detail: "V-head output projection element count overflows"
+                                    .to_string(),
+                            })?;
+                    let mut values = dequantize_ssm_out(info.ggml_type, &bytes, elements);
+                    if values.len() != elements || values.iter().any(|value| !value.is_finite()) {
+                        return Err(GgufRepackError::ShapeMismatch {
+                            tensor: name.to_string(),
+                            detail: format!(
+                                "type {} dequantized to {} finite values, expected {elements}",
+                                info.ggml_type,
+                                values.len()
+                            ),
+                        });
+                    }
+                    apply_source_convention(name, &canonical, arch, cols, &mut values)?;
+                    let mut packed = Vec::new();
+                    for row in values.chunks_exact(cols) {
+                        packed.extend_from_slice(&compute::quant_gguf::quantize_q8_0(row));
+                    }
+                    slot_lossy.push((name.to_string(), elements));
+                    slot_out.push(ResidentEntrySpec::Raw(RawTensorSpec {
+                        name: canonical,
+                        dtype: crate::resident_writer::DTYPE_GGUF_Q8_0,
+                        bytes: packed,
+                        shape: logical_shape(&info.dims),
+                    }));
+                    continue;
+                }
+                if family == ModelFamily::Qwen4Exp
+                    && canonical.ends_with("linear_attn.out_proj.weight")
+                    && QWEN4EXP_SSM_OUT_TRANSCODE_TYPES.contains(&info.ggml_type)
+                {
+                    // Qwen3.8's 48 V heads are 128 columns wide, while this artifact
+                    // quantizes `ssm_out` in 256-element blocks. A block spans two
+                    // heads, so no byte permutation can restore the runtime's
+                    // even/odd V-head order. Dequantize one matrix, permute its
+                    // columns, and carry the values as BF16; this keeps the source
+                    // quantization values while avoiding a false byte-level shuffle.
+                    let elements = info
+                        .dims
+                        .iter()
+                        .try_fold(1u64, |count, &dim| count.checked_mul(dim))
+                        .and_then(|count| usize::try_from(count).ok())
+                        .ok_or_else(|| GgufRepackError::ShapeMismatch {
+                            tensor: name.to_string(),
+                            detail: "V-head output projection element count overflows".to_string(),
+                        })?;
+                    let values = dequantize_ssm_out(info.ggml_type, &bytes, elements);
+                    if values.len() != elements || values.iter().any(|value| !value.is_finite()) {
+                        return Err(GgufRepackError::ShapeMismatch {
+                            tensor: name.to_string(),
+                            detail: format!(
+                                "type {} dequantized to {} finite values, expected {elements}",
+                                info.ggml_type,
+                                values.len()
+                            ),
+                        });
+                    }
+                    let mut values = values;
+                    apply_source_convention(
+                        name,
+                        &canonical,
+                        arch,
+                        row_and_col(&info.dims).1,
+                        &mut values,
+                    )?;
+                    let (spec, precision_loss) = raw_bf16_spec(canonical, &values, &info.dims);
+                    if precision_loss > 0 {
+                        slot_lossy.push((name.to_string(), precision_loss));
+                    }
+                    slot_out.push(spec);
+                    continue;
+                }
+                let mut bytes = bytes;
+                apply_source_convention_bytes(
+                    name,
+                    &canonical,
+                    arch,
+                    row_and_col(&info.dims),
+                    info.ggml_type,
+                    &mut bytes,
+                )?;
+                slot_out.push(ResidentEntrySpec::Raw(RawTensorSpec {
+                    name: canonical,
+                    dtype,
+                    bytes,
+                    shape: logical_shape(&info.dims),
+                }));
+            }
+            Ok(())
+        })();
+        prefetched.clear();
+        step_result?;
+    }
+
+    let mut out: Vec<ResidentEntrySpec> = out_slots.into_iter().flatten().collect();
+    let lossy: Vec<(String, usize)> = lossy_slots.into_iter().flatten().collect();
+
+    if !indexer_projection_parts.is_empty() {
+        let mut validated = Vec::with_capacity(indexer_projection_parts.len());
+        let mut idx_ranges = Vec::with_capacity(indexer_projection_parts.len() * 2);
+        for (layer, (query_name, key_name)) in indexer_projection_parts {
+            let query_name = query_name.ok_or_else(|| GgufRepackError::MissingTensor {
+                name: format!("blk.{layer}.indexer.q_proj.weight"),
+            })?;
+            let key_name = key_name.ok_or_else(|| GgufRepackError::MissingTensor {
+                name: format!("blk.{layer}.indexer.k_proj.weight"),
+            })?;
+            let query_info = &header.tensors[query_name];
+            let key_info = &header.tensors[key_name];
+            let expected_q = arch
+                .compressed_attention
+                .index_n_heads
+                .checked_mul(arch.compressed_attention.index_head_dim)
                 .ok_or_else(|| GgufRepackError::ShapeMismatch {
                     tensor: query_name.to_string(),
-                    detail: "combined QSA projection row count overflows".to_string(),
+                    detail: "QSA query projection width overflows".to_string(),
                 })?;
-        out.push(ResidentEntrySpec::Raw(RawTensorSpec {
-            name: format!(
-                "language_model.model.layers.{layer}.self_attn.indexer.index_qk_proj.weight"
-            ),
-            dtype: crate::resident_writer::DTYPE_BF16,
-            bytes,
-            shape: logical_shape(&[hidden, combined_rows]),
-        }));
+            let hidden =
+                u64::try_from(arch.hidden_size).map_err(|_| GgufRepackError::ShapeMismatch {
+                    tensor: query_name.to_string(),
+                    detail: "hidden size is negative".to_string(),
+                })?;
+            let query_rows =
+                u64::try_from(expected_q).map_err(|_| GgufRepackError::ShapeMismatch {
+                    tensor: query_name.to_string(),
+                    detail: "QSA query projection width is negative".to_string(),
+                })?;
+            let key_rows =
+                u64::try_from(arch.compressed_attention.index_head_dim).map_err(|_| {
+                    GgufRepackError::ShapeMismatch {
+                        tensor: key_name.to_string(),
+                        detail: "QSA key projection width is negative".to_string(),
+                    }
+                })?;
+            for (name, info, output_rows) in [
+                (query_name, query_info, query_rows),
+                (key_name, key_info, key_rows),
+            ] {
+                if info.dims != [hidden, output_rows] || info.ggml_type != 30 {
+                    return Err(GgufRepackError::ShapeMismatch {
+                        tensor: name.to_string(),
+                        detail: format!(
+                            "Qwen4Exp QSA parts must be BF16 type 30 with GGUF shape \
+                             [{hidden}, {output_rows}], got type {} shape {:?}",
+                            info.ggml_type, info.dims
+                        ),
+                    });
+                }
+            }
+            if query_info.ggml_type != key_info.ggml_type {
+                return Err(GgufRepackError::ShapeMismatch {
+                    tensor: key_name.to_string(),
+                    detail: "Qwen4Exp QSA query and key projections use different dtypes"
+                        .to_string(),
+                });
+            }
+            let combined_rows =
+                query_rows
+                    .checked_add(key_rows)
+                    .ok_or_else(|| GgufRepackError::ShapeMismatch {
+                        tensor: query_name.to_string(),
+                        detail: "combined QSA projection row count overflows".to_string(),
+                    })?;
+            let qr = header.absolute_range(query_name).ok_or_else(|| {
+                GgufRepackError::MissingTensor {
+                    name: query_name.to_string(),
+                }
+            })??;
+            let kr = header.absolute_range(key_name).ok_or_else(|| {
+                GgufRepackError::MissingTensor {
+                    name: key_name.to_string(),
+                }
+            })??;
+            idx_ranges.push(qr);
+            idx_ranges.push(kr);
+            validated.push((layer, query_name, key_name, hidden, combined_rows));
+        }
+        prefetched.prefetch(&idx_ranges)?;
+        let idx_result = (|| -> Result<(), GgufRepackError> {
+            for (layer, query_name, key_name, hidden, combined_rows) in validated {
+                let mut bytes = read_tensor(header, &prefetched, query_name)?;
+                bytes.extend_from_slice(&read_tensor(header, &prefetched, key_name)?);
+                out.push(ResidentEntrySpec::Raw(RawTensorSpec {
+                    name: format!(
+                        "language_model.model.layers.{layer}.self_attn.indexer.index_qk_proj.weight"
+                    ),
+                    dtype: crate::resident_writer::DTYPE_BF16,
+                    bytes,
+                    shape: logical_shape(&[hidden, combined_rows]),
+                }));
+            }
+            Ok(())
+        })();
+        prefetched.clear();
+        idx_result?;
     }
     Ok((out, lossy))
 }

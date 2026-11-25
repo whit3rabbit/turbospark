@@ -7,6 +7,9 @@ mod chunks;
 mod http;
 
 pub use http::{hf_token_allowed_for_url, ByteProgressCallback, CancelFlag, HttpRangeSource};
+pub(crate) use prefetched::PrefetchedRangeSource;
+
+mod prefetched;
 
 use crate::gguf_header::{
     parse_header as parse_gguf, GgufHeader, GgufHeaderError, DEFAULT_MAX_HEADER_BYTES as GGUF_CAP,
@@ -103,6 +106,18 @@ impl From<SafetensorsHeaderError> for DownloadError {
 /// connection to exercise.
 pub trait RangeSource {
     fn read_range(&self, start: u64, end_exclusive: u64) -> Result<Vec<u8>, DownloadError>;
+
+    /// Reads multiple byte ranges, returning each range's bytes in the same
+    /// order as `ranges`. HTTP-backed sources coalesce nearby ranges and
+    /// transfer chunks concurrently; in-memory and virtual sources default to
+    /// reading each range in turn.
+    fn read_ranges(&self, ranges: &[(u64, u64)]) -> Result<Vec<Vec<u8>>, DownloadError> {
+        let mut out = Vec::with_capacity(ranges.len());
+        for &(start, end_exclusive) in ranges {
+            out.push(self.read_range(start, end_exclusive)?);
+        }
+        Ok(out)
+    }
 }
 
 /// Fetches the safetensors header from `source` without downloading the

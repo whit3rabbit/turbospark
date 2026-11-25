@@ -260,13 +260,26 @@ pub(crate) fn encode_resid_capture(
     hidden: usize,
     x_off: u64,
 ) -> Result<(), crate::real_forward_types::RealForwardError> {
+    encode_resid_capture_buf(context, pass, &scratch.x, capture, layer, hidden, x_off)
+}
+
+/// [`encode_resid_capture`] against an explicit residual-stream buffer.
+pub(crate) fn encode_resid_capture_buf(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    x_buf: &gpu::MetalBuffer,
+    capture: Option<&ResidCapture>,
+    layer: usize,
+    hidden: usize,
+    x_off: u64,
+) -> Result<(), crate::real_forward_types::RealForwardError> {
     let Some(c) = capture else {
         return Ok(());
     };
     gpu::encode_dflash_copy_rows(
         context,
         pass,
-        (&scratch.x, x_off),
+        (x_buf, x_off),
         (&c.capture, c.layer_offset(layer)),
         1,
         hidden as u32,

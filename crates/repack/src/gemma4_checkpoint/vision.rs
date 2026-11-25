@@ -577,67 +577,111 @@ pub fn read_vision_entries_quantized(
 
     // The resident nine, renamed onto the install's own prefix.
     let mut entries = Vec::with_capacity(resident_tensors.len());
-    for (slot, name) in resident_names.iter().enumerate() {
-        let name = name.expect("checked above");
-        let (converted, shape) = read_tower_tensor(shards, name, quant)?;
-        if converted.lossy > 0 {
-            lossy_conversion.push((name.to_string(), converted.lossy));
+    // Prefetch resident + deepstack vision tensors in one coalesced batch.
+    {
+        let mut prefetch_names = Vec::new();
+        for name in resident_names
+            .iter()
+            .flatten()
+            .chain(deepstack_names.iter().flat_map(|r| r.iter().flatten()))
+        {
+            collect_vision_prefetch_names(shards, name, quant, &mut prefetch_names);
         }
-        entries.push(ResidentEntrySpec::Raw(RawTensorSpec {
-            name: format!("{VISION_INSTALL_PREFIX}{}", resident_tensors[slot]),
-            dtype: converted.dtype,
-            bytes: converted.bytes,
-            shape: resident_shape(name, &shape)?,
-        }));
-    }
-
-    // The deepstack mergers, resident behind their own prefix level. Written
-    // AFTER the main nine so a hexdump of the resident region reads tower
-    // order: the main merger, then the three injections in index order.
-    for (index, roles) in deepstack_names.iter().enumerate() {
-        for (role, name) in roles.iter().enumerate() {
+        let prefetch_refs: Vec<&str> = prefetch_names.iter().map(String::as_str).collect();
+        let _guard = shards.prefetch_guard(&prefetch_refs)?;
+        for (slot, name) in resident_names.iter().enumerate() {
             let name = name.expect("checked above");
             let (converted, shape) = read_tower_tensor(shards, name, quant)?;
             if converted.lossy > 0 {
                 lossy_conversion.push((name.to_string(), converted.lossy));
             }
             entries.push(ResidentEntrySpec::Raw(RawTensorSpec {
-                name: format!(
-                    "{VISION_INSTALL_PREFIX}{DEEPSTACK_MERGER_PREFIX}{index}.{}",
-                    DEEPSTACK_MERGER_SUFFIXES[role]
-                ),
+                name: format!("{VISION_INSTALL_PREFIX}{}", resident_tensors[slot]),
                 dtype: converted.dtype,
                 bytes: converted.bytes,
                 shape: resident_shape(name, &shape)?,
             }));
         }
+
+        // The deepstack mergers, resident behind their own prefix level. Written
+        // AFTER the main nine so a hexdump of the resident region reads tower
+        // order: the main merger, then the three injections in index order.
+        for (index, roles) in deepstack_names.iter().enumerate() {
+            for (role, name) in roles.iter().enumerate() {
+                let name = name.expect("checked above");
+                let (converted, shape) = read_tower_tensor(shards, name, quant)?;
+                if converted.lossy > 0 {
+                    lossy_conversion.push((name.to_string(), converted.lossy));
+                }
+                entries.push(ResidentEntrySpec::Raw(RawTensorSpec {
+                    name: format!(
+                        "{VISION_INSTALL_PREFIX}{DEEPSTACK_MERGER_PREFIX}{index}.{}",
+                        DEEPSTACK_MERGER_SUFFIXES[role]
+                    ),
+                    dtype: converted.dtype,
+                    bytes: converted.bytes,
+                    shape: resident_shape(name, &shape)?,
+                }));
+            }
+        }
     }
 
     // The blocks. One `ExpertBlob` each, sub-tensors in `BLOCK_ROLES` order.
+    // Prefetch blocks in ~128 MiB waves so all 300+ small vision tensors
+    // coalesce into concurrent HTTP range requests.
     let mut experts = Vec::with_capacity(depth);
     let mut widest = 0u64;
-    for (index, roles) in block_names.iter().enumerate() {
-        let mut sub_tensors = Vec::with_capacity(block_roles.len());
-        let mut used = 0u64;
-        for (role, name) in roles.iter().enumerate() {
-            let name = name.expect("checked above");
-            let (converted, shape) = read_tower_tensor(shards, name, quant)?;
-            if converted.lossy > 0 {
-                lossy_conversion.push((name.to_string(), converted.lossy));
+    let mut block_cursor = 0usize;
+    while block_cursor < block_names.len() {
+        let wave_start = block_cursor;
+        let mut wave_bytes = 0u64;
+        let mut prefetch_names = Vec::new();
+        while block_cursor < block_names.len() {
+            let mut block_names_vec = Vec::new();
+            let mut block_bytes = 0u64;
+            for name in block_names[block_cursor].iter().flatten() {
+                block_bytes = block_bytes.saturating_add(collect_vision_prefetch_names(
+                    shards,
+                    name,
+                    quant,
+                    &mut block_names_vec,
+                ));
             }
-            used += converted.bytes.len() as u64;
-            sub_tensors.push(SubTensor {
-                role: block_roles[role].0.to_string(),
-                bytes: converted.bytes,
-                dtype: "fp16".to_string(),
-                shape,
+            if block_cursor > wave_start
+                && wave_bytes.saturating_add(block_bytes) > super::shards::PREFETCH_WINDOW_BYTES
+            {
+                break;
+            }
+            wave_bytes = wave_bytes.saturating_add(block_bytes);
+            prefetch_names.extend(block_names_vec);
+            block_cursor += 1;
+        }
+        let prefetch_refs: Vec<&str> = prefetch_names.iter().map(String::as_str).collect();
+        let _guard = shards.prefetch_guard(&prefetch_refs)?;
+        for (offset, roles) in block_names[wave_start..block_cursor].iter().enumerate() {
+            let index = wave_start + offset;
+            let mut sub_tensors = Vec::with_capacity(block_roles.len());
+            let mut used = 0u64;
+            for (role, name) in roles.iter().enumerate() {
+                let name = name.expect("checked above");
+                let (converted, shape) = read_tower_tensor(shards, name, quant)?;
+                if converted.lossy > 0 {
+                    lossy_conversion.push((name.to_string(), converted.lossy));
+                }
+                used += converted.bytes.len() as u64;
+                sub_tensors.push(SubTensor {
+                    role: block_roles[role].0.to_string(),
+                    bytes: converted.bytes,
+                    dtype: "fp16".to_string(),
+                    shape,
+                });
+            }
+            widest = widest.max(used);
+            experts.push(ExpertBlob {
+                expert: index,
+                sub_tensors,
             });
         }
-        widest = widest.max(used);
-        experts.push(ExpertBlob {
-            expert: index,
-            sub_tensors,
-        });
     }
 
     Ok(VisionRead {
@@ -646,6 +690,35 @@ pub fn read_vision_entries_quantized(
         block_stride: widest.div_ceil(GTURBO_PAGE_BYTES) * GTURBO_PAGE_BYTES,
         lossy_conversion,
     })
+}
+
+fn collect_vision_prefetch_names(
+    shards: &Gemma4Shards<'_>,
+    name: &str,
+    quant: Option<&Gemma4Quant>,
+    out: &mut Vec<String>,
+) -> u64 {
+    let mut bytes = 0u64;
+    if let Ok((_, start, end)) = shards.location_of(name) {
+        bytes = bytes.saturating_add(end.saturating_sub(start));
+        out.push(name.to_string());
+    }
+    if quant.is_some() {
+        if let Ok(info) = shards.info(name) {
+            if info.dtype == "U32" {
+                if let Some(base) = name.strip_suffix(".weight") {
+                    for suffix in [".scales", ".biases"] {
+                        let companion = format!("{base}{suffix}");
+                        if let Ok((_, start, end)) = shards.location_of(&companion) {
+                            bytes = bytes.saturating_add(end.saturating_sub(start));
+                            out.push(companion);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    bytes
 }
 
 /// One tower tensor as FP16 bytes plus its LOGICAL shape.

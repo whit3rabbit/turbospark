@@ -406,11 +406,26 @@ fn plan_one_layer_inner(
         .collect();
     let mut used = 0u64;
 
+    let prefetched = source.map(crate::ranged_download::PrefetchedRangeSource::new);
+    if let Some(prefetched) = &prefetched {
+        let mut ranges = Vec::with_capacity(sources.len());
+        for s in sources {
+            let range =
+                header
+                    .absolute_range(s.name)
+                    .ok_or_else(|| GgufRepackError::MissingTensor {
+                        name: s.name.to_string(),
+                    })??;
+            ranges.push(range);
+        }
+        prefetched.prefetch(&ranges)?;
+    }
+
     for s in sources {
         let info = &header.tensors[s.name];
         let per = per_expert_bytes(header, s, arch)? as usize;
-        let bytes = match source {
-            Some(source) => read_tensor(header, source, s.name)?,
+        let bytes = match &prefetched {
+            Some(prefetched) => read_tensor(header, prefetched, s.name)?,
             None => vec![0u8; per * experts],
         };
         if bytes.len() != per * experts {

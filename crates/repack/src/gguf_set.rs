@@ -145,4 +145,46 @@ impl<S: RangeSource> RangeSource for GgufSet<S> {
             .ok_or_else(|| DownloadError::Request("GGUF tensor crosses shard boundary".into()))?;
         source.read_range(start - base, end - base)
     }
+
+    fn read_ranges(&self, ranges: &[(u64, u64)]) -> Result<Vec<Vec<u8>>, DownloadError> {
+        if ranges.is_empty() {
+            return Ok(Vec::new());
+        }
+        if ranges.len() == 1 {
+            return self.read_range(ranges[0].0, ranges[0].1).map(|v| vec![v]);
+        }
+        let mut by_shard: Vec<Vec<(usize, u64, u64)>> = vec![Vec::new(); self.sources.len()];
+        for (index, &(start, end)) in ranges.iter().enumerate() {
+            if start > end || end > self.bytes {
+                return Err(DownloadError::Request("invalid split GGUF range".into()));
+            }
+            if start == end {
+                continue;
+            }
+            let (shard_idx, base) = self
+                .sources
+                .iter()
+                .enumerate()
+                .find_map(|(i, (base, limit, _))| {
+                    (start >= *base && end <= *limit).then_some((i, *base))
+                })
+                .ok_or_else(|| {
+                    DownloadError::Request("GGUF tensor crosses shard boundary".into())
+                })?;
+            by_shard[shard_idx].push((index, start - base, end - base));
+        }
+
+        let mut out = vec![Vec::new(); ranges.len()];
+        for (shard_idx, items) in by_shard.into_iter().enumerate() {
+            if items.is_empty() {
+                continue;
+            }
+            let local_ranges: Vec<(u64, u64)> = items.iter().map(|&(_, s, e)| (s, e)).collect();
+            let fetched = self.sources[shard_idx].2.read_ranges(&local_ranges)?;
+            for ((orig_idx, _, _), bytes) in items.into_iter().zip(fetched) {
+                out[orig_idx] = bytes;
+            }
+        }
+        Ok(out)
+    }
 }

@@ -4,11 +4,12 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{Read as _, Seek as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::time::Duration;
+use std::sync::{Arc, Condvar, Mutex, OnceLock, RwLock};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::chunks::{
-    chunk_ranges, fill_chunks, MAX_RANGE_BYTES, RANGE_ATTEMPTS, RANGE_CONCURRENCY,
+    chunk_ranges, coalesce_ranges, fill_chunk_jobs, fill_chunks, ChunkJob, COALESCE_MAX_GAP_BYTES,
+    MAX_RANGE_BYTES, RANGE_ATTEMPTS, RANGE_CONCURRENCY,
 };
 use super::{DownloadError, RangeSource};
 
@@ -152,6 +153,12 @@ impl std::fmt::Debug for CancelFlag {
 /// A call is split into [`MAX_RANGE_BYTES`] chunks, up to
 /// [`RANGE_CONCURRENCY`] of them in flight at once, each retried up to
 /// [`RANGE_ATTEMPTS`] times. Callers see one contiguous `Vec` either way.
+#[derive(Clone)]
+struct CachedRedirect {
+    url: String,
+    expires_at: Instant,
+}
+
 pub struct HttpRangeSource {
     url: String,
     client: reqwest::blocking::Client,
@@ -172,6 +179,10 @@ pub struct HttpRangeSource {
     /// nothing else compares them to the file, so this is what `read_range`
     /// holds a declared range against before allocating for it.
     source_len: OnceLock<u64>,
+    /// Cached unauthenticated CDN redirect target (e.g. Xet CloudFront
+    /// presigned URL). Skips repeated 302 round trips through `huggingface.co`
+    /// on subsequent ranges and refreshes automatically if expired or rejected.
+    resolved_url: RwLock<Option<CachedRedirect>>,
 }
 
 /// The longest range `read_range` accepts when the server reports no file
@@ -190,26 +201,40 @@ const UNKNOWN_LENGTH_MAX_RANGE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
 /// recovers from a single slow or dropped chunk.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
+const MAX_REDIRECTS: usize = 10;
+const DEFAULT_REDIRECT_TTL: Duration = Duration::from_secs(600);
+const MIN_REDIRECT_TTL: Duration = Duration::from_secs(30);
+const MAX_REDIRECT_TTL: Duration = Duration::from_secs(1800);
+const REDIRECT_EXPIRY_MARGIN: Duration = Duration::from_secs(60);
 
 fn build_client() -> reqwest::blocking::Client {
-    reqwest::blocking::Client::builder()
-        // `http1_only` IS the optimization; [`RANGE_CONCURRENCY`] on its
-        // own is not. Every one of these URLs redirects to the Xet LFS
-        // bridge, which speaks HTTP/2, and reqwest would then multiplex
-        // all the concurrent chunk GETs onto ONE connection -- so one
-        // CloudFront edge, so the one per-edge rate cap, so the
-        // concurrency buys exactly nothing. There is no error and no
-        // warning in that case, only the old wall clock (AGENTS.md
-        // Gotcha 46). HTTP/1.1 forces a connection per in-flight
-        // request, which is what the measurement in
-        // [`RANGE_CONCURRENCY`]'s table was taken over.
-        .http1_only()
-        .pool_max_idle_per_host(RANGE_CONCURRENCY)
-        .connect_timeout(CONNECT_TIMEOUT)
-        .timeout(REQUEST_TIMEOUT)
-        .build()
-        // Matches `Client::new`, which panics on the same failure.
-        .expect("blocking HTTP client")
+    static CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            reqwest::blocking::Client::builder()
+                // `http1_only` IS the optimization; [`RANGE_CONCURRENCY`] on its
+                // own is not. Every one of these URLs redirects to the Xet LFS
+                // bridge, which speaks HTTP/2, and reqwest would then multiplex
+                // all the concurrent chunk GETs onto ONE connection -- so one
+                // CloudFront edge, so the one per-edge rate cap, so the
+                // concurrency buys exactly nothing. There is no error and no
+                // warning in that case, only the old wall clock (AGENTS.md
+                // Gotcha 46). HTTP/1.1 forces a connection per in-flight
+                // request, which is what the measurement in
+                // [`RANGE_CONCURRENCY`]'s table was taken over.
+                .http1_only()
+                .pool_max_idle_per_host(RANGE_CONCURRENCY * 2)
+                .connect_timeout(CONNECT_TIMEOUT)
+                .timeout(REQUEST_TIMEOUT)
+                // Redirects are followed manually in `send_range_from_origin`
+                // so the presigned CDN URL can be cached across chunks while
+                // keeping `Authorization` strictly scoped to the origin host.
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                // Matches `Client::new`, which panics on the same failure.
+                .expect("blocking HTTP client")
+        })
+        .clone()
 }
 
 impl HttpRangeSource {
@@ -223,6 +248,7 @@ impl HttpRangeSource {
             cache_dir: None,
             pinned_identity: None,
             source_len: OnceLock::new(),
+            resolved_url: RwLock::new(None),
         }
     }
 
@@ -236,6 +262,7 @@ impl HttpRangeSource {
             cache_dir: None,
             pinned_identity: None,
             source_len: OnceLock::new(),
+            resolved_url: RwLock::new(None),
         }
     }
 
@@ -375,7 +402,11 @@ impl HttpRangeSource {
                 .open(&temp)?;
             file.write_all(model_io::hash_data(bytes).as_bytes())?;
             file.write_all(bytes)?;
-            file.sync_all()?;
+            // Skip `sync_all` (`F_FULLFSYNC` on macOS) for temporary resume
+            // cache chunks: every entry carries a 64-byte SHA-256 prefix and
+            // is atomically renamed; any truncated or un-flushed entry after
+            // power loss is detected and refetched by `read_cached_chunk`.
+            drop(file);
             match fs::rename(&temp, &path) {
                 Ok(()) => Ok(()),
                 Err(_) if path.is_file() => {
@@ -390,47 +421,121 @@ impl HttpRangeSource {
         }
     }
 
+    fn cached_redirect_url(&self) -> Option<String> {
+        let guard = self.resolved_url.read().unwrap_or_else(|p| p.into_inner());
+        let entry = guard.as_ref()?;
+        (Instant::now() < entry.expires_at).then(|| entry.url.clone())
+    }
+
+    fn clear_cached_redirect(&self) {
+        *self.resolved_url.write().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+
+    fn store_cached_redirect(&self, url: String) {
+        let ttl = redirect_ttl_for_url(&url);
+        *self.resolved_url.write().unwrap_or_else(|p| p.into_inner()) = Some(CachedRedirect {
+            url,
+            expires_at: Instant::now() + ttl,
+        });
+    }
+
+    fn send_single_range_request(
+        &self,
+        url: &str,
+        range_header: &str,
+        send_auth: bool,
+    ) -> Result<reqwest::blocking::Response, DownloadError> {
+        let mut request = self
+            .client
+            .get(url)
+            .header(reqwest::header::RANGE, range_header);
+        if send_auth {
+            if let Some(token) = self
+                .token
+                .as_ref()
+                .filter(|_| hf_token_allowed_for_url(url))
+            {
+                request = request.bearer_auth(token);
+            }
+        }
+        if let Some((_, _, Some(validator))) = &self.pinned_identity {
+            request = request.header(reqwest::header::IF_MATCH, format!("\"{validator}\""));
+        }
+        request
+            .send()
+            .map_err(|e| DownloadError::Request(e.to_string()))
+    }
+
     /// Issues one `Range` GET and requires a 206.
     fn send_range(
         &self,
         start: u64,
         end_inclusive: u64,
     ) -> Result<reqwest::blocking::Response, DownloadError> {
-        let mut request = self.client.get(&self.url).header(
-            reqwest::header::RANGE,
-            format!("bytes={start}-{end_inclusive}"),
-        );
-        if let Some(token) = self
-            .token
-            .as_ref()
-            .filter(|_| hf_token_allowed_for_url(&self.url))
-        {
-            request = request.bearer_auth(token);
+        let range_header = format!("bytes={start}-{end_inclusive}");
+        if let Some(cached) = self.cached_redirect_url() {
+            match self.send_single_range_request(&cached, &range_header, false) {
+                Ok(response) if response.status().as_u16() == 206 => return Ok(response),
+                Ok(response) if throttled_status(response.status().as_u16()) => {
+                    return Err(unexpected_status(&response));
+                }
+                Ok(_) | Err(_) => {
+                    // Presigned CDN URL expired, was rejected, or dropped;
+                    // re-resolve cleanly from the origin URL.
+                    self.clear_cached_redirect();
+                }
+            }
         }
-        if let Some((_, _, Some(validator))) = &self.pinned_identity {
-            request = request.header(reqwest::header::IF_MATCH, format!("\"{validator}\""));
-        }
-        let response = request
-            .send()
-            .map_err(|e| DownloadError::Request(e.to_string()))?;
-        if response.status().as_u16() != 206 {
+        self.send_range_from_origin(&range_header)
+    }
+
+    fn send_range_from_origin(
+        &self,
+        range_header: &str,
+    ) -> Result<reqwest::blocking::Response, DownloadError> {
+        let origin_parsed = reqwest::Url::parse(&self.url).ok();
+        let mut current_url = self.url.clone();
+        for hop in 0..=MAX_REDIRECTS {
+            let current_parsed = reqwest::Url::parse(&current_url).ok();
+            let same_as_origin = match (&origin_parsed, &current_parsed) {
+                (Some(a), Some(b)) => same_origin(a, b),
+                _ => hop == 0,
+            };
+            let send_auth = same_as_origin && hf_token_allowed_for_url(&current_url);
+            let response = self.send_single_range_request(&current_url, range_header, send_auth)?;
             let status = response.status().as_u16();
-            // `Retry-After` is read HERE because it is a property of this
-            // response and is gone by the time the ladder sees the error.
-            // Seconds form only: the HTTP-date form is legal and no CDN in
-            // this walk's path uses it, so parsing one would be untested code
-            // guarding an unobserved case.
-            let retry_after = response
-                .headers()
-                .get(reqwest::header::RETRY_AFTER)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.trim().parse::<u64>().ok());
-            return Err(DownloadError::UnexpectedStatus {
-                status,
-                retry_after,
-            });
+            if matches!(status, 301 | 302 | 303 | 307 | 308) {
+                if hop == MAX_REDIRECTS {
+                    return Err(DownloadError::Request("too many redirects".into()));
+                }
+                let Some(location) = response
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|v| v.to_str().ok())
+                else {
+                    return Err(unexpected_status(&response));
+                };
+                let next = match current_parsed {
+                    Some(base) => base
+                        .join(location)
+                        .map_err(|e| DownloadError::Request(format!("invalid redirect: {e}")))?
+                        .into(),
+                    None => location.to_string(),
+                };
+                current_url = next;
+                continue;
+            }
+            if status != 206 {
+                return Err(unexpected_status(&response));
+            }
+            // Cache unauthenticated redirect targets (e.g. Xet/CloudFront
+            // presigned URLs) so subsequent ranges bypass `huggingface.co`.
+            if hop > 0 && !send_auth {
+                self.store_cached_redirect(current_url);
+            }
+            return Ok(response);
         }
-        Ok(response)
+        Err(DownloadError::Request("too many redirects".into()))
     }
 
     /// Keeps the file length from a 206's `Content-Range: bytes a-b/total`. A
@@ -891,6 +996,59 @@ fn throttle_backoff(attempt: usize, retry_after: Option<u64>) -> std::time::Dura
     std::time::Duration::from_secs(seconds)
 }
 
+fn unexpected_status(response: &reqwest::blocking::Response) -> DownloadError {
+    let status = response.status().as_u16();
+    // `Retry-After` is read HERE because it is a property of this
+    // response and is gone by the time the ladder sees the error.
+    // Seconds form only: the HTTP-date form is legal and no CDN in
+    // this walk's path uses it, so parsing one would be untested code
+    // guarding an unobserved case.
+    let retry_after = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<u64>().ok());
+    DownloadError::UnexpectedStatus {
+        status,
+        retry_after,
+    }
+}
+
+fn same_origin(a: &reqwest::Url, b: &reqwest::Url) -> bool {
+    a.scheme() == b.scheme()
+        && a.host_str()
+            .zip(b.host_str())
+            .is_some_and(|(ha, hb)| ha.eq_ignore_ascii_case(hb))
+        && a.port_or_known_default() == b.port_or_known_default()
+}
+
+/// Derives a bounded TTL from a presigned redirect URL's `Expires` (epoch
+/// seconds) or `X-Amz-Expires` (delta seconds) query parameter when present.
+fn redirect_ttl_for_url(url: &str) -> Duration {
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return DEFAULT_REDIRECT_TTL;
+    };
+    let now_epoch = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    for (key, value) in parsed.query_pairs() {
+        if key.eq_ignore_ascii_case("Expires") {
+            if let Ok(expiry_epoch) = value.parse::<u64>() {
+                let remaining = expiry_epoch.saturating_sub(now_epoch);
+                let safe = Duration::from_secs(remaining).saturating_sub(REDIRECT_EXPIRY_MARGIN);
+                return safe.clamp(MIN_REDIRECT_TTL, MAX_REDIRECT_TTL);
+            }
+        } else if key.eq_ignore_ascii_case("X-Amz-Expires") {
+            if let Ok(seconds) = value.parse::<u64>() {
+                let safe = Duration::from_secs(seconds).saturating_sub(REDIRECT_EXPIRY_MARGIN);
+                return safe.clamp(MIN_REDIRECT_TTL, MAX_REDIRECT_TTL);
+            }
+        }
+    }
+    DEFAULT_REDIRECT_TTL
+}
+
 impl RangeSource for HttpRangeSource {
     fn read_range(&self, start: u64, end_exclusive: u64) -> Result<Vec<u8>, DownloadError> {
         if let Some(cancel) = &self.cancel {
@@ -911,6 +1069,86 @@ impl RangeSource for HttpRangeSource {
             RANGE_CONCURRENCY,
             |chunk_start, chunk_end, dst| self.read_chunk_retrying(chunk_start, chunk_end, dst),
         )?;
+        Ok(out)
+    }
+
+    fn read_ranges(&self, ranges: &[(u64, u64)]) -> Result<Vec<Vec<u8>>, DownloadError> {
+        if ranges.is_empty() {
+            return Ok(Vec::new());
+        }
+        if ranges.len() == 1 {
+            return self.read_range(ranges[0].0, ranges[0].1).map(|v| vec![v]);
+        }
+        if let Some(cancel) = &self.cancel {
+            cancel.checkpoint()?;
+        }
+        for &(start, end_exclusive) in ranges {
+            if start > end_exclusive {
+                return Err(DownloadError::InvalidRange {
+                    start,
+                    end_exclusive,
+                });
+            }
+        }
+        let spans = coalesce_ranges(ranges, COALESCE_MAX_GAP_BYTES);
+        if spans.is_empty() {
+            return Ok(vec![Vec::new(); ranges.len()]);
+        }
+        let mut total_span_bytes = 0u64;
+        for span in &spans {
+            self.check_range_within_source(span.start, span.end_exclusive)?;
+            total_span_bytes = total_span_bytes
+                .checked_add(span.end_exclusive - span.start)
+                .ok_or(DownloadError::InvalidRange {
+                    start: span.start,
+                    end_exclusive: span.end_exclusive,
+                })?;
+        }
+        if self.known_source_len().is_none() && total_span_bytes > UNKNOWN_LENGTH_MAX_RANGE_BYTES {
+            let last = spans.last().expect("spans is non-empty");
+            return Err(DownloadError::InvalidRange {
+                start: spans[0].start,
+                end_exclusive: last.end_exclusive,
+            });
+        }
+
+        let mut span_buffers: Vec<Vec<u8>> = spans
+            .iter()
+            .map(|span| vec![0u8; (span.end_exclusive - span.start) as usize])
+            .collect();
+        {
+            let mut jobs: Vec<ChunkJob<'_>> = Vec::new();
+            for (span, buf) in spans.iter().zip(span_buffers.iter_mut()) {
+                let chunks = chunk_ranges(span.start, span.end_exclusive, MAX_RANGE_BYTES);
+                let mut rest: &mut [u8] = buf.as_mut_slice();
+                for (chunk_start, chunk_end) in chunks {
+                    let (head, tail) = rest.split_at_mut((chunk_end - chunk_start) as usize);
+                    let job_index = jobs.len();
+                    jobs.push((job_index, chunk_start, chunk_end, head));
+                    rest = tail;
+                }
+            }
+            fill_chunk_jobs(jobs, RANGE_CONCURRENCY, |chunk_start, chunk_end, dst| {
+                self.read_chunk_retrying(chunk_start, chunk_end, dst)
+            })?;
+        }
+
+        let mut out = vec![Vec::new(); ranges.len()];
+        for (span, buf) in spans.into_iter().zip(span_buffers) {
+            if span.members.len() == 1 {
+                let member = span.members[0];
+                if ranges[member] == (span.start, span.end_exclusive) {
+                    out[member] = buf;
+                    continue;
+                }
+            }
+            for member in span.members {
+                let (rs, re) = ranges[member];
+                let lo = (rs - span.start) as usize;
+                let hi = (re - span.start) as usize;
+                out[member] = buf[lo..hi].to_vec();
+            }
+        }
         Ok(out)
     }
 }
@@ -1110,6 +1348,185 @@ mod tests {
             secs.iter().sum::<u64>() < 150,
             "the ladder must stay bounded"
         );
+    }
+
+    fn spawn_range_server(
+        payload: Vec<u8>,
+        redirect_hits: Arc<std::sync::atomic::AtomicUsize>,
+        cdn_hits: Arc<std::sync::atomic::AtomicUsize>,
+        expire_cdn_on_hit: Option<usize>,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        use std::io::{BufRead as _, BufReader, Write as _};
+        use std::net::TcpListener;
+
+        let cdn = TcpListener::bind("127.0.0.1:0").expect("bind cdn");
+        let cdn_addr = cdn.local_addr().unwrap();
+        let origin = TcpListener::bind("127.0.0.1:0").expect("bind origin");
+        let origin_addr = origin.local_addr().unwrap();
+
+        let cdn_payload = Arc::new(payload);
+        let cdn_hits_thread = Arc::clone(&cdn_hits);
+        std::thread::spawn(move || {
+            for stream in cdn.incoming().flatten() {
+                let cdn_payload = Arc::clone(&cdn_payload);
+                let cdn_hits_thread = Arc::clone(&cdn_hits_thread);
+                std::thread::spawn(move || {
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut stream = stream;
+                    loop {
+                        let mut req_line = String::new();
+                        if reader.read_line(&mut req_line).unwrap_or(0) == 0 {
+                            break;
+                        }
+                        let mut range = None;
+                        let mut saw_auth = false;
+                        loop {
+                            let mut line = String::new();
+                            if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                                break;
+                            }
+                            let lower = line.to_ascii_lowercase();
+                            if let Some(rest) = lower.strip_prefix("range: bytes=") {
+                                let rest = rest.trim();
+                                if let Some((a, b)) = rest.split_once('-') {
+                                    if let (Ok(s), Ok(e)) = (a.parse::<usize>(), b.parse::<usize>())
+                                    {
+                                        range = Some((s, e));
+                                    }
+                                }
+                            }
+                            if lower.starts_with("authorization:") {
+                                saw_auth = true;
+                            }
+                        }
+                        let hit = cdn_hits_thread.fetch_add(1, Ordering::SeqCst) + 1;
+                        assert!(!saw_auth, "bearer token must never be forwarded to CDN");
+                        if expire_cdn_on_hit == Some(hit) {
+                            let resp = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n";
+                            let _ = stream.write_all(resp.as_bytes());
+                            continue;
+                        }
+                        let (start, end_incl) = range.unwrap_or((0, cdn_payload.len() - 1));
+                        let slice = &cdn_payload[start..=end_incl];
+                        let header = format!(
+                            "HTTP/1.1 206 Partial Content\r\n\
+                             Content-Range: bytes {start}-{end_incl}/{}\r\n\
+                             Content-Length: {}\r\n\r\n",
+                            cdn_payload.len(),
+                            slice.len()
+                        );
+                        if stream.write_all(header.as_bytes()).is_err()
+                            || stream.write_all(slice).is_err()
+                        {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+
+        let handle = std::thread::spawn(move || {
+            for stream in origin.incoming().flatten() {
+                let redirect_hits = Arc::clone(&redirect_hits);
+                std::thread::spawn(move || {
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    let mut stream = stream;
+                    loop {
+                        let mut req_line = String::new();
+                        if reader.read_line(&mut req_line).unwrap_or(0) == 0 {
+                            break;
+                        }
+                        loop {
+                            let mut line = String::new();
+                            if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                                break;
+                            }
+                        }
+                        let hit = redirect_hits.fetch_add(1, Ordering::SeqCst) + 1;
+                        let resp = format!(
+                            "HTTP/1.1 302 Found\r\n\
+                             Location: http://{cdn_addr}/blob?v={hit}&X-Amz-Expires=3600\r\n\
+                             Content-Length: 0\r\n\r\n"
+                        );
+                        if stream.write_all(resp.as_bytes()).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+
+        (
+            format!("http://{origin_addr}/resolve/main/model.bin"),
+            handle,
+        )
+    }
+
+    #[test]
+    fn redirect_is_cached_across_ranges_and_refreshed_on_expiry() {
+        use std::sync::atomic::AtomicUsize;
+
+        let payload: Vec<u8> = (0..1024).map(|i| (i % 251) as u8).collect();
+        let origin_hits = Arc::new(AtomicUsize::new(0));
+        let cdn_hits = Arc::new(AtomicUsize::new(0));
+        // Expire the cached CDN URL on its 3rd hit to prove automatic fallback.
+        let (url, _handle) = spawn_range_server(
+            payload.clone(),
+            Arc::clone(&origin_hits),
+            Arc::clone(&cdn_hits),
+            Some(3),
+        );
+        let source = HttpRangeSource::new(url).with_token("secret-token");
+
+        assert_eq!(source.read_range(0, 16).unwrap(), payload[0..16]);
+        assert_eq!(origin_hits.load(Ordering::SeqCst), 1);
+
+        // Second read uses the cached CDN URL without hitting origin again.
+        assert_eq!(source.read_range(16, 48).unwrap(), payload[16..48]);
+        assert_eq!(origin_hits.load(Ordering::SeqCst), 1);
+
+        // Third read hits the expired 403 on CDN, clears cache, re-resolves via origin, and succeeds.
+        assert_eq!(source.read_range(48, 80).unwrap(), payload[48..80]);
+        assert_eq!(origin_hits.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn read_ranges_coalesces_nearby_ranges_and_preserves_caller_order() {
+        use std::sync::atomic::AtomicUsize;
+
+        let payload: Vec<u8> = (0..200_000).map(|i| (i % 251) as u8).collect();
+        let origin_hits = Arc::new(AtomicUsize::new(0));
+        let cdn_hits = Arc::new(AtomicUsize::new(0));
+        let (url, _handle) = spawn_range_server(
+            payload.clone(),
+            Arc::clone(&origin_hits),
+            Arc::clone(&cdn_hits),
+            None,
+        );
+        let source = HttpRangeSource::new(url);
+        // Warm redirect once so only coalesced CDN hits are counted below.
+        let _ = source.read_range(0, 8).unwrap();
+        cdn_hits.store(0, Ordering::SeqCst);
+
+        // Three adjacent ranges (coalesced into 1 span) + one far range (> 64 KiB gap).
+        let ranges = vec![
+            (150_000, 150_500),
+            (100, 200),
+            (200, 350),
+            (400, 500),
+            (500, 500), // empty
+        ];
+        let results = source.read_ranges(&ranges).unwrap();
+        assert_eq!(results.len(), 5);
+        assert_eq!(results[0], payload[150_000..150_500]);
+        assert_eq!(results[1], payload[100..200]);
+        assert_eq!(results[2], payload[200..350]);
+        assert_eq!(results[3], payload[400..500]);
+        assert!(results[4].is_empty());
+        // Four non-empty ranges turned into exactly 2 HTTP requests (not 4).
+        assert_eq!(cdn_hits.load(Ordering::SeqCst), 2);
+        // Zero additional origin hits after the initial redirect.
+        assert_eq!(origin_hits.load(Ordering::SeqCst), 1);
     }
 }
 

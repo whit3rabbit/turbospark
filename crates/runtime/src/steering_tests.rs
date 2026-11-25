@@ -81,9 +81,16 @@ fn the_reason_is_present_exactly_when_the_family_cannot_steer() {
         F::Qwen3Moe,
         F::GptOss,
         F::MuseGlimmer,
+        F::Spark25,
+        F::Flint,
+        F::Lfm3,
+        F::UnlimitedOcr2,
+        F::Inkling2Loop,
         F::DeepseekV4Flash,
         F::Qwen4Exp,
-        F::Flint,
+        F::Deepseek2,
+        F::Gemma3,
+        F::Gemma2,
     ] {
         let dispatches = family_dispatches_steering(family);
         let reason = steering_unsupported_reason(family);
@@ -108,11 +115,10 @@ fn the_reason_is_present_exactly_when_the_family_cannot_steer() {
     }
 }
 
-/// Exactly two families cannot steer today, and both are refused for reasons
-/// recorded beside the predicate. Pinned so ADDING a family is a deliberate
-/// edit here rather than something a `_ =>` arm could absorb.
+/// Unsteerable families are pinned here so ADDING a family is a deliberate
+/// edit rather than something a `_ =>` arm could absorb.
 #[test]
-fn the_two_unsteerable_families_are_the_expected_ones() {
+fn the_unsteerable_families_are_the_expected_ones() {
     use model_io::ModelFamily as F;
     let unsupported: Vec<F> = [
         F::Gemma4,
@@ -120,15 +126,36 @@ fn the_two_unsteerable_families_are_the_expected_ones() {
         F::QwenGdnDense,
         F::Llama,
         F::Qwen3Moe,
+        F::Qwen3Dense,
+        F::Qwen2Dense,
         F::GptOss,
         F::MuseGlimmer,
+        F::Spark25,
+        F::MiniMaxM2,
+        F::Qwen3Vl,
+        F::Flint,
+        F::Lfm3,
+        F::UnlimitedOcr2,
+        F::Inkling2Loop,
         F::DeepseekV4Flash,
         F::Qwen4Exp,
+        F::Deepseek2,
+        F::Gemma3,
+        F::Gemma2,
     ]
     .into_iter()
     .filter(|f| !family_dispatches_steering(*f))
     .collect();
-    assert_eq!(unsupported, vec![F::DeepseekV4Flash, F::Qwen4Exp]);
+    assert_eq!(
+        unsupported,
+        vec![
+            F::DeepseekV4Flash,
+            F::Qwen4Exp,
+            F::Deepseek2,
+            F::Gemma3,
+            F::Gemma2,
+        ]
+    );
 }
 
 fn one_layer_set(hidden: usize, values: Vec<f32>) -> model_io::SteeringSet {

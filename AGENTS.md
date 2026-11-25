@@ -268,3 +268,4 @@ turn through `--messages-file`) unless `--raw` is given. The
 
 Report the files changed, focused checks run, any unrelated checkout failures,
 and whether a real hardware or release gate was actually run.
+- If using MobileBuildMCP, use the installed MobileBuildMCP skill before calling MobileBuildMCP tools.

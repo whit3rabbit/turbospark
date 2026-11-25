@@ -4,18 +4,19 @@
 Byte-range reads over a remote (HTTP) or in-memory source, used by the repacker to read safetensors and GGUF headers without downloading the tensor data, and to download whole files with resume via a range cache. `mod.rs` defines the `RangeSource` trait, the error type, and the header-fetch plans. `chunks.rs` partitions ranges and fills one buffer concurrently from disjoint slices. `http.rs` is the reqwest-blocking implementation with retry, pause/cancel, an on-disk range cache, and optional pinned-source validation.
 
 ## Interface
-- `RangeSource` [mod.rs:RangeSource]: trait, `read_range(start, end_exclusive) -> Result<Vec<u8>, DownloadError>` by absolute offset
+- `RangeSource` [mod.rs:RangeSource]: trait, `read_range(start, end_exclusive) -> Result<Vec<u8>, DownloadError>` and `read_ranges(&[(start, end_exclusive)]) -> Result<Vec<Vec<u8>>, DownloadError>` by absolute offset
+- `PrefetchedRangeSource` [prefetched.rs:PrefetchedRangeSource]: crate-private zero-copy prefetch cache over any `RangeSource`
 - `DownloadError` [mod.rs:DownloadError]: Request (also local filesystem failures and the refusing-to-overwrite check, not only transport errors [http.rs:PendingDownload::new, http.rs:PendingDownload::publish]), SourceIdentity, Cancelled, UnexpectedStatus{status, retry_after}, ShortRead, InvalidRange, Header, GgufHeader, TruncatedGguf
 - `fetch_safetensors_header` [mod.rs:fetch_safetensors_header]: reads the 8-byte prefix, then exactly the declared header
 - `fetch_gguf_header` [mod.rs:fetch_gguf_header]: geometric growth from `GGUF_INITIAL_FETCH_BYTES` (1 MiB) up to the GGUF cap, since GGUF has no length prefix
 - `MemoryRangeSource` [mod.rs:MemoryRangeSource]: in-memory source for tests
-- `HttpRangeSource` [http.rs:HttpRangeSource]: Range-GET source; builders `new`, `with_progress`, `with_cancel`, `with_token`, `with_optional_token`, `with_cache_dir`, `with_pinned_identity`
+- `HttpRangeSource` [http.rs:HttpRangeSource]: Range-GET source; builders `new`, `with_progress`, `with_cancel`, `with_token`, `with_optional_token`, `with_cache_dir`, `with_pinned_identity`; shares a process-wide HTTP/1.1 connection pool and caches unauthenticated CDN redirect URLs across ranges with automatic refresh on expiry/rejection
 - `HttpRangeSource::download_to` / `download_batch` [http.rs:HttpRangeSource]: whole-file download (at most `FILE_DOWNLOAD_WORKERS` = 8 files per batch), published by rename
 - `HttpRangeSource::invalidate_cache` / `source_cache_dir` [http.rs:HttpRangeSource]: per-source cache removal and location
 - `CancelFlag` [http.rs:CancelFlag]: cloneable cancel plus pause/resume control (`cancel`, `pause`, `resume`, `is_paused`, `is_cancelled`, `checkpoint`, `wait_for_retry`, `same_flag`)
 - `ByteProgressCallback` [http.rs:ByteProgressCallback]: per-chunk byte-count callback
 - `hf_token_allowed_for_url` [http.rs:hf_token_allowed_for_url]: gate for sending the HF token
-- `chunk_ranges`, `fill_chunks`, `MAX_RANGE_BYTES` (16 MiB), `RANGE_ATTEMPTS` (8), `RANGE_CONCURRENCY` (8) [chunks.rs] (crate-private to this module; `mod chunks` is not exported)
+- `chunk_ranges`, `coalesce_ranges`, `fill_chunks`, `fill_chunk_jobs`, `COALESCE_MAX_GAP_BYTES` (64 KiB), `MAX_RANGE_BYTES` (16 MiB), `RANGE_ATTEMPTS` (8), `RANGE_CONCURRENCY` (8) [chunks.rs] (crate-private to this module; `mod chunks` is not exported)
 
 ## Invariants
 - A safetensors header length above `DEFAULT_MAX_HEADER_BYTES` is rejected before the second read, so a hostile prefix cannot size the allocation [mod.rs:fetch_safetensors_header]
@@ -33,7 +34,7 @@ Byte-range reads over a remote (HTTP) or in-memory source, used by the repacker 
 
 ## Side Effects
 - Network: HTTP Range GETs (30 s connect, 600 s request timeout) [http.rs:build_client, http.rs:send_range]
-- Filesystem: range cache files and `.range-<pid>-<n>.tmp` temps under the cache dir, written with create_new, fsync, rename [http.rs:persist_cached_chunk]
+- Filesystem: range cache files and `.range-<pid>-<n>.tmp` temps under the cache dir, written with create_new and atomic rename (SHA-256 verified on read) [http.rs:persist_cached_chunk]
 - Filesystem: creates parent dirs and a `.turbospark-download-<pid>-<n>.partial` file, then renames it to the destination [http.rs:PendingDownload]
 - Filesystem: `invalidate_cache` removes the source's cache directory tree [http.rs:invalidate_cache]
 - Threads: scoped worker threads per multi-chunk read and per download batch [chunks.rs:fill_chunks, http.rs:download_batch]

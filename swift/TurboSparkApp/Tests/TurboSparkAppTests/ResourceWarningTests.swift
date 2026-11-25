@@ -7,14 +7,6 @@ import XCTest
 final class ResourceWarningTests: XCTestCase {
     typealias RW = ResourceWarning
 
-    func testMemoryLevelsFollowTheEngineVocabularyAndIgnoreUnknownWords() {
-        XCTAssertNil(RW.memoryLevel("normal"))
-        XCTAssertNil(RW.memoryLevel(nil))
-        XCTAssertNil(RW.memoryLevel("elevated"))
-        XCTAssertEqual(RW.memoryLevel("warn"), .warning)
-        XCTAssertEqual(RW.memoryLevel("Critical"), .critical)
-    }
-
     func testThermalWarnsOnlyFromSerious() {
         XCTAssertNil(RW.thermalLevel("nominal"))
         XCTAssertNil(RW.thermalLevel("fair"))
@@ -33,20 +25,17 @@ final class ResourceWarningTests: XCTestCase {
 
     func testNoLevelsWithoutALoadedModel() {
         XCTAssertEqual(RW.levels(
-            hasSession: false, memoryPressure: "critical", thermalLevel: "critical",
+            hasSession: false, thermalLevel: "critical",
             contextFraction: 1, isCompacting: false), [:])
         XCTAssertEqual(RW.levels(
-            hasSession: true, memoryPressure: "warn", thermalLevel: "nominal",
-            contextFraction: 0.9, isCompacting: false), [.memory: .warning, .context: .warning])
+            hasSession: true, thermalLevel: "nominal",
+            contextFraction: 0.9, isCompacting: false), [.context: .warning])
     }
 
     func testHigherLevelWinsThenKindOrder() {
         XCTAssertEqual(
-            RW.notice(levels: [.memory: .warning, .thermal: .critical], dismissed: [:], blockedByOtherStrip: false),
+            RW.notice(levels: [.context: .warning, .thermal: .critical], dismissed: [:], blockedByOtherStrip: false),
             RW.Notice(kind: .thermal, level: .critical))
-        XCTAssertEqual(
-            RW.notice(levels: [.thermal: .warning, .context: .warning, .memory: .warning], dismissed: [:], blockedByOtherStrip: false),
-            RW.Notice(kind: .memory, level: .warning))
         XCTAssertEqual(
             RW.notice(levels: [.thermal: .warning, .context: .warning], dismissed: [:], blockedByOtherStrip: false),
             RW.Notice(kind: .context, level: .warning))
@@ -55,21 +44,21 @@ final class ResourceWarningTests: XCTestCase {
 
     func testLoadFailureStallOrErrorStripWins() {
         XCTAssertNil(RW.notice(
-            levels: [.memory: .critical], dismissed: [:], blockedByOtherStrip: true))
+            levels: [.context: .critical], dismissed: [:], blockedByOtherStrip: true))
     }
 
     func testDismissHoldsUntilTheLevelWorsens() {
-        let warn = RW.Notice(kind: .memory, level: .warning)
+        let warn = RW.Notice(kind: .context, level: .warning)
         let held = RW.dismissing(warn, from: [:])
-        XCTAssertNil(RW.notice(levels: [.memory: .warning], dismissed: held, blockedByOtherStrip: false))
+        XCTAssertNil(RW.notice(levels: [.context: .warning], dismissed: held, blockedByOtherStrip: false))
         XCTAssertEqual(
-            RW.notice(levels: [.memory: .critical], dismissed: held, blockedByOtherStrip: false),
-            RW.Notice(kind: .memory, level: .critical))
+            RW.notice(levels: [.context: .critical], dismissed: held, blockedByOtherStrip: false),
+            RW.Notice(kind: .context, level: .critical))
     }
 
     func testDismissingOneResourceRevealsTheNextOne() {
-        let levels: [RW.Kind: RW.Level] = [.memory: .warning, .thermal: .warning]
-        let held = RW.dismissing(RW.Notice(kind: .memory, level: .warning), from: [:])
+        let levels: [RW.Kind: RW.Level] = [.context: .warning, .thermal: .warning]
+        let held = RW.dismissing(RW.Notice(kind: .context, level: .warning), from: [:])
         XCTAssertEqual(
             RW.notice(levels: levels, dismissed: held, blockedByOtherStrip: false),
             RW.Notice(kind: .thermal, level: .warning))
