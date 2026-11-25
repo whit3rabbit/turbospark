@@ -189,18 +189,26 @@ impl RealForwardRunner {
             }
         }
 
-        let q_norm = norm_view(
-            &self.weights,
-            &self.index,
-            &layer_tensor(layer, "self_attn.q_norm.weight"),
-            head_dim_l as usize,
-        )?;
-        let k_norm = norm_view(
-            &self.weights,
-            &self.index,
-            &layer_tensor(layer, "self_attn.k_norm.weight"),
-            head_dim_l as usize,
-        )?;
+        let q_norm = if !super::norm::applies_qk_norm(&arch) {
+            None
+        } else {
+            Some(norm_view(
+                &self.weights,
+                &self.index,
+                &layer_tensor(layer, "self_attn.q_norm.weight"),
+                head_dim_l as usize,
+            )?)
+        };
+        let k_norm = if !super::norm::applies_qk_norm(&arch) {
+            None
+        } else {
+            Some(norm_view(
+                &self.weights,
+                &self.index,
+                &layer_tensor(layer, "self_attn.k_norm.weight"),
+                head_dim_l as usize,
+            )?)
+        };
         let (rotated_pairs, theta) = if is_full {
             (
                 (arch.full_head_dim as f64 * arch.partial_rotary_factor / 2.0) as u32,
@@ -218,30 +226,32 @@ impl RealForwardRunner {
             let (v_buf, v_off) = self.kv.v_slot(layer, position);
             let v_row = (v_buf, v_off as u64);
 
-            super::norm::encode_norm_perhead(
-                &arch,
-                &mut self.context,
-                pass,
-                (&b_q, q_row),
-                q_norm,
-                (&b_q, q_row),
-                num_heads,
-                head_dim_l,
-                RMS_EPS,
-            )
-            .map_err(gpu_err)?;
-            super::norm::encode_norm_perhead(
-                &arch,
-                &mut self.context,
-                pass,
-                k_row,
-                k_norm,
-                k_row,
-                num_kv_l,
-                head_dim_l,
-                RMS_EPS,
-            )
-            .map_err(gpu_err)?;
+            if let (Some(q_norm), Some(k_norm)) = (q_norm, k_norm) {
+                super::norm::encode_norm_perhead(
+                    &arch,
+                    &mut self.context,
+                    pass,
+                    (&b_q, q_row),
+                    q_norm,
+                    (&b_q, q_row),
+                    num_heads,
+                    head_dim_l,
+                    RMS_EPS,
+                )
+                .map_err(gpu_err)?;
+                super::norm::encode_norm_perhead(
+                    &arch,
+                    &mut self.context,
+                    pass,
+                    k_row,
+                    k_norm,
+                    k_row,
+                    num_kv_l,
+                    head_dim_l,
+                    RMS_EPS,
+                )
+                .map_err(gpu_err)?;
+            }
             // Gemma 4 normalizes V with a weightless per-head RMS norm; Gemma 3
             // has no V norm at all, so applying it would decode fluently and wrong.
             if super::norm::applies_v_norm(&arch) {
@@ -256,28 +266,43 @@ impl RealForwardRunner {
                 )
                 .map_err(gpu_err)?;
             }
-            gpu::encode_rope_proportional_neox(
-                &mut self.context,
-                pass,
-                (&b_q, q_row),
-                position as u32,
-                num_heads,
-                head_dim_l,
-                rotated_pairs,
-                theta,
-            )
-            .map_err(gpu_err)?;
-            gpu::encode_rope_proportional_neox(
-                &mut self.context,
-                pass,
-                k_row,
-                position as u32,
-                num_kv_l,
-                head_dim_l,
-                rotated_pairs,
-                theta,
-            )
-            .map_err(gpu_err)?;
+            // Gemma 3 4B+: the GLOBAL layers rotate by a per-pair table (linear
+            // scaling divides every frequency); sliding layers keep the scalar theta.
+            let global_freqs = if is_full {
+                self.real
+                    .as_ref()
+                    .and_then(|real| real.global_rope_frequencies.as_ref())
+            } else {
+                None
+            };
+            for (data, heads) in [((&b_q, q_row), num_heads), (k_row, num_kv_l)] {
+                if let Some(freqs) = global_freqs {
+                    gpu::encode_rope_neox_freqs(
+                        &mut self.context,
+                        pass,
+                        data,
+                        position as u32,
+                        heads,
+                        head_dim_l,
+                        rotated_pairs,
+                        (freqs, 0),
+                        1.0,
+                    )
+                    .map_err(gpu_err)?;
+                } else {
+                    gpu::encode_rope_proportional_neox(
+                        &mut self.context,
+                        pass,
+                        data,
+                        position as u32,
+                        heads,
+                        head_dim_l,
+                        rotated_pairs,
+                        theta,
+                    )
+                    .map_err(gpu_err)?;
+                }
+            }
 
             let seq_len = (position + 1) as u32;
             let (kv_start, active_ring) = if is_full {

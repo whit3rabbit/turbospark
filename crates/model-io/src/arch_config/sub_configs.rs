@@ -36,6 +36,32 @@ pub struct RopeScalingConfig {
     /// constant, because the checkpoint states it and both engines apply
     /// it. See `docs/DEEPSEEK2_PHASE0.md` for the two derived floats.
     pub mscale: f64,
+    /// Llama 3's `low_freq_factor` (`rope_scaling.type == "llama3"`). Llama 3
+    /// scaling is NOT YaRN: pairs whose wavelength is under
+    /// `original_context / high_freq_factor` keep their frequency, pairs over
+    /// `original_context / low_freq_factor` are divided by `factor`, and the
+    /// band between is smoothly interpolated. It reuses `factor` and
+    /// `original_context`; the two ramp ends live here. ZERO (with
+    /// `high_freq_factor`) means this is not Llama 3 scaling, which is every
+    /// manifest written before the field existed. Read it through
+    /// [`Self::is_llama3`].
+    pub low_freq_factor: f64,
+    /// Llama 3's `high_freq_factor`. See [`Self::low_freq_factor`].
+    pub high_freq_factor: f64,
+    /// Linear rope scaling (`rope_scaling.type == "linear"`, Gemma 3 4B and
+    /// up): every pair's frequency is divided by this factor. Applies to the
+    /// GLOBAL (full-attention) layers only; sliding layers keep their own base
+    /// unscaled, as llama.cpp's Gemma 3 does. ZERO means none. Separate from
+    /// `factor`, which means YaRN, so `is_active` stays a YaRN question.
+    pub linear_factor: f64,
+    /// LongRoPE's `attn_factor` (Phi-3.5, `rope.scaling.attn_factor`): the
+    /// magnitude multiplier on cos and sin, so q and k are each scaled by it
+    /// and `q.k` by its square. ZERO means no LongRoPE. The per-pair factor
+    /// vectors it divides frequencies by are LEARNED, so they travel as two
+    /// resident FP32 tensors (`rope_factors_short` and `rope_factors_long`),
+    /// not as parameters; `original_context` says which one a context
+    /// window selects. Read it through [`Self::is_longrope`].
+    pub longrope_attn_factor: f64,
 }
 
 impl RopeScalingConfig {
@@ -46,11 +72,34 @@ impl RopeScalingConfig {
         beta_fast: 0.0,
         beta_slow: 0.0,
         mscale: 0.0,
+        low_freq_factor: 0.0,
+        high_freq_factor: 0.0,
+        linear_factor: 0.0,
+        longrope_attn_factor: 0.0,
     };
+
+    /// Whether LongRoPE applies (a short/long factor table pair and an
+    /// `attn_factor`), which also needs `original_context` to pick between
+    /// them.
+    pub fn is_longrope(&self) -> bool {
+        self.longrope_attn_factor > 0.0 && self.original_context > 0
+    }
+
+    /// Whether linear scaling applies.
+    pub fn is_linear(&self) -> bool {
+        self.linear_factor > 0.0
+    }
+
+    /// Whether Llama 3 scaling applies. Mutually exclusive with YaRN: a
+    /// config that sets both ramps and a YaRN beta is not a thing any
+    /// checkpoint publishes, and the repack refuses to build one.
+    pub fn is_llama3(&self) -> bool {
+        self.factor > 0.0 && self.low_freq_factor > 0.0 && self.high_freq_factor > 0.0
+    }
 
     /// Whether YaRN applies at all.
     pub fn is_active(&self) -> bool {
-        self.factor > 0.0
+        self.factor > 0.0 && !self.is_llama3()
     }
 
     /// The rope magnitude (and, squared, the attention-score) multiplier:
@@ -91,6 +140,15 @@ pub struct LinearAttentionConfig {
     /// constant: AGENTS.md Gotcha 61's shape, which is exactly a per-family
     /// property left standing in shared code.
     pub output_gate_sigmoid: bool,
+    /// INSTALL-TIME ONLY, never persisted: the SOURCE file already stores the
+    /// V heads in the grouped order the runtime uses, so the GGUF walk must
+    /// not run its tiled-to-grouped restore. True for a `qwen3next` GGUF
+    /// (llama.cpp's converter reorders V heads only for Qwen 3.5, see
+    /// `_LinearAttentionVReorderBase`); false for every other source, which is
+    /// the previous behavior. A manifest does not carry it, so a re-read
+    /// manifest reports false, which is correct because the install already
+    /// holds the grouped order.
+    pub source_v_heads_grouped: bool,
 }
 
 impl LinearAttentionConfig {
@@ -102,6 +160,7 @@ impl LinearAttentionConfig {
         value_head_dim: 0,
         conv_kernel_size: 0,
         output_gate_sigmoid: false,
+        source_v_heads_grouped: false,
     };
 
     /// Fused qkv projection rows: 2 * K-dim + V-dim. Also the depthwise conv

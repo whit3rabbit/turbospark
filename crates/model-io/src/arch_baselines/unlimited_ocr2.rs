@@ -66,6 +66,7 @@ pub fn unlimited_ocr2_12l() -> ArchConfig {
             beta_fast: 32.0,
             beta_slow: 1.0,
             mscale: 1.0,
+            ..RopeScalingConfig::NONE
         },
         vision: VisionConfig::NONE,
         short_conv_kernel_size: 0,

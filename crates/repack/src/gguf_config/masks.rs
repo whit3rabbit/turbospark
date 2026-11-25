@@ -112,6 +112,33 @@ pub fn qwen_gdn_moe_layer_mask(
     m: &Meta<'_>,
     num_layers: usize,
 ) -> Result<Vec<u8>, GgufConfigError> {
+    // The first `qwen3next` conversions (Unsloth's, 2025) predate the
+    // `full_attention_interval` key. The layer kinds are still stated by the
+    // file, in which tensors each layer carries: a full-attention layer has
+    // `attn_q` and a gated-DeltaNet layer has the fused `attn_qkv`. Read them
+    // from there rather than assume the HF default of 4, and require exactly
+    // one of the two per layer so a layer of unknown kind refuses.
+    if m.opt("full_attention_interval").is_none() && m.prefix == "qwen3next" {
+        return (0..num_layers)
+            .map(|i| {
+                let has = |t: &str| {
+                    m.header
+                        .tensors
+                        .contains_key(&format!("blk.{i}.{t}.weight"))
+                };
+                match (has("attn_q"), has("attn_qkv")) {
+                    (true, false) => Ok(1u8),
+                    (false, true) => Ok(2u8),
+                    _ => Err(GgufConfigError::BadValue {
+                        key: format!("blk.{i}.attn_q.weight / attn_qkv.weight"),
+                        detail: "a layer must carry exactly one of full attention's `attn_q` \
+                                 and the gated-DeltaNet `attn_qkv`"
+                            .to_string(),
+                    }),
+                }
+            })
+            .collect();
+    }
     let interval = m.u64("full_attention_interval")? as usize;
     if interval == 0 {
         return Err(GgufConfigError::BadValue {

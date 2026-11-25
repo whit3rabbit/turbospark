@@ -6,6 +6,7 @@ mod deepseek;
 mod deepseek2;
 mod flint;
 mod gemma;
+mod gemma2;
 mod gemma3;
 mod gpt_oss;
 mod inkling2;
@@ -21,6 +22,7 @@ pub use deepseek::deepseek_v4_flash_284b_a13b;
 pub use deepseek2::{deepseek_v2_lite_16b, deepseek_vl2_tiny};
 pub use flint::{flint_40b_a2_5b, flint_layer_mask};
 pub use gemma::{gemma4_12b_dense, gemma4_26b_a4b};
+pub use gemma2::{gemma2_2b, gemma2_layer_mask, GEMMA2_ATTN_LOGIT_SOFTCAP};
 pub use gemma3::{gemma3_1b, gemma3_layer_mask};
 pub use gpt_oss::gpt_oss_20b;
 pub use inkling2::{inkling2_layer_mask, inkling2_mini};
@@ -60,6 +62,7 @@ pub fn known_architecture(family: ModelFamily) -> ArchConfig {
         ModelFamily::UnlimitedOcr2 => unlimited_ocr2_12l(),
         ModelFamily::Gemma3 => gemma3_1b(),
         ModelFamily::Inkling2Loop => inkling2_mini(),
+        ModelFamily::Gemma2 => gemma2_2b(),
     }
 }
 
@@ -86,5 +89,6 @@ pub fn all_known_architectures() -> Vec<ArchConfig> {
         unlimited_ocr2_12l(),
         gemma3_1b(),
         inkling2_mini(),
+        gemma2_2b(),
     ]
 }

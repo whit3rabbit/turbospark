@@ -1,0 +1,7 @@
+{
+ "tokenizer_class": "LlamaTokenizer",
+ "bos_token": "<s>",
+ "eos_token": "<|endoftext|>",
+ "pad_token": "<|endoftext|>",
+ "clean_up_tokenization_spaces": false
+}

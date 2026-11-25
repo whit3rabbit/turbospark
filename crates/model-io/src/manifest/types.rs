@@ -254,6 +254,20 @@ pub struct ManifestArch {
     /// manifest; the multiplier itself derives at the use site.
     #[serde(default)]
     pub rope_scaling_mscale: Option<f64>,
+    /// Llama 3 rope scaling's ramp ends (`rope_scaling.type == "llama3"`).
+    /// Absent means not Llama 3 scaling, which preserves every earlier
+    /// manifest. `ropeScalingFactor` and `ropeScalingOriginalContext` carry
+    /// the other two parameters.
+    #[serde(default)]
+    pub rope_scaling_low_freq_factor: Option<f64>,
+    #[serde(default)]
+    pub rope_scaling_high_freq_factor: Option<f64>,
+    /// Linear rope scaling's factor (Gemma 3 4B and up). Absent means none.
+    #[serde(default)]
+    pub rope_scaling_linear_factor: Option<f64>,
+    /// LongRoPE's `attn_factor` (Phi-3.5). Absent means none.
+    #[serde(default)]
+    pub rope_scaling_longrope_attn_factor: Option<f64>,
     /// The vision tower (ROADMAP M-V3). Absent means no tower, which is what
     /// `VisionConfig::NONE` says and what every install written before M-V3
     /// declares -- which is why all fifteen are `Option` and default rather

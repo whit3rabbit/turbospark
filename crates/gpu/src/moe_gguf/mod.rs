@@ -177,6 +177,49 @@ pub(crate) fn encode_phase1_with(
     Ok(())
 }
 
+/// The ten-slot twin of [`encode_phase2`]: ten simdgroups, 320 threads, no
+/// `top_k` argument because the kernel reduces exactly ten slots.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_phase2_k10(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    kernel: &'static str,
+    routed: &RoutedBlobsBuffer,
+    offsets: &MoeExpertOffsets,
+    acts: (&metal::Buffer, u64),
+    routing_w: (&metal::Buffer, u64),
+    residual: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    d_dim: u32,
+    f_dim: u32,
+    use_silu: bool,
+) -> Result<(), GpuError> {
+    let pipeline = context.pipeline(
+        SOURCE,
+        kernel,
+        &moe_function_constants(use_silu),
+        &constants_key(use_silu),
+    )?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[
+            (routed.buffer(), 0, 0),
+            (acts.0, 2, acts.1),
+            (routing_w.0, 3, routing_w.1),
+            (residual.0, 4, residual.1),
+            (y.0, 5, y.1),
+        ],
+        &[
+            (&offsets.bytes(), 1),
+            (u32_bytes(&d_dim), 6),
+            (u32_bytes(&f_dim), 7),
+        ],
+        d_dim as u64,
+        320,
+    );
+    Ok(())
+}
+
 /// The dispatch both phase-2 kernels share; see [`encode_phase1`]. Asserts
 /// `top_k` against [`PHASE2_FIXED_SLOTS`] rather than
 /// `MAX_STREAMED_EXPERTS`: these kernels reduce a fixed 8 simdgroups

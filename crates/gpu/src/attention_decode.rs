@@ -619,6 +619,42 @@ pub(crate) fn attention_function_constants(
     values
 }
 
+/// [`attention_function_constants`] plus Gemma 2's score soft cap
+/// (`FC_ATTN_SOFTCAP`, 80). `cap == 0.0` is exactly the uncapped constants: the
+/// constant is not set at all, so the shader's `is_function_constant_defined`
+/// is false and the compiled kernel is the one every other family uses.
+pub(crate) fn attention_function_constants_cap(
+    scale: f32,
+    ring_capacity: u32,
+    num_chunks: u32,
+    has_sinks: bool,
+    cap: f32,
+) -> FunctionConstantValues {
+    let values = attention_function_constants(scale, ring_capacity, num_chunks, has_sinks);
+    if cap != 0.0 {
+        values.set_constant_value_at_index((&cap as *const f32).cast(), MTLDataType::Float, 80);
+    }
+    values
+}
+
+/// The pipeline-cache key for [`attention_function_constants_cap`]: the 13-byte
+/// uncapped key when `cap == 0.0` (unchanged, so existing pipelines keep their
+/// cache entries) and that key plus the cap's bytes otherwise, so a capped
+/// dispatch can never reuse an uncapped pipeline or one with another cap.
+pub(crate) fn attention_constants_key_cap(
+    scale: f32,
+    ring_capacity: u32,
+    num_chunks: u32,
+    has_sinks: bool,
+    cap: f32,
+) -> Vec<u8> {
+    let mut key = attention_constants_key(scale, ring_capacity, num_chunks, has_sinks).to_vec();
+    if cap != 0.0 {
+        key.extend_from_slice(&cap.to_le_bytes());
+    }
+    key
+}
+
 pub(crate) fn attention_constants_key(
     scale: f32,
     ring_capacity: u32,
@@ -690,6 +726,11 @@ pub struct AttentionScratch {
     pub d: metal::Buffer,
     pub o: metal::Buffer,
     decode_kernel: DecodeAttentionKernel,
+    /// Gemma 2's attention-score soft cap, 0.0 for every other family. Lives on
+    /// the scratch for the reason the decode kernel does: a family opts in where
+    /// its runner is built, without widening the encoder's signature. A nonzero
+    /// cap forces the barrier kernel (the only one that applies it).
+    softcap: f32,
 }
 
 /// Which partial pass [`encode_attention_decode`] runs. The choice lives on
@@ -715,7 +756,24 @@ impl AttentionScratch {
             d: context.new_output_buffer(slots * 4),
             o: context.new_output_buffer(slots * head_dim as u64 * 4),
             decode_kernel: DecodeAttentionKernel::Barrier,
+            softcap: 0.0,
         }
+    }
+
+    /// Applies `cap * tanh(score / cap)` to every attention score. See
+    /// [`AttentionScratch::softcap`].
+    pub fn with_softcap(mut self, cap: f32) -> Self {
+        assert!(
+            cap.is_finite() && cap >= 0.0,
+            "attention soft cap must be finite and non-negative, got {cap}"
+        );
+        self.softcap = cap;
+        self
+    }
+
+    /// The attention-score soft cap, 0.0 meaning none.
+    pub fn softcap(&self) -> f32 {
+        self.softcap
     }
 
     pub fn with_decode_kernel(mut self, kernel: DecodeAttentionKernel) -> Self {
@@ -954,7 +1012,9 @@ pub fn encode_attention_decode(
     assert!(v_buffer.length() >= kv_bytes, "V buffer too small");
 
     let range = seq_len - kv_start;
+    let softcap = scratch.softcap();
     if scratch.decode_kernel() == DecodeAttentionKernel::GqaShared
+        && softcap == 0.0
         && attention_decode_gqa_supported(head_dim, num_q_heads, num_kv_heads)
     {
         foundation::engaged!("attn_decode_gqa");
@@ -988,8 +1048,10 @@ pub fn encode_attention_decode(
     let chunk_len = range.div_ceil(num_chunks);
 
     let has_sinks = sinks.is_some();
-    let constants = attention_function_constants(scale, ring_capacity, num_chunks, has_sinks);
-    let constants_key = attention_constants_key(scale, ring_capacity, num_chunks, has_sinks);
+    let constants =
+        attention_function_constants_cap(scale, ring_capacity, num_chunks, has_sinks, softcap);
+    let constants_key =
+        attention_constants_key_cap(scale, ring_capacity, num_chunks, has_sinks, softcap);
     let partial_pipeline = context.pipeline(
         SOURCE,
         "attention_decode_partial",

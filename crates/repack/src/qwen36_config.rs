@@ -1102,6 +1102,7 @@ fn parse_qwen_family_config(json: &str, family: ModelFamily) -> Result<ArchConfi
             value_head_dim: i("linear_value_head_dim")?,
             conv_kernel_size: i("linear_conv_kernel_dim")?,
             output_gate_sigmoid,
+            source_v_heads_grouped: false,
         },
         mla: MlaConfig::NONE,
         compressed_attention,

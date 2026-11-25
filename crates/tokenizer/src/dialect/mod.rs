@@ -105,6 +105,19 @@ pub enum ChatDialect {
     /// markup exists in the table (every such id is [`NO_SUCH_TOKEN_ID`]) and
     /// there is no fallback renderer: the checkpoint ships its template.
     Gemma3,
+    /// Microsoft Phi-3 / Phi-3.5 / Phi-4-mini:
+    /// `<|user|>\ncontent<|end|>\n<|assistant|>\n`, a turn closed by `<|end|>`
+    /// (id 32007 on Phi-3.5), with `<|endoftext|>` as eos. **`<|end|>` IS A
+    /// STOP HERE and is deliberately not one for Harmony**, whose `<|end|>`
+    /// closes a channel message inside one generation. Without this dialect a
+    /// Phi table (which carries `<s>` and `</s>`) landed on Mistral, whose stop
+    /// set is `</s>` alone, and the model ran on past its own turn end into an
+    /// invented next user prompt. Shares `<|user|>`, `<|assistant|>` and
+    /// `<|system|>` with GLM, so it is probed AFTER GLM (which requires
+    /// `<|observation|>`), Flint, Harmony and Kimi. No tool or channel markup
+    /// exists in the table and there is no fallback renderer: the checkpoint
+    /// ships its template.
+    Phi3,
     ChatMl,
     Deepseek,
     /// Mistral / Mixtral: `[INST] user [/INST] assistant</s>`, framed in
@@ -370,6 +383,8 @@ impl ChatDialect {
             ChatDialect::Llama3 => ToolCallSupport::Prompted,
             // Gemma 3 has no tool markup in its table; same answer as Llama-3.
             ChatDialect::Gemma3 => ToolCallSupport::Prompted,
+            // Phi-3 has no tool markup in its table either.
+            ChatDialect::Phi3 => ToolCallSupport::Prompted,
             // **NOT AN OVERSIGHT, AND NOT THE SAME AS THE TWO ABOVE.** This dialect DOES frame tool calls -- `<atem:function_calls>` on a
             // `to=<tool>` message -- and this engine has NO PARSER for that
             // block (`structured_decoder/muse.rs`'s `parse_header`). The

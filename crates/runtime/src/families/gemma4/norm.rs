@@ -13,7 +13,7 @@ use model_io::{ArchConfig, ModelFamily};
 
 /// Whether this arch's norm weights are offsets from unity.
 pub(crate) fn centered_norms(arch: &ArchConfig) -> bool {
-    arch.family == ModelFamily::Gemma3
+    matches!(arch.family, ModelFamily::Gemma3 | ModelFamily::Gemma2)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -57,5 +57,11 @@ pub(crate) fn encode_norm_perhead(
 
 /// Gemma 4 applies a weightless per-head RMS norm to V; Gemma 3 has none.
 pub(crate) fn applies_v_norm(arch: &ArchConfig) -> bool {
-    arch.family != ModelFamily::Gemma3
+    !matches!(arch.family, ModelFamily::Gemma3 | ModelFamily::Gemma2)
+}
+
+/// Gemma 3 and 4 norm q and k per head before RoPE; Gemma 2 has no such
+/// tensors at all (its q and k go to RoPE as projected).
+pub(crate) fn applies_qk_norm(arch: &ArchConfig) -> bool {
+    arch.family != ModelFamily::Gemma2
 }

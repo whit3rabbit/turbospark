@@ -216,6 +216,7 @@ pub fn parse_unlimited_ocr2_config(json: &str) -> Result<ArchConfig, Gemma4Error
             beta_fast: rs_f("beta_fast")?,
             beta_slow: rs_f("beta_slow")?,
             mscale: 1.0,
+            ..RopeScalingConfig::NONE
         },
         vision: VisionConfig::NONE,
         short_conv_kernel_size: 0,

@@ -26,7 +26,10 @@ impl RealForwardRunner {
     /// disagree, and a run never measures the wrong engine under a chunked
     /// label.
     pub(crate) fn gemma3_chunked_refusal(&self) -> Option<String> {
-        if self.arch.family != model_io::ModelFamily::Gemma3 {
+        if !matches!(
+            self.arch.family,
+            model_io::ModelFamily::Gemma3 | model_io::ModelFamily::Gemma2
+        ) {
             return None;
         }
         for layer in 0..self.arch.num_layers as usize {

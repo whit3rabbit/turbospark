@@ -333,6 +333,15 @@ impl DecodeScratch {
                     | model_io::ModelFamily::Lfm3
                     | model_io::ModelFamily::Flint => gpu::DecodeAttentionKernel::GqaShared,
                     _ => gpu::DecodeAttentionKernel::Barrier,
+                })
+                // Gemma 2's attention-score cap. Zero for every other family,
+                // which compiles to exactly the pipeline it always did; a
+                // nonzero cap also forces the barrier kernel, the only one
+                // that applies it.
+                .with_softcap(if arch.family == model_io::ModelFamily::Gemma2 {
+                    model_io::GEMMA2_ATTN_LOGIT_SOFTCAP
+                } else {
+                    0.0
                 }),
             kv_stage: kv_quant.is_on().then(|| KvStage::new(context, full_kv_dim)),
             tq_attn: kv_quant.is_on().then(|| {

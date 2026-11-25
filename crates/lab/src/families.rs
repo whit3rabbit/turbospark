@@ -126,6 +126,18 @@ pub fn facts(f: ModelFamily) -> FamilyFacts {
             probe_and_standin: false,
             notes: &["dense Gemma 4 arm: no V norm, no layer scalar, centered norms"],
         },
+        // Gemma 3's flow minus the q/k norms, plus the attention-score cap that
+        // only the barrier kernel applies. Never measured in the lab.
+        Gemma2 => FamilyFacts {
+            flow: "gemma4",
+            chunked_prefill: Support::Yes,
+            drafters: &[],
+            steel_prefill: false,
+            decode_attention: "barrier",
+            phase_buckets: "final_only",
+            probe_and_standin: false,
+            notes: &["dense Gemma arm: no q/k norm, attention-score soft cap 50, final cap 30"],
+        },
         Llama | Qwen3Dense | Qwen2Dense | Qwen3Vl => llama_flow,
         // Held at barrier: its gqa arm decoded different tokens with no
         // moe_kl gate run (`crates/lab/families/qwen3moe.json`).

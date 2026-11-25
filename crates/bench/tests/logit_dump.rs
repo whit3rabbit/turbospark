@@ -171,6 +171,15 @@ fn resolve_target() -> Option<DumpTarget> {
         // the same MLX bytes (`scripts/kld_flint_mlx_vlm.py`); mlx-lm has no
         // released Flint module.
         .or_else(|| plain("TURBOSPARK_FLINT_INSTALL_DIR"))
+        // Phi-3.5 on the dense `llama` flow (fused qkv and gate/up split at
+        // repack, LongRoPE). A plain arm for the reason the others are: its
+        // reference is llama.cpp on the identical GGUF bytes
+        // (`scripts/kld_llamacpp.py`).
+        .or_else(|| plain("TURBOSPARK_PHI3_INSTALL_DIR"))
+        // Gemma 2 on the Gemma flow (no q/k norm, attention-score cap 50, final
+        // cap 30). A plain arm for the same reason: llama.cpp on the identical
+        // GGUF bytes is its reference.
+        .or_else(|| plain("TURBOSPARK_GEMMA2_INSTALL_DIR"))
         .or_else(|| {
             env_dir("TURBOSPARK_GPTOSS_INSTALL_DIR").map(|install| DumpTarget {
                 install,
@@ -213,7 +222,8 @@ fn dump_reference_logits() {
              TURBOSPARK_QWEN3MOE_INSTALL_DIR, \
              TURBOSPARK_QWEN35_INSTALL_DIR, TURBOSPARK_TERNARY_INSTALL_DIR, \
              TURBOSPARK_ORNITH9B_INSTALL_DIR, TURBOSPARK_ORNITH35B_INSTALL_DIR, \
-             TURBOSPARK_FLINT_INSTALL_DIR, \
+             TURBOSPARK_FLINT_INSTALL_DIR, TURBOSPARK_PHI3_INSTALL_DIR, \
+             TURBOSPARK_GEMMA2_INSTALL_DIR, \
              or \
              TURBOSPARK_GPTOSS_INSTALL_DIR) and \
              TURBOSPARK_LOGIT_DUMP_DIR; skipping."

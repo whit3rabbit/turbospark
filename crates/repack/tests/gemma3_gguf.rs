@@ -89,12 +89,18 @@ fn a_file_that_does_not_match_the_one_shape_read_off_bytes_is_refused() {
         refused_key(builder(1e-6, 128)),
         "gemma3.attention.key_length"
     );
-    // 4B and up: linear rope scaling on the global layers.
-    let scaled = builder(1e-6, 256)
-        .metadata_str("gemma3.rope.scaling.type", "linear")
+    // Another scaling mechanism is not Gemma 3's. (A YaRN file never gets this
+    // far: the generic reader refuses it first for a missing original context.)
+    let longrope = builder(1e-6, 256)
+        .metadata_str("gemma3.rope.scaling.type", "longrope")
         .metadata_f32("gemma3.rope.scaling.factor", 8.0);
-    assert_eq!(refused_key(scaled), "gemma3.rope.scaling.type");
-    // A factor with no type is just as unsupported.
+    assert_eq!(refused_key(longrope), "gemma3.rope.scaling.type");
+    // A linear factor that scales nothing (or shrinks) is not a scaling.
+    let unity = builder(1e-6, 256)
+        .metadata_str("gemma3.rope.scaling.type", "linear")
+        .metadata_f32("gemma3.rope.scaling.factor", 1.0);
+    assert_eq!(refused_key(unity), "gemma3.rope.scaling.factor");
+    // A factor with no type is ambiguous.
     let factor_only = builder(1e-6, 256).metadata_f32("gemma3.rope.scaling.factor", 8.0);
     assert_eq!(refused_key(factor_only), "gemma3.rope.scaling.factor");
     // A different local:global ratio.
@@ -113,6 +119,23 @@ fn a_file_that_does_not_match_the_one_shape_read_off_bytes_is_refused() {
     // A partial rotary width is another architecture.
     let partial = builder(1e-6, 256).metadata_u32("gemma3.rope.dimension_count", 64);
     assert_eq!(refused_key(partial), "gemma3.rope.dimension_count");
+}
+
+/// 4B and up: linear scaling on the global layers, carried as
+/// `rope_scaling.linear_factor` (and NOT as YaRN's `factor`).
+#[test]
+fn linear_rope_scaling_is_read_for_the_global_layers() {
+    let a = arch(
+        builder(1e-6, 256)
+            .metadata_str("gemma3.rope.scaling.type", "linear")
+            .metadata_f32("gemma3.rope.scaling.factor", 8.0),
+    )
+    .expect("4B-style scaling derives");
+    assert_eq!(a.rope_scaling.linear_factor, 8.0);
+    assert!(a.rope_scaling.is_linear());
+    assert!(!a.rope_scaling.is_active() && !a.rope_scaling.is_llama3());
+    // The unscaled 1B keeps none.
+    assert!(!arch(builder(1e-6, 256)).unwrap().rope_scaling.is_linear());
 }
 
 #[test]

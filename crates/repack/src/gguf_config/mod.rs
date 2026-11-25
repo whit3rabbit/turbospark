@@ -287,6 +287,7 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         ModelFamily::Gemma4 => gemma4_layer_mask(&m, num_layers_usize)?,
         // Not in the file: the converter's constant 5 local : 1 global.
         ModelFamily::Gemma3 => model_io::gemma3_layer_mask(num_layers_usize),
+        ModelFamily::Gemma2 => model_io::gemma2_layer_mask(num_layers_usize),
         // Spark-X2.5 publishes the SAME bool-array key with the SAME
         // convention (true = this layer slides), so the Gemma builder IS
         // this family's builder; only the rope divergence below is its own.
@@ -438,6 +439,7 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
                 .opt_f64("rope.scaling.yarn_log_multiplier")
                 .map(|v| v * 10.0)
                 .unwrap_or(0.0),
+            ..model_io::RopeScalingConfig::NONE
         };
     }
 
@@ -459,6 +461,9 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
         ModelFamily::QwenGdnMoe | ModelFamily::QwenGdnDense | ModelFamily::Qwen4Exp
     ) {
         arch.linear_attention = linear_attention(&m)?;
+        // See `LinearAttentionConfig::source_v_heads_grouped`: set only for
+        // the architecture whose converter keeps HF's grouped V-head order.
+        arch.linear_attention.source_v_heads_grouped = architecture == "qwen3next";
         // Qwen's key/value length are per-head and equal on both paths.
         if let Some(k) = m.opt_i64("attention.key_length")? {
             arch.head_dim = k;
@@ -518,10 +523,9 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     // THE SAME BUG CLASS AS THE HEAD DIM ABOVE, one field further along. The
     // llama flow scales scores by `attention_scale`, and the baseline's is
     // Mixtral's 128^-0.5. A 64-wide head (Llama 3.2 1B, SmolLM2, TinyLlama)
-    // kept it and attended at 0.71x the right scale: exact at position 0,
-    // where there is one key, and 0.59 nats from llama.cpp on the same
-    // Q8_0 bytes everywhere after. Recomputed from THIS model's head;
-    // Granite overrides it below with its own published scale.
+    // or 96-wide head (Phi-3.5) kept it and attended at the wrong scale.
+    // Recomputed from THIS model's head; Granite overrides it below with its
+    // own published scale.
     if family == ModelFamily::Llama {
         arch.attention_scale = (arch.full_head_dim as f64).powf(-0.5);
     }
@@ -710,8 +714,198 @@ pub fn arch_from_gguf(header: &GgufHeader) -> Result<ArchConfig, GgufConfigError
     if family == ModelFamily::Gemma3 {
         derive_gemma3_extensions(&m, &mut arch)?;
     }
+    if architecture == "phi3" {
+        derive_phi3_extensions(&m, &mut arch)?;
+    }
+    if family == ModelFamily::Gemma2 {
+        derive_gemma2_extensions(&m, &mut arch)?;
+    }
 
     Ok(arch)
+}
+
+/// Gemma 2 (2B and 9B) on the Gemma flow's dense arm.
+///
+/// What the GGUF omits and this port fixes: the alternating local/global
+/// schedule (`gemma2_layer_mask`) and the attention scale
+/// (`query_pre_attn_scalar^-0.5`, which is `head_dim^-0.5` for the 2B and 9B).
+/// What the file states and this port REQUIRES to equal the family constant,
+/// rather than decoding a different model with it: the attention-score cap
+/// (`attn_logit_softcapping`, 50) and the final-logit cap (30).
+///
+/// Refused, because each would decode fluently and wrong: any `rope.scaling.*`,
+/// a `key_length` other than 256 (the 27B is head_dim 128 with
+/// `query_pre_attn_scalar = hidden / heads`, a different scale), MoE keys, an
+/// untied head, partial rotary, an RMS epsilon other than 1e-6.
+fn derive_gemma2_extensions(m: &Meta<'_>, arch: &mut ArchConfig) -> Result<(), GgufConfigError> {
+    let bad = |suffix: &str, detail: String| GgufConfigError::BadValue {
+        key: m.key(suffix),
+        detail,
+    };
+    if m.opt_f64("attention.layer_norm_rms_epsilon")
+        .map(|v| v as f32)
+        != Some(1e-6f32)
+    {
+        return Err(bad(
+            "attention.layer_norm_rms_epsilon",
+            "Gemma 2 requires RMS epsilon 1e-6".into(),
+        ));
+    }
+    for (key, want) in [
+        (
+            "attn_logit_softcapping",
+            f64::from(model_io::GEMMA2_ATTN_LOGIT_SOFTCAP),
+        ),
+        ("final_logit_softcapping", 30.0),
+    ] {
+        match m.opt_f64(key) {
+            Some(v) if v == want => {}
+            Some(v) => {
+                return Err(bad(
+                    key,
+                    format!("{v} where Gemma 2 publishes {want}; this port fixes the family's cap"),
+                ))
+            }
+            None => {
+                return Err(GgufConfigError::MissingKey { key: m.key(key) });
+            }
+        }
+    }
+    if let Some(kind) = m.opt("rope.scaling.type").and_then(GgufValue::as_str) {
+        if kind != "none" {
+            return Err(bad(
+                "rope.scaling.type",
+                format!("{kind} rope scaling is not a Gemma 2 feature"),
+            ));
+        }
+    }
+    if arch.full_head_dim != 256 || arch.head_dim != 256 {
+        return Err(bad(
+            "attention.key_length",
+            format!(
+                "Gemma 2 is admitted at head_dim 256 only (the 27B's attention scale is \
+                 hidden / heads), got {}",
+                arch.full_head_dim
+            ),
+        ));
+    }
+    if arch.num_experts != 0 {
+        return Err(bad("expert_count", "Gemma 2 is dense".into()));
+    }
+    if !arch.tie_word_embeddings {
+        return Err(bad(
+            "output.weight",
+            "Gemma 2 ties its head; an untied output.weight is not this architecture".into(),
+        ));
+    }
+    if let Some(dims) = m.opt_i64("rope.dimension_count")? {
+        if dims != arch.full_head_dim {
+            return Err(bad(
+                "rope.dimension_count",
+                format!(
+                    "{dims} rotary dims; Gemma 2 rotates the whole {}-wide head",
+                    arch.full_head_dim
+                ),
+            ));
+        }
+    }
+    if m.opt_i64("attention.sliding_window")?.is_none() {
+        return Err(GgufConfigError::MissingKey {
+            key: m.key("attention.sliding_window"),
+        });
+    }
+    arch.attention_scale = (arch.full_head_dim as f64).powf(-0.5);
+    Ok(())
+}
+
+/// `phi3` (Phi-3, Phi-3.5, Phi-4-mini) on the `llama` decode flow.
+///
+/// What makes it Llama-flow-shaped: dense FFN, GQA/MHA attention with full
+/// rotary, RMSNorm, untied head. What it adds, all handled at repack or in the
+/// rope table and invisible to the rest of the flow: fused `attn_qkv` and
+/// `ffn_up` (split by rows at install) and LongRoPE (two learned per-pair
+/// factor vectors, `rope_factors_short.weight` and `rope_factors_long.weight`,
+/// picked by the context window against `rope.scaling.original_context_length`,
+/// plus `rope.scaling.attn_factor` as a cos/sin magnitude).
+///
+/// Refused, because each would decode fluently and wrong: a real sliding
+/// window (Phi-3-mini-4k publishes 2047; the 128k and 3.5 files publish a
+/// window at or above the context and so never slide), partial rotary, a
+/// missing attn_factor or original context, and factor vectors that are not
+/// F32 `[head_dim / 2]`.
+fn derive_phi3_extensions(m: &Meta<'_>, arch: &mut ArchConfig) -> Result<(), GgufConfigError> {
+    let bad = |suffix: &str, detail: String| GgufConfigError::BadValue {
+        key: m.key(suffix),
+        detail,
+    };
+    let context = m.i64("context_length")?;
+    if let Some(window) = m.opt_i64("attention.sliding_window")? {
+        if window < context {
+            return Err(bad(
+                "attention.sliding_window",
+                format!(
+                    "window {window} is below the context {context}: a real sliding window, \
+                     which the Llama flow does not implement"
+                ),
+            ));
+        }
+    }
+    if arch.num_experts != 0 {
+        return Err(bad("expert_count", "phi3 is dense".into()));
+    }
+    if let Some(dims) = m.opt_i64("rope.dimension_count")? {
+        if dims != arch.full_head_dim {
+            return Err(bad(
+                "rope.dimension_count",
+                format!(
+                    "{dims} rotary dims; the phi3 path rotates the whole {}-wide head",
+                    arch.full_head_dim
+                ),
+            ));
+        }
+    }
+    let attn_factor =
+        m.opt_f64("rope.scaling.attn_factor")
+            .ok_or_else(|| GgufConfigError::MissingKey {
+                key: m.key("rope.scaling.attn_factor"),
+            })?;
+    let original = m
+        .opt_i64("rope.scaling.original_context_length")?
+        .ok_or_else(|| GgufConfigError::MissingKey {
+            key: m.key("rope.scaling.original_context_length"),
+        })?;
+    if !(attn_factor > 0.0 && attn_factor.is_finite()) || original <= 0 {
+        return Err(bad(
+            "rope.scaling.attn_factor",
+            format!("attn_factor {attn_factor} / original context {original} are not usable"),
+        ));
+    }
+    let pairs = (arch.full_head_dim / 2) as u64;
+    for name in ["rope_factors_short.weight", "rope_factors_long.weight"] {
+        let info = m
+            .header
+            .tensors
+            .get(name)
+            .ok_or_else(|| GgufConfigError::MissingKey {
+                key: name.to_string(),
+            })?;
+        // ggml type 0 is F32.
+        if info.ggml_type != 0 || info.dims != [pairs] {
+            return Err(GgufConfigError::BadValue {
+                key: name.to_string(),
+                detail: format!(
+                    "type {} dims {:?}; expected F32 [{pairs}]",
+                    info.ggml_type, info.dims
+                ),
+            });
+        }
+    }
+    arch.rope_scaling = model_io::RopeScalingConfig {
+        original_context: original,
+        longrope_attn_factor: attn_factor,
+        ..model_io::RopeScalingConfig::NONE
+    };
+    Ok(())
 }
 
 /// Gemma 3's constants, which the file does not carry, and the refusals that
@@ -744,22 +938,41 @@ fn derive_gemma3_extensions(m: &Meta<'_>, arch: &mut ArchConfig) -> Result<(), G
             "Gemma 3 requires RMS epsilon 1e-6".into(),
         ));
     }
-    if let Some(kind) = m.opt("rope.scaling.type").and_then(GgufValue::as_str) {
-        if kind != "none" {
+    // 4B and up scale the GLOBAL layers' rope linearly (factor 8). The sliding
+    // layers stay unscaled, which the flow applies per layer kind. Any other
+    // scaling type is a different mechanism and refuses.
+    match m.opt("rope.scaling.type").and_then(GgufValue::as_str) {
+        None | Some("none") => {
+            if m.opt("rope.scaling.factor").is_some() {
+                return Err(bad(
+                    "rope.scaling.factor",
+                    "a rope scaling factor without a scaling type is ambiguous for Gemma 3".into(),
+                ));
+            }
+        }
+        Some("linear") => {
+            let factor =
+                m.opt_f64("rope.scaling.factor")
+                    .ok_or_else(|| GgufConfigError::MissingKey {
+                        key: m.key("rope.scaling.factor"),
+                    })?;
+            if !(factor > 1.0 && factor.is_finite()) {
+                return Err(bad(
+                    "rope.scaling.factor",
+                    format!("linear factor {factor} is not a scaling factor above 1"),
+                ));
+            }
+            arch.rope_scaling = model_io::RopeScalingConfig {
+                linear_factor: factor,
+                ..model_io::RopeScalingConfig::NONE
+            };
+        }
+        Some(kind) => {
             return Err(bad(
                 "rope.scaling.type",
-                format!(
-                    "{kind} rope scaling is Gemma 3 4B and up (factor 8 on the global layers), \
-                     which no decode flow here implements; only the unscaled 1B and 270M run"
-                ),
+                format!("{kind} rope scaling is not Gemma 3's (linear on the global layers)"),
             ));
         }
-    }
-    if m.opt("rope.scaling.factor").is_some() {
-        return Err(bad(
-            "rope.scaling.factor",
-            "a rope scaling factor is not supported for Gemma 3".into(),
-        ));
     }
     if arch.full_head_dim != 256 || arch.head_dim != 256 {
         return Err(bad(

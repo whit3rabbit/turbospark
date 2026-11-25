@@ -48,6 +48,14 @@ pub(crate) struct RealGemmaState {
     /// The chunk driver's batched routed scratch, allocated ON FIRST USE
     /// rather than at open. See [`BatchedPrefillScratch`].
     pub(crate) batched: Option<BatchedPrefillScratch>,
+    /// Gemma 3 4B and up: a `[rotated_pairs]` f32 per-pair table for the
+    /// GLOBAL layers, `full_rope_theta^(-2i/d) / linear_factor`, built once at
+    /// open. Linear scaling divides every frequency, which no scalar theta can
+    /// express, so those layers take `rope_neox_freqs`. Sliding layers keep the
+    /// scalar-theta kernel unscaled (llama.cpp's `rope_freq_scale_train_swa`
+    /// is 1). `None` on every unscaled checkpoint, which keeps their dispatch
+    /// byte for byte.
+    pub(crate) global_rope_frequencies: Option<gpu::MetalBuffer>,
 }
 
 /// Batched routed-expert scratch (`docs/BATCHED_PREFILL.md` steps 2
@@ -141,12 +149,38 @@ pub(crate) struct BatchedPrefillScratch {
 fn check_gemma_flow(arch: &ArchConfig) -> Result<(), RealForwardError> {
     if !matches!(
         arch.family,
-        model_io::ModelFamily::Gemma4 | model_io::ModelFamily::Gemma3
+        model_io::ModelFamily::Gemma4
+            | model_io::ModelFamily::Gemma3
+            | model_io::ModelFamily::Gemma2
     ) {
         return Err(RealForwardError::Unsupported(format!(
-            "the real-checkpoint Gemma flow runs only families gemma4 and gemma3, not {}",
+            "the real-checkpoint Gemma flow runs only families gemma4, gemma3 and gemma2, not {}",
             arch.family.as_str()
         )));
+    }
+    if arch.family == model_io::ModelFamily::Gemma2 {
+        // Gemma 2 is Gemma 3's dense sandwich-norm arm WITHOUT the q/k norms and
+        // WITH the two soft caps: the attention-score cap (a family constant,
+        // applied by `AttentionScratch::with_softcap`) and the final-logit cap
+        // in `final_logit_softcap`, which must be the published 30. Everything
+        // else is refused rather than decoded under Gemma 2's constants.
+        if !arch.ffn_sandwich_norms
+            || arch.router_scaled
+            || arch.num_experts != 0
+            || arch.attention_k_eq_v
+            || arch.final_logit_softcap != 30.0
+            || arch.rope_scaling.is_active()
+            || arch.rope_scaling.is_llama3()
+            || arch.rope_scaling.is_linear()
+            || arch.partial_rotary_factor != 1.0
+        {
+            return Err(RealForwardError::Unsupported(
+                "the Gemma 2 flow is the dense sandwich-norm arm with whole-head rope, the \
+                 final-logit cap 30, no k=v sharing and no rope scaling"
+                    .to_string(),
+            ));
+        }
+        return Ok(());
     }
     if arch.family == model_io::ModelFamily::Gemma3 {
         // Gemma 3 is the dense arm only, with sandwich norms and no router.
@@ -158,7 +192,8 @@ fn check_gemma_flow(arch: &ArchConfig) -> Result<(), RealForwardError> {
             || arch.num_experts != 0
             || arch.attention_k_eq_v
             || arch.final_logit_softcap != 0.0
-            || arch.rope_scaling != model_io::RopeScalingConfig::NONE
+            || arch.rope_scaling.is_active()
+            || arch.rope_scaling.is_llama3()
             || arch.partial_rotary_factor != 1.0
         {
             return Err(RealForwardError::Unsupported(
@@ -221,7 +256,10 @@ impl RealGemmaState {
             // residual with it exactly as the MoE tail does.
             // Gemma 3 has no per-layer scalar (the layer output is not
             // rescaled), which is exactly a scalar of 1.0.
-            if arch.family == model_io::ModelFamily::Gemma3 {
+            if matches!(
+                arch.family,
+                model_io::ModelFamily::Gemma3 | model_io::ModelFamily::Gemma2
+            ) {
                 layer_scalar.push(1.0);
                 continue;
             }
@@ -263,6 +301,30 @@ impl RealGemmaState {
             per_expert_scale.push(pes);
         }
 
+        let global_rope_frequencies = if arch.rope_scaling.is_linear() {
+            // Linear scaling is Gemma 3's; Gemma 4 declares none, and the
+            // table below would be wrong for its proportional-rope full layers.
+            if arch.family != model_io::ModelFamily::Gemma3 {
+                return Err(RealForwardError::Unsupported(
+                    "linear rope scaling is wired for Gemma 3 only".to_string(),
+                ));
+            }
+            let pairs = (arch.full_head_dim / 2) as usize;
+            let table: Vec<u8> = (0..pairs)
+                .flat_map(|p| {
+                    let extrap = arch
+                        .full_rope_theta
+                        .powf(-((2 * p) as f64) / arch.full_head_dim as f64);
+                    ((extrap / arch.rope_scaling.linear_factor) as f32).to_le_bytes()
+                })
+                .collect();
+            let buffer = context.new_output_buffer(table.len().max(4) as u64);
+            gpu::write_buffer_bytes(&buffer, 0, &table);
+            Some(buffer)
+        } else {
+            None
+        };
+
         let halfs = |n: usize| context.new_output_buffer((n.max(1) * 2) as u64);
         Ok(Self {
             dense,
@@ -281,6 +343,7 @@ impl RealGemmaState {
             h1: halfs(hidden),
             h2: halfs(hidden),
             batched: None,
+            global_rope_frequencies,
             effective_scale,
             per_expert_scale,
             layer_scalar,
@@ -375,7 +438,7 @@ mod flow_check_tests {
         match check_gemma_flow(&arch) {
             Err(RealForwardError::Unsupported(detail)) => {
                 assert!(
-                    detail.contains("only families gemma4 and gemma3"),
+                    detail.contains("only families gemma4, gemma3 and gemma2"),
                     "{detail}"
                 )
             }

@@ -153,6 +153,10 @@ pub(crate) fn build_manifest_json(
             "ropeScalingBetaFast": arch.rope_scaling.beta_fast,
             "ropeScalingBetaSlow": arch.rope_scaling.beta_slow,
             "ropeScalingMscale": arch.rope_scaling.mscale,
+            "ropeScalingLowFreqFactor": arch.rope_scaling.low_freq_factor,
+            "ropeScalingHighFreqFactor": arch.rope_scaling.high_freq_factor,
+            "ropeScalingLinearFactor": arch.rope_scaling.linear_factor,
+            "ropeScalingLongropeAttnFactor": arch.rope_scaling.longrope_attn_factor,
             // `deepseek2`'s MLA block and its dense lead, unconditional for
             // the same reason every field above is: validation falls back on
             // an omitted field, so an MLA install that said nothing would

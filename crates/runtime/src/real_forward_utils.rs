@@ -236,6 +236,22 @@ pub(crate) fn read_bf16_host(
         .collect())
 }
 
+/// Decodes a resident FP32 tensor to `f32` host values.
+pub(crate) fn read_f32_host(
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    name: &str,
+) -> Result<Vec<f32>, RealForwardError> {
+    let e = entry(index, name)?;
+    let base = index.header.index_size;
+    let local = (e.file_offset - base) as usize;
+    let bytes = &weights.data()[local..local + e.size_bytes as usize];
+    Ok(bytes
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect())
+}
+
 /// Resolves a raw (norm) tensor to a `(buffer, gpu offset)` view, checking
 /// its byte size against the expected element count.
 pub(crate) fn norm_view<'a>(

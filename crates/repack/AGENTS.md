@@ -75,6 +75,11 @@ Checkpoint intake and `.gturbo` writing.
   `gguf_config` (rope scaling, `key_length != 256`, epsilon and MoE keys are
   refused). Q5_0 matrices dequantize to BF16 (`gemma3_tensor_is_transcoded`,
   manifest slot written raw BF16). MLX `gemma3_text` is refused, not mapped.
+- The V-head column reorder on a GDN `ssm_out` refuses a block wider than a
+  head. Any new walk-side refusal that can be decided from the header gets a
+  `pub fn` the catalog probe also calls (`gguf_v_head_block_split`,
+  `qwen4exp_tensor_is_transcoded`), or the probe says RUNNABLE for a file the
+  install refuses.
 - Plain dense `qwen3` has a safetensors door (`parse_qwen3_config`,
   `write_qwen3_dense_install_streamed`, the `qwen3` row of `SUPPORTED_HF`) for
   pre-quantized MLX repos (`mlx-community/Qwen3-4B-4bit`) and, through

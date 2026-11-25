@@ -13,6 +13,7 @@ mod transcode;
 pub use sizing::{minimax_gguf_sizing, MiniMaxSizing};
 mod types;
 
+pub use conventions::gguf_v_head_block_split;
 pub use manifest::gguf_manifest_quant;
 pub use muse_qk_norms::constant_vector as muse_qk_norm_is_constant;
 pub use resume::ResumeProvenance;

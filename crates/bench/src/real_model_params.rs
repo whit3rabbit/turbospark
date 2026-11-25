@@ -139,6 +139,9 @@ pub const fn protocol_parameters(family: ModelFamily) -> ProtocolParameters {
         // `gemma3` rides Gemma 4's row on tokenizer evidence only: both
         // declare a 262,144-entry vocab. UNVERIFIED until an install runs it.
         | ModelFamily::Gemma3
+        // `gemma2` rides the same Gemma row (tokenizer evidence only: 256,000
+        // entries against 262,144). UNVERIFIED until a quality row exists.
+        | ModelFamily::Gemma2
         | ModelFamily::QwenGdnMoe
         | ModelFamily::QwenGdnDense
         | ModelFamily::Qwen3Moe

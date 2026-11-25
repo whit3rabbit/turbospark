@@ -64,6 +64,7 @@ fn linear_attention() -> LinearAttentionConfig {
         value_head_dim: LA_VALUE_DIM as i64,
         conv_kernel_size: LA_CONV_K as i64,
         output_gate_sigmoid: false,
+        source_v_heads_grouped: false,
     }
 }
 

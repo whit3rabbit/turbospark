@@ -95,6 +95,7 @@ pub fn gpt_oss_20b() -> ArchConfig {
             beta_fast: 32.0,
             beta_slow: 1.0,
             mscale: 0.0,
+            ..RopeScalingConfig::NONE
         },
         vision: VisionConfig::NONE,
         short_conv_kernel_size: 0,

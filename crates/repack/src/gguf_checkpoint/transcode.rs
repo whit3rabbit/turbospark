@@ -145,6 +145,7 @@ fn int8_transcode_targets(family: ModelFamily) -> &'static [&'static str] {
         | ModelFamily::MuseGlimmer
         // `gemma3` is DENSE: no router and no per-layer scalar to transcode.
         | ModelFamily::Gemma3
+        | ModelFamily::Gemma2
         | ModelFamily::Spark25
         | ModelFamily::Qwen3Dense
         | ModelFamily::Qwen2Dense
@@ -466,8 +467,8 @@ pub fn resident_entries(
         else {
             continue;
         };
-        let gemma3_q5_0 =
-            family == ModelFamily::Gemma3 && gemma3_tensor_is_transcoded(info.ggml_type);
+        let gemma3_q5_0 = matches!(family, ModelFamily::Gemma3 | ModelFamily::Gemma2)
+            && gemma3_tensor_is_transcoded(info.ggml_type);
         let qwen4exp_dequantized_type = (family == ModelFamily::Qwen4Exp
             && qwen4exp_tensor_is_transcoded(&canonical, info.ggml_type))
             || gemma3_q5_0;
@@ -500,6 +501,45 @@ pub fn resident_entries(
                 }
                 continue;
             }
+        }
+        if family == ModelFamily::Llama {
+            if canonical.ends_with("rope_factors_short") || canonical.ends_with("rope_factors_long")
+            {
+                // Exact F32, never narrowed: these ARE the rotation angles.
+                if info.ggml_type != GGML_TYPE_F32 {
+                    return Err(GgufRepackError::UnsupportedType {
+                        tensor: (*name).to_string(),
+                        ggml_type: info.ggml_type,
+                    });
+                }
+                out.push(ResidentEntrySpec::Raw(RawTensorSpec {
+                    name: canonical,
+                    dtype: crate::resident_writer::DTYPE_FP32,
+                    bytes: read_tensor(header, source, name)?,
+                    shape: logical_shape(&info.dims),
+                }));
+                continue;
+            }
+            let fused = canonical.ends_with("self_attn.qkv_proj.weight")
+                || (canonical.ends_with("mlp.up_proj.weight")
+                    && arch.num_experts == 0
+                    && row_and_col(&info.dims).0 as i64 == 2 * arch.intermediate_size);
+            if fused {
+                let bytes = read_tensor(header, source, name)?;
+                let (specs, narrowed) =
+                    split_phi3_fused(name, &canonical, info.ggml_type, &info.dims, &bytes, arch)?;
+                lossy.extend(narrowed);
+                out.extend(specs);
+                continue;
+            }
+        }
+        if canonical.ends_with("linear_attn.in_proj_ba.weight") {
+            let bytes = read_tensor(header, source, name)?;
+            let (specs, narrowed) =
+                split_fused_ba(name, &canonical, info.ggml_type, &info.dims, &bytes, arch)?;
+            lossy.extend(narrowed);
+            out.extend(specs);
+            continue;
         }
         let bytes = read_tensor(header, source, name)?;
         if family == ModelFamily::Qwen4Exp || gemma3_q5_0 {
@@ -726,6 +766,181 @@ pub fn resident_entries(
         }));
     }
     Ok((out, lossy))
+}
+
+/// Splits `phi3`'s fused projections by ROWS, which is exact for every
+/// row-addressable type (a row is a whole number of blocks).
+///
+/// - `attn_qkv` [hidden, (heads + 2 kv) * head_dim]: q, then k, then v
+///   (llama.cpp's converter keeps HF's `qkv_proj` row order and does NOT apply
+///   the rotary pair permutation Llama's does, so none is applied here).
+/// - `ffn_up` [hidden, 2 * ffn]: HF's `gate_up_proj`, `gate, up =
+///   chunk(2)`, so the FIRST half is gate and the second is up.
+fn split_phi3_fused(
+    name: &str,
+    canonical: &str,
+    ggml_type: u32,
+    dims: &[u64],
+    bytes: &[u8],
+    arch: &ArchConfig,
+) -> Result<(Vec<ResidentEntrySpec>, Vec<(String, usize)>), GgufRepackError> {
+    let shape_err = |detail: String| GgufRepackError::ShapeMismatch {
+        tensor: name.to_string(),
+        detail,
+    };
+    let (rows, _) = row_and_col(dims);
+    let head_dim = arch.full_head_dim as usize;
+    let q_rows = arch.num_heads as usize * head_dim;
+    let kv_rows = arch.num_full_kv_heads as usize * head_dim;
+    // (output suffix, row count), in source order.
+    let (prefix, parts): (&str, Vec<(&str, usize)>) =
+        if let Some(p) = canonical.strip_suffix("qkv_proj.weight") {
+            (
+                p,
+                vec![
+                    ("q_proj.weight", q_rows),
+                    ("k_proj.weight", kv_rows),
+                    ("v_proj.weight", kv_rows),
+                ],
+            )
+        } else if let Some(p) = canonical.strip_suffix("up_proj.weight") {
+            let half = arch.intermediate_size as usize;
+            (
+                p,
+                vec![("gate_proj.weight", half), ("up_proj.weight", half)],
+            )
+        } else {
+            return Err(shape_err(format!("{canonical} is not a fused phi3 tensor")));
+        };
+    if parts.iter().map(|(_, n)| n).sum::<usize>() != rows {
+        return Err(shape_err(format!(
+            "{rows} rows where the fused parts sum to {}",
+            parts.iter().map(|(_, n)| n).sum::<usize>()
+        )));
+    }
+    if bytes.len() % rows != 0 {
+        return Err(shape_err(format!(
+            "{} bytes do not divide into {rows} whole rows",
+            bytes.len()
+        )));
+    }
+    let row_bytes = bytes.len() / rows;
+    let mut specs = Vec::new();
+    let mut lossy = Vec::new();
+    let mut at = 0usize;
+    for (suffix, n) in parts {
+        let half = bytes[at * row_bytes..(at + n) * row_bytes].to_vec();
+        at += n;
+        let out_name = format!("{prefix}{suffix}");
+        let half_dims = [dims[0], n as u64];
+        if ggml_type == GGML_TYPE_F32 {
+            let t = transcode_f32(name, out_name, &half, &half_dims, arch)?;
+            if t.lossy > 0 {
+                lossy.push((name.to_string(), t.lossy));
+            }
+            specs.push(t.spec);
+        } else {
+            let dtype = dtype_tag_for_ggml_type(ggml_type).ok_or_else(|| {
+                GgufRepackError::UnsupportedType {
+                    tensor: name.to_string(),
+                    ggml_type,
+                }
+            })?;
+            specs.push(ResidentEntrySpec::Raw(RawTensorSpec {
+                name: out_name,
+                dtype,
+                bytes: half,
+                shape: logical_shape(&half_dims),
+            }));
+        }
+    }
+    Ok((specs, lossy))
+}
+
+/// Splits `qwen3next`'s fused `ssm_ba` (`in_proj_ba`) into the runtime's
+/// `in_proj_b` and `in_proj_a`.
+///
+/// HF stores the fused rows grouped by KEY head: for key head `h` and
+/// `r = num_v_heads / num_k_heads`, rows `h*2r .. h*2r + r` are beta for V
+/// heads `h*r ..` and rows `h*2r + r .. (h+1)*2r` are alpha for the same V
+/// heads (`Qwen3NextGatedDeltaNet.fix_query_key_value_ordering`:
+/// `b, a = torch.split(mixed_ba, [r, r])`). llama.cpp's converter leaves this
+/// tensor in HF order, so the split is a gather of whole rows, exact for every
+/// row-addressable type (a row is a whole number of blocks, which the byte
+/// length check below proves). The outputs are in grouped V-head order, which
+/// is the runtime's convention and what `source_v_heads_grouped` promises.
+fn split_fused_ba(
+    name: &str,
+    canonical: &str,
+    ggml_type: u32,
+    dims: &[u64],
+    bytes: &[u8],
+    arch: &ArchConfig,
+) -> Result<(Vec<ResidentEntrySpec>, Vec<(String, usize)>), GgufRepackError> {
+    let shape_err = |detail: String| GgufRepackError::ShapeMismatch {
+        tensor: name.to_string(),
+        detail,
+    };
+    let la = &arch.linear_attention;
+    let (k_heads, v_heads) = (la.num_k_heads as usize, la.num_v_heads as usize);
+    if k_heads == 0 || v_heads % k_heads != 0 {
+        return Err(shape_err(format!(
+            "ssm_ba needs num_v_heads divisible by num_k_heads, got {v_heads} and {k_heads}"
+        )));
+    }
+    let r = v_heads / k_heads;
+    let (rows, cols) = row_and_col(dims);
+    if rows != 2 * v_heads {
+        return Err(shape_err(format!(
+            "{rows} rows where 2 x {v_heads} (beta and alpha per V head) are expected"
+        )));
+    }
+    if bytes.len() % rows != 0 {
+        return Err(shape_err(format!(
+            "{} bytes do not divide into {rows} whole rows",
+            bytes.len()
+        )));
+    }
+    let row_bytes = bytes.len() / rows;
+    let mut beta = Vec::with_capacity(v_heads * row_bytes);
+    let mut alpha = Vec::with_capacity(v_heads * row_bytes);
+    for h in 0..k_heads {
+        for j in 0..r {
+            let b_row = h * 2 * r + j;
+            let a_row = h * 2 * r + r + j;
+            beta.extend_from_slice(&bytes[b_row * row_bytes..(b_row + 1) * row_bytes]);
+            alpha.extend_from_slice(&bytes[a_row * row_bytes..(a_row + 1) * row_bytes]);
+        }
+    }
+    let half_dims = [dims[0], v_heads as u64];
+    let prefix = canonical.trim_end_matches("in_proj_ba.weight");
+    let mut specs = Vec::new();
+    let mut lossy = Vec::new();
+    for (suffix, half) in [("in_proj_b.weight", beta), ("in_proj_a.weight", alpha)] {
+        let out_name = format!("{prefix}{suffix}");
+        if ggml_type == GGML_TYPE_F32 {
+            let t = transcode_f32(name, out_name, &half, &half_dims, arch)?;
+            if t.lossy > 0 {
+                lossy.push((name.to_string(), t.lossy));
+            }
+            specs.push(t.spec);
+        } else {
+            let dtype = dtype_tag_for_ggml_type(ggml_type).ok_or_else(|| {
+                GgufRepackError::UnsupportedType {
+                    tensor: name.to_string(),
+                    ggml_type,
+                }
+            })?;
+            let _ = cols;
+            specs.push(ResidentEntrySpec::Raw(RawTensorSpec {
+                name: out_name,
+                dtype,
+                bytes: half,
+                shape: logical_shape(&half_dims),
+            }));
+        }
+    }
+    Ok((specs, lossy))
 }
 
 fn qwen4_indexer_projection_part(name: &str) -> Option<(usize, bool)> {
@@ -1050,5 +1265,107 @@ mod tests {
             assert_eq!((spec.shape.0 * spec.shape.1) as usize, elements);
             assert_eq!(spec.bytes.len(), elements * 2);
         }
+    }
+
+    fn qwen3next_like_arch() -> ArchConfig {
+        let mut arch = model_io::known_architecture(ModelFamily::QwenGdnMoe);
+        // 4 key heads x 2 value heads each, like the real 16 x 2.
+        arch.linear_attention.num_k_heads = 4;
+        arch.linear_attention.num_v_heads = 8;
+        arch.linear_attention.source_v_heads_grouped = true;
+        arch
+    }
+
+    /// `qwen3next`'s fused `ssm_ba` gathers into beta and alpha rows by
+    /// KEY-head group: group `h` holds `[b(2h*r..), a(..)]` as rows
+    /// `h*2r .. (h+1)*2r`, beta first. Row `i` of the input is filled with
+    /// the byte `i`, so any mis-ordered gather shows as a wrong byte.
+    #[test]
+    fn fused_ssm_ba_splits_into_grouped_beta_and_alpha_rows() {
+        let arch = qwen3next_like_arch();
+        // 16 rows (2 x 8 V heads), 3 bytes each; a row is one value so any
+        // whole-row layout works for the byte gather. Type 8 (Q8_0) is a
+        // block type whose rows are handled as raw bytes.
+        let rows = 16usize;
+        let row_bytes = 34usize; // one Q8_0 block, so cols = 32
+        let mut bytes = Vec::new();
+        for r in 0..rows {
+            bytes.extend(std::iter::repeat(r as u8).take(row_bytes));
+        }
+        let (specs, lossy) = split_fused_ba(
+            "blk.0.ssm_ba.weight",
+            "language_model.model.layers.0.linear_attn.in_proj_ba.weight",
+            8,
+            &[32, rows as u64],
+            &bytes,
+            &arch,
+        )
+        .expect("splits");
+        assert!(lossy.is_empty());
+        let get = |suffix: &str| match specs
+            .iter()
+            .find(|s| matches!(s, ResidentEntrySpec::Raw(r) if r.name.ends_with(suffix)))
+        {
+            Some(ResidentEntrySpec::Raw(r)) => r.bytes.clone(),
+            _ => panic!("{suffix} missing"),
+        };
+        let first = |b: &[u8]| -> Vec<u8> { b.chunks(row_bytes).map(|c| c[0]).collect() };
+        // r = 2: group h rows are [4h, 4h+1] beta and [4h+2, 4h+3] alpha.
+        assert_eq!(
+            first(&get("in_proj_b.weight")),
+            vec![0, 1, 4, 5, 8, 9, 12, 13]
+        );
+        assert_eq!(
+            first(&get("in_proj_a.weight")),
+            vec![2, 3, 6, 7, 10, 11, 14, 15]
+        );
+    }
+
+    /// A wrong row count is refused rather than silently mis-split.
+    #[test]
+    fn fused_ssm_ba_refuses_a_wrong_row_count() {
+        let arch = qwen3next_like_arch();
+        let bytes = vec![0u8; 34 * 12];
+        assert!(split_fused_ba("t", "x.in_proj_ba.weight", 8, &[32, 12], &bytes, &arch).is_err());
+    }
+
+    /// With `source_v_heads_grouped` the restore is the identity for every
+    /// V-head tensor, and `A_log` still gets its value transform.
+    #[test]
+    fn grouped_source_skips_the_restore_but_not_the_a_log_transform() {
+        let arch = qwen3next_like_arch();
+        let c = "language_model.model.layers.0.linear_attn.";
+        let mut v: Vec<f32> = (0..8).map(|i| -(i as f32 + 1.0)).collect();
+        let before = v.clone();
+        apply_source_convention("blk.0.ssm_a", &format!("{c}A_log"), &arch, 1, &mut v).unwrap();
+        // Order untouched, values are ln(-x).
+        for (got, src) in v.iter().zip(&before) {
+            assert!((got - (-src).ln()).abs() < 1e-6);
+        }
+        // A tensor that would be shuffled is returned untouched.
+        let mut dt: Vec<f32> = (0..8).map(|i| i as f32).collect();
+        let dt0 = dt.clone();
+        apply_source_convention(
+            "blk.0.ssm_dt.bias",
+            &format!("{c}dt_bias"),
+            &arch,
+            1,
+            &mut dt,
+        )
+        .unwrap();
+        assert_eq!(dt, dt0);
+        // The non-grouped (qwen3.5) source DOES shuffle it.
+        let mut tiled = arch;
+        tiled.linear_attention.source_v_heads_grouped = false;
+        let mut dt2: Vec<f32> = (0..8).map(|i| i as f32).collect();
+        apply_source_convention(
+            "blk.0.ssm_dt.bias",
+            &format!("{c}dt_bias"),
+            &tiled,
+            1,
+            &mut dt2,
+        )
+        .unwrap();
+        assert_ne!(dt2, dt0);
     }
 }

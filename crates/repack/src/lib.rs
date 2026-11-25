@@ -29,6 +29,7 @@ mod gguf_config;
 mod gguf_header;
 mod gguf_names;
 pub mod gguf_quantize;
+mod gguf_tokenizer;
 mod gturbo_writer;
 mod hf_checkpoint;
 mod inkling2_checkpoint;
@@ -131,10 +132,10 @@ pub use gemma4_checkpoint::{
 };
 pub use gguf_checkpoint::{
     dtype_tag_for_ggml_type, gdn_out_proj_needs_q8_0_requant, gemma3_tensor_is_transcoded,
-    gguf_manifest_quant, gguf_speculation, lfm3_rope_freqs_are_zero_tail, muse_qk_norm_is_constant,
-    orchestrate_gguf_checkpoint, qwen4exp_tensor_is_transcoded, write_gguf_install_streamed,
-    write_gguf_install_streamed_resumable, GgufRepackError, GgufRepackOutput, GgufSpeculation,
-    ResumeProvenance, FUSED_GATE_FIRST,
+    gguf_manifest_quant, gguf_speculation, gguf_v_head_block_split, lfm3_rope_freqs_are_zero_tail,
+    muse_qk_norm_is_constant, orchestrate_gguf_checkpoint, qwen4exp_tensor_is_transcoded,
+    write_gguf_install_streamed, write_gguf_install_streamed_resumable, GgufRepackError,
+    GgufRepackOutput, GgufSpeculation, ResumeProvenance, FUSED_GATE_FIRST,
 };
 pub use gguf_config::{arch_from_gguf, GgufConfigError};
 pub use gguf_header::{
@@ -146,6 +147,7 @@ pub use gguf_header::{
 pub use gguf_names::{
     family_for_architecture, gguf_architecture, map_gguf_name, GgufMapping, GgufNameError,
 };
+pub use gguf_tokenizer::{tokenizer_files_from_gguf, GgufTokenizerError, GgufTokenizerFiles};
 pub use gturbo_writer::{
     write_gturbo_install, write_gturbo_install_with_resident_index,
     write_gturbo_install_with_resident_index_and_experts, write_packed_vision, ExpertBlob,

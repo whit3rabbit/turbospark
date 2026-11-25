@@ -374,6 +374,11 @@ impl MfTokenizer {
             // template folds a system message into the first user turn and
             // renames the assistant role `model`, which a hand-rolled copy
             // could get subtly wrong. A real install ships it.
+            ChatDialect::Phi3 => Err(TokenizerError::UnsupportedForDialect(
+                "phi3 has no fallback renderer; the install must carry its own \
+                 chat_template (tokenizer_config.json, chat_template.json or chat_template.jinja)"
+                    .to_string(),
+            )),
             ChatDialect::Gemma3 => Err(TokenizerError::UnsupportedForDialect(
                 "gemma3 has no fallback renderer; the install must carry its own \
                  chat_template (tokenizer_config.json, chat_template.json or chat_template.jinja)"
@@ -467,6 +472,8 @@ impl MfTokenizer {
             ChatDialect::Gemma3 => format!(
                 "<start_of_turn>user\n{content}<end_of_turn>\n<start_of_turn>model\n"
             ),
+            // Read off Phi-3.5's template: `<|user|>\n{c}<|end|>\n<|assistant|>\n`.
+            ChatDialect::Phi3 => format!("<|user|>\n{content}<|end|>\n<|assistant|>\n"),
             // Writable for Harmony's reason: a continuation is one user turn
             // plus the opening of an assistant one, no system preamble and no
             // tools involved. The think frame is opened here to match the

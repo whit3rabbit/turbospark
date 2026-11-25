@@ -369,6 +369,8 @@ pub fn routed_marker(family: ModelFamily) -> &'static str {
         ModelFamily::Gemma4
         // `gemma3` is DENSE and GGUF-only this pass; the marker can never match.
         | ModelFamily::Gemma3
+        // `gemma2` is dense and GGUF-only too.
+        | ModelFamily::Gemma2
         | ModelFamily::DeepseekV4Flash
         | ModelFamily::Llama
         | ModelFamily::Qwen3Moe
@@ -395,6 +397,7 @@ fn is_dense_family(family: ModelFamily) -> bool {
         family,
         ModelFamily::QwenGdnDense
             | ModelFamily::Gemma3
+            | ModelFamily::Gemma2
             | ModelFamily::MuseGlimmer
             | ModelFamily::Spark25
             | ModelFamily::Qwen3Dense

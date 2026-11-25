@@ -1117,6 +1117,8 @@ mod tests {
         ModelFamily::Inkling2Loop,
         // Refused deliberately: DENSE, no routed experts to map.
         ModelFamily::Gemma3,
+        // Refused deliberately: DENSE, no routed experts to map.
+        ModelFamily::Gemma2,
     ];
 
     /// A manifest dimension past its ceiling is refused at open,

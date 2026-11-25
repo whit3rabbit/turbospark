@@ -62,11 +62,26 @@ pub enum ArchSupport {
 /// GGUF `general.architecture` -> family, for the architectures that run.
 const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     ("gemma4", ModelFamily::Gemma4),
-    // The text-only Gemma 3 line, 1B first. 4B and up carry linear rope
-    // scaling and are refused at `gguf_config`, by name. No HF row: the
+    // The text-only Gemma 3 line, 1B first. 4B and 12B carry linear rope
+    // scaling on the global layers, which `gguf_config` reads and the Gemma
+    // flow applies (synthetic gate only; no real 4B file run). The 27B is
+    // refused at `gguf_config` for its key_length. No HF row: the
     // `gemma3_text` safetensors path (which needs the `+1` norm bake) is not
     // implemented, so the HF registry keeps refusing it.
     ("gemma3", ModelFamily::Gemma3),
+    // Read off `bartowski/gemma-2-2b-it-GGUF`'s Q3_K_L header, 2026-11-19:
+    // 26 layers, 8 q heads over 4 kv at head_dim 256, `attn_logit_softcapping`
+    // 50 and `final_logit_softcapping` 30, `attention.sliding_window` 4096, no
+    // q/k norm tensors, tied head, SentencePiece tokenizer (pre `default`). The
+    // Gemma flow's dense arm without the q/k norms and with the attention-score
+    // soft cap, which only the barrier decode kernel applies
+    // (`AttentionScratch::with_softcap`). 9B should follow (head_dim 256); the
+    // 27B is refused at `gguf_config` for its attention scale. Gated 2026-11-20
+    // on gemma-2-2b-it Q4_K_M: against llama.cpp on the SAME bytes, mean KL
+    // 0.0000079 nats at 99.27% top-1, perplexity 19.6696 against 19.6686 (shape
+    // floor 0.00043, backend floor 0.0043); with the attention cap disabled the
+    // same run reads 0.0000768 and 19.694, so the cap is exercised and right.
+    ("gemma2", ModelFamily::Gemma2),
     // Promoted out of the planned table by ROADMAP Phase M2. This string
     // covers dense Llama 2/3.x and Mistral as well as the Mixtral MoEs, and
     // only `expert_count` tells the halves apart; both run (M4 made the dense
@@ -106,6 +121,20 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // the published payload still needs its real install and runtime gates
     // (docs/QWEN4_EXP.md).
     ("qwen4exp", ModelFamily::Qwen4Exp),
+    // Read off `unsloth/Qwen3-Next-80B-A3B-Instruct-GGUF`'s UD-TQ1_0 header,
+    // 2026-11-19: 48 layers, 512 experts top-10 at ffn 512 over hidden 2048,
+    // the `ssm.*` keys of the Gated-DeltaNet hybrid, rope dim 64 of head_dim
+    // 256, pre-tokenizer `qwen2`. The same decode flow as `qwen35moe`, and its
+    // OWN string (exact equality). It differs from `qwen35moe` ONLY in source
+    // conventions, handled at repack and invisible to the runtime: a fused
+    // `ssm_ba` (beta then alpha per key-head group) where `qwen35moe` has
+    // `ssm_alpha`/`ssm_beta`, and V heads already in the grouped order (see
+    // `LinearAttentionConfig::source_v_heads_grouped`). Gated 2026-11-20 on
+    // Unsloth's UD-TQ1_0 (19.1 GiB, streamed install): coherent 320-token
+    // generations and, against llama.cpp on the SAME bytes on Metal, a mean KL
+    // of 0.00312 nats at 97.5% top-1 between a 0.00135 shape floor and a
+    // 0.00665 backend floor (docs/GGUF.md).
+    ("qwen3next", ModelFamily::QwenGdnMoe),
     // Promoted by ROADMAP M5 step 3 and FULLY supported since step 4: a
     // baseline, a name table, a metadata mapping and its own decode flow
     // (`crates/runtime/src/families/gptoss/`), with both real-model gates
@@ -179,6 +208,19 @@ const SUPPORTED_GGUF: &[(&str, ModelFamily)] = &[
     // scale, and `arch_from_gguf` REFUSES any file whose other scalars differ
     // (Granite 3.x carries 12.0 / 0.22 / 16.0, which the flow cannot express).
     ("granite", ModelFamily::Llama),
+    // Read off `bartowski/Phi-3.5-mini-instruct-GGUF`'s Q6_K header,
+    // 2026-11-19 (witness below): 32 layers, MHA, head_dim 96 with full
+    // rotary, fused `attn_qkv` and `ffn_up` (up and gate in one tensor, gate
+    // first), two F32 LongRoPE factor vectors, `original_context_length` 4096,
+    // `attn_factor` 1.19. The Llama decode flow with the fused tensors split
+    // at repack and a LongRoPE table pair; see `derive_phi3_extensions`.
+    // Phi-4's mini conversions report the same string. Gated 2026-11-20 on
+    // `bartowski/Phi-3.5-mini-instruct-GGUF` Q4_K_M: against llama.cpp on the
+    // SAME bytes, mean KL 0.0000333 nats at 99.69% top-1 and perplexity 8.2529
+    // against 8.2545 (shape floor 0.0000173, backend floor 0.00675). Only the
+    // SHORT factor table was compared (the harness context is under 4096);
+    // the long table is checked for coherence only. See docs/GGUF.md.
+    ("phi3", ModelFamily::Llama),
     // Read off `Qwen/Qwen3-VL-4B-Instruct-GGUF`'s Q4_K_M header, 2026-11-14:
     // the TEXT trunk only (398 tensors: 11 per layer over 36 layers plus
     // `token_embd` and `output_norm`, tied head), with the vision tower in a
@@ -353,11 +395,29 @@ const PLANNED_GGUF: &[(&str, PlannedArch)] = &[
             witness: "https://huggingface.co/unsloth/Llama-4-Scout-17B-16E-Instruct-GGUF/resolve/main/Llama-4-Scout-17B-16E-Instruct-Q2_K.gguf",
         },
     ),
+    // Rows below were read off real headers on 2026-11-19 with a ranged fetch
+    // (first ~40 MB, tokenizer arrays included). Slot arithmetic is Gotcha 36's
+    // header multiplication at the Q4-ish rate, an ESTIMATE until a Phase 0 reads
+    // the real expert tensors; none of these has an installed or run witness.
+    //
+    // 48 layers, 512 experts top-10 at ffn 512 over hidden 2048 (about 1.8 MiB
+    // per expert, so streaming fits), `ssm.*` keys of the Gated-DeltaNet hybrid
+    // layer family `qwen35moe` already runs, 16 q heads over 2 kv at head_dim
+    // 256, rope dim 64, pre-tokenizer `qwen2`. Its OWN string despite the
+    // shared layer graph, so it is NOT a `qwen35moe` alias (exact equality).
+    // 47 layers (one leading dense), 128 experts top-8 at ffn 1408 over hidden
+    // 4096 (about 9.9 MiB per expert), 96 q heads over 8 kv at head_dim 128,
+    // rope dim 64 of 128, `expert_gating_func` 2 (sigmoid) with weight norm,
+    // one shared expert, `nextn_predict_layers` 1, pre-tokenizer `glm4`.
     (
-        "phi3",
+        "glm4moe",
         PlannedArch {
-            needs: "dense-FFN GPU path and SuScaled (longrope) RoPE",
-            witness: "https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF/resolve/main/Phi-3.5-mini-instruct-Q6_K.gguf",
+            needs: "the Llama flow plus a shared expert and a per-layer dense/MoE switch \
+                    (block 0 is dense), q/k/v biases, 64-of-128 partial rope, MiniMax's \
+                    sigmoid selection-only router bias, block 46 (the NextN layer) \
+                    dropped from the layer count, and a cross-engine gate that needs a \
+                    machine that holds the 35.6 GiB checkpoint (docs/GLM4MOE_PHASE0.md)",
+            witness: "https://huggingface.co/unsloth/GLM-4.5-Air-GGUF/resolve/main/GLM-4.5-Air-UD-TQ1_0.gguf",
         },
     ),
 ];

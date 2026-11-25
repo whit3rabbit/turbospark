@@ -147,42 +147,44 @@ impl RealForwardRunner {
             (v_buf, v_off),
         )?;
 
-        let q_norm = norm_view(
-            &self.weights,
-            &self.index,
-            &layer_tensor(layer, "self_attn.q_norm.weight"),
-            head_dim_l as usize,
-        )?;
-        let k_norm = norm_view(
-            &self.weights,
-            &self.index,
-            &layer_tensor(layer, "self_attn.k_norm.weight"),
-            head_dim_l as usize,
-        )?;
-        super::norm::encode_norm_perhead(
-            &arch,
-            &mut self.context,
-            pass,
-            q,
-            q_norm,
-            q,
-            num_heads,
-            head_dim_l,
-            RMS_EPS,
-        )
-        .map_err(gpu_err)?;
-        super::norm::encode_norm_perhead(
-            &arch,
-            &mut self.context,
-            pass,
-            (k_buf, k_off),
-            k_norm,
-            (k_buf, k_off),
-            num_kv_l,
-            head_dim_l,
-            RMS_EPS,
-        )
-        .map_err(gpu_err)?;
+        if super::norm::applies_qk_norm(&arch) {
+            let q_norm = norm_view(
+                &self.weights,
+                &self.index,
+                &layer_tensor(layer, "self_attn.q_norm.weight"),
+                head_dim_l as usize,
+            )?;
+            let k_norm = norm_view(
+                &self.weights,
+                &self.index,
+                &layer_tensor(layer, "self_attn.k_norm.weight"),
+                head_dim_l as usize,
+            )?;
+            super::norm::encode_norm_perhead(
+                &arch,
+                &mut self.context,
+                pass,
+                q,
+                q_norm,
+                q,
+                num_heads,
+                head_dim_l,
+                RMS_EPS,
+            )
+            .map_err(gpu_err)?;
+            super::norm::encode_norm_perhead(
+                &arch,
+                &mut self.context,
+                pass,
+                (k_buf, k_off),
+                k_norm,
+                (k_buf, k_off),
+                num_kv_l,
+                head_dim_l,
+                RMS_EPS,
+            )
+            .map_err(gpu_err)?;
+        }
         // Gemma 4 normalizes V with a weightless per-head RMS norm; Gemma 3
         // has no V norm at all, so applying it would decode fluently and wrong.
         if super::norm::applies_v_norm(&arch) {
@@ -206,28 +208,43 @@ impl RealForwardRunner {
         } else {
             (head_dim_l / 2, arch.rope_theta as f32)
         };
-        gpu::encode_rope_proportional_neox(
-            &mut self.context,
-            pass,
-            q,
-            position as u32,
-            num_heads,
-            head_dim_l,
-            rotated_pairs,
-            theta,
-        )
-        .map_err(gpu_err)?;
-        gpu::encode_rope_proportional_neox(
-            &mut self.context,
-            pass,
-            (k_buf, k_off),
-            position as u32,
-            num_kv_l,
-            head_dim_l,
-            rotated_pairs,
-            theta,
-        )
-        .map_err(gpu_err)?;
+        // Gemma 3 4B+: the GLOBAL layers rotate by a per-pair table (linear
+        // scaling divides every frequency); sliding layers keep the scalar theta.
+        let global_freqs = if is_full {
+            self.real
+                .as_ref()
+                .and_then(|real| real.global_rope_frequencies.as_ref())
+        } else {
+            None
+        };
+        for (data, heads) in [(q, num_heads), ((k_buf, k_off), num_kv_l)] {
+            if let Some(freqs) = global_freqs {
+                gpu::encode_rope_neox_freqs(
+                    &mut self.context,
+                    pass,
+                    data,
+                    position as u32,
+                    heads,
+                    head_dim_l,
+                    rotated_pairs,
+                    (freqs, 0),
+                    1.0,
+                )
+                .map_err(gpu_err)?;
+            } else {
+                gpu::encode_rope_proportional_neox(
+                    &mut self.context,
+                    pass,
+                    data,
+                    position as u32,
+                    heads,
+                    head_dim_l,
+                    rotated_pairs,
+                    theta,
+                )
+                .map_err(gpu_err)?;
+            }
+        }
 
         // No-op on an FP16 (or SWA) layer; quantizes the normed, RoPE'd
         // staging row into the cache on a TurboQuant-quantized one.

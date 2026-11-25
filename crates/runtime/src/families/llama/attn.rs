@@ -323,9 +323,9 @@ fn encode_attention_input_row(
                 .map_err(gpu_err)?;
             }
         } else if let Some(frequencies) = llama.rope_frequencies.as_ref() {
-            // Llama 3.x: the per-pair angle table built at open. `mscale`
-            // 1.0 because llama3 scaling moves only the angle (state.rs
-            // refuses it next to YaRN, whose mscale is not 1).
+            // Llama 3.x or LongRoPE (Phi-3.5): the per-pair angle table built
+            // at open. `rope_mscale` is 1.0 for Llama 3 and `attn_factor` for
+            // LongRoPE.
             gpu::encode_rope_neox_freqs(
                 context,
                 pass,
@@ -335,7 +335,7 @@ fn encode_attention_input_row(
                 head_dim,
                 llama.rotated_pairs,
                 (frequencies, 0),
-                1.0,
+                llama.rope_mscale,
             )
             .map_err(gpu_err)?;
         } else if arch.rope_neox_subdim {

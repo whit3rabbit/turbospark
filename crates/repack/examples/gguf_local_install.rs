@@ -6,10 +6,13 @@
 //!   cargo run --release -p turbospark-repack --example gguf_local_install -- \
 //!       <model.gguf> <new install dir> <sidecar dir> [model id]
 //!
-//! A GGUF carries llama.cpp's tokenizer, not an HF one, so `<sidecar dir>` must
-//! hold the model's HF `tokenizer.json` and `tokenizer_config.json` (and
-//! optionally `generation_config.json`). Refuses an existing destination and
-//! writes no registry row: point `turbospark run` at the directory.
+//! A GGUF carries llama.cpp's tokenizer, not an HF one. `<sidecar dir>` may hold
+//! the model's HF `tokenizer.json` and `tokenizer_config.json` (and optionally
+//! `generation_config.json`), which win when present. Pass `-` or a directory
+//! without `tokenizer.json` to rebuild them from the GGUF's own metadata
+//! (byte-level BPE with a reviewed pre-tokenizer only; anything else is refused
+//! by name). Refuses an existing destination and writes no registry row: point
+//! `turbospark run` at the directory.
 
 use std::fs::File;
 use std::os::unix::fs::FileExt;
@@ -62,6 +65,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let source = FileRangeSource(File::open(&gguf)?);
     let header = turbospark_repack::fetch_gguf_header(&source)?;
     std::fs::create_dir_all(&dst)?;
+    if !sidecars.join("tokenizer.json").exists() {
+        let files = turbospark_repack::tokenizer_files_from_gguf(&header)?;
+        std::fs::write(
+            dst.join("tokenizer.json"),
+            serde_json::to_vec(&files.tokenizer_json)?,
+        )?;
+        std::fs::write(
+            dst.join("tokenizer_config.json"),
+            serde_json::to_vec_pretty(&files.tokenizer_config_json)?,
+        )?;
+        eprintln!("[install] tokenizer rebuilt from GGUF metadata");
+    }
     for name in [
         "tokenizer.json",
         "tokenizer_config.json",

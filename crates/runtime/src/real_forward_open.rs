@@ -219,6 +219,13 @@ impl RealForwardRunner {
                     // and checked at build (`families/inkling2/lamq.rs`).
                     && !(expecting.family == model_io::ModelFamily::Inkling2Loop
                         && (e.dtype == 36 || (e.dtype == 2 && e.name.starts_with("lamq.lut."))))
+                    // `phi3`'s LongRoPE factors are exact FP32 by design (a
+                    // BF16 round would move every rotation angle), read only
+                    // by `RealLlamaState::build` through `read_f32_host`.
+                    && !(expecting.family == model_io::ModelFamily::Llama
+                        && e.dtype == 3
+                        && (e.name == "language_model.model.rope_factors_short"
+                            || e.name == "language_model.model.rope_factors_long"))
             })
             .min_by_key(|e| &e.name)
         {
@@ -420,7 +427,9 @@ impl RealForwardRunner {
             // `gemma3` runs the Gemma 4 flow's dense arm, with the family-keyed
             // switches in `families/gemma4/` (no V norm, no layer scalar,
             // centered norms).
-            model_io::ModelFamily::Gemma4 | model_io::ModelFamily::Gemma3 => {
+            model_io::ModelFamily::Gemma4
+            | model_io::ModelFamily::Gemma3
+            | model_io::ModelFamily::Gemma2 => {
                 if runner
                     .index
                     .entries
@@ -566,6 +575,7 @@ impl RealForwardRunner {
                     &runner.weights,
                     &runner.index,
                     &runner.arch,
+                    max_context,
                 )?);
             }
             model_io::ModelFamily::DeepseekV4Flash => {

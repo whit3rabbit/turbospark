@@ -147,6 +147,7 @@ fn linear_layer_has_no_kv_slots() {
         value_head_dim: 8,
         conv_kernel_size: 4,
         output_gate_sigmoid: false,
+        source_v_heads_grouped: false,
     };
     let cache = KvCacheManager::new(context.device(), &arch, 32, false, None, 8, None).unwrap();
     assert_eq!(cache.layer_kind(0), LayerKind::Linear);

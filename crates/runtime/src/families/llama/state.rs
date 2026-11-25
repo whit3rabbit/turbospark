@@ -84,6 +84,10 @@ pub(crate) struct RealLlamaState {
     pub(crate) moe_x: gpu::MetalBuffer,
     /// `[hidden]`: the routed sum, added back to the stream.
     pub(crate) h2: gpu::MetalBuffer,
+    /// Magnitude on cos and sin when `rope_frequencies` is set: 1.0 for Llama
+    /// 3 scaling, `attn_factor` for LongRoPE (Phi-3.5), which scales q and k
+    /// each by it.
+    pub(crate) rope_mscale: f32,
 }
 
 /// Persistent allocations for the dense-Llama batched-attention path.
@@ -189,6 +193,7 @@ impl RealLlamaState {
         weights: &gpu::ResidentGpuWeights,
         index: &ResidentIndex,
         arch: &ArchConfig,
+        max_context: usize,
     ) -> Result<Self, RealForwardError> {
         let unsupported = |detail: String| Err(RealForwardError::Unsupported(detail));
         if arch.family == ModelFamily::MiniMaxM2 && arch.tie_word_embeddings {
@@ -457,8 +462,59 @@ impl RealLlamaState {
         let router_ones = context.new_output_buffer(ones.len() as u64);
         gpu::write_buffer_bytes(&router_ones, 0, &ones);
 
+        let mut rope_mscale = 1.0f32;
+        let rope_frequencies = if arch.rope_scaling.is_longrope() {
+            if rope_frequencies.is_some() {
+                return unsupported(
+                    "LongRoPE cannot be combined with per-pair rope_freq_factors".into(),
+                );
+            }
+            // LongRoPE: frequency_i = base^(-2i/d) / factor_i, with the SHORT
+            // vector while the context window fits the original training
+            // context and the LONG one past it. llama.cpp makes that choice
+            // once per context from `n_ctx`, not per position, and so does
+            // this: the window is fixed at open (`max_context`), so the table
+            // is too. HF's `Phi3` switches by the live sequence length instead,
+            // which would change the angles of cached keys mid-sequence.
+            if arch.partial_rotary_factor != 1.0 || arch.rope_neox_subdim {
+                return unsupported("LongRoPE is wired for full-head NeoX rotation only".into());
+            }
+            let long = max_context as i64 > arch.rope_scaling.original_context;
+            let name = if long {
+                "language_model.model.rope_factors_long"
+            } else {
+                "language_model.model.rope_factors_short"
+            };
+            let factors = crate::real_forward_utils::read_f32_host(weights, index, name)?;
+            if factors.len() as i64 != rotated_pairs {
+                return unsupported(format!(
+                    "{name} has {} entries; the flow rotates {rotated_pairs} pairs",
+                    factors.len()
+                ));
+            }
+            if factors.iter().any(|f| !f.is_finite() || *f <= 0.0) {
+                return unsupported(format!("{name} holds a non-positive or non-finite factor"));
+            }
+            let dim = arch.full_head_dim as f64;
+            let bytes: Vec<u8> = factors
+                .iter()
+                .enumerate()
+                .flat_map(|(i, &f)| {
+                    let inv = arch.full_rope_theta.powf(-((2 * i) as f64) / dim) / f64::from(f);
+                    (inv as f32).to_le_bytes()
+                })
+                .collect();
+            rope_mscale = arch.rope_scaling.longrope_attn_factor as f32;
+            let buffer = context.new_output_buffer(bytes.len().max(4) as u64);
+            gpu::write_buffer_bytes(&buffer, 0, &bytes);
+            Some(buffer)
+        } else {
+            rope_frequencies
+        };
+
         let halfs = |n: usize| context.new_output_buffer((n.max(1) * 2) as u64);
         Ok(Self {
+            rope_mscale,
             rotated_pairs: rotated_pairs as u32,
             rope_frequencies,
             qk_norm,

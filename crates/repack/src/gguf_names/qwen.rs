@@ -95,6 +95,11 @@ pub fn map_qwen_gdn_moe_layer(suffix: &str, layer: usize) -> Option<GgufMapping>
         "attn_gate.weight" => resident("linear_attn.in_proj_z.weight"),
         "ssm_alpha.weight" => resident("linear_attn.in_proj_a.weight"),
         "ssm_beta.weight" => resident("linear_attn.in_proj_b.weight"),
+        // `qwen3next` ships HF's fused `in_proj_ba` instead of the two above.
+        // The canonical name is a MARKER the resident walk splits into
+        // `in_proj_b` and `in_proj_a` rows (`transcode::split_fused_ba`); no
+        // install ever holds a tensor with this name.
+        "ssm_ba.weight" => resident("linear_attn.in_proj_ba.weight"),
         "ssm_out.weight" => resident("linear_attn.out_proj.weight"),
         "ssm_conv1d.weight" => resident("linear_attn.conv1d.weight"),
         "ssm_norm.weight" => resident("linear_attn.norm.weight"),
