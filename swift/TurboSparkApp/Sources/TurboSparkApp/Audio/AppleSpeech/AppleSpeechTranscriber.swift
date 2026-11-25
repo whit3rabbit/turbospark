@@ -1,7 +1,9 @@
+#if compiler(>=6.2)
 import AVFoundation
 import CoreMedia
-import Foundation
 import Speech
+#endif
+import Foundation
 import TurboSpark
 
 extension AppleSpeech {
@@ -9,7 +11,9 @@ extension AppleSpeech {
     /// runs on every macOS the app supports.
     nonisolated static var isSupportedOnThisMac: Bool {
         isSupported(osMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion) {
+            #if compiler(>=6.2)
             if #available(macOS 26, *) { return SpeechTranscriber.isAvailable }
+            #endif
             return false
         }
     }
@@ -31,6 +35,7 @@ enum AppleSpeechError: LocalizedError {
 /// this Mac: `SpeechTranscriber` has no server mode, unlike `SFSpeechRecognizer`.
 @available(macOS 26, *)
 enum AppleSpeechTranscriber {
+#if compiler(>=6.2)
     /// The recognizer locale for `preferred`, else US English, else none.
     static func locale(preferred: Locale = .current) async throws -> Locale {
         if let match = await SpeechTranscriber.supportedLocale(equivalentTo: preferred) { return match }
@@ -138,4 +143,21 @@ enum AppleSpeechTranscriber {
         if status == .error { throw failure ?? AppleSpeechError.unavailable }
         return output
     }
+#else
+    static func locale(preferred: Locale = .current) async throws -> Locale {
+        throw AppleSpeechError.unavailable
+    }
+
+    static func needsAssets(_ locale: Locale) async -> Bool {
+        false
+    }
+
+    static func installAssets(_ locale: Locale, progress: @escaping @Sendable (Double) -> Void) async throws {
+        throw AppleSpeechError.unavailable
+    }
+
+    static func transcribe(_ pcm: [Float], locale: Locale) async throws -> [AppleSpeech.Piece] {
+        throw AppleSpeechError.unavailable
+    }
+#endif
 }
