@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// OC-07: the first-run flow, an opaque overlay on the main window (RootView
-/// mounts it only while `FirstRunCoordinator.isActive`). Every step is
+/// OC-07: the welcome tour, a popup card over a dimmed main window (RootView
+/// mounts it only while `FirstRunCoordinator.isActive`, which now happens only
+/// from Help > Show Welcome Tour). Every step is
 /// skippable, Skip Setup is always in the header, Back is always allowed, and
 /// focus lands on the primary action of each step. No step requests a macOS
 /// permission, a credential or the network.
@@ -15,7 +16,13 @@ struct FirstRunFlowView: View {
 
     var body: some View {
         ZStack {
-            Rectangle().fill(.appPage).ignoresSafeArea()
+            // Dimmed scrim: swallows clicks so the window behind is inert,
+            // but the tour is a card over it, not a full-screen takeover.
+            Rectangle()
+                .fill(Color.black.opacity(0.35))
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture {}
             ScrollView {
                 VStack(spacing: 28) {
                     header
@@ -25,11 +32,15 @@ struct FirstRunFlowView: View {
                         .transition(.opacity)
                     footer
                 }
-                .frame(maxWidth: (560 * AppMetrics.textScale(theme)).rounded())
-                .padding(.horizontal, 24)
-                .padding(.vertical, 32)
-                .frame(maxWidth: .infinity)
+                .padding(28)
             }
+            .frame(width: (560 * AppMetrics.textScale(theme)).rounded())
+            .frame(maxHeight: (640 * AppMetrics.textScale(theme)).rounded())
+            .fixedSize(horizontal: false, vertical: true)
+            .background(.appPage, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(.appBorder))
+            .shadow(color: .black.opacity(0.25), radius: 24, y: 8)
+            .padding(24)
         }
         .accessibilityAddTraits(.isModal)
         .tsAnimation(TSMotion.pane, value: coordinator.current)

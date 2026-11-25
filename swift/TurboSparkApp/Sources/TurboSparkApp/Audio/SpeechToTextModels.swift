@@ -140,9 +140,11 @@ enum SpeechToTextModels {
 }
 
 extension AudioWorkspaceController {
-    /// A managed install or a checkpoint folder the user chose.
+    /// A managed install, a checkpoint folder the user chose, or the built-in
+    /// recognizer, which macOS provides and has nothing to download here.
     func isInstalled(_ profile: AudioProfile) -> Bool {
         installedPaths[profile.identity.alias] != nil || preferences.localModels[profile.identity.alias] != nil
+            || AppleSpeech.isBuiltIn(profile.identity.alias)
     }
 
     /// The model a mode uses for a job. The current mode's final pass is the

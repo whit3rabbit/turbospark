@@ -308,7 +308,7 @@ extension AudioWorkspaceController {
         guard let item = items.first(where: { $0.id == id }), !item.clips.isEmpty,
               let profile = profiles.first(where: { $0.identity.alias == item.recipe.modelID && $0.identity.task == .speechToText }),
               AudioRuntimeProvider(profile).canRun(profile),
-              installedPaths[profile.identity.alias] != nil || preferences.localModels[profile.identity.alias] != nil else { return }
+              isInstalled(profile) else { return }
         let token = epoch
         isBusy = true
         update(id) { $0.status = .processing }
@@ -322,6 +322,8 @@ extension AudioWorkspaceController {
                 let transcription: Transcription
                 if case .fluidAudio(let family) = AudioRuntimeProvider(profile) {
                     transcription = try await self.transcribeWithFluidAudio(item: item, into: id, profile: profile, family: family, source: .final, token: token)
+                } else if AudioRuntimeProvider(profile) == .appleSpeech {
+                    transcription = try await self.transcribeWithAppleSpeech(item: item, into: id, source: .final, token: token)
                 } else {
                     let session = try await self.residentSession(for: profile, source: item)
                     transcription = try await self.transcribe(item: item, into: id, session: session, request: Self.request(from: item.recipe, task: .speechToText), source: .final, token: token)

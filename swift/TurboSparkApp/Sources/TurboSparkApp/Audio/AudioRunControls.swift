@@ -5,6 +5,8 @@ import SwiftUI
 struct AudioRunControls<Actions: View>: View {
     @ObservedObject var controller: AudioWorkspaceController
     @ViewBuilder let actions: () -> Actions
+    // The run button turns into Stop while the system voice reads the script.
+    @ObservedObject private var systemVoice = AppSpeechSynthesizer.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -32,6 +34,8 @@ struct AudioRunControls<Actions: View>: View {
         if controller.hasRecordingActivity { return Text("Recording", bundle: .module) }
         if controller.isBusy { return Text("Wait for the current generation or model load to finish.", bundle: .module) }
         if controller.importTask != nil { return Text("Importing audio", bundle: .module) }
+        // The system voice needs no model, so only the script can be missing.
+        if controller.usesSystemVoice { return Text("Write a script to generate speech.", bundle: .module) }
         if controller.isInstalling { return Text("Downloading audio model", bundle: .module) }
         if controller.selectedProfile == nil { return Text("Choose a model", bundle: .module) }
         if controller.page == .music && controller.modelGate != nil { return Text("Download the music model", bundle: .module) }
@@ -55,8 +59,12 @@ struct AudioRunControls<Actions: View>: View {
 
     private var runButton: some View {
         Button { controller.run() } label: {
-            Label { Text(LocalizedStringKey(controller.runTitle), bundle: .module) }
-                icon: { Image(systemName: controller.page.symbol) }
+            if controller.isSpeakingWithSystemVoice {
+                Label { Text("Stop reading out loud", bundle: .module) } icon: { Image(systemName: "stop.fill") }
+            } else {
+                Label { Text(LocalizedStringKey(controller.runTitle), bundle: .module) }
+                    icon: { Image(systemName: controller.page.symbol) }
+            }
         }
         .appAction(.primary).disabled(!controller.canRun)
         .help(runBlockedReason ?? Text(LocalizedStringKey(controller.runTitle), bundle: .module))

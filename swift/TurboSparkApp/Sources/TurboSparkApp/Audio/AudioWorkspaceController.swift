@@ -310,13 +310,14 @@ final class AudioWorkspaceController: ObservableObject {
     var selectedProfile: AudioProfile? { availableProfiles.first { $0.identity.alias == recipe.modelID } }
     var modelInstalled: Bool {
         guard let id = recipe.modelID else { return false }
-        return installedPaths[id] != nil || preferences.localModels[id] != nil
+        return installedPaths[id] != nil || preferences.localModels[id] != nil || AppleSpeech.isBuiltIn(id)
     }
     /// Whether `profile` can be used, is installed on a drive that is away, or is
     /// not installed. The picker and the install button read this, so an offline
     /// install is shown as such and never offered a download.
     func installStatus(for profile: AudioProfile) -> AudioInstallStatus {
-        AudioInstallStatus.resolve(
+        if AppleSpeech.isBuiltIn(profile.identity.alias) { return .installed }
+        return AudioInstallStatus.resolve(
             alias: profile.identity.alias, installedPaths: installedPaths,
             localModels: Set(preferences.localModels.keys), notConnected: notConnectedInstalls)
     }
@@ -799,7 +800,9 @@ final class AudioWorkspaceController: ObservableObject {
             case .success(let snapshot):
                 let installed = snapshot.installed
                 self.familyCapabilities = snapshot.capabilities
-                self.profiles = snapshot.profiles
+                // Built-in engines have no catalog row; they ride along here
+                // so every picker and ranking sees them like any install.
+                self.profiles = snapshot.profiles + Self.builtInAudioProfiles
                 self.installedPaths = Dictionary(installed.installed.map { ($0.alias, $0.path) }, uniquingKeysWith: { first, _ in first })
                 self.installedRecords = installed.installed
                 self.needsAdoption = installed.needsAdoption
@@ -1026,8 +1029,11 @@ final class AudioWorkspaceController: ObservableObject {
     }
     var isModelLoading: Bool { opening != nil }
 
+    /// The built-in recognizer lives in a macOS process, so there is nothing
+    /// for this app to load or unload.
     var canLoadModel: Bool {
         modelInstalled && selectedProfileIsRunnable && !isModelLoaded && opening == nil && !isBusy && !isInstalling
+            && selectedProfile.map { AudioRuntimeProvider($0) != .appleSpeech } != false
     }
 
     /// Whether `profile` can be loaded now, outside the page's own picker.
@@ -1035,6 +1041,7 @@ final class AudioWorkspaceController: ObservableObject {
     func canLoad(_ profile: AudioProfile) -> Bool {
         let streamingOnly = profile.identity.task == .speechToText && !profile.capabilities.operations.contains("transcribe")
         return isInstalled(profile) && AudioRuntimeProvider(profile).canRun(profile) && profile.identity.task.isRunnable
+            && AudioRuntimeProvider(profile) != .appleSpeech
             && !streamingOnly && !isProfileLoaded(profile) && opening == nil && !isBusy && !isInstalling
     }
 
@@ -1063,6 +1070,8 @@ final class AudioWorkspaceController: ObservableObject {
                     _ = try await self.residentQwenSession(for: profile)
                 case .fluidAudio(let family):
                     _ = try await self.residentFluidTranscriber(for: profile, family: family)
+                case .appleSpeech:
+                    return
                 case .rust, .unsupported:
                     if try await self.offlineVoiceIsolator(for: profile) == nil {
                         _ = try await self.residentSession(for: profile, portable: portable, experimentalMetal: experimentalMetal)

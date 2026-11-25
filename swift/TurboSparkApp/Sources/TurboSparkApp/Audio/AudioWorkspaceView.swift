@@ -265,7 +265,9 @@ struct AudioWorkspaceView: View {
             scriptEditor
             Text("Separate sections with a blank line.", bundle: .module)
                 .themedFont(.small).foregroundStyle(.appSecondary)
-            if controller.selectedProfile?.family == "qwen3_tts" {
+            if controller.usesSystemVoice {
+                AudioSystemVoiceNotice(model: model)
+            } else if controller.selectedProfile?.family == "qwen3_tts" {
                 Qwen3TTSInputsView(controller: controller)
             } else if controller.selectedProfileClonesNatively {
                 VoiceCloneInputsView(controller: controller)

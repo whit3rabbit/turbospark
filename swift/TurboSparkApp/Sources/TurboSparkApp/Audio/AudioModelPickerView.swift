@@ -154,7 +154,9 @@ struct AudioModelPickerView: View {
                 get: { controller.recipe.modelID.flatMap { id in listed.contains { $0.identity.alias == id } ? id : nil } },
                 set: { controller.selectModel($0) })
             ) {
-                Text("Choose a model", bundle: .module).tag(Optional<String>.none)
+                // On Text-to-Speech no model means the macOS voice speaks.
+                (controller.page == .voiceover ? Text("System voice", bundle: .module) : Text("Choose a model", bundle: .module))
+                    .tag(Optional<String>.none)
                 ForEach(listed) { profile in
                     pickerRow(profile).tag(Optional(profile.identity.alias))
                 }

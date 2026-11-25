@@ -35,9 +35,8 @@ struct FirstRunHost: ViewModifier {
                         break
                     }
                 }
-                coordinator.begin(
-                    hasInstalledModel: !model.installed.isEmpty,
-                    hasChatHistory: model.chats.contains { !$0.messages.isEmpty })
+                // The tour no longer auto-runs on first launch. It opens only
+                // from Help > Show Welcome Tour (the onReceive below).
             }
             .onReceive(NotificationCenter.default.publisher(for: .showWelcomeTour)) { _ in
                 coordinator.replay(hasInstalledModel: !model.installed.isEmpty)

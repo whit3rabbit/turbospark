@@ -4,7 +4,7 @@ extension AudioWorkspaceController {
     var runTitle: String {
         switch task {
         case .speechToText: return "Transcribe"
-        case .textToSpeech: return "Generate speech"
+        case .textToSpeech: return usesSystemVoice ? "Read aloud" : "Generate speech"
         case .music: return "Generate music"
         default: return "Run"
         }

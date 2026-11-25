@@ -10,6 +10,9 @@ enum AudioRuntimeProvider: Equatable, Sendable {
     case qwenMLX
     /// FluidAudio (Core ML) inside the app.
     case fluidAudio(FluidAudioFamily)
+    /// The macOS built-in recognizer (`AppleSpeech`). It has no download and
+    /// runs speech-to-text only.
+    case appleSpeech
     /// A Swift-hosted backend this build cannot run: an unknown family, or a
     /// FluidAudio family with no job for the row's task. Pickers hide these.
     case unsupported
@@ -27,6 +30,8 @@ enum AudioRuntimeProvider: Equatable, Sendable {
             } else {
                 self = .unsupported
             }
+        case AppleSpeech.backend:
+            self = profile.family == AppleSpeech.family && profile.identity.task == .speechToText ? .appleSpeech : .unsupported
         default:
             self = .rust
         }
@@ -40,15 +45,19 @@ enum AudioRuntimeProvider: Equatable, Sendable {
         case .rust: return profile.capabilities.canRun
         case .qwenMLX: return true
         case .fluidAudio(let family): return family.isSupportedOnThisMac
+        case .appleSpeech: return AppleSpeech.isSupportedOnThisMac
         case .unsupported: return false
         }
     }
 
     /// FluidAudio loads only the catalog's verified installs. A folder the
     /// user picks never passed the per-file check, and the signature check
-    /// alone stops a trap, not wrong weights.
+    /// alone stops a trap, not wrong weights. The built-in recognizer has no
+    /// files to pick.
     var acceptsLocalFolder: Bool {
-        if case .fluidAudio = self { return false }
-        return true
+        switch self {
+        case .fluidAudio, .appleSpeech: return false
+        case .rust, .qwenMLX, .unsupported: return true
+        }
     }
 }
