@@ -53,7 +53,15 @@ struct AudioRecordingPresetPicker: View {
 
     var body: some View {
         Picker(selection: Binding(
-            get: { controller.effectiveRecordingPreset },
+            // With no saved choice, the default sources are a voice note. An
+            // empty segmented picker reads as a missing selection.
+            get: { () -> AudioRecordingPreset? in
+                if let preset = controller.effectiveRecordingPreset { return preset }
+                let voiceNote = AudioRecordingPreset.voiceNote
+                return controller.recordingPreset == nil
+                    && voiceNote.matches(microphone: controller.captureMicrophone, systemAudio: controller.captureSystemAudio)
+                    ? Optional(voiceNote) : nil
+            },
             set: { if let preset = $0 { controller.applyRecordingPreset(preset) } }
         )) {
             ForEach(AudioRecordingPreset.recordPageCases) { preset in
@@ -77,16 +85,11 @@ struct AudioLibraryFilterBar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Picker(selection: $filter) {
-                ForEach(AudioLibraryFilter.allCases) { option in
-                    Text(LocalizedStringKey(option.titleKey), bundle: .module).tag(option)
-                }
-            } label: { Text("Show", bundle: .module) }
-            HStack(spacing: 8) {
-                facetMenu(title: Text("Collection", bundle: .module), systemImage: "folder",
-                          facets: controller.libraryCollections, selection: $collection)
-                facetMenu(title: Text("Tag", bundle: .module), systemImage: "tag",
-                          facets: controller.libraryTags, selection: $tag)
+            // Three bordered menus in one vocabulary. Five filters do not fit an
+            // AppPillPicker in the 260 pt library column, which never shrinks.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { showMenu; collectionMenu; tagMenu }
+                VStack(alignment: .leading, spacing: 8) { showMenu; collectionMenu; tagMenu }
             }
             if collection != nil || tag != nil {
                 HStack(spacing: 6) {
@@ -103,6 +106,34 @@ struct AudioLibraryFilterBar: View {
         }
     }
 
+    private var showMenu: some View {
+        Menu {
+            Picker(selection: $filter) {
+                ForEach(AudioLibraryFilter.allCases) { option in
+                    Text(LocalizedStringKey(option.titleKey), bundle: .module).tag(option)
+                }
+            } label: { Text("Show", bundle: .module) }
+            .pickerStyle(.inline)
+        } label: {
+            Label { Text(LocalizedStringKey(filter.titleKey), bundle: .module) }
+                icon: { Image(systemName: "line.3.horizontal.decrease.circle") }
+        }
+        .appMenuAction()
+        .accessibilityLabel(Text("Show", bundle: .module))
+        .accessibilityValue(Text(LocalizedStringKey(filter.titleKey), bundle: .module))
+        .help(Text("Show", bundle: .module))
+    }
+
+    private var collectionMenu: some View {
+        facetMenu(title: Text("Collection", bundle: .module), systemImage: "folder",
+                  facets: controller.libraryCollections, selection: $collection)
+    }
+
+    private var tagMenu: some View {
+        facetMenu(title: Text("Tag", bundle: .module), systemImage: "tag",
+                  facets: controller.libraryTags, selection: $tag)
+    }
+
     private func facetMenu(title: Text, systemImage: String, facets: [AudioFacet], selection: Binding<String?>) -> some View {
         Menu {
             Button { selection.wrappedValue = nil } label: { Text("Any", bundle: .module) }
@@ -113,7 +144,7 @@ struct AudioLibraryFilterBar: View {
                 }
             }
         } label: { Label { title } icon: { Image(systemName: systemImage) } }
-        .menuStyle(.borderlessButton).fixedSize()
+        .appMenuAction()
         .disabled(facets.isEmpty)
         .help(facets.isEmpty ? Text("Nothing in the library has one yet.", bundle: .module) : title)
     }

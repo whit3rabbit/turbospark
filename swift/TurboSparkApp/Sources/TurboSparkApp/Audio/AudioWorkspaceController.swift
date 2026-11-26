@@ -14,7 +14,7 @@ struct AudioCaptureMicrophone: Identifiable { var id: String; var name: String }
 
 @MainActor
 final class AudioWorkspaceController: ObservableObject {
-    @Published var page: AudioWorkspacePage = .library { didSet { persistPreferences() } }
+    @Published var page: AudioWorkspacePage = .transcribe { didSet { persistPreferences() } }
     @Published var recipe = AudioRecipe() { didSet { persistPreferences() } }
     @Published var items: [AudioLibraryItem] = []
     // Several paths select a take by assigning here (a new generation, an
@@ -260,7 +260,12 @@ final class AudioWorkspaceController: ObservableObject {
         case .voiceover, .voiceClone, .voiceDesign: return .textToSpeech
         case .music: return .music
         case .cleanup: return recipe.task == AudioTask.separation.rawValue ? .separation : .enhancement
-        case .library, .advanced: return AudioTask(rawValue: recipe.task) ?? .speechToText
+        case .library: return AudioTask(rawValue: recipe.task) ?? .speechToText
+        case .advanced:
+            // Clean Up's operations are not in Advanced's picker. Carried over,
+            // they left the picker blank.
+            let saved = AudioTask(rawValue: recipe.task) ?? .speechToText
+            return saved == .enhancement || saved == .separation ? .speechToText : saved
         }
     }
     var availableProfiles: [AudioProfile] {

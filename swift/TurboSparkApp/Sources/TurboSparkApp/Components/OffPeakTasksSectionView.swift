@@ -39,6 +39,7 @@ struct OffPeakTasksSectionView: View {
                 set: { model.setOffPeakEnabled($0) }
             )) {
                 Text("Run off-peak tasks", bundle: .module)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             .toggleStyle(.switch)
             .settingsControl("Run off-peak tasks", pane: .automation, timing: .immediate)
@@ -64,25 +65,42 @@ struct OffPeakTasksSectionView: View {
         .onReceive(refresh) { _ in revision += 1 }
     }
 
+    private var queueField: some View {
+        TextField(
+            text: $draft,
+            prompt: Text("What should run when the chat is idle?", bundle: .module)
+        ) {
+            Text("What should run when the chat is idle?", bundle: .module)
+        }
+        .textFieldStyle(.roundedBorder)
+        .onSubmit(add)
+    }
+
+    private var queueButton: some View {
+        Button(action: add) {
+            Text("Add to Queue", bundle: .module)
+        }
+        .appAction(.primary)
+        .fixedSize()
+        .disabled(!canAdd)
+        .help(selectedChatIsTemporary
+            ? Text("Temporary chats are never saved, so they cannot hold off-peak tasks.", bundle: .module)
+            : Text("Adds the prompt to the queue for the open chat", bundle: .module))
+    }
+
     private var addRow: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                TextField(
-                    text: $draft,
-                    prompt: Text("What should run when the chat is idle?", bundle: .module)
-                ) {
-                    Text("What should run when the chat is idle?", bundle: .module)
+            // The field keeps a readable width: below it the button drops
+            // under the field instead of being truncated (German, 820 pt).
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    queueField.frame(minWidth: 220)
+                    queueButton
                 }
-                .textFieldStyle(.roundedBorder)
-                .onSubmit(add)
-                Button(action: add) {
-                    Text("Add to Queue", bundle: .module)
+                VStack(alignment: .leading, spacing: 8) {
+                    queueField
+                    queueButton
                 }
-                .appAction(.primary)
-                .disabled(!canAdd)
-                .help(selectedChatIsTemporary
-                    ? Text("Temporary chats are never saved, so they cannot hold off-peak tasks.", bundle: .module)
-                    : Text("Adds the prompt to the queue for the open chat", bundle: .module))
             }
             if addFailed {
                 Text("Could not add the task. The queue may be full or the prompt too long.", bundle: .module)

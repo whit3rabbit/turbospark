@@ -116,7 +116,7 @@ struct ModelInstallView: View {
 
     private var recommendationsSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            AppAdaptiveHeader {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Recommended Models for Your Mac", bundle: .module)
                         .themedFont(.base, weight: .semibold)
@@ -131,16 +131,10 @@ struct ModelInstallView: View {
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
                 }
-                Spacer()
-                Picker(selection: $selectedFilter) {
-                    ForEach(RecommendationFilter.allCases) { f in
-                        recommendationFilterLabel(f).tag(f)
-                    }
-                } label: { Text("Filter", bundle: .module) }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .themedFont(.small)
-                .accessibilityLabel(Text("Recommendations filter", bundle: .module))
+            } actions: {
+                recommendationFilterPicker
+            } compactActions: {
+                recommendationFilterPicker
             }
 
             // Where an install from this list goes: only when there is a choice
@@ -239,14 +233,14 @@ struct ModelInstallView: View {
         return recommendations
     }
 
-    @ViewBuilder
-    private func recommendationFilterLabel(_ filter: RecommendationFilter) -> some View {
-        switch filter {
-        case .recommended:
-            Text("Recommended", bundle: .module)
-        case .all:
-            Text("All models", bundle: .module)
-        }
+    private var recommendationFilterPicker: some View {
+        AppPillPicker(
+            selection: $selectedFilter,
+            items: [
+                AppPillItem(value: RecommendationFilter.recommended, label: Text("Recommended", bundle: .module)),
+                AppPillItem(value: RecommendationFilter.all, label: Text("All models", bundle: .module)),
+            ],
+            label: Text("Recommendations filter", bundle: .module))
     }
 
     private func loadRecommendations() async {

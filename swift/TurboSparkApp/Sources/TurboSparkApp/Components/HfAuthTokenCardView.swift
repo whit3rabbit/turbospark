@@ -60,7 +60,9 @@ public struct HfAuthTokenCardView: View {
 
     // MARK: - Header
     private var headerRow: some View {
-        HStack(alignment: .top) {
+        // Adaptive: the "Get Token" link drops under the text instead of
+        // squeezing the title and its badge under German and Extra Large text.
+        AppAdaptiveHeader {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 8) {
                     Text("Hugging Face API Token", bundle: .module)
@@ -88,8 +90,9 @@ public struct HfAuthTokenCardView: View {
                 Text("Authenticate to inspect and download gated or private repositories.", bundle: .module)
                     .font(theme.ui(.small))
                     .foregroundStyle(.appSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer()
+        } actions: {
             Link(destination: URL(string: "https://huggingface.co/settings/tokens")!) {
                 HStack(spacing: 4) {
                     Text("Get Token", bundle: .module)
@@ -131,6 +134,8 @@ public struct HfAuthTokenCardView: View {
                     isRevealed.toggle()
                 }
                 .buttonStyle(.plain)
+                .frame(minWidth: 20, minHeight: 20)
+                .contentShape(Rectangle())
                 .foregroundStyle(.appSecondary)
                 .appPointerCursor()
             }
@@ -152,6 +157,8 @@ public struct HfAuthTokenCardView: View {
                     scheduleDebouncedValidation()
                 }
                 .buttonStyle(.plain)
+                .frame(minWidth: 20, minHeight: 20)
+                .contentShape(Rectangle())
                 .foregroundStyle(.appSecondary)
                 .appPointerCursor()
             }

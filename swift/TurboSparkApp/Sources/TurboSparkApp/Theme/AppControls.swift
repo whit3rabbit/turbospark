@@ -52,6 +52,25 @@ extension View {
     /// role reaches VoiceOver and confirmation dialogs as well.
     @ViewBuilder
     func appAction(_ role: AppActionRole, size: ControlSize = .regular) -> some View {
+        appActionTreatment(role, size: size).appMinimumHitTarget(size)
+    }
+
+    /// Small and mini AppKit buttons measure 19 and 16pt tall, under the
+    /// 20pt desktop minimum the audit enforces (AX frames showed Download
+    /// at 13pt and Later at 17pt). The bezel keeps its native look; the
+    /// frame and content shape widen the box VoiceOver and the pointer see.
+    @ViewBuilder
+    fileprivate func appMinimumHitTarget(_ size: ControlSize) -> some View {
+        switch size {
+        case .mini, .small:
+            frame(minWidth: 20, minHeight: 20).contentShape(Rectangle())
+        default:
+            self
+        }
+    }
+
+    @ViewBuilder
+    fileprivate func appActionTreatment(_ role: AppActionRole, size: ControlSize) -> some View {
         switch role {
         case .primary:
             buttonStyle(.borderedProminent).controlSize(size).appControlLabelFont(size)
@@ -109,6 +128,9 @@ private struct AppMenuActionModifier: ViewModifier {
             .controlSize(size)
             .appControlLabelFont(size)
             .fixedSize()
+            // Small and mini menus measure under the 20pt desktop minimum
+            // (Share conversation read 13pt tall in the AX audit).
+            .appMinimumHitTarget(size)
             // AppKit retains the old menu label color across appearance
             // changes. Recreate the bridge so the new mode stays readable.
             .id(colorScheme)
@@ -275,6 +297,7 @@ struct AppSectionHeader: View {
         VStack(alignment: .leading, spacing: 3) {
             title
                 .themedFont(.base, weight: .semibold)
+                .fixedSize(horizontal: false, vertical: true)
                 .accessibilityAddTraits(.isHeader)
             if let subtitle {
                 subtitle
@@ -327,8 +350,13 @@ struct AppEmptyState<Actions: View>: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: (440 * AppMetrics.textScale(theme)).rounded())
             }
-            HStack(spacing: AppMetrics.actionSpacing) { actions() }
-                .padding(.top, 4)
+            // Side by side when they fit, stacked otherwise: two long
+            // German labels were middle-truncated at the 820 pt window.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: AppMetrics.actionSpacing) { actions() }
+                VStack(spacing: AppMetrics.actionSpacing) { actions() }
+            }
+            .padding(.top, 4)
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -97,8 +97,13 @@ struct StatusBarView: View {
             }
             .padding(.horizontal, 4)
             .padding(.vertical, 2)
+            // 20 pt is the desktop minimum target. The glyph alone measured
+            // about 10 pt, so the frame and hit shape grow the target, not
+            // the look.
+            .frame(minWidth: 20, minHeight: 20)
             .background(isGraphMode ? theme.accent.opacity(0.12) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(isGraphMode

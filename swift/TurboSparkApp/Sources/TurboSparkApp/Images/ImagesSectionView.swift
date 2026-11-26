@@ -49,6 +49,19 @@ struct ImagesSectionView: View {
                         generationProgress
                     }
                 }
+                .overlay {
+                    // Inline, not a sheet: a modal here froze the sidebar
+                    // until "Later" (DESIGN.md section 3, missing-model setup).
+                    if showingImageModelRecommendation, !organizing, model.imageGenerationTask == nil {
+                        ScrollView {
+                            ImageModelRecommendationSheet(model: model) {
+                                showingImageModelRecommendation = false
+                            }
+                            .appCardSurface(padding: 0)
+                            .padding(24)
+                        }
+                    }
+                }
             if !organizing {
                 ImageComposerView(model: model, importing: $importing)
             }
@@ -61,9 +74,6 @@ struct ImagesSectionView: View {
             ImageGalleryCarousel(model: model, initialID: artifact.id) { artifact in
                 reusePrompt(artifact)
             }
-        }
-        .sheet(isPresented: $showingImageModelRecommendation) {
-            ImageModelRecommendationSheet(model: model)
         }
         .onChange(of: model.shouldRecommendImageModel, initial: true) { _, shouldRecommend in
             guard shouldRecommend, !imageModelRecommendationSeen else { return }
@@ -191,6 +201,10 @@ struct ImagesSectionView: View {
                 if !search.isEmpty {
                     Button { search = "" } label: { Text("Clear search", bundle: .module) }
                         .appAction(.secondary)
+                } else {
+                    // An empty library is filled by making an image: go to Create.
+                    Button { model.imagesMode = .create } label: { Text("Create", bundle: .module) }
+                        .appAction(.primary)
                 }
             }
         } else {

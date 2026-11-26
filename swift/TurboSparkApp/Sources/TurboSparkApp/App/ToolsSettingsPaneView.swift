@@ -75,16 +75,27 @@ struct ToolsSettingsPaneView: View {
         let isActive = model.selectedToolProfile.id == profile.id
         let isEditing = editingID == profile.id
         return HStack(spacing: 10) {
-            Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
-                .foregroundStyle(isActive ? .appAccentText : .appSecondary)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(profile.displayName).fontWeight(isEditing ? .semibold : .regular)
-                Text(countSummary(profile))
-                    .font(theme.ui(.small))
-                    .foregroundStyle(.appSecondary)
+            // A plain Button, not an onTapGesture, so keyboard and VoiceOver
+            // users can pick the profile to edit. The action buttons stay
+            // siblings: nesting them would swallow their clicks.
+            Button { editingID = profile.id } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: isActive ? "checkmark.circle.fill" : "circle")
+                        .foregroundStyle(isActive ? .appAccentText : .appSecondary)
+                        .accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(profile.displayName).fontWeight(isEditing ? .semibold : .regular)
+                        Text(countSummary(profile))
+                            .font(theme.ui(.small))
+                            .foregroundStyle(.appSecondary)
+                    }
+                    Spacer()
+                }
+                .contentShape(Rectangle())
             }
-            Spacer()
+            .buttonStyle(.plain)
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(isActive ? .isSelected : [])
             if !isActive {
                 Button { model.selectToolProfile(profile.id) } label: {
                     Text("Use", bundle: .module)
@@ -102,12 +113,10 @@ struct ToolsSettingsPaneView: View {
                     Text("Delete", bundle: .module)
                 }
                 .settingsControl("Delete", pane: .tools, timing: .nextTurn)
+                .accessibilityLabel(Text("Delete \(profile.displayName)", bundle: .module))
             }
         }
-        .contentShape(Rectangle())
-        .onTapGesture { editingID = profile.id }
         .accessibilityElement(children: .contain)
-        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 
     private func countSummary(_ profile: AppToolProfile) -> String {

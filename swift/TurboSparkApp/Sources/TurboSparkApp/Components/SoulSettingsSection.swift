@@ -17,6 +17,21 @@ struct SoulSettingsSection: View {
         model.detectedSoulImportSources.contains { $0.kind == .hermes }
     }
 
+    private var soulDescription: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Global personality and communication guidance for the agent.", bundle: .module)
+                .themedFont(.small)
+                .foregroundStyle(.appSecondary)
+                // Wrap, do not truncate, beside the mascot at 820 pt in German.
+                .fixedSize(horizontal: false, vertical: true)
+
+            statusDescription
+                .themedFont(.small)
+                .foregroundStyle(.appSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     var body: some View {
         Section(header: Text(verbatim: "SOUL.md")) {
             Toggle(isOn: $model.soulPromptEnabled) {
@@ -27,17 +42,17 @@ struct SoulSettingsSection: View {
             }
             .settingsControl("Enable SOUL.md", pane: .soul, timing: .nextTurn)
 
-            HStack(alignment: .center, spacing: 18) {
-                TSIdlingSoulSparkView(size: 80)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Global personality and communication guidance for the agent.", bundle: .module)
-                        .themedFont(.small)
-                        .foregroundStyle(.appSecondary)
-
-                    statusDescription
-                        .themedFont(.small)
-                        .foregroundStyle(.appSecondary)
+            // Beside the mascot while the text keeps a readable width, stacked
+            // under it otherwise (narrow window, German, Extra Large split words).
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 18) {
+                    TSIdlingSoulSparkView(size: 80)
+                    soulDescription
+                        .frame(minWidth: 220, idealWidth: 220, maxWidth: .infinity, alignment: .leading)
+                }
+                VStack(alignment: .leading, spacing: 12) {
+                    TSIdlingSoulSparkView(size: 80)
+                    soulDescription
                 }
             }
             .padding(.vertical, 4)

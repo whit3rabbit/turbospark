@@ -170,6 +170,10 @@ struct KeyboardShortcutsSettingsPaneView: View {
             .labelStyle(.iconOnly)
         }
         .buttonStyle(.borderless)
+        // A bare borderless glyph is about 14 pt square, under the 20 pt
+        // desktop minimum for a pointer target.
+        .frame(minWidth: 20, minHeight: 20)
+        .contentShape(Rectangle())
         .help(Text("Restore Default", bundle: .module))
         .accessibilityLabel(Text("Restore default for \(name)", bundle: .module))
     }
