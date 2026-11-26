@@ -110,6 +110,12 @@ The root references are:
   quality, memory, and paired performance gates before it takes Steel, the
   GQA decode attention, or any other measured default; a family without its
   own verdict keeps the previous path.
+- A default that changes the KV-cache format or kernel for every family that
+  accepts the same flag (today: the TurboQuant kernel behind `--kv-bits`) is
+  decided once, not per family. It needs the decode gate (LAB-01) and the
+  TurboQuant layer-kernel gate, both defined in the KERN design record, run on
+  each family that accepts the flag. Family-specific paths (Steel, GQA decode, a
+  new family's kernel) still need that family's own verdict.
 - The ANE+Steel prefill split for dense Qwen is opt-in (`ane-prefill` cargo
   feature, `TURBOSPARK_ANE_PREFILL`, or Swift runtime settings). Auto mode
   checks Apple Silicon M4+ / A18+ before activating and gracefully degrades to
