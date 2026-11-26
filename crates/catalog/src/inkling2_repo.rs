@@ -741,6 +741,7 @@ pub fn install_inkling2_row(
         fetch_drafter(
             client,
             &RepoRef::new(&mtp.repo, &mtp.revision),
+            ["mtp.safetensors", "config.json"],
             &into,
             cancel,
         )
@@ -748,6 +749,23 @@ pub fn install_inkling2_row(
         progress(&format!(
             "fetched the DSpark drafter from {}@{}",
             mtp.repo, mtp.revision
+        ));
+    }
+    if let Some(draft) = &entry.dflash2 {
+        // As above, into the `dflash2/` the intake copies from.
+        let staging_parent = store.staging_parent_for(&target.root)?;
+        let into = download_dir(&staging_parent, &source).join("dflash2");
+        fetch_drafter(
+            client,
+            &RepoRef::new(&draft.repo, &draft.revision),
+            ["model.safetensors", "config.json"],
+            &into,
+            cancel,
+        )
+        .map_err(|e| store.install_failure(&target.root, &target.root, &target.library_name, e))?;
+        progress(&format!(
+            "fetched the DFlash2 drafter from {}@{}",
+            draft.repo, draft.revision
         ));
     }
     let installed = install_inkling2_repo(
@@ -770,11 +788,12 @@ pub fn install_inkling2_row(
     })
 }
 
-/// Downloads a drafter repository's `mtp.safetensors` and `config.json`
-/// (whose `mtp_config` the runtime reads) into `into`, at the pinned commit.
+/// Downloads a drafter repository's weights and the `config.json` the runtime
+/// reads (`names`) into `into`, at the pinned commit.
 fn fetch_drafter(
     client: &Client,
     repo: &RepoRef,
+    names: [&str; 2],
     into: &Path,
     cancel: Option<&CancelFlag>,
 ) -> Result<(), String> {
@@ -787,11 +806,11 @@ fn fetch_drafter(
     }
     std::fs::create_dir_all(into).map_err(|e| format!("creating {}: {e}", into.display()))?;
     let range_cache = crate::stream::immutable_download_cache(into, &pinned);
-    for name in ["mtp.safetensors", "config.json"] {
+    for name in names {
         let size = listing
             .iter()
             .find(|(n, _)| n == name)
-            .ok_or_else(|| format!("{pinned} has no {name}; it is not a DSpark drafter source"))?
+            .ok_or_else(|| format!("{pinned} has no {name}; it is not a drafter source"))?
             .1;
         fetch_file(
             client,

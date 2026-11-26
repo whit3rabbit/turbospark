@@ -112,14 +112,17 @@ public struct SafetySettingsPaneView: View {
             // toggle looks like it did something and did not, which is the
             // exact failure this whole surface exists to avoid.
             if model.steeringNeedsReload {
-                HStack {
+                // Adaptive: the button drops under the sentence instead of
+                // squeezing it under German and Extra Large text.
+                AppAdaptiveHeader {
                     Label {
                         Text("The loaded model is not running this. Steering is applied when a model opens.", bundle: .module)
+                            .fixedSize(horizontal: false, vertical: true)
                     } icon: {
                         Image(systemName: "arrow.clockwise")
                     }
                     .themedFont(.small)
-                    Spacer()
+                } actions: {
                     Button { model.reloadForSteering() } label: { Text("Reload model", bundle: .module) }
                         .appAction(.secondary, size: .small)
                         .disabled(model.selected == nil || model.generating || model.opening)
@@ -252,9 +255,12 @@ struct SteeringPresetRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack {
+            // Adaptive so a long direction name keeps its width and the
+            // actions drop under it instead of truncating it.
+            AppAdaptiveHeader {
                 Text(verbatim: preset.displayName).fontWeight(.medium)
-                Spacer()
+                    .fixedSize(horizontal: false, vertical: true)
+            } actions: {
                 Button(action: onEdit) { Text("Edit", bundle: .module) }
                     .appAction(.quiet, size: .small)
                 Button(role: .destructive, action: onDelete) { Text("Delete", bundle: .module) }

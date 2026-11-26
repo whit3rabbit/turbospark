@@ -30,7 +30,6 @@ mod sse;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashSet;
 use std::time::Duration;
 
 use anyllm_translate::openai::responses::ResponsesRequest;
@@ -52,7 +51,7 @@ use self::sse::{
 use crate::guardrails::run_guarded;
 use crate::handler::{
     error_response, plan, reasoning_effort, request_id, stream_blocking, tool_names, AppState,
-    GenError, Piece,
+    GenError, Piece, ToolSet,
 };
 
 const SSE_KEEP_ALIVE: Duration = Duration::from_secs(15);
@@ -151,7 +150,7 @@ pub async fn responses(
 fn stream_response(
     model: AppState,
     chat_request: ChatCompletionRequest,
-    tools: HashSet<String>,
+    tools: ToolSet,
     effort: ReasoningEffort,
     request_model: String,
     cancel: crate::cancel::Cancel,

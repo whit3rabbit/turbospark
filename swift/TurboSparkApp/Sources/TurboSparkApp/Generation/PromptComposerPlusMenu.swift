@@ -309,7 +309,12 @@ struct PromptComposerPlusMenu: View {
 
             // A Toggle so the menu shows the native checkmark and VoiceOver
             // reads the on/off state, rather than an icon swap.
-            Toggle(isOn: $model.webSearchEnabled) {
+            Toggle(isOn: Binding(
+                get: { model.webSearchEnabled },
+                set: { newValue in
+                    model.webSearchEnabled = newValue
+                    model.persistSettingsDebounced()
+                })) {
                 Label { Text("Web Search", bundle: .module) } icon: { Image(systemName: "globe") }
             }
 

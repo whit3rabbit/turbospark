@@ -21,13 +21,15 @@
 //! Exactness class: KL-bounded against the CPU reference (FP16 activations,
 //! FP32 accumulation, FP32 router). Prefill is this decode path per token.
 
+mod dflash2;
 mod dspark;
 mod lamq;
+mod loopcd;
 mod prefill;
 mod state;
 mod verify;
 
-pub use dspark::inkling2_dspark_dir;
+pub(crate) use dspark::inkling2_drafter_offered;
 
 use half::f16;
 use model_io::ResidentIndex;
@@ -375,6 +377,15 @@ impl RealForwardRunner {
                 cfg.unpadded_vocab
             )));
         }
+        let lcd = st.loopcd.as_ref().map(|l| l.policy);
+        if lcd.is_some()
+            && (self.steering.is_some() || self.resid_capture.is_some() || st.taps.is_some())
+        {
+            return Err(RealForwardError::Unsupported(
+                "Inkling 2 LoopCD does not combine with steering, residual capture or taps"
+                    .to_string(),
+            ));
+        }
         let mut c = Ctx {
             context: &mut self.context,
             weights: &self.weights,
@@ -571,6 +582,39 @@ impl RealForwardRunner {
                 )?;
                 visit += 1;
             }
+            // This pass's state: its blocks after the first core block (that
+            // one is the prelude output, the same on every pass), then its
+            // output. The same rows the next pass banks.
+            if lcd.is_some_and(|l| l.pass as usize == p + 1) {
+                let first = prelude_blocks + 1;
+                let k = n_blocks.saturating_sub(first);
+                let r = st.loopcd.as_mut().expect("policy implies state");
+                r.rows = k;
+                if k > 0 {
+                    c.copy(
+                        &pass,
+                        (&st.states, (first * h * 2) as u64),
+                        (&r.reference, 0),
+                        k * h,
+                    )?;
+                }
+                c.copy(&pass, (&st.cur, 0), (&r.reference, (k * h * 2) as u64), h)?;
+            }
+        }
+        let core_blocks = n_blocks;
+        if let Some(l) = lcd.filter(|l| l.mode == loopcd::Mode::Hidden) {
+            tr.gpu_ms += resubmit(&mut c, &mut pass);
+            let r = st.loopcd.as_ref().expect("policy implies state");
+            let first = prelude_blocks + 1;
+            let k = r.rows;
+            let reference = read_half(&r.reference, 0, (k + 1) * h);
+            for (buf, off, from, rows) in
+                [(&st.states, first * h * 2, 0, k), (&st.cur, 0, k * h, 1)]
+            {
+                let mut s = read_half(buf, off, rows * h);
+                loopcd::extrapolate(&mut s, &reference[from..from + rows * h], l.omega);
+                write_half(buf, off, &s);
+            }
         }
         for ip in core_end..layers {
             tap(&mut c, &pass, st, visit)?;
@@ -578,56 +622,51 @@ impl RealForwardRunner {
             visit += 1;
         }
 
-        if !self.skip_head {
-            let q = view(c.weights, c.index, "model.llm.attn_res.output_query")?;
-            if fused_enabled() {
-                c.mix_norm(
-                    &pass,
-                    &st.states,
-                    n_blocks,
-                    (&st.cur, 0),
-                    q,
-                    &["model.llm.norm.weight"],
-                    (&st.mn, 0),
-                )?;
-            } else {
-                c.mix(&pass, &st.states, n_blocks, (&st.cur, 0), q, 1, (&st.m, 0))?;
-                c.norm(&pass, (&st.m, 0), "model.llm.norm.weight", (&st.mn, 0))?;
-            }
-            if let Some(t) = st.taps.as_ref() {
+        let head = !self.skip_head;
+        if head {
+            output_head(
+                &mut c,
+                &pass,
+                st,
+                &arch,
+                n_blocks,
+                (&self.scratch.logits, 0),
+            )?;
+        }
+        // The reference run: the final layers and head again, from the
+        // reference state, on their own KV and conv slots. It runs on
+        // headless tokens too, because those slots need every position.
+        if lcd.is_some_and(|l| l.mode == loopcd::Mode::Adaptive) {
+            let r = st.loopcd.as_ref().expect("policy implies state");
+            let (k, first, slot_base) = (r.rows, prelude_blocks + 1, r.slot_base);
+            if k > 0 {
                 c.copy(
                     &pass,
-                    (&st.mn, 0),
-                    (t, (DSPARK_TAPS_MIDDLE * h * 2) as u64),
-                    h,
+                    (&r.reference, 0),
+                    (&st.states, (first * h * 2) as u64),
+                    k * h,
                 )?;
             }
-            if let Some(l) = c.lamq.clone() {
-                l.head(
-                    c.context,
-                    &pass,
-                    c.weights.buffer(),
-                    (&st.mn, 0),
-                    (&self.scratch.logits, 0),
-                )?;
-            } else {
-                c.gemv(
-                    &pass,
-                    "model.llm.unembed.weight",
-                    vocab,
-                    h,
-                    (&st.mn, 0),
-                    (&self.scratch.logits, 0),
+            c.copy(&pass, (&r.reference, (k * h * 2) as u64), (&st.cur, 0), h)?;
+            n_blocks = core_blocks;
+            for ip in core_end..layers {
+                let slot = slot_base + (ip - core_end);
+                apply(
+                    &mut c,
+                    &mut pass,
+                    st,
+                    &mut n_blocks,
+                    slot,
+                    ip,
+                    &mut tr,
+                    false,
                 )?;
             }
-            gpu::encode_logit_softcap(
-                c.context,
-                &pass,
-                (&self.scratch.logits, 0),
-                arch.final_logit_softcap as f32,
-                vocab as u32,
-            )
-            .map_err(RealForwardError::Gpu)?;
+            if head {
+                let r = st.loopcd.as_ref().expect("policy implies state");
+                let out = r.logits.clone();
+                output_head(&mut c, &pass, st, &arch, n_blocks, (&out, 0))?;
+            }
         }
         tr.gpu_ms += pass.commit_and_wait_with_gpu_time() * 1e3;
         if trace {
@@ -647,6 +686,12 @@ impl RealForwardRunner {
             )));
         }
         gpu::read_buffer_f16_into(&self.scratch.logits, 0, logits);
+        if let Some(l) = lcd.filter(|l| l.mode == loopcd::Mode::Adaptive) {
+            let r = st.loopcd.as_ref().expect("policy implies state");
+            let n = cfg.unpadded_vocab as usize;
+            let reference = read_half(&r.logits, 0, n);
+            loopcd::contrast_adaptive(&mut logits[..n], &reference, l.omega);
+        }
         mask_padding(logits, cfg.unpadded_vocab as usize);
         Ok(())
     }
@@ -692,6 +737,91 @@ mod padding_tests {
             assert!(id < 6, "padding row {id} sampled at position {pos}");
         }
     }
+}
+
+/// Output depth mix, final norm, unembed and softcap of the current state
+/// into `out`; also the DSpark final-norm tap when taps are on.
+fn output_head(
+    c: &mut Ctx<'_>,
+    pass: &gpu::PassEncoder,
+    st: &RealInkling2State,
+    arch: &model_io::ArchConfig,
+    n_blocks: usize,
+    out: Buf<'_>,
+) -> Result<(), RealForwardError> {
+    let (h, vocab) = (c.h, arch.vocab_size as usize);
+    let q = view(c.weights, c.index, "model.llm.attn_res.output_query")?;
+    if fused_enabled() {
+        c.mix_norm(
+            pass,
+            &st.states,
+            n_blocks,
+            (&st.cur, 0),
+            q,
+            &["model.llm.norm.weight"],
+            (&st.mn, 0),
+        )?;
+    } else {
+        c.mix(pass, &st.states, n_blocks, (&st.cur, 0), q, 1, (&st.m, 0))?;
+        c.norm(pass, (&st.m, 0), "model.llm.norm.weight", (&st.mn, 0))?;
+    }
+    if let Some(t) = st.taps.as_ref() {
+        c.copy(
+            pass,
+            (&st.mn, 0),
+            (t, (DSPARK_TAPS_MIDDLE * h * 2) as u64),
+            h,
+        )?;
+    }
+    if let Some(l) = c.lamq.clone() {
+        l.head(
+            c.context,
+            pass,
+            c.weights.buffer(),
+            (&st.mn, 0),
+            (out.0, out.1),
+        )?;
+    } else {
+        c.gemv(
+            pass,
+            "model.llm.unembed.weight",
+            vocab,
+            h,
+            (&st.mn, 0),
+            (out.0, out.1),
+        )?;
+    }
+    gpu::encode_logit_softcap(
+        c.context,
+        pass,
+        out,
+        arch.final_logit_softcap as f32,
+        vocab as u32,
+    )
+    .map_err(RealForwardError::Gpu)
+}
+
+/// Commits the pass, waits, and starts the next one, so the host can read and
+/// write activations in between. Returns the GPU milliseconds.
+fn resubmit(c: &mut Ctx<'_>, pass: &mut gpu::PassEncoder) -> f64 {
+    std::mem::replace(pass, c.context.begin_pass_labeled("inkling2 loopcd"))
+        .commit()
+        .wait_with_gpu_time()
+        * 1e3
+}
+
+fn read_half(buf: &gpu::MetalBuffer, byte_offset: usize, n: usize) -> Vec<f16> {
+    let mut out = vec![f16::ZERO; n];
+    gpu::read_buffer_f16_into(buf, byte_offset, &mut out);
+    out
+}
+
+fn write_half(buf: &gpu::MetalBuffer, byte_offset: usize, values: &[f16]) {
+    let bytes: Vec<u8> = values
+        .iter()
+        .flat_map(|v| v.to_bits().to_le_bytes())
+        .collect();
+    gpu::write_buffer_bytes(buf, byte_offset, &bytes);
 }
 
 /// The attention half of one layer application, through the router GEMV.

@@ -106,7 +106,7 @@ fn the_drafter_spellings_are_the_cli_and_server_ones() {
     // Round-trips through the reported name, so a GUI reading
     // `sessionInfo.speculation.drafter` can hand it straight back as
     // `speculativeDrafter` on the next open.
-    for name in ["mtp", "dflash"] {
+    for name in ["mtp", "dflash", "dflash2"] {
         assert_eq!(drafter_name(drafter(Some(name)).unwrap()), name);
     }
 }

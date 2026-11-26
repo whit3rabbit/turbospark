@@ -38,7 +38,8 @@ struct VoiceCallPanelView: View {
             }
         }
         .frame(minWidth: 260 * scale, idealWidth: 320 * scale, maxWidth: 380 * scale, alignment: .leading)
-        .appCardSurface(padding: 14)
+        .padding(14)
+        .appGlassSurface(.rect(cornerRadius: AppMetrics.cardRadius))
         .offset(x: resting.width + dragging.width, y: resting.height + dragging.height)
         .accessibilityElement(children: .contain)
         .onChange(of: call.state) { _, new in announce(Text(LocalizedStringKey(new.titleKey), bundle: .module)) }

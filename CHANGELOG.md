@@ -13,6 +13,16 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Added
+- DFlash2 block drafter for Inkling 2 (`incoai/Inkling-2-Mini-DFlash2`), a new
+  `dflash2` speculative drafter value in the CLI, server, C ABI, Swift package
+  and app, and catalog download on `inkling2-mini-mlx4` and
+  `inkling2-mini-ud-q4kxl` (about 1 GB more per install). See
+  `docs/DFLASH2.md` section 9.
+
+### Changed
+- The app's `dflash` drafter choice is now labelled "Block Drafter".
+
 ## [0.10.2] - 2026-11-24
 
 ### Added

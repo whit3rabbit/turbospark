@@ -25,8 +25,6 @@
 //! a single object instead reads as the server hanging until the whole turn
 //! finishes.
 
-use std::collections::HashSet;
-
 use anyllm_translate::openai::{ChatCompletionRequest, ChatMessage, ChatRole};
 use axum::extract::State;
 use axum::http::{header, StatusCode};
@@ -497,7 +495,7 @@ async fn run(
             planned.prompt_ids,
             planned.config,
             planned.images,
-            HashSet::new(),
+            crate::handler::ToolSet::default(),
             effort,
             RunControl {
                 cancel,
@@ -556,7 +554,7 @@ async fn run(
                 &planned.prompt_ids,
                 &planned.config,
                 planned.images.as_ref(),
-                &HashSet::new(),
+                &crate::handler::ToolSet::default(),
                 effort,
                 &flag,
                 &mut emit,

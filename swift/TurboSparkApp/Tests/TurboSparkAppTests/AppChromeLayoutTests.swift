@@ -118,16 +118,12 @@ final class AppChromeLayoutTests: XCTestCase {
             AppChromeLayout.artifactPanelWidth + AppChromeLayout.dividerWidth)
     }
 
-    func testTheRailIsCountedInEveryStateAndThePanelOnlyWhenShown() {
-        // ABSOLUTE, not a delta between two `minimumWindowWidth` calls: a
-        // constant added to or dropped from both arms of a subtraction
-        // cancels, so a relative test cannot see the rail's width going
-        // missing. The rail is on screen in every section and state, so both
-        // floors carry it; only the panel comes and goes.
+    func testTheSidebarSwapsBetweenExpandedWidthAndCollapsedRail() {
+        // Unified sidebar: expanded shows the 260pt labeled sidebar; collapsed
+        // drops to the 52pt icon rail. The two never stack side by side.
         XCTAssertEqual(
             AppChromeLayout.minimumWindowWidth(isPanelVisible: true, rightColumn: .none),
-            AppChromeLayout.navigationRailWidth
-                + AppChromeLayout.sidebarPanelWidth
+            AppChromeLayout.sidebarPanelWidth
                 + AppChromeLayout.dividerWidth
                 + AppChromeLayout.primaryMinimumWidth)
 
@@ -138,21 +134,22 @@ final class AppChromeLayoutTests: XCTestCase {
                 + AppChromeLayout.primaryMinimumWidth)
     }
 
-    func testLeftChromeIsTheRailPlusThePanelWhenShown() {
+    func testLeftChromeIsExpandedSidebarOrCollapsedRail() {
         XCTAssertEqual(
             AppChromeLayout.leftChromeWidth(isPanelVisible: false),
             AppChromeLayout.navigationRailWidth)
         XCTAssertEqual(
             AppChromeLayout.leftChromeWidth(isPanelVisible: true),
-            AppChromeLayout.navigationRailWidth + AppChromeLayout.sidebarPanelWidth)
+            AppChromeLayout.sidebarPanelWidth)
     }
 
     func testExactlyTheSectionsWithPanelContentHaveASidebarPanel() {
         // The window floor and the sidebar both follow this, so a section
-        // listed here wrongly reserves (or drops) 260pt of width. Files,
-        // Discover and Humanize have nothing to list beside the rail.
+        // listed here wrongly reserves (or drops) 260pt of width. Files and
+        // Humanize have nothing to list beside the rail. Discover is a mode of
+        // Models and shows the Models panel.
         let withPanel = AppModel.AppNavigationSection.allCases.filter(\.hasSidebarPanel)
-        XCTAssertEqual(Set(withPanel), [.chat, .audio, .images, .modelManager, .server])
+        XCTAssertEqual(Set(withPanel), [.chat, .audio, .images, .modelManager, .modelHub, .server])
     }
 
     func testEveryPanelButChatsHasARailMenuForWhenItIsHidden() {

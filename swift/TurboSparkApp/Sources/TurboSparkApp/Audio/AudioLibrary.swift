@@ -32,7 +32,7 @@ public enum AudioWorkspacePage: String, Codable, CaseIterable, Identifiable, Sen
         case .transcribe: return "text.bubble"
         case .voiceover: return "waveform"
         case .voiceClone: return "person.wave.2"
-        case .voiceDesign: return "slider.horizontal.3"
+        case .voiceDesign: return "person.text.rectangle"
         case .music: return "music.note"
         case .cleanup: return "slider.horizontal.3"
         case .advanced: return "wrench.and.screwdriver"
@@ -321,7 +321,8 @@ struct AudioPreset: Codable, Identifiable, Equatable, Sendable {
 
 struct AudioWorkspacePreferences: Codable, Sendable {
     var schemaVersion = 1
-    var page: AudioWorkspacePage = .library
+    /// A new profile opens on a task, since the library is empty until one has run.
+    var page: AudioWorkspacePage = .transcribe
     var recipe = AudioRecipe()
     var presets: [AudioPreset] = []
     var speechModes: [String: AudioSpeechSettings]? = nil

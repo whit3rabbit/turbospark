@@ -1,5 +1,5 @@
 #![cfg(target_os = "macos")]
-//! Greedy DSpark speculation on Inkling 2 against plain greedy decode, through
+//! Greedy block-drafter speculation (DSpark or DFlash2) on Inkling 2 against plain greedy decode, through
 //! the shipped loops (`run_raw_completion` and
 //! `run_raw_completion_speculative`), on a real install.
 //!
@@ -9,6 +9,10 @@
 //! TURBOSPARK_SPEC_STATS=1 cargo test --release -p turbospark-runtime \
 //!     --test real_forward_inkling2_speculative -- --ignored --nocapture
 //! ```
+//!
+//! `INKLING2_SPEC_DRAFTER=dflash2` names the DFlash2 drafter instead
+//! (`TURBOSPARK_INKLING2_DFLASH2=~/models/inkling2-dflash2`, or the install's
+//! `dflash2/`).
 //!
 //! The committed token streams must be identical. A difference would have to
 //! come from a verify row that differs from the sequential row, which the
@@ -78,7 +82,7 @@ fn prompts() -> Vec<(&'static str, String)> {
 }
 
 #[test]
-#[ignore = "needs INKLING2_INSTALL and TURBOSPARK_INKLING2_DSPARK"]
+#[ignore = "needs INKLING2_INSTALL and a block drafter"]
 fn greedy_speculation_commits_the_plain_greedy_stream() {
     let install = PathBuf::from(std::env::var("INKLING2_INSTALL").expect("INKLING2_INSTALL"));
     let arch = model_io::inkling2_mini();
@@ -90,6 +94,12 @@ fn greedy_speculation_commits_the_plain_greedy_stream() {
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(7);
+    let dflash2 = std::env::var("INKLING2_SPEC_DRAFTER").is_ok_and(|v| v == "dflash2");
+    let policy = if dflash2 {
+        turbospark_runtime::DflashDraftPolicy::Dflash2(depth)
+    } else {
+        turbospark_runtime::DflashDraftPolicy::Fixed(depth)
+    };
     let mut runner = RealForwardRunner::open_with_residency(
         &install,
         arch.clone(),
@@ -97,15 +107,20 @@ fn greedy_speculation_commits_the_plain_greedy_stream() {
         turbospark_runtime::ExpertCacheSlots::Auto,
         turbospark_runtime::DraftPolicies {
             mtp: turbospark_runtime::MtpDraftPolicy::Off,
-            dflash: turbospark_runtime::DflashDraftPolicy::Fixed(depth),
+            dflash: policy,
         },
         turbospark_runtime::SteeringPolicy::off(),
         1,
         turbospark_runtime::KvQuant::Off,
         turbospark_runtime::ExpertResidency::Resident,
     )
-    .expect("open with the DSpark drafter");
+    .expect("open with a block drafter");
     assert_eq!(runner.dflash_speculation_blocker(), None);
+    // Both drafters pass the stream check, so say which one was measured.
+    assert_eq!(
+        runner.inkling2_drafter_name(),
+        Some(if dflash2 { "DFlash2" } else { "DSpark" })
+    );
     let n_new = std::env::var("INKLING2_SPEC_TOKENS")
         .ok()
         .and_then(|v| v.parse().ok())

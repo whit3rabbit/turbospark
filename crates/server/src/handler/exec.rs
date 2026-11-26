@@ -1,13 +1,11 @@
 //! Generation execution and streaming loop logic.
 
-use std::collections::HashSet;
-
 use runtime::{
     CancelFlag, GenerationConfig, RawDecodeResult, RuntimeError, TurnEvent, TurnSplitter,
 };
 use tokenizer::{ParsedToolCall, ReasoningEffort};
 
-use super::plan::AppState;
+use super::plan::{AppState, ToolSet};
 use crate::cancel::Cancel;
 
 /// A generation that never started, as distinct from one that failed.
@@ -74,7 +72,7 @@ pub(crate) async fn run_full(
     prompt_ids: Vec<foundation::TokenId>,
     config: GenerationConfig,
     images: Option<crate::vision::RequestImages>,
-    tools: HashSet<String>,
+    tools: ToolSet,
     effort: ReasoningEffort,
     control: RunControl,
 ) -> Result<Generated, GenError> {
@@ -145,7 +143,7 @@ pub(crate) fn stream_blocking(
     prompt_ids: &[foundation::TokenId],
     config: &GenerationConfig,
     images: Option<&crate::vision::RequestImages>,
-    tools: &HashSet<String>,
+    tools: &ToolSet,
     effort: ReasoningEffort,
     cancel: CancelFlag<'_>,
     on_piece: &mut dyn FnMut(Piece),
@@ -164,7 +162,10 @@ pub(crate) fn stream_blocking(
             format!("toolu_{}", next_id - 1)
         },
         prompt_ids,
-    );
+    )
+    // Without these a Qwen XML parameter is typed by how its text looks, so a
+    // string parameter holding `true` or `12` comes out a bool or a number.
+    .with_tool_schemas(tools.schemas().clone());
     let mut released_span_text = String::new();
     let mut emit_piece = |event: TurnEvent| match event {
         TurnEvent::Prefill { .. } => {}

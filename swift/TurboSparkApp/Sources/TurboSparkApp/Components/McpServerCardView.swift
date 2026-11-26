@@ -23,7 +23,10 @@ struct McpServerCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
+            // Adaptive: the four row actions drop under the server details
+            // instead of squeezing its name at German and Extra Large text.
+            AppAdaptiveHeader {
+              HStack(spacing: 10) {
                 Image(systemName: "server.rack")
                     .themedFont(.title3)
                     .foregroundStyle(server.isEnabled ? AnyShapeStyle(.appAccent) : AnyShapeStyle(.appSecondary))
@@ -50,12 +53,13 @@ struct McpServerCard: View {
                         .themedCode(.small)
                         .foregroundStyle(.appSecondary)
                         .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(Text(verbatim: McpEnvMasking.scrub(server.commandSummary, secrets: server.envSecretValues)))
 
                     McpServerStatusLabel(status: status, showsReason: result == nil)
                 }
-
-                Spacer()
-
+              }
+            } actions: {
                 rowActions
             }
 
@@ -169,6 +173,8 @@ struct McpServerCard: View {
                 .themedFont(.tiny, weight: .medium)
             }
             .foregroundStyle(.appSecondary)
+            .frame(minHeight: 20)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(isExpanded

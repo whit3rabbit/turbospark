@@ -159,6 +159,12 @@ object as control data. A dialect's explicit tool marker remains sufficient;
 without one, the trimmed response must parse in full as a JSON object or
 array before the heuristic rescuer runs.
 
+**CODE REGIONS ARE MASKED BEFORE RESCUE SCANNING.** Fenced blocks and inline
+code in the raw reply are blanked first (`mask_code_regions`), so tool markup
+the model merely quotes is never rescued. Two exceptions: a reply that is
+exactly one fenced block keeps its old behavior (a known small-model habit of
+fencing a real call), and a released span body is never masked.
+
 ## 3. The retry, and why it re-renders the prompt
 
 `run_guarded` is the loop. On `Retry` it appends two messages to a CLONE of

@@ -94,7 +94,10 @@ public struct PermissionsSettingsPaneView: View {
         let status = permissionsManager.folderStatuses[folder] ?? .unknown
         let name = Self.folderName(folder)
 
-        return HStack(spacing: 12) {
+        // One row when it fits; otherwise the status and actions drop under
+        // the text. A fixed row squeezed the folder name into a few
+        // characters under German and Extra Large text.
+        let info = HStack(spacing: 12) {
             Image(systemName: folder.systemImage)
                 .themedFont(.title3)
                 .foregroundStyle(status.isGranted ? AnyShapeStyle(.appAccent) : AnyShapeStyle(.appSecondary))
@@ -102,57 +105,75 @@ public struct PermissionsSettingsPaneView: View {
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 8) {
-                    Text(name)
-                        .themedFont(.small, weight: .semibold)
-                    Text(verbatim: folder.pathDisplay)
-                        .themedCode(.small)
-                        .foregroundStyle(.appSecondary)
-                }
+                Text(name)
+                    .themedFont(.small, weight: .semibold)
+                Text(verbatim: folder.pathDisplay)
+                    .themedCode(.small)
+                    .foregroundStyle(.appSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .help(Text(verbatim: folder.pathDisplay))
 
                 Self.folderPurpose(folder)
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
 
-            Spacer()
+        // Status badge: the explicit word, not only the color, so the
+        // state reads the same to VoiceOver and to a color-blind reader.
+        let badge = HStack(spacing: 4) {
+            Image(systemName: status.systemIcon)
+                .themedFont(.small)
+                .accessibilityHidden(true)
+            Self.statusLabel(status)
+                .themedFont(.small, weight: .medium)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundStyle(status.statusColor(in: theme))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(status.statusColor(in: theme).opacity(0.12))
+        .clipShape(Capsule())
 
-            // Status badge: the explicit word, not only the color, so the
-            // state reads the same to VoiceOver and to a color-blind reader.
-            HStack(spacing: 4) {
-                Image(systemName: status.systemIcon)
-                    .themedFont(.small)
-                    .accessibilityHidden(true)
-                Self.statusLabel(status)
-                    .themedFont(.small, weight: .medium)
-            }
-            .foregroundStyle(status.statusColor(in: theme))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(status.statusColor(in: theme).opacity(0.12))
-            .clipShape(Capsule())
-
-            HStack(spacing: 6) {
-                if !status.isGranted {
-                    Button {
-                        permissionsManager.requestFolderAccess(for: folder)
-                    } label: {
-                        Text("Grant Access", bundle: .module)
-                            .settingsControl("Grant Access", pane: .permissions, timing: .immediate)
-                    }
-                    .appAction(.secondary, size: .small)
-                    .help(Text("Prompt macOS to grant file access to \(name)", bundle: .module))
-                    .accessibilityLabel(Text("Grant access to \(name)", bundle: .module))
+        let actions = HStack(spacing: 6) {
+            if !status.isGranted {
+                Button {
+                    permissionsManager.requestFolderAccess(for: folder)
+                } label: {
+                    Text("Grant Access", bundle: .module)
+                        .settingsControl("Grant Access", pane: .permissions, timing: .immediate)
                 }
+                .appAction(.secondary, size: .small)
+                .fixedSize()
+                .help(Text("Prompt macOS to grant file access to \(name)", bundle: .module))
+                .accessibilityLabel(Text("Grant access to \(name)", bundle: .module))
+            }
 
-                if let url = folder.defaultURL {
-                    AppIconButton("folder", label: Text("Reveal \(name) in Finder", bundle: .module)) {
-                        permissionsManager.revealInFinder(url: url)
-                    }
-                    .appAction(.quiet, size: .small)
+            if let url = folder.defaultURL {
+                AppIconButton("folder", label: Text("Reveal \(name) in Finder", bundle: .module)) {
+                    permissionsManager.revealInFinder(url: url)
+                }
+                .appAction(.quiet, size: .small)
+            }
+        }
+
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 12) {
+                info.frame(maxWidth: 260 * AppMetrics.textScale(theme), alignment: .leading)
+                Spacer(minLength: 8)
+                badge
+                actions
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                info
+                HStack(spacing: 12) {
+                    badge
+                    actions
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(10)
         .background(.appSurface)

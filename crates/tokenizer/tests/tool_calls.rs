@@ -94,6 +94,112 @@ fn qwen_string_values_stay_raw_even_if_json_like() {
     );
 }
 
+fn qwen_schemas(parameters: &str) -> std::collections::BTreeMap<String, JsonValue> {
+    let mut m = std::collections::BTreeMap::new();
+    m.insert("f".to_string(), JsonValue::parse(parameters).unwrap());
+    m
+}
+
+fn qwen_call(
+    params: &[(&str, &str)],
+    schema: Option<&str>,
+) -> std::collections::BTreeMap<String, JsonValue> {
+    let mut text = String::from("<function=f>\n");
+    for (k, v) in params {
+        text.push_str(&format!("<parameter={k}>\n{v}\n</parameter>\n"));
+    }
+    text.push_str("</function>");
+    let schemas = schema.map(qwen_schemas).unwrap_or_default();
+    QwenToolCallParser::new()
+        .parse_with_schemas(&text, &tools(&["f"]), "id", &schemas)
+        .unwrap()
+        .arguments
+        .as_object()
+        .unwrap()
+        .clone()
+}
+
+#[test]
+fn qwen_schema_string_param_stays_string_even_if_json_like() {
+    let schema = r#"{"type":"object","properties":{
+        "a":{"type":"string"},"b":{"type":"string"},"c":{"type":"string"},
+        "d":{"type":"string"},"e":{"type":"string"},"f":{"type":["string","null"]}}}"#;
+    let obj = qwen_call(
+        &[
+            ("a", "true"),
+            ("b", "null"),
+            ("c", "1e3"),
+            ("d", "12"),
+            ("e", "[1, 2]"),
+            ("f", "false"),
+        ],
+        Some(schema),
+    );
+    for (k, v) in [
+        ("a", "true"),
+        ("b", "null"),
+        ("c", "1e3"),
+        ("d", "12"),
+        ("e", "[1, 2]"),
+        ("f", "false"),
+    ] {
+        assert_eq!(obj[k], JsonValue::String(v.to_string()), "param {k}");
+    }
+}
+
+#[test]
+fn qwen_schema_typed_params_coerce_by_declared_type() {
+    let schema = r#"{"type":"object","properties":{
+        "n":{"type":"integer"},"x":{"type":"number"},"b":{"type":"boolean"},
+        "l":{"type":"array"},"o":{"type":"object"}}}"#;
+    let obj = qwen_call(
+        &[
+            ("n", " 7 "),
+            ("x", "2.5"),
+            ("b", "false"),
+            ("l", "[1, \"a\"]"),
+            ("o", "{\"k\": 1}"),
+        ],
+        Some(schema),
+    );
+    assert_eq!(obj["n"], JsonValue::Integer(7));
+    assert_eq!(obj["x"], JsonValue::Number(2.5));
+    assert_eq!(obj["b"], JsonValue::Bool(false));
+    assert_eq!(
+        obj["l"],
+        JsonValue::Array(vec![JsonValue::Integer(1), JsonValue::String("a".into())])
+    );
+    assert_eq!(obj["o"].as_object().unwrap()["k"], JsonValue::Integer(1));
+}
+
+#[test]
+fn qwen_schema_keeps_whitespace_and_markup_in_string_params() {
+    let schema = r#"{"type":"object","properties":{"s":{"type":"string"}}}"#;
+    let obj = qwen_call(&[("s", "  <b>x</b>\n  line2  ")], Some(schema));
+    assert_eq!(obj["s"], JsonValue::String("  <b>x</b>\n  line2  ".into()));
+}
+
+#[test]
+fn qwen_without_schema_or_property_keeps_heuristic() {
+    // No schema at all, and a property the schema does not declare.
+    let none = qwen_call(&[("a", "true"), ("b", "3")], None);
+    assert_eq!(none["a"], JsonValue::Bool(true));
+    assert_eq!(none["b"], JsonValue::Integer(3));
+    let schema = r#"{"type":"object","properties":{"other":{"type":"string"}}}"#;
+    let unk = qwen_call(&[("a", "true"), ("b", "3")], Some(schema));
+    assert_eq!(unk["a"], JsonValue::Bool(true));
+    assert_eq!(unk["b"], JsonValue::Integer(3));
+}
+
+#[test]
+fn qwen_schema_mismatch_falls_back_to_heuristic() {
+    // Declared integer but the text is not one: reaches the tool as before.
+    let schema = r#"{"type":"object","properties":{"n":{"type":"integer"}}}"#;
+    let obj = qwen_call(&[("n", "abc"), ("m", "true")], Some(schema));
+    assert_eq!(obj["n"], JsonValue::String("abc".into()));
+    assert_eq!(obj["m"], JsonValue::Bool(true));
+}
+
 #[test]
 fn qwen_rejects_unknown_tool() {
     let parser = QwenToolCallParser::new();

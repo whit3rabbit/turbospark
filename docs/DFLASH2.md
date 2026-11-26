@@ -1043,3 +1043,57 @@ speed (`docs/MOE_PRIOR_ART.md`). The drafter's residual stream peaks near
 113,920, past FP16, and the ANE computes in FP16 only (section 6 stores it
 divided by `DFLASH_RESIDUAL_SCALE` on the GPU for the same reason). And round
 n+1's draft needs round n's verify result, so there is little to overlap.
+
+## 9. Inkling 2 (`incoai/Inkling-2-Mini-DFlash2`)
+
+The same drafter design for `thinkingmachines/Inkling-2-Mini`, supported
+upstream by ggml-org/llama.cpp#33073. Pinned revision
+`4f9088ea66c21f2b99ed657d1941c306b03e84d2`, 990 MB, all BF16. The code is
+`families/inkling2/dflash2.rs`, built on the Inkling DSpark drafter's state
+and kernels, not on the Qwen draft pass.
+
+Put `model.safetensors` and `config.json` in `<install>/dflash2/`, or name the
+directory with `TURBOSPARK_INKLING2_DFLASH2`. The catalog rows
+`inkling2-mini-mlx4` and `inkling2-mini-ud-q4kxl` fetch it. Select it with
+`--speculative-drafter dflash2 --speculative N` (N from 1 to 7) at temperature
+0. `dflash` keeps DSpark when the install has it. `auto` never enables either.
+
+What differs from the Qwen drafter above:
+
+- Taps `[5, 23, 41, 48]`, used unshifted: the features DSpark records.
+- The anchor and mask token (200056) rows enter through the target's
+  `embed_norm`. Rope theta is 10000 and the activation silu, both from the
+  draft's own config (the target's activation is `situ`).
+- Candidates are the real ids below 200058.
+- The softcap (30) applies to the pair score after the correction. It is
+  monotonic, so the greedy walk skips it. `before_correction` is refused.
+- The context window is 2048 positions before the block, as DSpark counts it.
+  The Qwen drafter counts the block inside its 2048.
+- The finish convolutions reach 6e4 on a short prompt, at FP16's ceiling, so
+  they are stored divided by 32 and multiplied back in the F32 residual add.
+
+Gates, both on a real install:
+
+- `tests/real_forward_inkling2_dflash2_parity.rs`: the Metal draft pass
+  against an f32 CPU reference. MLX 4-bit, post-final-norm cosine at least
+  0.9998 on every row, on a 50-token prompt and on 3298 context rows (past the
+  window). A swapped convolution side drops it to 0.44 and below. The target
+  head is not part of the comparison, and no llama.cpp run was compared.
+- `tests/real_forward_inkling2_speculative.rs` with
+  `INKLING2_SPEC_DRAFTER=dflash2`: the committed stream equals plain greedy.
+
+Committed tokens per verify, MLX 4-bit, 256 greedy tokens, block 7, one run
+each (acceptance only; the host was not quiet, so no speed is quoted):
+
+| prompt | DSpark | DFlash2 |
+| :--- | ---: | ---: |
+| prose (47 tokens) | 2.87 | 3.31 |
+| code (50 tokens) | 3.66 | 4.13 |
+| edit (841 tokens) | 4.83 | 5.12 |
+| long (1830 tokens) | 4.40 | 5.43 |
+| long (3299 tokens) | 3.51 | 2.69 |
+| code then long (3644 tokens) | 3.41 | 3.24 |
+
+DFlash2 leads under the window and trails past it. One likely reason, not
+tested: all five DFlash2 layers are windowed, while DSpark's middle layer sees
+the whole context.

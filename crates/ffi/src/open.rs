@@ -115,8 +115,9 @@ fn drafter(name: Option<&str>) -> Result<runtime::SpeculativeDrafter, String> {
         None | Some("auto") => Ok(runtime::SpeculativeDrafter::Auto),
         Some("mtp") => Ok(runtime::SpeculativeDrafter::Mtp),
         Some("dflash") => Ok(runtime::SpeculativeDrafter::Dflash),
+        Some("dflash2") => Ok(runtime::SpeculativeDrafter::Dflash2),
         Some(other) => Err(format!(
-            "speculativeDrafter must be auto, mtp or dflash, got {other:?}"
+            "speculativeDrafter must be auto, mtp, dflash or dflash2, got {other:?}"
         )),
     }
 }
@@ -127,6 +128,7 @@ fn drafter(name: Option<&str>) -> Result<runtime::SpeculativeDrafter, String> {
 fn drafter_name(drafter: runtime::SpeculativeDrafter) -> &'static str {
     match drafter {
         runtime::SpeculativeDrafter::Dflash => "dflash",
+        runtime::SpeculativeDrafter::Dflash2 => "dflash2",
         _ => "mtp",
     }
 }
@@ -538,7 +540,7 @@ pub(crate) fn open_with_failure(
         asked,
         choice.drafter,
         match choice.drafter {
-            runtime::SpeculativeDrafter::Dflash => runner.dflash_speculation_blocker(),
+            d if d.is_block_drafter() => runner.dflash_speculation_blocker(),
             // The note outranks the engine's own blocker where there is
             // one: both are true of a DFlash2-only install under `auto`,
             // and only one names something the caller can act on.

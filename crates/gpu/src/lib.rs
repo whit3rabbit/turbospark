@@ -386,9 +386,9 @@ pub use inkling2_dspark::{
     encode_dspark_attention, encode_dspark_bf16_to_half, encode_dspark_ctx_store,
     encode_dspark_init_x, encode_dspark_markov_argmax, encode_dspark_markov_gate,
     encode_dspark_markov_input, encode_dspark_markov_logits, encode_dspark_residual,
-    encode_dspark_rms_f32, encode_dspark_rope_rows, encode_dspark_silu_mul,
-    encode_dspark_tap_mix_norm, encode_dspark_transpose_bf16, DsparkAttnShape,
-    DSPARK_LOGITS_PER_GROUP, DSPARK_MAX_RANK,
+    encode_dspark_residual_scaled, encode_dspark_rms_f32, encode_dspark_rope_rows,
+    encode_dspark_silu_mul, encode_dspark_tap_mix_norm, encode_dspark_transpose_bf16,
+    DsparkAttnShape, DSPARK_LOGITS_PER_GROUP, DSPARK_MAX_RANK,
 };
 #[cfg(target_os = "macos")]
 pub use inkling2_ops::{

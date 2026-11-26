@@ -252,6 +252,16 @@ pub(crate) fn run_turn(
             format!("toolu_{}", next_call_id - 1)
         },
         &prompt_ids,
+    )
+    // Qwen XML parameters are typed by the offered schemas, not by how their
+    // text reads (a string parameter holding `true` stays a string).
+    .with_tool_schemas(
+        offer
+            .definitions
+            .iter()
+            .filter(|d| matches!(d.parameters, tokenizer::JsonValue::Object(_)))
+            .map(|d| (d.name.clone(), d.parameters.clone()))
+            .collect(),
     );
 
     let mut emit_turn = |turn: TurnEvent| match turn {

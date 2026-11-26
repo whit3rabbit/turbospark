@@ -594,6 +594,57 @@ fn a_gemma_call_is_rescued() {
     );
 }
 
+/// The rescue tier types Qwen XML values by the request's schema, as the
+/// native decoder does: `city` is declared a string, so text that reads as a
+/// bool, null or number stays the text; `days` is an integer and still types.
+#[test]
+fn a_rescued_qwen_xml_string_parameter_stays_a_string() {
+    let request = weather_request(None);
+    for text in ["true", "null", "1e3", "12"] {
+        let gen = generated(
+            &format!(
+                "<function=get_weather>\n<parameter=city>{text}</parameter>\n<parameter=days>3</parameter>\n</function>"
+            ),
+            vec![],
+        );
+        let Verdict::Rescued(calls) = verdict_for(&request, &gen) else {
+            panic!("expected a Qwen XML rescue for {text:?}");
+        };
+        assert_eq!(
+            object_field(&calls[0].arguments, "city"),
+            Some(&JsonValue::String(text.to_string())),
+            "string parameter {text:?} must stay a string"
+        );
+        assert_eq!(
+            object_field(&calls[0].arguments, "days"),
+            Some(&JsonValue::Integer(3))
+        );
+    }
+}
+
+/// Guard: a tool offered with no `parameters` schema keeps the rescue tier's
+/// own text-shape heuristic, so schema-less requests rescue as they did.
+#[test]
+fn a_rescued_qwen_xml_call_without_a_schema_keeps_the_heuristic() {
+    let request: ChatCompletionRequest = serde_json::from_value(serde_json::json!({
+        "model": "test",
+        "messages": [{"role": "user", "content": "weather in Oslo?"}],
+        "tools": [{"type": "function", "function": {"name": "get_weather"}}],
+    }))
+    .expect("request fixture parses");
+    let gen = generated(
+        "<function=get_weather>\n<parameter=city>true</parameter>\n</function>",
+        vec![],
+    );
+    let Verdict::Rescued(calls) = verdict_for(&request, &gen) else {
+        panic!("expected a Qwen XML rescue");
+    };
+    assert_eq!(
+        object_field(&calls[0].arguments, "city"),
+        Some(&JsonValue::Bool(true))
+    );
+}
+
 /// Qwen ChatML parameter XML: `<function=NAME><parameter=KEY>VALUE</parameter>...</function>`.
 #[test]
 fn a_qwen_xml_parameter_call_is_rescued() {
@@ -617,5 +668,146 @@ fn a_qwen_xml_parameter_call_is_rescued() {
     assert_eq!(
         object_field(&calls[0].arguments, "days"),
         Some(&JsonValue::Integer(3))
+    );
+}
+
+// ---- quoted markup in code regions must not become a call ----
+
+const QWEN_CALL: &str = "<function=get_weather>\n<parameter=city>Oslo</parameter>\n</function>";
+
+/// Prose that shows a call format inside a fenced block is documentation,
+/// not an instruction to the client to execute anything.
+#[test]
+fn tool_markup_quoted_in_a_fenced_block_is_not_rescued() {
+    let request = weather_request(None);
+    let text = format!("The format looks like this:\n```xml\n{QWEN_CALL}\n```\nHope that helps.");
+    assert_eq!(
+        verdict_for(&request, &generated(&text, vec![])),
+        Verdict::Accept
+    );
+}
+
+#[test]
+fn tool_markup_quoted_in_inline_code_is_not_rescued() {
+    let request = weather_request(None);
+    let text =
+        "Use `<function=get_weather><parameter=city>Oslo</parameter></function>` to call it.";
+    assert_eq!(
+        verdict_for(&request, &generated(text, vec![])),
+        Verdict::Accept
+    );
+}
+
+/// A quoted JSON object next to an unrelated control marker must not be
+/// swept up by forge's embedded-JSON scan.
+#[test]
+fn json_quoted_in_a_fence_is_not_rescued_when_a_marker_appears_elsewhere() {
+    let request = weather_request(None);
+    let text = "Here is a function call: example\n```json\n{\"name\":\"get_weather\",\"arguments\":{\"city\":\"Oslo\"}}\n```\nDone.";
+    assert_eq!(
+        verdict_for(&request, &generated(text, vec![])),
+        Verdict::Accept
+    );
+}
+
+/// An unterminated fence (generation cut off) still masks to the end.
+#[test]
+fn an_unterminated_fence_masks_to_the_end() {
+    let request = weather_request(None);
+    let text = format!("Example:\n```\n{QWEN_CALL}\n");
+    assert_eq!(
+        verdict_for(&request, &generated(&text, vec![])),
+        Verdict::Accept
+    );
+}
+
+/// A real call outside any code region is still rescued when code appears
+/// elsewhere in the same answer.
+#[test]
+fn a_real_call_beside_a_code_block_is_still_rescued() {
+    let request = weather_request(None);
+    let text = format!("Run `ls` first.\n```sh\nls\n```\n{QWEN_CALL}");
+    assert!(matches!(
+        verdict_for(&request, &generated(&text, vec![])),
+        Verdict::Rescued(_)
+    ));
+}
+
+/// Known small-model failure: the whole answer is one fenced call. Kept
+/// rescuable on purpose (see `mask_code_regions`).
+#[test]
+fn a_response_that_is_only_one_fence_is_still_rescued() {
+    let request = weather_request(None);
+    let text = format!("```xml\n{QWEN_CALL}\n```");
+    assert!(matches!(
+        verdict_for(&request, &generated(&text, vec![])),
+        Verdict::Rescued(_)
+    ));
+}
+
+/// A body the decoder released from the model's own tool-call wrapper is
+/// control data even when its arguments contain backticks.
+#[test]
+fn a_released_span_body_is_not_masked() {
+    let request = weather_request(None);
+    let mut gen = generated("", vec![]);
+    gen.released_span_text =
+        "<function=get_weather>\n<parameter=city>`Oslo`</parameter>\n</function>".to_string();
+    assert!(matches!(verdict_for(&request, &gen), Verdict::Rescued(_)));
+}
+
+/// REVIEW PROBE: a real call emitted as plain text whose own argument holds
+/// backticks (a shell command, or markdown in a file body). Masking must not
+/// rewrite the call's arguments, or a rescued call would run with corrupted
+/// input.
+#[test]
+fn backticks_inside_a_rescued_raw_call_argument_are_preserved() {
+    let request = weather_request(None);
+    let gen = generated(
+        "<function=get_weather>\n<parameter=city>`Oslo`</parameter>\n</function>",
+        vec![],
+    );
+    let Verdict::Rescued(calls) = verdict_for(&request, &gen) else {
+        panic!("expected a rescue, got {:?}", verdict_for(&request, &gen));
+    };
+    assert_eq!(
+        object_field(&calls[0].arguments, "city"),
+        Some(&JsonValue::String("`Oslo`".to_string())),
+        "masking blanked the call's own argument"
+    );
+}
+
+/// A real call plus a quoted copy of the format in a fence: the extra quoted
+/// call means the real call's arguments cannot be recovered safely from the
+/// masked text, so nothing is rescued (never a damaged call).
+#[test]
+fn a_real_call_beside_a_quoted_example_with_backticks_is_not_rescued() {
+    let request = weather_request(None);
+    let text = format!(
+        "Format:\n```xml\n{QWEN_CALL}\n```\n<function=get_weather>\n<parameter=city>`Oslo`</parameter>\n</function>"
+    );
+    assert_eq!(
+        verdict_for(&request, &generated(&text, vec![])),
+        Verdict::Accept
+    );
+}
+
+/// REVIEW PROBE: real Qwen output wraps each parameter value in newlines
+/// (`<parameter=city>\nOslo\n</parameter>`); the native parser strips exactly
+/// one on each side. The rescue path must hand the tool the same value, not
+/// "\nOslo\n", for a parameter whose schema type is string.
+#[test]
+fn a_rescued_newline_wrapped_string_parameter_has_no_wrapping_newlines() {
+    let request = weather_request(None);
+    let gen = generated(
+        "<function=get_weather>\n<parameter=city>\nOslo\n</parameter>\n</function>",
+        vec![],
+    );
+    let Verdict::Rescued(calls) = verdict_for(&request, &gen) else {
+        panic!("expected a Qwen XML rescue");
+    };
+    assert_eq!(
+        object_field(&calls[0].arguments, "city"),
+        Some(&JsonValue::String("Oslo".to_string()))
     );
 }

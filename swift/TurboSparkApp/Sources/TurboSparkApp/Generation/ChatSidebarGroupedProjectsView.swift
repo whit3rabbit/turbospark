@@ -19,6 +19,8 @@ struct ChatSidebarGroupedProjectsView: View {
     @Binding var chatForSystemPrompt: AppChat?
 
     @State private var expandedProjectIDs: Set<UUID> = []
+    @State private var collapsedProjectIDs: Set<UUID> = []
+    @State private var isUnorganizedCollapsed = false
     @State private var hoveredProjectID: UUID?
     @State private var projectPendingDeletion: AppProject?
     @State private var hoveredChatID: UUID?
@@ -153,61 +155,82 @@ struct ChatSidebarGroupedProjectsView: View {
     private func projectSection(_ project: AppProject) -> some View {
         let isProjectSelected = model.selectedProjectID == project.id
         let projectTasks = tasks(for: project.id)
+        let isCollapsed = collapsedProjectIDs.contains(project.id) && trimmedSearch.isEmpty
         let isExpanded = expandedProjectIDs.contains(project.id) || !trimmedSearch.isEmpty
         let visibleTasks = isExpanded ? projectTasks : Array(projectTasks.prefix(defaultTaskLimit))
         let hasMore = projectTasks.count > defaultTaskLimit && trimmedSearch.isEmpty
 
         return VStack(alignment: .leading, spacing: 2) {
-            projectHeaderRow(project, isSelected: isProjectSelected)
+            projectHeaderRow(project, isSelected: isProjectSelected, isCollapsed: isCollapsed)
 
-            if projectTasks.isEmpty {
-                Text("No tasks yet", bundle: .module)
-                    .font(theme.ui(.tiny))
-                    .foregroundStyle(.appSecondary)
-                    .padding(.leading, 24)
-                    .padding(.vertical, 4)
-            } else {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(visibleTasks) { chat in
-                        taskRow(chat, project: project)
-                    }
-
-                    if hasMore {
-                        Button {
-                            toggleExpansion(for: project.id)
-                        } label: {
-                            (isExpanded ? Text("Show less", bundle: .module) : Text("Show more", bundle: .module))
-                                .font(theme.ui(.tiny, weight: .medium))
-                                .foregroundStyle(.appSecondary)
-                                .padding(.leading, 24)
-                                .padding(.vertical, 4)
-                                .contentShape(.rect)
+            if !isCollapsed {
+                if projectTasks.isEmpty {
+                    Text("No tasks yet", bundle: .module)
+                        .font(theme.ui(.tiny))
+                        .foregroundStyle(.appSecondary)
+                        .padding(.leading, 24)
+                        .padding(.vertical, 4)
+                } else {
+                    VStack(alignment: .leading, spacing: 1) {
+                        ForEach(visibleTasks) { chat in
+                            taskRow(chat, project: project)
                         }
-                        .buttonStyle(.plain)
-                        .help((isExpanded ? Text("Show less", bundle: .module) : Text("Show more", bundle: .module)))
+
+                        if hasMore {
+                            Button {
+                                toggleExpansion(for: project.id)
+                            } label: {
+                                (isExpanded ? Text("Show less", bundle: .module) : Text("Show more", bundle: .module))
+                                    .font(theme.ui(.tiny, weight: .medium))
+                                    .foregroundStyle(.appSecondary)
+                                    .padding(.leading, 24)
+                                    .padding(.vertical, 4)
+                                    .contentShape(.rect)
+                            }
+                            .buttonStyle(.plain)
+                            .help((isExpanded ? Text("Show less", bundle: .module) : Text("Show more", bundle: .module)))
+                        }
                     }
                 }
             }
         }
     }
 
-    private func projectHeaderRow(_ project: AppProject, isSelected: Bool) -> some View {
+    private func projectHeaderRow(_ project: AppProject, isSelected: Bool, isCollapsed: Bool) -> some View {
         let isHovered = hoveredProjectID == project.id
         let showsActions = isHovered || isSelected
 
-        return HStack(spacing: 6) {
+        return HStack(spacing: 4) {
+            Button {
+                TSMotion.animate(TSMotion.select) {
+                    if collapsedProjectIDs.contains(project.id) {
+                        collapsedProjectIDs.remove(project.id)
+                    } else {
+                        collapsedProjectIDs.insert(project.id)
+                    }
+                }
+            } label: {
+                Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                    .font(theme.ui(.micro, weight: .semibold))
+                    .foregroundStyle(.appSecondary)
+                    .frame(width: 14, height: 18)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(Text("Project: \(project.name)", bundle: .module))
+
             Button {
                 model.selectProject(id: project.id)
             } label: {
-                HStack(spacing: 7) {
+                HStack(spacing: 6) {
                     Image(systemName: isSelected ? "folder.fill" : "folder")
                         .font(theme.ui(.tiny))
-                        .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
+                        .foregroundStyle(isSelected ? theme.accentText : theme.secondaryText)
                         .accessibilityHidden(true)
 
                     Text(project.name)
-                        .font(theme.ui(.small, weight: isSelected ? .semibold : nil))
-                        .foregroundStyle(.appText)
+                        .font(theme.ui(.small, weight: isSelected ? .semibold : .medium))
+                        .foregroundStyle(isSelected ? theme.foreground : theme.secondaryText)
                         .lineLimit(1)
 
                     Spacer(minLength: 0)
@@ -426,23 +449,36 @@ struct ChatSidebarGroupedProjectsView: View {
     // MARK: - Unorganized Section
 
     private var unorganizedSection: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 7) {
-                Image(systemName: "tray")
-                    .font(theme.ui(.tiny))
-                    .foregroundStyle(.appSecondary)
-                Text("Other Tasks", bundle: .module)
-                    .font(theme.ui(.small, weight: .medium))
-                    .foregroundStyle(.appSecondary)
-                Spacer()
+        let isCollapsed = isUnorganizedCollapsed && trimmedSearch.isEmpty
+        return VStack(alignment: .leading, spacing: 2) {
+            Button {
+                TSMotion.animate(TSMotion.select) {
+                    isUnorganizedCollapsed.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                        .font(theme.ui(.micro, weight: .semibold))
+                        .foregroundStyle(.appSecondary)
+                        .frame(width: 14, height: 18)
+                        .accessibilityHidden(true)
+                    Text("Other Tasks", bundle: .module)
+                        .font(theme.ui(.tiny, weight: .semibold))
+                        .foregroundStyle(.appSecondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .contentShape(.rect)
             }
-            .padding(.horizontal, 6)
-            .padding(.vertical, 4)
+            .buttonStyle(.plain)
             .accessibilityAddTraits(.isHeader)
 
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(unorganizedChats) { chat in
-                    taskRow(chat, project: nil)
+            if !isCollapsed {
+                VStack(alignment: .leading, spacing: 1) {
+                    ForEach(unorganizedChats) { chat in
+                        taskRow(chat, project: nil)
+                    }
                 }
             }
         }

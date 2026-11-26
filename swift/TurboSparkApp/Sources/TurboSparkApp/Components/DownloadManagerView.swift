@@ -75,14 +75,7 @@ struct DownloadManagerView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(14)
-        .background {
-            RoundedRectangle(cornerRadius: AppMetrics.cardRadius)
-                .fill(.appPage)
-                .shadow(color: .black.opacity(0.2), radius: 14, x: 0, y: 4)
-                .overlay {
-                    RoundedRectangle(cornerRadius: AppMetrics.cardRadius).stroke(.appBorder, lineWidth: 1)
-                }
-        }
+        .appGlassSurface(.rect(cornerRadius: AppMetrics.cardRadius))
     }
 
     private var historyFooter: LocalizedStringKey {

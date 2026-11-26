@@ -26,7 +26,7 @@
 //! generation doubles the worst-case hold. A ladder of escalating nudges is
 //! what `forge`'s own `step_nudge` offers and is deliberately not taken here.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use anyllm_translate::openai::{
     ChatCompletionRequest, ChatContent, ChatMessage, ChatRole, ChatToolChoice,
@@ -39,6 +39,7 @@ use tokenizer::{JsonValue, ParsedToolCall, ReasoningEffort};
 use crate::cancel::Cancel;
 use crate::handler::{
     cancelled_before_start, plan, run_full, tool_names, AppState, GenError, Generated, RunControl,
+    ToolSet,
 };
 
 mod extra_formats;
@@ -198,6 +199,97 @@ fn rescue_candidate(text: &str) -> bool {
     )
 }
 
+/// Blank out fenced and inline code so quoted tool markup is not rescued.
+///
+/// A model explaining a call format ("it looks like ```<function=...>```")
+/// is showing an example, not asking the client to run it. Rescue scans
+/// raw prose, so without this a quoted example, or a quoted JSON object
+/// next to any incidental marker such as "call:", becomes an executed call.
+///
+/// **TRADEOFF, CHOSEN DELIBERATELY:** some small models wrap a REAL call
+/// in a fence by mistake. When the whole answer is exactly one fenced block
+/// the text is returned unchanged, so that case keeps its previous
+/// behavior (the answer has no prose around it, so it is far more likely
+/// an attempted call than documentation). A real call inside a fence that
+/// is mixed with other prose is no longer rescued.
+///
+/// Fences are runs of 3+ backticks, closed by a run at least as long, or
+/// by end of text (a cut-off generation). Inline code is a 1 or 2 backtick
+/// run closed on the same line; an unmatched run stays literal. Tilde
+/// fences are not handled.
+fn mask_code_regions(text: &str) -> String {
+    let trimmed = text.trim();
+    if let Some(inner) = trimmed.strip_prefix("```") {
+        if inner.ends_with("```") && !inner[..inner.len() - 3].contains("```") {
+            return text.to_string();
+        }
+    }
+
+    let bytes = text.as_bytes();
+    let run_at = |i: usize| bytes[i..].iter().take_while(|&&b| b == b'`').count();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    let mut copied = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'`' {
+            i += 1;
+            continue;
+        }
+        let n = run_at(i);
+        let after = i + n;
+        let end = if n >= 3 {
+            // Closing run: the next run of at least `n` backticks.
+            let mut j = after;
+            let mut found = bytes.len();
+            while j < bytes.len() {
+                if bytes[j] == b'`' {
+                    let m = run_at(j);
+                    if m >= n {
+                        found = j + m;
+                        break;
+                    }
+                    j += m;
+                } else {
+                    j += 1;
+                }
+            }
+            Some(found)
+        } else {
+            // Inline: an exact-length run on the same line.
+            let line_end = bytes[after..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .map_or(bytes.len(), |p| after + p);
+            let mut j = after;
+            let mut found = None;
+            while j < line_end {
+                if bytes[j] == b'`' {
+                    let m = run_at(j);
+                    if m == n {
+                        found = Some(j + m);
+                        break;
+                    }
+                    j += m;
+                } else {
+                    j += 1;
+                }
+            }
+            found
+        };
+        match end {
+            Some(end) => {
+                out.push_str(&text[copied..i]);
+                out.push(' ');
+                i = end;
+                copied = end;
+            }
+            None => i = after,
+        }
+    }
+    out.push_str(&text[copied..]);
+    out
+}
+
 /// Read one generation against the schemas the request sent.
 ///
 /// Pure: no I/O, no model, no clock. Every branch is unit-testable, which is
@@ -205,7 +297,7 @@ fn rescue_candidate(text: &str) -> bool {
 pub(crate) fn inspect(
     generated: &Generated,
     specs: &HashMap<String, ToolSpec>,
-    offered: &HashSet<String>,
+    offered: &ToolSet,
     requires_call: bool,
     config: &GuardrailConfig,
 ) -> Verdict {
@@ -227,7 +319,7 @@ pub(crate) fn inspect(
     // saw a call with empty arguments rescued straight onto the wire.
     //
     // **THE LOCAL FORMATS RUN BEFORE FORGE'S OWN STRATEGIES, and forge still
-    // runs when they miss.** `extra_formats::rescue` knows the four dialects
+    // runs when they miss.** `extra_formats::rescue_with_schemas` knows the four dialects
     // forge does not (GLM, the invoke/parameter shape MiniMax speaks, Kimi
     // K2, and nothing for Longcat, which forge's JSON scan already covers);
     // forge's four strategies keep everything else, so bare JSON and
@@ -247,7 +339,7 @@ pub(crate) fn inspect(
     let mut rescued = Vec::new();
     if generated.calls.is_empty() && config.rescue {
         let try_rescue = |text: &str, rescued: &mut Vec<ParsedToolCall>| {
-            let local = extra_formats::rescue(text, &names);
+            let local = extra_formats::rescue_with_schemas(text, &names, offered.schemas());
             if local.is_empty() {
                 rescued.extend(
                     rescue_tool_call(text, &names)
@@ -262,8 +354,32 @@ pub(crate) fn inspect(
         if !generated.released_span_text.is_empty() {
             try_rescue(&generated.released_span_text, &mut rescued);
         }
-        if rescued.is_empty() && rescue_candidate(&generated.text) {
-            try_rescue(&generated.text, &mut rescued);
+        // The raw-text path is the only one that sees prose, so it is the
+        // only one that masks code regions. A released span body is already
+        // control data and may legitimately hold backticks in an argument.
+        let visible = mask_code_regions(&generated.text);
+        if rescued.is_empty() && rescue_candidate(&visible) {
+            try_rescue(&visible, &mut rescued);
+            // Masking decides WHICH calls are real; it must not decide their
+            // arguments. A real call can carry backticks of its own (a shell
+            // command, markdown in a file body), and the masked text has those
+            // blanked, so executing the masked parse would run the call with
+            // corrupted input. Re-read the original text and take that parse
+            // only when it finds the same calls the masked text did. If it
+            // finds more, the extras are quoted examples inside code regions
+            // and the arguments of the real ones cannot be recovered safely,
+            // so rescue nothing rather than rescue a damaged call.
+            if !rescued.is_empty() && visible != generated.text {
+                let mut full = Vec::new();
+                try_rescue(&generated.text, &mut full);
+                let same = full.len() == rescued.len()
+                    && full.iter().zip(&rescued).all(|(a, b)| a.name == b.name);
+                if same {
+                    rescued = full;
+                } else {
+                    rescued.clear();
+                }
+            }
         }
     }
     let calls: &[ParsedToolCall] = if rescued.is_empty() {

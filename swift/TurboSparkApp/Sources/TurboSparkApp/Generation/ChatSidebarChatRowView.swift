@@ -35,16 +35,10 @@ struct ChatSidebarChatRowView: View {
     // modifier chain in reasonable time. Explicit types keep each piece cheap.
     @ViewBuilder
     private func rowBackground(isSelected: Bool) -> some View {
-        let hoverOpacity: Double = isHovered ? 0.05 : 0
+        let hoverOpacity: Double = isHovered ? 0.06 : 0
         let fillColor: Color = isSelected ? theme.selection : theme.foreground.opacity(hoverOpacity)
-        let shape = RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
-        shape
-            .fill(fillColor)
-            .overlay {
-                if isSelected {
-                    shape.stroke(theme.accent.opacity(0.25), lineWidth: 1)
-                }
-            }
+        let shape = RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+        shape.fill(fillColor)
     }
 
     @ViewBuilder
@@ -53,7 +47,7 @@ struct ChatSidebarChatRowView: View {
             Capsule()
                 .fill(theme.accent)
                 .frame(width: 2.5)
-                .padding(.vertical, 9)
+                .padding(.vertical, 6)
         }
     }
 
@@ -69,7 +63,7 @@ struct ChatSidebarChatRowView: View {
         // The "you are here" mark. Full-opacity accent on a 2.5pt bar
         // survives any accent/background pairing the theme allows.
         .overlay(alignment: .leading) { selectionBar(isSelected: isSelected) }
-        .contentShape(.rect(cornerRadius: AppMetrics.cardRadius))
+        .contentShape(.rect(cornerRadius: AppMetrics.controlRadius))
         .tsAnimation(TSMotion.hover, value: isHovered)
         .tsAnimation(TSMotion.select, value: isSelected)
         .onHover { hovering in
@@ -185,39 +179,28 @@ struct ChatSidebarChatRowView: View {
                 model.selectChat(id: chat.id)
             }
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 rowIcon(isSelected: isSelected)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 4) {
-                        Text(chat.title)
-                            .font(theme.ui(.small, weight: isSelected ? .semibold : nil))
-                            .foregroundStyle(.appText)
-                            .lineLimit(1)
-                        // The qwen-code workspace accent: one deterministic
-                        // dot per project, so chats from different roots
-                        // read apart without reading any words.
-                        if let accent = projectAccent {
-                            Circle()
-                                .fill(accent)
-                                .frame(width: 6, height: 6)
-                                .help(Text("Projects", bundle: .module))
-                                .accessibilityHidden(true)
-                        }
-                    }
-                    if !chat.preview.isEmpty {
-                        Text(chat.preview)
-                            .font(theme.ui(.tiny))
-                            .foregroundStyle(.appSecondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
+                Text(chat.title)
+                    .font(theme.ui(.small, weight: isSelected ? .semibold : .regular))
+                    .foregroundStyle(isSelected ? theme.foreground : theme.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+
+                if let accent = projectAccent {
+                    Circle()
+                        .fill(accent)
+                        .frame(width: 5, height: 5)
+                        .help(Text("Projects", bundle: .module))
+                        .accessibilityHidden(true)
                 }
+
                 Spacer(minLength: 0)
                 stateBadge
             }
-            .padding(.leading, 9)
-            .padding(.vertical, 8)
+            .padding(.leading, 10)
+            .padding(.vertical, 5.5)
             .contentShape(.rect)
         }
         .buttonStyle(TSPressScaleStyle(scale: 0.985))
@@ -230,29 +213,21 @@ struct ChatSidebarChatRowView: View {
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 
-    /// Ghost badge INSTEAD of the bubble icon, not beside it: the icon is
-    /// what marks the row temporary, and doubling it would just spend
-    /// sidebar width. A pinned chat reads the same way: the pin replaces
-    /// the bubble, because the row has one icon slot and "this one is
-    /// held" outranks "this is a chat".
+    /// Only show a leading glyph when it carries real state (temporary,
+    /// pinned, or actively generating). Ordinary chats stay clean text-only
+    /// rows like Claude Desktop so titles scan effortlessly.
     @ViewBuilder
     private func rowIcon(isSelected: Bool) -> some View {
         if chat.isGhost {
-            GhostGlyph(size: 13, color: theme.accent)
+            GhostGlyph(size: 12, color: theme.accent)
                 .accessibilityHidden(true)
         } else if chat.isPinned {
             Image(systemName: "pin.fill")
-                .font(theme.ui(.tiny))
-                .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
+                .font(theme.ui(.micro))
+                .foregroundStyle(isSelected ? theme.accentText : theme.secondaryText)
                 .accessibilityHidden(true)
         } else if model.chatTurnState(for: chat.id) == .generating {
-            TaskProgressFlameIcon(size: 13)
-        } else {
-            Image(systemName: isSelected ? "bubble.left.fill" : "bubble.left")
-                .font(theme.ui(.tiny))
-                .foregroundStyle(isSelected ? theme.accent : theme.secondaryText)
-                .contentTransition(.symbolEffect(.replace))
-                .accessibilityHidden(true)
+            TaskProgressFlameIcon(size: 12)
         }
     }
 

@@ -41,10 +41,9 @@ struct AlternateShortcutBridge: View {
                 .disabled(model.isRunning || model.orderedChats.isEmpty)
 
             // unsloth toggleSidebar: Cmd+B.
-            // Mirrors the View menu's Toggle Sidebar disabled state.
+            // Mirrors the View menu's Toggle Sidebar command.
             Button { toggleSidebar() } label: { Text(verbatim: "Toggle Sidebar Alternate") }
                 .alternateChord(.toggleSidebar)
-                .disabled(!model.activeSection.hasSidebarPanel)
 
             // unsloth switchToChat..switchToExport: Ctrl+1..Ctrl+9 on macOS.
             // The rail has eight sections, so the range stops at eight.

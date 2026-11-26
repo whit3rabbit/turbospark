@@ -16,6 +16,9 @@ struct ProfileMenuButton: View {
     @ObservedObject private var appearanceManager = AppearanceManager.shared
     @ObservedObject var model: AppModel
     let itemSize: CGFloat
+    /// Expanded unified sidebar footer shows avatar + user name + chevron;
+    /// collapsed icon rail shows the compact avatar circle alone.
+    var showsLabel = false
 
     @AppStorage(AppLanguage.storageKey)
     private var languageRawValue = AppLanguage.system.rawValue
@@ -78,17 +81,45 @@ struct ProfileMenuButton: View {
 
             Text("\(chatCount) local chats", bundle: .module)
         } label: {
-            ZStack {
-                Circle()
-                    .fill(theme.selection)
-                    .frame(width: avatarSize, height: avatarSize)
+            if showsLabel {
+                HStack(spacing: 8) {
+                    ZStack {
+                        Circle()
+                            .fill(theme.selection)
+                            .frame(width: avatarSize, height: avatarSize)
 
-                Text(profileInitial)
-                    .font(theme.ui(.tiny, weight: .bold))
-                    .foregroundStyle(.appText)
+                        Text(profileInitial)
+                            .font(theme.ui(.tiny, weight: .bold))
+                            .foregroundStyle(.appText)
+                    }
+
+                    Text(verbatim: profileDisplayName)
+                        .font(theme.ui(.small, weight: .medium))
+                        .foregroundStyle(.appText)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(theme.ui(.micro, weight: .semibold))
+                        .foregroundStyle(.appSecondary)
+                        .accessibilityHidden(true)
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .contentShape(.rect)
+            } else {
+                ZStack {
+                    Circle()
+                        .fill(theme.selection)
+                        .frame(width: avatarSize, height: avatarSize)
+
+                    Text(profileInitial)
+                        .font(theme.ui(.tiny, weight: .bold))
+                        .foregroundStyle(.appText)
+                }
+                .frame(width: itemSize, height: itemSize)
+                .contentShape(.rect)
             }
-            .frame(width: itemSize, height: itemSize)
-            .contentShape(.rect)
         }
         // `.button` + `.plain`, not `.borderlessButton`: the latter FLATTENS a
         // custom label on the macOS 14 SDK to its first Text, which drew a

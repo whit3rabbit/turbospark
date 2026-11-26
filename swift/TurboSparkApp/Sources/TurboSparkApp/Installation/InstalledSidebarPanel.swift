@@ -26,16 +26,37 @@ enum InstalledModelKind: String, SidebarPanelMode {
 
 // Isolated explicitly: only `body` is isolated by the protocol on the
 // macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
-/// The Installed panel beside the rail. It replaced the model-type segmented
-/// control that sat under the pane header.
+/// The Models panel beside the rail: the installed model kinds, then Discover.
+/// Discover is a mode of Models rather than a sidebar row of its own, so one
+/// row is selected at a time across both.
 @MainActor
 struct InstalledSidebarPanel: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        SidebarModePanel(
-            title: Text("Installed", bundle: .module),
-            groupLabel: Text("Installed model type", bundle: .module),
-            selection: $model.installedModelKind)
+        SidebarPanelList(title: Text("Models", bundle: .module)) {
+            VStack(spacing: 2) {
+                ForEach(InstalledModelKind.allCases) { kind in
+                    SidebarPanelRow(
+                        title: kind.titleText, systemImage: kind.symbol,
+                        isSelected: model.activeSection == .modelManager
+                            && model.installedModelKind == kind
+                    ) {
+                        model.installedModelKind = kind
+                        model.activeSection = .modelManager
+                    }
+                }
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(Text("Installed model type", bundle: .module))
+
+            SidebarPanelRow(
+                title: Text("Discover Models", bundle: .module), systemImage: "shippingbox",
+                isSelected: model.activeSection == .modelHub
+            ) { model.activeSection = .modelHub }
+            .padding(.top, 6)
+        }
+        .tsAnimation(TSMotion.select, value: model.activeSection)
+        .tsAnimation(TSMotion.select, value: model.installedModelKind)
     }
 }

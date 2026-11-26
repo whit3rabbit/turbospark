@@ -3,10 +3,12 @@
 //! streams as content immediately, and each dialect's thought channel comes
 //! back as reasoning rather than as part of the reply.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 
-use turbospark_tokenizer::{MfTokenizer, StructuredAssistantDecoder, StructuredAssistantEvent};
+use turbospark_tokenizer::{
+    JsonValue, MfTokenizer, StructuredAssistantDecoder, StructuredAssistantEvent,
+};
 
 fn fixture(name: &str) -> MfTokenizer {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -79,6 +81,73 @@ fn tool_call_span_buffers_until_end_token() {
         other => panic!("expected a tool call event, got {other:?}"),
     }
     assert!(decoder.has_tool_calls());
+}
+
+/// Feeds one Qwen XML tool-call span for tool `f` with a single parameter `x`
+/// (raw text `value`) through a decoder and returns the emitted argument.
+/// `parameters` is the request's `parameters` schema JSON for `f`, or `None`
+/// for a decoder that was never given any.
+fn qwen_span_arguments(value: &str, parameters: Option<&str>) -> JsonValue {
+    let tok = load();
+    let allowed: HashSet<String> = ["f".to_string()].into_iter().collect();
+    let mut decoder = StructuredAssistantDecoder::new(&tok, allowed, || "call_1".to_string(), &[]);
+    if let Some(parameters) = parameters {
+        let schema = JsonValue::parse(parameters).expect("fixture schema parses");
+        decoder = decoder.with_tool_schemas(BTreeMap::from([("f".to_string(), schema)]));
+    }
+    let ids = tok.encode(
+        &format!("\n<function=f>\n<parameter=x>\n{value}\n</parameter>\n</function>\n"),
+        false,
+    );
+    decoder.consume(tok.tool_call_start_id, "").unwrap();
+    for &id in &ids {
+        decoder.consume(id, "").unwrap();
+    }
+    let events = decoder.consume(tok.tool_call_end_id, "").unwrap();
+    match events.as_slice() {
+        [StructuredAssistantEvent::ToolCall(call)] => {
+            call.arguments.as_object().unwrap()["x"].clone()
+        }
+        other => panic!("expected one tool call event, got {other:?}"),
+    }
+}
+
+/// The decoder, not just the parser, honors the schema: a string parameter
+/// whose text reads as JSON stays the text the model wrote.
+#[test]
+fn a_schema_string_parameter_stays_a_string_through_the_decoder() {
+    let string_schema = r#"{"type":"object","properties":{"x":{"type":"string"}}}"#;
+    for text in ["true", "null", "1e3", "12", "[1, 2]"] {
+        assert_eq!(
+            qwen_span_arguments(text, Some(string_schema)),
+            JsonValue::String(text.to_string()),
+            "string parameter {text:?} must not be retyped"
+        );
+    }
+}
+
+/// An integer parameter still becomes an integer, so the schema path is not
+/// simply "everything is a string".
+#[test]
+fn a_schema_integer_parameter_becomes_an_integer_through_the_decoder() {
+    let int_schema = r#"{"type":"object","properties":{"x":{"type":"integer"}}}"#;
+    assert_eq!(
+        qwen_span_arguments("12", Some(int_schema)),
+        JsonValue::Integer(12)
+    );
+}
+
+/// Guard: a decoder given no schemas keeps the text-shape heuristic, so a
+/// caller that never offers schemas (every path before this wiring) is
+/// unchanged.
+#[test]
+fn a_decoder_without_schemas_keeps_the_text_shape_heuristic() {
+    assert_eq!(qwen_span_arguments("true", None), JsonValue::Bool(true));
+    assert_eq!(qwen_span_arguments("12", None), JsonValue::Integer(12));
+    assert_eq!(
+        qwen_span_arguments("hello", None),
+        JsonValue::String("hello".to_string())
+    );
 }
 
 /// A span whose body the native parser refuses keeps the body reachable.

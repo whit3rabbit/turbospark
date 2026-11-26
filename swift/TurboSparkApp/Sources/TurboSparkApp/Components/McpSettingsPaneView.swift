@@ -196,9 +196,12 @@ public struct McpSettingsPaneView: View {
             .help(Text("Runs model-written JavaScript that can batch deferred MCP tool calls; every inner call still passes its permission and hook gates", bundle: .module))
             .accessibilityLabel(Text("Codemode", bundle: .module))
             .accessibilityHint(Text("Batch MCP tool calls inside one sandboxed script.", bundle: .module))
-            Text("Batch MCP tool calls inside one sandboxed script.", bundle: .module)
+            // Says what turning it on exposes: the model writes and runs the
+            // script. Was a tooltip only, which a keyboard user never sees.
+            Text("Runs model-written JavaScript that can batch deferred MCP tool calls; every inner call still passes its permission and hook gates", bundle: .module)
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

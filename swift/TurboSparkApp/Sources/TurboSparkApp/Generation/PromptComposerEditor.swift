@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The prompt text field itself, kept separate from the composer's footer
@@ -26,6 +27,10 @@ struct PromptComposerEditor: View {
     @ScaledMetric private var expandedMaxHeight: CGFloat = 420
     @State private var measuredTextHeight: CGFloat = 0
     @State private var isExpanded: Bool = false
+    /// True while the underlying `NSTextView` holds uncommitted marked text
+    /// (for example during macOS speech-to-text dictation) before SwiftUI
+    /// commits it to `model.promptText`.
+    @State private var hasUncommittedEditorText: Bool = false
     /// Up/Down recall through `model.promptHistory` (qwen-code input
     /// history). Nil while the editor is not browsing. The text each step
     /// writes is remembered so an unrelated edit (typing, pasting) ends the
@@ -69,6 +74,9 @@ struct PromptComposerEditor: View {
                 // new one.
                 if newValue.isEmpty {
                     isExpanded = false
+                    syncUncommittedEditorText()
+                } else {
+                    hasUncommittedEditorText = false
                 }
                 // A text change that was not a history step ends the walk.
                 if historyBrowser != nil, newValue != lastHistoryAppliedText {
@@ -84,7 +92,7 @@ struct PromptComposerEditor: View {
                     .scrollContentBackground(.hidden)
                     .focused(promptFocused)
                     .overlay(alignment: .topLeading) {
-                        if model.promptText.isEmpty {
+                        if model.promptText.isEmpty && !hasUncommittedEditorText {
                             Text("Ask anything", bundle: .module)
                                 .font(theme.uiFont)
                                 .foregroundStyle(.appSecondary)
@@ -93,6 +101,12 @@ struct PromptComposerEditor: View {
                                 .allowsHitTesting(false)
                                 .accessibilityHidden(true)
                         }
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: NSTextStorage.didProcessEditingNotification)) { _ in
+                        syncUncommittedEditorText()
+                    }
+                    .onReceive(NotificationCenter.default.publisher(for: NSText.didChangeNotification)) { _ in
+                        syncUncommittedEditorText()
                     }
                     .onKeyPress(phases: .down) { press in
                         if let autocomplete, autocomplete.isVisible {
@@ -202,6 +216,15 @@ struct PromptComposerEditor: View {
                     .transition(.opacity)
                 }
             }
+    }
+
+    private func syncUncommittedEditorText() {
+        guard promptFocused.wrappedValue,
+              let textView = NSApp.keyWindow?.firstResponder as? NSTextView else {
+            hasUncommittedEditorText = false
+            return
+        }
+        hasUncommittedEditorText = textView.hasMarkedText() || !textView.string.isEmpty
     }
 
     /// Applies the highlighted suggestion; true when text was inserted, so

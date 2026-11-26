@@ -364,7 +364,7 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
         // for DFlash2.
         drafter,
         match drafter {
-            runtime::SpeculativeDrafter::Dflash => runner.dflash_speculation_blocker(),
+            d if d.is_block_drafter() => runner.dflash_speculation_blocker(),
             // THE NOTE WINS WHERE THERE IS ONE. Both reasons are true of a
             // DFlash2-only install under `auto` -- it has no MTP head, and
             // its DFlash2 drafter was deliberately not enabled -- and only
@@ -383,9 +383,10 @@ pub(crate) fn open_session(request: &InvocationRequest) -> Result<Session, Strin
                 // serve this family and they have different shapes and
                 // different measured optima, so a throughput number from
                 // this run is unreadable without knowing which one ran.
-                let which = match drafter {
-                    runtime::SpeculativeDrafter::Dflash => "dflash2 (block drafter)",
-                    _ => "mtp head (step drafter)",
+                let which = if drafter.is_block_drafter() {
+                    format!("{} (block drafter)", runner.block_drafter_name())
+                } else {
+                    "mtp head (step drafter)".to_string()
                 };
                 if matches!(asked, runtime::Speculation::Adaptive(_)) {
                     eprintln!(
@@ -496,6 +497,7 @@ fn map_drafter(drafter: invocation::SpeculativeDrafter) -> runtime::SpeculativeD
         invocation::SpeculativeDrafter::Auto => runtime::SpeculativeDrafter::Auto,
         invocation::SpeculativeDrafter::Mtp => runtime::SpeculativeDrafter::Mtp,
         invocation::SpeculativeDrafter::Dflash => runtime::SpeculativeDrafter::Dflash,
+        invocation::SpeculativeDrafter::Dflash2 => runtime::SpeculativeDrafter::Dflash2,
     }
 }
 

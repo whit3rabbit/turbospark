@@ -48,6 +48,50 @@ extension View {
     func appPrimaryGlow(_ active: Bool) -> some View {
         modifier(AppPrimaryGlowModifier(active: active))
     }
+
+    /// Floating surface treatment for transient overlays, HUDs, and floating
+    /// controls: Liquid Glass on macOS 26+, `.regularMaterial` on macOS 14-15,
+    /// and an opaque `.appSurface` with `.appBorder` when Reduce Transparency
+    /// or Increase Contrast is active.
+    func appGlassSurface(
+        _ shape: AppGlassShape = .rect(cornerRadius: AppMetrics.cardRadius),
+        interactive: Bool = false
+    ) -> some View {
+        modifier(AppGlassSurfaceModifier(shape: shape, interactive: interactive))
+    }
+}
+
+/// Shape options for `appGlassSurface(_:interactive:)`.
+enum AppGlassShape {
+    case capsule
+    case rect(cornerRadius: CGFloat)
+}
+
+/// Groups sibling `.appGlassSurface` views into a single Liquid Glass
+/// rendering pass on macOS 26+ while acting as a transparent passthrough on
+/// earlier macOS releases and older SDKs.
+struct AppGlassContainer<Content: View>: View {
+    let spacing: CGFloat
+    @ViewBuilder let content: () -> Content
+
+    init(spacing: CGFloat = 12, @ViewBuilder content: @escaping () -> Content) {
+        self.spacing = spacing
+        self.content = content
+    }
+
+    var body: some View {
+        #if compiler(>=6.2)
+        if #available(macOS 26, *) {
+            GlassEffectContainer(spacing: spacing) {
+                content()
+            }
+        } else {
+            content()
+        }
+        #else
+        content()
+        #endif
+    }
 }
 
 private struct AppCardSurfaceModifier: ViewModifier {
@@ -126,4 +170,76 @@ private struct AppPrimaryGlowModifier: ViewModifier {
             .shadow(color: active && !theme.isHighContrast ? theme.accent.opacity(0.45) : .clear, radius: 8, x: 0, y: 2)
             .tsAnimation(TSMotion.hover, value: active)
     }
+}
+
+private struct AppGlassSurfaceModifier: ViewModifier {
+    let shape: AppGlassShape
+    let interactive: Bool
+    @Environment(\.appTheme) private var theme
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if theme.reduceTransparency || theme.isHighContrast {
+            opaqueFallback(content)
+        } else {
+            #if compiler(>=6.2)
+            if #available(macOS 26, *) {
+                glassBody(content)
+            } else {
+                materialFallback(content)
+            }
+            #else
+            materialFallback(content)
+            #endif
+        }
+    }
+
+    @ViewBuilder
+    private func opaqueFallback(_ content: Content) -> some View {
+        let strokeWidth: CGFloat = theme.isHighContrast ? 1.5 : 1
+        switch shape {
+        case .capsule:
+            content
+                .background(.appSurface, in: Capsule(style: .continuous))
+                .overlay(Capsule(style: .continuous).stroke(.appBorder, lineWidth: strokeWidth))
+        case .rect(let cornerRadius):
+            content
+                .background(.appSurface, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(.appBorder, lineWidth: strokeWidth)
+                )
+        }
+    }
+
+    @ViewBuilder
+    private func materialFallback(_ content: Content) -> some View {
+        switch shape {
+        case .capsule:
+            content
+                .background(.regularMaterial, in: Capsule(style: .continuous))
+                .overlay(Capsule(style: .continuous).stroke(.appBorder, lineWidth: 0.75))
+        case .rect(let cornerRadius):
+            content
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                        .stroke(.appBorder, lineWidth: 0.75)
+                )
+        }
+    }
+
+    #if compiler(>=6.2)
+    @available(macOS 26, *)
+    @ViewBuilder
+    private func glassBody(_ content: Content) -> some View {
+        let glass: Glass = interactive ? .regular.interactive() : .regular
+        switch shape {
+        case .capsule:
+            content.glassEffect(glass, in: Capsule(style: .continuous))
+        case .rect(let cornerRadius):
+            content.glassEffect(glass, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        }
+    }
+    #endif
 }

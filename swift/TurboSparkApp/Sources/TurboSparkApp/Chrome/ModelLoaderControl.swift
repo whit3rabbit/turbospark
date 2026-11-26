@@ -76,6 +76,12 @@ struct ModelLoaderControl: View {
                 separator
                 reasoningPicker
             }
+            separator
+            SamplingTonePillControl(model: model)
+                .padding(.horizontal, 8)
+            separator
+            SteeringPillControl(model: model)
+                .padding(.horizontal, 8)
             if model.session != nil {
                 separator
                 ejectButton
@@ -179,7 +185,7 @@ struct ModelLoaderControl: View {
         }
         // Honor the available width so long model aliases cannot draw
         // outside the capsule in a narrow conversation column.
-        .frame(maxWidth: density == .compact ? 420 : 320)
+        .frame(maxWidth: density == .compact ? 280 : 320)
         .fixedSize(horizontal: false, vertical: true)
         .help(chooserHelp)
         // Without this the two Texts are two elements, and VoiceOver reads

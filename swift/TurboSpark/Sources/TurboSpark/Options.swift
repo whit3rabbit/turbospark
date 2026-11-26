@@ -88,8 +88,11 @@ public struct OpenOptions: Encodable, Sendable {
         case auto
         /// Multi-token prediction head drafter.
         case mtp
-        /// DFlash2 diffusion block drafter.
+        /// The family's block drafter: DFlash2, or on Inkling 2 its DSpark
+        /// drafter when the install has one.
         case dflash
+        /// DFlash2 by name.
+        case dflash2
     }
 
     /// How much of the machine may be committed to loading a model.

@@ -11,6 +11,7 @@ mod batched_scratch;
 mod dense;
 mod dflash;
 mod dflash_draft;
+pub(crate) use dflash_draft::{read_bf16_row, read_f16_rows, top_k_finite, CodebookView};
 mod dflash_state;
 mod dflash_tree;
 mod hadamard;

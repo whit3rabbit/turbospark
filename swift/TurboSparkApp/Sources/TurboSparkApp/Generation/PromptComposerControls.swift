@@ -129,8 +129,14 @@ struct PromptAudioInputButton: View {
         // name at once (the two spellings had already drifted apart here).
         let btnSize = (28 * AppMetrics.textScale(theme)).rounded()
         return AppIconButton("mic", label: Text("Start voice dictation", bundle: .module)) {
-            promptFocused = true
-            NSApp.sendAction(Selector(("startDictation:")), to: nil, from: nil)
+            if promptFocused {
+                NSApp.sendAction(Selector(("startDictation:")), to: nil, from: nil)
+            } else {
+                promptFocused = true
+                DispatchQueue.main.async {
+                    NSApp.sendAction(Selector(("startDictation:")), to: nil, from: nil)
+                }
+            }
         }
         .buttonStyle(.plain)
         .themedFont(.callout, weight: .medium)

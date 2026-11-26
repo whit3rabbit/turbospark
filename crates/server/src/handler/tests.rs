@@ -365,6 +365,149 @@ fn a_generated_tool_call_is_decoded_out_of_the_stream() {
     assert!(!text.contains("get_weather"), "{text}");
 }
 
+/// Runs one scripted generation whose output is a Qwen XML call to `echo`
+/// with parameter `x` holding `value`, against a request whose `echo` tool
+/// carries `echo_function_extra` (merged into the function object, so it can
+/// add or omit `parameters`). Returns the call's arguments JSON.
+fn echoed_arguments(
+    value: &str,
+    echo_function_extra: serde_json::Value,
+    tool_choice: Option<serde_json::Value>,
+) -> String {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/ChatMLTokenizer");
+    let tok = MfTokenizer::load_from_dir(&dir).expect("fixture tokenizer should load");
+    let mut function = serde_json::json!({"name": "echo", "description": "Echo"});
+    function
+        .as_object_mut()
+        .unwrap()
+        .extend(echo_function_extra.as_object().unwrap().clone());
+    let mut body = serde_json::json!({
+        "model": "m",
+        "max_tokens": 128,
+        "temperature": 0.0,
+        "tools": [{"type": "function", "function": function}],
+        "messages": [{"role": "user", "content": "echo it"}]
+    });
+    if let Some(choice) = tool_choice {
+        body["tool_choice"] = choice;
+    }
+    let request = request(body);
+
+    let planning_model: AppState = Arc::new(ScriptedChatModel::new(
+        MfTokenizer::load_from_dir(&dir).unwrap(),
+        4096,
+        Vec::new(),
+    ));
+    let planned = plan(&planning_model, &request).expect("plan should succeed");
+    let (prompt_ids, config) = (planned.prompt_ids, planned.config);
+
+    let mut ids = tok.encode("<tool_call>\n<function=echo>\n", false);
+    ids.extend(tok.encode(&format!("<parameter=x>\n{value}\n</parameter>\n"), false));
+    ids.extend(tok.encode("</function>\n</tool_call>", false));
+    ids.push(tok.end_of_turn_id);
+    let mut steps = vec![one_hot(tok.vocab_size, 0); prompt_ids.len() - 1];
+    steps.extend(ids.iter().map(|&id| one_hot(tok.vocab_size, id as usize)));
+
+    let model: AppState = Arc::new(ScriptedChatModel::new(tok, 4096, steps));
+    let mut calls = Vec::new();
+    stream_blocking(
+        &model,
+        &prompt_ids,
+        &config,
+        None,
+        &tool_names(&request),
+        ReasoningEffort::Off,
+        &|| false,
+        &mut |piece| {
+            if let Piece::Tool(call) = piece {
+                calls.push(call);
+            }
+        },
+    )
+    .expect("generation should succeed");
+    assert_eq!(calls.len(), 1, "exactly one decoded call");
+    calls.remove(0).arguments_json
+}
+
+/// The end-to-end case the parser fix exists for: the request declares `x` as
+/// a string, so `true`, `null`, `1e3` and `12` reach the caller as the text
+/// the model wrote, not as a bool, null or number.
+#[test]
+fn a_string_parameter_stays_a_string_end_to_end() {
+    let schema = serde_json::json!({
+        "parameters": {"type": "object", "properties": {"x": {"type": "string"}}}
+    });
+    for text in ["true", "null", "1e3", "12"] {
+        assert_eq!(
+            echoed_arguments(text, schema.clone(), None),
+            format!(r#"{{"x":"{text}"}}"#),
+            "string parameter {text:?} must stay a string"
+        );
+    }
+}
+
+/// An integer parameter is still typed as an integer by the same path.
+#[test]
+fn an_integer_parameter_is_an_integer_end_to_end() {
+    let schema = serde_json::json!({
+        "parameters": {"type": "object", "properties": {"x": {"type": "integer"}}}
+    });
+    assert_eq!(echoed_arguments("12", schema, None), r#"{"x":12}"#);
+}
+
+/// Guard: a tool offered without a `parameters` schema keeps the old text
+/// heuristic, so requests that declare no schema decode exactly as before.
+#[test]
+fn a_tool_without_a_schema_keeps_the_heuristic_end_to_end() {
+    assert_eq!(
+        echoed_arguments("true", serde_json::json!({}), None),
+        r#"{"x":true}"#
+    );
+}
+
+/// `tool_schemas` honors the same `tool_choice` filtering as `tool_names`: a
+/// pinned function suppresses the others' schemas, `none` suppresses all.
+#[test]
+fn tool_schemas_follow_tool_choice_like_tool_names() {
+    let tool = |name: &str| {
+        serde_json::json!({"type": "function", "function": {
+            "name": name,
+            "parameters": {"type": "object", "properties": {"x": {"type": "string"}}},
+        }})
+    };
+    let with_choice = |choice: Option<serde_json::Value>| {
+        let mut body = serde_json::json!({
+            "model": "m",
+            "tools": [tool("a"), tool("b")],
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        if let Some(choice) = choice {
+            body["tool_choice"] = choice;
+        }
+        request(body)
+    };
+    let keys = |r: &ChatCompletionRequest| tool_schemas(r).into_keys().collect::<Vec<_>>();
+
+    assert_eq!(keys(&with_choice(None)), ["a", "b"]);
+    assert_eq!(
+        keys(&with_choice(Some(
+            serde_json::json!({"type": "function", "function": {"name": "b"}})
+        ))),
+        ["b"]
+    );
+    assert!(keys(&with_choice(Some(serde_json::json!("none")))).is_empty());
+    for choice in [
+        None,
+        Some(serde_json::json!("none")),
+        Some(serde_json::json!({"type": "function", "function": {"name": "a"}})),
+    ] {
+        let r = with_choice(choice);
+        let names = tool_names(&r);
+        assert!(tool_schemas(&r).keys().all(|k| names.contains(k)));
+        assert_eq!(tool_schemas(&r).len(), names.len());
+    }
+}
+
 fn one_hot(vocab_size: usize, index: usize) -> Vec<foundation::LogitValue> {
     let mut v = vec![foundation::LogitValue::from_f32(0.0); vocab_size];
     v[index] = foundation::LogitValue::from_f32(1.0);

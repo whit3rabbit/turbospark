@@ -165,6 +165,17 @@ impl<'a> TurnSplitter<'a> {
         }
     }
 
+    /// Hands the request's tool schemas (tool name -> JSON-schema
+    /// `parameters`) to the decoder so Qwen's untyped XML values are coerced
+    /// by declared type. A splitter with no decoder ignores it.
+    pub fn with_tool_schemas(
+        mut self,
+        schemas: std::collections::BTreeMap<String, tokenizer::JsonValue>,
+    ) -> Self {
+        self.decoder = self.decoder.map(|d| d.with_tool_schemas(schemas));
+        self
+    }
+
     /// Whether the run degraded to raw pass-through. Diagnostic only; the
     /// stream itself already says so, by carrying markup as content.
     pub fn degraded(&self) -> bool {

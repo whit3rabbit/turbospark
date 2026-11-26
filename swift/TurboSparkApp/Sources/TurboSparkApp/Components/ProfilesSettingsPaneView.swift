@@ -163,7 +163,12 @@ struct ProfilesSettingsPaneView: View {
         subtitle: Text,
         profile: UserProfile?
     ) -> some View {
-        HStack(spacing: 10) {
+        // One row at every width: the name and description wrap while Switch
+        // and the menu keep their size. AppAdaptiveHeader's stacked fallback
+        // left a lone ellipsis button orphaned under the avatar (seen at the
+        // 820 pt minimum window in German, Extra Large).
+        HStack(alignment: .center, spacing: 12) {
+          HStack(spacing: 10) {
             Image(systemName: "person.crop.circle")
                 .font(theme.ui(.title3))
                 .foregroundStyle(.appSecondary)
@@ -193,7 +198,9 @@ struct ProfilesSettingsPaneView: View {
             .accessibilityLabel(isCurrent
                 ? Text("\(spokenName), current profile", bundle: .module)
                 : Text(spokenName))
-            Spacer()
+          }
+          Spacer(minLength: 12)
+          HStack(spacing: AppMetrics.actionSpacing) {
             if !isCurrent {
                 Button {
                     switchTarget = profile ?? UserProfileStore.defaultProfile
@@ -221,7 +228,11 @@ struct ProfilesSettingsPaneView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
+            // The bare ellipsis glyph is under the 20 pt desktop minimum.
+            .frame(minWidth: 20, minHeight: 20)
+            .contentShape(Rectangle())
             .help(Text("More actions for \(spokenName)", bundle: .module))
+          }
         }
     }
 
@@ -314,7 +325,9 @@ struct ProfilesSettingsPaneView: View {
                     ? Text("Touch ID or Mac login", bundle: .module)
                     : Text("Touch ID or Mac login authentication is not available.", bundle: .module))
 
-                HStack {
+                // Wraps onto a second line instead of overflowing under
+                // German and Extra Large text.
+                FlowLayout(spacing: 8, lineSpacing: 8) {
                     Button {
                         securitySheet = .changePassphrase
                     } label: { Text("Change Passphrase...", bundle: .module) }
@@ -325,7 +338,6 @@ struct ProfilesSettingsPaneView: View {
                         securitySheet = .disableProtection
                     } label: { Text("Disable Protection...", bundle: .module) }
                     .appAction(.destructive, size: .small)
-                    Spacer()
                     Button {
                         vaultCoordinator.lockNow()
                     } label: {

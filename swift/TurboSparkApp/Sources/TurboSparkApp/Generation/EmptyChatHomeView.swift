@@ -24,11 +24,6 @@ struct EmptyChatHomeView: View {
             excluding: Set(resume.map(\.chatID)))
 
         VStack(alignment: .leading, spacing: 18) {
-            // Only while the composer is empty: a click replaces the draft,
-            // so offering it over typed text would discard the user's words.
-            if model.showsPromptExamples {
-                examples
-            }
             if !resume.isEmpty {
                 section(
                     header: AppSectionHeader(title: Text("Pick up where you left off", bundle: .module))

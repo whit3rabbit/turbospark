@@ -108,6 +108,15 @@ impl RealForwardRunner {
                 "prefill_chunk called with an empty chunk".to_string(),
             ));
         }
+        // LoopCD has no multi-row form; the per-token path fills its
+        // reference slots through the headless passes.
+        if self
+            .real_inkling2
+            .as_ref()
+            .is_some_and(|s| s.loopcd.is_some())
+        {
+            return self.prefill_chunk_inkling2_sequential(tokens, start_position, logits);
+        }
         if let Some(why) = self.inkling2_chunked_refusal() {
             return Err(RealForwardError::Unsupported(why));
         }

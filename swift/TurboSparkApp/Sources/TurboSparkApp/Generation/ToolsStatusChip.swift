@@ -55,17 +55,19 @@ struct ToolsPopoverView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if model.interactionMode == .chat {
-                Toggle(isOn: Binding(
-                    get: { model.chatToolsEnabled },
-                    set: { value in
-                        model.chatToolsEnabled = value
-                        model.persistSettingsDebounced()
-                    })) {
-                    Text("Tools in Chat", bundle: .module)
-                        .font(theme.ui(.callout, weight: .semibold))
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 16) {
+                    if model.interactionMode == .chat {
+                        toolsInChatToggle
+                    }
+                    searchToggle
                 }
-                .toggleStyle(.switch)
+                VStack(alignment: .leading, spacing: 8) {
+                    if model.interactionMode == .chat {
+                        toolsInChatToggle
+                    }
+                    searchToggle
+                }
             }
 
             profilePicker
@@ -115,6 +117,32 @@ struct ToolsPopoverView: View {
         // Extra Large instead of wrapping inside a fixed 340 points.
         .frame(width: (340 * AppMetrics.textScale(theme)).rounded(), alignment: .leading)
         .padding(16)
+    }
+
+    private var toolsInChatToggle: some View {
+        Toggle(isOn: Binding(
+            get: { model.chatToolsEnabled },
+            set: { value in
+                model.chatToolsEnabled = value
+                model.persistSettingsDebounced()
+            })) {
+            Text("Tools in Chat", bundle: .module)
+                .font(theme.ui(.callout, weight: .semibold))
+        }
+        .toggleStyle(.switch)
+    }
+
+    private var searchToggle: some View {
+        Toggle(isOn: Binding(
+            get: { model.webSearchEnabled },
+            set: { value in
+                model.webSearchEnabled = value
+                model.persistSettingsDebounced()
+            })) {
+            Text("Search", bundle: .module)
+                .font(theme.ui(.callout, weight: .semibold))
+        }
+        .toggleStyle(.switch)
     }
 
     private var profilePicker: some View {

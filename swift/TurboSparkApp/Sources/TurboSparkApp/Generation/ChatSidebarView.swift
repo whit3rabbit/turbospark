@@ -3,18 +3,25 @@ import SwiftUI
 
 // Isolated explicitly: only body is isolated by the protocol on the
 // macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
-/// The CHAT LIST: tabs (Chat vs Projects), filter, and the rows themselves.
+/// The unified Chat & Projects sidebar panel.
 ///
-/// It is the Chat section's panel beside the icon rail (`AppSidebarView`),
-/// so it renders only while `activeSection == .chat`. The profile menu and
-/// settings live in the rail, which is the only chrome present in every
-/// section; the temporary-chat button sits beside the tabs because it is a
-/// chat action and that row shows in both Chat and Projects modes.
+/// Layout (inspired by Claude Desktop):
+/// - Compact top bar: Chat/Projects switcher, collapsible Search icon, and
+///   temporary-chat toggle.
+/// - Expandable inline filter field (hidden until the Search icon is clicked).
+/// - Primary "+ New chat" action button.
+/// - Labeled workspace navigation (`Images`, `Audio`, `Installed`, `More`) so
+///   every destination icon says what it does without a separate icon rail.
+/// - Clean, high-density Recents list (with a compact Inbox toggle) in Chat
+///   mode, or collapsible Project groups in Projects mode.
 @MainActor
 struct ChatSidebarView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     @State private var searchText = ""
+    @State private var isSearchVisible = false
+    @FocusState private var isSearchFocused: Bool
+    @State private var isRecentsExpanded = true
     @State private var chatBeingRenamed: AppChat?
     @State private var chatForSystemPrompt: AppChat?
     @State private var renameText = ""
@@ -25,28 +32,31 @@ struct ChatSidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                tabSelector
-                GhostChatButton(model: model)
-            }
-            .padding(.horizontal, 10)
-            .padding(.top, 10)
-            .padding(.bottom, 6)
+            topActionRow
+                .padding(.horizontal, 10)
+                .padding(.top, 6)
+                .padding(.bottom, 6)
 
-            if model.interactionMode == .chat {
-                modePicker
+            if isSearchVisible || !searchText.isEmpty {
+                filterBar
                     .padding(.horizontal, 10)
                     .padding(.bottom, 6)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            filterBar
-                .padding(.horizontal, 10)
-                .padding(.bottom, 8)
+            if model.interactionMode == .chat {
+                newChatButton
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 4)
+            }
+
+            SidebarNavigationList(model: model, includesChat: false)
 
             SidebarDivider()
 
             contentView
         }
+        .tsAnimation(TSMotion.hover, value: isSearchVisible)
         .sheet(isPresented: $showingProjectSettingsSheet) {
             ProjectSettingsSheet(
                 model: model,
@@ -110,10 +120,18 @@ struct ChatSidebarView: View {
         }
     }
 
-    // MARK: - Tab Selector
+    // MARK: - Top Action Row
+
+    private var topActionRow: some View {
+        HStack(spacing: 4) {
+            tabSelector
+            searchToggleButton
+            GhostChatButton(model: model)
+        }
+    }
 
     private var tabSelector: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             ForEach(AppModel.AppInteractionMode.allCases) { mode in
                 let isSelected = model.interactionMode == mode
                 Button {
@@ -121,21 +139,22 @@ struct ChatSidebarView: View {
                         model.setInteractionMode(mode)
                     }
                 } label: {
-                    HStack(spacing: 5) {
+                    HStack(spacing: 4) {
                         Image(systemName: mode.systemImage)
                             .font(theme.ui(.tiny, weight: .semibold))
                         Text(LocalizedStringKey(mode.title), bundle: .module)
                             .font(theme.ui(.tiny, weight: isSelected ? .semibold : .medium))
+                            .lineLimit(1)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 4)
-                    .frame(minHeight: theme.sidebarRowHeight - 4)
+                    .frame(minHeight: theme.sidebarRowHeight - 6)
                     .foregroundStyle(isSelected ? theme.foreground : theme.secondaryText)
                     .background(
                         isSelected ? theme.selection : Color.clear,
-                        in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                        in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius - 1, style: .continuous)
                     )
-                    .contentShape(.rect(cornerRadius: AppMetrics.controlRadius))
+                    .contentShape(.rect(cornerRadius: AppMetrics.controlRadius - 1))
                 }
                 .buttonStyle(.plain)
                 .help(Text(LocalizedStringKey(mode.title), bundle: .module))
@@ -151,41 +170,55 @@ struct ChatSidebarView: View {
         )
     }
 
-    // MARK: - Mode Picker (OC-03)
-
-    /// Chats (time buckets) or Inbox (what needs the user). Chat tab only:
-    /// the Projects tab has its own grouping.
-    private var modePicker: some View {
-        AppAdaptiveHeader(
-            leading: {
-                AppPillPicker(
-                    selection: Binding(
-                        get: { model.chatSidebarMode },
-                        set: { model.setChatSidebarMode($0) }),
-                    items: [
-                        AppPillItem(
-                            value: ChatSidebarMode.chats,
-                            label: Text("Chats", bundle: .module),
-                            systemImage: "bubble.left.and.bubble.right"),
-                        AppPillItem(
-                            value: ChatSidebarMode.inbox,
-                            label: Text("Inbox", bundle: .module),
-                            systemImage: "tray"),
-                    ],
-                    label: Text("Sidebar view", bundle: .module))
-            },
-            actions: { EmptyView() })
+    private var searchToggleButton: some View {
+        let isActive = isSearchVisible || !searchText.isEmpty
+        return AppIconButton(
+            "magnifyingglass",
+            label: Text("Search", bundle: .module)
+        ) {
+            TSMotion.animate(TSMotion.hover) {
+                if isActive {
+                    searchText = ""
+                    isSearchVisible = false
+                    isSearchFocused = false
+                } else {
+                    isSearchVisible = true
+                    isSearchFocused = true
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .font(theme.ui(.small, weight: .medium))
+        .foregroundStyle(isActive ? theme.accentText : theme.secondaryText)
+        .frame(width: theme.sidebarRowHeight - 2, height: theme.sidebarRowHeight - 2)
+        .background {
+            RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous)
+                .fill(isActive ? theme.selection : Color.clear)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
+        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 
-    // MARK: - Filter Bar
+    // MARK: - Filter Bar (Hidden Behind Search Icon)
 
     private var filterBar: some View {
         AppSearchField(
             text: $searchText,
             prompt: model.interactionMode == .projects
                 ? Text("Filter projects and tasks...", bundle: .module)
-                : Text("Filter chats...", bundle: .module)
+                : Text("Filter chats...", bundle: .module),
+            minWidth: 100,
+            idealWidth: 220,
+            maxWidth: .infinity,
+            focus: $isSearchFocused
         )
+        .onExitCommand {
+            TSMotion.animate(TSMotion.hover) {
+                searchText = ""
+                isSearchVisible = false
+                isSearchFocused = false
+            }
+        }
     }
 
     // MARK: - Content View
@@ -210,19 +243,15 @@ struct ChatSidebarView: View {
 
                 Spacer()
 
-                Button {
+                AppIconButton("plus", label: Text("Add Project", bundle: .module)) {
                     projectBeingEdited = nil
                     showingProjectSettingsSheet = true
-                } label: {
-                    Image(systemName: "plus")
-                        .font(theme.ui(.tiny, weight: .semibold))
-                        .foregroundStyle(.appSecondary)
-                        .frame(width: theme.sidebarActionSize, height: theme.sidebarActionSize)
-                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .help(Text("Add Project", bundle: .module))
-                .accessibilityLabel(Text("Add Project", bundle: .module))
+                .font(theme.ui(.tiny, weight: .semibold))
+                .foregroundStyle(.appSecondary)
+                .frame(width: theme.sidebarActionSize, height: theme.sidebarActionSize)
+                .contentShape(Circle())
             }
             .padding(.horizontal, 14)
             .padding(.top, 8)
@@ -244,27 +273,82 @@ struct ChatSidebarView: View {
 
     private var chatContent: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                ChatSidebarProjectsSectionView(
-                    model: model,
-                    showingProjectSettingsSheet: $showingProjectSettingsSheet,
-                    projectBeingEdited: $projectBeingEdited,
-                    projectForMcpSettings: $projectForMcpSettings)
-            }
-            .frame(height: min(180, CGFloat(72 + model.projects.count * 48)) * theme.sidebarScale)
-            SidebarDivider()
-            newChatButton
-                .padding(.horizontal, 10)
-                .padding(.top, 8)
-                .padding(.bottom, 6)
-
             if let activeProject = model.selectedProject {
                 activeProjectScopeBar(activeProject)
                     .padding(.horizontal, 10)
-                    .padding(.bottom, 6)
+                    .padding(.top, 8)
             }
 
-            chatList
+            recentsHeaderRow
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
+
+            if isRecentsExpanded || model.chatSidebarMode == .inbox || !searchText.isEmpty {
+                chatList
+            } else {
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    /// Collapsible "Recents" heading on the leading side, and a compact quiet
+    /// Inbox toggle on the trailing side (replacing the full-width Chats/Inbox
+    /// pill bar).
+    private var recentsHeaderRow: some View {
+        let isInbox = model.chatSidebarMode == .inbox
+        return HStack(spacing: 6) {
+            Button {
+                TSMotion.animate(TSMotion.select) {
+                    if isInbox {
+                        model.setChatSidebarMode(.chats)
+                        isRecentsExpanded = true
+                    } else {
+                        isRecentsExpanded.toggle()
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text("Recents", bundle: .module)
+                        .font(theme.ui(.tiny, weight: .semibold))
+                        .foregroundStyle(isInbox ? theme.secondaryText : theme.secondaryText)
+                    Image(systemName: (!isInbox && isRecentsExpanded) ? "chevron.down" : "chevron.right")
+                        .font(theme.ui(.micro, weight: .semibold))
+                        .foregroundStyle(.appSecondary)
+                        .accessibilityHidden(true)
+                }
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(.isHeader)
+
+            Spacer(minLength: 4)
+
+            Button {
+                TSMotion.animate(TSMotion.select) {
+                    model.setChatSidebarMode(isInbox ? .chats : .inbox)
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: isInbox ? "tray.fill" : "tray")
+                        .font(theme.ui(.micro, weight: .medium))
+                        .accessibilityHidden(true)
+                    Text("Inbox", bundle: .module)
+                        .font(theme.ui(.tiny, weight: isInbox ? .semibold : .medium))
+                }
+                .foregroundStyle(isInbox ? theme.accentText : theme.secondaryText)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    isInbox ? theme.selection : Color.clear,
+                    in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius - 1, style: .continuous)
+                )
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .help(Text("Inbox", bundle: .module))
+            .accessibilityLabel(Text("Inbox", bundle: .module))
+            .accessibilityAddTraits(isInbox ? [.isButton, .isSelected] : .isButton)
         }
     }
 
@@ -333,15 +417,15 @@ struct ChatSidebarView: View {
             Text("New chat", bundle: .module)
                 .font(theme.ui(.small, weight: .medium))
         } icon: {
-            Image(systemName: "square.and.pencil")
-                .font(theme.ui(.small))
+            Image(systemName: "plus")
+                .font(theme.ui(.small, weight: .medium))
                 .accessibilityHidden(true)
         }
     }
 
     private var chatList: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 3) {
+            LazyVStack(alignment: .leading, spacing: 1) {
                 if model.chatSidebarMode == .inbox {
                     inboxRows
                 } else {
@@ -376,10 +460,7 @@ struct ChatSidebarView: View {
 
     @ViewBuilder
     private var chatsRows: some View {
-        // Sorted, filtered and bucketed ONCE per body. This used to
-        // re-run (with a sort and a vault-aware transcript check
-        // each) for every mention below, and the body re-runs per
-        // streamed token.
+        // Sorted, filtered and bucketed ONCE per body.
         let layout = ChatSidebarLayout.make(
             sortedHistory: historyChats, searchText: searchText)
         if layout.isEmpty {
@@ -400,10 +481,6 @@ struct ChatSidebarView: View {
             }
             .padding(.vertical, 16)
         } else if !layout.isSearching {
-            // The qwen-code session grouping: time-bucket headers
-            // over the recency-sorted list. Suppressed while a
-            // search filter is active -- the matches are what
-            // matters then, not when they happened.
             ForEach(layout.pinned) { chat in
                 ChatSidebarChatRowView(
                     model: model,
@@ -416,11 +493,13 @@ struct ChatSidebarView: View {
             }
             ForEach(layout.groups, id: \.bucket) { group in
                 Text(LocalizedStringKey(group.bucket.label), bundle: .module)
-                    .font(theme.ui(.tiny, weight: .semibold))
+                    .font(theme.ui(.micro, weight: .semibold))
                     .foregroundStyle(.appSecondary)
                     .padding(.leading, 10)
                     .padding(.top, 8)
+                    .padding(.bottom, 2)
                     .textCase(nil)
+                    .accessibilityAddTraits(.isHeader)
                 ForEach(group.chats) { chat in
                     ChatSidebarChatRowView(
                         model: model,
@@ -446,12 +525,10 @@ struct ChatSidebarView: View {
         }
     }
 
-    /// The qwen-code session-archive surface: archived chats leave the
-    /// lists above and live behind one disclosure here, each row offering
-    /// Restore and Delete.
+    /// Archived chats live behind one disclosure, each row offering Restore
+    /// and confirmed Delete.
     @ViewBuilder
     private var archivedSection: some View {
-        // `archivedChats` is already in sidebar order.
         let archived = model.archivedChats
         if !archived.isEmpty {
             DisclosureGroup {

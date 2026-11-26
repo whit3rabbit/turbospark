@@ -59,6 +59,16 @@ pub enum SpeculativeDrafter {
     Auto,
     Mtp,
     Dflash,
+    /// DFlash2 by name. [`Self::Dflash`] is the family's default block
+    /// drafter, which on Inkling 2 is DSpark when the install has it.
+    Dflash2,
+}
+
+impl SpeculativeDrafter {
+    /// Whether this names a block drafter.
+    pub fn is_block_drafter(self) -> bool {
+        matches!(self, Self::Dflash | Self::Dflash2)
+    }
 }
 
 /// What [`resolve_drafter`] decided: the drafter to open, and a NOTE for the
@@ -150,11 +160,10 @@ pub enum SpeculationPlan {
 pub fn resolve_drafter(requested: SpeculativeDrafter, model_dir: &Path) -> DrafterChoice {
     let index = model_io::load_resident_index(&model_dir.join("model_weights.bin")).ok();
     let install_has_mtp_head = index.as_ref().map(install_has_mtp_head);
-    // An Inkling 2 install's block drafter (DSpark) sits beside it rather
-    // than in its index (`families/inkling2/dspark.rs`).
+    // An Inkling 2 install's block drafter (DSpark or DFlash2) sits beside
+    // it rather than in its index (`families/inkling2/dspark.rs`).
     let install_has_dflash = index.as_ref().map(|ix| {
-        install_has_dflash(ix)
-            || crate::families::inkling2::inkling2_dspark_dir(model_dir).is_some()
+        install_has_dflash(ix) || crate::families::inkling2::inkling2_drafter_offered(model_dir)
     });
     let plain = |drafter| DrafterChoice {
         drafter,
@@ -180,8 +189,8 @@ pub fn resolve_drafter(requested: SpeculativeDrafter, model_dir: &Path) -> Draft
                 // pass a flag it cannot pass is an instruction it cannot
                 // follow. The CLI and the server share the flag; the C ABI
                 // takes the same choice as an option key.
-                "this install carries a DFlash2 drafter, which auto leaves OFF: measured \
-                 0.90x throughput on prose against 1.33-1.47x on code and math, and \
+                "this install carries a block drafter, which auto leaves OFF: measured on \
+                 Qwen DFlash2, 0.90x throughput on prose against 1.33-1.47x on code and math, and \
                  +17.4% J/token, so it is opt-in. Select the dflash drafter to use it \
                  (--speculative-drafter dflash, or speculativeDrafter \"dflash\" on the \
                  C ABI)"
@@ -266,25 +275,30 @@ pub fn draft_policies(choice: &DrafterChoice, speculation: Speculation) -> Draft
         }),
         // `Auto` is resolved by `resolve_drafter` before this is called and
         // cannot reach here; it shares the DFlash2 arm if it ever does.
-        SpeculativeDrafter::Auto | SpeculativeDrafter::Dflash => DraftPolicies {
-            mtp: MtpDraftPolicy::Off,
-            dflash: match speculation {
-                Speculation::Off => DflashDraftPolicy::Off,
-                Speculation::Auto => DflashDraftPolicy::Auto,
-                // Adaptive depth is the step drafter's. Opening nothing lets
-                // the open succeed so `resolve_speculation` can refuse by
-                // name, as it does for a named block the install cannot serve.
-                Speculation::Adaptive(_) => DflashDraftPolicy::Off,
-                // The MTP arm's headless guard, on the drafter it is missing
-                // from. `Some(false)` and never a bare falsy test, for that
-                // arm's reason: `None` is an unreadable index and has to keep
-                // failing at open with the engine's own message.
-                Speculation::Block(_) if choice.install_has_dflash == Some(false) => {
-                    DflashDraftPolicy::Off
-                }
-                Speculation::Block(n) => DflashDraftPolicy::Fixed(n as usize),
-            },
-        },
+        SpeculativeDrafter::Auto | SpeculativeDrafter::Dflash | SpeculativeDrafter::Dflash2 => {
+            DraftPolicies {
+                mtp: MtpDraftPolicy::Off,
+                dflash: match speculation {
+                    Speculation::Off => DflashDraftPolicy::Off,
+                    Speculation::Auto => DflashDraftPolicy::Auto,
+                    // Adaptive depth is the step drafter's. Opening nothing lets
+                    // the open succeed so `resolve_speculation` can refuse by
+                    // name, as it does for a named block the install cannot serve.
+                    Speculation::Adaptive(_) => DflashDraftPolicy::Off,
+                    // The MTP arm's headless guard, on the drafter it is missing
+                    // from. `Some(false)` and never a bare falsy test, for that
+                    // arm's reason: `None` is an unreadable index and has to keep
+                    // failing at open with the engine's own message.
+                    Speculation::Block(_) if choice.install_has_dflash == Some(false) => {
+                        DflashDraftPolicy::Off
+                    }
+                    Speculation::Block(n) if choice.drafter == SpeculativeDrafter::Dflash2 => {
+                        DflashDraftPolicy::Dflash2(n as usize)
+                    }
+                    Speculation::Block(n) => DflashDraftPolicy::Fixed(n as usize),
+                },
+            }
+        }
     }
 }
 
@@ -312,7 +326,7 @@ pub fn resolve_speculation(
 ) -> Result<SpeculationPlan, String> {
     let unavailable = if let Some(blocker) = engine_blocker {
         Some(blocker)
-    } else if !deterministic && drafter == SpeculativeDrafter::Dflash {
+    } else if !deterministic && drafter.is_block_drafter() {
         Some(
             "sampled speculation cannot be served by the block drafter: DFlash2's \
              selection is a greedy structured search, not a distribution, so exact \
@@ -329,7 +343,9 @@ pub fn resolve_speculation(
     // 8-row INT4 tile off and 7 with it on (`DFLASH_SERVING_BLOCK`), read
     // from the process's tile setting so it matches the drafter's open.
     let auto_block = match drafter {
-        SpeculativeDrafter::Dflash => crate::families::qwen::dflash_serving_block(),
+        SpeculativeDrafter::Dflash | SpeculativeDrafter::Dflash2 => {
+            crate::families::qwen::dflash_serving_block()
+        }
         _ => DEFAULT_SPECULATION_BLOCK,
     };
 
@@ -342,7 +358,7 @@ pub fn resolve_speculation(
         (Speculation::Block(_) | Speculation::Adaptive(_), Some(reason)) => Err(format!(
             "--speculative was asked for but cannot be served: {reason}"
         )),
-        (Speculation::Adaptive(_), None) if drafter == SpeculativeDrafter::Dflash => Err(
+        (Speculation::Adaptive(_), None) if drafter.is_block_drafter() => Err(
             "--speculative was asked for but cannot be served: adaptive depth moves the round \
              size of the step drafter; the DFlash2 block drafter proposes a fixed block"
                 .to_string(),

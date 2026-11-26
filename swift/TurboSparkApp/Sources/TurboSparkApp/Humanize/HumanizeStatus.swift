@@ -34,7 +34,11 @@ struct HumanizeRewriteRail: View {
             // "Rewrite draft", not "Rewrite": that key is the result card's
             // title and is translated as a noun ("the rewrite"), which named
             // this button "Rewritten text" in several languages.
-            .help(busy ? Text("Stop", bundle: .module) : Text("Rewrite draft", bundle: .module))
+            // A dead button says why: with no draft the card's own prompt is
+            // the reason, and the model bar beside it covers a missing model.
+            .help(busy ? Text("Stop", bundle: .module)
+                  : (controller.hasDraft ? Text("Rewrite draft", bundle: .module)
+                                         : Text("Paste a draft to rewrite.", bundle: .module)))
             .accessibilityLabel(busy ? Text("Stop", bundle: .module) : Text("Rewrite draft", bundle: .module))
             .accessibilityIdentifier("humanize.run")
             VStack(spacing: 4) {

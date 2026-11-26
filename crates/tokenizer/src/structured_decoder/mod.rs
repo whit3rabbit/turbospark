@@ -10,7 +10,7 @@ mod kimi;
 mod mistral;
 mod muse;
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use self::harmony::HarmonyState;
 use self::muse::MuseState;
@@ -50,6 +50,10 @@ enum Channel {
 pub struct StructuredAssistantDecoder<'a> {
     tokenizer: &'a MfTokenizer,
     allowed_tools: HashSet<String>,
+    /// Tool name -> its JSON-schema `parameters`, for dialects whose wire
+    /// format carries no value types (Qwen's XML). Empty by default, which
+    /// keeps the text-shape heuristic.
+    tool_schemas: BTreeMap<String, crate::json_value::JsonValue>,
     id_generator: Box<dyn FnMut() -> String + 'a>,
     channel: Channel,
     harmony: HarmonyState,
@@ -165,6 +169,7 @@ impl<'a> StructuredAssistantDecoder<'a> {
         Self {
             tokenizer,
             allowed_tools,
+            tool_schemas: BTreeMap::new(),
             id_generator: Box::new(id_generator),
             channel: if prompt_opens_thought(tokenizer, prompt_ids) {
                 Channel::Thought
@@ -181,6 +186,17 @@ impl<'a> StructuredAssistantDecoder<'a> {
             emitted_calls: 0,
             failed: false,
         }
+    }
+
+    /// Supplies each offered tool's JSON-schema `parameters` so a dialect
+    /// with untyped values (Qwen XML) coerces by declared type, not by what
+    /// the text looks like.
+    pub fn with_tool_schemas(
+        mut self,
+        schemas: BTreeMap<String, crate::json_value::JsonValue>,
+    ) -> Self {
+        self.tool_schemas = schemas;
+        self
     }
 
     /// Returns true if at least one tool call has been parsed and emitted.

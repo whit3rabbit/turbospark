@@ -10,9 +10,9 @@ extension AudioWorkspaceController {
         let entries: [AudioProfile]
     }
 
-    /// Non-nil while Music or Voice Cloning has none of its curated models on this
-    /// Mac. It lifts by itself when an install lands, so nothing remembers a
-    /// dismissal.
+    /// Non-nil while Music, Voice Cloning, or Voice Design has none of its
+    /// curated models on this Mac. It lifts by itself when an install lands,
+    /// so nothing remembers a dismissal.
     ///
     /// **ANY SIGN OF AN INSTALL KEEPS THE PAGE OPEN.** A model on a drive that is
     /// away, one on disk the receipt store does not know yet, and one that needs
@@ -21,7 +21,8 @@ extension AudioWorkspaceController {
     /// the catalog: before the first read there are no entries, and during a
     /// refresh a gate would flash over a model that is installed.
     var modelGate: ModelGate? {
-        guard page == .music || page == .voiceClone, !isRefreshingModels, modelCatalogError == nil else { return nil }
+        guard page == .music || page == .voiceClone || page == .voiceDesign,
+              !isRefreshingModels, modelCatalogError == nil else { return nil }
         let entries = availableProfiles
         guard !entries.isEmpty,
               entries.allSatisfy({ installStatus(for: $0).offersDownload && modelState($0, download: nil) == .notInstalled })

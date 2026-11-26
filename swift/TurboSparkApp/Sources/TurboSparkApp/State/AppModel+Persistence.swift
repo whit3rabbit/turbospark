@@ -137,6 +137,7 @@ extension AppModel {
         self.compactionKeepRecentTurns = AppChatCompaction.clampKeepRecent(
             settings.compactionKeepRecentTurns)
         self.chatToolsEnabled = settings.chatToolsEnabled
+        self.webSearchEnabled = settings.webSearchEnabled
         // A built-in ID in the stored list would shadow the code-defined row.
         self.customToolProfiles = settings.toolProfiles.filter { !$0.isBuiltIn }
         self.activeToolProfileID = UUID(uuidString: settings.activeToolProfileID)
@@ -313,6 +314,7 @@ extension AppModel {
             todoBoundaryCompaction: todoBoundaryCompactionEnabled,
             compactionKeepRecentTurns: compactionKeepRecentTurns,
             chatToolsEnabled: chatToolsEnabled,
+            webSearchEnabled: webSearchEnabled,
             toolProfiles: customToolProfiles,
             activeToolProfileID: activeToolProfileID.uuidString,
             microcompactEnabled: microcompactEnabled,

@@ -32,22 +32,28 @@ struct NavigationRailView: View {
     @State private var isSettingsHovered = false
     /// The live chord map, so rail tooltips show what is bound now.
     @ObservedObject private var keybinds = KeybindOverrideStore.shared
+    @ObservedObject private var layoutStore = SidebarLayoutStore.shared
     @Namespace private var selectionNamespace
 
     var body: some View {
         VStack(spacing: 4) {
             ScrollView {
                 VStack(spacing: 4) {
-                    ForEach(SidebarNavigationGroup.allCases) { group in
-                        if group != .creation {
+                    let groups = layoutStore.layout.groups(
+                        includesChat: true, keeping: model.activeSection.navigationRow)
+                    ForEach(Array(groups.enumerated()), id: \.offset) { index, sections in
+                        if index > 0 {
                             SidebarDivider().padding(.horizontal, 12).padding(.vertical, 4)
                         }
-                        ForEach(group.sections) { section in
-                            if Self.hasDestinationMenu(section) && !isPanelPreferred {
-                                railMenu(section)
-                            } else {
-                                railButton(section)
+                        ForEach(sections) { section in
+                            Group {
+                                if Self.hasDestinationMenu(section) && !isPanelPreferred {
+                                    railMenu(section)
+                                } else {
+                                    railButton(section)
+                                }
                             }
+                            .modifier(CustomizableRow(section: section, store: layoutStore))
                         }
                     }
                 }
@@ -85,12 +91,14 @@ struct NavigationRailView: View {
     /// Every panel except Chat's lists the section's destinations, so with
     /// the panel hidden those would be unreachable without this menu. Chat's
     /// panel is its conversation list, which the chat pane does not need.
+    /// Discover has the Models panel but no rail icon of its own: the Models
+    /// icon covers it.
     nonisolated static func hasDestinationMenu(_ section: AppModel.AppNavigationSection) -> Bool {
-        section.hasSidebarPanel && section != .chat
+        section.hasSidebarPanel && section != .chat && section != .modelHub
     }
 
     private func railMenu(_ section: AppModel.AppNavigationSection) -> some View {
-        let isSelected = model.activeSection == section
+        let isSelected = model.activeSection.navigationRow == section
         let isHovered = hoveredSection == section
         return Menu {
             switch section {
@@ -150,7 +158,7 @@ struct NavigationRailView: View {
     }
 
     private func railButton(_ section: AppModel.AppNavigationSection) -> some View {
-        let isSelected = model.activeSection == section
+        let isSelected = model.activeSection.navigationRow == section
         let isHovered = hoveredSection == section
 
         return Button {

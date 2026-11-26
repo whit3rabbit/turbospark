@@ -68,6 +68,7 @@ Build from these instead of local variants. They live in
 | A multi-line editor | `TextEditor(...).appEditorSurface(minHeight:)` |
 | A focus glow on an editor with no native ring | `.appFocusGlow(_:radius:halo:)` |
 | A card | `.appCardSurface(padding:)` |
+| A floating overlay, HUD, or transient pill | `.appGlassSurface(_:interactive:)` (grouped with `AppGlassContainer`) |
 | A composer-style surface (prompt box, Humanize cards, script editor) | `.appComposerSurface(focused:halo:)` |
 | A heading in a scrolling pane | `AppSectionHeader(title:subtitle:)`; a heading built from a `Label` or `Text` instead (icon headings, `AppAdaptiveHeader` leading content) adds `.accessibilityAddTraits(.isHeader)` itself |
 | A filesystem path in a row | `SettingsPathText(path, size:)` (code font, selectable, middle truncation, full path in `.help`) |

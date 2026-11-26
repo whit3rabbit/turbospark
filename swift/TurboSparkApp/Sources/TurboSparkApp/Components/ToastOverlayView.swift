@@ -53,7 +53,6 @@ public struct ToastOverlayView: View {
             Text(verbatim: toast.message)
                 .themedFont(.base, weight: .medium)
                 .foregroundStyle(.appText)
-                .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -67,15 +66,7 @@ public struct ToastOverlayView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background {
-            RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
-                .fill(.appPage)
-                .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 4)
-                .overlay {
-                    RoundedRectangle(cornerRadius: AppMetrics.cardRadius, style: .continuous)
-                        .stroke(.appBorder, lineWidth: 0.5)
-                }
-        }
+        .appGlassSurface(.rect(cornerRadius: AppMetrics.cardRadius))
         .accessibilityElement(children: .combine)
         .accessibilityLabel(accessibilityLabel(for: toast))
     }

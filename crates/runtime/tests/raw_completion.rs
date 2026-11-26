@@ -219,6 +219,99 @@ fn stop_string_truncates_visible_output() {
     assert_eq!(result.reason, StopReason::StopString);
 }
 
+/// Runs a scripted completion whose prompt ends inside an open think frame
+/// (the way a thinking-on ChatML template renders it). `script` is the list
+/// of tokens the model "samples"; returns the run result and the visible
+/// text the stop matcher released.
+fn run_in_open_think_frame(
+    stops: &[&str],
+    script: &dyn Fn(&MfTokenizer) -> Vec<usize>,
+) -> (turbospark_runtime::RawDecodeResult, String) {
+    let tokenizer = load_tokenizer();
+    let vocab_size = tokenizer.vocab_size;
+    let mut prompt_ids = tokenizer.encode("hi", false);
+    prompt_ids.push(
+        tokenizer
+            .think_start_id
+            .expect("ChatML fixture has <think>"),
+    );
+
+    let mut steps = vec![vec![LogitValue::from_f32(0.0); vocab_size]; prompt_ids.len() - 1];
+    for id in script(&tokenizer) {
+        steps.push(one_hot(vocab_size, id));
+    }
+    let mut producer = ScriptedLogitProducer::new(steps);
+    let config = GenerationConfig {
+        shaping: ShapingConfig::new(0.0, 0, None, 1.0, None).unwrap(),
+        max_new_tokens: 16,
+        stop_strings: stops.iter().map(|s| s.to_string()).collect(),
+        extra_stop_tokens: Vec::new(),
+        rate: Default::default(),
+    };
+    let mut text = String::new();
+    let result = run_raw_completion(
+        &mut producer,
+        &tokenizer,
+        &prompt_ids,
+        &config,
+        4096,
+        vocab_size,
+        |e| match e {
+            RawDecodeProgress::Token { delta, .. } => text.push_str(&delta),
+            RawDecodeProgress::Tail(t) => text.push_str(&t),
+            RawDecodeProgress::Prefill { .. } => {}
+        },
+    )
+    .unwrap();
+    (result, text)
+}
+
+fn tok(t: &MfTokenizer, s: &str) -> usize {
+    t.token_to_id(s).expect("in base vocab") as usize
+}
+
+/// A user stop string the model merely writes while reasoning must not end
+/// the request: the client would get an empty answer.
+#[test]
+fn stop_string_inside_thinking_does_not_stop_the_run() {
+    let (result, text) = run_in_open_think_frame(&["hh"], &|t| {
+        vec![
+            tok(t, "h"),
+            tok(t, "h"),
+            t.think_end_id.unwrap() as usize,
+            tok(t, "i"),
+            t.end_of_turn_id as usize,
+        ]
+    });
+    assert_eq!(result.reason, StopReason::EndOfTurn);
+    assert_eq!(result.new_tokens, 5);
+    // The reasoning text still reaches the caller (the structured decoder
+    // downstream is what classifies it), so nothing is swallowed.
+    assert!(
+        text.contains("hh"),
+        "thinking text must pass through: {text:?}"
+    );
+}
+
+/// The stop still fires in the answer, and a stop string split across two
+/// answer tokens is still caught after the thinking section closed.
+#[test]
+fn stop_string_in_answer_after_thinking_still_stops() {
+    let (result, text) = run_in_open_think_frame(&["ih"], &|t| {
+        vec![
+            tok(t, "h"),
+            tok(t, "h"),
+            t.think_end_id.unwrap() as usize,
+            tok(t, "i"),
+            tok(t, "h"),
+            tok(t, "h"),
+        ]
+    });
+    assert_eq!(result.reason, StopReason::StopString);
+    assert_eq!(result.new_tokens, 5);
+    assert!(!text.contains("ih"), "stop text must be withheld: {text:?}");
+}
+
 // --- ROADMAP Phase P2: decode-rate control -------------------------------
 
 /// Counts how often the decode loop polls thermal pressure. A `fn` pointer
@@ -742,4 +835,52 @@ fn chunked_prefix_covering_whole_prompt_is_clamped_so_at_least_one_token_is_chun
     assert_eq!(result.prompt_tokens, 3);
     assert_eq!(result.kv_position, 3);
     assert_eq!(result.kv_backed_token_ids[..3], [10, 11, 12]);
+}
+
+/// A stop-string prefix the matcher is withholding in the answer ("h" of
+/// "hi") must be released, in order, when a think frame opens mid-answer, and
+/// the reasoning text that follows ("i") must not complete it into a stop.
+/// Distinct characters make the output order observable: a missing release
+/// would emit the reasoning "i" first and the withheld "h" later.
+#[test]
+fn stop_prefix_before_a_mid_answer_think_frame_is_released_in_order() {
+    let tokenizer = load_tokenizer();
+    let vocab_size = tokenizer.vocab_size;
+    // No open think frame in the prompt: thinking starts mid-answer.
+    let prompt_ids = tokenizer.encode("hi", false);
+    let mut steps = vec![vec![LogitValue::from_f32(0.0); vocab_size]; prompt_ids.len() - 1];
+    for id in [
+        tok(&tokenizer, "h"),
+        tokenizer.think_start_id.unwrap() as usize,
+        tok(&tokenizer, "i"),
+        tokenizer.think_end_id.unwrap() as usize,
+        tokenizer.end_of_turn_id as usize,
+    ] {
+        steps.push(one_hot(vocab_size, id));
+    }
+    let mut producer = ScriptedLogitProducer::new(steps);
+    let config = GenerationConfig {
+        shaping: ShapingConfig::new(0.0, 0, None, 1.0, None).unwrap(),
+        max_new_tokens: 16,
+        stop_strings: vec!["hi".to_string()],
+        extra_stop_tokens: Vec::new(),
+        rate: Default::default(),
+    };
+    let mut text = String::new();
+    let result = run_raw_completion(
+        &mut producer,
+        &tokenizer,
+        &prompt_ids,
+        &config,
+        4096,
+        vocab_size,
+        |e| match e {
+            RawDecodeProgress::Token { delta, .. } => text.push_str(&delta),
+            RawDecodeProgress::Tail(t) => text.push_str(&t),
+            RawDecodeProgress::Prefill { .. } => {}
+        },
+    )
+    .unwrap();
+    assert_eq!(result.reason, StopReason::EndOfTurn, "text: {text:?}");
+    assert!(text.starts_with("hi"), "release order broken: {text:?}");
 }

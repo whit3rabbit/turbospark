@@ -300,7 +300,7 @@ struct BrowserTabView: View {
                 AppProgressBar(value: progress, label: Text("Loading", bundle: .module), size: .compact)
                     .frame(maxWidth: 180)
                     .padding(12)
-                    .background(.regularMaterial, in: Capsule())
+                    .appGlassSurface(.capsule)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .padding(12)
             case .failed(let message):
@@ -317,7 +317,7 @@ struct BrowserTabView: View {
                 }
                 .themedFont(.small)
                 .padding(8)
-                .background(.regularMaterial, in: Capsule())
+                .appGlassSurface(.capsule)
                 .padding(12)
             }
         }
@@ -408,7 +408,7 @@ struct BrowserTabView: View {
         }
         .padding(20)
         .frame(maxWidth: 360)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius))
+        .appGlassSurface(.rect(cornerRadius: AppMetrics.cardRadius))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

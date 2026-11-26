@@ -208,7 +208,7 @@ struct TurboSparkApp: App {
                 Button {
                     NSWorkspace.shared.open(AppSupportLinks.reportIssue)
                 } label: {
-                    Text("Report an Issue...", bundle: .module)
+                    Text("Report an Issue\u{2026}", bundle: .module)
                 }
             }
             if let model = vaultCoordinator.model {
@@ -392,16 +392,13 @@ struct TurboSparkModelCommands: Commands {
 
                 Divider()
 
-                // Shows or hides the section's panel beside the rail. Named
-                // for no section because it acts on Chat and Audio alike, and
-                // disabled where there is no panel to toggle.
+                // Expands the unified sidebar or collapses it to the icon rail.
                 Button {
                     NotificationCenter.default.post(name: .toggleChatSidebar, object: nil)
                 } label: {
                     Text("Toggle Sidebar", bundle: .module)
                 }
                 .keyboardChord(.toggleSidebar, keybinds)
-                .disabled(!model.activeSection.hasSidebarPanel)
 
                 Button {
                     NotificationCenter.default.post(name: .toggleInspector, object: nil)
@@ -415,7 +412,7 @@ struct TurboSparkModelCommands: Commands {
                 Button {
                     model.openSettings(tab: .shortcuts)
                 } label: {
-                    Text("Keyboard Shortcuts...", bundle: .module)
+                    Text("Keyboard Shortcuts\u{2026}", bundle: .module)
                 }
                 .keyboardChord(.keyboardShortcuts, keybinds)
 
@@ -595,7 +592,7 @@ struct TurboSparkModelCommands: Commands {
                 Button {
                     NotificationCenter.default.post(name: .showChatSearch, object: nil)
                 } label: {
-                    Text("Command Center...", bundle: .module)
+                    Text("Command Center\u{2026}", bundle: .module)
                 }
                 .keyboardChord(.commandCenter, keybinds)
                 .accessibilityHint(Text("Searches commands, chats, and files", bundle: .module))
@@ -607,7 +604,7 @@ struct TurboSparkModelCommands: Commands {
                         name: .showChatSearch, object: nil,
                         userInfo: [PaletteQuery.seedUserInfoKey: ">"])
                 } label: {
-                    Text("Run Command...", bundle: .module)
+                    Text("Run Command\u{2026}", bundle: .module)
                 }
                 .keyboardChord(.runCommand, keybinds)
                 .accessibilityHint(Text("Searches commands, chats, and files", bundle: .module))
@@ -756,7 +753,7 @@ struct TurboSparkModelCommands: Commands {
                 Button {
                     model.openSettings(tab: .profiles)
                 } label: {
-                    Text("New Profile...", bundle: .module)
+                    Text("New Profile\u{2026}", bundle: .module)
                 }
             }
 

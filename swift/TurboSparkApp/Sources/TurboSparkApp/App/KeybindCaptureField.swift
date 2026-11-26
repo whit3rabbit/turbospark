@@ -92,6 +92,9 @@ struct KeybindCaptureField: View {
             .foregroundStyle(tint(.appText))
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
+            // The chord badge is the click target: keep it at the 20 pt
+            // desktop minimum even at the smallest text size.
+            .frame(minHeight: 20)
             .background(.appSurface)
             .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
             .overlay(

@@ -80,12 +80,25 @@ final class AudioModelGateTests: XCTestCase {
         }
     }
 
-    func testOnlyMusicAndVoiceCloningAreGated() async throws {
+    func testOnlyCuratedGenerationPagesAreGated() async throws {
         try await withController { controller in
-            for page in AudioWorkspacePage.allCases where page != .music && page != .voiceClone {
+            for page in AudioWorkspacePage.allCases where page != .music && page != .voiceClone && page != .voiceDesign {
                 controller.selectPage(page)
                 XCTAssertNil(controller.modelGate, page.rawValue)
             }
+        }
+    }
+
+    func testVoiceDesignGateHasTheVoiceDesignModelAndLiftsWhenInstalled() async throws {
+        let voiceDesign = "qwen3-tts-12hz-17b-voicedesign-8bit"
+        try await withController { controller in
+            controller.selectPage(.voiceDesign)
+            XCTAssertEqual(controller.modelGate?.entries.map(\.identity.alias), [voiceDesign])
+        }
+        try await withController(installed: "[\(record(voiceDesign, family: "qwen3_tts"))]") { controller in
+            controller.selectPage(.voiceDesign)
+            XCTAssertNil(controller.modelGate)
+            XCTAssertEqual(controller.selectedProfile?.identity.alias, voiceDesign)
         }
     }
 

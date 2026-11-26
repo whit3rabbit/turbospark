@@ -21,6 +21,14 @@ pub(crate) struct TokenSink<'a> {
     config: &'a GenerationConfig,
     detok: MfDetokenizer<'a>,
     stop_matcher: StreamingStopMatcher,
+    /// True while the stream is inside a think frame (`<think>` .. `</think>`
+    /// style, the dialects that resolve `think_start_id`/`think_end_id`).
+    /// User stop strings are matched on the ANSWER only: a stop the model
+    /// merely writes while reasoning (a counted "10", an agent's closing
+    /// tag named in its plan) would otherwise end the request with empty
+    /// visible content. Always false for a dialect without those markers,
+    /// which keeps raw matching exactly as before.
+    in_thinking: bool,
     /// Tokens handed to the caller, including the one that stops the run.
     pub(crate) generated: usize,
     /// Tokens handed to the PRODUCER. Excludes the stopping token, which is
@@ -34,11 +42,30 @@ impl<'a> TokenSink<'a> {
         config: &'a GenerationConfig,
         history: Vec<TokenId>,
     ) -> Self {
+        // Seeded from the rendered prompt (`history` is the prompt here), the
+        // same backward scan the structured decoder uses: a thinking-on
+        // template opens the frame itself so the model never emits the
+        // opening marker, and the last marker wins over balanced pairs a
+        // tool preamble quotes in its instructions.
+        let in_thinking = history
+            .iter()
+            .rev()
+            .find_map(|&id| {
+                if tokenizer.think_start_id == Some(id) {
+                    Some(true)
+                } else if tokenizer.think_end_id == Some(id) {
+                    Some(false)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(false);
         Self {
             tokenizer,
             config,
             detok: MfDetokenizer::new(tokenizer),
             stop_matcher: StreamingStopMatcher::new(config.stop_strings.clone()),
+            in_thinking,
             generated: 0,
             history,
         }
@@ -47,10 +74,42 @@ impl<'a> TokenSink<'a> {
     /// Flushes whatever the stop matcher was withholding. Every exit from a
     /// generation goes through this; skipping it truncates the reply.
     pub(crate) fn flush_tail(&mut self, on_progress: &mut dyn FnMut(RawDecodeProgress)) {
-        let mut tail = self.stop_matcher.push(&self.detok.flush());
+        let residue = self.detok.flush();
+        let mut tail = if self.in_thinking {
+            String::new()
+        } else {
+            self.stop_matcher.push(&residue)
+        };
         tail += &self.stop_matcher.finish();
+        if self.in_thinking {
+            tail += &residue;
+        }
         if !tail.is_empty() {
             on_progress(RawDecodeProgress::Tail(tail));
+        }
+    }
+
+    /// Runs `delta` through the stop matcher unless it is reasoning text.
+    ///
+    /// The marker tokens flip the scope. Text the matcher was withholding as
+    /// a possible stop prefix is released ahead of a reasoning span, so the
+    /// output order is preserved and a stop prefix cannot be completed by
+    /// reasoning text that follows it.
+    fn match_stops(&mut self, token_id: TokenId, delta: String) -> String {
+        if self.tokenizer.think_start_id == Some(token_id) {
+            self.in_thinking = true;
+            let mut out = self.stop_matcher.finish();
+            out += &delta;
+            return out;
+        }
+        if self.tokenizer.think_end_id == Some(token_id) {
+            self.in_thinking = false;
+            return delta;
+        }
+        if self.in_thinking {
+            delta
+        } else {
+            self.stop_matcher.push(&delta)
         }
     }
 
@@ -89,7 +148,7 @@ impl<'a> TokenSink<'a> {
         }
 
         let delta = self.detok.push(token_id);
-        let visible = self.stop_matcher.push(&delta);
+        let visible = self.match_stops(token_id, delta);
         on_progress(RawDecodeProgress::Token {
             index: self.generated - 1,
             id: token_id,

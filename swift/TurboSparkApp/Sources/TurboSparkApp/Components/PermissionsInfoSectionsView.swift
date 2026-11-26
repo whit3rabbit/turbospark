@@ -9,6 +9,7 @@ import SwiftUI
 /// permissions live in.
 @MainActor
 struct PermissionsSystemLinksSection: View {
+    @Environment(\.appTheme) private var theme
     @ObservedObject var permissionsManager: SystemPermissionsManager
 
     var body: some View {
@@ -16,7 +17,12 @@ struct PermissionsSystemLinksSection: View {
             AppSectionHeader(title: Text("macOS System Settings Links", bundle: .module))
                 .settingsControl("macOS System Settings Links", pane: .permissions, timing: .immediate)
 
-            HStack(spacing: 10) {
+            // Adaptive grid: three cards side by side when they fit, fewer
+            // columns at German or Extra Large text instead of squeezing.
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 190 * AppMetrics.textScale(theme)), spacing: 10, alignment: .top)],
+                alignment: .leading, spacing: 10
+            ) {
                 systemLinkCard(
                     title: Text("Files and Folders", bundle: .module),
                     subtitle: Text("Manage per-folder permissions in macOS Privacy & Security.", bundle: .module),
@@ -64,7 +70,6 @@ struct PermissionsSystemLinksSection: View {
                 subtitle
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
-                    .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(10)

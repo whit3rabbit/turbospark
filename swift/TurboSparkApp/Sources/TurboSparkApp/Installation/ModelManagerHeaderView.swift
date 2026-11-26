@@ -2,29 +2,29 @@ import AppKit
 import SwiftUI
 import TurboSpark
 
-/// Header bar for ModelManagerView showing storage stats, rescan, add folder, and hub discovery buttons.
+/// Header bar for ModelManagerView showing the Installed | Discover switcher, storage stats, rescan and add folder.
 ///
 /// Shares its structure with the Discover header (`ModelWorkspaceTitle` plus
-/// `AppAdaptiveHeader`): Discover Models is the one primary action, and when
-/// the row is too narrow it stays visible while Rescan and Add Folder fold
-/// into a labeled More menu.
+/// `AppAdaptiveHeader`): the Installed | Discover switcher leads, and when the
+/// row is too narrow Rescan and Add Folder fold into a labeled More menu.
 @MainActor
 struct ModelManagerHeaderView: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
         AppAdaptiveHeader {
-            ModelWorkspaceTitle(
-                systemImage: "internaldrive.fill",
-                title: Text("Installed Models", bundle: .module),
-                badge: Text("LOCAL STORAGE", bundle: .module),
-                summary: summaryText)
+            // The switcher leads; the title block sits under it.
+            VStack(alignment: .leading, spacing: 8) {
+                ModelWorkspaceSwitcher(model: model)
+                ModelWorkspaceTitle(
+                    systemImage: "internaldrive.fill",
+                    title: Text("Installed Models", bundle: .module),
+                    summary: summaryText)
+            }
         } actions: {
             rescanButton.appAction(.secondary)
             addFolderButton.appAction(.secondary)
-            discoverButton
         } compactActions: {
-            discoverButton
             Menu {
                 rescanButton
                 addFolderButton
@@ -33,6 +33,8 @@ struct ModelManagerHeaderView: View {
             }
             .appMenuAction()
         }
+        // ViewThatFits centers a header narrower than the pane; keep it leading.
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
@@ -56,16 +58,6 @@ struct ModelManagerHeaderView: View {
         .help(Text("Add an external folder containing .gturbo bundles or .gguf files", bundle: .module))
     }
 
-    private var discoverButton: some View {
-        Button {
-            model.activeSection = .modelHub
-        } label: {
-            Label { Text("Discover Models", bundle: .module) } icon: { Image(systemName: "shippingbox.fill") }
-        }
-        .appAction(.primary)
-        .help(Text("Browse the curated catalog and download models", bundle: .module))
-    }
-
     private var summaryText: Text {
         let count = model.installed.count
         let totalBytes = model.installed.reduce(UInt64(0)) { $0 + $1.installBytes }
@@ -73,9 +65,6 @@ struct ModelManagerHeaderView: View {
         var line = Text("Installed models: \(count)", bundle: .module)
         if totalBytes > 0 {
             line = line + separator + Text("On disk: \(MetricFormat.storage(totalBytes))", bundle: .module)
-        }
-        if let sel = model.selected, model.session != nil {
-            line = line + separator + Text("Active: \(sel.alias)", bundle: .module)
         }
         return line
     }

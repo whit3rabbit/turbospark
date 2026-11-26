@@ -56,8 +56,6 @@ struct PromptComposerFooter: View {
 
             RemoteModelPill(model: model, store: model.remoteProviders)
 
-            SearchToggleButton(model: model)
-
             if model.selectedProject != nil {
                 PromptProjectContextPill(model: model)
             }
@@ -66,10 +64,6 @@ struct PromptComposerFooter: View {
 
     private var trailing: some View {
         HStack(spacing: 6) {
-            SamplingTonePillControl(model: model)
-
-            SteeringPillControl(model: model)
-
             // First, not last: `clearAction` below is conditional on the
             // draft, and the ring should not change position with it.
             ContextUsageRingView(model: model)

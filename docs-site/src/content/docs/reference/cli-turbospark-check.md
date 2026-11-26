@@ -36,7 +36,7 @@ usage:
   --rdadvise  read-ahead mode: off, normal, aggressive (default off)
   --expert-cache-slots  routed-cache slot count, allowed 8/16/24/32/48/64/96/128, or auto (default auto, which never resolves below 16)
   --speculative  speculative decoding: auto, off, or a block size 1-15 (default auto; a named block FAILS if the model cannot serve it)
-  --speculative-drafter  drafter --speculative drives: auto, mtp or dflash (default auto, which enables an mtp head but only REPORTS a dflash one -- dflash is 0.88x on prose, so name it to run it)
+  --speculative-drafter  drafter --speculative drives: auto, mtp, dflash or dflash2 (default auto, which enables an mtp head but only REPORTS a dflash one -- dflash is 0.88x on prose, so name it to run it. On Inkling 2, dflash prefers DSpark and dflash2 names DFlash2)
   --prefill-chunk  prompt-processing chunk size, or auto (default 128)
   --power-profile  power profile: performance, balanced, efficiency (default performance, or efficiency under Low Power Mode)
   --steering  path to a control vector (.gguf, llama.cpp layout) to steer with (default none; see docs/OBLITERATION.md)

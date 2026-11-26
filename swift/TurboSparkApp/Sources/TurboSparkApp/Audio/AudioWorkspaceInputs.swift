@@ -10,7 +10,7 @@ struct AudioOperationPicker: View {
     @ObservedObject var controller: AudioWorkspaceController
 
     var body: some View {
-        Picker(selection: Binding(get: { controller.recipe.task }, set: { controller.selectTask($0) })) {
+        Picker(selection: Binding(get: { controller.task.rawValue }, set: { controller.selectTask($0) })) {
             if controller.page == .cleanup {
                 if AudioTask.enhancement.isRunnable {
                     Text("Enhance speech", bundle: .module).tag(AudioTask.enhancement.rawValue)

@@ -66,7 +66,7 @@ With no mode flag, the run is refused with a missing-mode error. A mode flag can
 | `--max-tokens-per-sec X` | uncapped | Greater than `0`. |
 | `--kv-bits BITS` | `off` | `off`, `2`, `3`, `3.5`, `4`. An unsupported head size or family refuses the flag at open. It does not fall back to FP16. |
 | `--speculative MODE` | `auto` | `auto`, `off`, or a block size from `1` to `15`. A named block size fails if the model cannot serve it. |
-| `--speculative-drafter NAME` | `auto` | `auto`, `mtp`, `dflash`. `auto` enables an MTP head when present. It only reports a DFlash head, so name `dflash` to run it. |
+| `--speculative-drafter NAME` | `auto` | `auto`, `mtp`, `dflash`, `dflash2`. `auto` enables an MTP head when present. It only reports a block drafter, so name one to run it. On Inkling 2, `dflash` prefers DSpark and `dflash2` names DFlash2. |
 
 ### Steering
 

@@ -50,12 +50,10 @@ public enum AppChromeLayout {
     /// Width of the icon rail, which is on screen in every section and state.
     public static let navigationRailWidth: CGFloat = 52
 
-    /// Total width of the left chrome: the rail, plus the panel when one is
-    /// shown. The hairline between the two is an overlay on the rail, not
-    /// layout width, so a caller sizing the window asks this rather than
-    /// summing the parts itself.
+    /// Total width of the left chrome: the unified sidebar when expanded, or
+    /// the compact icon rail when collapsed.
     public static func leftChromeWidth(isPanelVisible: Bool) -> CGFloat {
-        navigationRailWidth + (isPanelVisible ? sidebarPanelWidth : 0)
+        isPanelVisible ? sidebarPanelWidth : navigationRailWidth
     }
     /// Height of the flat top bar carrying the machine telemetry.
     public static let topBarHeight: CGFloat = 44

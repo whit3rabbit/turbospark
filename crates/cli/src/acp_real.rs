@@ -252,7 +252,20 @@ impl ChatBackend for RealBackend {
                 format!("model_{next_id}")
             },
             &prompt_ids,
-        );
+        )
+        // Qwen XML parameters are typed by the offered schemas, not by how
+        // their text reads (a string parameter holding `true` stays a string).
+        .with_tool_schemas(if use_tools {
+            tool_schemas()
+                .into_iter()
+                .filter_map(|(name, _, schema)| {
+                    let schema = tokenizer::JsonValue::parse(&schema.to_string()).ok()?;
+                    Some((name.to_string(), schema))
+                })
+                .collect()
+        } else {
+            Default::default()
+        });
         let mut emit = |event: TurnEvent| match event {
             TurnEvent::Content(text) | TurnEvent::ReleasedToolSpan(text) => delta(&text),
             TurnEvent::ToolCall(c) => call(ToolReq {

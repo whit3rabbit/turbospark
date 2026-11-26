@@ -23,8 +23,6 @@
 //! local install's capabilities. An image on an install WITH a tower is
 //! served rather than reported.
 
-use std::collections::HashSet;
-
 use anyllm_translate::anthropic::streaming::{StreamError, StreamEvent};
 use anyllm_translate::anthropic::{ErrorType, MessageCreateRequest};
 use anyllm_translate::mapping::errors_map::create_anthropic_error;
@@ -47,7 +45,7 @@ use tokenizer::ReasoningEffort;
 use crate::guardrails::run_guarded;
 use crate::handler::{
     merge_degradation, now_unix, plan, reasoning_effort, request_id, status_for, stream_blocking,
-    tool_names, AppState, GenError, Piece, SSE_KEEP_ALIVE,
+    tool_names, AppState, GenError, Piece, ToolSet, SSE_KEEP_ALIVE,
 };
 use crate::response::{
     completion_chunk, completion_response, finish_reason_for, reasoning_delta, role_delta,
@@ -369,7 +367,7 @@ fn stream_response(
     prompt_ids: Vec<foundation::TokenId>,
     config: GenerationConfig,
     images: Option<crate::vision::RequestImages>,
-    tools: HashSet<String>,
+    tools: ToolSet,
     effort: ReasoningEffort,
     openai: &ChatCompletionRequest,
     client_model: String,

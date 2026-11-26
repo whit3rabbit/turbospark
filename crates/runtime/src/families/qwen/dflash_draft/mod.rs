@@ -25,6 +25,7 @@ mod context_kv;
 mod forward;
 mod layer;
 mod select;
+pub(crate) use select::{read_bf16_row, top_k_finite, CodebookView};
 
 pub(crate) use select::read_f16_rows;
 

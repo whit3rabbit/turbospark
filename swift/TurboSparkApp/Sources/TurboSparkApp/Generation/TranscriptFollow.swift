@@ -190,7 +190,24 @@ struct JumpToLatestButton: View {
     let action: () -> Void
 
     var body: some View {
-        // The chip has an opaque surface and a border, so it reads over text.
-        AppChip(Text("Jump to latest", bundle: .module), systemImage: "arrow.down", action: action)
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.down")
+                    .themedFont(.tiny, weight: .medium)
+                    .accessibilityHidden(true)
+                Text("Jump to latest", bundle: .module)
+                    .themedFont(.small, weight: .medium)
+            }
+            .lineLimit(1)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .foregroundStyle(.appText)
+            .appGlassSurface(.capsule, interactive: true)
+            .contentShape(Capsule(style: .continuous))
+        }
+        .buttonStyle(TSPressScaleStyle(scale: 0.96))
+        .fixedSize()
+        .help(Text("Jump to latest", bundle: .module))
+        .accessibilityLabel(Text("Jump to latest", bundle: .module))
     }
 }

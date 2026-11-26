@@ -33,6 +33,9 @@ pub fn entry(entry: &CatalogEntry, is_user_row: bool, store: &Store) {
             mtp.repo, mtp.revision
         );
     }
+    if let Some(draft) = &entry.dflash2 {
+        println!("  dflash2     {} @ {}", draft.repo, draft.revision);
+    }
     println!(
         "  sidecars    {} @ {}: {}",
         entry.sidecar_repo(),

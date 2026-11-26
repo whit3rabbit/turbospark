@@ -136,6 +136,7 @@ struct ServerConsoleView: View {
                 .labelStyle(.iconOnly)
             }
             .buttonStyle(.borderless)
+            .frame(minWidth: 20, minHeight: 20).contentShape(Rectangle())
             .help(paused ? Text("Resume", bundle: .module) : Text("Pause console display. Metrics continue updating.", bundle: .module))
 
             Button {
@@ -150,6 +151,7 @@ struct ServerConsoleView: View {
                 .labelStyle(.iconOnly)
             }
             .buttonStyle(.borderless)
+            .frame(minWidth: 20, minHeight: 20).contentShape(Rectangle())
             .help(copiedAll ? Text("Copied visible rows as JSON", bundle: .module) : Text("Copy the visible rows as JSON", bundle: .module))
         }
         .padding(.horizontal, 12)
@@ -162,12 +164,12 @@ struct ServerConsoleView: View {
                 Text(verbatim: statusText(record))
                     .font(theme.code(.small, weight: .semibold))
                     .foregroundStyle(statusColor(record))
-                    .frame(width: 34, alignment: .leading)
+                    .fixedSize().frame(minWidth: 34, alignment: .leading)
 
                 Text(verbatim: record.method)
                     .font(theme.code(.small))
                     .foregroundStyle(.appSecondary)
-                    .frame(width: 38, alignment: .leading)
+                    .fixedSize().frame(minWidth: 38, alignment: .leading)
 
                 Text(verbatim: record.path)
                     .font(theme.code(.small))
@@ -206,7 +208,7 @@ struct ServerConsoleView: View {
                         .themedFont(.small)
                         .monospacedDigit()
                         .foregroundStyle(.appSecondary)
-                        .frame(width: 62, alignment: .trailing)
+                        .fixedSize().frame(minWidth: 62, alignment: .trailing)
                 }
 
                 Button {
@@ -224,7 +226,8 @@ struct ServerConsoleView: View {
                     .labelStyle(.iconOnly)
                 }
                 .buttonStyle(.borderless)
-                .help(record.isError ? Text("Copy error or request summary", bundle: .module) : Text("Copy request summary", bundle: .module))
+                .frame(minWidth: 20, minHeight: 20).contentShape(Rectangle())
+            .help(record.isError ? Text("Copy error or request summary", bundle: .module) : Text("Copy request summary", bundle: .module))
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 5)

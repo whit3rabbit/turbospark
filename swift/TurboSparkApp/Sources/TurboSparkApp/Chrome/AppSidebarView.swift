@@ -2,26 +2,13 @@ import SwiftUI
 
 // Isolated explicitly: only `body` is isolated by the protocol on the
 // macOS 14 SDK (swift/CLAUDE.md Gotcha 45).
-/// The window's left chrome: the icon rail, always, and beside it the
-/// selected section's panel when it has one.
+/// The window's left chrome: one unified labeled sidebar when expanded, or
+/// the compact icon rail when collapsed.
 ///
-/// ## Why this is two columns again
-///
-/// From 2026-09-09 this was ONE column in two presentations: expanded, the
-/// sections were labeled rows stacked above the chat list; collapsed, it was
-/// the rail. That fixed an earlier rail-plus-chat-sidebar pair that read as
-/// two vertical bars, but the labeled rows cost roughly 300pt of chat history.
-/// The pair is back on three conditions, and they are what keeps it from
-/// regressing into the old look:
-///
-/// - **The panel never repeats the section list.** The rail answers "where
-///   am I"; the panel shows only what is in that section (the chat list, the
-///   Audio pages, a section's modes). The old pair duplicated navigation.
-/// - **One surface.** Rail and panel share `sidebarBackgroundColor`, split by
-///   a 0.5pt hairline the rail draws, so they read as one surface in two parts.
-/// - **Navigation never hides.** The sidebar toggle hides the PANEL; the rail
-///   stays in every section and state. Sections without a panel
-///   (`AppNavigationSection.hasSidebarPanel`) show the rail alone.
+/// Showing one column instead of a permanent rail beside a panel reclaims
+/// 52pt of horizontal space and pairs every navigation icon with a readable
+/// label. Collapsing the sidebar drops cleanly to `NavigationRailView` so
+/// top-level navigation is never stranded.
 ///
 /// `isPanelVisible` comes from `RootView`, which feeds the same value to the
 /// window minimum. Do not recompute it here from the raw preference.
@@ -30,15 +17,16 @@ struct AppSidebarView: View {
     @Environment(\.appTheme) private var theme
     @ObservedObject var model: AppModel
     let isPanelVisible: Bool
-    /// The user's panel preference, which the rail's Audio item reads.
+    /// The user's panel preference, which the collapsed rail's menus read.
     let isPanelPreferred: Bool
 
     var body: some View {
-        HStack(spacing: 0) {
-            NavigationRailView(
-                model: model, isPanelVisible: isPanelVisible, isPanelPreferred: isPanelPreferred)
+        Group {
             if isPanelVisible {
                 SidebarPanelSurface(model: model)
+            } else {
+                NavigationRailView(
+                    model: model, isPanelVisible: false, isPanelPreferred: isPanelPreferred)
             }
         }
         .frame(width: AppChromeLayout.leftChromeWidth(isPanelVisible: isPanelVisible))
@@ -49,9 +37,9 @@ struct AppSidebarView: View {
     }
 }
 
-/// The section's panel with its frame, top inset and background. The docked
-/// sidebar and the OC-06 hover peek both render this view, so the two cannot
-/// drift.
+/// The unified expanded sidebar: labeled workspace navigation, the active
+/// section's content (chats, projects, or sub-modes), and the profile/settings
+/// footer. Both the docked sidebar and the OC-06 hover peek render this view.
 @MainActor
 struct SidebarPanelSurface: View {
     @Environment(\.appTheme) private var theme
@@ -61,37 +49,45 @@ struct SidebarPanelSurface: View {
     var clearsTopBar = true
 
     var body: some View {
-        panel
-            .font(theme.ui(.small))
-            .foregroundStyle(.appText)
-            .frame(width: AppChromeLayout.sidebarPanelWidth)
-            // Starts below the top bar's height so the first row
-            // clears the traffic lights, which a `.hiddenTitleBar`
-            // window draws over the rail and the panel's first 14pt.
-            .padding(.top, clearsTopBar ? AppChromeLayout.topBarHeight + 6 : 6)
-            .frame(maxHeight: .infinity)
-            // The rail paints its own background; painting this one
-            // under both would stack two translucent layers there.
-            .background(TurboSparkTheme.sidebarBackgroundColor(
-                isDark: theme.isDark, reduceTransparency: theme.reduceTransparency))
+        VStack(spacing: 0) {
+            if model.activeSection == .chat {
+                ChatSidebarView(model: model)
+            } else {
+                SidebarNavigationList(model: model)
+                if model.activeSection.hasSidebarPanel {
+                    SidebarDivider()
+                    sectionPanel
+                } else {
+                    Spacer(minLength: 0)
+                }
+            }
+
+            SidebarFooterView(model: model)
+        }
+        .font(theme.ui(.small))
+        .foregroundStyle(.appText)
+        .frame(width: AppChromeLayout.sidebarPanelWidth)
+        // Starts below the top bar's height so the first row
+        // clears the traffic lights, which a `.hiddenTitleBar`
+        // window draws over the sidebar's first 44pt.
+        .padding(.top, clearsTopBar ? AppChromeLayout.topBarHeight + 4 : 4)
+        .frame(maxHeight: .infinity)
+        .background(TurboSparkTheme.sidebarBackgroundColor(
+            isDark: theme.isDark, reduceTransparency: theme.reduceTransparency))
     }
 
     @ViewBuilder
-    private var panel: some View {
+    private var sectionPanel: some View {
         switch model.activeSection {
-        case .chat:
-            ChatSidebarView(model: model)
         case .audio:
             AudioSidebarPanel(model: model, controller: model.audioWorkspace)
         case .images:
             ImagesSidebarPanel(model: model)
-        case .modelManager:
+        case .modelManager, .modelHub:
             InstalledSidebarPanel(model: model)
         case .server:
             APISidebarPanel(model: model)
         default:
-            // Unreachable while `hasSidebarPanel` lists only the cases above.
-            // A section added there needs its own case here.
             EmptyView()
         }
     }

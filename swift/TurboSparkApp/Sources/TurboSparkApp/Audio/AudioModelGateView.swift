@@ -51,15 +51,25 @@ struct AudioModelGateView: View {
     }
 
     private var title: Text {
-        gate.page == .music
-            ? Text("Download the music model", bundle: .module)
-            : Text("Choose a voice cloning model", bundle: .module)
+        switch gate.page {
+        case .music:
+            return Text("Download the music model", bundle: .module)
+        case .voiceDesign:
+            return Text("Voice Design", bundle: .module)
+        default:
+            return Text("Choose a voice cloning model", bundle: .module)
+        }
     }
 
     private var message: Text {
-        gate.page == .music
-            ? Text("Music generation needs its model on this Mac. Download it to continue.", bundle: .module)
-            : Text("Voice cloning needs one of these models on this Mac. Pick one to download.", bundle: .module)
+        switch gate.page {
+        case .music:
+            return Text("Music generation needs its model on this Mac. Download it to continue.", bundle: .module)
+        case .voiceDesign:
+            return Text("Describe a voice and generate an audio clip. Reuse the clip as a cloning reference for a consistent voice.", bundle: .module)
+        default:
+            return Text("Voice cloning needs one of these models on this Mac. Pick one to download.", bundle: .module)
+        }
     }
 
     private func row(_ profile: AudioProfile) -> some View {

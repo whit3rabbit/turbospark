@@ -313,6 +313,25 @@ struct ImageModelRecommendationSheet: View {
     /// The library the user picked for the download. Nil follows the default
     /// (requirement 2.2). Per install: not remembered across launches.
     @State private var destination: String?
+    /// Set when the card is shown inline; it hides the card. Nil keeps the
+    /// sheet behavior (`dismiss`).
+    var onLater: (() -> Void)?
+
+    private func close() {
+        if let onLater { onLater() } else { dismiss() }
+    }
+
+    /// The catalog's quantization is a machine label
+    /// ("mlx-affine-linear-weights-group-64-bits-8"). Say the bit width
+    /// plainly and keep the repo id; with no parsable width, the repo id
+    /// alone. No download size is in the catalog data, so none is shown.
+    static func detailLine(for source: ImageCatalogEntry) -> String {
+        if let bits = source.quantization.split(separator: "-").last.flatMap({ Int($0) }),
+           source.quantization.contains("bits-") {
+            return "\(bits)-bit  |  \(source.modelID)"
+        }
+        return source.modelID
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -324,7 +343,7 @@ struct ImageModelRecommendationSheet: View {
                 }
                 .themedFont(.title3, weight: .semibold)
                 Spacer()
-                Button { dismiss() } label: {
+                Button { close() } label: {
                     Text("Later", bundle: .module)
                 }
                 .appAction(.secondary)
@@ -346,6 +365,13 @@ struct ImageModelRecommendationSheet: View {
                     HStack {
                         Text(verbatim: source.alias)
                             .themedFont(.base, weight: .medium)
+                        if source.id == model.recommendedImageModelSources.first?.id {
+                            // The list is memory-ranked, so the first row is the one
+                            // sized for this Mac (the intro says so).
+                            Text("Recommended", bundle: .module)
+                                .themedFont(.tiny, weight: .medium)
+                                .foregroundStyle(.appAccentText)
+                        }
                         Spacer()
                         Button {
                             model.installImageModel(
@@ -361,7 +387,7 @@ struct ImageModelRecommendationSheet: View {
                             size: .small)
                         .disabled(!model.canInstallImageModel(alias: source.alias))
                     }
-                    Text(verbatim: "\(source.quantization)  |  \(source.modelID)")
+                    Text(verbatim: Self.detailLine(for: source))
                         .themedFont(.tiny)
                         .foregroundStyle(.appSecondary)
                 }
@@ -372,7 +398,7 @@ struct ImageModelRecommendationSheet: View {
             HStack {
                 Spacer()
                 Button {
-                    dismiss()
+                    close()
                     model.activeSection = .modelManager
                 } label: {
                     Text("Manage image models", bundle: .module)

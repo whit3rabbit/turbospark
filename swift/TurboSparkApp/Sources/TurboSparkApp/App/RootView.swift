@@ -41,28 +41,25 @@ struct RootView: View {
             hasTranscript: model.hasOutputTranscript)
     }
 
-    /// The one predicate for "a panel is on screen". The sidebar view and the
-    /// window minimum both read it, so the floor cannot reserve a panel's
-    /// width in a rail-only section, or drop it in a section that shows one.
+    /// The one predicate for whether the expanded sidebar is on screen.
+    /// Every section uses the unified sidebar when expanded and collapses to
+    /// the icon rail when collapsed, so switching sections never shifts the
+    /// window floor.
     private var isPanelVisible: Bool {
-        isSidebarExpanded && model.activeSection.hasSidebarPanel
+        isSidebarExpanded
     }
 
-    /// Cmd+B, Ctrl+Cmd+S and the top-bar button. A section without a panel
-    /// has nothing to toggle, so the preference is left alone there rather
-    /// than flipped invisibly.
+    /// Cmd+B, Ctrl+Cmd+S and the top-bar button.
     private func toggleSidebarPanel() {
         // A toggle during a peek cancels it and then applies the normal
         // toggle: the toggle is the deliberate path.
         sidebarPeek.cancel()
-        guard model.activeSection.hasSidebarPanel else { return }
         isSidebarExpanded.toggle()
     }
 
-    /// Peek applies only while the panel is collapsed in a section that has
-    /// one.
+    /// Peek applies while the sidebar is collapsed to the icon rail.
     private var isPeekEligible: Bool {
-        !isSidebarExpanded && model.activeSection.hasSidebarPanel
+        !isSidebarExpanded
     }
 
     /// The edge trigger strip and, while peeking, the live panel over the
@@ -140,7 +137,7 @@ struct RootView: View {
                     isChatSidebarVisible: isPanelVisible,
                     isInspectorVisible: isInspectorVisible,
                     toggleChatSidebar: toggleSidebarPanel,
-                    showsSidebarToggle: model.activeSection.hasSidebarPanel,
+                    showsSidebarToggle: true,
                     toggleInspector: toggleModelSettings,
                     canPinSummary: canPinSummary,
                     isSummaryVisible: rightColumnClaimant == .projectSummary,
@@ -215,10 +212,12 @@ struct RootView: View {
             // The downloads panel opens under its top-bar button, with toasts
             // beneath it. They share the available height so neither can
             // cover the other when the window is short or text is enlarged.
-            VStack(alignment: .trailing, spacing: 12) {
-                DownloadManagerView(model: model)
-                ToastOverlayView(model: model)
-                Spacer(minLength: 0)
+            AppGlassContainer(spacing: 12) {
+                VStack(alignment: .trailing, spacing: 12) {
+                    DownloadManagerView(model: model)
+                    ToastOverlayView(model: model)
+                    Spacer(minLength: 0)
+                }
             }
             .frame(maxWidth: 420)
             .padding(.horizontal, 16)
@@ -531,6 +530,16 @@ struct RootView: View {
 
     @ViewBuilder
     private var primaryContent: some View {
+        // The sidebar row animates its own highlight inside withAnimation, and
+        // that transaction also reached this switch: the old pane cross-faded
+        // and ghosted through for about half a second. A section change swaps
+        // panes at once; animations inside a pane are untouched.
+        primaryContentSwitch
+            .transaction(value: model.activeSection) { $0.animation = nil }
+    }
+
+    @ViewBuilder
+    private var primaryContentSwitch: some View {
         switch model.activeSection {
         case .images:
             ImagesSectionView(model: model)

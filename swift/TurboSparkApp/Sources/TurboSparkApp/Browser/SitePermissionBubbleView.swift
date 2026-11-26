@@ -105,7 +105,7 @@ struct SitePermissionBubbleView: View {
             }
             .padding(20)
             .frame(maxWidth: 440, alignment: .leading)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AppMetrics.cardRadius))
+            .appGlassSurface(.rect(cornerRadius: AppMetrics.cardRadius))
             .shadow(radius: 24)
             .padding(24)
             .accessibilityAddTraits(.isModal)

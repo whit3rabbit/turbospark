@@ -1,6 +1,6 @@
 //! Request parsing and prompt planning for `/v1/chat/completions` and `/v1/messages`.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -260,9 +260,47 @@ fn tool_definition(tool: &ChatTool) -> FunctionDefinition {
     }
 }
 
-/// The tool names the structured decoder will accept in generated output.
+/// What the structured decoder is told about a request's tools: the names it
+/// will accept and each offered tool's `parameters` schema.
+///
+/// A wrapper that derefs to the name set, rather than a second parameter on
+/// `run_full` / `stream_blocking` and every handler above them: those take and
+/// forward the names already, so every existing `is_empty`, `contains` and
+/// `&HashSet<String>` use keeps compiling and the schemas ride along to the one
+/// place that needs them (the `TurnSplitter` in `stream_blocking`).
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ToolSet {
+    names: HashSet<String>,
+    schemas: BTreeMap<String, JsonValue>,
+}
+
+impl ToolSet {
+    /// Each offered tool's `parameters` schema, by name. A tool with no
+    /// usable schema is absent, which keeps the schema-less decoding for it.
+    pub(crate) fn schemas(&self) -> &BTreeMap<String, JsonValue> {
+        &self.schemas
+    }
+}
+
+impl std::ops::Deref for ToolSet {
+    type Target = HashSet<String>;
+
+    fn deref(&self) -> &HashSet<String> {
+        &self.names
+    }
+}
+
+/// The tool names the structured decoder will accept in generated output,
+/// with their schemas (see [`ToolSet`]).
 /// Respects `tool_choice`: "none" suppresses tools, named tool_choice restricts to that function.
-pub(crate) fn tool_names(request: &ChatCompletionRequest) -> HashSet<String> {
+pub(crate) fn tool_names(request: &ChatCompletionRequest) -> ToolSet {
+    ToolSet {
+        names: offered_names(request),
+        schemas: tool_schemas(request),
+    }
+}
+
+fn offered_names(request: &ChatCompletionRequest) -> HashSet<String> {
     match &request.tool_choice {
         Some(ChatToolChoice::Simple(s)) if s == "none" => HashSet::new(),
         Some(ChatToolChoice::Named(n)) => {
@@ -277,6 +315,27 @@ pub(crate) fn tool_names(request: &ChatCompletionRequest) -> HashSet<String> {
             .map(|t| t.function.name.clone())
             .collect(),
     }
+}
+
+/// The `parameters` schema of every tool the decoder will accept, by name.
+///
+/// Filtered by the same `tool_choice` rule as [`tool_names`], so a request
+/// pinning one function never types arguments against a schema it
+/// suppressed. A tool whose `parameters` are absent or not an object is
+/// skipped (not refused): the decoder then keeps its schema-less coercion.
+pub(crate) fn tool_schemas(request: &ChatCompletionRequest) -> BTreeMap<String, JsonValue> {
+    let offered = offered_names(request);
+    request
+        .tools
+        .iter()
+        .flatten()
+        .filter(|t| offered.contains(&t.function.name))
+        .filter_map(|t| {
+            let parameters = tool_definition(t).parameters;
+            matches!(parameters, JsonValue::Object(_))
+                .then(|| (t.function.name.clone(), parameters))
+        })
+        .collect()
 }
 
 /// The reasoning level this request asked for.

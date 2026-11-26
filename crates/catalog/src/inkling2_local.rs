@@ -173,6 +173,20 @@ pub fn inkling2_local_required_bytes(source: &Inkling2LocalSource) -> u64 {
     inkling2_install_estimate(packed, source_bytes(source))
 }
 
+/// The DFlash2 drafter pair in a `dflash2/` folder beside a source (where
+/// the Hub route puts a row's `dflash2` drafter), or None.
+fn dflash2_source(source: &Inkling2LocalSource) -> Option<(PathBuf, PathBuf)> {
+    let dir = match source {
+        Inkling2LocalSource::Gguf(f) => f.parent()?,
+        Inkling2LocalSource::Lamq(d) | Inkling2LocalSource::Hf(d) | Inkling2LocalSource::Mlx(d) => {
+            d
+        }
+    }
+    .join("dflash2");
+    let (w, c) = (dir.join("model.safetensors"), dir.join("config.json"));
+    (w.is_file() && c.is_file()).then_some((w, c))
+}
+
 /// Where a source's DSpark block drafter is, if it ships one: a `dspark/`
 /// folder holding `mtp.safetensors` and its `config.json` (what the Hub
 /// route assembles from a row's `mtp` repository), or, for the original
@@ -227,11 +241,18 @@ fn drafter_gguf_beside(source: &Inkling2LocalSource) -> Option<PathBuf> {
     found.into_iter().next()
 }
 
-/// Copies the drafter pair into `dest` (`<staging>/dspark`). A copy, not a
-/// move: a `pull-local` source is the user's own folder.
+/// Copies a drafter pair into `dest` (`<staging>/dspark` or
+/// `<staging>/dflash2`), keeping the weights' file name. A copy, not a move:
+/// a `pull-local` source is the user's own folder.
 fn copy_drafter((weights, config): &(PathBuf, PathBuf), dest: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dest).map_err(|e| format!("creating {}: {e}", dest.display()))?;
-    for (from, name) in [(weights, "mtp.safetensors"), (config, "config.json")] {
+    let weights_name = weights
+        .file_name()
+        .ok_or("drafter weights path has no name")?;
+    for (from, name) in [
+        (weights, weights_name),
+        (config, std::ffi::OsStr::new("config.json")),
+    ] {
         std::fs::copy(from, dest.join(name))
             .map_err(|e| format!("copying {} into {}: {e}", from.display(), dest.display()))?;
     }
@@ -405,6 +426,10 @@ pub fn install_inkling2_local(
             }
         }
         repack::copy_inkling2_tokenizer_files(&tokenizer_dir, &staging).map_err(|e| e.0)?;
+        if let Some(from) = dflash2_source(source) {
+            copy_drafter(&from, &staging.join("dflash2"))?;
+            progress("copied the DFlash2 drafter (model.safetensors, config.json) into dflash2/");
+        }
         if let Some(from) = drafter_source(source) {
             copy_drafter(&from, &staging.join("dspark"))?;
             progress("copied the DSpark drafter (mtp.safetensors, config.json) into dspark/");
@@ -468,6 +493,26 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn the_dflash2_pair_is_taken_from_its_own_folder_and_keeps_its_names() {
+        let d = std::env::temp_dir().join(format!("ink2-dflash2-{}", std::process::id()));
+        let sub = d.join("dflash2");
+        std::fs::create_dir_all(&sub).unwrap();
+        let source = Inkling2LocalSource::Mlx(d.clone());
+        // A top-level model.safetensors is the target's, never the drafter.
+        std::fs::write(d.join("model.safetensors"), b"t").unwrap();
+        std::fs::write(d.join("config.json"), b"t").unwrap();
+        assert_eq!(dflash2_source(&source), None);
+        std::fs::write(sub.join("model.safetensors"), b"w").unwrap();
+        std::fs::write(sub.join("config.json"), b"c").unwrap();
+        let pair = dflash2_source(&source).expect("pair");
+        let out = d.join("staging/dflash2");
+        copy_drafter(&pair, &out).unwrap();
+        assert_eq!(std::fs::read(out.join("model.safetensors")).unwrap(), b"w");
+        assert_eq!(std::fs::read(out.join("config.json")).unwrap(), b"c");
+        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]

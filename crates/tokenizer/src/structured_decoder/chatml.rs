@@ -36,10 +36,11 @@ impl<'a> StructuredAssistantDecoder<'a> {
                 return Err(ToolCallParserError::Malformed);
             };
             let text = self.tokenizer.decode(&tokens, false);
-            match QwenToolCallParser::new().parse(
+            match QwenToolCallParser::new().parse_with_schemas(
                 &text,
                 &self.allowed_tools,
                 &(self.id_generator)(),
+                &self.tool_schemas,
             ) {
                 Ok(call) => {
                     self.emitted_calls += 1;

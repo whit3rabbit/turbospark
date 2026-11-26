@@ -295,11 +295,12 @@ final class InstalledModelRowModelTests: XCTestCase {
         // Color alone would not survive color blindness: the glyph and the word
         // are both drawn, from the model, inside the one status block.
         let rowStatus = try XCTUnwrap(
-            Self.block(in: row, from: "if let status = rowModel.status", to: "Feature & Source Badges"))
+            Self.block(in: row, from: "if let status = rowModel.status", to: "} else if isLoaded"))
         XCTAssertTrue(rowStatus.contains("Image(systemName: status.glyph)"), "the glyph")
         XCTAssertTrue(rowStatus.contains("Text(verbatim: text)"), "the word")
         XCTAssertTrue(rowStatus.contains("rowModel.statusText"))
-        XCTAssertTrue(row.contains("rowModel.estimateText"))
+        // The load-time estimate moved to the detail pane with the rest of the
+        // row's extra text; the row keeps the location chip.
         XCTAssertTrue(row.contains("rowModel.locationText"))
 
         let bar = try String(

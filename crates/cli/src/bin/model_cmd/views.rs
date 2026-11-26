@@ -345,6 +345,9 @@ pub fn show(catalog: &Catalog, store: &Store, name: &str, options: &Options) -> 
         if let Some(mtp) = &entry.mtp {
             field("mtp head", format!("{} @ {}", mtp.repo, mtp.revision));
         }
+        if let Some(draft) = &entry.dflash2 {
+            field("dflash2", format!("{} @ {}", draft.repo, draft.revision));
+        }
         field(
             "sidecars",
             format!(

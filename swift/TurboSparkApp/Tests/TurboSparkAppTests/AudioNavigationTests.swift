@@ -55,6 +55,9 @@ final class AudioNavigationTests: XCTestCase {
             })
             controller.installedPaths[speech.identity.alias] = "/test/installed"
             controller.preferences.selectedModels[AudioTask.speechToText.rawValue] = "removed-pin"
+            // New profiles open on Speech-to-Text, and selecting the page you are
+            // on does nothing: leave it and come back so the choice is restored.
+            controller.selectPage(.library)
             controller.selectPage(.transcribe)
             XCTAssertEqual(controller.selectedProfile?.identity, speech.identity)
             XCTAssertTrue(controller.modelInstalled)

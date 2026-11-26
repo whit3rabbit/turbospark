@@ -13,7 +13,6 @@ mod plan;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
@@ -638,7 +637,7 @@ fn stream_response(
     prompt_ids: Vec<foundation::TokenId>,
     config: GenerationConfig,
     images: Option<crate::vision::RequestImages>,
-    tools: HashSet<String>,
+    tools: ToolSet,
     effort: ReasoningEffort,
     request: &ChatCompletionRequest,
     include_usage: bool,

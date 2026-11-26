@@ -99,21 +99,18 @@ public struct ModelsSettingsPaneView: View {
                 storagePathRow(label: Text("Image", bundle: .module), path: ModelStorageManager.defaultTurboSparkImageModelsDirectory)
                 storagePathRow(label: Text("Audio", bundle: .module), path: ModelStorageManager.defaultTurboSparkAudioModelsDirectory)
 
-                HStack(spacing: AppMetrics.actionSpacing) {
-                    Button {
-                        ModelStorageManager.revealInFinder(path: turboSparkStoreRoot)
-                    } label: {
-                        Label { Text("Reveal in Finder", bundle: .module) } icon: { Image(systemName: "arrow.up.right.square") }
+                // Two long labels side by side overflowed under German and
+                // Extra Large text, so they stack when they do not fit.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: AppMetrics.actionSpacing) {
+                        revealStoreButton
+                        Spacer()
+                        detectLibrariesButton
                     }
-                    .appAction(.secondary, size: .small)
-                    .help(Text("Opens the TurboSpark store in Finder", bundle: .module))
-                    Spacer()
-                    Button {
-                        showingProviderDiscovery = true
-                    } label: {
-                        Label { Text("Detect Model Libraries", bundle: .module) } icon: { Image(systemName: "magnifyingglass") }
+                    VStack(alignment: .leading, spacing: AppMetrics.actionSpacing) {
+                        revealStoreButton
+                        detectLibrariesButton
                     }
-                    .appAction(.secondary, size: .small)
                 }
 
                 Text("Catalog installs and future text, image, and audio installs use this shared root. Other folders are scanned in place and are never copied automatically.", bundle: .module)
@@ -122,6 +119,27 @@ public struct ModelsSettingsPaneView: View {
             }
             .modelsSettingsCard()
         }
+    }
+
+    private var revealStoreButton: some View {
+        Button {
+            ModelStorageManager.revealInFinder(path: turboSparkStoreRoot)
+        } label: {
+            Label { Text("Reveal in Finder", bundle: .module) } icon: { Image(systemName: "arrow.up.right.square") }
+        }
+        .appAction(.secondary, size: .small)
+        .fixedSize()
+        .help(Text("Opens the TurboSpark store in Finder", bundle: .module))
+    }
+
+    private var detectLibrariesButton: some View {
+        Button {
+            showingProviderDiscovery = true
+        } label: {
+            Label { Text("Detect Model Libraries", bundle: .module) } icon: { Image(systemName: "magnifyingglass") }
+        }
+        .appAction(.secondary, size: .small)
+        .fixedSize()
     }
 
     private func storagePathRow(label: Text, path: String) -> some View {
@@ -209,23 +227,16 @@ public struct ModelsSettingsPaneView: View {
                 .background(.appAccent.opacity(0.08))
                 .clipShape(RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
 
-                HStack {
-                    if isLmStudioPresent && model.enableLMStudioDetection {
-                        // A count label rather than a plural sentence: the
-                        // catalog carries no plural variants for this key.
-                        Text("Models found in LM Studio folder: \(lmStudioModelCount)", bundle: .module)
-                            .themedFont(.small)
-                            .foregroundStyle(.appSecondary)
+                ViewThatFits(in: .horizontal) {
+                    HStack {
+                        lmStudioCountLabel
+                        Spacer()
+                        rescanButton
                     }
-                    Spacer()
-                    Button {
-                        model.refreshModels()
-                        Task { await rescanLmStudioCount() }
-                        model.showToast(AppStrings.localized("Rescanned local and LM Studio models"), style: .info)
-                    } label: {
-                        Label { Text("Rescan Now", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
+                    VStack(alignment: .leading, spacing: 8) {
+                        lmStudioCountLabel
+                        rescanButton
                     }
-                    .appAction(.secondary, size: .small)
                 }
             }
             .task(id: "\(activeLmStudioPath)|\(model.enableLMStudioDetection)") {
@@ -235,14 +246,32 @@ public struct ModelsSettingsPaneView: View {
         }
     }
 
-    private var lmStudioPathRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "folder")
+    @ViewBuilder
+    private var lmStudioCountLabel: some View {
+        if isLmStudioPresent && model.enableLMStudioDetection {
+            // A count label rather than a plural sentence: the
+            // catalog carries no plural variants for this key.
+            Text("Models found in LM Studio folder: \(lmStudioModelCount)", bundle: .module)
+                .themedFont(.small)
                 .foregroundStyle(.appSecondary)
-                .accessibilityHidden(true)
-            SettingsPathText(activeLmStudioPath)
-            Spacer()
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
 
+    private var rescanButton: some View {
+        Button {
+            model.refreshModels()
+            Task { await rescanLmStudioCount() }
+            model.showToast(AppStrings.localized("Rescanned local and LM Studio models"), style: .info)
+        } label: {
+            Label { Text("Rescan Now", bundle: .module) } icon: { Image(systemName: "arrow.clockwise") }
+        }
+        .appAction(.secondary, size: .small)
+        .fixedSize()
+    }
+
+    private var lmStudioPathRow: some View {
+        let buttons = HStack(spacing: 6) {
             if isLmStudioPresent {
                 AppIconButton("arrow.up.right.square", label: Text("Reveal in Finder", bundle: .module)) {
                     ModelStorageManager.revealInFinder(path: activeLmStudioPath)
@@ -254,6 +283,7 @@ public struct ModelsSettingsPaneView: View {
                 selectLmStudioFolder()
             } label: { Text("Select Folder...", bundle: .module) }
             .appAction(.secondary, size: .small)
+            .fixedSize()
 
             if !model.lmStudioDirectory.isEmpty {
                 Button {
@@ -262,7 +292,27 @@ public struct ModelsSettingsPaneView: View {
                     model.refreshModels()
                 } label: { Text("Default", bundle: .module) }
                 .appAction(.secondary, size: .small)
+                .fixedSize()
                 .help(Text("Reset to default ~/.lmstudio/models", bundle: .module))
+            }
+        }
+        let path = HStack(spacing: 8) {
+            Image(systemName: "folder")
+                .foregroundStyle(.appSecondary)
+                .accessibilityHidden(true)
+            SettingsPathText(activeLmStudioPath)
+        }
+        // Path first, buttons under it when the row is too narrow for both
+        // (German and Extra Large text), rather than squeezing the path.
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                path
+                Spacer()
+                buttons
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                path
+                buttons
             }
         }
         .padding(8)

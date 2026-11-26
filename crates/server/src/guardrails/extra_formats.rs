@@ -80,10 +80,18 @@ fn cached_regex(cell: &'static OnceLock<Regex>, pattern: &str) -> &'static Regex
 /// Ids follow the `toolu_rescued_N` shape [`super::inspect`]'s forge path
 /// already uses, so a rescued call is indistinguishable on the wire no
 /// matter which pass recovered it.
-pub(super) fn rescue(text: &str, available_tools: &[&str]) -> Vec<ParsedToolCall> {
+///
+/// `schemas` (offered tool name -> its `parameters` schema) types Qwen XML
+/// values the way the native decoder does: by the declared type, so a string
+/// parameter holding `true` or `12` stays a string. Other dialects ignore it.
+pub(super) fn rescue_with_schemas(
+    text: &str,
+    available_tools: &[&str],
+    schemas: &BTreeMap<String, JsonValue>,
+) -> Vec<ParsedToolCall> {
     let built = parse_glm(text, available_tools)
         .or_else(|| parse_invoke_parameters(text, available_tools))
-        .or_else(|| parse_qwen_xml(text, available_tools))
+        .or_else(|| parse_qwen_xml(text, available_tools, schemas))
         .or_else(|| parse_gemma(text, available_tools))
         .or_else(|| parse_kimi(text, available_tools));
     built
@@ -190,12 +198,16 @@ fn parse_invoke_parameters(text: &str, available_tools: &[&str]) -> Option<Vec<R
         &PAIR,
         r#"<parameter\s+name="([\s\S]*?)"\s*>([\s\S]*?)</parameter>"#,
     );
-    collect_matches(text, block, pair, available_tools)
+    collect_matches(text, block, pair, available_tools, None)
 }
 
 /// Qwen ChatML parameter XML: `<function=NAME><parameter=KEY>VALUE</parameter>...</function>`,
 /// or JSON inside `<function=NAME>{...}</function>`.
-fn parse_qwen_xml(text: &str, available_tools: &[&str]) -> Option<Vec<RawCall>> {
+fn parse_qwen_xml(
+    text: &str,
+    available_tools: &[&str],
+    schemas: &BTreeMap<String, JsonValue>,
+) -> Option<Vec<RawCall>> {
     static BLOCK: OnceLock<Regex> = OnceLock::new();
     static PAIR: OnceLock<Regex> = OnceLock::new();
     let block = cached_regex(&BLOCK, r"<function=([A-Za-z0-9_\-]+)>([\s\S]*?)</function>");
@@ -203,7 +215,7 @@ fn parse_qwen_xml(text: &str, available_tools: &[&str]) -> Option<Vec<RawCall>> 
         &PAIR,
         r"<parameter=([A-Za-z0-9_\-]+)>([\s\S]*?)</parameter>",
     );
-    collect_matches(text, block, pair, available_tools)
+    collect_matches(text, block, pair, available_tools, Some(schemas))
 }
 
 /// Gemma DSL: `call:NAME{key:value,...}` or `call:NAME{"key":value,...}`.
@@ -308,6 +320,18 @@ fn balanced_brace_len(s: &str) -> Option<usize> {
     None
 }
 
+/// Drops one leading and one trailing newline, the wrapping Qwen puts around
+/// a parameter value. Nothing else is trimmed.
+fn unwrap_one_newline(raw: &str) -> &str {
+    let raw = raw
+        .strip_prefix("\r\n")
+        .or_else(|| raw.strip_prefix('\n'))
+        .unwrap_or(raw);
+    raw.strip_suffix("\r\n")
+        .or_else(|| raw.strip_suffix('\n'))
+        .unwrap_or(raw)
+}
+
 /// Shared walk for the two tag-pair shapes: every non-overlapping block
 /// contributes one call whose key/value pairs are read out of its body with
 /// `pair` (group 1 the key, group 2 the value).
@@ -316,6 +340,7 @@ fn collect_matches(
     block: &Regex,
     pair: &Regex,
     available_tools: &[&str],
+    schemas: Option<&BTreeMap<String, JsonValue>>,
 ) -> Option<Vec<RawCall>> {
     let mut calls = Vec::new();
     for caps in block.captures_iter(text) {
@@ -323,10 +348,27 @@ fn collect_matches(
         if !available_tools.contains(&g.first) {
             continue;
         }
+        // A tool with a schema is typed by it, byte for byte as the native
+        // Qwen decoder does; a tool without one keeps this module's own
+        // heuristic, so the schema-less behavior is unchanged.
+        let tool_schema = schemas.and_then(|s| s.get(g.first));
         let mut arguments = BTreeMap::new();
         for p in pair.captures_iter(g.second) {
             let kv = groups(&p);
-            arguments.insert(kv.first.to_string(), coerce_value(kv.second));
+            let value = match tool_schema {
+                // Qwen wraps each value in one newline on each side
+                // (`<parameter=k>\nvalue\n</parameter>`) and the native
+                // parser strips exactly that pair, so do the same: a schema'd
+                // string is otherwise taken verbatim, wrapping included.
+                // Other whitespace stays, as it does natively.
+                Some(_) => tokenizer::QwenToolCallParser::coerce_parameter(
+                    unwrap_one_newline(kv.second),
+                    tool_schema,
+                    kv.first,
+                ),
+                None => coerce_value(kv.second),
+            };
+            arguments.insert(kv.first.to_string(), value);
         }
         // A body that never held a key/value pair is an empty argument
         // object, not a refusal: a no-argument tool is legal, and a call

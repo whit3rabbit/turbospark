@@ -58,6 +58,18 @@ pub(crate) struct SlotState {
     pub(crate) tail_f: gpu::MetalBuffer,
 }
 
+pub(crate) struct LoopCdState {
+    pub(crate) policy: super::loopcd::Policy,
+    /// `[MAX_STATES, hidden]` f16: the reference pass's `rows` core blocks,
+    /// then its output.
+    pub(crate) reference: gpu::MetalBuffer,
+    pub(crate) rows: usize,
+    /// First of the final layers' reference slots (`adaptive` only).
+    pub(crate) slot_base: usize,
+    /// The reference head's logits (`adaptive` only; one row otherwise).
+    pub(crate) logits: gpu::MetalBuffer,
+}
+
 pub(crate) struct RealInkling2State {
     pub(crate) cfg: Inkling2Config,
     pub(crate) max_ctx: usize,
@@ -93,6 +105,8 @@ pub(crate) struct RealInkling2State {
     pub(crate) msg_queries: Vec<gpu::MetalBuffer>,
     /// Rows of `bank` in use on the current pass (previous blocks + output).
     pub(crate) bank_states: usize,
+    /// The LoopCD experiment (`loopcd.rs`), `None` unless asked for at open.
+    pub(crate) loopcd: Option<LoopCdState>,
     // Activations (FP16 unless noted).
     pub(crate) cur: gpu::MetalBuffer,
     pub(crate) attn_out: gpu::MetalBuffer,
@@ -577,18 +591,30 @@ impl RealInkling2State {
             context.new_buffer_with_data(&vec![0u8; n * 2])
         };
         let n_slots = cfg.slots(layers as u32) as usize;
+        let policy = super::loopcd::Policy::from_env(cfg.passes)?;
+        // `adaptive` runs the final layers a second time per token, so they
+        // need K/V and conv tails of their own, after the model's slots.
+        let reference_slots = if policy.is_some_and(|p| p.mode == super::loopcd::Mode::Adaptive) {
+            layers - cfg.core_end as usize
+        } else {
+            0
+        };
         let window = arch.sliding_window as usize;
         if window == 0 {
             return Err(unsupported("zero sliding window".into()));
         }
-        let slots = (0..n_slots)
+        let slots = (0..n_slots + reference_slots)
             .map(|slot| {
-                let ip = compute::inkling2::layer_phys(
-                    slot,
-                    layers,
-                    cfg.core_start as usize,
-                    cfg.core_end as usize,
-                );
+                let ip = if slot < n_slots {
+                    compute::inkling2::layer_phys(
+                        slot,
+                        layers,
+                        cfg.core_start as usize,
+                        cfg.core_end as usize,
+                    )
+                } else {
+                    cfg.core_end as usize + (slot - n_slots)
+                };
                 // A window slot keeps `window + VERIFY_SLACK` rows so the rows
                 // of a speculative verify block never overwrite a position an
                 // earlier row of the block still reads. Attention reads row
@@ -611,7 +637,23 @@ impl RealInkling2State {
             .collect();
         let tap_buffer = (std::env::var("TURBOSPARK_INKLING2_TAPS").as_deref() == Ok("1"))
             .then(|| context.new_buffer_with_data(&vec![0u8; super::DSPARK_TAP_ROWS * h * 2]));
+        let loopcd = policy.map(|policy| {
+            let logits = if reference_slots > 0 {
+                arch.vocab_size as usize
+            } else {
+                1
+            };
+            eprintln!("inkling2 LoopCD (experimental): {policy:?}");
+            LoopCdState {
+                policy,
+                reference: half(context, MAX_STATES * h),
+                rows: 0,
+                slot_base: n_slots,
+                logits: half(context, logits),
+            }
+        });
         Ok(RealInkling2State {
+            loopcd,
             taps: tap_buffer,
             batch: None,
             verify: None,
@@ -678,6 +720,11 @@ impl RealInkling2State {
     /// run the decode pair over per-row blob tables); a LookAtMyQuant
     /// install needs its coded experts.
     pub(crate) fn multi_row_refusal(&self) -> Option<String> {
+        // Also keeps prefill on the per-token path, which fills the LoopCD
+        // reference slots.
+        if self.loopcd.is_some() {
+            return Some("Inkling 2 LoopCD has no multi-row forward".to_string());
+        }
         let l = self.lamq.as_ref()?;
         l.experts.is_none().then(|| {
             "a LookAtMyQuant install without coded experts has no multi-row forward".to_string()
