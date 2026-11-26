@@ -1,6 +1,6 @@
 import copy
 import unittest
-from moe_route_replay import analyze, routed_sub_batches
+from moe_route_replay import analyze, routed_sub_batches, union_growth, verify_summary
 
 
 def capture(n=17):
@@ -74,6 +74,39 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(routed_sub_batches(routes, 5), [4])
         self.assertEqual(routed_sub_batches(routes, 4), [2, 2])
         with self.assertRaises(ValueError): routed_sub_batches(routes, 1)
+
+    def test_union_growth_counts_the_shared_step_per_layer(self):
+        def plain(row):
+            return {"num_experts": 8, "num_layers": 1, "top_k": 2, "trace": [row]}
+        a, b = plain([0, 1, 0, 1]), plain([1, 2, 3, 4])
+        out = union_growth([a, b], (1, 2))["growth"]
+        self.assertEqual([r["mean_union"] for r in out], [2.0, 3.5])
+        self.assertEqual(out[1]["source"], "captures")
+        self.assertAlmostEqual(out[1]["ceiling"], 2 * 2 / 3.5)
+        # One capture is cut into N segments: [0,1] beside [2,3] for N=2.
+        seg = union_growth([plain([0, 1, 2, 3])], (2,))["growth"][0]
+        self.assertEqual((seg["source"], seg["steps"], seg["mean_union"]),
+                         ("segments", 1, 4.0))
+        # The prompt is dropped before anything is counted.
+        self.assertEqual(union_growth([b], (1,), skip=1)["growth"][0]["steps"], 1)
+        with self.assertRaises(ValueError): union_growth([a, b], (4,))
+        with self.assertRaises(ValueError): union_growth([a], (8,))
+
+    def test_verify_rows_are_summarized_per_verify(self):
+        c = capture(2); del c["trace"]
+        first = c["batches"]["rows"][0]
+        first.update(phase="verify", routes=[[0, 1], [1, 2]], io_samples=0)
+        # The same verify on a second layer, then a second verify.
+        second = dict(copy.deepcopy(first), layer=1, routes=[[0, 1], [0, 1]])
+        third = dict(copy.deepcopy(first), batch=2, trace_start=4, trace_end=8,
+                     routes=[[0, 1], [2, 3]])
+        c["num_layers"] = 2
+        c["batches"]["rows"] = [first, second, third]
+        self.assertEqual(analyze(c)["batches"], [])
+        got = verify_summary(analyze(c, phase="verify")["batches"], 100, 3)
+        self.assertEqual(got["verifies"], 2)
+        self.assertEqual(got["mean_distinct_experts"], (3 + 2 + 4) / 2)
+        self.assertEqual(got["requested_bytes_per_committed_token"], 900 / 3)
 
     def test_union_cap_reported_per_row(self):
         row = analyze(capture(), union_cap=2)["batches"][0]

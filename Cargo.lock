@@ -2552,6 +2552,7 @@ dependencies = [
  "turbospark-repack",
  "turbospark-runtime",
  "turbospark-selection",
+ "turbospark-streaming",
  "turbospark-tokenizer",
  "turbospark-vision-io",
 ]

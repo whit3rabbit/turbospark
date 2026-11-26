@@ -136,6 +136,47 @@ pub(crate) fn set_nocache(_fd: std::os::unix::io::RawFd) -> bool {
     false
 }
 
+/// Ask the kernel to drop a file's resident pages without `sudo purge`:
+/// map it read-only, `msync(MS_INVALIDATE)`, unmap. For cold-read A/Bs
+/// (tslab LAB-14). Never call it on a file backing live `bytesNoCopy` Metal
+/// buffers: that would drop pages the GPU reads.
+///
+/// `Ok` means the calls succeeded, not that pages were reclaimed; confirm
+/// with `bytes_physical`, as with `F_NOCACHE`. The test
+/// `msync_invalidate_evicts_hot_pages` records what this OS does.
+#[cfg(target_os = "macos")]
+pub fn evict_file_pages(path: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::io::AsRawFd;
+    let file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len() as usize;
+    if len == 0 {
+        return Ok(());
+    }
+    // SAFETY: a fresh read-only shared mapping of an open descriptor, used
+    // only by `msync` and unmapped before return; no reference escapes.
+    #[allow(unsafe_code)]
+    unsafe {
+        let map = libc::mmap(
+            std::ptr::null_mut(),
+            len,
+            libc::PROT_READ,
+            libc::MAP_SHARED,
+            file.as_raw_fd(),
+            0,
+        );
+        if map == libc::MAP_FAILED {
+            return Err(std::io::Error::last_os_error());
+        }
+        let synced = libc::msync(map, len, libc::MS_INVALIDATE);
+        let error = std::io::Error::last_os_error();
+        libc::munmap(map, len);
+        if synced != 0 {
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
 /// Cumulative byte accounting for one streamer's cache-miss reads.
 ///
 /// `requested` is free and always collected; `physical` and `samples` are
@@ -275,6 +316,42 @@ mod tests {
             "read {BYTES} bytes with the cache bypassed; the counter moved \
              by {}, so the rusage flavor is probably wrong",
             after - before
+        );
+    }
+
+    /// LAB-14's question, measured: after `evict_file_pages`, does a hot
+    /// file come off the device again? The control half shows the same hot
+    /// file served from memory without the eviction.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn msync_invalidate_evicts_hot_pages() {
+        use std::os::unix::fs::FileExt;
+        use std::os::unix::io::AsRawFd;
+
+        const BYTES: usize = 8 << 20;
+        let dir = std::env::temp_dir().join(format!("turbospark-evict-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("blob.bin");
+        // Written through the cache, so every page starts resident.
+        std::fs::write(&path, vec![7u8; BYTES]).unwrap();
+        std::fs::File::open(&path).unwrap().sync_all().unwrap();
+        let read_physical = || {
+            let file = std::fs::File::open(&path).unwrap();
+            assert!(set_nocache(file.as_raw_fd()));
+            let before = process_disk_bytes_read().expect("probe available");
+            let mut buffer = vec![0u8; BYTES];
+            file.read_exact_at(&mut buffer, 0).unwrap();
+            process_disk_bytes_read().expect("probe available") - before
+        };
+        let hot = read_physical();
+        evict_file_pages(&path).unwrap();
+        let evicted = read_physical();
+        let _ = std::fs::remove_dir_all(&dir);
+        eprintln!("msync evict: {hot} physical bytes hot, {evicted} after eviction");
+        assert_eq!(hot, 0, "the control read already hit the device");
+        assert!(
+            evicted >= BYTES as u64,
+            "msync(MS_INVALIDATE) left the pages resident: {evicted} of {BYTES} bytes reread"
         );
     }
 

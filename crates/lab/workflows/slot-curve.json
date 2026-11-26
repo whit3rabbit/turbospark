@@ -1,0 +1,14 @@
+{
+  "name": "slot-curve",
+  "description": "decode tok/s against expert slot count on a streamed MoE, in interleaved pairs against 32 slots (LAB-16): judge tok/s, never hit rate or one ordered sweep",
+  "vars": {"prompt": "protocol:medium-review", "decode": "128"},
+  "steps": [
+    {"id": "capabilities", "command": "capabilities", "args": {"model": "{model}"}},
+    {"id": "curve", "command": "sweep", "when": ["text", "runs", "moe"],
+     "args": {"model": "{model}", "experiment": "{experiment}", "prompt": "{prompt}", "decode": "{decode}",
+              "metric": "decode_tok_s", "baseline": "s32@32/streamed",
+              "candidate": ["s16@16/streamed", "s64@64/streamed", "s96@96/streamed"]}},
+    {"id": "report", "command": "report",
+     "args": {"experiment": "{experiment}", "html": "{lab}/{experiment}/report.html", "force": true}}
+  ]
+}

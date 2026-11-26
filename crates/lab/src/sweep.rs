@@ -15,7 +15,7 @@ use serde_json::json;
 
 use crate::args::{parse_arm, parse_env, parse_prompt, parse_residency, parse_slots, Args};
 use crate::cli::{host_rules_from, memory_check, null_floor, timeout_from};
-use crate::experiment::{quality_gate_arms, GateArms};
+use crate::experiment::{quality_gate_arms, secondary_guard, GateArms};
 use crate::family_profile::{ProfileSet, Sweep};
 use crate::gates::GateClass;
 use crate::lock::MachineLock;
@@ -23,6 +23,7 @@ use crate::orchestrate::{run_sweep, Session, SweepRun};
 use crate::paths::lab_dir;
 use crate::report;
 use crate::schema::CmdOutput;
+use crate::spec::{SecondaryGuard, MAX_GUARD_REGRESSION};
 use crate::stats;
 use crate::workload::{Arm, Metric, OpenParams, PromptSource, Workload};
 
@@ -172,6 +173,9 @@ pub fn sweep_cmd(mut args: Args) -> Result<CmdOutput, String> {
     let fail_on_loss = args.flag("--fail-on-loss");
     let gate = args.flag("--gate");
     let enforce_memory = args.flag("--enforce-memory");
+    // `--guard METRIC[:MAX]`: no candidate is picked if it loses more than
+    // MAX on a second metric (LAB-33).
+    let guard = args.take("--guard")?.map(|g| parse_guard(&g)).transpose()?;
     args.finish()?;
     if gate && baseline.is_some() {
         return Err(
@@ -322,6 +326,24 @@ pub fn sweep_cmd(mut args: Args) -> Result<CmdOutput, String> {
             if let Some(why) = &arm.refused {
                 crate::say!("  refused: {why}");
             }
+            // Expert hit rate beside the verdict (LAB-16): a slot curve is
+            // judged on tok/s, and the rate says why, never the reverse.
+            let hit_rate = {
+                let rates: Vec<f64> = arm
+                    .pairs
+                    .iter()
+                    .filter(|(a, b)| a.eligible && b.eligible)
+                    .filter_map(|(_, b)| {
+                        report::aggregate(&b.record, "decode_phases")?["expert_hit_rate"].as_f64()
+                    })
+                    .collect();
+                (!rates.is_empty()).then(|| stats::median(&rates))
+            };
+            if let Some(h) = hit_rate {
+                crate::say!("  expert hit rate (decode): {:.1}%", h * 100.0);
+            }
+            let buckets = report::bucket_table(&arm.pairs);
+            report::print_buckets(&buckets);
             let v = arm.verdict.verdict;
             // The gates only judge a WIN: a candidate that did not win is
             // never the sweep's pick, so gating it would spend quality runs
@@ -337,11 +359,18 @@ pub fn sweep_cmd(mut args: Args) -> Result<CmdOutput, String> {
                 )),
                 _ => None,
             };
+            let guarded = guard.map(|g| secondary_guard(&arm.pairs, g));
             let rejected = rejection(
                 quality.as_ref(),
                 enforce_memory && v == stats::Verdict::Win,
                 &memory,
-            );
+            )
+            .or_else(|| {
+                guarded
+                    .as_ref()
+                    .filter(|g| v == stats::Verdict::Win && g["passed"] != json!(true))
+                    .map(|g| format!("secondary guard failed: {g}"))
+            });
             if let Some(why) = &rejected {
                 crate::say!("  rejected: {why}");
             }
@@ -349,7 +378,9 @@ pub fn sweep_cmd(mut args: Args) -> Result<CmdOutput, String> {
                 "baseline": r.baseline, "candidate": arm.candidate, "verdict": arm.verdict,
                 "null_floor": floor, "memory": memory, "pairs": run_ids,
                 "sweep_id": r.id, "family": family, "quality": quality,
-                "rejected": rejected});
+                "rejected": rejected, "secondary_guard": guarded, "buckets": buckets,
+                "expert_hit_rate": hit_rate,
+                "methodology": crate::orchestrate::methodology(&r.workload, crate::worker::Mode::Timing)});
             let id = session.ledger.append("verdict", rec)?;
             match v {
                 stats::Verdict::Win if rejected.is_some() => {}
@@ -377,6 +408,13 @@ pub fn sweep_cmd(mut args: Args) -> Result<CmdOutput, String> {
             Some((arm, m)) => crate::say!("  best: {arm} ({:+.2}% median)", m * 100.0),
             None => crate::say!("  best: none (no candidate won)"),
         }
+        // Several candidates at one alpha (LAB-05): how many WINs pure noise
+        // alone would be expected to produce, as an upper bound.
+        let judged = arms.iter().filter(|a| a.refused.is_none()).count();
+        let false_wins = judged as f64 * stats::sign_rule_false_win(min_pairs);
+        crate::say!(
+            "  {judged} candidates at {min_pairs} pairs: up to {false_wins:.2} false WINs expected from the sign rule alone (the effect floor lowers it)"
+        );
         let record = json!({
             "sweep_id": r.id, "family": family, "model": model, "install": coverage.install,
             "baseline": r.baseline, "metric": r.metric, "floor": min_effect,
@@ -384,7 +422,7 @@ pub fn sweep_cmd(mut args: Args) -> Result<CmdOutput, String> {
             "description": r.sweep.as_ref().map(|s| s.description.clone()),
             "workload": r.workload, "candidates": cands,
             "best": best.as_ref().map(|(arm, m)| json!({"arm": arm, "median": m})),
-            "stopped": stopped,
+            "stopped": stopped, "false_wins_upper_bound": false_wins,
         });
         let id = session.ledger.append("sweep", record.clone())?;
         worst = worst.max(code);
@@ -394,6 +432,26 @@ pub fn sweep_cmd(mut args: Args) -> Result<CmdOutput, String> {
         worst,
         json!({"experiment": experiment, "sweeps": results}),
     ))
+}
+
+/// `METRIC` or `METRIC:MAX_REGRESSION`, the same bounds a spec's
+/// `secondary_guard` takes.
+fn parse_guard(s: &str) -> Result<SecondaryGuard, String> {
+    let (metric, max) = s.split_once(':').unwrap_or((s, ""));
+    let max_regression = if max.is_empty() {
+        MAX_GUARD_REGRESSION
+    } else {
+        max.parse()
+            .ok()
+            .filter(|v| (0.0..=MAX_GUARD_REGRESSION).contains(v))
+            .ok_or_else(|| {
+                format!("--guard {s:?}: regression within [0, {MAX_GUARD_REGRESSION}]")
+            })?
+    };
+    Ok(SecondaryGuard {
+        metric: parse_metric(metric)?,
+        max_regression,
+    })
 }
 
 /// `--gate` for one winning candidate: the same corpus and bounds `tslab
@@ -464,6 +522,18 @@ mod tests {
 
     fn mem(passed: bool) -> serde_json::Value {
         json!({"passed": passed, "growth": 200, "allowance": 100})
+    }
+
+    #[test]
+    fn a_guard_flag_parses_and_cannot_be_loosened() {
+        let g = parse_guard("prefill_tok_s").unwrap();
+        assert_eq!(g.max_regression, MAX_GUARD_REGRESSION);
+        assert_eq!(
+            parse_guard("prefill_tok_s:0.01").unwrap().max_regression,
+            0.01
+        );
+        assert!(parse_guard("prefill_tok_s:0.1").is_err());
+        assert!(parse_guard("nope").is_err());
     }
 
     #[test]

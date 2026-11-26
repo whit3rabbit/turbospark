@@ -71,6 +71,8 @@ impl RoutedSlot {
 /// top_k=8 model (real Gemma 4) hits this deterministically; 16 does not,
 /// because `16 >= 2 * 8` takes the pipelined branch instead.
 pub(crate) fn routed_pipeline_banks(expert_cache_slots: usize, top_k: usize) -> usize {
+    // Every caller sits under `routed_pipeline`, so reaching here is the lane.
+    foundation::engaged!("routed_pipeline");
     if expert_cache_slots >= 2 * top_k {
         ROUTED_BANKS
     } else {

@@ -17,6 +17,14 @@
 //! file and are recomputable from the trace, which is the capture's own
 //! cross-check.
 //!
+//! The same switch adds two fields beside `trace`, whose shape is unchanged
+//! so older readers keep working. `gate_weights` is parallel to `trace`
+//! (one routed mixing weight per recorded id, router rank order), which is
+//! what pricing a lossy keep-N needs. `token_index` has one entry per
+//! GROUP: the token position of that pass when it ran inside a batch scope
+//! (`begin_batch`), and -1 when the path that routed it opens none. Group
+//! number is not a position: a rejected speculative row re-runs positions.
+//!
 //! `TURBOSPARK_ROUTER_LOGITS_LAYER` plus `TURBOSPARK_ROUTER_LOGITS_PASS`
 //! capture one full f32 router-logit row into that JSON. Pass is the 0-based
 //! routed-forward count for that layer, so it lines up with token position in
@@ -40,10 +48,18 @@ pub(crate) struct RouterHistogram {
     /// one group of `top_k` per forward pass, in pass order. `Some` only
     /// under `TURBOSPARK_ROUTER_TRACE`.
     ///
-    /// ponytail: unbounded, ~1.3 KB per pass at Qwen's 40 layers x top-8,
-    /// so a 4,000-pass session costs ~5 MB. Cap it if a capture ever runs
-    /// long enough to matter.
+    /// ponytail: unbounded, ~3 KB per pass at Qwen's 40 layers x top-8
+    /// (ids, weights and token index), so a 4,000-pass session costs ~12 MB.
+    /// Cap it if a capture ever runs long enough to matter.
     trace: Option<Vec<Vec<u32>>>,
+    /// Gate weights, parallel to `trace`; written only with it.
+    gate_weights: Vec<Vec<f32>>,
+    /// One token position per `trace` group, -1 when unknown.
+    token_index: Vec<Vec<i64>>,
+    /// `(first position, rows)` of the open batch, and how many rows each
+    /// layer has routed in it.
+    token_scope: Option<(usize, usize)>,
+    scope_rows: Vec<usize>,
     /// `pred[layer]` is the ONE-LAYER-AHEAD prediction of that layer's
     /// top-k: what layer `layer`'s own router says when it is run early, on
     /// the previous layer's post-attention residual instead of its own
@@ -121,6 +137,10 @@ impl RouterHistogram {
             counts: vec![vec![0; num_experts]; num_layers],
             passes: vec![0; num_layers],
             trace,
+            gate_weights: vec![Vec::new(); num_layers],
+            token_index: vec![Vec::new(); num_layers],
+            token_scope: None,
+            scope_rows: vec![0; num_layers],
             pred,
             pilot_self_test,
             router_logits,
@@ -129,12 +149,15 @@ impl RouterHistogram {
     }
 
     pub(crate) fn begin_batch(&mut self, phase: &'static str, start: usize, count: usize) {
+        self.token_scope = Some((start, count));
+        self.scope_rows.iter_mut().for_each(|rows| *rows = 0);
         if let Some(capture) = &mut self.batches {
             capture.begin(phase, start, count);
         }
     }
 
     pub(crate) fn end_batch(&mut self, completed: bool) {
+        self.token_scope = None;
         if let Some(capture) = &mut self.batches {
             capture.end(completed);
         }
@@ -222,7 +245,9 @@ impl RouterHistogram {
         }
     }
 
-    pub(crate) fn record(&mut self, layer: usize, selected: &[usize]) {
+    /// `weights` are the routed mixing weights of `selected`, same order.
+    pub(crate) fn record(&mut self, layer: usize, selected: &[usize], weights: &[f32]) {
+        debug_assert_eq!(selected.len(), weights.len());
         if let Some(capture) = &mut self.batches {
             capture.record(
                 layer,
@@ -238,6 +263,16 @@ impl RouterHistogram {
         }
         if let Some(trace) = self.trace.as_mut() {
             trace[layer].extend(selected.iter().map(|&e| e as u32));
+            self.gate_weights[layer].extend_from_slice(weights);
+            let token = match self.token_scope {
+                // A row past the batch's width is not a position of it.
+                Some((start, count)) if self.scope_rows[layer] < count => {
+                    (start + self.scope_rows[layer]) as i64
+                }
+                _ => -1,
+            };
+            self.token_index[layer].push(token);
+            self.scope_rows[layer] += 1;
         }
         self.passes[layer] += 1;
     }
@@ -257,6 +292,23 @@ impl RouterHistogram {
         if let Some(trace) = self.trace.as_ref() {
             out.push_str(",\"trace\":[");
             push_rows(&mut out, trace.iter().map(|row| row.iter()));
+            out.push_str("],\"gate_weights\":[");
+            // JSON has no NaN or infinity; `null` makes a reader refuse the
+            // row instead of failing to parse the whole capture.
+            push_rows(
+                &mut out,
+                self.gate_weights.iter().map(|row| {
+                    row.iter().map(|w| {
+                        if w.is_finite() {
+                            w.to_string()
+                        } else {
+                            "null".to_string()
+                        }
+                    })
+                }),
+            );
+            out.push_str("],\"token_index\":[");
+            push_rows(&mut out, self.token_index.iter().map(|row| row.iter()));
             out.push(']');
         }
         if let Some(pred) = self.pred.as_ref() {
@@ -293,11 +345,11 @@ impl RouterHistogram {
 }
 
 /// `[[a,b],[c]]` without the trailing bracket, which the caller closes.
-fn push_rows<'a, R, I, T>(out: &mut String, rows: R)
+fn push_rows<R, I>(out: &mut String, rows: R)
 where
     R: Iterator<Item = I>,
-    I: Iterator<Item = &'a T>,
-    T: std::fmt::Display + 'a,
+    I: Iterator,
+    I::Item: std::fmt::Display,
 {
     for (i, row) in rows.enumerate() {
         if i > 0 {
@@ -338,6 +390,10 @@ mod tests {
             counts: vec![vec![0; 3]; 2],
             passes: vec![0; 2],
             trace: trace.then(|| vec![Vec::new(); 2]),
+            gate_weights: vec![Vec::new(); 2],
+            token_index: vec![Vec::new(); 2],
+            token_scope: None,
+            scope_rows: vec![0; 2],
             pred: pilot.then(|| vec![Vec::new(); 2]),
             pilot_self_test: false,
             router_logits: None,
@@ -348,9 +404,9 @@ mod tests {
     #[test]
     fn records_and_serializes_layer_expert_counts() {
         let mut hist = fixture(false);
-        hist.record(0, &[2, 0]);
-        hist.record(0, &[2, 1]);
-        hist.record(1, &[1, 1]);
+        hist.record(0, &[2, 0], &[0.5, 0.5]);
+        hist.record(0, &[2, 1], &[0.5, 0.5]);
+        hist.record(1, &[1, 1], &[0.5, 0.5]);
         assert_eq!(
             hist.to_json(),
             "{\"num_layers\":2,\"num_experts\":3,\"top_k\":2,\"counts\":[[1,1,2],[0,2,0]]}"
@@ -363,17 +419,64 @@ mod tests {
     #[test]
     fn trace_keeps_pass_order_that_the_counts_discard() {
         let mut hist = fixture(true);
-        hist.record(0, &[2, 0]);
-        hist.record(0, &[2, 1]);
-        hist.record(1, &[1, 1]);
+        hist.record(0, &[2, 0], &[0.5, 0.5]);
+        hist.record(0, &[2, 1], &[0.5, 0.5]);
+        hist.record(1, &[1, 1], &[0.5, 0.5]);
         // Same counts as above, plus the ordering: layer 0's two passes are
         // (2,0) then (2,1), which is 3 distinct experts over a window of 2
         // against the 4 a union-free cost model would charge.
         assert_eq!(
             hist.to_json(),
             "{\"num_layers\":2,\"num_experts\":3,\"top_k\":2,\
-             \"counts\":[[1,1,2],[0,2,0]],\"trace\":[[2,0,2,1],[1,1]]}"
+             \"counts\":[[1,1,2],[0,2,0]],\"trace\":[[2,0,2,1],[1,1]],\
+             \"gate_weights\":[[0.5,0.5,0.5,0.5],[0.5,0.5]],\
+             \"token_index\":[[-1,-1],[-1]]}"
         );
+        std::mem::forget(hist);
+    }
+
+    #[test]
+    fn gate_weights_and_token_positions_follow_the_trace_groups() {
+        let mut hist = fixture(true);
+        // A two-token prefill batch starting at position 7: each layer routes
+        // both rows, so positions are 7 then 8 on BOTH layers.
+        hist.begin_batch("prefill", 7, 2);
+        hist.record(0, &[2, 0], &[0.75, 0.25]);
+        hist.record(0, &[2, 1], &[0.625, f32::NAN]);
+        hist.record(1, &[1, 0], &[0.5, 0.125]);
+        hist.record(1, &[1, 2], &[0.5, 0.5]);
+        // A row past the batch width has no position.
+        hist.record(1, &[0, 2], &[1.0, 0.0]);
+        hist.end_batch(true);
+        // Outside any scope neither does this one.
+        hist.record(0, &[0, 1], &[0.5, 0.5]);
+        let json = hist.to_json();
+        assert!(
+            json.contains(
+                "\"gate_weights\":[[0.75,0.25,0.625,null,0.5,0.5],\
+                 [0.5,0.125,0.5,0.5,1,0]],\"token_index\":[[7,8,-1],[7,8,-1]]"
+            ),
+            "{json}"
+        );
+        // The legacy field keeps its shape: ids only.
+        assert!(
+            json.contains("\"trace\":[[2,0,2,1,0,1],[1,0,1,2,0,2]]"),
+            "{json}"
+        );
+        std::mem::forget(hist);
+    }
+
+    #[test]
+    fn a_new_batch_restarts_the_row_count() {
+        let mut hist = fixture(true);
+        hist.begin_batch("decode", 3, 1);
+        hist.record(0, &[2, 0], &[0.5, 0.5]);
+        hist.end_batch(true);
+        hist.begin_batch("verify", 4, 2);
+        hist.record(0, &[2, 1], &[0.5, 0.5]);
+        hist.record(0, &[0, 1], &[0.5, 0.5]);
+        hist.end_batch(true);
+        assert_eq!(hist.token_index[0], vec![3, 4, 5]);
         std::mem::forget(hist);
     }
 
@@ -382,9 +485,9 @@ mod tests {
         let mut hist = fixture_with(true, true);
         // One pass: layer 0 runs, and while it runs it predicts layer 1.
         // Layer 1 then routes to something the prediction got half right.
-        hist.record(0, &[2, 0]);
+        hist.record(0, &[2, 0], &[0.5, 0.5]);
         hist.record_prediction(1, &[1, 2]);
-        hist.record(1, &[1, 0]);
+        hist.record(1, &[1, 0], &[0.5, 0.5]);
         // `pred` row 0 stays EMPTY -- nothing precedes layer 0, so no
         // prediction is ever made about it, and the analysis must not read
         // row 0 as "predicted nothing correctly".
@@ -392,6 +495,8 @@ mod tests {
             hist.to_json(),
             "{\"num_layers\":2,\"num_experts\":3,\"top_k\":2,\
              \"counts\":[[1,0,1],[1,1,0]],\"trace\":[[2,0],[1,0]],\
+             \"gate_weights\":[[0.5,0.5],[0.5,0.5]],\
+             \"token_index\":[[-1],[-1]],\
              \"pred\":[[],[1,2]]}"
         );
         std::mem::forget(hist);
@@ -402,6 +507,9 @@ mod tests {
         hist.counts = vec![vec![0; 8]; layers];
         hist.passes = vec![0; layers];
         hist.trace = Some(vec![Vec::new(); layers]);
+        hist.gate_weights = vec![Vec::new(); layers];
+        hist.token_index = vec![Vec::new(); layers];
+        hist.scope_rows = vec![0; layers];
         hist.pred = Some(vec![Vec::new(); layers]);
         hist.pilot_self_test = self_test;
         hist.top_k = 2;
@@ -427,7 +535,7 @@ mod tests {
     fn a_guess_is_filed_under_the_layer_it_is_about() {
         let mut real = probe_fixture(3, false);
         real.record_pilot(0, &[5, 6]);
-        real.record(1, &[5, 7]);
+        real.record(1, &[5, 7], &[0.5, 0.5]);
         let pred = real.pred.as_ref().unwrap();
         assert_eq!(pred[0], Vec::<u32>::new());
         assert_eq!(pred[1], vec![5, 6]);
@@ -444,13 +552,13 @@ mod tests {
     fn passes_with_no_probe_keep_later_guesses_on_their_own_pass() {
         // Two prefill passes route layer 1 with no probe, then decode guesses.
         let mut hist = probe_fixture(2, false);
-        hist.record(0, &[1, 2]);
-        hist.record(1, &[1, 2]);
-        hist.record(0, &[3, 4]);
-        hist.record(1, &[3, 4]);
-        hist.record(0, &[5, 6]);
+        hist.record(0, &[1, 2], &[0.5, 0.5]);
+        hist.record(1, &[1, 2], &[0.5, 0.5]);
+        hist.record(0, &[3, 4], &[0.5, 0.5]);
+        hist.record(1, &[3, 4], &[0.5, 0.5]);
+        hist.record(0, &[5, 6], &[0.5, 0.5]);
         hist.record_pilot(0, &[5, 7]);
-        hist.record(1, &[5, 6]);
+        hist.record(1, &[5, 6], &[0.5, 0.5]);
         // Pass 2's guess must sit at pass 2, behind two PILOT_NONE groups.
         assert_eq!(
             hist.pred.as_ref().unwrap()[1],
@@ -469,7 +577,7 @@ mod tests {
         let mut hist = fixture_with(true, false);
         assert!(!hist.pilot_enabled());
         hist.record_prediction(1, &[1, 2]);
-        hist.record(0, &[2, 0]);
+        hist.record(0, &[2, 0], &[0.5, 0.5]);
         assert!(!hist.to_json().contains("pred"));
         std::mem::forget(hist);
     }
@@ -495,9 +603,9 @@ mod tests {
         });
 
         hist.record_router_logits(0, &[9.0, 8.0, 7.0]);
-        hist.record(0, &[0, 1]);
+        hist.record(0, &[0, 1], &[0.5, 0.5]);
         hist.record_router_logits(1, &[6.0, 5.0, 4.0]);
-        hist.record(1, &[0, 1]);
+        hist.record(1, &[0, 1], &[0.5, 0.5]);
         hist.record_router_logits(1, &[3.5, 2.5, 1.5]);
 
         assert!(hist

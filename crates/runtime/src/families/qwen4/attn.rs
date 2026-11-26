@@ -494,6 +494,9 @@ pub(crate) fn encode_full_attention_block(
 
     // --- Block selection, above budget only.
     let sparse = complete_blocks > qwen4.idx_block_topk && !qwen4.qsa_force_dense;
+    if qwen4.qsa_force_dense && complete_blocks > qwen4.idx_block_topk {
+        foundation::engaged!("qsa_force_dense");
+    }
     if sparse {
         // The indexer query: per-head scaled norm, then the trunk's own
         // RoPE at the current position (one shared object in the reference,

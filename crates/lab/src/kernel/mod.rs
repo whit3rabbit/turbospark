@@ -18,13 +18,16 @@ pub mod ane_handoff;
 pub mod ane_matmul;
 pub mod attn_decode;
 pub mod gdn_delta;
+pub mod gdn_trajectory;
 pub mod int4_matmul;
 pub mod int8_matmul;
 pub mod moe_routed;
 pub mod music3_grid;
 pub mod qkv_concurrent;
+pub mod routes;
 pub mod rows_attn;
 pub mod support;
+pub mod tile_pin;
 pub mod verify_ladder;
 pub mod vision_encode;
 pub mod whisper_linear;
@@ -229,6 +232,11 @@ pub trait KernelBench: Sync {
     fn name(&self) -> &'static str;
     /// One line for `tslab kernel --list`.
     fn describe(&self) -> &'static str;
+    /// The bench's own command-line values (`--<name> VALUE`). A given one
+    /// reaches the bench as the string `case.params[name]`.
+    fn flags(&self) -> &'static [&'static str] {
+        &[]
+    }
     /// The cases this bench runs on `subject`, or why it cannot run there.
     /// An `Err` is a coverage answer ("no MLA kernel"), not a failure.
     fn cases(&self, subject: &Subject, opts: &BenchOpts) -> Result<Vec<Case>, String>;
@@ -248,6 +256,7 @@ pub fn registry() -> Vec<&'static dyn KernelBench> {
         &int8_matmul::Int8Matmul,
         &attn_decode::AttnDecode,
         &gdn_delta::GdnDelta,
+        &gdn_trajectory::GdnTrajectory,
         &rows_attn::RowsAttn,
         &moe_routed::MoeRouted,
         &qkv_concurrent::QkvConcurrent,
@@ -270,6 +279,7 @@ pub fn arm_labels(bench: &str) -> Option<Vec<String>> {
         "int8_matmul" => Some(int8_matmul::ARMS.iter().map(|a| a.to_string()).collect()),
         "attn_decode" => Some(attn_decode::ARMS.iter().map(|a| a.to_string()).collect()),
         "gdn_delta" => Some(gdn_delta::ARMS.iter().map(|a| a.to_string()).collect()),
+        "moe_routed" => Some(moe_routed::ARMS.iter().map(|a| a.to_string()).collect()),
         "qkv_concurrent" => Some(qkv_concurrent::ARMS.iter().map(|a| a.to_string()).collect()),
         _ => None,
     }
@@ -324,6 +334,13 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
     let ane_dir = args.take("--ane-dir")?.map(PathBuf::from);
     let contend: usize = args.parsed("--contend", 0)?;
     let vision_sidecar = args.take("--vision-sidecar")?.map(PathBuf::from);
+    // Bench-owned values, each taken only by the benches that declare it.
+    let mut extra: Vec<(&'static str, String)> = Vec::new();
+    for name in registry().iter().flat_map(|b| b.flags()) {
+        if let Some(v) = args.take(&format!("--{name}"))? {
+            extra.push((name, v));
+        }
+    }
     // `--shape RxC` predates `--case`; both select one case label.
     let only_case = match (args.take("--case")?, args.take("--shape")?) {
         (Some(c), _) | (None, Some(c)) => Some(c),
@@ -347,6 +364,11 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
             })
             .collect::<Result<_, _>>()?
     };
+    for (name, _) in &extra {
+        if !benches.iter().any(|b| b.flags().contains(name)) {
+            return Err(format!("--{name}: no selected bench takes it"));
+        }
+    }
     let opts = BenchOpts {
         rows,
         contexts,
@@ -417,9 +439,14 @@ pub fn kernel_cmd(mut args: Args) -> Result<(), String> {
                 continue;
             }
         };
-        for case in cases {
+        for mut case in cases {
             if only_case.as_deref().is_some_and(|c| c != case.label) {
                 continue;
+            }
+            for (name, value) in &extra {
+                if b.flags().contains(name) {
+                    case.params[*name] = json!(value);
+                }
             }
             let before = monitor.sample(None);
             let e0 = meter.as_ref().and_then(|m| m.read().ok());

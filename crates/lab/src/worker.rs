@@ -40,6 +40,10 @@ pub enum Mode {
     /// Prefill each prompt and store its final-position logits for the
     /// quality gate. Timing is recorded but not quotable.
     Quality,
+    /// Prefill each plain prompt, then decode a FIXED token sequence and
+    /// write every step's logits (LAB-01). Without `forced_ids` the run's own
+    /// greedy ids become the sequence. Never a timing run.
+    ForcedDecode,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,9 +53,15 @@ pub struct WorkerRequest {
     pub arm: Arm,
     pub workload: Workload,
     pub mode: Mode,
-    /// Where the quality mode writes its f16 logits (one row per prompt).
+    /// Where the quality mode writes its f16 logits (one row per prompt), and
+    /// where the forced mode writes its trace (`logit_trace`, one row per
+    /// decode step per prompt).
     #[serde(default)]
     pub logits_path: Option<PathBuf>,
+    /// Forced mode: the token ids to decode, per prompt, from the reference
+    /// arm's record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forced_ids: Option<Vec<Vec<i32>>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +82,16 @@ pub struct PromptRecord {
     pub prefill_phases: PhaseReport,
     pub decode_phases: Option<PhaseReport>,
     pub cache_class: CacheClass,
+    /// The generated (or forced) ids and their decoded text, for plain
+    /// prompts. Token ids always come from this install's tokenizer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_ids: Option<Vec<i32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_text: Option<String>,
+    /// Dispatches and command buffers per window, under
+    /// `TURBOSPARK_LAUNCH_COUNT=1` (LAB-26). Such a run is not a timing run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launches: Option<serde_json::Value>,
     /// Per turn, for a chat prompt. The fields above then total the chat
     /// (`prompt_tokens` counting only the tokens prefilled, not the reused
     /// ones), and `decode_digest` covers every turn's tokens in order.
@@ -342,6 +362,10 @@ fn parse_messages(rows: &[serde_json::Value], path: &Path) -> Result<Vec<Message
 pub struct ChatFile {
     pub opening: Vec<Message>,
     pub follow_ups: Vec<String>,
+    /// Variants of one last user message (`"edit_variants"`, LAB-20): after
+    /// the follow-ups the client edits that message back and forth, A B C C
+    /// B A, each time from the same history.
+    pub edit_variants: Vec<String>,
     /// Whether the model reasons before it replies, so a reply carries a
     /// `</think>` and the client sends back only what follows it. `false` for a
     /// template with no thinking channel, where the whole reply is the content.
@@ -388,12 +412,45 @@ impl ChatFile {
                 format!("{}: \"reasoning\" must be true or false", path.display())
             })?,
         };
+        let edit_variants = match v.get("edit_variants") {
+            None => Vec::new(),
+            Some(e) => serde_json::from_value::<Vec<String>>(e.clone())
+                .ok()
+                .filter(|e| e.len() >= 2)
+                .ok_or_else(|| {
+                    format!(
+                        "{}: \"edit_variants\" must be two or more strings",
+                        path.display()
+                    )
+                })?,
+        };
         Ok(Self {
             opening,
             follow_ups,
+            edit_variants,
             reasoning,
         })
     }
+}
+
+/// What the user says on turn `turn` of a chat: `None` for the opening,
+/// then each follow-up, then the edit order over the variants (forward then
+/// back, so every variant is also returned to).
+pub fn chat_turn<'a>(
+    follow_ups: &'a [String],
+    variants: &'a [String],
+    turn: usize,
+) -> Option<(&'a str, bool)> {
+    if turn == 0 {
+        return None;
+    }
+    if turn <= follow_ups.len() {
+        return Some((&follow_ups[turn - 1], false));
+    }
+    let i = turn - follow_ups.len() - 1;
+    let n = variants.len();
+    let v = if i < n { i } else { 2 * n - 1 - i };
+    Some((&variants[v], true))
 }
 
 /// A reply as a client sends it back. With `reasoning` (a thinking template)
@@ -535,9 +592,15 @@ fn chat_once(
     let mut turns = Vec::new();
     let mut all = Vec::new();
     let outcome = (|| {
-        for turn in 0..=chat.follow_ups.len() {
-            if turn > 0 {
-                history.push(Message::new(Role::User, chat.follow_ups[turn - 1].clone()));
+        // The history every edit variant is asked from.
+        let mut before_edits: Option<Vec<Message>> = None;
+        let total = chat.follow_ups.len() + 2 * chat.edit_variants.len();
+        for turn in 0..=total {
+            if let Some((message, edit)) = chat_turn(&chat.follow_ups, &chat.edit_variants, turn) {
+                if edit {
+                    history = before_edits.get_or_insert_with(|| history.clone()).clone();
+                }
+                history.push(Message::new(Role::User, message.to_string()));
             }
             let rendered = tokenizer
                 .apply_chat_template(&history)
@@ -742,6 +805,39 @@ fn open(
     Ok((runner, tokenizer, family))
 }
 
+/// A forced decode drives plain prompts only, and given ids must cover
+/// every prompt for the whole decode.
+fn check_forced(req: &WorkerRequest) -> Result<(), String> {
+    if req.arm.effective_speculation(&req.workload).is_some()
+        || req.workload.prompts.iter().any(PromptSource::is_chat)
+    {
+        return Err("a forced decode takes plain prompts: no speculation or chat".into());
+    }
+    if req.workload.decode_tokens == 0 {
+        return Err("a forced decode needs decode_tokens".into());
+    }
+    if let Some(forced) = &req.forced_ids {
+        if forced.len() != req.workload.prompts.len()
+            || forced.iter().any(|f| f.len() != req.workload.decode_tokens)
+        {
+            return Err(format!(
+                "forced ids must give {} tokens for each of {} prompts",
+                req.workload.decode_tokens,
+                req.workload.prompts.len()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn launches_json(c: &runtime::launch_count::LaunchCounts) -> serde_json::Value {
+    serde_json::json!({
+        "dispatches": c.dispatches,
+        "command_buffers": c.command_buffers,
+        "routes": c.routes,
+    })
+}
+
 /// The environment the orchestrator built must be the arm's, exactly. A
 /// stray inherited variable would silently make this a different arm.
 /// Location variables pass through for alias resolution, and the
@@ -882,7 +978,16 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
 
     let mut prompts = Vec::new();
     let mut logits_out: Vec<u8> = Vec::new();
-    for (ids, source) in all_ids.iter().zip(&req.workload.prompts) {
+    let mut trace = match (req.mode, &req.logits_path) {
+        (Mode::ForcedDecode, Some(path)) => {
+            check_forced(req)?;
+            Some(crate::logit_trace::TraceWriter::create(path, vocab)?)
+        }
+        (Mode::ForcedDecode, None) => return Err("a forced decode needs a trace path".into()),
+        _ => None,
+    };
+    for (index, (ids, source)) in all_ids.iter().zip(&req.workload.prompts).enumerate() {
+        let forced = req.forced_ids.as_ref().map(|f| f[index].as_slice());
         if let PromptSource::Chat(path) = source {
             let chat = ChatFile::load(path, &tokenizer)?;
             let e0 = energy.mark();
@@ -922,6 +1027,9 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
                 prefill_phases: all,
                 decode_phases: None,
                 turns: Some(turns),
+                decode_ids: None,
+                decode_text: None,
+                launches: None,
             });
             continue;
         }
@@ -958,6 +1066,9 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
                 prefill_phases: all,
                 decode_phases: None,
                 turns: None,
+                decode_ids: Some(generated.clone()),
+                decode_text: Some(tokenizer.decode(&generated, false)),
+                launches: None,
             });
             continue;
         }
@@ -965,6 +1076,10 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         saw_plain_prompts = true;
         let e0 = energy.mark();
         let p0 = runner.phase_counters();
+        let counting = runtime::launch_count::enabled();
+        if counting {
+            runtime::launch_count::take();
+        }
         let t0 = Instant::now();
         prefill(
             &mut runner,
@@ -974,6 +1089,7 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
             &mut sampler,
         )?;
         let prefill_s = t0.elapsed().as_secs_f64();
+        let prefill_launches = counting.then(runtime::launch_count::take);
         let prefill_end_footprint_bytes = sampler.sample();
         let p1 = runner.phase_counters();
         let e1 = energy.mark();
@@ -988,7 +1104,16 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         let mut first_token_s = None;
         let t1 = Instant::now();
         for step in 0..req.workload.decode_tokens {
-            let t = argmax(&logits)?;
+            // Row `step` predicts decode token `step`: in the forced mode the
+            // token is given, and the row is what the arm would have chosen
+            // from.
+            if let Some(trace) = &mut trace {
+                trace.row(&f16_bits(&logits))?;
+            }
+            let t = match forced {
+                Some(f) => f[step],
+                None => argmax(&logits)?,
+            };
             if step == 0 {
                 first_token_s = Some(t0.elapsed().as_secs_f64());
             }
@@ -1007,6 +1132,16 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         energy.plain_prompt_tokens += ids.len();
         energy.plain_decode_tokens += generated.len();
         sampler.sample();
+        let launches = prefill_launches.map(|prefill| {
+            let decode = runtime::launch_count::take();
+            let steps = generated.len().max(1) as f64;
+            serde_json::json!({
+                "prefill": launches_json(&prefill),
+                "decode": launches_json(&decode),
+                "decode_dispatches_per_token": decode.dispatches as f64 / steps,
+                "decode_command_buffers_per_token": decode.command_buffers as f64 / steps,
+            })
+        });
 
         let prefill_phases = phases::report(&phases::delta(&p0, &p1));
         let decode_phases =
@@ -1027,7 +1162,13 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
             decode_phases,
             cache_class,
             turns: None,
+            decode_text: Some(tokenizer.decode(&generated, false)),
+            decode_ids: Some(generated),
+            launches,
         });
+    }
+    if let Some(trace) = trace.take() {
+        trace.finish()?;
     }
 
     if let Some(path) = &req.logits_path {
@@ -1131,6 +1272,41 @@ fn hog(threads: &str) -> i32 {
     0
 }
 
+/// Allocate `bytes` and write one non-compressible word per page, so the
+/// pages are really resident rather than reserved or compressed away.
+fn touched_ballast(bytes: usize) -> Vec<u64> {
+    let mut words = vec![0u64; bytes / 8];
+    let mut x = 0x9e37_79b9_7f4a_7c15u64;
+    for w in words.iter_mut() {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        *w = x;
+    }
+    words
+}
+
+/// `tslab-worker --ballast GIB`: hold GIB of touched memory until stdin
+/// closes (`~ballast:GIB` arms, LAB-21). Prints `ready` once it is held.
+fn ballast(gib: &str) -> i32 {
+    let n: u32 = match gib.parse() {
+        Ok(n) if (1..=crate::workload::MAX_BALLAST_GIB).contains(&n) => n,
+        _ => {
+            eprintln!(
+                "usage: tslab-worker --ballast <1..={}>",
+                crate::workload::MAX_BALLAST_GIB
+            );
+            return 2;
+        }
+    };
+    let held = touched_ballast(n as usize * (1usize << 30));
+    println!("ready");
+    let mut sink = Vec::new();
+    let _ = std::io::Read::read_to_end(&mut std::io::stdin(), &mut sink);
+    std::hint::black_box(&held);
+    0
+}
+
 /// The `tslab-worker` binary body: `--request <json> --out <json>`.
 pub fn main_entry() -> i32 {
     let args: Vec<String> = std::env::args().collect();
@@ -1145,9 +1321,12 @@ pub fn main_entry() -> i32 {
     if let Some(threads) = get("--hog") {
         return hog(&threads);
     }
+    if let Some(gib) = get("--ballast") {
+        return ballast(&gib);
+    }
     let (Some(request), Some(out)) = (get("--request"), get("--out")) else {
         eprintln!(
-            "usage: tslab-worker --request <request.json> --out <record.json> | --hog <threads>"
+            "usage: tslab-worker --request <request.json> --out <record.json> | --hog <threads> | --ballast <gib>"
         );
         return 2;
     };
@@ -1197,6 +1376,8 @@ mod tests {
             speculation: None,
             expect_engaged: Vec::new(),
             contention: None,
+            ballast_gib: None,
+            cold: false,
         }
     }
 
@@ -1204,6 +1385,28 @@ mod tests {
         env.iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    #[test]
+    fn edit_variants_run_forward_then_back_after_the_follow_ups() {
+        let f = vec!["f1".to_string()];
+        let v: Vec<String> = ["a", "b", "c"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(chat_turn(&f, &v, 0), None);
+        assert_eq!(chat_turn(&f, &v, 1), Some(("f1", false)));
+        let edits: Vec<&str> = (2..=7).map(|t| chat_turn(&f, &v, t).unwrap().0).collect();
+        assert_eq!(edits, ["a", "b", "c", "c", "b", "a"]);
+        assert!(chat_turn(&f, &v, 2).unwrap().1);
+    }
+
+    #[test]
+    fn ballast_pages_are_written_and_not_compressible_zeros() {
+        let b = touched_ballast(1 << 20);
+        assert_eq!(b.len(), 1 << 17);
+        // Every 16 KiB page holds distinct nonzero words.
+        for page in b.chunks(2048) {
+            assert!(page.iter().all(|&w| w != 0));
+            assert!(page.windows(2).all(|w| w[0] != w[1]));
+        }
     }
 
     /// The bug this exists for: the orchestrator's own engagement variable

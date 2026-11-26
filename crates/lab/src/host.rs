@@ -47,6 +47,12 @@ pub struct HostSample {
     pub compressions: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub decompressions: Option<u64>,
+    /// `pmset -g`'s `lowpowermode` (LAB-31). `None` when unread or absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low_power: Option<bool>,
+    /// `kern.memorystatus_vm_pressure_level`: 1 normal, 2 warning, 4 critical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_pressure: Option<u32>,
     pub error: Option<String>,
     /// The orchestrator's own busy process beside this run (`~hog:N`),
     /// when one was started. Inside the owned tree, so never foreign CPU;
@@ -196,6 +202,26 @@ pub fn load1() -> f64 {
     }
 }
 
+/// Low Power Mode from `pmset -g`, `None` when the line is absent.
+pub fn low_power_mode() -> Option<bool> {
+    parse_low_power(&run("pmset", &["-g"]).ok()?)
+}
+
+fn parse_low_power(text: &str) -> Option<bool> {
+    text.lines().find_map(|l| {
+        let mut it = l.split_whitespace();
+        (it.next()? == "lowpowermode").then(|| it.next() == Some("1"))
+    })
+}
+
+pub fn memory_pressure_level() -> Option<u32> {
+    run("sysctl", &["-n", "kern.memorystatus_vm_pressure_level"])
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
 /// `used = 1127.38M` from `sysctl vm.swapusage`, in MiB.
 pub fn swap_used_mib() -> Option<f64> {
     let text = run("sysctl", &["-n", "vm.swapusage"]).ok()?;
@@ -264,6 +290,8 @@ impl HostMonitor {
             swap_used_mib: swap_used_mib(),
             compressions: None,
             decompressions: None,
+            low_power: low_power_mode(),
+            memory_pressure: memory_pressure_level(),
             error: None,
             contention: self.hog,
         };
@@ -348,6 +376,20 @@ pub struct HostRules {
     /// GiB. 0 disables. Release builds are about 5 GB per worktree.
     #[serde(default = "default_min_free_gb")]
     pub min_free_gb: f64,
+    /// Opt-in dirty rules (LAB-15, LAB-31). Off by default: a threshold
+    /// must come from this host's own null runs, not be invented.
+    /// A run whose compressor made more than this many pages is dirty.
+    #[serde(default)]
+    pub max_compressions_delta: Option<u64>,
+    /// A run during which swap grew by more than this many MiB is dirty.
+    #[serde(default)]
+    pub max_swap_growth_mib: Option<f64>,
+    /// Dirty when Low Power Mode is on.
+    #[serde(default)]
+    pub require_full_power: bool,
+    /// Dirty when the memory-pressure level is above normal.
+    #[serde(default)]
+    pub require_normal_pressure: bool,
 }
 
 fn default_quiet_wait_s() -> f64 {
@@ -367,6 +409,10 @@ impl Default for HostRules {
             require_ac: true,
             quiet_wait_s: default_quiet_wait_s(),
             min_free_gb: default_min_free_gb(),
+            max_compressions_delta: None,
+            max_swap_growth_mib: None,
+            require_full_power: false,
+            require_normal_pressure: false,
         }
     }
 }
@@ -428,6 +474,44 @@ pub fn eligibility(samples: &[HostSample], rules: &HostRules) -> (bool, Vec<Stri
                 ));
             }
         }
+    }
+    if let Some(max) = rules.max_compressions_delta {
+        let mut counts = samples.iter().filter_map(|s| s.compressions);
+        match counts.next() {
+            Some(first) => {
+                let delta = counts.last().unwrap_or(first).saturating_sub(first);
+                if delta > max {
+                    reasons.insert(format!("compressor made {delta} pages, over {max}"));
+                }
+            }
+            None => {
+                reasons.insert("compressor counters unreadable".into());
+            }
+        }
+    }
+    if let Some(max) = rules.max_swap_growth_mib {
+        let used: Vec<f64> = samples.iter().filter_map(|s| s.swap_used_mib).collect();
+        match used.first() {
+            Some(&first) => {
+                let growth = used.iter().copied().fold(first, f64::max) - first;
+                if growth > max {
+                    reasons.insert(format!("swap grew {growth:.0} MiB, over {max:.0}"));
+                }
+            }
+            None => {
+                reasons.insert("swap use unreadable".into());
+            }
+        }
+    }
+    if rules.require_full_power && samples.iter().any(|s| s.low_power == Some(true)) {
+        reasons.insert("Low Power Mode was on".into());
+    }
+    if rules.require_normal_pressure
+        && samples
+            .iter()
+            .any(|s| s.memory_pressure.is_none_or(|p| p > 1))
+    {
+        reasons.insert("memory pressure above normal or unreadable".into());
     }
     (reasons.is_empty(), reasons.into_iter().collect())
 }
@@ -686,9 +770,64 @@ mod tests {
             swap_used_mib: Some(1000.0),
             compressions: None,
             decompressions: None,
+            low_power: None,
+            memory_pressure: None,
             error: None,
             contention: None,
         }
+    }
+
+    /// Each opt-in rule is off by default and dirties only its own case.
+    #[test]
+    fn opt_in_pressure_rules_are_off_until_set() {
+        let mut first = quiet(0.0);
+        first.compressions = Some(1_000);
+        first.swap_used_mib = Some(100.0);
+        first.low_power = Some(true);
+        first.memory_pressure = Some(2);
+        let mut last = first.clone();
+        last.t_s = 2.0;
+        last.compressions = Some(6_000);
+        last.swap_used_mib = Some(700.0);
+        let samples = [first, last];
+        let reasons = |rules: &HostRules| eligibility(&samples, rules).1.join("; ");
+        let off = HostRules {
+            require_ac: false,
+            ..HostRules::default()
+        };
+        assert!(!reasons(&off).contains("compressor"), "{}", reasons(&off));
+        assert!(!reasons(&off).contains("swap grew"));
+        assert!(!reasons(&off).contains("Low Power"));
+        assert!(!reasons(&off).contains("pressure"));
+        let tight = HostRules {
+            max_compressions_delta: Some(4_999),
+            max_swap_growth_mib: Some(599.0),
+            require_full_power: true,
+            require_normal_pressure: true,
+            ..off
+        };
+        let r = reasons(&tight);
+        assert!(r.contains("compressor made 5000 pages"), "{r}");
+        assert!(r.contains("swap grew 600 MiB"), "{r}");
+        assert!(
+            r.contains("Low Power Mode") && r.contains("memory pressure"),
+            "{r}"
+        );
+        let at_limit = HostRules {
+            max_compressions_delta: Some(5_000),
+            max_swap_growth_mib: Some(600.0),
+            ..off
+        };
+        let r = reasons(&at_limit);
+        assert!(!r.contains("compressor") && !r.contains("swap grew"), "{r}");
+    }
+
+    #[test]
+    fn parses_low_power_mode() {
+        let text = " sleep 1\n lowpowermode         1\n";
+        assert_eq!(super::parse_low_power(text), Some(true));
+        assert_eq!(super::parse_low_power(" lowpowermode 0"), Some(false));
+        assert_eq!(super::parse_low_power(" sleep 1"), None);
     }
 
     #[test]

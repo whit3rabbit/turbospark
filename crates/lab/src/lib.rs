@@ -41,17 +41,22 @@ pub mod export;
 pub mod family_profile;
 pub mod fit;
 pub mod gates;
+pub mod golden;
 pub mod inventory;
+pub mod kl_stats;
 pub mod knobs;
 pub mod ledger;
 pub mod lock;
+pub mod logit_trace;
 pub mod out;
 pub mod paths;
 pub mod pinned;
 pub mod projection;
+pub mod report_md;
 pub mod round_cost;
 pub mod schema;
 pub mod series;
+pub mod serve_bench;
 pub mod spec;
 pub mod stats;
 pub mod viz;
@@ -59,6 +64,8 @@ pub mod workload;
 
 #[cfg(target_os = "macos")]
 pub mod ane;
+#[cfg(target_os = "macos")]
+pub mod checks;
 #[cfg(target_os = "macos")]
 pub mod cli;
 #[cfg(target_os = "macos")]

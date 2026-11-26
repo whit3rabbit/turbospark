@@ -152,13 +152,34 @@ pub fn parse_arm(
     let mut main = segments.next().unwrap_or("").to_string();
     let mut speculation = None;
     let mut contention = None;
+    let mut ballast_gib = None;
+    let mut cold = false;
     for seg in segments {
+        // `~cold` takes no value; an env tail may follow as `~cold::K=V`.
+        if seg == "cold" {
+            cold = true;
+            continue;
+        }
         let mut it = seg.splitn(3, ':');
         let kind = it.next().unwrap_or("");
-        let value = it
-            .next()
-            .ok_or_else(|| format!("arm {s:?}: a ~ modifier is ~DRAFTER:BLOCK or ~hog:THREADS"))?;
-        if kind == "hog" {
+        let value = it.next().ok_or_else(|| {
+            format!(
+                "arm {s:?}: a ~ modifier is ~DRAFTER:BLOCK, ~hog:THREADS, ~ballast:GIB or ~cold"
+            )
+        })?;
+        if kind == "ballast" {
+            let gib: u32 = value
+                .parse()
+                .ok()
+                .filter(|&n| n >= 1 && n <= crate::workload::MAX_BALLAST_GIB)
+                .ok_or_else(|| {
+                    format!(
+                        "arm {s:?}: ballast {value:?} must be 1..={} GiB",
+                        crate::workload::MAX_BALLAST_GIB
+                    )
+                })?;
+            ballast_gib = Some(gib);
+        } else if kind == "hog" {
             let threads: usize = value
                 .parse()
                 .ok()
@@ -219,6 +240,8 @@ pub fn parse_arm(
         speculation,
         expect_engaged: Vec::new(),
         contention,
+        ballast_gib,
+        cold,
     })
 }
 

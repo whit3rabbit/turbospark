@@ -20,20 +20,24 @@ use serde_json::{json, Value};
 
 use crate::args::Args;
 use crate::gates::{
-    effective_bounds, judge_quality, GateClass, PromptComparison, QualityBounds, QualityResult,
+    effective_bounds, judge_decode, judge_quality, DecodeResult, GateClass, PromptComparison,
+    QualityBounds, QualityResult, DECODE_TRACE_TOKENS,
 };
 use crate::integrity;
 use crate::lock::MachineLock;
-use crate::orchestrate::{run_ab, AbRun, Session};
+use crate::logit_trace::TraceReader;
+use crate::orchestrate::{run_ab, AbRun, Outcome, Session};
 use crate::paths::lab_dir;
 use crate::schema::CmdOutput;
-use crate::spec::ExperimentSpec;
-use crate::stats::Verdict;
+use crate::spec::{ExperimentSpec, SecondaryGuard};
+use crate::stats::{decide_noninferior, NonInferiority, NonInferiorityReport, Verdict};
 use crate::worker::Mode;
 use crate::workload::{Arm, PromptSource, Workload};
 
 /// The arm probes' prompt lengths (`qwen38_prefill_arm_probe`).
 pub const QUALITY_LENGTHS: [usize; 6] = [64, 200, 500, 1000, 2000, 3000];
+/// Corpus prompt lengths of the forced decode trace.
+pub const DECODE_TRACE_LENGTHS: [usize; 3] = [64, 500, 2000];
 /// Greedy steps decoded after each quality prompt, for the token-equality
 /// half of the bit-exact gate.
 pub const QUALITY_DECODE: usize = 32;
@@ -116,6 +120,139 @@ pub fn quality_gate_arms(session: &Session, spec: &GateArms) -> Result<QualityRe
     if spec.workload.audio.is_some() {
         return audio_quality_gate(session, spec);
     }
+    // A workload that decodes gets the forced-decode gate too: the prefill
+    // comparison below never sees the decode path (LAB-01).
+    let result = prefill_quality_gate(session, spec)?;
+    if spec.workload.decode_tokens == 0 || runs_the_runtime_loop(spec, spec.workload) {
+        return Ok(result);
+    }
+    Ok(result.with_decode(decode_trace_gate(session, spec)?))
+}
+
+/// A speculative arm, and any chat, runs the runtime's loop, which keeps its
+/// logits to itself. Losslessness is then a question about generated tokens.
+fn runs_the_runtime_loop(spec: &GateArms, workload: &Workload) -> bool {
+    spec.baseline.effective_speculation(workload).is_some()
+        || spec.candidate.effective_speculation(workload).is_some()
+        || workload.prompts.iter().any(PromptSource::is_chat)
+}
+
+/// The prompts and decode length of the forced trace.
+pub fn decode_trace_workload(w: &Workload) -> Workload {
+    let max = w.max_context as usize;
+    // Three of the quality corpus lengths: short, medium and long fill. A
+    // context too small for the full trace decodes what fits.
+    let steps = DECODE_TRACE_TOKENS.min(max.saturating_sub(DECODE_TRACE_LENGTHS[0] + 1));
+    Workload {
+        prompts: DECODE_TRACE_LENGTHS
+            .iter()
+            .filter(|&&n| n + steps < max)
+            .map(|&n| PromptSource::Corpus(n))
+            .collect(),
+        decode_tokens: steps,
+        ..quality_workload(w)
+    }
+}
+
+/// Compare a reference trace with an arm's trace of the same forced ids,
+/// row by row, grouped by prompt.
+pub fn compare_traces(
+    reference: &Path,
+    arm: &Path,
+    prompt_tokens: &[usize],
+    forced: &[Vec<i32>],
+) -> Result<Vec<(usize, Vec<crate::kl_stats::Position>)>, String> {
+    let (mut a, mut b) = (TraceReader::open(reference)?, TraceReader::open(arm)?);
+    let rows: usize = forced.iter().map(Vec::len).sum();
+    if a.rows != rows as u64 || b.rows != rows as u64 || a.vocab != b.vocab {
+        return Err(format!(
+            "decode traces hold {} and {} rows (vocab {} and {}), {rows} were forced",
+            a.rows, b.rows, a.vocab, b.vocab
+        ));
+    }
+    let mut out = Vec::new();
+    for (ids, &n) in forced.iter().zip(prompt_tokens) {
+        let mut positions = Vec::with_capacity(ids.len());
+        for &id in ids {
+            let (x, y) = a
+                .next_row()?
+                .zip(b.next_row()?)
+                .ok_or("decode trace ended early")?;
+            positions.push(crate::kl_stats::position(&x, &y, id as usize)?);
+        }
+        out.push((n, positions));
+    }
+    Ok(out)
+}
+
+/// One forced-decode run: its trace file, the ids it decoded and each
+/// prompt's token count.
+pub struct Traced {
+    pub trace: PathBuf,
+    pub ids: Vec<Vec<i32>>,
+    pub prompt_tokens: Vec<usize>,
+}
+
+/// Run `arm` over `workload` in the forced mode. `forced` is `None` for the
+/// reference, whose own greedy ids become the sequence.
+pub fn traced_run(
+    session: &Session,
+    arm: &Arm,
+    workload: &Workload,
+    forced: Option<Vec<Vec<i32>>>,
+) -> Result<Traced, String> {
+    let o = session.run_forced(arm, workload, Mode::ForcedDecode, 0, false, forced)?;
+    if o.status != "ok" {
+        return Err(format!(
+            "decode trace for {} was {}: {}",
+            o.arm,
+            o.status,
+            o.record["refusal"].as_str().unwrap_or("(see its stderr)")
+        ));
+    }
+    let prompts = o.record["prompts"].as_array().cloned().unwrap_or_default();
+    if prompts.len() != workload.prompts.len() {
+        return Err(format!("decode trace for {}: prompts missing", o.arm));
+    }
+    Ok(Traced {
+        trace: session
+            .exp_dir
+            .join("runs")
+            .join(format!("{}.trace.f16", o.run_id)),
+        ids: prompts
+            .iter()
+            .map(|p| serde_json::from_value(p["decode_ids"].clone()).map_err(|e| e.to_string()))
+            .collect::<Result<_, _>>()?,
+        prompt_tokens: prompts
+            .iter()
+            .map(|p| p["prompt_tokens"].as_u64().unwrap_or(0) as usize)
+            .collect(),
+    })
+}
+
+/// The teacher-forced decode gate: the baseline records its greedy ids and
+/// per-step logits, the candidate replays the ids, and every position is
+/// compared. The traces are large and removed once judged.
+pub fn decode_trace_gate(session: &Session, spec: &GateArms) -> Result<DecodeResult, String> {
+    if runs_the_runtime_loop(spec, spec.workload) {
+        return Err("the decode trace takes plain prompts, no speculation or chat".into());
+    }
+    let workload = decode_trace_workload(spec.workload);
+    let a = traced_run(session, spec.baseline, &workload, None)?;
+    let b = traced_run(session, spec.candidate, &workload, Some(a.ids.clone()))?;
+    let compared = compare_traces(&a.trace, &b.trace, &a.prompt_tokens, &a.ids);
+    for t in [&a.trace, &b.trace] {
+        let _ = std::fs::remove_file(t);
+    }
+    let bounds = match spec.exactness {
+        GateClass::BitExact | GateClass::TextExact => spec.exactness.default_bounds(),
+        class => effective_bounds(class, spec.quality_bounds)?,
+    };
+    Ok(judge_decode(spec.exactness, bounds, &compared?))
+}
+
+/// The final-position prefill comparison over the quality corpus.
+pub fn prefill_quality_gate(session: &Session, spec: &GateArms) -> Result<QualityResult, String> {
     let workload = quality_workload(spec.workload);
     let n = workload.prompts.len();
     let a = session.run_once(spec.baseline, &workload, Mode::Quality, 0, false)?;
@@ -138,13 +275,8 @@ pub fn quality_gate_arms(session: &Session, spec: &GateArms) -> Result<QualityRe
     };
     let pa = a.record["prompts"].as_array().cloned().unwrap_or_default();
     let pb = b.record["prompts"].as_array().cloned().unwrap_or_default();
-    // A speculative arm, and any chat, runs the runtime's loop, which keeps
-    // its prefill logits to itself. Losslessness is then a question about
-    // generated tokens only, so such workloads are judged bit-exact on those.
-    let speculative = spec.baseline.effective_speculation(&workload).is_some()
-        || spec.candidate.effective_speculation(&workload).is_some()
-        || workload.prompts.iter().any(PromptSource::is_chat);
-    if speculative {
+    // Runtime-loop workloads are judged bit-exact on generated tokens.
+    if runs_the_runtime_loop(spec, &workload) {
         if spec.exactness != GateClass::BitExact {
             return Err(
                 "speculative arms and chats are gated on generated tokens; declare \
@@ -407,15 +539,43 @@ fn print_quality(q: &QualityResult) {
     for r in &q.reasons {
         crate::say!("  {r}");
     }
+    if let Some(d) = &q.decode {
+        let s = &d.overall;
+        crate::say!(
+            "  decode trace: {} positions, mean KL {:.3e} (p99 {:.3e}), {} flips ({} sure), \
+             PPL {:.3} to {:.3}, NLL delta {:+.4} +/- {:.4}",
+            s.tokens,
+            s.mean_kl,
+            s.p99_kl,
+            s.flips,
+            s.large_margin_flips,
+            s.ref_ppl,
+            s.arm_ppl,
+            s.nll_delta,
+            s.nll_delta_se
+        );
+    }
 }
 
 pub fn gate_cmd(mut args: Args) -> Result<CmdOutput, String> {
-    let (p, _lock) = prepare(&mut args, "gate")?;
+    let force_trace = args.flag("--decode-trace");
+    // `--noise-arms`: also run each arm against itself, so the candidate's
+    // KL is read beside the run-to-run spread (LAB-03).
+    let noise_arms = args.flag("--noise-arms");
+    let (mut p, _lock) = prepare(&mut args, "gate")?;
     args.finish()?;
+    if force_trace && p.spec.workload.decode_tokens == 0 {
+        p.spec.workload.decode_tokens = DECODE_TRACE_TOKENS;
+    }
     let tests = required_tests(&p.repo, &p.spec.required_tests, &p.session.exp_dir)?;
     let q = quality_gate(&p.session, &p.spec)?;
     print_quality(&q);
-    let rec = json!({"spec_sha256": p.sha, "required_tests": tests, "quality": q});
+    let noise = noise_arms
+        .then(|| self_comparisons(&p.session, &p.spec))
+        .transpose()?;
+    let floor = print_floor(&p.spec, &q);
+    let rec = json!({"spec_sha256": p.sha, "required_tests": tests, "quality": q,
+                     "noise_arms": noise, "floor": floor});
     p.session.ledger.append("gate", rec.clone())?;
     if q.passed {
         Ok(CmdOutput::ok(rec))
@@ -424,6 +584,57 @@ pub fn gate_cmd(mut args: Args) -> Result<CmdOutput, String> {
         eprintln!("tslab gate: quality gate failed");
         Ok(CmdOutput::with_code(1, rec))
     }
+}
+
+/// Baseline against baseline and candidate against candidate: the spread a
+/// result between the two arms has to be read beside.
+fn self_comparisons(session: &Session, spec: &ExperimentSpec) -> Result<Value, String> {
+    let mut out = serde_json::Map::new();
+    for arm in [&spec.baseline, &spec.candidate] {
+        let again = Arm {
+            name: format!("{}-again", arm.name),
+            ..arm.clone()
+        };
+        let q = quality_gate_arms(
+            session,
+            &GateArms {
+                baseline: arm,
+                candidate: &again,
+                ..GateArms::from_spec(spec)
+            },
+        )?;
+        let kl = q.decode.as_ref().map(|d| d.overall.mean_kl);
+        crate::say!(
+            "  noise {} against itself: prefill mean KL {:.3e}, bits equal {}{}",
+            arm.name,
+            q.mean_kl,
+            q.all_bits_equal,
+            kl.map_or(String::new(), |k| format!(", decode mean KL {k:.3e}"))
+        );
+        out.insert(arm.name.clone(), json!(q));
+    }
+    Ok(Value::Object(out))
+}
+
+/// "limit L, floor F, margin M" when the family has a recorded floor
+/// (LAB-04). The floor explains the margin; it never moves the limit.
+fn print_floor(spec: &ExperimentSpec, q: &QualityResult) -> Option<Value> {
+    let dir = catalog::resolve_model_arg(&spec.model);
+    let family = repack::peek_manifest_arch(&dir).ok()?.family;
+    let floor = crate::checks::latest_floor(&lab_dir(), family.as_str())?;
+    let f = floor["mean_kl"].as_f64()?;
+    crate::say!(
+        "  limit {:.1e}, family floor {f:.3e}, margin {:.3e}{}",
+        q.bounds.mean_kl,
+        q.bounds.mean_kl - f,
+        if floor["bits_identical"] == false {
+            " (this family's baseline is not run-to-run exact)"
+        } else {
+            ""
+        }
+    );
+    Some(json!({"family": family.as_str(), "mean_kl": f,
+                "bits_identical": floor["bits_identical"], "record": floor["id"]}))
 }
 
 /// The decision values the ledger records.
@@ -488,6 +699,87 @@ pub fn decide(
             "WIN with gates passed; run tslab confirm".to_string(),
         ),
         other => (DISCARD, format!("verdict {other:?}")),
+    }
+}
+
+/// The decision for a spec that asks "not worse than `limit`" (LAB-05).
+pub fn decide_noninferiority(
+    trusted: bool,
+    report: &NonInferiorityReport,
+    memory_passed: bool,
+) -> (&'static str, String) {
+    if !trusted {
+        return (
+            DISCARD,
+            "evaluator was not the trusted install (--dev-untrusted)".to_string(),
+        );
+    }
+    let span = format!(
+        "one-sided bounds {:+.2}% to {:+.2}% against a {:.2}% limit",
+        report.lower * 100.0,
+        report.upper * 100.0,
+        report.limit * 100.0
+    );
+    match report.result {
+        NonInferiority::NotWorse if !memory_passed => (
+            DISCARD,
+            "peak footprint grew past the allowance".to_string(),
+        ),
+        NonInferiority::NotWorse => (
+            KEEP_PENDING_CONFIRM,
+            format!("not worse: {span}; run tslab confirm"),
+        ),
+        NonInferiority::Worse => (DISCARD, format!("worse: {span}")),
+        // More pairs "until it passes" is not allowed: a larger fixed budget
+        // is a new spec.
+        NonInferiority::Inconclusive => (
+            INCONCLUSIVE,
+            format!(
+                "{} clean pairs, {span}; declare a larger budget",
+                report.pairs
+            ),
+        ),
+    }
+}
+
+/// The second metric's median improvement over the clean pairs, and whether
+/// it stayed within the allowed regression (LAB-33). No reading fails.
+pub fn secondary_guard(pairs: &[(Outcome, Outcome)], guard: SecondaryGuard) -> Value {
+    let improvements: Vec<f64> = pairs
+        .iter()
+        .filter(|(a, b)| a.eligible && b.eligible)
+        .filter_map(|(a, b)| {
+            crate::stats::improvement(
+                a.metric(guard.metric)?,
+                b.metric(guard.metric)?,
+                guard.metric.direction(),
+            )
+        })
+        .collect();
+    let median = crate::stats::median(&improvements);
+    json!({
+        "metric": guard.metric,
+        "max_regression": guard.max_regression,
+        "pairs": improvements.len(),
+        "median": median.is_finite().then_some(median),
+        "passed": !improvements.is_empty() && median >= -guard.max_regression,
+    })
+}
+
+/// A guard that failed turns a KEEP into a DISCARD; it never rescues one.
+pub fn apply_guard(
+    decision: (&'static str, String),
+    guard: Option<&Value>,
+) -> (&'static str, String) {
+    match guard {
+        Some(g) if decision.0 == KEEP_PENDING_CONFIRM && g["passed"] != true => (
+            DISCARD,
+            format!(
+                "secondary guard failed: {g}; the primary result was: {}",
+                decision.1
+            ),
+        ),
+        _ => decision,
     }
 }
 
@@ -560,17 +852,30 @@ pub fn run_experiment_cmd(mut args: Args) -> Result<CmdOutput, String> {
         .iter()
         .map(|(a, b)| (a.run_id.clone(), b.run_id.clone()))
         .collect();
+    let noninferiority = p
+        .spec
+        .noninferiority_limit
+        .map(|limit| decide_noninferior(&verdict.improvements, limit));
+    let guard = p.spec.secondary_guard.map(|g| secondary_guard(&pairs, g));
+    if let Some(g) = &guard {
+        crate::say!("  secondary guard: {g}");
+    }
     let extra = json!({"required_tests": tests, "quality": q, "verdict": verdict,
                        "null_floor": floor, "memory": memory, "pairs": run_ids,
-                       "stopped": stopped});
-    let (decision, reason) = decide(
-        p.trusted,
-        verdict.verdict,
-        memory["passed"] == true,
-        verdict.improvements.len(),
-        p.spec.min_pairs,
-        stopped.as_deref(),
-    );
+                       "stopped": stopped, "noninferiority": noninferiority,
+                       "secondary_guard": guard, "also_changes": p.spec.also_changes});
+    let decided = match &noninferiority {
+        Some(report) => decide_noninferiority(p.trusted, report, memory["passed"] == true),
+        None => decide(
+            p.trusted,
+            verdict.verdict,
+            memory["passed"] == true,
+            verdict.improvements.len(),
+            p.spec.min_pairs,
+            stopped.as_deref(),
+        ),
+    };
+    let (decision, reason) = apply_guard(decided, guard.as_ref());
     finish(decision, reason, extra)
 }
 
@@ -601,7 +906,7 @@ pub fn confirm_cmd(mut args: Args) -> Result<CmdOutput, String> {
         .confirm_workload
         .clone()
         .ok_or("the spec has no confirm_workload")?;
-    let AbRun { verdict, .. } = run_ab(
+    let AbRun { verdict, pairs, .. } = run_ab(
         &p.session,
         &p.spec.baseline,
         &p.spec.candidate,
@@ -615,9 +920,20 @@ pub fn confirm_cmd(mut args: Args) -> Result<CmdOutput, String> {
     crate::report::print_verdict("confirm (held-out prompts)", &verdict);
     // The held-out look must not contradict the main one: a LOSS or a
     // negative median there means the gain was specific to the main prompts.
-    let confirmed = p.trusted && verdict.verdict != Verdict::Loss && verdict.median > 0.0;
+    // A non-inferiority spec was never claiming a gain: its held-out median
+    // only has to stay inside the limit it declared.
+    let held = match p.spec.noninferiority_limit {
+        Some(limit) => verdict.median >= -limit,
+        None => verdict.median > 0.0,
+    };
+    let guard = p.spec.secondary_guard.map(|g| secondary_guard(&pairs, g));
+    let confirmed = p.trusted
+        && verdict.verdict != Verdict::Loss
+        && held
+        && guard.as_ref().is_none_or(|g| g["passed"] == true);
     let decision = if confirmed { "keep" } else { DISCARD };
-    let rec = json!({"spec_sha256": p.sha, "verdict": verdict, "decision": decision});
+    let rec = json!({"spec_sha256": p.sha, "verdict": verdict, "decision": decision,
+                     "secondary_guard": guard});
     let id = ledger.append("confirm", rec.clone())?;
     crate::say!("CONFIRM: {decision}; ledger id {id}");
     Ok(CmdOutput::with_code(exit_code_for(decision), rec))
@@ -672,6 +988,58 @@ mod tests {
         for v in [Verdict::Win, Verdict::Inconclusive, Verdict::Noise] {
             assert_eq!(decide(false, v, true, 9, 3, None).0, DISCARD);
         }
+    }
+
+    #[test]
+    fn a_noninferiority_spec_keeps_only_when_the_loss_is_ruled_out() {
+        let report = |result| NonInferiorityReport {
+            result,
+            pairs: 10,
+            limit: 0.02,
+            lower: -0.01,
+            upper: 0.01,
+        };
+        let d = |r, mem| decide_noninferiority(true, &report(r), mem).0;
+        assert_eq!(d(NonInferiority::NotWorse, true), KEEP_PENDING_CONFIRM);
+        assert_eq!(d(NonInferiority::NotWorse, false), DISCARD);
+        assert_eq!(d(NonInferiority::Worse, true), DISCARD);
+        assert_eq!(d(NonInferiority::Inconclusive, true), INCONCLUSIVE);
+        let untrusted = decide_noninferiority(false, &report(NonInferiority::NotWorse), true);
+        assert_eq!(untrusted.0, DISCARD);
+    }
+
+    #[test]
+    fn a_failed_secondary_guard_discards_a_keep_and_only_a_keep() {
+        let run = |prefill: f64, eligible: bool| Outcome {
+            run_id: "r".into(),
+            arm: "a".into(),
+            round: 1,
+            warmup: false,
+            record: json!({"totals": {"prefill_tok_s": prefill}}),
+            status: "ok".into(),
+            eligible,
+            reasons: Vec::new(),
+        };
+        let guard = SecondaryGuard {
+            metric: crate::workload::Metric::PrefillTokS,
+            max_regression: 0.02,
+        };
+        let slower = secondary_guard(&[(run(100.0, true), run(90.0, true))], guard);
+        assert_eq!(slower["passed"], false, "{slower}");
+        let fine = secondary_guard(&[(run(100.0, true), run(99.0, true))], guard);
+        assert_eq!(fine["passed"], true, "{fine}");
+        // Dirty pairs are not readings, and no reading fails.
+        let dirty = secondary_guard(&[(run(100.0, false), run(120.0, true))], guard);
+        assert_eq!(dirty["passed"], false, "{dirty}");
+        let keep = (KEEP_PENDING_CONFIRM, "WIN".to_string());
+        assert_eq!(apply_guard(keep.clone(), Some(&slower)).0, DISCARD);
+        assert_eq!(
+            apply_guard(keep.clone(), Some(&fine)).0,
+            KEEP_PENDING_CONFIRM
+        );
+        assert_eq!(apply_guard(keep, None).0, KEEP_PENDING_CONFIRM);
+        let inconclusive = (INCONCLUSIVE, "few pairs".to_string());
+        assert_eq!(apply_guard(inconclusive, Some(&slower)).0, INCONCLUSIVE);
     }
 
     #[test]

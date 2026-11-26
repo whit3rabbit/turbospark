@@ -14,6 +14,7 @@ use super::error::GpuError;
 use super::pass::PassEncoder;
 use super::pipeline_cache::{MetalCompilationStats, PipelineDiskCache};
 use crate::dispatch_profile::{self, PassProfile};
+use crate::launch_count;
 
 /// Owns the Metal device and command queue, and caches one
 /// [`ComputePipelineState`] per (library source, function name) pair so
@@ -290,6 +291,7 @@ impl MetalContext {
             }
         }
         dispatch_profile::register_pipeline(&pipeline, function_name);
+        launch_count::register_pipeline(&pipeline, function_name, constants_key);
         self.pipelines
             .entry(key)
             .or_default()
@@ -385,6 +387,7 @@ impl MetalContext {
     /// instead of an anonymous buffer) and groups the rows of
     /// `TURBOSPARK_DISPATCH_PROFILE=1`'s per-dispatch report.
     pub fn begin_pass_labeled(&self, label: &'static str) -> PassEncoder {
+        launch_count::command_buffer();
         let command_buffer = self.queue.new_command_buffer().to_owned();
         command_buffer.set_label(label);
         let encoder = command_buffer.new_compute_command_encoder().to_owned();
@@ -415,6 +418,7 @@ impl MetalContext {
     /// GEMM keeps one activation table per context (`int4_mma8_scratch`),
     /// which concurrent dispatches would race on.
     pub fn begin_pass_concurrent_labeled(&self, label: &'static str) -> PassEncoder {
+        launch_count::command_buffer();
         let command_buffer = self.queue.new_command_buffer().to_owned();
         command_buffer.set_label(label);
         let encoder = command_buffer

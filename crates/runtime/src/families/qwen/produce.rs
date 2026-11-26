@@ -460,6 +460,7 @@ impl RealForwardRunner {
             if let (Some(prefetch), Some(target)) = (qwen.prefetch.as_ref(), prefetch_target) {
                 if probe_target == Some(target) {
                     if let Some(logits) = moe::read_qwen_pilot_logits(qwen, num_experts) {
+                        foundation::engaged!("qwen_prefetch");
                         prefetch.submit(target, streamers, logits);
                     }
                 }

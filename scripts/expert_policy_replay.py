@@ -10,6 +10,9 @@ prefetcher. Stdlib only, deterministic, no model access.
 Usage:
     expert_policy_replay.py a.json [b.json ...] [--slots 16,32]
                             [--skip 21 | --skip 21,30] [--half-life 64,256]
+                            [--arm admit:MARGIN[,bounce=N]] [--keep J[,R]]
+                            [--felt-fraction F] [--layer-cost C[,C...]]
+                            [--token-ms MS]
 
 SEVERAL CAPTURES ARE REPLAYED BACK TO BACK THROUGH THE SAME CACHES. That is
 the server's shape rather than the CLI's: `PreadExpertStreamer` is opened
@@ -41,6 +44,37 @@ Arms, all at the same slot count:
 
 Also printed: the compulsory floor (first touch of each (layer, expert) in
 the whole replay), which no policy and no slot count avoids.
+
+Extra arms:
+
+  admit:M,bounce=N
+                  Frequency-gated admission. N of the slots (default 2) are
+                  a bounce ring: a miss is admitted only when its use count
+                  (this use included) exceeds the least-used evictable
+                  resident's by at least M, else it is read into a bounce
+                  slot and forgotten. Every non-resident access is a read,
+                  bounced or not, so residents are slots - N. When more
+                  misses fail than the ring holds, the most used of them are
+                  admitted anyway.
+  --keep J[,R]    LOSSY, decode only (passes from --skip on; earlier ones
+                  route in full). A pass always uses its J highest-ranked
+                  experts; ranks past J only if already resident. With R,
+                  ranks R..J (1-based) also need to be resident or announced
+                  by the capture's `pred` rows (TURBOSPARK_PILOT_PROBE);
+                  the first routed layer keeps the plain J rule. Reported:
+                  reads avoided against `lfu (engine)`, dropped gate mass
+                  (needs `gate_weights`, trace v2) and the share of tokens
+                  that lose any expert. Dropped weights are not
+                  renormalized. No quality claim comes out of a replay.
+
+Felt wait: a miss at routed layer i costs `--layer-cost[i]` (one value for
+all, or one per routed layer, in ms) times `--felt-fraction`, the share not
+hidden behind compute. The gate printed per arm is mean predicted felt-wait
+gain over captures >= 10% with no capture worse than -3%, against
+`lfu (engine)`; give one capture per workload category. `--token-ms` is the
+measured baseline decode time per token and turns the saved wait into a
+predicted throughput gain, which `tslab calibrate --predicted` can later be
+read against the measured one. A replay is never a performance result.
 
 Read the oracle row first. If it sits a point or two above `lfu (engine)`,
 policy work is closed at that slot count and slots are the lever
@@ -341,6 +375,174 @@ class ClassLruPool:
         return self.cache.plan(layer, [e for (_, e) in group])
 
 
+class AdmitLfu:
+    """Cumulative-count LFU that admits a miss only past a margin.
+
+    See the module docstring's `admit:` entry. `resident` never holds more
+    than `slots - bounce` keys.
+    """
+
+    def __init__(self, slots, margin, bounce):
+        if not 0 <= bounce < slots:
+            raise ValueError(f"bounce {bounce} must be in [0, {slots})")
+        self.capacity = slots - bounce
+        self.margin = margin
+        self.bounce = bounce
+        self.resident = set()
+        self.count = {}
+        self.last_use = {}
+
+    def plan(self, keys, now):
+        if len(keys) > self.capacity + self.bounce:
+            raise RuntimeError(f"{len(keys)} requested, too few slots")
+        wanted = set(keys)
+        misses = [k for k in keys if k not in self.resident]
+        for k in keys:
+            self.count[k] = self.count.get(k, 0) + 1
+        bounced = []
+        # Most used first, so a free slot or a cheap victim goes to it.
+        for k in sorted(misses, key=lambda k: -self.count[k]):
+            if len(self.resident) < self.capacity:
+                self.resident.add(k)
+                continue
+            victim = self._victim(wanted)
+            if victim is not None and self.count[k] - self.count[victim] >= self.margin:
+                self._swap(victim, k)
+            else:
+                bounced.append(k)
+        # Every requested expert needs a slot somewhere for the dispatch.
+        while len(bounced) > self.bounce:
+            self._swap(self._victim(wanted), bounced.pop(0))
+        for k in keys:
+            self.last_use[k] = now
+        return len(misses)
+
+    def _victim(self, wanted):
+        return min(
+            (k for k in self.resident if k not in wanted),
+            key=lambda k: (self.count[k], self.last_use.get(k, 0), k),
+            default=None,
+        )
+
+    def _swap(self, victim, key):
+        self.resident.remove(victim)
+        self.resident.add(key)
+
+
+def parse_admit(spec):
+    """`admit:MARGIN[,bounce=N]` into `(margin, bounce)`."""
+    if not spec.startswith("admit:"):
+        raise ValueError(f"unknown arm {spec!r}: expected admit:MARGIN[,bounce=N]")
+    margin, _, rest = spec[len("admit:"):].partition(",")
+    bounce = 2
+    if rest:
+        key, _, value = rest.partition("=")
+        if key != "bounce":
+            raise ValueError(f"unknown option {rest!r} in {spec!r}")
+        bounce = int(value)
+    return float(margin), bounce
+
+
+def parse_keep(spec, top_k):
+    """`J[,R]` into `(j, r)`, `r` None when absent."""
+    parts = [int(p) for p in spec.split(",")]
+    if len(parts) not in (1, 2):
+        raise ValueError(f"--keep takes J or J,R, got {spec!r}")
+    j, r = parts[0], parts[1] if len(parts) == 2 else None
+    if not 1 <= j <= top_k or (r is not None and not 1 <= r <= j):
+        raise ValueError(f"--keep {spec}: need 1 <= R <= J <= top_k {top_k}")
+    return j, r
+
+
+def keep_replay(captures, steps, slots, num_experts, j, r, skips):
+    """Lossy keep-J[,R] through the engine's LFU, beside full routing."""
+    full, kept = {}, {}
+    first_layer = min(captures[0]["routed"])
+    reads = full_reads = samples = 0
+    dropped_mass = 0.0
+    have_weights = all(cap.get("weights") for cap in captures)
+    tokens, dropped_tokens = set(), set()
+    for c, p, layer, group in steps:
+        if layer not in full:
+            full[layer] = ExpertCache(slots, num_experts)
+            kept[layer] = ExpertCache(slots, num_experts)
+        decode = p >= skips[c]
+        used = list(group)
+        if decode:
+            resident = set(kept[layer].slot_expert)
+            pred = captures[c].get("pred", {}).get(layer, [])
+            announced = set(pred[p]) if p < len(pred) else set()
+            used = []
+            for rank, expert in enumerate(group):
+                if rank < j:
+                    narrowed = (r is not None and rank >= r - 1
+                                and layer != first_layer)
+                    keep = (not narrowed or expert in resident
+                            or expert in announced)
+                else:
+                    keep = expert in resident
+                if keep:
+                    used.append(expert)
+        misses = len(kept[layer].plan(used)[1])
+        base = len(full[layer].plan(group)[1])
+        if not decode:
+            continue
+        reads += misses
+        full_reads += base
+        samples += 1
+        tokens.add((c, p))
+        if len(used) < len(group):
+            dropped_tokens.add((c, p))
+        if have_weights:
+            weights = [abs(w) for w in captures[c]["weights"][layer][p]]
+            total = sum(weights)
+            if total > 0:
+                dropped_mass += sum(
+                    w for e, w in zip(group, weights) if e not in used) / total
+    return {
+        "reads": reads,
+        "full_reads": full_reads,
+        "reads_avoided": (full_reads - reads) / full_reads if full_reads else 0.0,
+        "dropped_mass": dropped_mass / samples if have_weights and samples else None,
+        "tokens_with_drop": len(dropped_tokens) / len(tokens) if tokens else 0.0,
+    }
+
+
+def felt_wait(steps, rows, skips, layer_cost, felt_fraction):
+    """Felt ms per counted token, per capture. `rows` is `replay`'s output
+    for `steps`, in the same order."""
+    ms, tokens = {}, {}
+    for (c, p, layer, _), (_, _, _, missed) in zip(steps, rows):
+        if p < skips[c]:
+            continue
+        ms[c] = ms.get(c, 0.0) + missed * layer_cost[layer] * felt_fraction
+        tokens.setdefault(c, set()).add(p)
+    return {c: ms[c] / len(tokens[c]) for c in ms}
+
+
+def felt_verdict(base, arm, token_ms=None):
+    """Per-capture felt gain, its mean and worst, the gate, and (with a
+    measured baseline token time) the predicted throughput gain."""
+    gains = [(base[c] - arm[c]) / base[c] if base[c] else 0.0 for c in sorted(base)]
+    out = {
+        "mean": sum(gains) / len(gains),
+        "worst": min(gains),
+        "gains": gains,
+    }
+    out["passes"] = out["mean"] >= 0.10 and out["worst"] >= -0.03
+    if token_ms is not None:
+        predicted = []
+        for c in sorted(base):
+            after = token_ms - (base[c] - arm[c])
+            if after <= 0:
+                raise ValueError(
+                    f"--token-ms {token_ms} is below the felt wait saved; "
+                    "the cost vector or the felt fraction is wrong")
+            predicted.append(token_ms / after - 1.0)
+        out["predicted_gain"] = sum(predicted) / len(predicted)
+    return out
+
+
 class Oracle(KeyedCache):
     """Belady: evict the key whose next request is farthest away."""
 
@@ -385,8 +587,23 @@ def from_capture(capture, path):
         if recomputed != capture["counts"][layer]:
             sys.exit(f"{path}: layer {layer}'s trace does not reproduce its counts")
     npass = min(len(g) for g in routed.values())
-    return {"path": path, "top_k": top_k, "num_experts": num_experts,
-            "routed": routed, "npass": npass}
+    out = {"path": path, "top_k": top_k, "num_experts": num_experts,
+           "routed": routed, "npass": npass}
+    # Trace v2 and the pilot probe. Both optional: an older capture has
+    # neither and still replays every arm that does not need them.
+    weights = capture.get("gate_weights")
+    if weights:
+        out["weights"] = {}
+        for layer in routed:
+            row = weights[layer]
+            if len(row) != len(trace[layer]) or any(
+                    type(w) not in (int, float) or not math.isfinite(w) for w in row):
+                sys.exit(f"{path}: layer {layer}'s gate_weights do not match its trace")
+            out["weights"][layer] = passes(row, top_k)
+    if capture.get("pred"):
+        out["pred"] = {layer: passes(capture["pred"][layer], top_k)
+                       for layer in routed}
+    return out
 
 
 def schedule(captures):
@@ -441,7 +658,7 @@ def tally(rows, skips):
     return out
 
 
-def arms(steps, slots, num_experts, layer_count, half_lives):
+def arms(steps, slots, num_experts, layer_count, half_lives, admits=()):
     uses = next_use_index(steps)
     per_layer_uses = {}
     for (layer, expert), times in uses.items():
@@ -451,6 +668,9 @@ def arms(steps, slots, num_experts, layer_count, half_lives):
     for h in half_lives:
         yield f"lfu-decay h={h}", replay(steps, lambda layer, h=h: DecayedLfu(slots, h))
     yield "classlru", replay(steps, lambda layer: ClassLruPerLayer(layer, slots, num_experts))
+    for margin, bounce in admits:
+        yield (f"admit:{margin:g},bounce={bounce}",
+               replay(steps, lambda layer, m=margin, b=bounce: AdmitLfu(slots, m, b)))
     yield "oracle", replay(steps, lambda layer: Oracle(slots, per_layer_uses[layer]))
     yield "pool lru", replay(steps, None, pool=Lru(slots * layer_count))
     yield "pool classlru", replay(steps, None, pool=ClassLruPool(slots, num_experts, layer_count))
@@ -496,7 +716,26 @@ def main():
                          "per capture); the prompt token count reads decode alone")
     ap.add_argument("--half-life", default="64,256",
                     help="decayed-LFU half-lives in passes (default 64,256)")
+    ap.add_argument("--arm", action="append", default=[],
+                    help="extra arm, admit:MARGIN[,bounce=N]; repeatable")
+    ap.add_argument("--keep", action="append", default=[],
+                    help="lossy J[,R] keep arm; repeatable")
+    ap.add_argument("--felt-fraction", type=float,
+                    help="share of a miss's read time that decode waits for")
+    ap.add_argument("--layer-cost",
+                    help="ms per miss: one value, or one per routed layer")
+    ap.add_argument("--token-ms", type=float,
+                    help="measured baseline decode ms per token")
     args = ap.parse_args()
+    try:
+        admits = [parse_admit(a) for a in args.arm]
+    except ValueError as error:
+        ap.error(str(error))
+    if args.felt_fraction is not None and not 0 < args.felt_fraction <= 1:
+        ap.error("--felt-fraction must be in (0, 1]")
+    if args.token_ms is not None and not args.layer_cost:
+        ap.error("--token-ms needs --layer-cost in ms per miss")
+    felt = args.felt_fraction is not None or args.layer_cost is not None
 
     captures = [load(p) for p in args.captures]
     first = captures[0]
@@ -521,6 +760,18 @@ def main():
     for c, (cap, skip) in enumerate(zip(captures, skips)):
         print(f"  #{c + 1} {cap['path']}: {cap['npass']} passes, analysing from {skip}")
     floor = compulsory(steps, skips)
+    routed_layers = sorted(first["routed"])
+    try:
+        keeps = [parse_keep(k, top_k) for k in args.keep]
+    except ValueError as error:
+        sys.exit(str(error))
+    cost = parse_list(args.layer_cost or "1", float)
+    if len(cost) == 1:
+        cost = cost * layer_count
+    if len(cost) != layer_count:
+        sys.exit(f"--layer-cost names {len(cost)} values for {layer_count} routed layers")
+    layer_cost = dict(zip(routed_layers, cost))
+    felt_fraction = 1.0 if args.felt_fraction is None else args.felt_fraction
 
     labels = [f"#{c + 1}" for c in range(len(captures))]
     for slots in parse_list(args.slots, int):
@@ -531,8 +782,15 @@ def main():
         header = "  ".join(f"{l:>7}" for l in labels)
         print(f"  {'arm':<16} {header}  {'all':>7}  misses/layer/pass")
         results = {}
+        waits = {}
+        for _, bounce in admits:
+            if bounce >= slots or top_k > slots:
+                sys.exit(f"bounce={bounce} leaves no resident slot of {slots}")
         for name, rows in arms(steps, slots, first["num_experts"], layer_count,
-                               parse_list(args.half_life, int)):
+                               parse_list(args.half_life, int), admits):
+            rows = list(rows)
+            if felt:
+                waits[name] = felt_wait(steps, rows, skips, layer_cost, felt_fraction)
             per = tally(rows, skips)
             results[name] = per
             req = sum(r for r, _ in per.values())
@@ -548,6 +806,32 @@ def main():
         print(f"  {'compulsory':<16} {'':>{9 * len(captures) - 2}}  "
               f"{100.0 * (req_all - floor_all) / req_all:6.1f}%  (no policy beats this)")
 
+        for j, r in keeps:
+            out = keep_replay(captures, steps, slots, first["num_experts"], j, r, skips)
+            label = f"keep {j}" if r is None else f"keep {j},{r}"
+            mass = ("n/a (no gate_weights)" if out["dropped_mass"] is None
+                    else f"{100 * out['dropped_mass']:.2f}%")
+            print(f"  {label:<16} LOSSY: reads {out['reads']} vs {out['full_reads']} "
+                  f"({100 * out['reads_avoided']:.1f}% avoided), dropped gate mass "
+                  f"{mass}, tokens with a drop {100 * out['tokens_with_drop']:.1f}%")
+            if r is not None and not all(cap.get("pred") for cap in captures):
+                print("                   no `pred` rows: nothing counts as announced")
+        if felt:
+            print(f"  felt wait, ms/token per capture (felt fraction {felt_fraction:g}"
+                  f"{'' if args.layer_cost else ', cost in misses, not ms'})")
+            base = waits["lfu (engine)"]
+            for name, arm in waits.items():
+                try:
+                    v = felt_verdict(base, arm, args.token_ms)
+                except ValueError as error:
+                    sys.exit(str(error))
+                cells = "  ".join(f"{arm[c]:8.3f}" for c in sorted(arm))
+                tail = ("" if args.token_ms is None
+                        else f"  predicted_gain {v['predicted_gain']:+.4f}")
+                print(f"  {name:<22} {cells}  gain mean {100 * v['mean']:+6.1f}% "
+                      f"worst {100 * v['worst']:+6.1f}%  "
+                      f"gate {'PASS' if v['passes'] else 'no'}{tail}")
+
         # The oracle's defining property. If any online arm misses less, the
         # replay is wrong and none of these rows should be read.
         def total(name):
@@ -560,6 +844,8 @@ def main():
             if total(name) < floor_all:
                 sys.exit(f"inconsistent replay: {name} beat the compulsory floor")
     print()
+    print("A replay is not a performance result: hit rate and predicted felt wait "
+          "only decide what earns a live A/B.")
     print("Pool rows hold the same bytes as per-layer rows only if every layer's "
           "expert stride is equal.")
 

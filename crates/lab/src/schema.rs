@@ -103,6 +103,39 @@ pub const KINDS: &[(&str, &str)] = &[
         "a projection joined to the A/B verdict that followed: predicted, measured, miss",
     ),
     ("trace", "Metal System Trace tables (unquotable)"),
+    (
+        "sanity",
+        "golden answers through the chat template: per case pass, answer, advisory flags",
+    ),
+    (
+        "noise",
+        "one arm in K fresh processes: distinct outputs and first divergence per prompt",
+    ),
+    (
+        "floor",
+        "an arm quality-gated against itself, keyed by family",
+    ),
+    (
+        "quant_ab",
+        "installs replaying one reference's ids: KL, NLL against the base, bytes, verdict",
+    ),
+    (
+        "launch_count",
+        "dispatches, command buffers and pipelines per window (unquotable)",
+    ),
+    ("anchor", "greedy digests keyed by family and toolchain"),
+    (
+        "release_gate",
+        "a released worker against this build, per install: verdict, digests, declared reason",
+    ),
+    (
+        "serve_bench",
+        "HTTP/SSE server measurements: latency, server usage, aggregate and goodput; methodology names the protocol",
+    ),
+    (
+        "soak",
+        "a server soak: per-minute counters, footprint slope, failures; methodology names the protocol",
+    ),
     ("workflow_step", "one step of a workflow run"),
     ("workflow_run", "a workflow run's summary"),
 ];

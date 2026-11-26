@@ -5,11 +5,17 @@
 //! top-k per MoE layer) at each verify width M, under the arm the engine
 //! routes that width to, into one GEMM row per M.
 //!
-//! Routes, from `real_forward_dispatch::encode_gemv_any` and
-//! `encode_gemm_any`: one row runs the GEMV, 2..=16 rows the scalar batched
-//! GEMM; under `TURBOSPARK_INT4_MMA8=1` every shape of at least 4096 rows
-//! runs the 8-row tile at any M. Steel serves prefill micro-batches of 32+
-//! rows and never a verify, so it is not on the ladder.
+//! Routes, from `real_forward_dispatch::encode_gemv_any`, `encode_gemm_any`
+//! and `encode_gemm_rows`: one row runs the GEMV, 2..=16 rows the scalar
+//! batched GEMM, and a wider batch is that GEMM in `gpu::MAX_BATCH_ROWS`
+//! slices; under `TURBOSPARK_INT4_MMA8=1` every shape of at least 4096 rows
+//! runs the 8-row tile, in 8-row slices, at any M. Steel serves prefill
+//! micro-batches of 32+ rows and never a verify, so it is not on the ladder.
+//!
+//! Widths above 16 price that sliced route; no speculative verify takes
+//! them today (`ALLOWED_SPECULATION_BLOCKS` is 1..=15 and the Qwen batched
+//! head calls `encode_gemm_any`, which refuses a batch above 16). The ladder
+//! is what such a width would cost in GEMM time, not a width that runs.
 //!
 //! With `--verify-from EXPERIMENT`, the speculative runs in that ledger
 //! supply measured verify ms per round at their width; the difference from
@@ -19,7 +25,7 @@
 
 use std::collections::BTreeMap;
 
-use gpu::{MetalContext, MAX_BATCH_ROWS};
+use gpu::{MetalContext, INT4_MMA8_MAX_ROWS, MAX_BATCH_ROWS};
 use serde_json::{json, Value};
 
 use super::{int4_matmul, int8_matmul, BenchOpts, Case, KernelBench, Subject};
@@ -30,6 +36,83 @@ pub struct VerifyLadder;
 
 /// The shared tile's row threshold (`int4_mma8_min_rows`'s default).
 pub const MMA8_MIN_ROWS: usize = 4096;
+
+/// The widest logits a ladder width may imply: `m` rows of `vocab` entries,
+/// F16 on the GPU and f32 on the host (6 bytes). A width past it would not
+/// be a width anyone runs, so the ladder refuses it instead of timing it.
+pub const LOGITS_BUDGET_BYTES: u64 = 256 << 20;
+
+/// The default ladder: every width 1..=64, then 96.
+pub fn ladder_widths() -> Vec<usize> {
+    (1..=64).chain([96]).collect()
+}
+
+/// What `--rows` means here: the command's generic default sweep is
+/// replaced by [`ladder_widths`], anything else is taken as written.
+pub fn requested_widths(rows: &[usize]) -> Vec<usize> {
+    let mut w = if rows == BenchOpts::default().rows.as_slice() {
+        ladder_widths()
+    } else {
+        rows.to_vec()
+    };
+    w.sort_unstable();
+    w.dedup();
+    w
+}
+
+pub fn logits_bytes(vocab: usize, m: usize) -> u64 {
+    m as u64 * vocab as u64 * 6
+}
+
+/// Split `widths` into those inside the logits budget and those refused.
+pub fn admit_widths(widths: &[usize], vocab: usize) -> (Vec<usize>, Vec<usize>) {
+    widths
+        .iter()
+        .copied()
+        .partition(|&m| logits_bytes(vocab, m) <= LOGITS_BUDGET_BYTES)
+}
+
+/// A step of the measured curve where `slice` rows more start a new
+/// dispatch: the cost added between the two swept widths around it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Step {
+    /// The last swept width of the old slice count.
+    pub from: usize,
+    /// The first swept width of the new one.
+    pub to: usize,
+    pub add_ms: f64,
+    /// `add_ms` per added row.
+    pub per_row_ms: f64,
+}
+
+/// Where the slice count (`ceil(m / slice)`) grows along `points`, which
+/// are (width, ms) in ascending width.
+pub fn step_edges(points: &[(usize, f64)], slice: usize) -> Vec<Step> {
+    points
+        .windows(2)
+        .filter(|w| w[1].0.div_ceil(slice) > w[0].0.div_ceil(slice))
+        .map(|w| {
+            let add_ms = w[1].1 - w[0].1;
+            Step {
+                from: w[0].0,
+                to: w[1].0,
+                add_ms,
+                per_row_ms: add_ms / (w[1].0 - w[0].0) as f64,
+            }
+        })
+        .collect()
+}
+
+/// The median added ms per row between neighbours that stay inside one
+/// slice: what a step edge is read against. `None` with no such pair.
+pub fn within_slice_per_row(points: &[(usize, f64)], slice: usize) -> Option<f64> {
+    let mut v: Vec<f64> = points
+        .windows(2)
+        .filter(|w| w[1].0.div_ceil(slice) == w[0].0.div_ceil(slice))
+        .map(|w| (w[1].1 - w[0].1) / (w[1].0 - w[0].0) as f64)
+        .collect();
+    (!v.is_empty()).then(|| super::support::median(&mut v))
+}
 
 /// The arm label `int4_matmul` / `int8_matmul` time that the engine runs
 /// for a `rows`-row matrix at verify width `m`.
@@ -124,12 +207,15 @@ impl KernelBench for VerifyLadder {
         opts: &BenchOpts,
     ) -> Result<BenchResult, String> {
         let terms = terms(subject)?;
-        let widths: Vec<usize> = opts
-            .rows
-            .iter()
-            .copied()
-            .filter(|&m| m <= MAX_BATCH_ROWS)
-            .collect();
+        let vocab = subject.arch()?.vocab_size.max(0) as usize;
+        let (widths, refused) = admit_widths(&requested_widths(&opts.rows), vocab);
+        for &m in &refused {
+            crate::say!(
+                "verify_ladder: width {m} refused: {} MiB of logits (vocab {vocab}) is past the {} MiB budget",
+                logits_bytes(vocab, m) >> 20,
+                LOGITS_BUDGET_BYTES >> 20
+            );
+        }
         if !widths.contains(&1) {
             return Err("the ladder needs width 1 in --rows (its c(M) unit)".into());
         }
@@ -148,7 +234,24 @@ impl KernelBench for VerifyLadder {
             let r = if t.dtype == DTYPE_INT8_AFFINE {
                 int8_matmul::run_shape(context, &label, t.rows, t.cols, &shape_opts)?
             } else {
-                int4_matmul::run_shape(context, &label, t.rows, t.cols, &shape_opts)?
+                // Only the arms the two routes read: a 65-width sweep of
+                // all six arms would spend its time on the ones it drops.
+                let shared = t.rows >= MMA8_MIN_ROWS;
+                let want = |arm: int4_matmul::Arm, m: usize| match arm {
+                    int4_matmul::Arm::GemvPerRow => m == 1,
+                    int4_matmul::Arm::Scalar => m > 1,
+                    int4_matmul::Arm::Mma8 => shared,
+                    _ => false,
+                };
+                int4_matmul::run_shape_where(
+                    context,
+                    &label,
+                    t.rows,
+                    t.cols,
+                    &shape_opts,
+                    &want,
+                    true,
+                )?
             };
             eprintln!(
                 "  verify_ladder: timed {} {label}",
@@ -220,14 +323,59 @@ impl KernelBench for VerifyLadder {
                             "count": t.count, "ms": ms, "share": ms / top_total}))
             })
             .collect();
+        // Where the sliced route steps, from the measured sums.
+        let curve = |route: &str| -> Vec<(usize, f64)> {
+            totals[route].iter().map(|(&m, &ms)| (m, ms)).collect()
+        };
+        let mut edges = Vec::new();
+        let mut edge_notes = Vec::new();
+        for (route, slice) in [
+            ("default_route", MAX_BATCH_ROWS),
+            ("mma8_route", INT4_MMA8_MAX_ROWS),
+        ] {
+            let points = curve(route);
+            let within = within_slice_per_row(&points, slice);
+            let steps = step_edges(&points, slice);
+            if !steps.is_empty() {
+                edge_notes.push(format!(
+                    "{route} step edges ({slice}-row slices), added ms: {}; median ms per row inside a slice: {}",
+                    steps
+                        .iter()
+                        .map(|s| format!("{}->{} +{:.3}", s.from, s.to, s.add_ms))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    within.map_or("unmeasured".into(), |w| format!("{w:.3}"))
+                ));
+            }
+            for s in steps {
+                edges.push(json!({"route": route, "slice": slice, "from": s.from,
+                                  "to": s.to, "add_ms": s.add_ms,
+                                  "per_row_ms": s.per_row_ms,
+                                  "within_slice_per_row_ms": within}));
+            }
+        }
         let mut subject_map = BTreeMap::new();
+        subject_map.insert("step_edges".into(), json!(edges));
+        subject_map.insert("vocab".into(), json!(vocab));
+        subject_map.insert("refused_widths".into(), json!(refused));
+        subject_map.insert("logits_budget_bytes".into(), json!(LOGITS_BUDGET_BYTES));
         subject_map.insert("terms".into(), json!(terms.len()));
         subject_map.insert(format!("shares_at_m{top}"), json!(shares));
         let mut notes = vec![
             "GEMM time only: attention, GDN, norms and glue are not on the ladder".into(),
             "routed experts count M*top_k expert rows per MoE layer, an upper end".into(),
             "c(M) is the ladder at M over M one-row ladders".into(),
+            format!(
+                "widths above {MAX_BATCH_ROWS} price the sliced GEMM route; no speculative verify accepts them today"
+            ),
         ];
+        notes.extend(edge_notes);
+        if !refused.is_empty() {
+            notes.push(format!(
+                "widths {refused:?} refused: logits past {} MiB",
+                LOGITS_BUDGET_BYTES >> 20
+            ));
+        }
         if let Some(exp) = &opts.verify_from {
             let measured = measured_verify(exp, &totals)?;
             notes.push(format!(
@@ -295,6 +443,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_default_sweep_becomes_the_ladder_and_a_named_one_is_kept() {
+        let d = requested_widths(&BenchOpts::default().rows);
+        assert_eq!(d.len(), 65);
+        assert_eq!((d[0], d[63], d[64]), (1, 64, 96));
+        assert_eq!(requested_widths(&[33, 1, 17, 1]), [1, 17, 33]);
+    }
+
+    #[test]
+    fn widths_past_the_logits_budget_are_refused() {
+        // 1 MiB-entry vocab: 6 MiB per row, 42 rows fit in 256 MiB.
+        let vocab = 1 << 20;
+        let (kept, refused) = admit_widths(&[1, 42, 43, 96], vocab);
+        assert_eq!(kept, [1, 42]);
+        assert_eq!(refused, [43, 96]);
+        // A Qwen3.8-sized vocabulary keeps the whole default ladder.
+        assert!(admit_widths(&ladder_widths(), 248_320).1.is_empty());
+        assert!(!admit_widths(&[512], 201_024).1.is_empty());
+    }
+
+    #[test]
+    fn step_edges_sit_where_a_new_slice_starts() {
+        // 1 ms per slice plus 0.1 ms per row.
+        let pts: Vec<(usize, f64)> = (1..=40usize)
+            .map(|m| (m, m.div_ceil(16) as f64 + 0.1 * m as f64))
+            .collect();
+        let e = step_edges(&pts, 16);
+        assert_eq!(
+            e.iter().map(|s| (s.from, s.to)).collect::<Vec<_>>(),
+            [(16, 17), (32, 33)]
+        );
+        assert!((e[0].add_ms - 1.1).abs() < 1e-9, "{}", e[0].add_ms);
+        assert!((within_slice_per_row(&pts, 16).unwrap() - 0.1).abs() < 1e-9);
+    }
+
+    #[test]
     fn routes_follow_the_dispatcher() {
         assert_eq!(
             routed_arm(DTYPE_INT4_AFFINE, 17408, 1, false),
@@ -307,5 +490,11 @@ mod tests {
         assert_eq!(routed_arm(DTYPE_INT4_AFFINE, 17408, 1, true), "mma8");
         assert_eq!(routed_arm(DTYPE_INT4_AFFINE, 1024, 3, true), "scalar_gemm");
         assert_eq!(routed_arm(DTYPE_INT8_AFFINE, 256, 3, true), "batched_gemm");
+        // Past one slice the route is the same kernel, sliced.
+        assert_eq!(
+            routed_arm(DTYPE_INT4_AFFINE, 17408, 65, false),
+            "scalar_gemm"
+        );
+        assert_eq!(routed_arm(DTYPE_INT4_AFFINE, 17408, 96, true), "mma8");
     }
 }

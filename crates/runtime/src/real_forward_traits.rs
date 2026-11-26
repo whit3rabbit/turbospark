@@ -604,10 +604,18 @@ impl SpeculativeProducer for RealForwardRunner {
         base: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), String> {
+        // Router diagnostics only: scope the rows so a route capture can tell
+        // a verify from decode and count the distinct experts one reads.
+        if let Some(hist) = &mut self.router_hist {
+            hist.begin_batch("verify", base, feed.len());
+        }
         let result = gpu::autorelease_pool(|| {
             self.produce_batched(feed, base, logits)
                 .map_err(|e| e.to_string())
         });
+        if let Some(hist) = &mut self.router_hist {
+            hist.end_batch(result.is_ok());
+        }
         // NOT recorded here, and no longer TAINTED either. This used to
         // taint, on the reasoning that the record would have to track an
         // accept count this method is never told -- which left the

@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use metal::{ComputePipelineState, MTLSize};
 
 use crate::dispatch_profile::PassProfile;
+use crate::launch_count;
 
 /// An open command buffer + serial compute encoder; see
 /// [`MetalContext::begin_pass`](super::MetalContext::begin_pass). Every `encode_*` call appends one
@@ -46,10 +47,11 @@ impl PassEncoder {
         }
     }
 
-    /// Under profiling, closes the running encoder and opens a fresh
-    /// timestamped one for the dispatch about to be encoded. A no-op
-    /// otherwise, which is the production path.
+    /// Counts the dispatch about to be encoded (`launch_count`) and, under
+    /// profiling, closes the running encoder and opens a fresh timestamped
+    /// one for it. Both are no-ops on the production path.
     fn begin_dispatch(&self, pipeline: &ComputePipelineState) {
+        launch_count::dispatch(pipeline);
         let Some(profile) = &self.profile else {
             return;
         };

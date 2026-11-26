@@ -97,7 +97,20 @@ pub struct Arm {
     /// (`docs/SPEEDUP_PLAYBOOK.md`, "Not pursued").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contention: Option<Contention>,
+    /// Memory ballast (`~ballast:GIB`, LAB-21): the orchestrator holds this
+    /// many GiB of touched memory beside the worker, to emulate a smaller
+    /// Mac. Models only capacity, not bandwidth; never quoted in docs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ballast_gib: Option<u32>,
+    /// Cold arm (`~cold`, LAB-14): the install's resident pages are dropped
+    /// (`msync(MS_INVALIDATE)`) before each of this arm's runs.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub cold: bool,
 }
+
+/// The most memory a ballast arm may hold. This host has 36 GB and a
+/// resident gate has rebooted it once; more would swap other work.
+pub const MAX_BALLAST_GIB: u32 = 12;
 
 /// A deliberate CPU load beside the measured worker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

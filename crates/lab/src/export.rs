@@ -140,6 +140,11 @@ pub fn export_cmd(mut args: Args) -> Result<CmdOutput, String> {
 /// `tslab report --html OUT`.
 pub fn report_cmd(mut args: Args) -> Result<CmdOutput, String> {
     let (names, kinds, paths, force) = common(&mut args)?;
+    // `--md`: the text record with its own limits (LAB-32).
+    if let Some(md) = args.take("--md")? {
+        args.finish()?;
+        return report_md_to(&names, &PathBuf::from(md), force);
+    }
     let out = PathBuf::from(args.required("--html")?);
     let title = args.take("--title")?.unwrap_or_else(|| match names.len() {
         1..=3 => format!("tslab report: {}", names.join(", ")),
@@ -155,6 +160,31 @@ pub fn report_cmd(mut args: Args) -> Result<CmdOutput, String> {
                             "experiments": names, "series_count": series.len(),
                             "unquotable": series.iter().filter(|s| !s.quotable).count(),
                             "dirty_points": series.iter().flat_map(|s| &s.points).filter(|p| p.dirty).count()})))
+}
+
+fn report_md_to(names: &[String], out: &std::path::Path, force: bool) -> Result<CmdOutput, String> {
+    let mut text = String::new();
+    for name in names {
+        let dir = crate::paths::experiment_dir(&lab_dir(), name)?;
+        let ledger = crate::ledger::Ledger::open(&dir)?;
+        let records = ledger.read_all()?;
+        // The newest worker record that is still on disk names the machine.
+        let provenance = records
+            .iter()
+            .rev()
+            .filter(|r| r["kind"] == "run")
+            .find_map(|r| std::fs::read_to_string(r["record"].as_str()?).ok())
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .map(|r| r["provenance"].clone())
+            .unwrap_or(Value::Null);
+        text.push_str(&crate::report_md::render(name, &records, &provenance));
+        text.push('\n');
+    }
+    write_out(out, text.as_bytes(), force)?;
+    crate::say!("tslab report: {}", out.display());
+    Ok(CmdOutput::ok(
+        json!({"path": out.display().to_string(), "experiments": names}),
+    ))
 }
 
 /// Count of series per kind, for a caller that wants to know what an export

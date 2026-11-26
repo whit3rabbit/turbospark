@@ -142,6 +142,10 @@ pub use families::qwen::{
     DraftPolicies, MtpDraftPolicy, DFLASH_BLOCK, DFLASH_SERVING_BLOCK, DFLASH_SERVING_BLOCK_TILE,
     MOE_SPECULATION_BLOCKER_MARKER, VISION_SPECULATION_BLOCKER_MARKER,
 };
+/// Static dispatch and command-buffer counts (`TURBOSPARK_LAUNCH_COUNT=1`),
+/// re-exported so a caller holding a runner needs no `gpu` dependency.
+#[cfg(target_os = "macos")]
+pub use gpu::launch_count;
 #[cfg(target_os = "macos")]
 pub use gpu::MetalCompilationStats;
 #[cfg(target_os = "macos")]

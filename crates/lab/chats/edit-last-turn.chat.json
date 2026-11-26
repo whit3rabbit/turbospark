@@ -1,0 +1,11 @@
+{
+  "opening": [{"role": "user", "content": "Summarize the document above in three sentences."}],
+  "document": "../../../docs/BENCHMARKING.md",
+  "document_tokens": 20000,
+  "follow_ups": ["Name the single most important rule in it."],
+  "edit_variants": [
+    "Rewrite that rule as one imperative sentence.",
+    "Give one example of a run that breaks that rule.",
+    "Explain why that rule exists in two sentences."
+  ]
+}

@@ -5,6 +5,8 @@
   "steps": [
     {"id": "capabilities", "command": "capabilities", "args": {"model": "{model}"}},
     {"id": "inventory", "command": "inventory", "args": {"model": "{model}"}, "when": ["text"]},
+    {"id": "sanity", "command": "sanity", "when": ["text", "runs"], "continue_on_error": true,
+     "args": {"model": "{model}", "experiment": "{experiment}"}},
     {"id": "profile", "command": "profile", "when": ["text", "runs", "chunked_prefill"],
      "args": {"model": "{model}", "experiment": "{experiment}", "prompt": "{prompt}", "decode": "{decode}", "rounds": 3}},
     {"id": "profile_sequential", "command": "profile", "when": ["text", "runs", "!chunked_prefill"],

@@ -148,8 +148,9 @@ pub fn sign_test_p(k: usize, n: usize) -> f64 {
 }
 
 /// The verdict for a set of clean pair improvements. A short count is
-/// INCONCLUSIVE; the orchestrator keeps adding pairs up to `max_pairs`
-/// before asking.
+/// INCONCLUSIVE. The pair budget is fixed before the first run: the
+/// orchestrator adds pairs up to `max_pairs` only to REPLACE dirty ones, and
+/// never asks again after reading a verdict (no optional stopping).
 pub fn decide(improvements: &[f64], min_effect: f64) -> VerdictReport {
     let min_effect = min_effect.max(MIN_EFFECT_FLOOR);
     let n = improvements.len();
@@ -216,6 +217,135 @@ pub fn decide(improvements: &[f64], min_effect: f64) -> VerdictReport {
         min_effect,
         reasons,
     }
+}
+
+/// Pairs a non-inferiority question needs, declared before the first run.
+pub const NONINFERIORITY_PAIRS: usize = 10;
+/// The widest loss a non-inferiority question may call acceptable.
+pub const MAX_NONINFERIORITY_LIMIT: f64 = 0.03;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NonInferiority {
+    /// The one-sided 95% bound rules out a loss larger than the limit.
+    NotWorse,
+    /// The bound shows a loss larger than the limit.
+    Worse,
+    /// Neither, or too few pairs. Keeps a gate closed.
+    Inconclusive,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NonInferiorityReport {
+    pub result: NonInferiority,
+    pub pairs: usize,
+    pub limit: f64,
+    /// One-sided 95% bounds on the geometric-mean improvement.
+    pub lower: f64,
+    pub upper: f64,
+}
+
+/// One-sided 95% Student t critical value.
+fn t95(df: usize) -> f64 {
+    const T: [f64; 30] = [
+        6.314, 2.920, 2.353, 2.132, 2.015, 1.943, 1.895, 1.860, 1.833, 1.812, 1.796, 1.782, 1.771,
+        1.761, 1.753, 1.746, 1.740, 1.734, 1.729, 1.725, 1.721, 1.717, 1.714, 1.711, 1.708, 1.706,
+        1.703, 1.701, 1.699, 1.697,
+    ];
+    // Past the table the value falls toward 1.645; holding df = 30 is the
+    // conservative side.
+    T[df.clamp(1, T.len()) - 1]
+}
+
+/// "Is B no worse than A by more than `limit`?" on log ratios of the pair
+/// improvements. Never answers anything but `Inconclusive` under
+/// [`NONINFERIORITY_PAIRS`].
+pub fn decide_noninferior(improvements: &[f64], limit: f64) -> NonInferiorityReport {
+    let limit = limit.clamp(0.0, MAX_NONINFERIORITY_LIMIT);
+    let logs: Vec<f64> = improvements
+        .iter()
+        .map(|v| (1.0 + v).max(f64::MIN_POSITIVE).ln())
+        .collect();
+    let n = logs.len();
+    let mean = logs.iter().sum::<f64>() / n.max(1) as f64;
+    let var =
+        logs.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n.saturating_sub(1).max(1) as f64;
+    let half = t95(n.saturating_sub(1)) * (var / n.max(1) as f64).sqrt();
+    let (lower, upper) = ((mean - half).exp() - 1.0, (mean + half).exp() - 1.0);
+    let result = if n < NONINFERIORITY_PAIRS || !(lower.is_finite() && upper.is_finite()) {
+        NonInferiority::Inconclusive
+    } else if lower >= -limit {
+        NonInferiority::NotWorse
+    } else if upper < -limit {
+        NonInferiority::Worse
+    } else {
+        NonInferiority::Inconclusive
+    };
+    NonInferiorityReport {
+        result,
+        pairs: n,
+        limit,
+        lower,
+        upper,
+    }
+}
+
+/// The chance that the SIGN half of [`decide`]'s rule alone passes a WIN on
+/// pure noise with `n` clean pairs: unanimity below [`UNANIMITY_BELOW`], the
+/// sign test at and above it. The effect floor and the CI only lower the real
+/// rate, so this is an upper bound.
+pub fn sign_rule_false_win(n: usize) -> f64 {
+    if n < MIN_PAIRS {
+        return 0.0;
+    }
+    if n < UNANIMITY_BELOW {
+        return 0.5f64.powi(n as i32);
+    }
+    (0..=n)
+        .find(|&k| sign_test_p(k, n) <= SIGN_TEST_ALPHA)
+        .map_or(0.0, |k| sign_test_p(k, n))
+}
+
+/// False WIN and LOSS rates of [`decide`] when the null is true: `pool` holds
+/// A-against-A pair improvements, resampled with a random sign (so any host
+/// bias is cancelled) at `n` pairs per trial. Deterministic.
+pub fn type1_rate(pool: &[f64], n: usize, min_effect: f64, trials: usize) -> (f64, f64) {
+    if pool.is_empty() || n == 0 || trials == 0 {
+        return (f64::NAN, f64::NAN);
+    }
+    let mut rng = Rng(BOOTSTRAP_SEED ^ n as u64);
+    let (mut wins, mut losses) = (0usize, 0usize);
+    let mut sample = vec![0.0; n];
+    for _ in 0..trials {
+        for slot in sample.iter_mut() {
+            let v = pool[(rng.next() % pool.len() as u64) as usize];
+            *slot = if rng.next() >> 63 == 0 { v } else { -v };
+        }
+        match quick_verdict(&sample, min_effect.max(MIN_EFFECT_FLOOR)) {
+            Verdict::Win => wins += 1,
+            Verdict::Loss => losses += 1,
+            _ => {}
+        }
+    }
+    (wins as f64 / trials as f64, losses as f64 / trials as f64)
+}
+
+/// [`decide`] without running the bootstrap on samples the median or sign
+/// rule already refuses; the verdict is the same.
+fn quick_verdict(v: &[f64], min_effect: f64) -> Verdict {
+    let n = v.len();
+    let med = median(v);
+    let count = v.iter().filter(|x| **x * med > 0.0).count();
+    let nonzero = v.iter().filter(|x| **x != 0.0).count();
+    let sign_ok = if n < UNANIMITY_BELOW {
+        count == n
+    } else {
+        sign_test_p(count, nonzero) <= SIGN_TEST_ALPHA
+    };
+    if n < MIN_PAIRS || med.abs() < min_effect || !sign_ok {
+        return Verdict::Noise;
+    }
+    decide(v, min_effect).verdict
 }
 
 /// The effect floor a host's own A-against-A spread justifies: twice the MAD
@@ -294,6 +424,72 @@ mod tests {
         let mut v = vec![0.08; 8];
         v.push(-0.01);
         assert_eq!(decide(&v, 0.02).verdict, Verdict::Win);
+    }
+
+    #[test]
+    fn noninferiority_needs_the_budget_and_rules_out_the_loss() {
+        let flat = [
+            0.001, -0.001, 0.002, -0.002, 0.0, 0.001, -0.001, 0.0, 0.001, -0.001,
+        ];
+        assert_eq!(
+            decide_noninferior(&flat, 0.02).result,
+            NonInferiority::NotWorse
+        );
+        // One pair short of the declared budget stays closed.
+        assert_eq!(
+            decide_noninferior(&flat[..9], 0.02).result,
+            NonInferiority::Inconclusive
+        );
+        let slower: Vec<f64> = flat.iter().map(|v| v - 0.05).collect();
+        assert_eq!(
+            decide_noninferior(&slower, 0.02).result,
+            NonInferiority::Worse
+        );
+        // A wide spread rules out neither side.
+        let wide = [0.1, -0.1, 0.1, -0.1, 0.1, -0.1, 0.1, -0.1, 0.1, -0.1];
+        assert_eq!(
+            decide_noninferior(&wide, 0.02).result,
+            NonInferiority::Inconclusive
+        );
+        // The limit is capped: asking for 20% does not call a 5% loss fine.
+        assert_eq!(
+            decide_noninferior(&slower, 0.2).result,
+            NonInferiority::Worse
+        );
+    }
+
+    #[test]
+    fn sign_rule_false_win_matches_the_rule() {
+        assert_eq!(sign_rule_false_win(3), 0.125);
+        assert_eq!(sign_rule_false_win(5), 1.0 / 32.0);
+        // n = 6 needs 6 of 6 (7/64 > 0.05).
+        assert!((sign_rule_false_win(6) - 1.0 / 64.0).abs() < 1e-12);
+        assert_eq!(sign_rule_false_win(2), 0.0);
+    }
+
+    #[test]
+    fn type1_rate_is_zero_under_the_floor_and_positive_over_it() {
+        assert_eq!(type1_rate(&[0.001, 0.005, 0.01], 3, 0.02, 2000), (0.0, 0.0));
+        // Every draw is a 10% effect with a random sign: unanimity at n = 3
+        // passes about one time in eight each way.
+        let (w, l) = type1_rate(&[0.1], 3, 0.02, 4000);
+        assert!(
+            (w - 0.125).abs() < 0.02 && (l - 0.125).abs() < 0.02,
+            "{w} {l}"
+        );
+    }
+
+    #[test]
+    fn quick_verdict_agrees_with_decide() {
+        let mut rng = Rng(7);
+        for n in 3..9 {
+            for _ in 0..200 {
+                let v: Vec<f64> = (0..n)
+                    .map(|_| ((rng.next() % 2000) as f64 - 900.0) / 10_000.0)
+                    .collect();
+                assert_eq!(quick_verdict(&v, 0.02), decide(&v, 0.02).verdict, "{v:?}");
+            }
+        }
     }
 
     #[test]

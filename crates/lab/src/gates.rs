@@ -124,6 +124,10 @@ pub struct QualityResult {
     pub passed: bool,
     pub reasons: Vec<String>,
     pub prompts: Vec<PromptComparison>,
+    /// The teacher-forced decode gate, when the workload decodes. `passed`
+    /// above already includes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode: Option<DecodeResult>,
 }
 
 pub fn judge_quality(
@@ -180,6 +184,121 @@ pub fn judge_quality(
         passed: reasons.is_empty(),
         reasons,
         prompts,
+        decode: None,
+    }
+}
+
+impl QualityResult {
+    /// Fold the decode gate in: it can only fail a result, never rescue one.
+    pub fn with_decode(mut self, decode: DecodeResult) -> Self {
+        self.passed &= decode.passed;
+        self.reasons.extend(decode.reasons.iter().cloned());
+        self.decode = Some(decode);
+        self
+    }
+}
+
+/// Greedy steps a forced decode records per prompt (LAB-01).
+pub const DECODE_TRACE_TOKENS: usize = 256;
+
+/// The teacher-forced decode half of a quality gate: both arms decode the
+/// reference's token ids, judged position by position.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecodeResult {
+    pub passed: bool,
+    pub reasons: Vec<String>,
+    pub overall: crate::kl_stats::Summary,
+    /// Per prompt, with its token count as the label.
+    pub prompts: Vec<(usize, crate::kl_stats::Summary)>,
+}
+
+/// `positions` per prompt as `(prompt_tokens, positions)`. The mean KL bound
+/// is the class's own, applied over every decoded position; a class that
+/// bounds top-1 applies it to the positions that did not flip. A flip where
+/// the reference was sure fails any KL class: the mean cannot hide it.
+pub fn judge_decode(
+    class: GateClass,
+    bounds: QualityBounds,
+    prompts: &[(usize, Vec<crate::kl_stats::Position>)],
+) -> DecodeResult {
+    use crate::kl_stats::{summarize, LARGE_MARGIN};
+    let all: Vec<_> = prompts
+        .iter()
+        .flat_map(|(_, p)| p.iter().copied())
+        .collect();
+    let overall = summarize(&all);
+    let mut reasons = Vec::new();
+    if all.is_empty() {
+        reasons.push("decode: no positions compared".into());
+    }
+    match class {
+        GateClass::BitExact => {
+            if !overall.all_bits_equal {
+                reasons.push("decode: logits bits differ from the reference".into());
+            }
+        }
+        GateClass::TextExact => {
+            reasons.push("decode: text_exact has no decode-trace bound".into());
+        }
+        GateClass::DenseKl | GateClass::MoeKl => {
+            // NaN fails closed.
+            if overall.mean_kl.is_nan() || overall.mean_kl > bounds.mean_kl {
+                reasons.push(format!(
+                    "decode: mean KL {:.3e} over the {:.1e} bound",
+                    overall.mean_kl, bounds.mean_kl
+                ));
+            }
+            if 1.0 - overall.flip_rate < bounds.min_top1_fraction {
+                reasons.push(format!(
+                    "decode: top-1 agreement {:.3} under {:.2}",
+                    1.0 - overall.flip_rate,
+                    bounds.min_top1_fraction
+                ));
+            }
+            if overall.large_margin_flips > 0 {
+                reasons.push(format!(
+                    "decode: {} top-1 flips where the reference led by {LARGE_MARGIN} logits or more",
+                    overall.large_margin_flips
+                ));
+            }
+        }
+    }
+    DecodeResult {
+        passed: reasons.is_empty(),
+        reasons,
+        overall,
+        prompts: prompts.iter().map(|(n, p)| (*n, summarize(p))).collect(),
+    }
+}
+
+/// How far above the base install's KL a candidate may sit and still count
+/// as no worse (LAB-22).
+pub const QUANT_KL_EPS: f64 = 0.02;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuantVerdict {
+    pub passed: bool,
+    pub reasons: Vec<String>,
+}
+
+/// Install against install on one reference: no more bytes than the base and
+/// no worse a KL from the reference. A bit plan that loses at equal bytes is
+/// declined; one that buys quality with bytes is a different question.
+pub fn judge_quant(base_kl: f64, base_bytes: u64, cand_kl: f64, cand_bytes: u64) -> QuantVerdict {
+    let mut reasons = Vec::new();
+    if cand_bytes > base_bytes {
+        reasons.push(format!(
+            "{cand_bytes} bytes against the base's {base_bytes}"
+        ));
+    }
+    // NaN on either side fails closed.
+    let limit = base_kl * (1.0 + QUANT_KL_EPS);
+    if cand_kl.is_nan() || limit.is_nan() || cand_kl > limit {
+        reasons.push(format!("KL {cand_kl:.3e} over the base's {base_kl:.3e}"));
+    }
+    QuantVerdict {
+        passed: reasons.is_empty(),
+        reasons,
     }
 }
 
@@ -273,6 +392,46 @@ mod tests {
         assert!(judge_quality(GateClass::BitExact, b, vec![cmp(0.0, true, true)], true).passed);
         assert!(!judge_quality(GateClass::BitExact, b, vec![cmp(0.0, true, false)], true).passed);
         assert!(!judge_quality(GateClass::BitExact, b, vec![cmp(0.0, true, true)], false).passed);
+    }
+
+    #[test]
+    fn the_decode_gate_catches_what_the_prefill_gate_cannot() {
+        use crate::kl_stats::position;
+        let same = position(&[3.0, 1.0, 0.0], &[3.0, 1.0, 0.0], 0).unwrap();
+        // One sure flip among many identical positions: the mean KL stays
+        // far under the bound, the flip must still fail.
+        let mut tiny = vec![same; 20_000];
+        tiny.push(position(&[3.0, 0.0, 0.0], &[0.0, 3.0, 0.0], 0).unwrap());
+        let b = GateClass::DenseKl.default_bounds();
+        let d = judge_decode(GateClass::DenseKl, b, &[(64, tiny)]);
+        assert!(d.overall.mean_kl < b.mean_kl, "{}", d.overall.mean_kl);
+        assert!(!d.passed);
+        assert!(judge_decode(GateClass::DenseKl, b, &[(64, vec![same; 4])]).passed);
+        assert!(!judge_decode(GateClass::DenseKl, b, &[]).passed);
+        // A passing prefill gate does not rescue a failing decode.
+        let prefill = judge_quality(GateClass::DenseKl, b, vec![cmp(0.0, true, true)], true);
+        assert!(prefill.passed && !prefill.with_decode(d).passed);
+    }
+
+    #[test]
+    fn decode_bit_exact_needs_bits_and_nan_fails_closed() {
+        use crate::kl_stats::position;
+        let b = GateClass::BitExact.default_bounds();
+        let near = position(&[3.0, 1.0], &[3.0, 1.0000001], 0).unwrap();
+        assert!(!judge_decode(GateClass::BitExact, b, &[(1, vec![near])]).passed);
+        let broken = position(&[3.0, 1.0], &[f64::NAN, 1.0], 0).unwrap();
+        let b = GateClass::MoeKl.default_bounds();
+        assert!(!judge_decode(GateClass::MoeKl, b, &[(1, vec![broken])]).passed);
+    }
+
+    #[test]
+    fn a_quant_candidate_must_not_buy_quality_with_bytes_or_lose_it() {
+        assert!(judge_quant(0.10, 100, 0.10, 100).passed);
+        assert!(judge_quant(0.10, 100, 0.101, 90).passed);
+        assert!(!judge_quant(0.10, 100, 0.11, 90).passed);
+        assert!(!judge_quant(0.10, 100, 0.05, 101).passed);
+        assert!(!judge_quant(0.10, 100, f64::NAN, 90).passed);
+        assert!(!judge_quant(f64::NAN, 100, 0.05, 90).passed);
     }
 
     #[test]

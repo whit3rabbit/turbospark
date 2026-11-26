@@ -503,6 +503,8 @@ mod cmd {
             speculation: None,
             expect_engaged: Vec::new(),
             contention: None,
+            ballast_gib: None,
+            cold: false,
         };
         eprintln!(
             "tslab expert-census: one capture run of {model}; ledger {}",
