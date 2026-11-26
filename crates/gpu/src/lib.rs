@@ -134,6 +134,8 @@ mod kv_quantize;
 #[cfg(target_os = "macos")]
 mod lamq;
 #[cfg(target_os = "macos")]
+pub mod launch_count;
+#[cfg(target_os = "macos")]
 mod logit_softmax;
 #[cfg(target_os = "macos")]
 mod mla;
@@ -177,6 +179,8 @@ mod rope;
 mod short_conv;
 #[cfg(target_os = "macos")]
 mod short_conv_state;
+#[cfg(target_os = "macos")]
+pub mod submit_probe;
 #[cfg(target_os = "macos")]
 mod utility;
 #[cfg(target_os = "macos")]

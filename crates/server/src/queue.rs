@@ -245,6 +245,7 @@ pub(crate) fn reserve(
         .generation_queue()
         .map(|queue| queue.try_reserve())
         .transpose()
+        .inspect_err(|_| model.queue_rejected())
 }
 
 /// Waits on a reserved ticket; an ungated backend admits at once.

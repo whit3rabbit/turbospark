@@ -110,7 +110,7 @@ pub(crate) fn encode_qwen_layer_moe(
         // Inert unless `TURBOSPARK_ROUTER_LOGITS_LAYER`/`_PASS` name a row:
         // how a top-k swap between two prefill arms is traced to its margin.
         hist.record_router_logits(layer, &router_logits);
-        hist.record(layer, &selected);
+        hist.record(layer, &selected, &route_weights);
     }
     // MAPPED RESIDENCY SKIPS BOTH THE PLAN AND THE `pread`, exactly as
     // `families/gemma4/moe.rs` does: every expert is already addressable in
@@ -124,6 +124,7 @@ pub(crate) fn encode_qwen_layer_moe(
     // orders it before the routed reduction, and the caller retains the
     // draining handle so errors cannot release no-copy backing in flight.
     let shared_submission = if encode_shared && qwen.shared_read_overlap && !mapped_active {
+        foundation::engaged!("qwen_shared_read_overlap");
         let shared_pass = context.begin_pass_labeled("qwen shared expert (read overlap)");
         encode_shared_expert(
             context,
@@ -146,6 +147,14 @@ pub(crate) fn encode_qwen_layer_moe(
     };
     if mapped_active {
         if let Some(mode) = qwen.mapped_demand_preparation {
+            match mode {
+                streaming::MappedPagePreparationMode::Advice => {
+                    foundation::engaged!("mapped_demand_advice");
+                }
+                streaming::MappedPagePreparationMode::Touch => {
+                    foundation::engaged!("mapped_demand_touch");
+                }
+            }
             let mapping = mapped.layers[layer]
                 .as_ref()
                 .expect("mapped residency checked above");

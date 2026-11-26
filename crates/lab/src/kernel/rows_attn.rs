@@ -21,6 +21,7 @@ use serde_json::json;
 
 use super::attn_decode::shapes as attn_shapes;
 use super::support::{f16_bytes, median};
+use super::tile_pin::{self, Bucket};
 use super::{BenchOpts, Case, KernelBench, Subject};
 use crate::bench::{fnv_hex, ArmCurve, Axis, BenchResult, Point};
 
@@ -309,7 +310,12 @@ fn run_at(
     ] {
         subject.insert(k.to_string(), v);
     }
-    Ok(BenchResult {
+    let layouts: Vec<String> = arm_list
+        .iter()
+        .filter(|a| matches!(a, Arm::Layout { .. }))
+        .map(|a| a.label())
+        .collect();
+    let mut result = BenchResult {
         bench: "rows_attn".into(),
         case: format!("full_attn@{seq}"),
         subject,
@@ -322,5 +328,17 @@ fn run_at(
             "not bit-exact against the loop: chunk boundaries differ (docs/SPEEDUP_PLAYBOOK.md)"
                 .into(),
         ],
-    })
+    };
+    // Layout arms against the production launch, per rows bucket.
+    tile_pin::attach(
+        &mut result,
+        &tile_pin::Plan {
+            buckets: [(1, 1), (2, 8), (9, 32), (33, MAX_ROWS as u64)]
+                .iter()
+                .map(|&(lo, hi)| (Bucket { lo, hi }, "rows"))
+                .collect(),
+            candidates: layouts.iter().map(String::as_str).collect(),
+        },
+    );
+    Ok(result)
 }

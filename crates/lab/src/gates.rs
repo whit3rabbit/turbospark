@@ -25,6 +25,10 @@ pub enum GateClass {
     /// logits under it may (a reduction-order change in an encoder kernel).
     /// Audio workloads only.
     TextExact,
+    /// Speculative verify-width changes only (LAB-03): outputs may part, but
+    /// no more often than the same arm parts from itself, and only where the
+    /// baseline's choice was a near tie.
+    TokenDivergence,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -36,10 +40,12 @@ pub struct QualityBounds {
 impl GateClass {
     pub fn default_bounds(self) -> QualityBounds {
         match self {
-            GateClass::BitExact | GateClass::TextExact => QualityBounds {
-                mean_kl: 0.0,
-                min_top1_fraction: 1.0,
-            },
+            GateClass::BitExact | GateClass::TextExact | GateClass::TokenDivergence => {
+                QualityBounds {
+                    mean_kl: 0.0,
+                    min_top1_fraction: 1.0,
+                }
+            }
             GateClass::DenseKl => QualityBounds {
                 mean_kl: 1e-3,
                 min_top1_fraction: 0.0,
@@ -124,6 +130,13 @@ pub struct QualityResult {
     pub passed: bool,
     pub reasons: Vec<String>,
     pub prompts: Vec<PromptComparison>,
+    /// The prefill logits at each chunk end (LAB-02). `passed` includes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub positions: Option<DecodeResult>,
+    /// The teacher-forced decode gate, when the workload decodes. `passed`
+    /// above already includes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode: Option<DecodeResult>,
 }
 
 pub fn judge_quality(
@@ -154,6 +167,11 @@ pub fn judge_quality(
                 reasons.push("the transcript differs from the reference".into());
             }
         }
+        // Judged by `judge_divergence` over a probed speculative run; reaching
+        // here means no such run happened.
+        GateClass::TokenDivergence => {
+            reasons.push("token_divergence needs speculative arms".into());
+        }
         GateClass::DenseKl | GateClass::MoeKl => {
             // NaN fails closed: a broken arm must not pass by comparing false.
             if mean_kl.is_nan() || mean_kl > bounds.mean_kl {
@@ -180,7 +198,208 @@ pub fn judge_quality(
         passed: reasons.is_empty(),
         reasons,
         prompts,
+        positions: None,
+        decode: None,
     }
+}
+
+impl QualityResult {
+    /// Fold the prefill-position half in; like the decode half it can only
+    /// fail a result.
+    pub fn with_positions(mut self, mut positions: DecodeResult) -> Self {
+        for r in &mut positions.reasons {
+            *r = r.replacen("decode:", "prefill positions:", 1);
+        }
+        self.passed &= positions.passed;
+        self.reasons.extend(positions.reasons.iter().cloned());
+        self.positions = Some(positions);
+        self
+    }
+
+    /// Fold the decode gate in: it can only fail a result, never rescue one.
+    pub fn with_decode(mut self, decode: DecodeResult) -> Self {
+        self.passed &= decode.passed;
+        self.reasons.extend(decode.reasons.iter().cloned());
+        self.decode = Some(decode);
+        self
+    }
+}
+
+/// Greedy steps a forced decode records per prompt (LAB-01).
+pub const DECODE_TRACE_TOKENS: usize = 256;
+
+/// The teacher-forced decode half of a quality gate: both arms decode the
+/// reference's token ids, judged position by position.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecodeResult {
+    pub passed: bool,
+    pub reasons: Vec<String>,
+    pub overall: crate::kl_stats::Summary,
+    /// Per prompt, with its token count as the label.
+    pub prompts: Vec<(usize, crate::kl_stats::Summary)>,
+    /// Per text class (LAB-02), when the caller named them.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub classes: std::collections::BTreeMap<String, crate::kl_stats::Summary>,
+}
+
+/// `positions` per prompt as `(prompt_tokens, positions)`. The mean KL bound
+/// is the class's own, applied over every decoded position; a class that
+/// bounds top-1 applies it to the positions that did not flip. A flip where
+/// the reference was sure fails any KL class: the mean cannot hide it.
+pub fn judge_decode(
+    class: GateClass,
+    bounds: QualityBounds,
+    prompts: &[(usize, Vec<crate::kl_stats::Position>)],
+) -> DecodeResult {
+    use crate::kl_stats::{summarize, LARGE_MARGIN};
+    let all: Vec<_> = prompts
+        .iter()
+        .flat_map(|(_, p)| p.iter().copied())
+        .collect();
+    let overall = summarize(&all);
+    let mut reasons = Vec::new();
+    if all.is_empty() {
+        reasons.push("decode: no positions compared".into());
+    }
+    match class {
+        GateClass::BitExact => {
+            if !overall.all_bits_equal {
+                reasons.push("decode: logits bits differ from the reference".into());
+            }
+        }
+        GateClass::TextExact | GateClass::TokenDivergence => {
+            reasons.push(format!("decode: {class:?} has no decode-trace bound"));
+        }
+        GateClass::DenseKl | GateClass::MoeKl => {
+            // NaN fails closed.
+            if overall.mean_kl.is_nan() || overall.mean_kl > bounds.mean_kl {
+                reasons.push(format!(
+                    "decode: mean KL {:.3e} over the {:.1e} bound",
+                    overall.mean_kl, bounds.mean_kl
+                ));
+            }
+            if 1.0 - overall.flip_rate < bounds.min_top1_fraction {
+                reasons.push(format!(
+                    "decode: top-1 agreement {:.3} under {:.2}",
+                    1.0 - overall.flip_rate,
+                    bounds.min_top1_fraction
+                ));
+            }
+            if overall.large_margin_flips > 0 {
+                reasons.push(format!(
+                    "decode: {} top-1 flips where the reference led by {LARGE_MARGIN} logits or more",
+                    overall.large_margin_flips
+                ));
+            }
+        }
+    }
+    DecodeResult {
+        passed: reasons.is_empty(),
+        reasons,
+        overall,
+        prompts: prompts.iter().map(|(n, p)| (*n, summarize(p))).collect(),
+        classes: Default::default(),
+    }
+}
+
+/// Hold each text class to the same bound on its own: a drift on one kind of
+/// text must not be averaged away by the others. `labels` name `prompts` in
+/// order. Like every other half, it can only fail a result.
+pub fn judge_text_classes(
+    mut result: DecodeResult,
+    class: GateClass,
+    bounds: QualityBounds,
+    labels: &[&str],
+    prompts: &[(usize, Vec<crate::kl_stats::Position>)],
+) -> DecodeResult {
+    type Prompt = (usize, Vec<crate::kl_stats::Position>);
+    let mut by_class: std::collections::BTreeMap<&str, Vec<Prompt>> = Default::default();
+    for (label, prompt) in labels.iter().zip(prompts) {
+        by_class.entry(label).or_default().push(prompt.clone());
+    }
+    let several = by_class.len() > 1;
+    for (label, members) in by_class {
+        let judged = judge_decode(class, bounds, &members);
+        // One class alone is the overall judgment again.
+        if several {
+            result.passed &= judged.passed;
+            result
+                .reasons
+                .extend(judged.reasons.iter().map(|r| format!("{label} text: {r}")));
+        }
+        result.classes.insert(label.to_string(), judged.overall);
+    }
+    result
+}
+
+/// How far above the base install's KL a candidate may sit and still count
+/// as no worse (LAB-22).
+pub const QUANT_KL_EPS: f64 = 0.02;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuantVerdict {
+    pub passed: bool,
+    pub reasons: Vec<String>,
+}
+
+/// Install against install on one reference: no more bytes than the base and
+/// no worse a KL from the reference. A bit plan that loses at equal bytes is
+/// declined; one that buys quality with bytes is a different question.
+pub fn judge_quant(base_kl: f64, base_bytes: u64, cand_kl: f64, cand_bytes: u64) -> QuantVerdict {
+    let mut reasons = Vec::new();
+    if cand_bytes > base_bytes {
+        reasons.push(format!(
+            "{cand_bytes} bytes against the base's {base_bytes}"
+        ));
+    }
+    // NaN on either side fails closed.
+    let limit = base_kl * (1.0 + QUANT_KL_EPS);
+    if cand_kl.is_nan() || limit.is_nan() || cand_kl > limit {
+        reasons.push(format!("KL {cand_kl:.3e} over the base's {base_kl:.3e}"));
+    }
+    QuantVerdict {
+        passed: reasons.is_empty(),
+        reasons,
+    }
+}
+
+/// One prompt of a divergence gate: where the two arms first parted, and how
+/// many logits the baseline's choice led by there.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Divergence {
+    pub first: Option<usize>,
+    pub baseline_margin: Option<f64>,
+}
+
+/// `floor` is the share of prompts on which the SAME arm gave two outputs
+/// (`tslab noise`); with no measurement it is zero, so any divergence fails.
+/// A divergence with no recorded margin, or a margin that was not a near tie,
+/// fails whatever the floor.
+pub fn judge_divergence(prompts: &[Divergence], floor: f64) -> (bool, Vec<String>) {
+    use crate::kl_stats::SMALL_MARGIN;
+    let mut reasons = Vec::new();
+    if prompts.is_empty() {
+        reasons.push("no prompts compared".to_string());
+    }
+    let parted: Vec<&Divergence> = prompts.iter().filter(|p| p.first.is_some()).collect();
+    let rate = parted.len() as f64 / prompts.len().max(1) as f64;
+    if rate > floor {
+        reasons.push(format!(
+            "outputs part on {rate:.2} of prompts; the same arm parts from itself on {floor:.2}"
+        ));
+    }
+    for p in parted {
+        if p.baseline_margin
+            .is_none_or(|m| m.is_nan() || m >= SMALL_MARGIN)
+        {
+            reasons.push(format!(
+                "divergence at token {} was not a near tie (margin {:?})",
+                p.first.unwrap_or(0),
+                p.baseline_margin
+            ));
+        }
+    }
+    (reasons.is_empty(), reasons)
 }
 
 /// Peak footprint growth allowed for the candidate arm: the larger of
@@ -273,6 +492,108 @@ mod tests {
         assert!(judge_quality(GateClass::BitExact, b, vec![cmp(0.0, true, true)], true).passed);
         assert!(!judge_quality(GateClass::BitExact, b, vec![cmp(0.0, true, false)], true).passed);
         assert!(!judge_quality(GateClass::BitExact, b, vec![cmp(0.0, true, true)], false).passed);
+    }
+
+    #[test]
+    fn the_decode_gate_catches_what_the_prefill_gate_cannot() {
+        use crate::kl_stats::position;
+        let same = position(&[3.0, 1.0, 0.0], &[3.0, 1.0, 0.0], 0).unwrap();
+        // One sure flip among many identical positions: the mean KL stays
+        // far under the bound, the flip must still fail.
+        let mut tiny = vec![same; 20_000];
+        tiny.push(position(&[3.0, 0.0, 0.0], &[0.0, 3.0, 0.0], 0).unwrap());
+        let b = GateClass::DenseKl.default_bounds();
+        let d = judge_decode(GateClass::DenseKl, b, &[(64, tiny)]);
+        assert!(d.overall.mean_kl < b.mean_kl, "{}", d.overall.mean_kl);
+        assert!(!d.passed);
+        assert!(judge_decode(GateClass::DenseKl, b, &[(64, vec![same; 4])]).passed);
+        assert!(!judge_decode(GateClass::DenseKl, b, &[]).passed);
+        // A passing prefill gate does not rescue a failing decode.
+        let prefill = judge_quality(GateClass::DenseKl, b, vec![cmp(0.0, true, true)], true);
+        assert!(prefill.passed && !prefill.with_decode(d).passed);
+    }
+
+    #[test]
+    fn decode_bit_exact_needs_bits_and_nan_fails_closed() {
+        use crate::kl_stats::position;
+        let b = GateClass::BitExact.default_bounds();
+        let near = position(&[3.0, 1.0], &[3.0, 1.0000001], 0).unwrap();
+        assert!(!judge_decode(GateClass::BitExact, b, &[(1, vec![near])]).passed);
+        let broken = position(&[3.0, 1.0], &[f64::NAN, 1.0], 0).unwrap();
+        let b = GateClass::MoeKl.default_bounds();
+        assert!(!judge_decode(GateClass::MoeKl, b, &[(1, vec![broken])]).passed);
+    }
+
+    #[test]
+    fn a_quant_candidate_must_not_buy_quality_with_bytes_or_lose_it() {
+        assert!(judge_quant(0.10, 100, 0.10, 100).passed);
+        assert!(judge_quant(0.10, 100, 0.101, 90).passed);
+        assert!(!judge_quant(0.10, 100, 0.11, 90).passed);
+        assert!(!judge_quant(0.10, 100, 0.05, 101).passed);
+        assert!(!judge_quant(0.10, 100, f64::NAN, 90).passed);
+        assert!(!judge_quant(f64::NAN, 100, 0.05, 90).passed);
+    }
+
+    #[test]
+    fn a_drift_on_one_kind_of_text_is_not_averaged_away() {
+        use crate::kl_stats::position;
+        let same = position(&[3.0, 1.0, 0.0], &[3.0, 1.0, 0.0], 0).unwrap();
+        let off = position(&[3.0, 1.0, 0.0], &[3.0, 1.2, 0.0], 0).unwrap();
+        let b = GateClass::DenseKl.default_bounds();
+        // Many clean document positions, a few drifted chat positions: the
+        // pooled mean passes and the chat class alone does not.
+        assert!(
+            off.kl > b.mean_kl && off.kl * 20.0 / 20_020.0 < b.mean_kl,
+            "{}",
+            off.kl
+        );
+        let prompts = vec![(64, vec![same; 20_000]), (32, vec![off; 20])];
+        let pooled = judge_decode(GateClass::DenseKl, b, &prompts);
+        assert!(pooled.passed, "{:?}", pooled.reasons);
+        let split = judge_text_classes(
+            pooled.clone(),
+            GateClass::DenseKl,
+            b,
+            &["documents", "chat"],
+            &prompts,
+        );
+        assert!(!split.passed);
+        assert!(
+            split.reasons.iter().any(|r| r.starts_with("chat text:")),
+            "{:?}",
+            split.reasons
+        );
+        assert_eq!(split.classes.len(), 2);
+        // One class: recorded, not judged twice.
+        let one = judge_text_classes(pooled, GateClass::DenseKl, b, &["documents"; 2], &prompts);
+        assert!(one.passed && one.reasons.is_empty() && one.classes.len() == 1);
+    }
+
+    #[test]
+    fn a_divergence_passes_only_as_a_near_tie_within_the_floor() {
+        let same = Divergence {
+            first: None,
+            baseline_margin: None,
+        };
+        let tie = Divergence {
+            first: Some(3),
+            baseline_margin: Some(0.1),
+        };
+        let sure = Divergence {
+            first: Some(3),
+            baseline_margin: Some(4.0),
+        };
+        let unknown = Divergence {
+            first: Some(3),
+            baseline_margin: None,
+        };
+        assert!(judge_divergence(&[same; 4], 0.0).0);
+        // No measured floor: even a tie fails.
+        assert!(!judge_divergence(&[same, tie], 0.0).0);
+        assert!(judge_divergence(&[same, tie], 0.5).0);
+        assert!(!judge_divergence(&[same, sure], 1.0).0);
+        assert!(!judge_divergence(&[same, unknown], 1.0).0);
+        assert!(!judge_divergence(&[], 1.0).0);
     }
 
     #[test]

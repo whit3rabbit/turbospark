@@ -86,7 +86,7 @@ pub(crate) fn encode_gpt_oss_layer_moe(
     let (selected, route_weights) =
         router_topk_gemma4(&router_logits, top_k, &state.per_expert_ones);
     if let Some(hist) = router_hist.as_mut() {
-        hist.record(layer, &selected);
+        hist.record(layer, &selected, &route_weights);
     }
     // MAPPED RESIDENCY SKIPS BOTH THE PLAN AND THE `pread`, exactly as
     // `families/gemma4/moe.rs` does: every expert is already addressable in

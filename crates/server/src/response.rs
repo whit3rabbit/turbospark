@@ -191,9 +191,10 @@ pub fn usage_chunk(
     id: String,
     created: u64,
     model: String,
-    prompt_tokens: u32,
-    completion_tokens: u32,
+    decode: &runtime::RawDecodeResult,
 ) -> ChatCompletionChunk {
+    let prompt_tokens = decode.prompt_tokens as u32;
+    let completion_tokens = decode.new_tokens as u32;
     ChatCompletionChunk {
         id,
         object: "chat.completion.chunk".to_string(),
@@ -203,6 +204,7 @@ pub fn usage_chunk(
             prompt_tokens,
             completion_tokens,
             total_tokens: prompt_tokens + completion_tokens,
+            prompt_tokens_details: Some(crate::timings::prompt_tokens_details(decode)),
             ..Default::default()
         }),
         created: Some(created),

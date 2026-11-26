@@ -182,6 +182,7 @@ impl RealForwardRunner {
 
                 let cb1 = pass.commit().waiting_on_drop();
                 let _shared_pass = if self.shared_cb_overlap {
+                    foundation::engaged!("shared_cb");
                     Some(self.encode_shared_expert_branch(
                         layer,
                         hidden,
@@ -248,6 +249,7 @@ impl RealForwardRunner {
                 )?;
 
                 if self.routed_pipeline {
+                    foundation::engaged!("routed_pipeline");
                     pending_routed.set(pass.commit().waiting_on_drop());
                     pass = self.context.begin_pass_labeled("cb1 (attn+router)");
                 }

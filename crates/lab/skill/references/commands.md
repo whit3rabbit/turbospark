@@ -45,17 +45,49 @@ process, which must sit beside `tslab`.
 | `ane-plan --path PROGRAM.mlpackage\|DIR [--units ane\|all\|gpu\|cpu] [--function NAME]` | Where Core ML places a program's ops (`MLComputePlan`), as cost shares on ANE, GPU and CPU plus the ops left off the ANE. No timing and no model install. Needs a macOS with compute plans. A multifunction program is planned for its default function only, and the others print `no op placed: not planned`: rerun with `--function NAME` for each | `ane_plan` |
 | `expert-census --model M [workload]` | One router capture run of a MoE install, reduced: the share of selections in experts used 8/16/17/32+ times within an executed batch, the largest in-batch group, experts per layer covering 50/80/95% of selections, the expert union per full batch against 16/32/64/96 slots, and the routed sub-batch sizes per union cap. The capture run itself is unquotable | `run`, `expert_census` |
 
+## Checks beside the A/B
+
+| Command | Use | Writes (`kind`) |
+|---|---|---|
+| `sanity --model M [--file F] [--tools] [--needle all\|N,..] [--candidate SPEC]` | Eight exact golden answers through the chat template (`workloads/golden.json`), optional tool calls and a needle grid; exit 1 on a miss, or with `--candidate` on any case it loses against `--arm`. The `garbage_flag` and `think_leak` fields are advisory. A miss on a new family is a finding to read, not proof of a bug | `run`, `sanity` |
+| `noise --model M [--runs 5] [--arm SPEC]` | The same arm in fresh processes: distinct outputs per prompt and the first diverging token | `run`, `noise` |
+| `floor --model M` | The arm quality-gated against itself, kept under the family; `gate` then prints limit, floor and margin. A floor never widens a bound | `run`, `floor` |
+| `quant-ab --ref M --base M --cand M` | Each install replays the reference's ids: a candidate passes only with no more bytes than the base and a KL from the reference no worse (2% slack) | `run`, `quant_ab` |
+| `launch-count --model M [--arm SPEC]...` | Dispatches and command buffers per decoded token, and the pipelines each arm used. Counts only: `TURBOSPARK_LAUNCH_COUNT=1` perturbs timing | `run`, `launch_count` |
+| `spec-rounds --model M --arm NAME~mtp:4 [--synth-len 1.5,2,3]` | Speculative rounds under the runtime probe: verify time by run age, expert reads per committed token, and costs at a forced acceptance. Synthetic output is wrong by design | `run`, `spec_rounds` |
+| `image-stage --model INSTALL --fixtures DIR [--against EXP]` | Each Z-Image denoise step from the reference latent (`scripts/z_image_capture.py`): update error and output hash; exit 3 when a step's bits changed. No quality bound | `image_stage` |
+| `idle-gap --model M` | First decode step after 0.5, 1, 2, 4 and 8 s gaps, and how long its first command buffer waited for the GPU; under 20% worse than the 0.5 s gap, drop the idle-GPU idea | `run`, `idle_gap` |
+| `anchor --model M --file F [--update]` | Greedy digests on three prompts keyed by family and toolchain; exit 3 lists changes for a person | `run`, `anchor` |
+| `release-gate --base-worker PATH --model M... [--declared F]` | A released `tslab-worker` against this one, interleaved: PASS, FAIL (undeclared loss), NEEDS-KL-GATE (output moved, undeclared), PASS-with-note, SKIP | `run`, `release_gate` |
+| `type1` | False WIN and LOSS rates of the pair rule, replayed on every stored null calibration | nothing |
+| `serve-bench`, `soak` | The server path over HTTP/SSE on loopback: latency, server usage, aggregate throughput, open-loop arrivals and goodput, and `serve-bench` the growth of the server's `turbospark_text_*` series over the run (`server_metrics`); the soak watches footprint, threads and stalls | `serve_bench`, `soak` |
+
 Workload flags: `--prompt protocol:ID|messages:PATH|text:PATH|corpus:N|chat:PATH`
 (repeatable), `--decode N`, `--chunk N|off`, `--context N`. An audio install
 takes `--audio-job JOB.json` instead (`workloads/audio/`), and its metrics are
 `audio_run_s` and `rtf`.
 
-Arm syntax: `NAME[@SLOTS/RESIDENCY][~DRAFTER:BLOCK[a]][~hog:N][:KEY=V,...]`,
+Arm syntax: `NAME[@SLOTS/RESIDENCY][~DRAFTER:BLOCK[a]][~hog:N][~ballast:GIB][~cold][:KEY=V,...]`,
 for example `mtp2~mtp:2:spec_stats=1`. `KEY` is a `TURBOSPARK_*` name or a
 knob short name. `~hog:N` runs N busy threads beside the worker for the
 whole run (controlled contention, never quotable); its run records keep
 `controlled_contention` and, with `ane_prefill_stats=1`, `ane_stats` with
-the handoff share.
+the handoff share. `~cold` drops the install's resident pages
+(`msync(MS_INVALIDATE)`, no sudo) before each of the arm's runs.
+`~ballast:GIB` (1 to 12) holds touched memory beside the worker to emulate a
+smaller Mac: refused when the host already swaps, dirty on swap growth, and
+never quoted in a doc.
+
+A `chat:` file may add `"edit_variants": [..]` (two or more): after the
+follow-ups the last message is edited A B C C B A from one history
+(`chats/edit-last-turn.chat.json`).
+
+`ab` and `sweep` warn when a baseline that sets anything lost a default lane.
+A null run with under 3 clean pairs records no floor.
+
+`ab --noninferior 0.02 --pairs 10` also asks "not worse than 2%?" with
+one-sided bounds. `sweep --guard prefill_tok_s` refuses a WIN that taxes a
+second metric (`expert_hit_rate` among them), and prints how many false WINs its candidate count allows.
 
 Metrics: `prefill_tok_s`, `decode_tok_s`, `prefill_s`, `peak_bytes`,
 `followup_ttft_s`, `audio_run_s`, `rtf`, and the modeled-energy pair
@@ -64,7 +96,10 @@ experiment; never a wall-power claim).
 
 Host flags: `--max-foreign-cpu 150`, `--max-single-cpu 90`, `--allow-battery`,
 `--quiet-wait-min 5`, `--min-free-gb 10`, `--timeout-min 60`. Loosening them
-gets you numbers from a busy host, which is all they then are.
+gets you numbers from a busy host, which is all they then are. Opt-in dirty
+rules, off until calibrated on this host's null runs:
+`--max-compressions N`, `--max-swap-growth-mib N`, `--require-full-power`,
+`--require-normal-pressure`.
 
 ## Kernel benches (in process, no model weights)
 
@@ -165,6 +200,7 @@ and the 8-row tile's lever 9 was exactly that.
 |---|---|
 | `export --experiment E[,F]\|--all [--format jsonl\|json\|csv] [--redact-paths] [--out P]` | `tslab/1` series, one per plottable line or bar group |
 | `report --experiment E --html OUT.html` | One self-contained HTML page with charts and tables |
+| `report --experiment E --md OUT.md` | A text record: environment, the spec to reproduce, verdicts, gates and "claims not made" derived from the records; a missing field reads `unrecorded` |
 
 ## Running several commands at once
 
@@ -175,6 +211,17 @@ and the 8-row tile's lever 9 was exactly that.
 `gate`, `run-experiment` and `confirm` take a spec file, check the git diff
 against `--base`, build the worker from the tree, run required tests, the
 quality gate, the paired A/B and the memory check, and print a `DECISION`.
+The quality gate compares final-position prefill logits and, when the
+workload decodes, a teacher-forced decode trace: the baseline's greedy ids
+replayed by the candidate for up to 256 steps on three document and two chat prompts, each class judged on its own,, judged
+on mean KL over every position, with any top-1 flip the reference led by 2
+logits or more failing. `gate --decode-trace` forces the trace; `gate
+--noise-arms` also compares each arm with itself. A spec may add
+`exactness: token_divergence` is for a change of verify width (the arms' speculation must differ): outputs may part only on a near tie and no more often than the model's `noise` record.
+A prefill quality gate also compares the logits at every chunk end. A spec may add
+`also_changes` (extra arm differences, each with a reason; otherwise the arms
+may differ only in `knob_env`), `secondary_guard` and
+`noninferiority_limit` (needs `min_pairs` of 10).
 They need the TurboSpark source tree, and outside it they refuse. The procedure
 is `crates/lab/program.md`.
 

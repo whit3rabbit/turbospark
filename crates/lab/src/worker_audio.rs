@@ -87,6 +87,8 @@ pub fn run(req: &WorkerRequest, job: &AudioJob) -> Result<RunRecord, String> {
         faults: task_fault_counters(),
         dispatch_profile: None,
         provenance: provenance::collect(),
+        open_pressure: None,
+        idle_gap: None,
         audio: Some(audio),
     })
 }

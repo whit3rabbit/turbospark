@@ -16,6 +16,7 @@ final class ServerEndpointCatalogTests: XCTestCase {
     /// Every route the router registers, spelled exactly as it does.
     private let routerRoutes: Set<String> = [
         "GET /health",
+        "GET /v1/metrics",
         "POST /v1/chat/completions",
         "POST /v1/images/generations",
         "POST /v1/images/edits",

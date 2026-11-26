@@ -23,11 +23,14 @@ tslab: the evaluator for kernel and method experiments (macOS).
                 [--dispatch-probe 0,4,8,16 | --standin attn,mlp,gdn]   (L1 / L4: their own arms, need --decode)
   tslab ab      --model M [workload] --baseline NAME[:KEY=V,...] --candidate NAME[:KEY=V,...]
                 [--null] [--metric prefill_tok_s|decode_tok_s|prefill_s|peak_bytes|followup_ttft_s|audio_run_s|rtf]
-                [--min-effect 0.02] [--pairs 3] [--max-pairs 6] [--experiment NAME]
+                [--min-effect 0.02] [--pairs 3] [--max-pairs 6] [--noninferior 0.02] [--experiment NAME]
+                (arm modifiers: ~mtp:2, ~hog:N, ~ballast:GIB, ~cold)
   tslab sweep   --model M (--sweep ID|all [--dir DIR] | --sweep-file F | --baseline A --candidate B [--candidate C]...)
-                [workload] [--metric M] [--min-effect 0.02] [--pairs 3] [--max-pairs 6] [--fail-on-loss] [--gate] [--enforce-memory] [--experiment NAME]
+                [workload] [--metric M] [--min-effect 0.02] [--pairs 3] [--max-pairs 6] [--fail-on-loss] [--gate] [--enforce-memory] [--guard METRIC[:0.02]] [--experiment NAME]
                 (every candidate against the one baseline, each a paired A/B; profile sweeps from `tslab family`)
-  tslab gate    --spec SPEC.json [--base REV]      (loads the model: takes minutes)
+  tslab gate    --spec SPEC.json [--base REV] [--decode-trace] [--noise-arms]
+                (loads the model: takes minutes. A spec that decodes is also gated on a
+                 teacher-forced decode trace; --decode-trace forces one)
   tslab run-experiment --spec SPEC.json [--base REV]
   tslab confirm --spec SPEC.json [--base REV]
   tslab kernel  --model M [--bench NAME[,NAME]|all] [--rows 1,2,4,...] [--contexts 512,...]
@@ -76,6 +79,25 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab export  --experiment A[,B]|--all [--kind K[,K]] [--format jsonl|json|csv] [--redact-paths]
                 [--out PATH [--force]]            (ledgers as tslab/1 series)
   tslab report  --experiment A[,B]|--all --html OUT.html [--title T] [--kind K] [--redact-paths] [--force]
+  tslab sanity  --model M [--file golden.json] [--arm SPEC] [--decode 512] [--tools] [--needle all|4096,16384]
+                [--candidate SPEC]                 (exact golden answers, tool calls, needle grid; exit 1 on a miss,
+                 or with --candidate on any case it loses against --arm)
+  tslab noise   --model M [--runs 5] [--arm SPEC] [--prompt ...] [--decode 128]  (run-to-run output spread)
+  tslab floor   --model M [--arm SPEC]             (the arm against itself, kept per family; gate prints the margin)
+  tslab quant-ab --ref M --base M --cand M [--cand M]   (installs on one reference's ids: no worse KL at no more bytes)
+  tslab launch-count --model M [--arm SPEC]... [--decode 32] [--us-per-dispatch X]  (unquotable)
+  tslab idle-gap --model M [--arm SPEC]            (does a 0.5-8 s idle gap cost the next token?)
+  tslab spec-rounds --model M --arm NAME~mtp:4 [--synth-len 1.5,2,3] [--decode 256]
+                (per round verify time by run age, expert reads per committed token, and costs at a
+                 forced acceptance; synthetic output is wrong by design)
+  tslab image-stage --model INSTALL --fixtures DIR [--against EXPERIMENT]
+                (each image denoise step from the reference's latent; exit 3 when a step's bits changed)
+  tslab anchor  --model M --file anchors.json [--update]   (greedy digests per family and toolchain; exit 3 on change)
+  tslab release-gate --base-worker PATH --model M... [--declared FILE] [--metric decode_tok_s] [--pairs 3]
+  tslab type1   [--trials 20000]                   (false WIN and LOSS rates from stored null calibrations)
+  tslab serve-bench (--server URL [--pid P] | --server-bin PATH --model M) [--sizes short,4k,16k] [--seeds 3]
+                [--max-tokens 512] [--burst 4] [--arrival closed|periodic|poisson --rate R] [--slo-first-output-s S]
+  tslab soak    (same target flags) [--duration 3600] [--concurrency 3] [--disconnect-pct 10] [--stall-s 180]
   tslab schema                                     (the JSON Schema of everything tslab writes)
   tslab serve   [--port 7878] [--bind 127.0.0.1] [--lab DIR] [--open]
                 (read-only dashboard over every ledger: experiments, compare, verdicts, sweeps,
@@ -85,6 +107,7 @@ workload: [--prompt protocol:ID|messages:PATH|text:PATH|corpus:N|chat:PATH]... [
           [--chunk N|off] [--context N]
           or, for an audio install: --audio-job JOB.json (see workloads/audio/)
 host:     [--max-foreign-cpu 150] [--max-single-cpu 90] [--allow-battery]
+          [--max-compressions N] [--max-swap-growth-mib N] [--require-full-power] [--require-normal-pressure]
           [--timeout-min 60] [--quiet-wait-min 5] [--min-free-gb 10]
           (--quiet-wait-min 0 measures on a busy host; --min-free-gb 0 skips the disk check)
 
@@ -178,6 +201,20 @@ pub const COMMANDS: &[&str] = &[
     "depth-replay",
     "hybrid-replay",
     "tree-replay",
+    "xengine-kl",
+    "sanity",
+    "noise",
+    "floor",
+    "quant-ab",
+    "launch-count",
+    "idle-gap",
+    "spec-rounds",
+    "image-stage",
+    "anchor",
+    "release-gate",
+    "type1",
+    "serve-bench",
+    "soak",
 ];
 
 /// Run one command in this process. `tslab workflow` calls this for each
@@ -214,6 +251,19 @@ pub fn dispatch(cmd: &str, args: Args) -> Result<CmdOutput, String> {
         "hybrid-replay" => unit(crate::hybrid_replay::hybrid_replay_cmd(args)),
         "tree-replay" => unit(crate::tree_replay::tree_replay_cmd(args)),
         "xengine-kl" => unit(crate::xengine::xengine_kl_cmd(args)),
+        "sanity" => crate::checks::sanity_cmd(args),
+        "noise" => crate::checks::noise_cmd(args),
+        "floor" => crate::checks::floor_cmd(args),
+        "quant-ab" => crate::checks::quant_ab_cmd(args),
+        "launch-count" => crate::checks::launch_count_cmd(args),
+        "idle-gap" => crate::checks::idle_gap_cmd(args),
+        "spec-rounds" => crate::checks::spec_rounds_cmd(args),
+        "image-stage" => crate::image_stage::image_stage_cmd(args),
+        "anchor" => crate::checks::anchor_cmd(args),
+        "release-gate" => crate::checks::release_gate_cmd(args),
+        "type1" => crate::checks::type1_cmd(args),
+        "serve-bench" => crate::serve_bench::serve_bench_cmd(args),
+        "soak" => crate::serve_bench::soak_cmd(args),
         other => Err(format!("unknown command {other:?}\n\n{USAGE}")),
     }
 }
@@ -284,7 +334,17 @@ pub fn host_rules_from(args: &mut Args) -> Result<HostRules, String> {
         // Minutes on the command line, seconds in the rule.
         quiet_wait_s: 60.0 * args.parsed("--quiet-wait-min", d.quiet_wait_s / 60.0)?,
         min_free_gb: args.parsed("--min-free-gb", d.min_free_gb)?,
+        max_compressions_delta: opt_parsed(args, "--max-compressions")?,
+        max_swap_growth_mib: opt_parsed(args, "--max-swap-growth-mib")?,
+        require_full_power: args.flag("--require-full-power"),
+        require_normal_pressure: args.flag("--require-normal-pressure"),
     })
+}
+
+fn opt_parsed<T: std::str::FromStr>(args: &mut Args, flag: &str) -> Result<Option<T>, String> {
+    args.take(flag)?
+        .map(|v| v.parse().map_err(|_| format!("{flag}: cannot parse {v:?}")))
+        .transpose()
 }
 
 fn common_env(args: &mut Args) -> Result<BTreeMap<String, String>, String> {
@@ -366,6 +426,8 @@ fn profile(mut args: Args) -> Result<(), String> {
                 speculation: None,
                 expect_engaged: Vec::new(),
                 contention: None,
+                ballast_gib: None,
+                cold: false,
             }
         };
         if let Some(ns) = &probe {
@@ -406,6 +468,8 @@ fn profile(mut args: Args) -> Result<(), String> {
                     speculation: None,
                     expect_engaged: Vec::new(),
                     contention: None,
+                    ballast_gib: None,
+                    cold: false,
                 });
             }
         }
@@ -548,7 +612,7 @@ pub fn null_floor(
         .of_kind("null_calibration")?
         .iter()
         .rev()
-        .find(|r| r["workload"] == w && r["metric"] == m)
+        .find(|r| r["workload"] == w && r["metric"] == m && usable_null(r))
         .map(|r| {
             (
                 r["floor"].as_f64().unwrap_or(0.0),
@@ -556,6 +620,14 @@ pub fn null_floor(
             )
         })
         .unwrap_or((0.0, 0)))
+}
+
+/// A calibration with fewer pairs than a verdict needs measures no spread:
+/// one pair has a MAD of zero, which would read as a perfectly quiet host.
+pub fn usable_null(record: &Value) -> bool {
+    record["improvements"]
+        .as_array()
+        .is_some_and(|v| v.len() >= stats::MIN_PAIRS)
 }
 
 fn median_peak(outcomes: &[&Outcome]) -> Option<f64> {
@@ -624,7 +696,28 @@ fn ab(mut args: Args) -> Result<(), String> {
     let requested_effect: f64 = args.parsed("--min-effect", stats::MIN_EFFECT_FLOOR)?;
     let min_pairs: usize = args.parsed("--pairs", stats::MIN_PAIRS)?;
     let max_pairs: usize = args.parsed("--max-pairs", 6)?;
+    // `--noninferior LIMIT`: also ask "not worse than LIMIT?" (LAB-05).
+    let noninferior: Option<f64> = opt_parsed(&mut args, "--noninferior")?;
     args.finish()?;
+    if let Some(limit) = noninferior {
+        if !(0.0..=stats::MAX_NONINFERIORITY_LIMIT).contains(&limit)
+            || min_pairs < stats::NONINFERIORITY_PAIRS
+        {
+            return Err(format!(
+                "--noninferior takes 0..={} and needs --pairs >= {} declared up front",
+                stats::MAX_NONINFERIORITY_LIMIT,
+                stats::NONINFERIORITY_PAIRS
+            ));
+        }
+    }
+    // The command-line form of the spec's one-knob lint (LAB-07).
+    let differs = crate::spec::arm_differences(&baseline, &candidate);
+    if !null && differs.len() > 1 {
+        eprintln!(
+            "warning: the arms differ in more than one thing ({}); this A/B cannot attribute a result",
+            differs.join(", ")
+        );
+    }
     if min_pairs < stats::MIN_PAIRS || max_pairs < min_pairs {
         return Err(format!(
             "--pairs must be >= {} and --max-pairs >= --pairs",
@@ -641,6 +734,7 @@ fn ab(mut args: Args) -> Result<(), String> {
         null_floor(&session, &workload, metric)?
     };
     let min_effect = requested_effect.max(floor);
+    let baseline_route = session.baseline_route(&baseline, &workload)?;
     eprintln!(
         "tslab ab: {} vs {}, metric {metric:?}, effect floor {:.2}% (null floor {:.2}%)",
         baseline.name,
@@ -665,10 +759,28 @@ fn ab(mut args: Args) -> Result<(), String> {
         &verdict,
     );
     crate::say!("  memory: {memory}");
+    report::print_buckets(&report::bucket_table(&pairs));
+    let not_worse =
+        noninferior.map(|limit| stats::decide_noninferior(&verdict.improvements, limit));
+    if let Some(r) = &not_worse {
+        crate::say!(
+            "  non-inferiority: {:?} (one-sided bounds {:+.2}% to {:+.2}%, limit {:.2}%)",
+            r.result,
+            r.lower * 100.0,
+            r.upper * 100.0,
+            r.limit * 100.0
+        );
+    }
     if let Some(why) = &stopped {
         crate::say!("  stopped early: {why}");
     }
-    if null {
+    if null && verdict.improvements.len() < stats::MIN_PAIRS {
+        crate::say!(
+            "  no null floor recorded: {} clean pairs, a calibration needs {}",
+            verdict.improvements.len(),
+            stats::MIN_PAIRS
+        );
+    } else if null {
         let floor = stats::null_floor(&verdict.improvements);
         // Twice the identical arms' peak gap is what this host's peak
         // reading cannot resolve.
@@ -688,7 +800,11 @@ fn ab(mut args: Args) -> Result<(), String> {
             "verdict",
             json!({"model": model, "workload": workload, "metric": metric,
                    "baseline": baseline, "candidate": candidate, "verdict": verdict,
-                   "null_floor": floor, "memory": memory, "pairs": run_ids}),
+                   "null_floor": floor, "memory": memory, "pairs": run_ids,
+                   "noninferiority": not_worse,
+                   "baseline_route": baseline_route,
+                   "methodology": crate::orchestrate::methodology(&workload, crate::worker::Mode::Timing),
+                   "buckets": report::bucket_table(&pairs)}),
         )?;
     }
     Ok(())
@@ -943,6 +1059,14 @@ fn pinned_cmd(mut args: Args) -> Result<CmdOutput, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_one_pair_calibration_is_not_a_floor() {
+        assert!(!usable_null(&json!({"improvements": [-0.14]})));
+        assert!(!usable_null(&json!({"improvements": [0.0, 0.0]})));
+        assert!(usable_null(&json!({"improvements": [0.0, 0.01, -0.01]})));
+        assert!(!usable_null(&json!({})));
+    }
+
     use super::*;
 
     fn outcome(status: &str, reasons: &[&str]) -> Outcome {

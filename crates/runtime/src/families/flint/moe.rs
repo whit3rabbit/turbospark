@@ -169,7 +169,7 @@ pub(crate) fn encode_flint_layer_moe(
     );
     let (selected, route_weights) = sigmoid_topk_renorm(&router_logits, top_k, routed_scale);
     if let Some(hist) = router_hist.as_mut() {
-        hist.record(blob_layer, &selected);
+        hist.record(blob_layer, &selected, &route_weights);
     }
     let mapped_active = mapped.buffers.get(layer).is_some_and(Option::is_some);
     let slots: Vec<usize> = if mapped_active {

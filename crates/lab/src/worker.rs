@@ -40,6 +40,17 @@ pub enum Mode {
     /// Prefill each prompt and store its final-position logits for the
     /// quality gate. Timing is recorded but not quotable.
     Quality,
+    /// Prefill each plain prompt, then decode a FIXED token sequence and
+    /// write every step's logits (LAB-01). Without `forced_ids` the run's own
+    /// greedy ids become the sequence. Never a timing run.
+    ForcedDecode,
+    /// A speculative run under the runtime's probe (`runtime::spec_probe`):
+    /// per round timings and expert reads, and the margin behind every
+    /// committed token. Never a timing run.
+    SpecProbe,
+    /// Sleep between short decodes and time the first step after each gap
+    /// (LAB-24): does an idle GPU cost the next token anything?
+    IdleGap,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,9 +60,19 @@ pub struct WorkerRequest {
     pub arm: Arm,
     pub workload: Workload,
     pub mode: Mode,
-    /// Where the quality mode writes its f16 logits (one row per prompt).
+    /// Where the quality mode writes its f16 logits (one row per prompt), and
+    /// where the forced mode writes its trace (`logit_trace`, one row per
+    /// decode step per prompt).
     #[serde(default)]
     pub logits_path: Option<PathBuf>,
+    /// Forced mode: the token ids to decode, per prompt, from the reference
+    /// arm's record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forced_ids: Option<Vec<Vec<i32>>>,
+    /// `Mode::SpecProbe` only: accept each proposal with this chance instead
+    /// of by the model (LAB-23). The output is wrong by design.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub synthetic_accept: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +93,23 @@ pub struct PromptRecord {
     pub prefill_phases: PhaseReport,
     pub decode_phases: Option<PhaseReport>,
     pub cache_class: CacheClass,
+    /// The generated (or forced) ids and their decoded text, for plain
+    /// prompts. Token ids always come from this install's tokenizer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_ids: Option<Vec<i32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decode_text: Option<String>,
+    /// Dispatches and command buffers per window, under
+    /// `TURBOSPARK_LAUNCH_COUNT=1` (LAB-26). Such a run is not a timing run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub launches: Option<serde_json::Value>,
+    /// `Mode::SpecProbe`'s rounds and margins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spec_probe: Option<serde_json::Value>,
+    /// Quality mode: the token that follows each recorded prefill position
+    /// (one per row of the `.positions` trace).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position_targets: Option<Vec<i32>>,
     /// Per turn, for a chat prompt. The fields above then total the chat
     /// (`prompt_tokens` counting only the tokens prefilled, not the reused
     /// ones), and `decode_digest` covers every turn's tokens in order.
@@ -246,6 +284,13 @@ pub struct RunRecord {
     /// stages in ms, output_digest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio: Option<serde_json::Value>,
+    /// Compressor pages and swap growth across the install's open (LAB-15):
+    /// a footprint reading beside heavy compression is a false green.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_pressure: Option<serde_json::Value>,
+    /// `Mode::IdleGap`'s rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_gap: Option<serde_json::Value>,
 }
 
 fn refused(req: &WorkerRequest, reason: String) -> RunRecord {
@@ -270,6 +315,8 @@ fn refused(req: &WorkerRequest, reason: String) -> RunRecord {
         dispatch_profile: None,
         provenance: provenance::collect(),
         audio: None,
+        open_pressure: None,
+        idle_gap: None,
     }
 }
 
@@ -342,6 +389,10 @@ fn parse_messages(rows: &[serde_json::Value], path: &Path) -> Result<Vec<Message
 pub struct ChatFile {
     pub opening: Vec<Message>,
     pub follow_ups: Vec<String>,
+    /// Variants of one last user message (`"edit_variants"`, LAB-20): after
+    /// the follow-ups the client edits that message back and forth, A B C C
+    /// B A, each time from the same history.
+    pub edit_variants: Vec<String>,
     /// Whether the model reasons before it replies, so a reply carries a
     /// `</think>` and the client sends back only what follows it. `false` for a
     /// template with no thinking channel, where the whole reply is the content.
@@ -388,12 +439,45 @@ impl ChatFile {
                 format!("{}: \"reasoning\" must be true or false", path.display())
             })?,
         };
+        let edit_variants = match v.get("edit_variants") {
+            None => Vec::new(),
+            Some(e) => serde_json::from_value::<Vec<String>>(e.clone())
+                .ok()
+                .filter(|e| e.len() >= 2)
+                .ok_or_else(|| {
+                    format!(
+                        "{}: \"edit_variants\" must be two or more strings",
+                        path.display()
+                    )
+                })?,
+        };
         Ok(Self {
             opening,
             follow_ups,
+            edit_variants,
             reasoning,
         })
     }
+}
+
+/// What the user says on turn `turn` of a chat: `None` for the opening,
+/// then each follow-up, then the edit order over the variants (forward then
+/// back, so every variant is also returned to).
+pub fn chat_turn<'a>(
+    follow_ups: &'a [String],
+    variants: &'a [String],
+    turn: usize,
+) -> Option<(&'a str, bool)> {
+    if turn == 0 {
+        return None;
+    }
+    if turn <= follow_ups.len() {
+        return Some((&follow_ups[turn - 1], false));
+    }
+    let i = turn - follow_ups.len() - 1;
+    let n = variants.len();
+    let v = if i < n { i } else { 2 * n - 1 - i };
+    Some((&variants[v], true))
 }
 
 /// A reply as a client sends it back. With `reasoning` (a thinking template)
@@ -498,6 +582,39 @@ fn prefill(
     Ok(())
 }
 
+/// Chunked prefill that asks for the head after EVERY chunk and records the
+/// logits at each chunk end but the last (the final row is the quality
+/// mode's own). A family whose chunk driver skips the head leaves the buffer
+/// as it was filled, and that position is not recorded. Returns the token
+/// following each recorded position.
+fn prefill_recording(
+    runner: &mut RealForwardRunner,
+    ids: &[i32],
+    chunk: usize,
+    logits: &mut [LogitValue],
+    sampler: &mut AppMemorySampler,
+    out: &mut crate::logit_trace::TraceWriter,
+) -> Result<Vec<i32>, String> {
+    let spans = prefill_chunk_spans(ids.len(), 0, chunk);
+    let mut targets = Vec::new();
+    for (i, span) in spans.iter().enumerate() {
+        let end = span.token_offset + span.token_count;
+        logits.fill(LogitValue::from_f32(f32::NAN));
+        runner.prefill_chunk_with_status(
+            &ids[span.token_offset..end],
+            span.start_position,
+            logits,
+            true,
+        )?;
+        sampler.sample();
+        if i + 1 < spans.len() && !logits.iter().all(|v| v.to_f32().is_nan()) {
+            out.row(&f16_bits(logits))?;
+            targets.push(ids[end]);
+        }
+    }
+    Ok(targets)
+}
+
 fn greedy_config(max_new: usize) -> Result<runtime::GenerationConfig, String> {
     Ok(runtime::GenerationConfig {
         // Temperature exactly 0: the speculative loop refuses anything else
@@ -535,9 +652,15 @@ fn chat_once(
     let mut turns = Vec::new();
     let mut all = Vec::new();
     let outcome = (|| {
-        for turn in 0..=chat.follow_ups.len() {
-            if turn > 0 {
-                history.push(Message::new(Role::User, chat.follow_ups[turn - 1].clone()));
+        // The history every edit variant is asked from.
+        let mut before_edits: Option<Vec<Message>> = None;
+        let total = chat.follow_ups.len() + 2 * chat.edit_variants.len();
+        for turn in 0..=total {
+            if let Some((message, edit)) = chat_turn(&chat.follow_ups, &chat.edit_variants, turn) {
+                if edit {
+                    history = before_edits.get_or_insert_with(|| history.clone()).clone();
+                }
+                history.push(Message::new(Role::User, message.to_string()));
             }
             let rendered = tokenizer
                 .apply_chat_template(&history)
@@ -742,6 +865,151 @@ fn open(
     Ok((runner, tokenizer, family))
 }
 
+/// Swap read once a second while the install opens: a spike that is gone by
+/// the end still moved pages.
+struct PressureWatch {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<(Option<f64>, usize)>>,
+}
+
+impl PressureWatch {
+    fn start() -> Self {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = stop.clone();
+        let thread = std::thread::spawn(move || {
+            let mut peak: Option<f64> = None;
+            let mut samples = 0;
+            let mut ticks = 0u32;
+            while !flag.load(std::sync::atomic::Ordering::Relaxed) {
+                if ticks % 10 == 0 {
+                    if let Some(used) = crate::host::swap_used_mib() {
+                        peak = Some(peak.map_or(used, |p: f64| p.max(used)));
+                        samples += 1;
+                    }
+                }
+                ticks += 1;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            (peak, samples)
+        });
+        Self {
+            stop,
+            thread: Some(thread),
+        }
+    }
+
+    /// The highest swap use seen and how many readings it came from.
+    fn finish(mut self) -> (Option<f64>, usize) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.thread
+            .take()
+            .and_then(|t| t.join().ok())
+            .unwrap_or((None, 0))
+    }
+}
+
+fn probe_json(r: runtime::spec_probe::Record) -> serde_json::Value {
+    serde_json::json!({
+        "synthetic": r.synthetic,
+        "margins": r.margins,
+        "rounds": r.rounds.iter().map(|r| serde_json::json!({
+            "at_s": r.at_s, "width": r.width, "accepted": r.accepted, "copy": r.copy,
+            "verify_ms": r.verify_ms, "expert_requests": r.expert_requests,
+            "expert_bytes": r.expert_bytes,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// The idle gaps the probe sleeps, seconds.
+pub const IDLE_GAPS_S: [f64; 5] = [0.5, 1.0, 2.0, 4.0, 8.0];
+/// Decode steps timed after each gap.
+const IDLE_STEPS: usize = 20;
+
+/// Prefill the first prompt, then for each gap: sleep, time one step, then
+/// time the following steps as the busy reading.
+fn idle_gap_probe(
+    runner: &mut RealForwardRunner,
+    ids: &[i32],
+    chunk: Option<usize>,
+    logits: &mut [LogitValue],
+    sampler: &mut AppMemorySampler,
+) -> Result<serde_json::Value, String> {
+    runner.reset();
+    prefill(runner, ids, chunk, logits, sampler)?;
+    let mut pos = ids.len();
+    let mut step = |runner: &mut RealForwardRunner, logits: &mut [LogitValue]| {
+        let t = argmax(logits)?;
+        let started = Instant::now();
+        runner.produce(t, pos, logits).map_err(|e| e.to_string())?;
+        pos += 1;
+        Ok::<f64, String>(started.elapsed().as_secs_f64() * 1e3)
+    };
+    let mut rows = Vec::new();
+    for gap in IDLE_GAPS_S {
+        for _ in 0..IDLE_STEPS {
+            step(runner, logits)?;
+        }
+        std::thread::sleep(std::time::Duration::from_secs_f64(gap));
+        runtime::submit_probe::install();
+        let first_ms = step(runner, logits)?;
+        // The first buffer after the gap is the one an idle GPU delays.
+        let first_submit_ms = runtime::submit_probe::take().first().copied();
+        let mut busy = Vec::with_capacity(IDLE_STEPS);
+        let mut busy_submit = Vec::with_capacity(IDLE_STEPS);
+        for _ in 0..IDLE_STEPS {
+            busy.push(step(runner, logits)?);
+            busy_submit.extend(runtime::submit_probe::take().first().copied());
+        }
+        runtime::submit_probe::remove();
+        busy_submit.sort_by(f64::total_cmp);
+        busy.sort_by(f64::total_cmp);
+        rows.push(serde_json::json!({"gap_s": gap, "first_ms": first_ms,
+                                     "busy_median_ms": busy[busy.len() / 2],
+                                     "first_submit_ms": first_submit_ms,
+                                     "busy_submit_median_ms": busy_submit.get(busy_submit.len() / 2)}));
+    }
+    sampler.sample();
+    Ok(serde_json::Value::Array(rows))
+}
+
+/// Steps the probe needs room for beyond the prompt.
+pub fn idle_gap_steps() -> usize {
+    IDLE_GAPS_S.len() * (2 * IDLE_STEPS + 1)
+}
+
+/// A forced decode drives plain prompts only, and given ids must cover
+/// every prompt for the whole decode.
+fn check_forced(req: &WorkerRequest) -> Result<(), String> {
+    if req.arm.effective_speculation(&req.workload).is_some()
+        || req.workload.prompts.iter().any(PromptSource::is_chat)
+    {
+        return Err("a forced decode takes plain prompts: no speculation or chat".into());
+    }
+    if req.workload.decode_tokens == 0 {
+        return Err("a forced decode needs decode_tokens".into());
+    }
+    if let Some(forced) = &req.forced_ids {
+        if forced.len() != req.workload.prompts.len()
+            || forced.iter().any(|f| f.len() != req.workload.decode_tokens)
+        {
+            return Err(format!(
+                "forced ids must give {} tokens for each of {} prompts",
+                req.workload.decode_tokens,
+                req.workload.prompts.len()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn launches_json(c: &runtime::launch_count::LaunchCounts) -> serde_json::Value {
+    serde_json::json!({
+        "dispatches": c.dispatches,
+        "command_buffers": c.command_buffers,
+        "routes": c.routes,
+    })
+}
+
 /// The environment the orchestrator built must be the arm's, exactly. A
 /// stray inherited variable would silently make this a different arm.
 /// Location variables pass through for alias resolution, and the
@@ -806,9 +1074,29 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
     sampler.sample();
     let manifest_sha256 = provenance::sha256_file(&dir.join("manifest.json"));
 
+    let pressure_before = (
+        crate::host::compressor_counters(),
+        crate::host::swap_used_mib(),
+    );
+    let watch = PressureWatch::start();
     let t_open = Instant::now();
     let (mut runner, tokenizer, family) = open(req, &dir)?;
     let open_s = t_open.elapsed().as_secs_f64();
+    let open_pressure = {
+        let (c, _) = crate::host::compressor_counters();
+        let delta = c
+            .zip(pressure_before.0 .0)
+            .map(|(b, a)| b.saturating_sub(a));
+        let swap = crate::host::swap_used_mib()
+            .zip(pressure_before.1)
+            .map(|(b, a)| b - a);
+        let (swap_peak, samples) = watch.finish();
+        let peak = swap_peak.zip(pressure_before.1).map(|(p, a)| p - a);
+        Some(
+            serde_json::json!({"compressions_delta": delta, "swap_growth_mib": swap,
+                                "swap_peak_growth_mib": peak, "samples": samples}),
+        )
+    };
     sampler.sample();
 
     // The speculative loop owns its prefill, so the chunk size does not
@@ -880,9 +1168,54 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
     // trace covers measured work, not the model load or the warm pass.
     eprintln!("{MEASURING_MARKER}");
 
+    let idle_gap = match req.mode {
+        Mode::IdleGap => {
+            let ids = &all_ids[0];
+            if ids.len() + idle_gap_steps() + 1 > req.workload.max_context as usize {
+                return Err("the idle-gap probe does not fit max_context".into());
+            }
+            Some(idle_gap_probe(
+                &mut runner,
+                ids,
+                req.workload.prefill_chunk,
+                &mut logits,
+                &mut sampler,
+            )?)
+        }
+        _ => None,
+    };
+    let measured_prompts: &[Vec<i32>] = if idle_gap.is_some() { &[] } else { &all_ids };
     let mut prompts = Vec::new();
     let mut logits_out: Vec<u8> = Vec::new();
-    for (ids, source) in all_ids.iter().zip(&req.workload.prompts) {
+    if req.mode == Mode::SpecProbe && speculation.is_none() {
+        return Err("the speculative probe needs a speculative arm (~mtp:N or ~dflash:N)".into());
+    }
+    if req.synthetic_accept.is_some() && req.mode != Mode::SpecProbe {
+        return Err("synthetic acceptance is a probe-only mode".into());
+    }
+    // Quality mode also keeps the logits at every chunk end (LAB-02): the
+    // prefill kernels hand them out, only the head is asked for each time.
+    let mut positions = match (req.mode, &req.logits_path) {
+        (Mode::Quality, Some(path)) => Some(crate::logit_trace::TraceWriter::create(
+            &path.with_extension("positions"),
+            vocab,
+        )?),
+        _ => None,
+    };
+    let mut trace = match (req.mode, &req.logits_path) {
+        (Mode::ForcedDecode, Some(path)) => {
+            check_forced(req)?;
+            Some(crate::logit_trace::TraceWriter::create(path, vocab)?)
+        }
+        (Mode::ForcedDecode, None) => return Err("a forced decode needs a trace path".into()),
+        _ => None,
+    };
+    for (index, (ids, source)) in measured_prompts
+        .iter()
+        .zip(&req.workload.prompts)
+        .enumerate()
+    {
+        let forced = req.forced_ids.as_ref().map(|f| f[index].as_slice());
         if let PromptSource::Chat(path) = source {
             let chat = ChatFile::load(path, &tokenizer)?;
             let e0 = energy.mark();
@@ -922,6 +1255,11 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
                 prefill_phases: all,
                 decode_phases: None,
                 turns: Some(turns),
+                decode_ids: None,
+                decode_text: None,
+                launches: None,
+                spec_probe: None,
+                position_targets: None,
             });
             continue;
         }
@@ -929,6 +1267,9 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
             runner.reset();
             let e0 = energy.mark();
             let p0 = runner.phase_counters();
+            if req.mode == Mode::SpecProbe {
+                runtime::spec_probe::install(req.synthetic_accept);
+            }
             let (result, generated) = speculative_once(
                 &mut runner,
                 &tokenizer,
@@ -958,6 +1299,11 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
                 prefill_phases: all,
                 decode_phases: None,
                 turns: None,
+                decode_ids: Some(generated.clone()),
+                decode_text: Some(tokenizer.decode(&generated, false)),
+                launches: None,
+                spec_probe: runtime::spec_probe::take().map(probe_json),
+                position_targets: None,
             });
             continue;
         }
@@ -965,15 +1311,33 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         saw_plain_prompts = true;
         let e0 = energy.mark();
         let p0 = runner.phase_counters();
+        let counting = runtime::launch_count::enabled();
+        if counting {
+            runtime::launch_count::take();
+        }
         let t0 = Instant::now();
-        prefill(
-            &mut runner,
-            ids,
-            req.workload.prefill_chunk,
-            &mut logits,
-            &mut sampler,
-        )?;
+        let mut position_targets = None;
+        match (&mut positions, req.workload.prefill_chunk) {
+            (Some(out), Some(chunk)) => {
+                position_targets = Some(prefill_recording(
+                    &mut runner,
+                    ids,
+                    chunk,
+                    &mut logits,
+                    &mut sampler,
+                    out,
+                )?);
+            }
+            _ => prefill(
+                &mut runner,
+                ids,
+                req.workload.prefill_chunk,
+                &mut logits,
+                &mut sampler,
+            )?,
+        }
         let prefill_s = t0.elapsed().as_secs_f64();
+        let prefill_launches = counting.then(runtime::launch_count::take);
         let prefill_end_footprint_bytes = sampler.sample();
         let p1 = runner.phase_counters();
         let e1 = energy.mark();
@@ -988,7 +1352,16 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         let mut first_token_s = None;
         let t1 = Instant::now();
         for step in 0..req.workload.decode_tokens {
-            let t = argmax(&logits)?;
+            // Row `step` predicts decode token `step`: in the forced mode the
+            // token is given, and the row is what the arm would have chosen
+            // from.
+            if let Some(trace) = &mut trace {
+                trace.row(&f16_bits(&logits))?;
+            }
+            let t = match forced {
+                Some(f) => f[step],
+                None => argmax(&logits)?,
+            };
             if step == 0 {
                 first_token_s = Some(t0.elapsed().as_secs_f64());
             }
@@ -1007,6 +1380,16 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         energy.plain_prompt_tokens += ids.len();
         energy.plain_decode_tokens += generated.len();
         sampler.sample();
+        let launches = prefill_launches.map(|prefill| {
+            let decode = runtime::launch_count::take();
+            let steps = generated.len().max(1) as f64;
+            serde_json::json!({
+                "prefill": launches_json(&prefill),
+                "decode": launches_json(&decode),
+                "decode_dispatches_per_token": decode.dispatches as f64 / steps,
+                "decode_command_buffers_per_token": decode.command_buffers as f64 / steps,
+            })
+        });
 
         let prefill_phases = phases::report(&phases::delta(&p0, &p1));
         let decode_phases =
@@ -1027,7 +1410,18 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
             decode_phases,
             cache_class,
             turns: None,
+            decode_text: Some(tokenizer.decode(&generated, false)),
+            decode_ids: Some(generated),
+            launches,
+            spec_probe: None,
+            position_targets,
         });
+    }
+    if let Some(trace) = trace.take() {
+        trace.finish()?;
+    }
+    if let Some(positions) = positions.take() {
+        positions.finish()?;
     }
 
     if let Some(path) = &req.logits_path {
@@ -1089,6 +1483,8 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         dispatch_profile,
         provenance: provenance::collect(),
         audio: None,
+        open_pressure,
+        idle_gap,
     })
 }
 
@@ -1131,6 +1527,41 @@ fn hog(threads: &str) -> i32 {
     0
 }
 
+/// Allocate `bytes` and write one non-compressible word per page, so the
+/// pages are really resident rather than reserved or compressed away.
+fn touched_ballast(bytes: usize) -> Vec<u64> {
+    let mut words = vec![0u64; bytes / 8];
+    let mut x = 0x9e37_79b9_7f4a_7c15u64;
+    for w in words.iter_mut() {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        *w = x;
+    }
+    words
+}
+
+/// `tslab-worker --ballast GIB`: hold GIB of touched memory until stdin
+/// closes (`~ballast:GIB` arms, LAB-21). Prints `ready` once it is held.
+fn ballast(gib: &str) -> i32 {
+    let n: u32 = match gib.parse() {
+        Ok(n) if (1..=crate::workload::MAX_BALLAST_GIB).contains(&n) => n,
+        _ => {
+            eprintln!(
+                "usage: tslab-worker --ballast <1..={}>",
+                crate::workload::MAX_BALLAST_GIB
+            );
+            return 2;
+        }
+    };
+    let held = touched_ballast(n as usize * (1usize << 30));
+    println!("ready");
+    let mut sink = Vec::new();
+    let _ = std::io::Read::read_to_end(&mut std::io::stdin(), &mut sink);
+    std::hint::black_box(&held);
+    0
+}
+
 /// The `tslab-worker` binary body: `--request <json> --out <json>`.
 pub fn main_entry() -> i32 {
     let args: Vec<String> = std::env::args().collect();
@@ -1145,9 +1576,12 @@ pub fn main_entry() -> i32 {
     if let Some(threads) = get("--hog") {
         return hog(&threads);
     }
+    if let Some(gib) = get("--ballast") {
+        return ballast(&gib);
+    }
     let (Some(request), Some(out)) = (get("--request"), get("--out")) else {
         eprintln!(
-            "usage: tslab-worker --request <request.json> --out <record.json> | --hog <threads>"
+            "usage: tslab-worker --request <request.json> --out <record.json> | --hog <threads> | --ballast <gib>"
         );
         return 2;
     };
@@ -1197,6 +1631,8 @@ mod tests {
             speculation: None,
             expect_engaged: Vec::new(),
             contention: None,
+            ballast_gib: None,
+            cold: false,
         }
     }
 
@@ -1204,6 +1640,37 @@ mod tests {
         env.iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    #[test]
+    fn edit_variants_run_forward_then_back_after_the_follow_ups() {
+        let f = vec!["f1".to_string()];
+        let v: Vec<String> = ["a", "b", "c"].iter().map(|s| s.to_string()).collect();
+        assert_eq!(chat_turn(&f, &v, 0), None);
+        assert_eq!(chat_turn(&f, &v, 1), Some(("f1", false)));
+        let edits: Vec<&str> = (2..=7).map(|t| chat_turn(&f, &v, t).unwrap().0).collect();
+        assert_eq!(edits, ["a", "b", "c", "c", "b", "a"]);
+        assert!(chat_turn(&f, &v, 2).unwrap().1);
+    }
+
+    #[test]
+    fn the_pressure_watch_reads_at_least_once_and_stops() {
+        let watch = PressureWatch::start();
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let (peak, samples) = watch.finish();
+        // A host where swap is unreadable records nothing, never zero.
+        assert_eq!(peak.is_some(), samples > 0);
+    }
+
+    #[test]
+    fn ballast_pages_are_written_and_not_compressible_zeros() {
+        let b = touched_ballast(1 << 20);
+        assert_eq!(b.len(), 1 << 17);
+        // Every 16 KiB page holds distinct nonzero words.
+        for page in b.chunks(2048) {
+            assert!(page.iter().all(|&w| w != 0));
+            assert!(page.windows(2).all(|w| w[0] != w[1]));
+        }
     }
 
     /// The bug this exists for: the orchestrator's own engagement variable

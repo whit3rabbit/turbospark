@@ -159,6 +159,7 @@ impl GdnStateManager {
             .and_then(|mut pool| pool.pop())
             .unwrap_or_else(|| self.new_mirror(queue.device()));
         crate::autorelease_pool(|| {
+            crate::launch_count::command_buffer();
             let command_buffer = queue.new_command_buffer();
             let blit = command_buffer.new_blit_command_encoder();
             for (layer, saved) in mirror.iter().enumerate() {
@@ -189,6 +190,7 @@ impl GdnStateManager {
             "snapshot is from a different model"
         );
         crate::autorelease_pool(|| {
+            crate::launch_count::command_buffer();
             let command_buffer = queue.new_command_buffer();
             let blit = command_buffer.new_blit_command_encoder();
             for (layer, saved) in snapshot.layers.iter().enumerate() {

@@ -987,6 +987,9 @@ fn open_expert_streamers_with(
             })?;
             streamers.push(Some(streamer));
         }
+        if matches!(cache_policy, streaming::ExpertCachePolicy::LfuDecay { .. }) {
+            foundation::engaged!("expert_cache_decay");
+        }
         Some(layout)
     } else {
         streamers.resize_with(num_layers, || None);

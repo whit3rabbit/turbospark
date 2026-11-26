@@ -253,6 +253,7 @@ impl RealForwardRunner {
             self.batched_gemv_prefill_auto && self.qwen_dense_batched_prefill_refusal()?.is_none()
         };
         if batched {
+            foundation::engaged!("batched_gemv");
             // The ONE place this arm's M-row scratch is allocated, and it is
             // here rather than at open so a run that never takes this arm
             // never pays for it. Idempotent, and ahead of the loop so every
@@ -399,6 +400,7 @@ impl RealForwardRunner {
                 .as_ref()
                 .is_some_and(|mtp| mtp.dump_dir.is_none())
         {
+            foundation::engaged!("mtp_batched_prime");
             let mut next: Vec<i32> = tokens[1..].to_vec();
             next.extend(after);
             let copy_to_row0 = (after.is_none() && m > 1).then_some(m - 1);

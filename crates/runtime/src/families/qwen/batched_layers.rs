@@ -15,7 +15,13 @@ use crate::real_forward_utils::norm_view;
 /// per-row form. Resolved once, never per layer or per token.
 pub(crate) fn row_batched_ops() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("TURBOSPARK_QWEN_BATCHED_ROW_OPS").as_deref() != Ok("0"))
+    *ON.get_or_init(|| {
+        let on = std::env::var("TURBOSPARK_QWEN_BATCHED_ROW_OPS").as_deref() != Ok("0");
+        if on {
+            foundation::engaged!("qwen_batched_row_ops");
+        }
+        on
+    })
 }
 
 /// Mask-1 layer at M rows.

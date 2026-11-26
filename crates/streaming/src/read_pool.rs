@@ -148,6 +148,7 @@ fn read_qos_requested() -> bool {
 /// thread's, which for the decode loop is the default user-initiated one.
 #[cfg(target_os = "macos")]
 fn apply_read_qos() {
+    foundation::engaged!("read_qos_utility");
     // SAFETY: sets the CALLING thread's own QoS class. Takes no pointer,
     // borrows nothing, and retains nothing past the call.
     #[allow(unsafe_code)]

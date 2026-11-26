@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Summarize a Metal System Trace for tslab (evaluator item L5).
 
-Usage: python3 -I trace_tables.py TRACE.trace PID
+Usage: python3 -I trace_tables.py TRACE.trace PID [TOKENS]
 
 Exports two tables with `xcrun xctrace export` and prints one JSON object:
 
@@ -9,7 +9,12 @@ Exports two tables with `xcrun xctrace export` and prints one JSON object:
   `metal-gpu-intervals`: count, the window they span, GPU busy percent over
   that window (the union of intervals), idle gaps between them, mean encoder
   time. Low busy inside a decode window means launch-bound, high busy means
-  kernel-time bound.
+  kernel-time bound. Also busy and idle milliseconds and the distinct
+  command buffers that ran compute encoders. TOKENS is the number of tokens
+  decoded inside that window; with it those three are also given per token.
+  The trace does not record it, and the window runs from the first encoder to
+  the last, so the figures per token mean something only for a window that is
+  decode throughout.
 - shaders: `metal-shader-profiler-intervals` (needs the "Metal GPU
   Counters" instrument) grouped by kernel name: samples, sampled time, and
   share of the process's sampled time. Samples cover about a tenth of GPU
@@ -98,8 +103,8 @@ def percentile(sorted_values, q):
     return sorted_values[i]
 
 
-def encoders(trace, pid):
-    spans = []
+def encoders(trace, pid, tokens=None):
+    spans, buffers = [], set()
     for r in rows(export(trace, "metal-gpu-intervals")):
         if pid_of(r.get("process")) != pid:
             continue
@@ -109,6 +114,10 @@ def encoders(trace, pid):
         if start is None or dur is None:
             continue
         spans.append((start, start + dur))
+        # 0 is "no command buffer recorded", not a buffer.
+        ident = num(r.get("cmdbuffer-id"))
+        if ident:
+            buffers.add(ident)
     if not spans:
         return {"count": 0}
     spans.sort()
@@ -125,7 +134,17 @@ def encoders(trace, pid):
     window = spans[-1][1] - spans[0][0]
     gaps.sort()
     us = lambda ns: None if ns is None else ns / 1e3
+    busy_ms, idle_ms = busy / 1e6, (window - busy) / 1e6
+    count = len(buffers) or None
+    per_token = lambda v: None if v is None or not tokens else v / tokens
     return {
+        "busy_ms": busy_ms,
+        "idle_ms": idle_ms,
+        "command_buffers": count,
+        "window_tokens": tokens,
+        "busy_ms_per_token": per_token(busy_ms),
+        "idle_ms_per_token": per_token(idle_ms),
+        "command_buffers_per_token": per_token(count),
         "count": len(spans),
         "window_ms": window / 1e6,
         "busy_percent": 100.0 * busy / window if window else None,
@@ -163,11 +182,16 @@ def shaders(trace, pid):
 
 
 def main():
-    if len(sys.argv) != 3:
+    if len(sys.argv) not in (3, 4):
         print(__doc__, file=sys.stderr)
         return 2
     trace, pid = sys.argv[1], int(sys.argv[2])
-    print(json.dumps({"pid": pid, "encoders": encoders(trace, pid), "shaders": shaders(trace, pid)}))
+    tokens = int(sys.argv[3]) if len(sys.argv) == 4 else None
+    if tokens is not None and tokens < 1:
+        print("TOKENS must be positive", file=sys.stderr)
+        return 2
+    print(json.dumps({"pid": pid, "encoders": encoders(trace, pid, tokens),
+                      "shaders": shaders(trace, pid)}))
     return 0
 
 

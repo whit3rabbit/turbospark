@@ -5,6 +5,7 @@ use std::cell::RefCell;
 use metal::{ComputePipelineState, MTLSize};
 
 use crate::dispatch_profile::PassProfile;
+use crate::launch_count;
 
 /// An open command buffer + serial compute encoder; see
 /// [`MetalContext::begin_pass`](super::MetalContext::begin_pass). Every `encode_*` call appends one
@@ -46,10 +47,11 @@ impl PassEncoder {
         }
     }
 
-    /// Under profiling, closes the running encoder and opens a fresh
-    /// timestamped one for the dispatch about to be encoded. A no-op
-    /// otherwise, which is the production path.
+    /// Counts the dispatch about to be encoded (`launch_count`) and, under
+    /// profiling, closes the running encoder and opens a fresh timestamped
+    /// one for it. Both are no-ops on the production path.
     fn begin_dispatch(&self, pipeline: &ComputePipelineState) {
+        launch_count::dispatch(pipeline);
         let Some(profile) = &self.profile else {
             return;
         };
@@ -180,6 +182,7 @@ impl PassEncoder {
     pub fn commit_and_wait_checked(self) -> Result<(), super::GpuError> {
         let pass = self.commit();
         pass.command_buffer.wait_until_completed();
+        crate::submit_probe::completed(&pass.command_buffer);
         let status = pass.command_buffer.status();
         if status != metal::MTLCommandBufferStatus::Completed {
             warn_on_command_buffer_error(&pass.command_buffer);
@@ -301,6 +304,7 @@ impl CommittedPass {
     /// while later image command buffers continue in queue order.
     pub fn wait_ref(&self) {
         self.command_buffer.wait_until_completed();
+        crate::submit_probe::completed(&self.command_buffer);
         warn_on_command_buffer_error(&self.command_buffer);
     }
 
@@ -309,6 +313,7 @@ impl CommittedPass {
     /// still be running.
     pub fn wait(mut self) {
         self.command_buffer.wait_until_completed();
+        crate::submit_probe::completed(&self.command_buffer);
         warn_on_command_buffer_error(&self.command_buffer);
         self.wait_on_drop = false;
     }
@@ -326,6 +331,7 @@ impl CommittedPass {
     pub fn wait_with_gpu_time(mut self) -> f64 {
         use metal::objc::{msg_send, sel, sel_impl};
         self.command_buffer.wait_until_completed();
+        crate::submit_probe::completed(&self.command_buffer);
         warn_on_command_buffer_error(&self.command_buffer);
         // SAFETY: `GPUStartTime`/`GPUEndTime` are documented
         // `CFTimeInterval` (f64) accessors on `MTLCommandBuffer`, called
@@ -362,6 +368,7 @@ impl CommittedPass {
     pub fn wait_gpu_start_end(&self) -> (f64, f64) {
         use metal::objc::{msg_send, sel, sel_impl};
         self.command_buffer.wait_until_completed();
+        crate::submit_probe::completed(&self.command_buffer);
         warn_on_command_buffer_error(&self.command_buffer);
         // SAFETY: documented `CFTimeInterval` accessors on a live,
         // completed buffer (as in `wait_with_gpu_time`).

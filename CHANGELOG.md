@@ -13,6 +13,27 @@ when this file gets updated relative to the version bump and the tag.
 
 ## [Unreleased]
 
+### Added
+- Server: llama.cpp-style `timings` and `usage.prompt_tokens_details.cached_tokens`
+  on chat completion and completion responses, and `turbospark_text_*` series on
+  `GET /v1/metrics`, which every server now serves behind the usual auth.
+- Tool calling on Inkling 2 installs.
+- tslab: a teacher-forced decode quality gate, golden-answer, tool-call and
+  long-context checks, server bench and soak, and the other items in
+  `docs/TSLAB_IMPROVE.md`.
+
+### Changed
+- The macOS app's server now queues generation requests in arrival order and
+  answers 429 past 64 waiting requests. It had no queue before.
+- With prefix reuse on (off by default), `cached_tokens` shows a client how much
+  of its prompt matched a cache shared with other clients.
+- A tslab spec's arms may differ only in `knob_env` unless declared in
+  `also_changes`, and a decoding workload is now gated on its decode path too.
+
+### Fixed
+- Inkling 2 tool requests failed to render (`tojson` arguments the template
+  engine refused).
+
 ## [0.10.2] - 2026-11-24
 
 ### Added
