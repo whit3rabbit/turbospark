@@ -179,6 +179,7 @@ mod rope;
 mod short_conv;
 #[cfg(target_os = "macos")]
 mod short_conv_state;
+#[cfg(target_os = "macos")]
 pub mod submit_probe;
 #[cfg(target_os = "macos")]
 mod utility;
