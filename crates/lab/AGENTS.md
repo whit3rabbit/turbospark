@@ -70,7 +70,17 @@ loop's `run-experiment`. Text and audio installs of every family.
   kernel modes with the bench, arms and parity tests that hold them
   (`tests/knob_registry.rs`).
 - `src/experiment.rs`, `src/integrity.rs`, `src/spec.rs`: gate,
-  run-experiment, confirm, and what an experiment may not touch.
+  run-experiment, confirm, and what an experiment may not touch. The quality
+  gate is two halves: final-position prefill logits, and for a workload that
+  decodes a teacher-forced trace (`Mode::ForcedDecode`, `src/logit_trace.rs`,
+  per-position statistics in `src/kl_stats.rs`, bounds in `gates.rs`
+  `judge_decode`). A prefill number says nothing about the decode path.
+- `src/checks.rs`: the one-model commands beside the A/B (`sanity` over
+  `src/golden.rs` and `src/functional.rs`, `noise`, `floor`, `quant-ab`,
+  `launch-count`, `idle-gap`, `anchor`,
+  `release-gate`, `type1`). `src/report_md.rs`: `report --md`.
+- `src/serve_bench/`: `serve-bench` and `soak` over a loopback HTTP/SSE
+  server, with their own methodology strings.
 - `src/workload.rs`: prompts, arms, metrics, slots, residency, and
   speculation: the vocabulary the CLI, spec, and worker share.
 - `src/kernel/`: microbenches behind `KernelBench` (`kernel/mod.rs` holds
@@ -152,6 +162,9 @@ loop's `run-experiment`. Text and audio installs of every family.
 - Changing a field's meaning in the ledger or the envelope is a new schema
   version, not an edit: dashboards and old ledgers outlive any build.
   `series.rs` keeps reading version 0 records.
+- A spec's arms differ in `knob_env` only; anything else goes in
+  `also_changes` with a reason. `METHODOLOGY_VERSION` (`orchestrate.rs`) is
+  bumped when a metric's meaning changes.
 - A runtime switch that outlives one experiment gets a knob row, and an
   `engagement` entry when its lane prints `foundation::engaged!`. A run
   whose stderr contradicts its arm's switches is ineligible.

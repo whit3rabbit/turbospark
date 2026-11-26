@@ -17,13 +17,15 @@ tslab workflow new-family --model M --experiment E --resume <run>
 
 | Plan | Runs | Needs |
 |---|---|---|
-| `new-family` | capabilities, inventory, profile, hashed kernels, null floor, dispatch probe, speculative round costs, verify ladder, tree replay, report | `--model` |
+| `new-family` | capabilities, inventory, golden-answer sanity, profile, hashed kernels, null floor, dispatch probe, speculative round costs, verify ladder, tree replay, report | `--model` |
 | `kernel-candidate` | hashed kernels, `hash-diff` against a base-build run, null, paired A/B of a switch | `--var against=EXP --var candidate=KNOB=V` |
 | `ane-sweep` | hashed `ane_matmul` curves with joules, `ane-plan` placement of the same programs, a report (a `tslab` built with `--features ane-prefill`) | `--var programs=DIR` (from `gen_ane_sweep_programs.py`); `--var tokens=` for the token counts |
 | `mode-candidate` | hashed bench curves, a base profile, null floor, `project` from those, paired A/B of the mode's switch, `calibrate` of the projection against that verdict | `--var knob=NAME --var candidate=KEY=V` (a knob with a lane in `tslab knobs`); `--var bench=` and `--var x=` for a lane that is not `int4_matmul` at one row |
 | `spec-depth` | chain capture, MTP arms at two blocks with round stats, depth replay priced from the ledger | an install with an MTP head |
 | `family-sweep` | capabilities, the family profile, a null floor, every profile sweep whose `when` holds, report | `--model`; the profile's sweeps (`tslab family --model M`) |
 | `audio-survey` | capabilities, the family profile, hashed audio kernel benches, profile of a job (music or speak, by the install's task), null floor | an audio install; `--var job=PATH` or `--var speak_job=PATH` to change the job |
+| `fill-ladder` | paired A/B of a switch at 0.3K, 8K and 32K tokens of real KV fill, with a per-context-bucket ratio table and footprints | `--var candidate=KNOB=V`; raise `--var context=` and edit the plan for longer rungs (the corpus ends near 100K tokens) |
+| `slot-curve` | paired sweep of 16, 64 and 96 expert slots against 32 on a streamed MoE, with decode hit rate | an MoE install |
 | `report` | export (JSON, paths redacted) and HTML beside the ledger | `--experiment` |
 
 A step whose `when` fails for the install is skipped, and the reason is

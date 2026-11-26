@@ -254,10 +254,11 @@ struct RewindSheet: View {
                         .appAction(.secondary)
                         .keyboardShortcut(.cancelAction)
                     // Destructive: everything after the chosen prompt is
-                    // dropped from the conversation.
+                    // dropped from the conversation. Deliberately not the
+                    // default action, so a reflexive Return cannot lose
+                    // history; the user must click it.
                     Button(role: .destructive, action: rewind) { Text("Rewind", bundle: .module) }
                         .appAction(.destructive)
-                        .keyboardShortcut(.defaultAction)
                         .disabled(selectedTargetID == nil)
                 }
                 .padding(.top, 6)

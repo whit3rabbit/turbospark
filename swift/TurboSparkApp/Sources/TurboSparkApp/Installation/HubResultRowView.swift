@@ -24,12 +24,18 @@ struct HubResultRowView: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
 
+                // At most two chips: the weight formats as one, then the single
+                // most important advisory (architecture, else gated, else in
+                // catalog). The detail pane lists all of them.
                 FlowLayout(spacing: 4, lineSpacing: 3) {
-                    if result.hasGguf { tag { Text(verbatim: "GGUF") } }
-                    if result.hasMlx { tag { Text(verbatim: "MLX") } }
-                    archBadge
-                    if result.gated { gatedBadge }
-                    if !result.bundledAliases.isEmpty { catalogBadge }
+                    if let formats = formatsText { tag { Text(verbatim: formats) } }
+                    if result.archHint != .unknown {
+                        archBadge
+                    } else if result.gated {
+                        gatedBadge
+                    } else if !result.bundledAliases.isEmpty {
+                        catalogBadge
+                    }
                 }
 
                 HStack(spacing: 10) {
@@ -63,6 +69,11 @@ struct HubResultRowView: View {
     }
 
     // MARK: - Badges
+
+    private var formatsText: String? {
+        let formats = [result.hasGguf ? "GGUF" : nil, result.hasMlx ? "MLX" : nil].compactMap { $0 }
+        return formats.isEmpty ? nil : formats.joined(separator: " + ")
+    }
 
     @ViewBuilder private var archBadge: some View {
         switch result.archHint {

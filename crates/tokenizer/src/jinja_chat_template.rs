@@ -17,7 +17,8 @@
 
 use std::io::{self, Write};
 
-use minijinja::{Environment, ErrorKind};
+use minijinja::value::Kwargs;
+use minijinja::{Environment, ErrorKind, Value};
 use serde_json::{json, Value as JsonValue};
 
 use crate::chat_template::{FunctionDefinition, HistoricalToolCall, Message};
@@ -60,6 +61,91 @@ impl Write for BoundedOutput {
 
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+/// `tojson`, accepting the `json.dumps` arguments `transformers` gives chat
+/// templates (`sort_keys`, `separators`, `ensure_ascii`). Inkling 2's template
+/// passes the first two when tools are declared, which minijinja's own filter
+/// refuses, so every tool request failed to render.
+///
+/// **A call without those arguments still goes to minijinja's filter**, byte
+/// for byte: it writes compact JSON and escapes `<>&'`, which is not what
+/// Python writes, but rendered prompts and frozen digests depend on it. With
+/// them, the output is Python's: no HTML escaping, non-ASCII kept, `", "` and
+/// `": "` unless `separators` says otherwise.
+fn tojson(value: &Value, indent: Option<Value>, args: Kwargs) -> Result<Value, minijinja::Error> {
+    let python = ["sort_keys", "separators", "ensure_ascii"]
+        .iter()
+        .any(|k| args.has(k));
+    if !python {
+        return minijinja::filters::tojson(value, indent, args);
+    }
+    let refuse = |what: &str| {
+        Err(minijinja::Error::new(
+            ErrorKind::InvalidOperation,
+            format!("tojson: {what}"),
+        ))
+    };
+    if indent.is_some() || args.has("indent") {
+        return refuse("indent cannot be combined with sort_keys or separators");
+    }
+    // The values `transformers` defaults to; the keys of a JSON context are
+    // already ordered, so `sort_keys` only has to be honoured for a template's
+    // own literals.
+    let sort_keys = args.get::<Option<bool>>("sort_keys")?.unwrap_or(false);
+    if args.get::<Option<bool>>("ensure_ascii")? == Some(true) {
+        return refuse("ensure_ascii=true is not supported");
+    }
+    let (item, key) = match args.get::<Option<Value>>("separators")? {
+        None => (", ".to_string(), ": ".to_string()),
+        Some(pair) => {
+            let parts: Vec<Value> = pair.try_iter()?.collect();
+            match parts.as_slice() {
+                [item, key] => (item.to_string(), key.to_string()),
+                _ => return refuse("separators takes an (item, key) pair"),
+            }
+        }
+    };
+    args.assert_all_used()?;
+    let json = serde_json::to_value(value).map_err(|e| {
+        minijinja::Error::new(ErrorKind::InvalidOperation, "cannot serialize to JSON")
+            .with_source(e)
+    })?;
+    let mut out = String::new();
+    write_json(&json, &item, &key, sort_keys, &mut out);
+    Ok(Value::from_safe_string(out))
+}
+
+fn write_json(value: &JsonValue, item: &str, key: &str, sort_keys: bool, out: &mut String) {
+    match value {
+        JsonValue::Array(items) => {
+            out.push('[');
+            for (i, v) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(item);
+                }
+                write_json(v, item, key, sort_keys, out);
+            }
+            out.push(']');
+        }
+        JsonValue::Object(map) => {
+            let mut entries: Vec<(&String, &JsonValue)> = map.iter().collect();
+            if sort_keys {
+                entries.sort_by(|a, b| a.0.cmp(b.0));
+            }
+            out.push('{');
+            for (i, (name, v)) in entries.into_iter().enumerate() {
+                if i > 0 {
+                    out.push_str(item);
+                }
+                out.push_str(&JsonValue::String(name.clone()).to_string());
+                out.push_str(key);
+                write_json(v, item, key, sort_keys, out);
+            }
+            out.push('}');
+        }
+        scalar => out.push_str(&scalar.to_string()),
     }
 }
 
@@ -232,6 +318,7 @@ pub fn render_generic_chat_template(
     // without it the render fails with "value of type undefined is not
     // callable" and no generation happens at all.
     env.add_function("strftime_now", strftime_now);
+    env.add_filter("tojson", tojson);
     env.set_unknown_method_callback(minijinja_contrib::pycompat::unknown_method_callback);
     env.add_template("chat", source)
         .map_err(|e| TokenizerError::InvalidChatTemplate(e.to_string()))?;
@@ -333,5 +420,63 @@ mod raw_content_tests {
         ] {
             assert!(!template_prints_content_raw(parts_aware), "{parts_aware}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tojson_tests {
+    use super::*;
+
+    fn render(source: &str) -> Result<String, minijinja::Error> {
+        let mut env = Environment::new();
+        env.add_filter("tojson", tojson);
+        env.render_str(
+            source,
+            json!({"v": {"b": ["x<y>", 1.5, null], "a": "caf\u{e9} 'q'"}}),
+        )
+    }
+
+    /// The exact calls Inkling 2's template makes, with Python's bytes.
+    #[test]
+    fn json_dumps_arguments_write_what_python_writes() {
+        assert_eq!(
+            render(r#"{{ v | tojson(sort_keys=true, separators=(",", ":")) }}"#).unwrap(),
+            "{\"a\":\"caf\u{e9} 'q'\",\"b\":[\"x<y>\",1.5,null]}"
+        );
+        assert_eq!(
+            render(r#"{{ v.b | tojson(separators=(",", ":")) }}"#).unwrap(),
+            r#"["x<y>",1.5,null]"#
+        );
+        // `sort_keys` alone keeps Python's spaced separators.
+        assert_eq!(
+            render("{{ v.b | tojson(sort_keys=true) }}").unwrap(),
+            r#"["x<y>", 1.5, null]"#
+        );
+        assert!(render("{{ v | tojson(sort_keys=true, indent=2) }}").is_err());
+        assert!(render("{{ v | tojson(sort_keys=true, ensure_ascii=true) }}").is_err());
+        assert!(render(r#"{{ v | tojson(separators=(",",)) }}"#).is_err());
+        assert!(render("{{ v | tojson(sort_keys=true, nonsense=1) }}").is_err());
+    }
+
+    /// Without those arguments nothing changed: rendered prompts of every
+    /// other family, and the digests frozen on them, stay as they were.
+    #[test]
+    fn a_plain_call_is_minijinjas_own_filter() {
+        for source in [
+            "{{ v | tojson }}",
+            "{{ v | tojson(indent=2) }}",
+            "{{ v | tojson(2) }}",
+        ] {
+            let builtin = Environment::new()
+                .render_str(source, json!({"v": {"b": ["x<y>"], "a": "'q'"}}))
+                .unwrap();
+            let mut env = Environment::new();
+            env.add_filter("tojson", tojson);
+            let ours = env
+                .render_str(source, json!({"v": {"b": ["x<y>"], "a": "'q'"}}))
+                .unwrap();
+            assert_eq!(ours, builtin, "{source}");
+        }
+        assert!(render("{{ v | tojson }}").unwrap().contains("\\u003c"));
     }
 }

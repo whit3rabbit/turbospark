@@ -33,6 +33,132 @@ pub const ORCHESTRATOR_ENV: &[(&str, &str)] = &[("TURBOSPARK_ENGAGEMENT", "1")];
 
 const SAMPLE_EVERY: Duration = Duration::from_secs(2);
 
+/// Swap already in use above which a ballast arm refuses to start.
+pub const BALLAST_SWAP_FLOOR_MIB: f64 = 2048.0;
+/// Swap growth that dirties a ballast run when no rule was given.
+pub const BALLAST_SWAP_GROWTH_MIB: f64 = 256.0;
+
+/// Ballast on a host that is already paging would only swap other work.
+pub fn ballast_allowed(swap_used_mib: Option<f64>) -> Result<(), String> {
+    match swap_used_mib {
+        Some(used) if used <= BALLAST_SWAP_FLOOR_MIB => Ok(()),
+        Some(used) => Err(format!(
+            "refusing ballast: {used:.0} MiB of swap already in use (floor {BALLAST_SWAP_FLOOR_MIB:.0})"
+        )),
+        None => Err("refusing ballast: swap use is unreadable".into()),
+    }
+}
+
+/// Evict every file under an install, one directory level deep (packed
+/// experts live in a subdirectory).
+fn evict_install(dir: &std::path::Path) -> Result<(), String> {
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    for entry in entries {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if path.is_dir() {
+            evict_install(&path)?;
+        } else {
+            turbospark_streaming::evict_file_pages(&path)
+                .map_err(|e| format!("evict {}: {e}", path.display()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Lane lines the default route printed and this arm's run did not, and the
+/// reverse. A baseline that lost a default lane flatters the candidate
+/// (LAB-06).
+pub fn route_difference(default: &Value, arm: &Value) -> (Vec<String>, Vec<String>) {
+    let lines = |v: &Value| -> std::collections::BTreeSet<String> {
+        v["engaged"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect()
+    };
+    let (d, a) = (lines(default), lines(arm));
+    (
+        d.difference(&a).cloned().collect(),
+        a.difference(&d).cloned().collect(),
+    )
+}
+
+impl Session {
+    /// For a baseline that sets anything: one unmeasured run of the plain
+    /// default arm and one of the baseline, compared by engagement lines.
+    /// `Null` when the baseline is the default arm.
+    pub fn baseline_route(&self, baseline: &Arm, workload: &Workload) -> Result<Value, String> {
+        if baseline.env.is_empty() {
+            return Ok(Value::Null);
+        }
+        let default = Arm {
+            name: format!("{}-default", baseline.name),
+            env: Default::default(),
+            expect_engaged: Vec::new(),
+            ..baseline.clone()
+        };
+        let d = self.run_once(&default, workload, Mode::Timing, 0, true)?;
+        let b = self.run_once(baseline, workload, Mode::Timing, 0, true)?;
+        if d.status != "ok" || b.status != "ok" {
+            return Ok(json!({"unknown": "a route probe run did not finish"}));
+        }
+        let (missing, extra) = route_difference(&d.record, &b.record);
+        if !missing.is_empty() || !extra.is_empty() {
+            eprintln!(
+                "warning: the baseline {} is NOT the default route (missing {missing:?}, extra {extra:?}); \
+                 a gain over it is not a gain over what ships",
+                baseline.name
+            );
+        }
+        Ok(json!({"default_missing": missing, "default_extra": extra}))
+    }
+}
+
+/// Bumped when what a metric means changes. Records with different ids are
+/// not comparable.
+pub const METHODOLOGY_VERSION: u32 = 3;
+
+/// The id of a measurement protocol: kind, version and the workload with the
+/// BYTES of every prompt file it names, so an edited prompt is a new id
+/// (LAB-09).
+pub fn methodology(workload: &Workload, mode: Mode) -> Value {
+    use crate::workload::PromptSource as P;
+    let mut text = serde_json::to_string(workload).unwrap_or_default();
+    for p in &workload.prompts {
+        if let P::MessagesFile(path) | P::TextFile(path) | P::Chat(path) = p {
+            match std::fs::read_to_string(path) {
+                Ok(t) => text.push_str(&t),
+                Err(_) => text.push_str("<unreadable>"),
+            }
+        }
+    }
+    let kind = match mode {
+        Mode::Timing => "timing",
+        Mode::Quality => "quality",
+        Mode::ForcedDecode => "forced_decode",
+        Mode::IdleGap => "idle_gap",
+        Mode::SpecProbe => "spec_probe",
+    };
+    let workload_sha256 = model_io::hash_data(text.as_bytes());
+    json!({
+        "kind": kind,
+        "version": METHODOLOGY_VERSION,
+        "workload_sha256": workload_sha256,
+        "id": format!("{kind}/{METHODOLOGY_VERSION}:{}", &workload_sha256[..12]),
+    })
+}
+
+/// Seconds since the install's newest file was written (LAB-15): a freshly
+/// written file can read faster for a while, so format A/Bs need to know.
+pub fn file_age_s(dir: &std::path::Path) -> Option<f64> {
+    let newest = std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok()?.metadata().ok()?.modified().ok())
+        .max()?;
+    newest.elapsed().ok().map(|d| d.as_secs_f64())
+}
+
 /// The worker binary that sits next to the running `tslab`.
 pub fn sibling_worker() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -264,6 +390,51 @@ impl Session {
         round: usize,
         warmup: bool,
     ) -> Result<Outcome, String> {
+        self.run_forced(arm, workload, mode, round, warmup, None)
+    }
+
+    /// [`Self::run_once`] with the token ids a forced decode replays.
+    pub fn run_forced(
+        &self,
+        arm: &Arm,
+        workload: &Workload,
+        mode: Mode,
+        round: usize,
+        warmup: bool,
+        forced_ids: Option<Vec<Vec<i32>>>,
+    ) -> Result<Outcome, String> {
+        self.run_request(arm, workload, mode, round, warmup, forced_ids, None)
+    }
+
+    /// [`Self::run_once`] under the speculative probe.
+    pub fn run_probe(
+        &self,
+        arm: &Arm,
+        workload: &Workload,
+        synthetic_accept: Option<f64>,
+    ) -> Result<Outcome, String> {
+        self.run_request(
+            arm,
+            workload,
+            Mode::SpecProbe,
+            0,
+            false,
+            None,
+            synthetic_accept,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_request(
+        &self,
+        arm: &Arm,
+        workload: &Workload,
+        mode: Mode,
+        round: usize,
+        warmup: bool,
+        forced_ids: Option<Vec<Vec<i32>>>,
+        synthetic_accept: Option<f64>,
+    ) -> Result<Outcome, String> {
         if !self.worker.is_file() {
             return Err(sibling_worker()
                 .err()
@@ -274,8 +445,11 @@ impl Session {
         let request_path = runs.join(format!("{run_id}.request.json"));
         let record_path = runs.join(format!("{run_id}.json"));
         let stderr_path = runs.join(format!("{run_id}.stderr"));
-        let logits_path =
-            (mode == Mode::Quality).then(|| runs.join(format!("{run_id}.logits.f16")));
+        let logits_path = match mode {
+            Mode::Quality => Some(runs.join(format!("{run_id}.logits.f16"))),
+            Mode::ForcedDecode => Some(runs.join(format!("{run_id}.trace.f16"))),
+            Mode::Timing | Mode::IdleGap | Mode::SpecProbe => None,
+        };
         let request = WorkerRequest {
             run_id: run_id.clone(),
             model: self.model.clone(),
@@ -283,6 +457,8 @@ impl Session {
             workload: workload.clone(),
             mode,
             logits_path: logits_path.clone(),
+            forced_ids,
+            synthetic_accept,
         };
         crate::atomic::write_new_json(
             &request_path,
@@ -309,6 +485,17 @@ impl Session {
                 monitor.set_hog(child.id(), c.hog_threads);
                 Some(child)
             }
+            None => None,
+        };
+        // A cold arm (LAB-14): drop the install's resident pages first. No
+        // worker holds a mapping yet, so no live Metal buffer loses pages.
+        if arm.cold {
+            evict_install(&catalog::resolve_model_arg(&self.model))?;
+        }
+        // Memory ballast (LAB-21): refused when the host is already
+        // swapping, held by a sibling process for the whole run.
+        let mut ballast = match arm.ballast_gib {
+            Some(gib) => Some(self.start_ballast(gib)?),
             None => None,
         };
         let mut samples = vec![monitor.sample(None)];
@@ -360,6 +547,10 @@ impl Session {
             drop(h.stdin.take());
             let _ = h.wait();
         }
+        if let Some(mut b) = ballast.take() {
+            drop(b.stdin.take());
+            let _ = b.wait();
+        }
 
         let mut record: Value = std::fs::read_to_string(&record_path)
             .ok()
@@ -376,6 +567,7 @@ impl Session {
             if !ane_stats.is_null() {
                 m.insert("ane_stats".into(), ane_stats.clone());
             }
+            m.insert("engaged".into(), json!(engaged));
         }
         let status = if timed_out {
             "timeout".to_string()
@@ -387,9 +579,21 @@ impl Session {
             "crash".to_string()
         };
 
-        let (host_ok, mut reasons) = eligibility(&samples, &self.rules);
+        // A ballast run is held to swap growth even without an opt-in rule:
+        // paging under ballast is a dirty round, not a small-Mac reading.
+        let mut rules = self.rules;
+        if arm.ballast_gib.is_some() {
+            rules
+                .max_swap_growth_mib
+                .get_or_insert(BALLAST_SWAP_GROWTH_MIB);
+        }
+        let (host_ok, mut reasons) = eligibility(&samples, &rules);
         if status != "ok" {
             reasons.insert(0, format!("worker status {status}"));
+        }
+        if synthetic_accept.is_some() {
+            reasons
+                .push("synthetic acceptance: the output is wrong by design, never quotable".into());
         }
         for env in knobs::unquotable_envs() {
             if arm.env.contains_key(env) {
@@ -430,19 +634,30 @@ impl Session {
             "family": record["family"],
             "totals": record["totals"],
             "audio": record["audio"],
+            "open_pressure": record["open_pressure"],
+            "synthetic_accept": synthetic_accept,
             "peak_footprint_bytes": record["peak_footprint_bytes"],
             "exe_sha256": record["provenance"]["exe_sha256"],
             "speculation": arm.speculation,
             "spec_stats": spec_stats,
             "ane_stats": ane_stats,
+            "methodology": methodology(workload, mode),
             "controlled_contention": arm.contention,
+            "ballast_gib": arm.ballast_gib,
+            "cold": arm.cold,
+            "file_age_s": file_age_s(&catalog::resolve_model_arg(&self.model)),
             "engaged": engaged,
         });
         self.ledger.append("run", run_payload.clone())?;
         // L7: every measured speculative call is also a round-cost reading.
         let mut with_model = run_payload;
         with_model["model"] = json!(self.model);
-        for cost in crate::round_cost::from_run(&with_model, &record) {
+        let probe_free = synthetic_accept.is_none() && mode == Mode::Timing;
+        for cost in probe_free
+            .then(|| crate::round_cost::from_run(&with_model, &record))
+            .into_iter()
+            .flatten()
+        {
             self.ledger.append("round_cost", cost)?;
         }
         if self.verbose {
@@ -471,6 +686,28 @@ impl Session {
             eligible,
             reasons,
         })
+    }
+
+    fn start_ballast(&self, gib: u32) -> Result<std::process::Child, String> {
+        ballast_allowed(crate::host::swap_used_mib())?;
+        let mut child = Command::new(&self.worker)
+            .arg("--ballast")
+            .arg(gib.to_string())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .map_err(|e| format!("ballast {}: {e}", self.worker.display()))?;
+        let mut line = String::new();
+        let stdout = child.stdout.take().ok_or("ballast: no stdout")?;
+        std::io::BufRead::read_line(&mut std::io::BufReader::new(stdout), &mut line)
+            .map_err(|e| format!("ballast: {e}"))?;
+        if line.trim() != "ready" {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(format!("ballast of {gib} GiB did not start"));
+        }
+        Ok(child)
     }
 
     /// `rounds` measured rounds over `arms` after one discarded warmup round,
@@ -794,6 +1031,13 @@ mod tests {
     }
 
     #[test]
+    fn ballast_is_refused_on_a_swapping_or_unreadable_host() {
+        assert!(ballast_allowed(Some(0.0)).is_ok());
+        assert!(ballast_allowed(Some(BALLAST_SWAP_FLOOR_MIB + 1.0)).is_err());
+        assert!(ballast_allowed(None).is_err());
+    }
+
+    #[test]
     fn dirty_causes_count_runs_by_reason_most_common_first() {
         let pairs = vec![
             (
@@ -861,5 +1105,47 @@ mod tests {
         assert_eq!(calls[0]["ms_per_round"]["verify"], 62.4);
         assert_eq!(calls[0]["per_position_acceptance"][2], Value::Null);
         assert!(calls[1].get("ms_per_round").is_none());
+    }
+}
+
+#[cfg(test)]
+mod methodology_tests {
+    use super::*;
+    use crate::workload::PromptSource;
+
+    #[test]
+    fn an_edited_prompt_or_another_mode_is_another_id() {
+        let path = std::env::temp_dir().join(format!("tslab-method-{}", std::process::id()));
+        std::fs::write(&path, "one").unwrap();
+        let w = Workload {
+            prompts: vec![PromptSource::TextFile(path.clone())],
+            decode_tokens: 4,
+            prefill_chunk: Some(128),
+            max_context: 512,
+            speculation: None,
+            audio: None,
+        };
+        let a = methodology(&w, Mode::Timing);
+        assert_eq!(a, methodology(&w, Mode::Timing));
+        assert_ne!(a["id"], methodology(&w, Mode::Quality)["id"]);
+        std::fs::write(&path, "two").unwrap();
+        assert_ne!(a["id"], methodology(&w, Mode::Timing)["id"]);
+        std::fs::remove_file(&path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+
+    #[test]
+    fn a_lane_the_baseline_lost_is_named() {
+        let d = json!({"engaged": ["a", "b"]});
+        let b = json!({"engaged": ["b", "c"]});
+        assert_eq!(
+            route_difference(&d, &b),
+            (vec!["a".to_string()], vec!["c".to_string()])
+        );
+        assert_eq!(route_difference(&d, &d), (vec![], vec![]));
     }
 }

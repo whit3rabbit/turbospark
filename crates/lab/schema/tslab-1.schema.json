@@ -37,7 +37,19 @@
         "calibration",
         "trace",
         "workflow_step",
-        "workflow_run"
+        "workflow_run",
+        "sanity",
+        "noise",
+        "floor",
+        "quant_ab",
+        "launch_count",
+        "anchor",
+        "idle_gap",
+        "spec_rounds",
+        "image_stage",
+        "release_gate",
+        "serve_bench",
+        "soak"
       ]
     },
     "envelope": {

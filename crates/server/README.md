@@ -50,7 +50,7 @@ cargo run -p turbospark-server --bin turbospark-server -- <tokenizer-dir> [port]
 - `guardrails.rs` & `guardrails/`: Tool-call rescue parser, schema repair, and validation retry loop.
 - `registry.rs`: Model routing registry, including `PoolRegistry` for least-busy dispatch (round-robin across idle members) across multiple loaded model instances.
 - `queue.rs`: FIFO generation admission gate that buffers concurrent requests in arrival order while the serialized real backend generates (cancellation-aware; no queue timeout, depth capped at `--max-queued`, default 64, 0 is unlimited).
-- `observe.rs`: Server event instrumentation (request ids, start/finish and generation events with durations) for embedding hosts; the Prometheus `/v1/metrics` endpoint (audio routes only) lives in `audio/metrics.rs`.
+- `observe.rs`: Server event instrumentation (request ids, start/finish and generation events with durations) for embedding hosts; the Prometheus `/v1/metrics` endpoint and its text series live in `metrics.rs` (audio series in `audio/metrics.rs`), and `timings`/`cached_tokens` in `timings.rs`.
 - `vision.rs`: Multimodal image data-URL decoding, per-request image count and size limits, and vision tensor injection (remote image URLs are refused, not downloaded).
 - `bind.rs`: Network interface binding (loopback vs Tailscale tailnet).
 - `auth.rs`: Bearer token and API key validation.

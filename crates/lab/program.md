@@ -406,6 +406,17 @@ $TSLAB ab --model <install> --prompt chat:crates/lab/chats/long-doc.chat.json \
     --metric followup_ttft_s --experiment <name>
 ```
 
+## The quality gate
+
+A spec that decodes is gated twice: final-position prefill logits on six
+corpus prompts, and a teacher-forced decode trace (the baseline's greedy ids
+replayed by the candidate, up to 256 steps on three prompts). A KL class
+holds the decode trace's mean KL over every position to the same bound and
+fails on any top-1 flip where the reference led by 2 logits or more. A
+decode-only change therefore cannot pass on prefill logits it never touched.
+The arms of a spec may differ only in `knob_env`; declare anything else in
+`also_changes`. Before a speed number on a new family, run `tslab sanity`.
+
 ## What tslab does not measure yet
 
 Say so in the hypothesis rather than measure around it:
@@ -419,11 +430,15 @@ Say so in the hypothesis rather than measure around it:
   host rules, and never beside `docs/POWER_BASELINE.md`, which is
   `scripts/power.sh` (powermetrics, needs sudo). A record with joules says
   `energy_model: ioreport_whole_machine`.
-- **Concurrent and mixed workloads.** Aggregate tok/s and p95 inter-token
-  latency over several streams, and decode stalls while another request
-  prefills, are single-stream blind spots here. Chats cover one client's
-  follow-up time to first token, and only with the reasoning dropped from
-  history.
+- **Concurrent and mixed workloads.** `ab` is single-stream. The server
+  path (several streams, open-loop arrivals, goodput) is `serve-bench` and
+  `soak`, which have no A/B verdict rule: they report, they do not decide.
+  Chats cover one client's follow-up time to first token, and only with the
+  reasoning dropped from history.
+- **Decode numerics beyond the forced trace.** The decode gate replays
+  greedy ids through plain per-token decode. Speculative verify, batched
+  decode and anything else that only runs in the runtime's own loop is
+  judged on generated tokens (bit_exact), with no KL class.
 - **Sampled speculation.** Speculative arms run greedy. Exact rejection
   sampling at temperature above 0 is not exercised.
 - **Prefill and decode split inside a speculative arm.** The speculative

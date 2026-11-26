@@ -2548,10 +2548,12 @@ dependencies = [
  "turbospark-core",
  "turbospark-coreml",
  "turbospark-gpu",
+ "turbospark-image",
  "turbospark-model-io",
  "turbospark-repack",
  "turbospark-runtime",
  "turbospark-selection",
+ "turbospark-streaming",
  "turbospark-tokenizer",
  "turbospark-vision-io",
 ]

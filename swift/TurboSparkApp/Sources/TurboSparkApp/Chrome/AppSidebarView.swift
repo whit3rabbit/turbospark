@@ -85,7 +85,7 @@ struct SidebarPanelSurface: View {
             AudioSidebarPanel(model: model, controller: model.audioWorkspace)
         case .images:
             ImagesSidebarPanel(model: model)
-        case .modelManager:
+        case .modelManager, .modelHub:
             InstalledSidebarPanel(model: model)
         case .server:
             APISidebarPanel(model: model)

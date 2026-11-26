@@ -56,6 +56,19 @@ struct ModelHubFilter: Equatable {
             || fit != nil
     }
 
+    /// How many of the Filter popover's dropdowns are set. The search text is
+    /// not one of them: it has its own field and clear button.
+    var activeFilterCount: Int {
+        [format, capability, fit].compactMap { $0 }.count
+    }
+
+    /// Clears the popover's dropdowns, leaving search, tab and sort alone.
+    mutating func clearFilters() {
+        format = nil
+        capability = nil
+        fit = nil
+    }
+
     /// Clears every narrowing filter, leaving the tab and sort alone.
     mutating func clearNarrowing() {
         searchText = ""

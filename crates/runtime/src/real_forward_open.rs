@@ -825,6 +825,7 @@ impl RealForwardRunner {
         // measured in `docs/OBLITERATION.md` rather than left to be guessed.
         runner.startup_stats.session_state_ms = phase_started.elapsed().as_secs_f64() * 1000.0;
         if std::env::var("TURBOSPARK_METAL_KERNEL_WARMUP").as_deref() == Ok("1") {
+            foundation::engaged!("metal_kernel_warmup");
             runner.startup_stats.kernel_warmup =
                 runner.prepare_kernel_warmup(max_context as u32)?;
         }

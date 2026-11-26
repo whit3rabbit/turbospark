@@ -191,6 +191,7 @@ impl WhisperRunner {
         config: &WhisperConfig,
     ) -> Option<Mutex<metal::WhisperMetalEngine>> {
         if std::env::var("TURBOSPARK_WHISPER_DEVICE").as_deref() == Ok("cpu") {
+            foundation::engaged!("whisper_cpu");
             return None;
         }
         match metal::WhisperMetalEngine::new(weights, config) {

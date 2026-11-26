@@ -207,6 +207,7 @@ impl RealForwardRunner {
 
         for layer in 0..arch.num_layers as usize {
             if self.batched_gemv_prefill {
+                foundation::engaged!("batched_gemv");
                 // The four attention projections as M-row GEMMs; everything
                 // else in the half stays per token (`TURBOSPARK_BATCHED_GEMV`).
                 self.encode_gemma4_layer_attn_and_router_batched(
@@ -427,6 +428,7 @@ impl RealForwardRunner {
         let mut pending_routed: Option<gpu::CommittedPass> = None;
         for layer in 0..arch.num_layers as usize {
             if self.batched_gemv_prefill {
+                foundation::engaged!("batched_gemv");
                 // The four attention projections as M-row GEMMs; everything
                 // else in the half stays per token (`TURBOSPARK_BATCHED_GEMV`).
                 self.encode_gemma4_layer_attn_and_router_batched(
@@ -607,6 +609,7 @@ impl RealForwardRunner {
                 },
             };
             let _shared_pass = if self.shared_cb_overlap {
+                foundation::engaged!("shared_cb");
                 Some(self.encode_shared_expert_branch(
                     layer,
                     hidden,

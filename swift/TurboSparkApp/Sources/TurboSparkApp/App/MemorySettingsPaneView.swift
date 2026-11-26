@@ -283,41 +283,62 @@ struct MemorySettingsPaneView: View {
 
     private var enableSection: some View {
         Section {
-            HStack(alignment: .center, spacing: 18) {
-                TSIdlingMemorySparkView(size: 80)
-                    .opacity(model.memoryEnabled ? 1.0 : 0.65)
-                    .tsAnimation(TSMotion.select, value: model.memoryEnabled)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Toggle(isOn: Binding(
-                        get: { model.memoryEnabled },
-                        set: { newValue in
-                            model.memoryEnabled = newValue
-                            model.persistSettingsDebounced()
-                        })) {
-                        Text("Let the model remember across conversations", bundle: .module)
-                    }
-                    .settingsControl("Let the model remember across conversations", pane: .memory, timing: .nextTurn)
-
-                    Toggle(isOn: Binding(
-                        get: { model.memoryAutoCaptureEnabled },
-                        set: { value in
-                            model.memoryAutoCaptureEnabled = value
-                            model.persistSettingsDebounced()
-                        })) {
-                        Text("Suggest memories from idle conversations", bundle: .module)
-                    }
-                    .disabled(!model.memoryEnabled)
-                    .help(Text("Model memory is disabled.", bundle: .module))
-
-                    Text("Use # or /memory text for profile memory. Use /memory project text for this project's memory. Review model suggestions below.", bundle: .module)
-                        .font(theme.ui(.small))
-                        .foregroundStyle(.appSecondary)
+            // Beside the mascot while the text column keeps a readable width,
+            // stacked under it otherwise (a narrow window at Extra Large text
+            // left about 110 pt and split words mid-word).
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 18) {
+                    mascot
+                    enableToggles
+                        .frame(minWidth: 220, idealWidth: 220, maxWidth: .infinity, alignment: .leading)
+                }
+                VStack(alignment: .leading, spacing: 12) {
+                    mascot
+                    enableToggles
                 }
             }
             .padding(.vertical, 4)
         }
             .settingsControl("Memory", pane: .memory, timing: .nextTurn)
+    }
+
+    private var mascot: some View {
+        TSIdlingMemorySparkView(size: 80)
+            .opacity(model.memoryEnabled ? 1.0 : 0.65)
+            .tsAnimation(TSMotion.select, value: model.memoryEnabled)
+    }
+
+    private var enableToggles: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle(isOn: Binding(
+                get: { model.memoryEnabled },
+                set: { newValue in
+                    model.memoryEnabled = newValue
+                    model.persistSettingsDebounced()
+                })) {
+                Text("Let the model remember across conversations", bundle: .module)
+                    // Wrap instead of truncating beside the mascot (German, 820 pt).
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .settingsControl("Let the model remember across conversations", pane: .memory, timing: .nextTurn)
+
+            Toggle(isOn: Binding(
+                get: { model.memoryAutoCaptureEnabled },
+                set: { value in
+                    model.memoryAutoCaptureEnabled = value
+                    model.persistSettingsDebounced()
+                })) {
+                Text("Suggest memories from idle conversations", bundle: .module)
+                    // Wrap instead of truncating beside the mascot (German, 820 pt).
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .disabled(!model.memoryEnabled)
+            .help(Text("Model memory is disabled.", bundle: .module))
+
+            Text("Use # or /memory text for profile memory. Use /memory project text for this project's memory. Review model suggestions below.", bundle: .module)
+                .font(theme.ui(.small))
+                .foregroundStyle(.appSecondary)
+        }
     }
 
     private var profileSection: some View {

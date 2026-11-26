@@ -27,6 +27,14 @@ struct ModelManagerView: View {
     @State private var showFavoritesOnly = false
     @State private var sortOption: SortOption = .name
     @State private var selectedModelPath: String?
+    // Multi-select delete. `selection` is separate from `selectedModelPath`
+    // (the detail pane's model) and holds model paths.
+    @State private var isSelecting = false
+    @State private var selection: Set<String> = []
+    @State private var showBulkDeleteConfirm = false
+    @State private var isBulkDeleting = false
+    /// The row whose Delete (trash or context menu) awaits its confirmation.
+    @State private var pendingDelete: InstalledModel?
 
     init(model: AppModel) {
         self.model = model
@@ -78,6 +86,42 @@ struct ModelManagerView: View {
         // when the row it shows has moved, and the sheet must outlive it to say
         // what happened.
         .modelMoveSheet(model: model, kinds: [.text, .image])
+        .onChange(of: isSelecting) { _, on in
+            if !on { selection = [] }
+        }
+        // A model that left the list (any delete, any pane) must not leave the
+        // detail pane on a row that no longer exists.
+        .onChange(of: displayModels.map(\.path)) { _, _ in
+            if let path = selectedModelPath, !displayModels.contains(where: { $0.path == path }) {
+                selectedModelPath = InstalledModelSelection.detailSelection(
+                    current: path, deleted: [path], remaining: displayModels)
+            }
+        }
+        .confirmationDialog(
+            Text(verbatim: bulkDialog.title),
+            isPresented: $showBulkDeleteConfirm,
+            titleVisibility: .visible
+        ) {
+            Button(role: .destructive) {
+                runBulkDelete()
+            } label: { Text(verbatim: bulkDialog.confirmTitle) }
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
+        } message: {
+            Text(verbatim: bulkDialog.message)
+        }
+        .confirmationDialog(
+            pendingDelete.map { Text(verbatim: singleDialog(for: $0).title) } ?? Text(verbatim: ""),
+            isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
+            titleVisibility: .visible,
+            presenting: pendingDelete
+        ) { target in
+            Button(role: .destructive) {
+                _ = model.startModelDelete(target)
+            } label: { Text(verbatim: singleDialog(for: target).confirmTitle) }
+            Button(role: .cancel) {} label: { Text("Cancel", bundle: .module) }
+        } message: { target in
+            Text(verbatim: singleDialog(for: target).message)
+        }
         .onChange(of: model.lastMovedModel) { _, moved in
             // The list keeps its own selected path, and a moved model has a new one.
             if let moved, let followed = moved.follow(selectedPath: selectedModelPath) {
@@ -97,10 +141,27 @@ struct ModelManagerView: View {
                 groupOption: $preferences.groupOption,
                 selectedTag: $selectedTag,
                 showFavoritesOnly: $showFavoritesOnly,
-                availableOnly: $preferences.availableOnly
+                availableOnly: $preferences.availableOnly,
+                isSelecting: $isSelecting,
+                canSelect: !displayModels.isEmpty
             )
             Divider()
             masterDetailContent
+            if isSelecting {
+                Divider()
+                InstalledModelSelectionBarView(
+                    count: effectiveSelection.count,
+                    bytes: InstalledModelSelection.bytesFreed(of: effectiveSelection, in: filteredModels),
+                    allSelected: !selectablePaths.isEmpty && selectablePaths.isSubset(of: effectiveSelection),
+                    hasSelectable: !selectablePaths.isEmpty,
+                    canDelete: model.canDeleteModel,
+                    isDeleting: isBulkDeleting,
+                    onToggleAll: {
+                        selection = InstalledModelSelection.toggledAll(
+                            selection: effectiveSelection, selectable: selectablePaths)
+                    },
+                    onDelete: { showBulkDeleteConfirm = true })
+            }
         }
     }
 
@@ -162,17 +223,79 @@ struct ModelManagerView: View {
     }
 
     private func rowFor(_ m: InstalledModel) -> some View {
-        InstalledModelRowView(
+        let rowModel = InstalledModelRowModel.make(for: m, in: libraryState, language: language)
+        let block = selectionBlock(m, status: rowModel.status)
+        return InstalledModelRowView(
             modelItem: m,
-            rowModel: InstalledModelRowModel.make(for: m, in: libraryState, language: language),
+            rowModel: rowModel,
             isSelected: selectedModelPath == m.path,
-            isLoaded: model.selected?.path == m.path && model.session != nil,
+            isLoaded: isLoaded(m),
             isFavorite: orgStore.isFavorite(m),
             tags: orgStore.tags(m),
             onSelect: {
                 selectedModelPath = m.path
-            }
+            },
+            selection: isSelecting
+                ? InstalledModelRowView.Selection(
+                    isChecked: effectiveSelection.contains(m.path),
+                    blockedReason: block?.reason(language: language),
+                    onToggle: {
+                        guard block == nil else { return }
+                        if selection.contains(m.path) { selection.remove(m.path) } else { selection.insert(m.path) }
+                    })
+                : nil,
+            onRequestDelete: { pendingDelete = m }
         )
+    }
+
+    // MARK: - Multi-select delete
+
+    private func isLoaded(_ m: InstalledModel) -> Bool {
+        model.selected?.path == m.path && model.session != nil
+    }
+
+    private func selectionBlock(_ m: InstalledModel, status: InstalledRowStatus?) -> InstalledModelSelection.Block? {
+        InstalledModelSelection.block(for: m, status: status, isLoaded: isLoaded(m))
+    }
+
+    /// The visible rows that may be ticked.
+    private var selectablePaths: Set<String> {
+        InstalledModelSelection.selectablePaths(in: filteredModels) { m in
+            selectionBlock(
+                m, status: InstalledModelRowModel.make(for: m, in: libraryState, language: language).status)
+        }
+    }
+
+    private var effectiveSelection: Set<String> {
+        InstalledModelSelection.effective(selection: selection, selectable: selectablePaths)
+    }
+
+    private var bulkDialog: InstalledModelBulkDeleteDialog {
+        InstalledModelBulkDeleteDialog(
+            count: effectiveSelection.count,
+            bytes: InstalledModelSelection.bytesFreed(of: effectiveSelection, in: filteredModels),
+            language: language)
+    }
+
+    private func singleDialog(for m: InstalledModel) -> ModelDeleteDialog {
+        ModelDeleteDialog(
+            model: m, libraryName: libraryState.library(for: m)?.name ?? m.libraryName, language: language)
+    }
+
+    /// Deletes the confirmed rows through `AppModel.deleteModels` (the single
+    /// Delete's own path, one at a time), then leaves selection mode. The
+    /// detail pane follows through the list-change handler.
+    private func runBulkDelete() {
+        let paths = effectiveSelection
+        let targets = filteredModels.filter { paths.contains($0.path) }
+        guard !targets.isEmpty, !isBulkDeleting else { return }
+        isBulkDeleting = true
+        Task {
+            _ = await model.deleteModels(targets)
+            isBulkDeleting = false
+            selection = []
+            isSelecting = false
+        }
     }
 
     /// A location group's title is already the text to show (a library name from

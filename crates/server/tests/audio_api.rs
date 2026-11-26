@@ -281,7 +281,7 @@ async fn until<F: FnMut() -> bool>(mut done: F) {
 async fn audio_routes_do_not_exist_without_a_provider() {
     let base = spawn_with(None, None).await;
     let client = reqwest::Client::new();
-    for path in ["/v1/audio/models", "/v1/metrics", "/v1/audio/jobs/x"] {
+    for path in ["/v1/audio/models", "/v1/audio/jobs/x"] {
         let r = client.get(format!("{base}{path}")).send().await.unwrap();
         assert_eq!(r.status(), 404, "{path}");
     }
@@ -1564,6 +1564,8 @@ async fn metrics_count_requests_by_endpoint_and_status() {
         "turbospark_audio_busy_total 1",
         "turbospark_audio_models_loaded 8",
         "turbospark_audio_jobs{status=\"running\"} 0",
+        // The same body holds the text series.
+        "turbospark_text_requests_total 0",
     ] {
         assert!(text.contains(want), "missing {want:?} in\n{text}");
     }

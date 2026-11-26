@@ -139,6 +139,7 @@ impl RealForwardRunner {
                 "the qwen MoE chunked prefill driver cannot serve {reason}; prefill sequentially"
             )));
         }
+        foundation::engaged!("qwen_moe_chunked");
         // THE BATCHED ROUTED HALF (`TURBOSPARK_ROUTED_BATCH`, opt-in) runs on
         // top of the batched arm only: it reads the M-row router logits and
         // gated shared-expert rows that arm's `cb1` leaves behind. The
@@ -163,6 +164,9 @@ impl RealForwardRunner {
         } else {
             self.batched_gemv_prefill_auto && self.qwen_moe_batched_prefill_refusal()?.is_none()
         };
+        if batched {
+            foundation::engaged!("batched_gemv");
+        }
         // Serving the per-token routed loop under the routed seam would report
         // the unbatched engine as the batched one (crate Gotcha 22).
         if self.routed_batch_prefill && !batched {
@@ -247,6 +251,7 @@ impl RealForwardRunner {
                 "the qwen MoE chunked prefill driver cannot serve {reason}"
             )));
         }
+        foundation::engaged!("qwen_moe_chunked");
         if self.routed_batch_prefill || self.batched_gemv_prefill || self.prompt_vision.is_some() {
             return Err(RealForwardError::Unsupported(
                 "hidden-row prefill serves neither TURBOSPARK_ROUTED_BATCH, \

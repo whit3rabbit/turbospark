@@ -157,6 +157,11 @@ pub trait ChatModel: Send + Sync {
         None
     }
 
+    /// Told that a request was refused because [`Self::generation_queue`]
+    /// was full. Only the metrics decorator (`observe::ReportingModel`)
+    /// cares.
+    fn queue_rejected(&self) {}
+
     /// Which tool-call guardrails this backend generates under.
     ///
     /// Process-level for exactly the reason [`ChatModel::rate_control`] is,

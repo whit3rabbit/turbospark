@@ -77,7 +77,7 @@ impl RealForwardRunner {
             if let Some(predicted) = predicted {
                 hist.record_prediction(next, &predicted);
             }
-            hist.record(layer, &selected);
+            hist.record(layer, &selected, &route_weights);
         }
         let layer_scalar = real.layer_scalar[layer];
 

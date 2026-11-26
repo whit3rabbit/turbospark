@@ -164,7 +164,7 @@ pub(crate) fn encode_qwen4_layer_routed_prefill(
         let (selected, route_weights) = router_topk_gemma4(row, top_k, &qwen4.per_expert_ones);
         if let Some(hist) = router_hist.as_mut() {
             hist.record_router_logits(layer, row);
-            hist.record(layer, &selected);
+            hist.record(layer, &selected, &route_weights);
         }
         selected_all.push(selected);
         weights_all.push(route_weights);

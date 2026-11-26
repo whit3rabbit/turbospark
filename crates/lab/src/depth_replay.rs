@@ -20,6 +20,16 @@
 //! from what ships. The best setting is then confirmed live with `tslab ab`
 //! and `TURBOSPARK_ADAPTIVE_DEPTH`.
 //!
+//! `--cost-model union` adds, per round, the expert reads a streamed MoE
+//! verify of d + 1 rows needs: the distinct experts over that many
+//! consecutive passes of a `TURBOSPARK_ROUTER_TRACE` capture, summed over
+//! layers, times the expert stride over the read rate. It is an addition to
+//! the base table, so the base must have been measured with the experts
+//! already resident, or the reads are charged twice. Every distinct expert
+//! is charged (`--miss-fraction` 1.0) unless told what share the slot cache
+//! misses. The trace is of sequential decode, so it prices the accepted
+//! stream, not the rejected drafts' routes.
+//!
 //! One bias, as in `kflash_tree_replay_probe`: replay head rows are primed
 //! from the trunk's real hidden state, so the replay drafter is slightly
 //! better informed than the live loop's. The replay reports its fixed
@@ -110,6 +120,109 @@ fn linear(name: &str, at2: f64, at4: f64, source: &str) -> CostTable {
         measured: vec![2, 4],
         source: source.to_string(),
     }
+}
+
+/// Distinct experts a pass over `width` consecutive tokens reads, summed
+/// over routed layers and averaged over every such window of the trace after
+/// `skip` passes (the prompt).
+pub fn union_experts(
+    capture: &serde_json::Value,
+    skip: usize,
+    width: usize,
+) -> Result<f64, String> {
+    let top_k = capture["top_k"]
+        .as_u64()
+        .filter(|&k| k > 0)
+        .ok_or("route trace: no top_k")? as usize;
+    let trace = capture["trace"]
+        .as_array()
+        .ok_or("route trace: no `trace`; capture with TURBOSPARK_ROUTER_TRACE=1")?;
+    let (mut total, mut routed) = (0f64, 0usize);
+    for row in trace {
+        let ids: Vec<u64> = row
+            .as_array()
+            .ok_or("route trace: a layer row is not an array")?
+            .iter()
+            .map(|v| v.as_u64().ok_or("route trace: bad expert id"))
+            .collect::<Result<_, _>>()?;
+        if ids.is_empty() {
+            continue;
+        }
+        if ids.len() % top_k != 0 {
+            return Err("route trace: incomplete pass".into());
+        }
+        let passes: Vec<&[u64]> = ids.chunks(top_k).skip(skip).collect();
+        if width == 0 || passes.len() < width {
+            return Err(format!(
+                "route trace: {} passes after skip {skip}, a window needs {width}",
+                passes.len()
+            ));
+        }
+        let sizes: usize = passes
+            .windows(width)
+            .map(|w| {
+                w.iter()
+                    .flat_map(|p| p.iter())
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len()
+            })
+            .sum();
+        total += sizes as f64 / (passes.len() - width + 1) as f64;
+        routed += 1;
+    }
+    if routed == 0 {
+        return Err("route trace: no routed layer".into());
+    }
+    Ok(total)
+}
+
+/// What the union cost model charges for expert reads.
+#[derive(Debug, Clone, Copy)]
+pub struct ReadModel {
+    pub expert_bytes: f64,
+    pub read_gb_s: f64,
+    /// Share of the distinct experts that are actually read.
+    pub miss_fraction: f64,
+    pub route_skip: usize,
+}
+
+/// `base` plus the union-weighted expert reads of a verify of depth + 1 rows.
+pub fn union_costs(
+    base: &CostTable,
+    capture: &serde_json::Value,
+    model: ReadModel,
+) -> Result<CostTable, String> {
+    let ReadModel {
+        expert_bytes,
+        read_gb_s,
+        miss_fraction,
+        route_skip,
+    } = model;
+    if !(expert_bytes > 0.0 && read_gb_s > 0.0 && (0.0..=1.0).contains(&miss_fraction)) {
+        return Err(
+            "union cost: --expert-bytes and --read-gbps positive, --miss-fraction in 0..=1".into(),
+        );
+    }
+    let ms_per_round = base
+        .ms_per_round
+        .iter()
+        .map(|(&depth, &ms)| {
+            let experts = union_experts(capture, route_skip, depth + 1)?;
+            // bytes / (GB/s * 1e9) seconds, in milliseconds.
+            let read_ms = experts * miss_fraction * expert_bytes / (read_gb_s * 1e6);
+            Ok((depth, ms + read_ms))
+        })
+        .collect::<Result<_, String>>()?;
+    Ok(CostTable {
+        name: format!("{}+union", base.name),
+        ms_per_round,
+        measured: base.measured.clone(),
+        source: format!(
+            "{}; plus modeled expert reads of depth+1 trace passes ({expert_bytes} B per expert, \
+             {read_gb_s} GB/s, miss fraction {miss_fraction})",
+            base.source
+        ),
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -525,6 +638,27 @@ pub fn depth_replay_cmd(mut args: crate::args::Args) -> Result<(), String> {
     let tables = args
         .take("--costs")?
         .unwrap_or_else(|| "flag_off,flag_on".into());
+    let union = match args.take("--cost-model")?.as_deref() {
+        None | Some("rounds") => None,
+        Some("union") => {
+            let path = args.required("--route-trace")?;
+            let text = std::fs::read_to_string(&path).map_err(|e| format!("{path}: {e}"))?;
+            let capture: serde_json::Value =
+                serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
+            let number = |flag: &str, v: String| {
+                v.parse::<f64>()
+                    .map_err(|_| format!("{flag} {v:?}: a number"))
+            };
+            let model = ReadModel {
+                expert_bytes: number("--expert-bytes", args.required("--expert-bytes")?)?,
+                read_gb_s: number("--read-gbps", args.required("--read-gbps")?)?,
+                miss_fraction: args.parsed("--miss-fraction", 1.0)?,
+                route_skip: args.parsed("--route-skip", 0)?,
+            };
+            Some((capture, model))
+        }
+        Some(other) => return Err(format!("--cost-model {other:?}: rounds or union")),
+    };
     args.finish()?;
     let ledger = crate::ledger::Ledger::open(&crate::paths::experiment_dir(
         &crate::paths::lab_dir(),
@@ -542,7 +676,12 @@ pub fn depth_replay_cmd(mut args: crate::args::Args) -> Result<(), String> {
     }
     let depth = captures.iter().map(|c| c.depth).min().unwrap_or(0);
     for name in tables.split(',') {
-        let costs = cost_table(name, depth)?;
+        let mut costs = cost_table(name, depth)?;
+        if let Some((capture, model)) = &union {
+            // Depths past the capture are never simulated.
+            costs.ms_per_round.retain(|&d, _| d <= depth);
+            costs = union_costs(&costs, capture, *model)?;
+        }
         let policies = grid(depth.min(costs.max_depth()));
         // Per policy: tok/s per case, then speedup over fixed 2 per case.
         let mut rows = Vec::new();
@@ -768,6 +907,45 @@ mod tests {
         let mut c = cap(&[8; 10]);
         c.depth = 4;
         assert!(simulate(&c, Policy::Fixed(5), &flat(1.0), 8).is_err());
+    }
+
+    #[test]
+    fn union_counts_distinct_experts_per_window_and_layer() {
+        // Layer 0: passes {0,1} {0,1} {2,3}. Layer 1 is unrouted, layer 2
+        // repeats one pair.
+        let t = serde_json::json!({"top_k": 2,
+            "trace": [[0, 1, 0, 1, 2, 3], [], [4, 5, 4, 5, 4, 5]]});
+        assert_eq!(union_experts(&t, 0, 1).unwrap(), 4.0);
+        // Width 2: layer 0 windows hold 2 and 4, layer 2 always 2.
+        assert_eq!(union_experts(&t, 0, 2).unwrap(), 5.0);
+        // Skipping the first pass leaves only the 4-expert window.
+        assert_eq!(union_experts(&t, 1, 2).unwrap(), 6.0);
+        assert!(union_experts(&t, 2, 2).is_err());
+        assert!(union_experts(&serde_json::json!({"top_k": 2}), 0, 1).is_err());
+    }
+
+    #[test]
+    fn union_costs_add_the_reads_of_depth_plus_one_rows() {
+        let t = serde_json::json!({"top_k": 1, "trace": [[0, 1, 2, 3, 4, 5, 6, 7, 8]]});
+        let mut base = flat(10.0);
+        base.ms_per_round.retain(|&d, _| d <= 3);
+        let model = ReadModel {
+            expert_bytes: 4e6,
+            read_gb_s: 2.0,
+            miss_fraction: 0.5,
+            route_skip: 0,
+        };
+        // Every pass is a new expert, so d + 1 rows read d + 1 experts; each
+        // costs 4 MB / 2 GB/s = 2 ms, half of them missing.
+        let c = union_costs(&base, &t, model).unwrap();
+        assert_eq!(c.cost(1), Some(12.0));
+        assert_eq!(c.cost(3), Some(14.0));
+        assert_eq!(c.name, "flat+union");
+        let bad = ReadModel {
+            miss_fraction: 1.5,
+            ..model
+        };
+        assert!(union_costs(&base, &t, bad).is_err());
     }
 
     #[test]

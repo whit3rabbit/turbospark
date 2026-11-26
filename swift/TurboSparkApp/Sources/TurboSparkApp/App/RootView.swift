@@ -531,6 +531,16 @@ struct RootView: View {
 
     @ViewBuilder
     private var primaryContent: some View {
+        // The sidebar row animates its own highlight inside withAnimation, and
+        // that transaction also reached this switch: the old pane cross-faded
+        // and ghosted through for about half a second. A section change swaps
+        // panes at once; animations inside a pane are untouched.
+        primaryContentSwitch
+            .transaction(value: model.activeSection) { $0.animation = nil }
+    }
+
+    @ViewBuilder
+    private var primaryContentSwitch: some View {
         switch model.activeSection {
         case .images:
             ImagesSectionView(model: model)

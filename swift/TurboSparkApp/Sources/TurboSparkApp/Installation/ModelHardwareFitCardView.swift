@@ -24,19 +24,41 @@ struct ModelHardwareFitCardView: View {
         }
     }
 
+    private func fitCardTitle(accent: Bool) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "gauge.with.needle")
+                .themedFont(.small)
+                .foregroundStyle(accent ? .appAccentText : .appSecondary)
+                .help(Text("Hardware compatibility estimate", bundle: .module))
+            Text("Hardware Compatibility", bundle: .module)
+                .themedFont(.base, weight: .semibold)
+        }
+    }
+
+    private var notSizedPill: some View {
+        Text("Not sized", bundle: .module)
+            .themedFont(.small, weight: .bold)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(Color.secondary.opacity(0.16), in: Capsule())
+            .foregroundStyle(.appSecondary)
+    }
+
     private func knownFitCard(_ rec: ModelRecommendation) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "gauge.with.needle")
-                    .themedFont(.small)
-                    .foregroundStyle(.appAccentText)
-                    .help(Text("Hardware compatibility estimate", bundle: .module))
-                Text("Hardware Compatibility", bundle: .module)
-                    .themedFont(.base, weight: .semibold)
-
-                Spacer()
-
-                verdictPill(rec.verdict)
+            // ViewThatFits drops the pill under the title when the row is too
+            // narrow, so the title never wraps mid-word beside it.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    fitCardTitle(accent: true)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Spacer()
+                    verdictPill(rec.verdict)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    fitCardTitle(accent: true)
+                    verdictPill(rec.verdict)
+                }
             }
 
             Text(rec.verdictSummary)
@@ -88,22 +110,17 @@ struct ModelHardwareFitCardView: View {
     /// exposes no probing call, so a button here could not do the work.
     private var unprobedFitCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "gauge.with.needle")
-                    .themedFont(.small)
-                    .foregroundStyle(.appSecondary)
-                    .accessibilityHidden(true)
-                Text("Hardware Compatibility", bundle: .module)
-                    .themedFont(.base, weight: .semibold)
-
-                Spacer()
-
-                Text("Not sized", bundle: .module)
-                    .themedFont(.small, weight: .bold)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(Color.secondary.opacity(0.16), in: Capsule())
-                    .foregroundStyle(.appSecondary)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    fitCardTitle(accent: false)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Spacer()
+                    notSizedPill
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    fitCardTitle(accent: false)
+                    notSizedPill
+                }
             }
 
             Text("This row has no memory sizing for this machine, so whether it fits, how much it would pin, and its largest usable context are all unknown.", bundle: .module)

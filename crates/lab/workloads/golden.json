@@ -1,0 +1,13 @@
+{
+  "description": "Golden-answer tripwire (LAB-08): exact answers every working chat install should give. A failure on a new family is a finding to read, not proof of a bug on its own.",
+  "cases": [
+    {"id": "arithmetic", "accept": ["391"], "prompt": "What is 17 multiplied by 23? Reply with the number only."},
+    {"id": "capital", "accept": ["paris"], "prompt": "What is the capital city of France? Reply with one word."},
+    {"id": "spelling", "accept": ["elppa"], "prompt": "Write the word apple backwards. Reply with the reversed word only."},
+    {"id": "sequence", "accept": ["32"], "prompt": "What number comes next: 2, 4, 8, 16? Reply with the number only."},
+    {"id": "opposite", "accept": ["cold"], "prompt": "What is the opposite of hot? Reply with one word."},
+    {"id": "months", "accept": ["march"], "prompt": "Which month comes directly after February? Reply with one word."},
+    {"id": "copy", "accept": ["zebra-7431"], "prompt": "Repeat this code exactly and add nothing else: zebra-7431"},
+    {"id": "logic", "accept": ["tom"], "prompt": "Sam is taller than Ann. Ann is taller than Tom. Who is the shortest? Reply with the name only."}
+  ]
+}

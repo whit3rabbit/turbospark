@@ -26,12 +26,32 @@ struct CronJobsSettingsPaneView: View {
         return CronScheduler.shared.list()
     }
 
-    var body: some View {
+    private var stackedContent: some View {
         VStack(spacing: 0) {
             cronContent
             Divider()
             OffPeakTasksSectionView(model: model)
         }
+    }
+
+    /// With no jobs the pane has no scroll view of its own, so the off-peak
+    /// section below the empty state was clipped at large text sizes in a
+    /// short window. Scroll only when the stack does not fit; a job list
+    /// keeps its own ScrollView.
+    @ViewBuilder
+    private var paneContent: some View {
+        if jobs.isEmpty {
+            ViewThatFits(in: .vertical) {
+                stackedContent
+                ScrollView { stackedContent }
+            }
+        } else {
+            stackedContent
+        }
+    }
+
+    var body: some View {
+        paneContent
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .confirmationDialog(
             Text("Delete scheduled task?", bundle: .module),

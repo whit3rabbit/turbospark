@@ -368,6 +368,80 @@ pub fn print_profile(arm_names: &[String], outcomes: &[Outcome]) -> Value {
     Value::Object(summary)
 }
 
+/// Context-length buckets of the per-bucket table, upper bounds in prompt
+/// tokens.
+const BUCKETS: [(&str, u64); 4] = [
+    ("<=2K", 2_048),
+    ("<=8K", 8_192),
+    ("<=32K", 32_768),
+    (">32K", u64::MAX),
+];
+
+/// Decode tok/s of the candidate against the baseline per context-length
+/// bucket, over clean pairs: median ratio and wins (LAB-17). Information
+/// only; a verdict is never pooled from buckets. `Null` with one bucket.
+pub fn bucket_table(pairs: &[(Outcome, Outcome)]) -> Value {
+    let mut ratios: std::collections::BTreeMap<usize, Vec<f64>> = Default::default();
+    let mut peaks: std::collections::BTreeMap<usize, Vec<f64>> = Default::default();
+    for (a, b) in pairs.iter().filter(|(a, b)| a.eligible && b.eligible) {
+        let rate = |p: &Value| {
+            let (n, s) = (p["decode_tokens"].as_f64()?, p["decode_s"].as_f64()?);
+            (n > 0.0 && s > 0.0).then(|| n / s)
+        };
+        let empty = Vec::new();
+        let prompts = |o: &Outcome| o.record["prompts"].as_array().cloned();
+        let (pa, pb) = (
+            prompts(a).unwrap_or_else(|| empty.clone()),
+            prompts(b).unwrap_or(empty),
+        );
+        for (x, y) in pa.iter().zip(&pb) {
+            let Some(tokens) = x["prompt_tokens"].as_u64() else {
+                continue;
+            };
+            let bucket = BUCKETS
+                .iter()
+                .position(|&(_, max)| tokens <= max)
+                .unwrap_or(3);
+            if let (Some(ra), Some(rb)) = (rate(x), rate(y)) {
+                ratios.entry(bucket).or_default().push(rb / ra);
+            }
+            if let Some(bytes) = y["prefill_end_footprint_bytes"].as_f64() {
+                peaks.entry(bucket).or_default().push(bytes);
+            }
+        }
+    }
+    if ratios.len() < 2 {
+        return Value::Null;
+    }
+    Value::Array(
+        ratios
+            .iter()
+            .map(|(&i, r)| {
+                json!({"bucket": BUCKETS[i].0, "readings": r.len(),
+                       "median_decode_ratio": median(r),
+                       "wins": r.iter().filter(|&&x| x > 1.0).count(),
+                       "candidate_footprint_bytes": peaks.get(&i).map(|p| median(p))})
+            })
+            .collect(),
+    )
+}
+
+pub fn print_buckets(table: &Value) {
+    let Some(rows) = table.as_array() else {
+        return;
+    };
+    crate::say!("  decode by context length (candidate / baseline, not a verdict):");
+    for r in rows {
+        crate::say!(
+            "    {:<6} median {:.3}, {} of {} readings faster",
+            r["bucket"].as_str().unwrap_or("?"),
+            r["median_decode_ratio"].as_f64().unwrap_or(f64::NAN),
+            r["wins"],
+            r["readings"]
+        );
+    }
+}
+
 pub fn print_verdict(label: &str, v: &VerdictReport) {
     crate::say!();
     crate::say!(
@@ -383,5 +457,49 @@ pub fn print_verdict(label: &str, v: &VerdictReport) {
     );
     for r in &v.reasons {
         crate::say!("  {r}");
+    }
+}
+
+#[cfg(test)]
+mod bucket_tests {
+    use super::*;
+
+    fn run(rates: &[(u64, f64)], eligible: bool) -> Outcome {
+        let prompts: Vec<Value> = rates
+            .iter()
+            .map(|&(tokens, tok_s)| {
+                json!({"prompt_tokens": tokens, "decode_tokens": 100, "decode_s": 100.0 / tok_s})
+            })
+            .collect();
+        Outcome {
+            run_id: "r".into(),
+            arm: "a".into(),
+            round: 1,
+            warmup: false,
+            record: json!({ "prompts": prompts }),
+            status: "ok".into(),
+            eligible,
+            reasons: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_sign_change_with_context_shows_per_bucket() {
+        let pairs = vec![
+            (
+                run(&[(300, 100.0), (40_000, 50.0)], true),
+                run(&[(300, 110.0), (40_000, 40.0)], true),
+            ),
+            // A dirty pair is not a reading.
+            (run(&[(300, 100.0)], false), run(&[(300, 500.0)], true)),
+        ];
+        let t = bucket_table(&pairs);
+        assert_eq!(t[0]["bucket"], "<=2K");
+        assert!((t[0]["median_decode_ratio"].as_f64().unwrap() - 1.1).abs() < 1e-9);
+        assert_eq!(t[0]["readings"], 1);
+        assert_eq!(t[1]["bucket"], ">32K");
+        assert_eq!(t[1]["wins"], 0);
+        // One bucket is not a table.
+        assert!(bucket_table(&pairs[..0]).is_null());
     }
 }

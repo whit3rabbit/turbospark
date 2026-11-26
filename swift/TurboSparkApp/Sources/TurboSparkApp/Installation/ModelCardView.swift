@@ -71,12 +71,9 @@ struct ModelCardView: View {
                         }
                     }
 
-                    Text(verbatim: name)
-                        .themedFont(.small)
-                        .foregroundStyle(.appSecondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-
+                    // A card says the alias, one state, the size and at most two
+                    // chips (parameters, fit). The full name and the format are in
+                    // the detail pane and the tooltip.
                     // The tags wrap onto a second line in a narrow column (or
                     // at a large text size) instead of being clipped; the
                     // size stays on the trailing edge of the first line.
@@ -90,9 +87,6 @@ struct ModelCardView: View {
                                     Text(verbatim: visuals.parameterTag)
                                 }
                             }
-                            metadataTag { Text(verbatim: visuals.formatLabel) }
-                                .help(Text(verbatim: visuals.formatLabel))
-
                             if let rec = recommendation {
                                 verdictBadge(rec.verdict)
                             }

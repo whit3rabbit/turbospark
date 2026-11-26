@@ -61,9 +61,12 @@ struct AudioLibraryView: View {
         VStack(alignment: .leading, spacing: 14) {
             AppSearchField(text: $controller.search, prompt: Text("Search recordings and takes", bundle: .module), maxWidth: .infinity)
             AudioLibraryFilterBar(controller: controller, filter: $filter, collection: $collection, tag: $tag)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 8) { importButton; recordButton }
-                VStack(alignment: .leading, spacing: 8) { importButton; recordButton }
+            // An empty library carries these in its empty state instead.
+            if !controller.items.isEmpty {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) { importButton; recordButton }
+                    VStack(alignment: .leading, spacing: 8) { importButton; recordButton }
+                }
             }
             libraryItems(scrolls: scrollsItems)
             if scrollsItems { Spacer(minLength: 0) }
@@ -96,7 +99,14 @@ struct AudioLibraryView: View {
                 systemImage: "waveform",
                 title: Text("No recordings or takes found", bundle: .module),
                 message: Text("Reopen recordings and takes, or start with an audio file.", bundle: .module)
-            )
+            ) {
+                if controller.items.isEmpty {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) { importButton; recordButton }
+                        VStack(spacing: 8) { importButton; recordButton }
+                    }
+                }
+            }
             .padding(.vertical, 20)
         } else if scrolls {
             ScrollView {

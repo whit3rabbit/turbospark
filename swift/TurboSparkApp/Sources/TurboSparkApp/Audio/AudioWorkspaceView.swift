@@ -131,10 +131,11 @@ struct AudioWorkspaceView: View {
                 Button { controller.selectPage(.library) } label: {
                     Label { Text("Audio library", bundle: .module) } icon: { Image(systemName: "books.vertical") }
                 }
-                .appAction(.quiet)
+                .appAction(.quiet, size: .small)
             }
             Menu { AudioDestinationMenu(model: model) } label: {
                 Label { Text("Audio tasks", bundle: .module) } icon: { Image(systemName: "ellipsis.circle") }
+                    .frame(minHeight: 24).contentShape(Rectangle())
             }
             .appMenuAction(quiet: true)
         }

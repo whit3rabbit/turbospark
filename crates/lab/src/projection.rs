@@ -798,13 +798,37 @@ fn higher_is_better(metric: &str) -> Result<bool, String> {
     Ok(m.direction() == crate::stats::Direction::HigherIsBetter)
 }
 
+/// A prediction that came from outside `tslab project`, such as the
+/// `predicted_gain` of `scripts/expert_policy_replay.py`, in the shape of a
+/// projection record. It is a throughput gain, so a time-like metric is
+/// refused rather than compared with the wrong sign or scale.
+fn external_prediction(value: &str, source: &str, higher_is_better: bool) -> Result<Value, String> {
+    if !higher_is_better {
+        return Err("--predicted is a throughput gain; calibrate it on a *_tok_s metric".into());
+    }
+    let gain = value
+        .parse::<f64>()
+        .ok()
+        .filter(|v| v.is_finite())
+        .ok_or_else(|| format!("--predicted {value:?}: a signed fraction such as 0.08"))?;
+    Ok(json!({
+        "id": "external",
+        "bench": "external",
+        "default_arm": "baseline",
+        "mode_arm": source,
+        "projection": {"floor": MIN_EFFECT_FLOOR, "improvement_throughput": gain},
+    }))
+}
+
 /// `tslab calibrate`.
 pub fn calibrate_cmd(mut args: Args) -> Result<CmdOutput, String> {
     if args.flag("--all") {
         args.finish()?;
         return calibrations_table();
     }
-    let proj_ref = args.required("--projection")?;
+    let proj_ref = args.take("--projection")?;
+    let predicted_flag = args.take("--predicted")?;
+    let predicted_source = args.take("--predicted-source")?;
     let verdict_ref = args.take("--verdict")?;
     let measured_flag = args.take("--measured")?;
     let source = args.take("--source")?;
@@ -815,10 +839,11 @@ pub fn calibrate_cmd(mut args: Args) -> Result<CmdOutput, String> {
         .unwrap_or_else(|| "calibration".into());
     args.finish()?;
 
-    let (pe, pid) = split_ref(&proj_ref);
-    let rec = newest(pe, "projection", pid)?;
-    let proj = &rec["projection"];
-    let floor = proj["floor"].as_f64().unwrap_or(MIN_EFFECT_FLOOR);
+    if proj_ref.is_some() == predicted_flag.is_some() {
+        return Err(
+            "give --projection EXP[:ID] or --predicted X --predicted-source TEXT, not both".into(),
+        );
+    }
     let (measured, metric, verdict_src) = match (&verdict_ref, &measured_flag) {
         (Some(v), None) => measured_from(v)?,
         (None, Some(m)) => (
@@ -834,6 +859,24 @@ pub fn calibrate_cmd(mut args: Args) -> Result<CmdOutput, String> {
     let metric = metric_flag.clone().unwrap_or(metric);
     let measured = if invert { -measured } else { measured };
     let hib = higher_is_better(&metric)?;
+    let (pe, rec) = match (&proj_ref, &predicted_flag) {
+        (Some(proj_ref), _) => {
+            let (pe, pid) = split_ref(proj_ref);
+            (pe.to_string(), newest(pe, "projection", pid)?)
+        }
+        (None, Some(value)) => {
+            let source = predicted_source
+                .as_deref()
+                .ok_or("--predicted needs --predicted-source TEXT naming the replay and arm")?;
+            (
+                "replay".to_string(),
+                external_prediction(value, source, hib)?,
+            )
+        }
+        (None, None) => unreachable!("one of the two was required above"),
+    };
+    let proj = &rec["projection"];
+    let floor = proj["floor"].as_f64().unwrap_or(MIN_EFFECT_FLOOR);
     let predicted = predicted_for(proj, hib).ok_or(
         "the projection record lacks improvement fields (a formula older than this build?)",
     )?;
@@ -1167,6 +1210,16 @@ mod tests {
         assert!(!c.miss, "{c:?}");
         let c = calibrate(0.041, 0.0407, 0.02);
         assert!(!c.miss && c.reason == "within the floor");
+    }
+
+    #[test]
+    fn an_outside_prediction_reads_back_as_a_projection() {
+        let rec = external_prediction("0.08", "admit:1 at 32 slots", true).unwrap();
+        assert_eq!(predicted_for(&rec["projection"], true), Some(0.08));
+        assert_eq!(rec["mode_arm"], "admit:1 at 32 slots");
+        assert!(external_prediction("0.08", "x", false).is_err());
+        assert!(external_prediction("fast", "x", true).is_err());
+        assert!(external_prediction("inf", "x", true).is_err());
     }
 
     #[test]

@@ -1,7 +1,7 @@
 import SwiftUI
 import TurboSpark
 
-/// Filter and control bar for ModelManagerView (search, favorites, architecture/drafter/source pickers, sort/group, tags).
+/// Search and the one Filter popover of ModelManagerView (favorites, available now, architecture, drafter, source, tag, sort, group).
 @MainActor
 struct ModelManagerFilterBarView: View {
     @Binding var searchText: String
@@ -15,123 +15,147 @@ struct ModelManagerFilterBarView: View {
     /// Hide models whose drive is not connected and models whose files are
     /// missing (requirement 3.6).
     @Binding var availableOnly: Bool
+    /// Multi-select mode for deleting several models at once.
+    @Binding var isSelecting: Bool
+    /// False when there is nothing to select (an empty library).
+    var canSelect: Bool = true
 
     @ObservedObject private var orgStore = ModelOrganizationStore.shared
 
+    private var activeCount: Int {
+        ModelManagerView.activeFilterCount(
+            showFavoritesOnly: showFavoritesOnly,
+            availableOnly: availableOnly,
+            architectureFilter: architectureFilter,
+            drafterFilter: drafterFilter,
+            sourceFilter: sourceFilter,
+            selectedTag: selectedTag)
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // A wrapping row: at the largest text size or in a long
-            // translation the menus move to a second line instead of
-            // squeezing the search field.
-            FlowLayout(spacing: 8, lineSpacing: 6) {
-                AppSearchField(
-                    text: $searchText,
-                    prompt: Text("Filter installed models...", bundle: .module))
+        // Search leads and takes the spare width; the one Filter button holds
+        // everything else, so the bar stays one short row at any text size.
+        HStack(spacing: 8) {
+            AppSearchField(
+                text: $searchText,
+                prompt: Text("Filter installed models...", bundle: .module),
+                maxWidth: .infinity)
 
-                Toggle(isOn: $showFavoritesOnly) {
-                    Label { Text("Show Favorites Only", bundle: .module) } icon: {
-                        Image(systemName: showFavoritesOnly ? "star.fill" : "star")
-                    }
-                    .labelStyle(.iconOnly)
-                }
-                .toggleStyle(.button)
-                .controlSize(.small)
-                .help(Text("Show Favorites Only", bundle: .module))
+            selectButton
 
-                // The word stays visible: a bare icon would leave the drive
-                // glyph as the only thing saying what the switch does, and the
-                // state is carried by the glyph and the pressed look, not color.
-                Toggle(isOn: $availableOnly) {
-                    Label { Text("Available now", bundle: .module) } icon: {
-                        Image(systemName: availableOnly ? "externaldrive.badge.checkmark" : "externaldrive")
-                    }
-                }
-                .toggleStyle(.button)
-                .controlSize(.small)
-                .help(Text("Hide models whose drive is not connected or whose files are missing", bundle: .module))
-
-                ModelFilterMenu(
-                    name: Text("Filter by architecture", bundle: .module),
-                    value: optionText(architectureFilter.rawValue)
-                ) {
-                    Picker(selection: $architectureFilter) {
-                        ForEach(ModelManagerView.ArchitectureFilter.allCases) { filter in
-                            optionText(filter.rawValue).tag(filter)
-                        }
-                    } label: { Text("Architecture", bundle: .module) }
-                }
-
-                ModelFilterMenu(
-                    name: Text("Filter by drafter", bundle: .module),
-                    value: optionText(drafterFilter.rawValue)
-                ) {
-                    Picker(selection: $drafterFilter) {
-                        ForEach(ModelManagerView.DrafterFilter.allCases) { filter in
-                            optionText(filter.rawValue).tag(filter)
-                        }
-                    } label: { Text("Drafter", bundle: .module) }
-                }
-
-                ModelFilterMenu(
-                    name: Text("Filter by source", bundle: .module),
-                    value: optionText(sourceFilter.rawValue)
-                ) {
-                    Picker(selection: $sourceFilter) {
-                        ForEach(ModelManagerView.SourceFilter.allCases) { filter in
-                            optionText(filter.rawValue).tag(filter)
-                        }
-                    } label: { Text("Source", bundle: .module) }
-                }
-
-                ModelFilterMenu(
-                    name: Text("Sort and group models", bundle: .module),
-                    value: optionText(sortOption.rawValue)
-                ) {
-                    Section(header: Text("Sort By", bundle: .module)) {
-                        Picker(selection: $sortOption) {
-                            ForEach(ModelManagerView.SortOption.allCases) { opt in
-                                optionText(opt.rawValue).tag(opt)
-                            }
-                        } label: { Text("Sort", bundle: .module) }
-                    }
-                    Section(header: Text("Group By", bundle: .module)) {
-                        Picker(selection: $groupOption) {
-                            ForEach(ModelManagerView.GroupOption.allCases) { grp in
-                                optionText(grp.rawValue).tag(grp)
-                            }
-                        } label: { Text("Group", bundle: .module) }
-                    }
-                }
-            }
-
-            // Tag filter bar if tags exist
-            let knownTags = orgStore.allKnownTags
-            if !knownTags.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 4) {
-                        Text("Tags:", bundle: .module)
-                            .themedFont(.tiny)
-                            .foregroundStyle(.appSecondary)
-
-                        AppChip(Text("All", bundle: .module), systemImage: "tag", isOn: selectedTag == nil) {
-                            selectedTag = nil
-                        }
-
-                        ForEach(knownTags, id: \.self) { tag in
-                            AppChip(Text(verbatim: tag), systemImage: "tag", isOn: selectedTag == tag) {
-                                selectedTag = selectedTag == tag ? nil : tag
-                            }
-                        }
-                    }
-                }
+            ModelFilterButton(activeCount: activeCount) {
+                filterSection
+                orderSection
+                tagSection
+                if activeCount > 0 { clearSection }
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        // Removing the last use of the selected tag hides the whole tag bar,
+        // Removing the last use of the selected tag hides the tag picker,
         // which would leave a filter active with no control to clear it.
         .onChange(of: orgStore.allKnownTags) { _, tags in
             if let tag = selectedTag, !tags.contains(tag) { selectedTag = nil }
+        }
+    }
+
+    /// Select and Done are the same control: the label says which it is, and
+    /// the glyph differs too, so the mode never rests on color.
+    private var selectButton: some View {
+        Button {
+            isSelecting.toggle()
+        } label: {
+            Label {
+                if isSelecting {
+                    Text("Done", bundle: .module)
+                } else {
+                    Text("Select", bundle: .module)
+                }
+            } icon: {
+                Image(systemName: isSelecting ? "checkmark" : "checklist")
+            }
+        }
+        .appAction(.secondary, size: .small)
+        .disabled(!canSelect && !isSelecting)
+        .help(Text("Choose several models to delete at once", bundle: .module))
+    }
+
+    // One computed property per Section (DESIGN.md section 3, Forms).
+
+    private var filterSection: some View {
+        Section {
+            Toggle(isOn: $showFavoritesOnly) {
+                Text("Show Favorites Only", bundle: .module)
+            }
+            // The state is the switch, not a color.
+            Toggle(isOn: $availableOnly) {
+                Text("Available now", bundle: .module)
+            }
+            .help(Text("Hide models whose drive is not connected or whose files are missing", bundle: .module))
+
+            Picker(selection: $architectureFilter) {
+                ForEach(ModelManagerView.ArchitectureFilter.allCases) { filter in
+                    optionText(filter.rawValue).tag(filter)
+                }
+            } label: { Text("Architecture", bundle: .module) }
+
+            Picker(selection: $drafterFilter) {
+                ForEach(ModelManagerView.DrafterFilter.allCases) { filter in
+                    optionText(filter.rawValue).tag(filter)
+                }
+            } label: { Text("Drafter", bundle: .module) }
+
+            Picker(selection: $sourceFilter) {
+                ForEach(ModelManagerView.SourceFilter.allCases) { filter in
+                    optionText(filter.rawValue).tag(filter)
+                }
+            } label: { Text("Source", bundle: .module) }
+        }
+    }
+
+    private var orderSection: some View {
+        Section {
+            Picker(selection: $sortOption) {
+                ForEach(ModelManagerView.SortOption.allCases) { opt in
+                    optionText(opt.rawValue).tag(opt)
+                }
+            } label: { Text("Sort By", bundle: .module) }
+
+            Picker(selection: $groupOption) {
+                ForEach(ModelManagerView.GroupOption.allCases) { grp in
+                    optionText(grp.rawValue).tag(grp)
+                }
+            } label: { Text("Group By", bundle: .module) }
+        }
+    }
+
+    @ViewBuilder private var tagSection: some View {
+        let knownTags = orgStore.allKnownTags
+        if !knownTags.isEmpty {
+            Section {
+                Picker(selection: $selectedTag) {
+                    Text("All", bundle: .module).tag(String?.none)
+                    ForEach(knownTags, id: \.self) { tag in
+                        Text(verbatim: tag).tag(String?.some(tag))
+                    }
+                } label: { Text("Tags", bundle: .module) }
+            }
+        }
+    }
+
+    private var clearSection: some View {
+        Section {
+            Button {
+                showFavoritesOnly = false
+                availableOnly = false
+                architectureFilter = .all
+                drafterFilter = .all
+                sourceFilter = .all
+                selectedTag = nil
+            } label: {
+                Text("Clear filters", bundle: .module)
+            }
+            .appAction(.quiet, size: .small)
         }
     }
 

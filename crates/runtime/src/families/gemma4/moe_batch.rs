@@ -172,7 +172,7 @@ impl RealForwardRunner {
                 &per_expert_scale,
             );
             if let Some(hist) = self.router_hist.as_mut() {
-                hist.record(layer, &selected);
+                hist.record(layer, &selected, &route_weights);
             }
             selected_all.push(selected);
             weights_all.push(route_weights);

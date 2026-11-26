@@ -1519,3 +1519,56 @@ fn the_turn_snapshot_cut_sees_both_cursors_at_the_cut_in_both_walks() {
         assert_eq!(cut, plain, "chunked={chunked}: the cut changed the stream");
     }
 }
+
+/// The lab's probe (`runtime::spec_probe`): recording changes nothing, and
+/// synthetic acceptance commits the drafter's proposals with the loop's state
+/// still consistent (`run_speculative` checks the cursor).
+#[test]
+fn the_probe_records_without_changing_output_and_synthetic_acceptance_is_obeyed() {
+    let tokenizer = load_tokenizer();
+    let vocab = tokenizer.vocab_size;
+    let truth = plain_truth(&tokenizer);
+    let prompt = tokenizer.encode("hi", false);
+    let config = greedy_config(12);
+    let run = |drafter| run_speculative(&tokenizer, &truth, &prompt, &config, vocab, drafter, 3);
+
+    let (_, plain, _) = run(Drafter::Alternating);
+    turbospark_runtime::spec_probe::install(None);
+    let (_, probed, _) = run(Drafter::Alternating);
+    let record = turbospark_runtime::spec_probe::take().expect("record");
+    assert_eq!(probed, plain, "recording changed the stream");
+    // One margin per committed token, all from one-hot rows here.
+    assert_eq!(record.margins.len(), plain.len());
+    assert!(
+        record.margins.iter().all(|m| *m == Some(1.0)),
+        "{:?}",
+        record.margins
+    );
+    assert!(!record.rounds.is_empty() && !record.synthetic);
+    assert!(record.rounds.iter().all(|r| r.accepted <= r.width));
+
+    // A drafter that is always wrong, accepted anyway: rounds accept all, the
+    // output is no longer the model's, and no state check fires.
+    turbospark_runtime::spec_probe::install(Some(1.0));
+    let (result, forced, _) = run(Drafter::Useless);
+    let record = turbospark_runtime::spec_probe::take().expect("record");
+    assert!(record.synthetic);
+    assert_eq!(result.new_tokens, 12);
+    assert!(
+        record.rounds.iter().all(|r| r.accepted == r.width),
+        "{:?}",
+        record.rounds
+    );
+    assert_ne!(forced, plain, "synthetic acceptance was not applied");
+    assert!(
+        record.margins.contains(&None),
+        "a forced token has no margin"
+    );
+
+    // And rate zero accepts nothing even from a perfect drafter.
+    turbospark_runtime::spec_probe::install(Some(0.0));
+    let (_, none, _) = run(Drafter::Perfect);
+    let record = turbospark_runtime::spec_probe::take().expect("record");
+    assert!(record.rounds.iter().all(|r| r.accepted == 0));
+    assert_eq!(none, plain);
+}

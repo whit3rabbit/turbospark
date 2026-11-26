@@ -262,7 +262,7 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
   /v1/metrics:
     get:
-      summary: Prometheus metrics (audio series only)
+      summary: Prometheus metrics (text series plus the audio series)
       responses:
         '200':
           description: Text exposition format.

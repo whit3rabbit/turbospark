@@ -21,6 +21,10 @@ pub struct Provenance {
     pub chip: Option<String>,
     pub macos: Option<String>,
     pub macos_build: Option<String>,
+    /// Xcode and Metal compiler versions (LAB-30): a compiler bump can move
+    /// output bits with no source change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub toolchain_id: Option<String>,
     pub features: Vec<String>,
     /// Every `TURBOSPARK_*` variable this process saw.
     pub turbospark_env: BTreeMap<String, String>,
@@ -66,6 +70,24 @@ pub fn turbospark_env() -> BTreeMap<String, String> {
         .collect()
 }
 
+/// One line from `xcodebuild -version` (two lines) and the first line of
+/// `xcrun metal --version`. `None` when neither tool answers.
+fn toolchain_id(xcode: Option<String>, metal: Option<String>) -> Option<String> {
+    let line = |s: &str, n: usize| {
+        s.lines()
+            .take(n)
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let parts: Vec<String> = [xcode.map(|x| line(&x, 2)), metal.map(|m| line(&m, 1))]
+        .into_iter()
+        .flatten()
+        .filter(|p| !p.is_empty())
+        .collect();
+    (!parts.is_empty()).then(|| parts.join("; "))
+}
+
 pub fn collect() -> Provenance {
     let root = source_root();
     let exe = std::env::current_exe().ok();
@@ -81,7 +103,30 @@ pub fn collect() -> Provenance {
         chip: turbospark_bench::memory::chip_brand_string(),
         macos: capture("sw_vers", &["-productVersion"]),
         macos_build: capture("sw_vers", &["-buildVersion"]),
+        toolchain_id: toolchain_id(
+            capture("xcodebuild", &["-version"]),
+            capture("xcrun", &["metal", "--version"]),
+        ),
         features,
         turbospark_env: turbospark_env(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn toolchain_lines_join_and_absence_stays_absent() {
+        assert_eq!(
+            toolchain_id(
+                Some("Xcode 16.4\nBuild version 16F6\n".into()),
+                Some("Apple metal version 32023\nTarget: air64".into())
+            )
+            .as_deref(),
+            Some("Xcode 16.4 Build version 16F6; Apple metal version 32023")
+        );
+        assert_eq!(toolchain_id(None, None), None);
+        assert_eq!(toolchain_id(Some(String::new()), None), None);
     }
 }

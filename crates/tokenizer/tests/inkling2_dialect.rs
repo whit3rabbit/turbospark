@@ -43,7 +43,7 @@ fn the_real_table_resolves_to_inkling2() {
     );
     assert_eq!(tok.pad_id, id(&tok, "<|endoftext|>"));
     assert_eq!(tok.vocab_size, 201_024);
-    assert_eq!(tok.dialect.tool_call_support(), ToolCallSupport::Prompted);
+    assert_eq!(tok.dialect.tool_call_support(), ToolCallSupport::Native);
     assert_eq!(tok.tool_call_start_id, NO_SUCH_TOKEN_ID);
     assert_eq!(tok.tool_call_stop_id, NO_SUCH_TOKEN_ID);
 }

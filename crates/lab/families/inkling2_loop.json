@@ -58,6 +58,15 @@
         "dflash"
       ],
       "note": "16 GB"
+    },
+    {
+      "name": "inkling2-mini-ud-q4kxl",
+      "quant": "GGUF unsloth UD-Q4_K_XL, native NVFP4 expert layers",
+      "machine": "Apple M4 Max 36 GB",
+      "drafters": [
+        "dflash"
+      ],
+      "note": "17 GB"
     }
   ],
   "recommended": [],
@@ -161,12 +170,198 @@
       },
       "conditions": "every pair excluded by rule: the resident arm reads no experts (no_reads) and the streamed arm does, so the page-cache classes always differ; the medians are per-arm run records, not a paired verdict; swap 8.6 GB used; built from the working tree before the resident commit, on top of 63b5e87a",
       "note": "resident mode is not bit-exact with the host-routed path: GPU and host exp round differently, 19/19 tokens identical but 262/265 top-1 against llama.cpp on a 265-token prompt (the 3 misses are top-2 swaps at llama.cpp margins 0.04 to 0.19); mean KL 5.6e-4 against 7.5e-4 for the host path"
+    },
+    {
+      "id": "inkling2_loop.floor-q4kxl-2026-11-26",
+      "date": "2026-11-26",
+      "install": "inkling2-mini-ud-q4kxl",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "e9fa0bc0",
+      "workload": "tslab floor: the default arm against itself, prefill logits on six corpus prompts (every chunk end) and a forced decode trace on three document and two chat prompts",
+      "arms": {
+        "default": {}
+      },
+      "metric": "mean_kl",
+      "values": {
+        "mean_kl": 0.0,
+        "bits_identical": 1
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "floor",
+        "record": "1795709271254-15473-8"
+      },
+      "conditions": "AC power; another session was compiling and testing on the same Mac, so no timing here is quotable; quality results do not depend on it",
+      "note": "run-to-run exact, so any KL between two arms of this install is the arms' own"
+    },
+    {
+      "id": "inkling2_loop.floor-iq1s-2026-11-26",
+      "date": "2026-11-26",
+      "install": "inkling2-mini-gguf-ud-iq1s",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "e9fa0bc0",
+      "workload": "tslab floor: the default arm against itself, prefill logits on six corpus prompts (every chunk end) and a forced decode trace on three document and two chat prompts",
+      "arms": {
+        "default": {}
+      },
+      "metric": "mean_kl",
+      "values": {
+        "mean_kl": 0.0,
+        "bits_identical": 1
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "floor",
+        "record": "1795708378215-50238-8"
+      },
+      "conditions": "AC power; another session was compiling and testing on the same Mac, so no timing here is quotable; quality results do not depend on it",
+      "note": ""
+    },
+    {
+      "id": "inkling2_loop.noise-dflash2-2026-11-26",
+      "date": "2026-11-26",
+      "install": "inkling2-mini-ud-q4kxl",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "e9fa0bc0",
+      "workload": "tslab noise: DFlash depth 2, 3 fresh processes, short-explanation and medium-review, 96 decode",
+      "arms": {
+        "d2": {
+          "speculation": {
+            "drafter": "dflash",
+            "block": 2
+          }
+        }
+      },
+      "metric": "decode_digest",
+      "values": {
+        "runs": 3,
+        "distinct_outputs_per_prompt": 1
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "noise",
+        "record": "1795709395340-31530-6"
+      },
+      "conditions": "AC power; another session was compiling and testing on the same Mac, so no timing here is quotable; quality results do not depend on it",
+      "note": ""
+    },
+    {
+      "id": "inkling2_loop.divergence-dflash2-3-2026-11-26",
+      "date": "2026-11-26",
+      "install": "inkling2-mini-ud-q4kxl",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "e9fa0bc0",
+      "workload": "tslab gate, exactness token_divergence: DFlash depth 2 against 3 on six corpus prompts, 32 decode",
+      "arms": {
+        "d2": {
+          "speculation": {
+            "drafter": "dflash",
+            "block": 2
+          }
+        },
+        "d3": {
+          "speculation": {
+            "drafter": "dflash",
+            "block": 3
+          }
+        }
+      },
+      "metric": "decode_digest",
+      "values": {
+        "prompts": 6,
+        "diverged": 0
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "inkling2-followups",
+        "record": "1795710676814-50274-9"
+      },
+      "conditions": "AC power; another session was compiling and testing on the same Mac, so no timing here is quotable; quality results do not depend on it",
+      "note": "identical tokens, so the near-tie rule of the class was not exercised"
+    },
+    {
+      "id": "inkling2_loop.needle-16k-2026-11-26",
+      "date": "2026-11-26",
+      "install": "inkling2-mini-ud-q4kxl",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "e9fa0bc0",
+      "workload": "tslab sanity --needle 16384: eight golden answers and a needle at depths 10, 50 and 90 percent of 16K tokens, 512 decode",
+      "arms": {
+        "default": {}
+      },
+      "metric": "decode_digest",
+      "values": {
+        "passed": 11,
+        "cases": 11
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "inkling2-followups",
+        "record": "1795711848212-24086-3"
+      },
+      "conditions": "AC power; another session was compiling and testing on the same Mac, so no timing here is quotable; quality results do not depend on it",
+      "note": "64K was not run: the KV cache beside this install risks the 36 GB host"
+    },
+    {
+      "id": "inkling2_loop.idle-gap-2026-11-26",
+      "date": "2026-11-26",
+      "install": "inkling2-mini-ud-q4kxl",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "ad0e35b8",
+      "workload": "tslab idle-gap: 20 decode steps after sleeping 0.5 to 8 s",
+      "arms": {
+        "default": {}
+      },
+      "metric": "first_step_ms",
+      "values": {
+        "gap_0.5s": {
+          "first_step_ms": 42.1,
+          "gpu_wait_ms": 0.6
+        },
+        "gap_1s": {
+          "first_step_ms": 42.0,
+          "gpu_wait_ms": 0.56
+        },
+        "gap_2s": {
+          "first_step_ms": 221.0,
+          "gpu_wait_ms": 179.97
+        },
+        "gap_4s": {
+          "first_step_ms": 263.4,
+          "gpu_wait_ms": 225.25
+        },
+        "gap_8s": {
+          "first_step_ms": 256.6,
+          "gpu_wait_ms": 204.97
+        },
+        "busy_median_ms": 28.0
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "inkling2-followups",
+        "record": "1795711906119-72342-2"
+      },
+      "conditions": "one reading on a shared Mac, AC power; a second run before it showed the same step times",
+      "note": "after 2 s or more idle the first command buffer waits about 200 ms between kernel scheduling and GPU start; the cause (GPU power state or another) is not established"
     }
   ],
   "open_questions": [
     "resident experts against streamed has no paired verdict: tslab pairs only arms in the same page-cache class, and the two modes never are",
     "auto now resolves resident experts where the resident weights, the table and the 10 GiB reserve fit Metal's working set (the 36 GB M4 Max does): measure with an explicit @N/streamed arm, since a bare auto arm is resident there; a quality gate at resident exactness is still owed",
-    "the CPU reference matched llama.cpp (top-1 19/19, mean KL 4.2e-4 on 19 tokens), a correctness check, not a lab measurement (docs/INKLING2_PHASE0.md)"
+    "the CPU reference matched llama.cpp (top-1 19/19, mean KL 4.2e-4 on 19 tokens), a correctness check, not a lab measurement (docs/INKLING2_PHASE0.md)",
+    "why the first command buffer after 2 s or more of GPU idle waits about 200 ms (inkling2_loop.idle-gap-2026-11-26), whether other families and installs see it, and whether keeping the GPU warm between turns is worth its power"
   ],
   "traps": [
     "layers 6-17 run three times per token: per-layer stats, prefetch keyed on layer + 1, and the router histogram all assume one application per layer",

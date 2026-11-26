@@ -329,6 +329,7 @@ impl LogitProducer for RealForwardRunner {
     }
 
     fn take_turn_snapshot(&mut self, position: usize) {
+        foundation::engaged!("gdn_turn_snapshot");
         self.take_turn_snapshot_at(position);
     }
 }
@@ -346,6 +347,11 @@ impl LogitProducer for RealForwardRunner {
 /// condition that has to agree with the first, and the failure mode of
 /// disagreeing is a refusal message that names the wrong cause.
 impl SpeculativeProducer for RealForwardRunner {
+    fn expert_counters(&self) -> Option<(u64, u64)> {
+        let c = self.phase_counters();
+        Some((c.expert_requests, c.expert_io_bytes_requested))
+    }
+
     type Checkpoint = RollbackPoint;
 
     // WHICH DRAFTER answers is a property of the open state, and at most
@@ -604,10 +610,18 @@ impl SpeculativeProducer for RealForwardRunner {
         base: usize,
         logits: &mut [LogitValue],
     ) -> Result<(), String> {
+        // Router diagnostics only: scope the rows so a route capture can tell
+        // a verify from decode and count the distinct experts one reads.
+        if let Some(hist) = &mut self.router_hist {
+            hist.begin_batch("verify", base, feed.len());
+        }
         let result = gpu::autorelease_pool(|| {
             self.produce_batched(feed, base, logits)
                 .map_err(|e| e.to_string())
         });
+        if let Some(hist) = &mut self.router_hist {
+            hist.end_batch(result.is_ok());
+        }
         // NOT recorded here, and no longer TAINTED either. This used to
         // taint, on the reasoning that the record would have to track an
         // accept count this method is never told -- which left the
@@ -666,7 +680,13 @@ impl ChunkedPrefillRunner for RealForwardRunner {
         self.note_eager_advance();
         self.batched_tape = None;
         self.batched_tape_row0 = None;
+        if let Some(hist) = &mut self.router_hist {
+            hist.begin_chunk(start_position, tokens.len());
+        }
         let result = self.prefill_chunk_inner(tokens, start_position, logits);
+        if let Some(hist) = &mut self.router_hist {
+            hist.end_chunk();
+        }
         // The server routes long prompts through here rather than through
         // `produce`, so without this the case prefix reuse exists for would
         // record nothing and never fire.

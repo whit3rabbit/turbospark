@@ -88,13 +88,15 @@ impl AdaptiveParams {
     pub fn from_env() -> Self {
         static PARAMS: OnceLock<AdaptiveParams> = OnceLock::new();
         *PARAMS.get_or_init(|| match std::env::var("TURBOSPARK_ADAPTIVE_DEPTH") {
-            Ok(v) => Self::parse(&v).unwrap_or_else(|| {
-                eprintln!(
-                    "TURBOSPARK_ADAPTIVE_DEPTH={v:?} is not LOW,MID,HIGH,DROP (each >= 1); \
+            Ok(v) => Self::parse(&v)
+                .inspect(|_| foundation::engaged!("adaptive_depth_tuned"))
+                .unwrap_or_else(|| {
+                    eprintln!(
+                        "TURBOSPARK_ADAPTIVE_DEPTH={v:?} is not LOW,MID,HIGH,DROP (each >= 1); \
                      using the default tuning"
-                );
-                Self::default()
-            }),
+                    );
+                    Self::default()
+                }),
             Err(_) => Self::default(),
         })
     }

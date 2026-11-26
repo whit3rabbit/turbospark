@@ -72,6 +72,7 @@ fn session(dir: &Path, experiment: &str) -> Session {
         require_ac: false,
         quiet_wait_s: 0.0,
         min_free_gb: 0.0,
+        ..HostRules::default()
     };
     let mut s = Session::new(
         &dir.join("lab"),

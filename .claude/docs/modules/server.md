@@ -843,7 +843,9 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     the choke point already (Gotcha 17: it exists because the speculative
     loop is not object-safe, so the trait method owns which decode loop
     runs), and every generation in this crate goes through exactly one call
-    to it. `observe::ReportingModel` wraps the resolved backend and
+    to it. `observe::ReportingModel` wraps EVERY resolved backend (it also
+    feeds the `/v1/metrics` text series, so it must delegate every trait
+    method, `generation_queue` included, or the FIFO gate disappears) and
     **delegates rather than reimplementing** -- calling `with_producer` in
     that override instead would silently downgrade every speculative or
     chunked request to the sequential loop the moment an observer was
@@ -1053,7 +1055,7 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
 
 
 36. **THE AUDIO ROUTES ARE CONDITIONAL, AND EACH MODEL LIVES ON ITS OWN
-    THREAD.** `/v1/audio/*` and `/v1/metrics` are merged into the router only
+    THREAD.** `/v1/audio/*` is merged into the router only
     when `ServerState::with_audio_provider` was called, so the FFI host (which
     sets none) keeps its route surface and `ServerEndpointCatalogTests` needs no
     rows. They join `protected` AFTER the 25 MiB chat body limit is applied and

@@ -1,17 +1,12 @@
-//! `GET /v1/metrics`: Prometheus text for the audio routes only. Chat has no
-//! equivalent, so the series carry an `audio` prefix rather than claiming to
-//! describe the whole process.
+//! The audio series of `GET /v1/metrics`. They carry an `audio` prefix because
+//! the same body also holds the text series (`crate::metrics`).
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use axum::extract::State;
-use axum::http::{header, HeaderValue, StatusCode};
-use axum::response::{IntoResponse, Response};
-
-use crate::ServerState;
+use super::AudioState;
 
 #[derive(Default)]
 struct Series {
@@ -104,17 +99,9 @@ impl AudioMetrics {
     }
 }
 
-pub(crate) async fn metrics_endpoint(State(state): State<ServerState>) -> Response {
-    let Some(audio) = state.audio else {
-        return super::unavailable();
-    };
-    let body = audio
+/// The audio half of the `/v1/metrics` body (`crate::metrics`).
+pub(crate) fn render_metrics(audio: &AudioState) -> String {
+    audio
         .metrics
-        .render(audio.provider.models().len(), &audio.jobs.counts());
-    let mut response = (StatusCode::OK, body).into_response();
-    response.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
-    );
-    response
+        .render(audio.provider.models().len(), &audio.jobs.counts())
 }

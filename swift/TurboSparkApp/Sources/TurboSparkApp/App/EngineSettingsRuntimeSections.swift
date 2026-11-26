@@ -366,6 +366,14 @@ extension EngineSettingsPaneView {
                 }
             }
 
+            // The switch is off-limits without a model; say why beside it
+            // rather than leaving a dimmed control unexplained.
+            if model.session == nil && model.server == nil {
+                Text("No model loaded.", bundle: .module)
+                    .themedFont(.small)
+                    .foregroundStyle(.appSecondary)
+            }
+
             // Both rows are READ BACK from the running server rather than
             // restated here. The address used to be half asserted (a
             // `127.0.0.1` literal beside the real port) and the auth state

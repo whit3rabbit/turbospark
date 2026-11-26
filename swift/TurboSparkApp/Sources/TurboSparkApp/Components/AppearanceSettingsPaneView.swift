@@ -74,7 +74,9 @@ public struct AppearanceSettingsPaneView: View {
     }
 
     private var resetSection: some View {
-        HStack(alignment: .center, spacing: 16) {
+        // Adaptive: the button drops under the description instead of
+        // squeezing it at German and Extra Large text.
+        AppAdaptiveHeader {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Reset Appearance", bundle: .module)
                     .settingsControl("Reset Appearance", pane: .appearance, timing: .immediate)
@@ -85,7 +87,7 @@ public struct AppearanceSettingsPaneView: View {
                     .foregroundStyle(.appSecondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer()
+        } actions: {
             // Destructive treatment, but this only opens the confirmation
             // below; nothing resets until that dialog's own button.
             Button(role: .destructive) {

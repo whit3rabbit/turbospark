@@ -1,6 +1,6 @@
 import unittest
 
-from prefill_bank_replay import lfu_misses, replay
+from prefill_bank_replay import lfu_misses, order_misses, order_replay, replay
 from test_expert_policy_replay import capture
 
 
@@ -38,6 +38,37 @@ class PrefillBankReplay(unittest.TestCase):
             result["requested_bytes"], {"lfu_16": 60000, "lfu_128": 60000, "bank_128": 1880}
         )
         self.assertTrue(result["passes_screen"])
+
+    def test_layer_major_beats_a_bank_emptied_between_chunks(self):
+        # Four experts cycling, chunks of 4, four slots: the shared bank
+        # rereads all four every chunk, layer-major reads them once.
+        groups = [[i % 4] for i in range(16)]
+        got = order_misses(groups, 4, 4, 4)
+        self.assertEqual(got, {"batch_major_lfu": 4, "batch_major_bank": 16,
+                               "layer_major": 4, "compulsory": 4})
+
+    def test_slots_bound_what_either_order_can_keep(self):
+        # Two slots: each chunk of 4 splits into two routed sub-batches, and
+        # four experts cannot be held by any order.
+        groups = [[i % 4] for i in range(8)]
+        got = order_misses(groups, 4, 2, 4)
+        self.assertEqual(got["layer_major"], got["batch_major_lfu"])
+        self.assertEqual(got["layer_major"], 8)
+        self.assertEqual(got["compulsory"], 4)
+
+    def test_the_sweep_prices_bytes_and_skips_long_prompts(self):
+        trace = capture([[[i % 4] for i in range(16)]] * 2, 4, 1)
+        layout = {"expertsPerLayer": 4, "numLayers": 2, "expertStride": 30,
+                  "layers": [{"layer": 0, "expertStride": 10}, {"layer": 1}]}
+        out = order_replay(trace, layout, [4], [4], [16, 99])
+        self.assertEqual(out["skipped_prompts"], [99])
+        cell = out["cells"][0]
+        self.assertEqual(cell["bytes"]["batch_major_bank"], 16 * (10 + 30))
+        self.assertEqual(cell["bytes"]["layer_major"], 4 * (10 + 30))
+        self.assertEqual(cell["saving_vs_bank_percent"], 75.0)
+        self.assertEqual(cell["saving_vs_lfu_percent"], 0.0)
+        with self.assertRaises(ValueError):
+            order_replay(trace, layout, [4], [4], [99])
 
 
 if __name__ == "__main__":
