@@ -6,6 +6,7 @@ mod chatml;
 mod deepseek;
 mod glm;
 mod harmony;
+mod inkling2;
 mod kimi;
 mod mistral;
 mod muse;
@@ -65,6 +66,8 @@ pub struct StructuredAssistantDecoder<'a> {
     held_text: String,
     dsml_text: Option<String>,
     emitted_calls: usize,
+    /// Inkling 2: between `<|message_model|>` and the content marker.
+    inkling2_header: bool,
     failed: bool,
 }
 
@@ -162,7 +165,7 @@ impl<'a> StructuredAssistantDecoder<'a> {
         id_generator: impl FnMut() -> String + 'a,
         prompt_ids: &[i32],
     ) -> Self {
-        Self {
+        let mut decoder = Self {
             tokenizer,
             allowed_tools,
             id_generator: Box::new(id_generator),
@@ -180,7 +183,11 @@ impl<'a> StructuredAssistantDecoder<'a> {
             dsml_text: None,
             emitted_calls: 0,
             failed: false,
-        }
+            inkling2_header: false,
+        };
+        decoder.inkling2_header = tokenizer.dialect == ChatDialect::Inkling2
+            && decoder.prompt_opens_inkling2_header(prompt_ids);
+        decoder
     }
 
     /// Returns true if at least one tool call has been parsed and emitted.
@@ -232,11 +239,8 @@ impl<'a> StructuredAssistantDecoder<'a> {
             // Flint shares this arm: its think pair is the only markup it
             // splits, keyed on the ids. Its GLM-style tool markup has no
             // parser and flows through as content (`Prompted`).
-            // Inkling 2 too: `<|content_thinking|>` opens the thought and the
-            // next `<|end_message|>` closes it; an `<|end_message|>` outside a
-            // thought only re-asserts visible. Its tool JSON segment has no
-            // parser yet (`Prompted`).
-            ChatDialect::MiniMax | ChatDialect::Flint | ChatDialect::Inkling2 => {
+            ChatDialect::Inkling2 => return self.consume_inkling2(token_id, delta),
+            ChatDialect::MiniMax | ChatDialect::Flint => {
                 if Some(token_id) == self.tokenizer.think_start_id {
                     self.channel = Channel::Thought;
                 } else if Some(token_id) == self.tokenizer.think_end_id {
@@ -496,6 +500,7 @@ impl<'a> StructuredAssistantDecoder<'a> {
         let mut events = match self.tokenizer.dialect {
             ChatDialect::Harmony => self.close_harmony_tool()?,
             ChatDialect::Mistral => self.close_mistral_tool()?,
+            ChatDialect::Inkling2 => self.finish_inkling2()?,
             _ => {
                 if self.tool_tokens.is_some() {
                     return Err(ToolCallParserError::Malformed);

@@ -410,9 +410,9 @@ impl ChatDialect {
             // checked against Flint's real output, so it flows as content
             // where a rescue layer can reach it.
             ChatDialect::Flint => ToolCallSupport::Prompted,
-            // `<|content_invoke_tool_json|>{"name":..,"args":..}<|end_message|>`
-            // exists, but no parser has met the model's real output.
-            ChatDialect::Inkling2 => ToolCallSupport::Prompted,
+            // `<|content_invoke_tool_json|>{"name":..,"args":..}<|end_message|>`,
+            // parsed by `structured_decoder/inkling2.rs`.
+            ChatDialect::Inkling2 => ToolCallSupport::Native,
         }
     }
 
