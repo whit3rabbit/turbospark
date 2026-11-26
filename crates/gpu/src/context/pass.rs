@@ -304,6 +304,7 @@ impl CommittedPass {
     /// while later image command buffers continue in queue order.
     pub fn wait_ref(&self) {
         self.command_buffer.wait_until_completed();
+        crate::submit_probe::completed(&self.command_buffer);
         warn_on_command_buffer_error(&self.command_buffer);
     }
 
@@ -330,6 +331,7 @@ impl CommittedPass {
     pub fn wait_with_gpu_time(mut self) -> f64 {
         use metal::objc::{msg_send, sel, sel_impl};
         self.command_buffer.wait_until_completed();
+        crate::submit_probe::completed(&self.command_buffer);
         warn_on_command_buffer_error(&self.command_buffer);
         // SAFETY: `GPUStartTime`/`GPUEndTime` are documented
         // `CFTimeInterval` (f64) accessors on `MTLCommandBuffer`, called
@@ -366,6 +368,7 @@ impl CommittedPass {
     pub fn wait_gpu_start_end(&self) -> (f64, f64) {
         use metal::objc::{msg_send, sel, sel_impl};
         self.command_buffer.wait_until_completed();
+        crate::submit_probe::completed(&self.command_buffer);
         warn_on_command_buffer_error(&self.command_buffer);
         // SAFETY: documented `CFTimeInterval` accessors on a live,
         // completed buffer (as in `wait_with_gpu_time`).

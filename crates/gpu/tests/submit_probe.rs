@@ -14,8 +14,17 @@ fn waited_buffers_are_timed_only_while_the_probe_is_installed() {
     submit_probe::install();
     context.begin_pass().commit_and_wait();
     context.begin_pass().commit().wait();
+    // Every other way a decode waits: the first version hooked only the two
+    // above and read nothing on a real model.
+    context.begin_pass().commit().wait_ref();
+    context.begin_pass().commit().wait_with_gpu_time();
+    context.begin_pass().commit_and_wait_with_gpu_time();
+    context
+        .begin_pass()
+        .commit_and_wait_checked()
+        .expect("empty pass completes");
     let delays = submit_probe::take();
-    assert_eq!(delays.len(), 2, "{delays:?}");
+    assert_eq!(delays.len(), 6, "{delays:?}");
     assert!(
         delays.iter().all(|d| *d >= 0.0 && *d < 10_000.0),
         "{delays:?}"

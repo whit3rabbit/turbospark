@@ -284,6 +284,10 @@ pub fn decode_trace_gate(session: &Session, spec: &GateArms) -> Result<DecodeRes
 /// The final-position prefill comparison over the quality corpus.
 pub fn prefill_quality_gate(session: &Session, spec: &GateArms) -> Result<QualityResult, String> {
     let workload = quality_workload(spec.workload);
+    // The divergence class reads only its own probed runs.
+    if spec.exactness == GateClass::TokenDivergence {
+        return divergence_gate(session, spec, &workload);
+    }
     let n = workload.prompts.len();
     let a = session.run_once(spec.baseline, &workload, Mode::Quality, 0, false)?;
     let b = session.run_once(spec.candidate, &workload, Mode::Quality, 0, false)?;
@@ -305,9 +309,6 @@ pub fn prefill_quality_gate(session: &Session, spec: &GateArms) -> Result<Qualit
     };
     let pa = a.record["prompts"].as_array().cloned().unwrap_or_default();
     let pb = b.record["prompts"].as_array().cloned().unwrap_or_default();
-    if spec.exactness == GateClass::TokenDivergence {
-        return divergence_gate(session, spec, &workload);
-    }
     // Runtime-loop workloads are judged bit-exact on generated tokens.
     if runs_the_runtime_loop(spec, &workload) {
         if spec.exactness != GateClass::BitExact {
