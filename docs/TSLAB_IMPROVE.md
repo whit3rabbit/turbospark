@@ -34,7 +34,7 @@ shared while this was built, so no speed claim was taken from it.
 | LAB-02 per-token KL statistics | partial | KL mean, median, p99 and SE, flip rate and flips by reference margin, PPL per arm, paired NLL delta and SE. Over the forced decode trace, and now over prefill logits at every chunk end (`quality.positions`), which can only fail a gate. | Prefill positions are chunk ends, not every token: the chunked kernels return one row per chunk. A family whose chunk driver skips the head records none. No split by text class beyond per prompt; no compact u16 reference (same size as the trace). |
 | LAB-03 A/A quality noise | partial | `gate --noise-arms`, `tslab noise`, and the `token_divergence` class for a change of verify width: both arms run under the speculative probe, and outputs may part only on a near tie (baseline margin under 0.5 logits) and no more often than the model's own `noise` record (zero without one). | Covers speculative verify width only, not batched decode or prefill batch width. Tree rounds record no margin, so a divergence there fails. No first-target runs (qwen36, MTP 2 against 3). |
 | LAB-04 floor table | partial | `tslab floor` records a family's arm against itself; `gate` prints limit, floor and margin. No path widens a bound. | The CPU or llama.cpp reference half stays `xengine-kl`, run separately. Floors for the listed families were not collected. |
-| LAB-08 golden answers | partial | `tslab sanity`: 8 exact cases, `--tools` (4 calls rendered by the checkpoint template, read by the runtime decoder), `--needle` (4K, 16K, 64K at depths 10, 50, 90), and `--candidate` as the functional gate (fails on any case the other arm passes). A `sanity` step in `new-family`. | The tool cases do not render on inkling2-mini-ud-q4kxl: its template uses `tojson(separators=...)`, which the template engine rejects (a server bug, see below). The per-family mutation pilot was not run. The reworded needle was not rerun on a model. |
+| LAB-08 golden answers | partial | `tslab sanity`: 8 exact cases, `--tools`, `--needle` (4K, 16K, 64K at depths 10, 50, 90) and `--candidate` as the functional gate; 15 of 15 on inkling2-mini-ud-q4kxl with the tool and 4K needle cases. A `sanity` step in `new-family`. | The 16K and 64K needles and the per-family mutation pilot were not run. |
 
 ## Wave 2
 
@@ -45,7 +45,7 @@ shared while this was built, so no speed claim was taken from it.
 | LAB-13 union pricing | done | `moe_route_replay.py --streams` and `--phase verify`, `depth-replay --cost-model union`, and per verify expert reads and bytes in `tslab spec-rounds`. | Reads are requested, not physically read; not distinct experts per verify. The streamed 35B pilot was not run. |
 | LAB-10 verify width beyond 16 | done | `verify_ladder` covers widths 1 to 64 and 96 through the sliced GEMM route, with step edges and a logits-memory budget. | No speculative verify accepts more than 16 rows today, so wider points are a what-if cost. The qwen38 and qwen36 sweeps were not run (not in the catalog store here). |
 | LAB-17 fill ladder | done | `fill-ladder` workflow (0.3K, 8K, 32K); `ab` and `sweep` print and record a per-context-bucket decode ratio and footprint, never pooled into a verdict. | The 64K and larger rungs are not in the built-in plan: the corpus ends near 100K tokens and a long rung on a streamed MoE competes with its slot pool. Not run on installs here. |
-| LAB-24 GPU-idle gap | partial | `trace_tables.py` per-token idle, busy and command buffers; `tslab idle-gap` (first decode step after 0.5 to 8 s gaps). | `idle-gap` times the step from the host, not GPU start against kernel start, and has not run on a model. The token count for the trace is given by the caller. |
+| LAB-24 GPU-idle gap | partial | `trace_tables.py` per-token idle, busy and command buffers; `tslab idle-gap`. | `idle-gap` times the step from the host, not GPU start against kernel start. The token count for the trace is given by the caller. The one reading below was on a shared machine. |
 
 ## Wave 3
 
@@ -66,8 +66,8 @@ shared while this was built, so no speed claim was taken from it.
 | Id | Status | What the lab does now | Not done, and why |
 |---|---|---|---|
 | LAB-09 methodology id | done | Every run and verdict records `methodology`; the logit trace has a row-count footer; `export` and the HTML report split a group that mixes ids; `report --md` says so. | Old records are not backfilled (they read `unrecorded`): their prompt bytes cannot be recovered reliably. `pinned` holds upstream settings, not ledger series, so it has nothing to group. Quality logit files keep their size check. |
-| LAB-23 synthetic acceptance | partial | `tslab spec-rounds --synth-len` forces acceptance to a mean committed length through a thread-local runtime probe no server or app path installs; such runs are marked unquotable and never feed round costs. | Greedy chain and copy rounds only (not tree or sampled). Not run on a model: no break-even per family yet. |
-| LAB-25 busy-age round cost | partial | Every probed round records its time into the run; `spec-rounds` prints verify median by width and run age (0-6, 6-15, 15-60, 60+ s). | Age is time since the probe started, not since the last GPU idle gap. The depth rule is unchanged until a measurement moves the ratio. Not run on a model. |
+| LAB-23 synthetic acceptance | partial | `tslab spec-rounds --synth-len` forces acceptance to a mean committed length through a thread-local runtime probe no server or app path installs; such runs are marked unquotable and never feed round costs. | Greedy chain and copy rounds only (not tree or sampled). One smoke run only: no break-even per family yet. |
+| LAB-25 busy-age round cost | partial | Every probed round records its time into the run; `spec-rounds` prints verify median by width and run age (0-6, 6-15, 15-60, 60+ s). | Age is time since the probe started, not since the last GPU idle gap. The depth rule is unchanged until a measurement moves the ratio. No 120 s run. |
 | LAB-27 tile sweeps and no-harm rule | partial | The no-harm-per-bucket rule, attached to the `rows_attn`, `moe_routed` and INT4 sweeps as a chip-keyed record. | It proposes a pin and changes no default. No decode-GEMV threadgroup arms where the gpu crate takes no tile parameter. No sweep was run for a pin. |
 | LAB-28 real routes in `moe_routed` | partial | `moe_routed --routes trace:|uniform|zipf:`, rows-per-expert histogram, pair against expert-sorted grid with hash equality (synthetic test). | Not run on a real capture or install: the bench synthesizes affine INT4 experts and no such MoE install is here. |
 | LAB-31 host-quiet extensions | done | Low Power Mode and memory-pressure level in every host sample; `--require-full-power` and `--require-normal-pressure`. | Opt-in: old ledgers never recorded either, so the number of runs a default rule would dirty cannot be counted yet. |
@@ -103,3 +103,20 @@ All on this Mac with inkling2-mini installs; none is a speed claim.
   eviction test (LAB-14).
 - `cargo test --workspace` passed locally. The Swift gates were not run: no
   Swift or FFI source changed.
+
+## Later runs, 2026-11-26
+
+All on inkling2-mini, on a Mac another session was also using at times.
+
+- Tool calling end to end against `turbospark-server` (UD-IQ1_S): the call
+  returns as `tool_calls`, the tool result is answered, streaming matches,
+  and `timings` and `/v1/metrics` are populated.
+- `sanity --tools --needle 4096` (UD-Q4_K_XL): 15 of 15.
+- `spec-rounds` with DFlash at depth 3: 2.94 committed per round under the
+  model, 2.18 with acceptance forced to a mean of 2. No expert reads were
+  reported: Inkling 2's flow does not fill that counter.
+- Prefill-position gate: 49 chunk-end positions per run, bit-identical
+  against itself.
+- `idle-gap`: first decode step about 41 ms after a 0.5 or 1 s gap and 240 to
+  290 ms after 2, 4 and 8 s (busy median 26 to 33 ms). One reading, host
+  timed: it opens the question, it does not name the cause.
