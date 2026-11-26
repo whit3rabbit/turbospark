@@ -84,6 +84,9 @@ pub(crate) struct RealLlamaState {
     pub(crate) moe_x: gpu::MetalBuffer,
     /// `[hidden]`: the routed sum, added back to the stream.
     pub(crate) h2: gpu::MetalBuffer,
+    /// M-row transient buffers of the batched prefill arm, allocated on its
+    /// first chunk.
+    pub(super) prefill_batch: Option<super::prefill_batched::DenseBatchScratch>,
     /// Magnitude on cos and sin when `rope_frequencies` is set: 1.0 for Llama
     /// 3 scaling, `attn_factor` for LongRoPE (Phi-3.5), which scales q and k
     /// each by it.
@@ -532,6 +535,7 @@ impl RealLlamaState {
                 .new_output_buffer((num_experts.max(1) * 4 * MAX_PREFILL_BATCH) as u64),
             moe_x: halfs(hidden * MAX_PREFILL_BATCH),
             h2: halfs(hidden),
+            prefill_batch: None,
         })
     }
 }
