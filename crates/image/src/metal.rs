@@ -187,6 +187,9 @@ impl IntraBlockProbe<'_> {
 
 struct DenoiseOptions<'a> {
     initial_noise: Option<&'a [f32]>,
+    /// The scheduler step the supplied latent is the input of. 0 for every
+    /// rollout; only [`MetalImageBackend::denoise_one_step`] starts later.
+    start_step: usize,
     stop_after_first_step: bool,
     on_step: &'a mut dyn FnMut(usize, &[f32]),
     trace: Option<BoundaryObserver<'a>>,
@@ -1253,6 +1256,7 @@ impl MetalImageBackend {
             cancellation,
             DenoiseOptions {
                 initial_noise,
+                start_step: 0,
                 stop_after_first_step: false,
                 on_step: &mut collect,
                 trace: None,
@@ -1260,6 +1264,47 @@ impl MetalImageBackend {
             &mut |_, _| {},
         )?;
         Ok(steps)
+    }
+
+    /// Run exactly one scheduler step from a caller-supplied latent: the
+    /// latent a reference rollout held BEFORE step `step`. For the lab's
+    /// teacher-forced stage gate, where each step is compared on its own so a
+    /// small error cannot hide inside a free-running rollout.
+    pub fn denoise_one_step(
+        &mut self,
+        conditioning: &[f32],
+        request: &ImageRequest,
+        scheduler: &FlowMatchEulerScheduler,
+        step: usize,
+        latent: &[f32],
+        cancellation: &CancellationToken,
+    ) -> Result<Vec<f32>, String> {
+        if scheduler.timesteps.len() != request.scheduler_steps as usize
+            || scheduler.sigmas.len() != request.scheduler_steps as usize + 1
+        {
+            return Err("native image scheduler shape does not match the request".to_string());
+        }
+        if step >= request.scheduler_steps as usize {
+            return Err(format!(
+                "step {step} is outside the {}-step schedule",
+                request.scheduler_steps
+            ));
+        }
+        let mut on_step = |_: usize, _: &[f32]| {};
+        self.denoise_impl(
+            conditioning,
+            request,
+            scheduler,
+            cancellation,
+            DenoiseOptions {
+                initial_noise: Some(latent),
+                start_step: step,
+                stop_after_first_step: true,
+                on_step: &mut on_step,
+                trace: None,
+            },
+            &mut |_, _| {},
+        )
     }
 
     /// Capture the first packed denoising step at the boundaries needed to
@@ -1313,6 +1358,7 @@ impl MetalImageBackend {
             cancellation,
             DenoiseOptions {
                 initial_noise,
+                start_step: 0,
                 stop_after_first_step: true,
                 on_step: &mut on_step,
                 trace: Some(&mut observe),
@@ -1562,6 +1608,7 @@ impl ImageBackend for MetalImageBackend {
             cancellation,
             DenoiseOptions {
                 initial_noise: None,
+                start_step: 0,
                 stop_after_first_step: false,
                 on_step: &mut step_observer,
                 trace: None,
@@ -1704,8 +1751,10 @@ impl MetalImageBackend {
         unified_ids.extend_from_slice(&caption_ids);
         let unified_freqs = self.cis_freqs(&unified_ids)?;
 
-        let mut timestep =
-            self.time_embedding(&component, scheduler.normalized_time(0) * 1000.0)?;
+        let mut timestep = self.time_embedding(
+            &component,
+            scheduler.normalized_time(options.start_step) * 1000.0,
+        )?;
         let mut image = image;
         for index in 0..2 {
             image = self.transformer_block(
@@ -1747,9 +1796,9 @@ impl MetalImageBackend {
         unified_values.extend_from_slice(&image_values);
         unified_values.extend_from_slice(&refined_caption_values);
         let mut unified = metal_ops::upload(&self.context, &unified_values);
-        for step in 0..request.scheduler_steps as usize {
+        for step in options.start_step..request.scheduler_steps as usize {
             Self::cancelled(cancellation)?;
-            if step != 0 {
+            if step != options.start_step {
                 // Each denoising step uses a new modulation embedding, while
                 // image/caption embeddings and positional frequencies remain
                 // stage-local immutable inputs.

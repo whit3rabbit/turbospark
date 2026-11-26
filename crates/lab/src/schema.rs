@@ -125,6 +125,10 @@ pub const KINDS: &[(&str, &str)] = &[
     ),
     ("anchor", "greedy digests keyed by family and toolchain"),
     (
+        "image_stage",
+        "image denoise steps each from the reference latent: update error, cosine, output hash (unquotable)",
+    ),
+    (
         "spec_rounds",
         "speculative rounds under the probe: verify time by age, expert reads, synthetic acceptance (unquotable)",
     ),

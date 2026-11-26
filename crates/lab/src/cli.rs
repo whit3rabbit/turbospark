@@ -90,6 +90,8 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab spec-rounds --model M --arm NAME~mtp:4 [--synth-len 1.5,2,3] [--decode 256]
                 (per round verify time by run age, expert reads per committed token, and costs at a
                  forced acceptance; synthetic output is wrong by design)
+  tslab image-stage --model INSTALL --fixtures DIR [--against EXPERIMENT]
+                (each image denoise step from the reference's latent; exit 3 when a step's bits changed)
   tslab anchor  --model M --file anchors.json [--update]   (greedy digests per family and toolchain; exit 3 on change)
   tslab release-gate --base-worker PATH --model M... [--declared FILE] [--metric decode_tok_s] [--pairs 3]
   tslab type1   [--trials 20000]                   (false WIN and LOSS rates from stored null calibrations)
@@ -207,6 +209,7 @@ pub const COMMANDS: &[&str] = &[
     "launch-count",
     "idle-gap",
     "spec-rounds",
+    "image-stage",
     "anchor",
     "release-gate",
     "type1",
@@ -255,6 +258,7 @@ pub fn dispatch(cmd: &str, args: Args) -> Result<CmdOutput, String> {
         "launch-count" => crate::checks::launch_count_cmd(args),
         "idle-gap" => crate::checks::idle_gap_cmd(args),
         "spec-rounds" => crate::checks::spec_rounds_cmd(args),
+        "image-stage" => crate::image_stage::image_stage_cmd(args),
         "anchor" => crate::checks::anchor_cmd(args),
         "release-gate" => crate::checks::release_gate_cmd(args),
         "type1" => crate::checks::type1_cmd(args),

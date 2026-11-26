@@ -2548,6 +2548,7 @@ dependencies = [
  "turbospark-core",
  "turbospark-coreml",
  "turbospark-gpu",
+ "turbospark-image",
  "turbospark-model-io",
  "turbospark-repack",
  "turbospark-runtime",

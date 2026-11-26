@@ -55,6 +55,7 @@ process, which must sit beside `tslab`.
 | `quant-ab --ref M --base M --cand M` | Each install replays the reference's ids: a candidate passes only with no more bytes than the base and a KL from the reference no worse (2% slack) | `run`, `quant_ab` |
 | `launch-count --model M [--arm SPEC]...` | Dispatches and command buffers per decoded token, and the pipelines each arm used. Counts only: `TURBOSPARK_LAUNCH_COUNT=1` perturbs timing | `run`, `launch_count` |
 | `spec-rounds --model M --arm NAME~mtp:4 [--synth-len 1.5,2,3]` | Speculative rounds under the runtime probe: verify time by run age, expert reads per committed token, and costs at a forced acceptance. Synthetic output is wrong by design | `run`, `spec_rounds` |
+| `image-stage --model INSTALL --fixtures DIR [--against EXP]` | Each Z-Image denoise step from the reference latent (`scripts/z_image_capture.py`): update error and output hash; exit 3 when a step's bits changed. No quality bound | `image_stage` |
 | `idle-gap --model M` | First decode step after 0.5, 1, 2, 4 and 8 s gaps; under 20% worse than the 0.5 s gap, drop the idle-GPU idea | `run`, `idle_gap` |
 | `anchor --model M --file F [--update]` | Greedy digests on three prompts keyed by family and toolchain; exit 3 lists changes for a person | `run`, `anchor` |
 | `release-gate --base-worker PATH --model M... [--declared F]` | A released `tslab-worker` against this one, interleaved: PASS, FAIL (undeclared loss), NEEDS-KL-GATE (output moved, undeclared), PASS-with-note, SKIP | `run`, `release_gate` |

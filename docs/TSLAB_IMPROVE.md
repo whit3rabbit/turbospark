@@ -74,7 +74,7 @@ shared while this was built, so no speed claim was taken from it.
 | LAB-32 markdown report | done | `report --md` with the derived "claims not made" list. | |
 | LAB-33 secondary guard | done | Spec `secondary_guard` and `sweep --guard`, including `expert_hit_rate` as the guard metric. | The allowance is a relative change (at most 2%), not percentage points. |
 | LAB-34 GDN trajectory | partial | `gdn_trajectory` bench with a one-ULP fault self-test (synthetic GDN test). | Not run on a real GDN install (none here). |
-| LAB-36 image denoise stage gate | not built | none | Needs per-step reference latents, a Z-Image install and a single-step entry in the Metal backend. `scripts/z_image_capture.py` already captures the latents (`crates/image/tests/metal_parity.rs` reads them), but no capture or image install was on this host. Its bounds depend on a measured reference-against-reference floor. |
+| LAB-36 image denoise stage gate | partial | `tslab image-stage` runs each Z-Image denoise step from the reference latent through `MetalImageBackend::denoise_one_step` and reports update error, cosine and output hash; with `--against` it fails on any changed step. | Never run on a model: no Z-Image install or capture on this host, so neither the new backend entry nor its parity test (`one_step_from_a_rollout_latent_reproduces_the_next_latent`, ignored) has executed. No quality bound: it needs a measured reference floor. Z-Image only. |
 
 ## Found by these checks and fixed
 
