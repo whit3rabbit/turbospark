@@ -108,8 +108,23 @@ pub fn encode_dequant_kquant_gemm_resident(
         "batch {batch} outside 1..={MAX_BATCH_ROWS}"
     );
     let (m, n, b) = (w.rows as u32, w.cols as u32, batch as u32);
+    // The wide Q4_K pair is chosen per matrix exactly as the GEMV chooses it
+    // (`q4_k_use_wide`), so verify rows match decode bit for bit.
+    let kernel = if w.kind == KQuantBatchType::Q4K
+        && crate::dequant_q4_k_gemv::q4_k_use_wide(w.weights_offset)
+    {
+        if x.1 % 8 != 0 {
+            return Err(GpuError::InvalidInput(format!(
+                "dequant_q4_k_gemm_wide needs an 8-byte aligned x offset (got {})",
+                x.1
+            )));
+        }
+        "dequant_q4_k_gemm_wide"
+    } else {
+        w.kind.kernel()
+    };
     let (constants, key) = specialized_constants(b);
-    let pipeline = context.pipeline(SOURCE, w.kind.kernel(), &constants, &key)?;
+    let pipeline = context.pipeline(SOURCE, kernel, &constants, &key)?;
     let threadgroups = w.rows.div_ceil(ROWS_PER_THREADGROUP as usize) as u64;
     pass.encode_threadgroups(
         &pipeline,

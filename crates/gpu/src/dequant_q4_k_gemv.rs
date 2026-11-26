@@ -41,6 +41,40 @@ fn no_function_constants() -> FunctionConstantValues {
     FunctionConstantValues::new()
 }
 
+/// Whether `TURBOSPARK_GGUF_KERNEL=wide` is the default (KERN-04). Flipped
+/// only with its decode gate and paired timing on a real install.
+const WIDE_BY_DEFAULT: bool = false;
+
+/// The Q4_K GEMV the engine dispatches, read once per process from
+/// `TURBOSPARK_GGUF_KERNEL` (`current` or `wide`; unset gives the default). It
+/// selects the GEMV and the batched verify GEMM TOGETHER: the two must keep
+/// one accumulation order or speculation stops being bit-exact against plain
+/// decode. An unknown value warns and keeps the default.
+pub fn q4_k_wide_selected() -> bool {
+    static SELECTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SELECTED.get_or_init(
+        || match std::env::var("TURBOSPARK_GGUF_KERNEL").as_deref() {
+            Ok("wide") => true,
+            Ok("current") => false,
+            Err(_) | Ok("") => WIDE_BY_DEFAULT,
+            Ok(other) => {
+                eprintln!(
+                    "[gpu] TURBOSPARK_GGUF_KERNEL={other:?} is not current or wide; using {}",
+                    if WIDE_BY_DEFAULT { "wide" } else { "current" }
+                );
+                WIDE_BY_DEFAULT
+            }
+        },
+    )
+}
+
+/// Whether a resident Q4_K matrix at `weights_offset` runs the wide kernels.
+/// Depends only on the matrix, never on `x`, so a GEMV and a batched GEMM of
+/// the same weights always agree; a misaligned `x` is an error instead.
+pub(crate) fn q4_k_use_wide(weights_offset: u64) -> bool {
+    q4_k_wide_selected() && weights_offset % 4 == 0
+}
+
 /// Bytes a Q4_K row of `n` elements occupies.
 pub fn q4_k_row_bytes(n: usize) -> usize {
     assert_eq!(
@@ -116,6 +150,10 @@ pub fn encode_dequant_q4_k_gemv_resident(
 ) -> Result<(), GpuError> {
     assert!(w.rows > 0);
     let _ = q4_k_row_bytes(w.cols);
+    if q4_k_use_wide(w.weights_offset) {
+        foundation::engaged!("gguf_q4k_wide");
+        return encode_dequant_q4_k_gemv_resident_wide(context, pass, w, x, y);
+    }
     let m_u32 = w.rows as u32;
     let n_u32 = w.cols as u32;
     let pipeline = context.pipeline(
@@ -139,10 +177,10 @@ pub fn encode_dequant_q4_k_gemv_resident(
     Ok(())
 }
 
-/// KERN-04 Stage A bench arm: [`encode_dequant_q4_k_gemv_resident`] through
-/// `dequant_q4_k_gemv_wide` (unit-wide loads; see the shader). Same math,
-/// different accumulation order. NOT used by the engine; it exists so the
-/// real-bytes price probe can time it against the current kernel.
+/// [`encode_dequant_q4_k_gemv_resident`] through `dequant_q4_k_gemv_wide`
+/// (unit-wide loads; see the shader): same math, different accumulation
+/// order. The engine reaches it through [`q4_k_wide_selected`]; the real-bytes
+/// price probe calls it directly to time it against the current kernel.
 pub fn encode_dequant_q4_k_gemv_resident_wide(
     context: &mut MetalContext,
     pass: &PassEncoder,
@@ -234,13 +272,17 @@ pub fn encode_embed_lookup_q4_k(
     Ok(())
 }
 
-/// One-shot [`encode_dequant_q4_k_gemv_resident`] for the parity tests.
+/// One-shot [`encode_dequant_q4_k_gemv_resident`] for the parity tests,
+/// routed by [`q4_k_wide_selected`] like the encoder.
 pub fn dequant_q4_k_gemv_resident(
     context: &mut MetalContext,
     w: &Q4KResidentMatrix<'_>,
     x: &[f16],
 ) -> Result<Vec<f16>, GpuError> {
     assert_eq!(x.len(), w.cols);
+    if q4_k_use_wide(w.weights_offset) {
+        return dequant_q4_k_gemv_resident_wide(context, w, x);
+    }
     let x_buffer = context.new_buffer_with_data(&half_slice_to_le_bytes(x));
     let y_buffer = context.new_output_buffer((w.rows * std::mem::size_of::<u16>()) as u64);
 

@@ -327,7 +327,7 @@ pub use dequant_q3_k_gemv::{
 pub use dequant_q4_k_gemv::{
     dequant_q4_k_gemv, dequant_q4_k_gemv_resident, dequant_q4_k_gemv_resident_wide,
     encode_dequant_q4_k_gemv_resident, encode_dequant_q4_k_gemv_resident_wide,
-    encode_embed_lookup_q4_k, q4_k_row_bytes, Q4KResidentMatrix, Q4_K_BLOCK_BYTES,
+    encode_embed_lookup_q4_k, q4_k_wide_selected, q4_k_row_bytes, Q4KResidentMatrix, Q4_K_BLOCK_BYTES,
     Q4_K_BLOCK_ELEMS,
 };
 #[cfg(target_os = "macos")]
