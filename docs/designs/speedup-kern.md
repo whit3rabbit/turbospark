@@ -187,6 +187,19 @@ Design (decision 5):
 Test: a fixture with a lowered limit returns `Err` through the checked commit and
 does not panic. The unchecked path aborts on the recorded violation.
 
+Built (guard half): `PassEncoder` records the first violation and skips that
+dispatch. `commit_and_wait_checked` and a new non-waiting `commit_checked`
+return `Err` without committing, so outputs keep their old contents. `commit`,
+`commit_and_wait`, `commit_and_wait_with_gpu_time` and `commit_signaling` panic
+on a recorded violation. The standalone helpers in `context/dispatch.rs` still
+panic before encoding. Tests are in `pass.rs`; the checked-commit test was
+mutation-checked.
+
+Survey (2026-11-26, `rg '\.commit_and_wait\(\)|\.commit\(\)'`): about 126
+unchecked sites in about 70 files under `crates/runtime/src` (84 waiting, 42
+non-waiting) and 2 in `crates/image`; none in `crates/ffi` or `crates/server`,
+which reach the GPU only through the runtime. Not migrated yet.
+
 ### 1. Idle stall (KERN-05)
 
 Evidence (turbospark#329, one reading, host timed, Inkling 2 Mini UD-Q4_K_XL):
