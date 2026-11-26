@@ -26,12 +26,27 @@ pub struct ExperimentSpec {
     pub knob_env: Option<String>,
     pub baseline: Arm,
     pub candidate: Arm,
+    /// Differences between the arms beyond `knob_env`, each declared with a
+    /// reason (LAB-07). `field` is an environment variable name, `open`,
+    /// `speculation`, `contention`, `ballast_gib` or `cold`. An undeclared
+    /// difference refuses the spec: a second flipped switch confounds the A/B.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub also_changes: Vec<AlsoChange>,
     pub workload: Workload,
     /// Held-out prompts for the single `tslab confirm` pass. Never used for
     /// the main verdict, so a change tuned to the main prompts is caught.
     #[serde(default)]
     pub confirm_workload: Option<Workload>,
     pub primary_metric: Metric,
+    /// A second metric the candidate may not lose more than `max_regression`
+    /// on (LAB-33), e.g. a decode win must not tax prefill.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub secondary_guard: Option<SecondaryGuard>,
+    /// Ask "not worse than this fraction" instead of only "better" (LAB-05),
+    /// for default-on, cleanup and safety changes. A KEEP then needs the
+    /// one-sided bound to clear the limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub noninferiority_limit: Option<f64>,
     #[serde(default = "default_min_effect")]
     pub min_effect: f64,
     /// What switching the knob may do to output.
@@ -52,6 +67,54 @@ pub struct ExperimentSpec {
     pub min_pairs: usize,
     #[serde(default = "default_max_pairs")]
     pub max_pairs: usize,
+}
+
+/// The widest regression a secondary guard may allow.
+pub const MAX_GUARD_REGRESSION: f64 = 0.02;
+
+/// The second metric of a spec (LAB-33).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SecondaryGuard {
+    pub metric: Metric,
+    #[serde(default = "default_guard_regression")]
+    pub max_regression: f64,
+}
+
+fn default_guard_regression() -> f64 {
+    MAX_GUARD_REGRESSION
+}
+
+/// One declared extra difference between a spec's arms.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AlsoChange {
+    pub field: String,
+    pub reason: String,
+}
+
+/// Every way two arms differ: environment variable names, then the non-env
+/// arm fields. `expect_engaged` is left out on purpose: it asserts that a
+/// lane ran and changes nothing the worker does.
+pub fn arm_differences(a: &Arm, b: &Arm) -> Vec<String> {
+    let keys: std::collections::BTreeSet<&String> = a.env.keys().chain(b.env.keys()).collect();
+    let mut out: Vec<String> = keys
+        .into_iter()
+        .filter(|k| a.env.get(*k) != b.env.get(*k))
+        .cloned()
+        .collect();
+    for (name, differs) in [
+        ("open", a.open != b.open),
+        ("speculation", a.speculation != b.speculation),
+        ("contention", a.contention != b.contention),
+        ("ballast_gib", a.ballast_gib != b.ballast_gib),
+        ("cold", a.cold != b.cold),
+    ] {
+        if differs {
+            out.push(name.to_string());
+        }
+    }
+    out
 }
 
 fn default_min_effect() -> f64 {
@@ -104,6 +167,52 @@ impl ExperimentSpec {
                     "baseline and candidate agree on {knob}; the arms must differ in the knob under test"
                 ));
             }
+            for field in arm_differences(&self.baseline, &self.candidate) {
+                if field != *knob && !self.also_changes.iter().any(|c| c.field == field) {
+                    return Err(format!(
+                        "the arms also differ in {field}: change one thing at a time, or declare it in also_changes with a reason"
+                    ));
+                }
+            }
+        }
+        for c in &self.also_changes {
+            if c.reason.trim().is_empty() {
+                return Err(format!("also_changes {}: the reason is empty", c.field));
+            }
+            if !arm_differences(&self.baseline, &self.candidate).contains(&c.field) {
+                return Err(format!(
+                    "also_changes {}: the arms do not differ there",
+                    c.field
+                ));
+            }
+        }
+        if let Some(g) = &self.secondary_guard {
+            if !(g.max_regression.is_finite()
+                && (0.0..=MAX_GUARD_REGRESSION).contains(&g.max_regression))
+            {
+                return Err(format!(
+                    "secondary_guard.max_regression must be within [0, {MAX_GUARD_REGRESSION}]"
+                ));
+            }
+            if g.metric == self.primary_metric {
+                return Err("secondary_guard.metric repeats primary_metric".into());
+            }
+        }
+        if let Some(limit) = self.noninferiority_limit {
+            if !(limit.is_finite()
+                && (0.0..=crate::stats::MAX_NONINFERIORITY_LIMIT).contains(&limit))
+            {
+                return Err(format!(
+                    "noninferiority_limit must be within [0, {}]",
+                    crate::stats::MAX_NONINFERIORITY_LIMIT
+                ));
+            }
+            if self.min_pairs < crate::stats::NONINFERIORITY_PAIRS {
+                return Err(format!(
+                    "noninferiority_limit needs a pre-declared min_pairs of at least {}",
+                    crate::stats::NONINFERIORITY_PAIRS
+                ));
+            }
         }
         for w in std::iter::once(&self.workload).chain(self.confirm_workload.iter()) {
             if w.prompts.is_empty() {
@@ -133,6 +242,15 @@ impl ExperimentSpec {
         }
         if self.exactness != GateClass::BitExact {
             effective_bounds(self.exactness, self.quality_bounds)?;
+        }
+        if self.exactness == GateClass::TokenDivergence
+            && self.baseline.effective_speculation(&self.workload)
+                == self.candidate.effective_speculation(&self.workload)
+        {
+            return Err(
+                "token_divergence is for a change of verify width: the arms' speculation must differ"
+                    .into(),
+            );
         }
         let audio = self.workload.audio.is_some();
         if self.exactness == GateClass::TextExact && !audio {
@@ -194,6 +312,57 @@ mod tests {
         let spec = ExperimentSpec::from_json(&base().to_string()).unwrap();
         assert_eq!(spec.require_knob().unwrap(), "TURBOSPARK_FOO");
         assert_eq!(spec.max_pairs, 6);
+    }
+
+    #[test]
+    fn a_second_difference_between_arms_must_be_declared() {
+        let mut v = base();
+        v["candidate"]["env"]["TURBOSPARK_BAR"] = serde_json::json!("1");
+        let err = ExperimentSpec::from_json(&v.to_string()).unwrap_err();
+        assert!(err.contains("TURBOSPARK_BAR"), "{err}");
+        v["also_changes"] =
+            serde_json::json!([{"field": "TURBOSPARK_BAR", "reason": "the lane needs it"}]);
+        assert!(ExperimentSpec::from_json(&v.to_string()).is_ok());
+        v["also_changes"][0]["reason"] = serde_json::json!(" ");
+        assert!(ExperimentSpec::from_json(&v.to_string()).is_err());
+        // Non-environment differences count too, and a declaration of a
+        // difference that is not there is refused.
+        let mut v = base();
+        v["candidate"]["speculation"] = serde_json::json!({"block": 2});
+        let err = ExperimentSpec::from_json(&v.to_string()).unwrap_err();
+        assert!(err.contains("speculation"), "{err}");
+        let mut v = base();
+        v["also_changes"] = serde_json::json!([{"field": "open", "reason": "x"}]);
+        assert!(ExperimentSpec::from_json(&v.to_string()).is_err());
+        // A lane assertion is not a change in behavior.
+        let mut v = base();
+        v["candidate"]["expect_engaged"] = serde_json::json!(["foo_lane"]);
+        assert!(ExperimentSpec::from_json(&v.to_string()).is_ok());
+    }
+
+    #[test]
+    fn guards_and_noninferiority_limits_are_bounded() {
+        let mut v = base();
+        v["secondary_guard"] = serde_json::json!({"metric": "decode_tok_s"});
+        assert!(ExperimentSpec::from_json(&v.to_string()).is_ok());
+        v["secondary_guard"]["max_regression"] = serde_json::json!(0.1);
+        assert!(ExperimentSpec::from_json(&v.to_string()).is_err());
+        v["secondary_guard"] = serde_json::json!({"metric": "prefill_tok_s"});
+        assert!(
+            ExperimentSpec::from_json(&v.to_string()).is_err(),
+            "repeats primary"
+        );
+        let mut v = base();
+        v["noninferiority_limit"] = serde_json::json!(0.02);
+        assert!(
+            ExperimentSpec::from_json(&v.to_string()).is_err(),
+            "3 pairs"
+        );
+        v["min_pairs"] = serde_json::json!(10);
+        v["max_pairs"] = serde_json::json!(14);
+        assert!(ExperimentSpec::from_json(&v.to_string()).is_ok());
+        v["noninferiority_limit"] = serde_json::json!(0.2);
+        assert!(ExperimentSpec::from_json(&v.to_string()).is_err());
     }
 
     #[test]

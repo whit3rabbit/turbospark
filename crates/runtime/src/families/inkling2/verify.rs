@@ -1427,6 +1427,7 @@ fn layer_attention_rows(
     // Prefill passes under the matrix-unit switch take the tiled kernel
     // (KL-bounded, row-independent); verify keeps the rows kernel.
     let attn = if c.prefill_mma() && prefill_attn_enabled() {
+        foundation::engaged!("inkling2_prefill_attn");
         gpu::encode_inkling2_attention_prefill
     } else {
         gpu::encode_inkling2_attention_rows

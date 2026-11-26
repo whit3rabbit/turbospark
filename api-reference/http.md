@@ -89,7 +89,8 @@ curl http://127.0.0.1:8080/health
 
 ### POST /v1/chat/completions
 
-OpenAI-compatible chat completions.
+OpenAI-compatible chat completions. `n` greater than 1 and a strict
+`json_schema` response format are refused with a 400.
 
 ```sh
 curl http://127.0.0.1:8080/v1/chat/completions \
@@ -243,4 +244,16 @@ Full generation runs take significant GPU time; prefer `async: true` and poll `/
 
 ### GET /v1/metrics
 
-Prometheus text exposition format. Exposes latency, request counters, error rates, in-flight work, and queue state for server workers.
+Prometheus text exposition format, behind the same authentication as other `/v1` routes. No text series carries a label.
+
+| Series (`turbospark_text_...`) | Meaning |
+| --- | --- |
+| `requests_total` | Generations started on a model. A guardrail retry counts again. |
+| `requests_failed_total` | Generations that ended in a runtime error. Requests refused before generation are not counted. |
+| `prompt_tokens_total` | Prompt tokens prefilled, reused prefix excluded. |
+| `predicted_tokens_total` | Tokens generated. |
+| `prefill_seconds_total`, `decode_seconds_total` | Time in each phase for completed generations. |
+| `queue_waiting` | Requests waiting for the generation queue. |
+| `queue_rejected_total` | Requests refused with 429 because the queue was full (embeddings requests share the queue). |
+
+A server with an audio provider appends the `turbospark_audio_*` series (requests and time by endpoint and status, in-flight, 429s, models, jobs).

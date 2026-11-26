@@ -12,7 +12,7 @@ HTTP and WebSocket routes for speech-to-text, text-to-speech and music generatio
 - [audio/generate.rs:generate] `POST /v1/audio/generate` (music).
 - [audio/jobs.rs:JobStore], [audio/jobs.rs:get_job], [audio/jobs.rs:get_job_result], [audio/jobs.rs:delete_job] async job store and routes.
 - [audio/models.rs:list_models], [audio/models.rs:load_model], [audio/models.rs:delete_model].
-- [audio/metrics.rs:metrics_endpoint] `GET /v1/metrics` (audio series only), [audio/metrics.rs:AudioMetrics].
+- [audio/metrics.rs:render_metrics] is the audio half of `GET /v1/metrics`, [audio/metrics.rs:AudioMetrics].
 
 ## Invariants
 - Upload size is capped by [audio/mod.rs:MAX_AUDIO_UPLOAD_BYTES] and transcribed duration by [audio/mod.rs:MAX_TRANSCRIBE_SECONDS].

@@ -1,0 +1,15 @@
+{
+  "name": "fill-ladder",
+  "description": "decode at real KV fill (LAB-17): one A/B pair of runs per rung length, decode tok/s and footprint per rung and a per-context-bucket ratio table; judge KV and attention changes per bucket, never from the short rung",
+  "requires": ["candidate"],
+  "vars": {"decode": "128", "context": "34000", "baseline": "baseline"},
+  "steps": [
+    {"id": "capabilities", "command": "capabilities", "args": {"model": "{model}"}},
+    {"id": "ladder", "command": "ab", "when": ["text", "runs", "chunked_prefill"],
+     "args": {"model": "{model}", "experiment": "{experiment}", "baseline": "{baseline}", "candidate": "{candidate}",
+              "prompt": ["corpus:300", "corpus:8000", "corpus:32000"], "decode": "{decode}",
+              "context": "{context}", "metric": "decode_tok_s"}},
+    {"id": "report", "command": "report",
+     "args": {"experiment": "{experiment}", "html": "{lab}/{experiment}/report.html", "force": true}}
+  ]
+}

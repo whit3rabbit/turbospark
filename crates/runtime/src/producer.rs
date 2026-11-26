@@ -165,6 +165,12 @@ pub trait SpeculativeProducer: LogitProducer {
     /// What [`Self::rollback`] restores.
     type Checkpoint;
 
+    /// Expert reads requested so far, count and bytes, when the producer
+    /// routes experts. Read around a verify by the lab's probe only.
+    fn expert_counters(&self) -> Option<(u64, u64)> {
+        None
+    }
+
     /// Advance the drafter over a known pair without producing logits: the
     /// prompt walk. `next` is the token at `position + 1`, which during a
     /// prompt is known rather than guessed.

@@ -18,6 +18,8 @@ mod read_pool;
 mod stream_layout;
 
 pub use aligned_slot::{wire_limit_bytes, AlignedSlot};
+#[cfg(target_os = "macos")]
+pub use disk_io::evict_file_pages;
 pub use disk_io::ExpertIoStats;
 pub use error::StreamerError;
 pub use expert_cache::{

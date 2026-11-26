@@ -102,19 +102,20 @@ impl RealForwardRunner {
             rows,
         )?;
         let hidden_norm = norm_view(weights, index, "dflash.hidden_norm.weight", hidden)?;
-        for r in 0..rows {
-            let row = (r * hidden) as u64 * 2;
-            gpu::encode_rms_norm_bf16w(
-                context,
-                &pass,
-                (&dflash.ctx_combined, row),
-                hidden_norm,
-                (&dflash.ctx_normed, row),
-                hidden as u32,
-                RMS_EPS,
-            )
-            .map_err(RealForwardError::Gpu)?;
-        }
+        // One dispatch over all rows: the per-head kernel reduces each
+        // `hidden`-wide row on its own and shares the one weight, which is
+        // exactly the per-row norm.
+        gpu::encode_rms_norm_bf16w_perhead(
+            context,
+            &pass,
+            (&dflash.ctx_combined, 0),
+            hidden_norm,
+            (&dflash.ctx_normed, 0),
+            rows as u32,
+            hidden as u32,
+            RMS_EPS,
+        )
+        .map_err(RealForwardError::Gpu)?;
         let spans = ring_spans(dflash.kv.capacity(0), base_pos, rows);
         for layer in 0..layers {
             let name = |s: &str| format!("dflash.layers.{layer}.{s}");
@@ -145,11 +146,10 @@ impl RealForwardRunner {
                     )?;
                 }
             }
-            for r in 0..rows {
-                // Per POSITION rather than `k_off + r * stride`: the same
-                // wrap the spans above split is what makes the arithmetic
-                // form wrong on a straddling round.
-                let (k_buf, k_row) = dflash.kv.k_slot(layer, base_pos + r);
+            // Per SPAN, not per `rows`: the ring wrap the spans split is what
+            // makes one contiguous run wrong on a straddling round.
+            for &(row0, count) in spans.iter().filter(|s| s.1 > 0) {
+                let (k_buf, k_row) = dflash.kv.k_slot(layer, base_pos + row0);
                 let k_row = k_row as u64;
                 gpu::encode_rms_norm_bf16w_perhead(
                     context,
@@ -157,16 +157,17 @@ impl RealForwardRunner {
                     (k_buf, k_row),
                     k_norm,
                     (k_buf, k_row),
-                    num_kv as u32,
+                    (num_kv * count) as u32,
                     head_dim as u32,
                     RMS_EPS,
                 )
                 .map_err(RealForwardError::Gpu)?;
-                gpu::encode_rope_proportional_neox(
+                gpu::encode_rope_proportional_neox_rows(
                     context,
                     &pass,
                     (k_buf, k_row),
-                    (base_pos + r) as u32,
+                    (base_pos + row0) as u32,
+                    count as u32,
                     num_kv as u32,
                     head_dim as u32,
                     (head_dim / 2) as u32,

@@ -42,6 +42,7 @@ use crate::guardrails::run_guarded;
 use crate::response::{
     completion_chunk, completion_response, reasoning_delta, role_delta, text_delta, tool_call_delta,
 };
+use crate::timings::{prompt_tokens_details, Timings, WithTimings};
 
 /// Per-request storage that carries a registry lease from resolution to the
 /// outer response-body layer without changing each handler's return type.
@@ -239,7 +240,7 @@ async fn resolve_off_worker(
     }
 }
 
-/// The observer-wrapping and error-mapping tail both resolvers share.
+/// The metrics/observer wrapping and error-mapping tail both resolvers share.
 #[allow(clippy::result_large_err)]
 fn finish_resolution(
     state: &crate::ServerState,
@@ -256,25 +257,27 @@ fn finish_resolution(
                 request_lease_slot.store(lease);
             }
             let model = resolved.model;
-            // With no observer, or no id to tie events to, the caller gets
-            // the bare model back and nothing is wrapped -- which is every
-            // pre-observer caller, this crate's whole integration suite
-            // included, on the exact path it always had.
-            let (Some(crate::observe::RequestTag(id)), Some(observer)) = (tag, &state.observer)
-            else {
-                return Ok(model);
+            if let Some(queue) = model.generation_queue() {
+                state.text_metrics.watch(&queue);
+            }
+            // Events need both an observer and the id its layer minted; the
+            // metrics counting below needs neither.
+            let report = match (tag, &state.observer) {
+                (Some(crate::observe::RequestTag(id)), Some(observer)) => {
+                    observer.record(crate::observe::ServerEvent::RequestRouted {
+                        id,
+                        requested: requested.map(str::to_string),
+                        served: model.model_id().to_string(),
+                        stream,
+                    });
+                    Some((Arc::clone(observer), id))
+                }
+                _ => None,
             };
-            let served = model.model_id().to_string();
-            observer.record(crate::observe::ServerEvent::RequestRouted {
-                id,
-                requested: requested.map(str::to_string),
-                served,
-                stream,
-            });
             Ok(Arc::new(crate::observe::ReportingModel::new(
                 model,
-                Arc::clone(observer),
-                id,
+                Arc::clone(&state.text_metrics),
+                report,
             )))
         }
         // 404 with `model_not_found`, matching what `model_detail` already
@@ -521,6 +524,9 @@ pub async fn chat_completions(
         Ok(m) => m,
         Err(response) => return response,
     };
+    if let Some(message) = unsupported_request_field(&request) {
+        return error_response(axum::http::StatusCode::BAD_REQUEST, message);
+    }
     // Planned here as well as inside `run_guarded` so an unparseable request
     // is still refused with a 400 before any generation starts. The guarded
     // path re-plans because a retry turn changes the messages.
@@ -590,7 +596,7 @@ pub async fn chat_completions(
             Ok(r) => r,
             Err(e) => return gen_error_response(e),
         };
-        Json(completion_response(
+        let mut body = completion_response(
             request_id("chatcmpl-"),
             now_unix(),
             request.model,
@@ -600,7 +606,16 @@ pub async fn chat_completions(
             generated.decode.reason,
             generated.decode.prompt_tokens as u32,
             generated.decode.new_tokens as u32,
-        ))
+        );
+        // Set here, not in `completion_response`: `/v1/messages` translates
+        // that object and its usage fields mean something else.
+        if let Some(usage) = &mut body.usage {
+            usage.prompt_tokens_details = Some(prompt_tokens_details(&generated.decode));
+        }
+        Json(WithTimings {
+            body,
+            timings: Some(Timings::from(&generated.decode)),
+        })
         .into_response()
     };
     if let Some(note) = degraded.and_then(|v| v.parse().ok()) {
@@ -667,7 +682,8 @@ fn stream_response(
     let cancel_for_gate = cancel.clone();
     tokio::spawn(async move {
         let _ = crate::queue::run_gated(gate, &cancel_for_gate, move || {
-            let send = |chunk: anyllm_translate::openai::streaming::ChatCompletionChunk| {
+            let send_last = |chunk: anyllm_translate::openai::streaming::ChatCompletionChunk,
+                             timings: Option<Timings>| {
                 // The second, faster disconnect signal: a chunk send failing
                 // means the receiver -- and so the `CancelOnDrop`-wrapped
                 // stream around it -- is already gone. `CancelOnDrop` catches
@@ -675,12 +691,17 @@ fn stream_response(
                 // attempted (a long prefill sends none), so this is a speed-up
                 // for the common case rather than the only detector. A full
                 // backlog (client connected but not reading) cancels too.
+                let wire = WithTimings {
+                    body: chunk,
+                    timings,
+                };
                 crate::cancel::send_or_cancel(
                     &tx,
-                    Event::default().data(serde_json::to_string(&chunk).unwrap_or_default()),
+                    Event::default().data(serde_json::to_string(&wire).unwrap_or_default()),
                     &cancel_for_task,
                 );
             };
+            let send = |chunk| send_last(chunk, None);
             send(completion_chunk(
                 id.clone(),
                 created,
@@ -725,21 +746,28 @@ fn stream_response(
                 // both pointless and (per `send`, above) itself an error.
                 Ok((r, _)) if r.reason == runtime::StopReason::Cancelled => return,
                 Ok((r, _)) => {
-                    send(completion_chunk(
+                    // `timings` goes on whichever chunk is last.
+                    let finish = completion_chunk(
                         id.clone(),
                         created,
                         model_name.clone(),
                         Default::default(),
                         Some(crate::response::finish_reason_for(r.reason, call_index > 0)),
-                    ));
+                    );
+                    let timings = Some(Timings::from(&r));
                     if include_usage {
-                        send(crate::response::usage_chunk(
-                            id.clone(),
-                            created,
-                            model_name.clone(),
-                            r.prompt_tokens as u32,
-                            r.new_tokens as u32,
-                        ));
+                        send(finish);
+                        send_last(
+                            crate::response::usage_chunk(
+                                id.clone(),
+                                created,
+                                model_name.clone(),
+                                &r,
+                            ),
+                            timings,
+                        );
+                    } else {
+                        send_last(finish, timings);
                     }
                 }
                 // A failed run is not a completed one: report it as a FRAMED
@@ -799,10 +827,16 @@ fn buffered_stream_response(
     let cancel_for_stream = cancel.clone();
 
     tokio::spawn(async move {
-        let send = |chunk: anyllm_translate::openai::streaming::ChatCompletionChunk| {
+        let send_last = |chunk: anyllm_translate::openai::streaming::ChatCompletionChunk,
+                         timings: Option<Timings>| {
+            let wire = WithTimings {
+                body: chunk,
+                timings,
+            };
             let _ =
-                tx.send(Event::default().data(serde_json::to_string(&chunk).unwrap_or_default()));
+                tx.send(Event::default().data(serde_json::to_string(&wire).unwrap_or_default()));
         };
+        let send = |chunk| send_last(chunk, None);
         let chunk = |delta, finish| {
             completion_chunk(id.clone(), created, model_name.clone(), delta, finish)
         };
@@ -827,21 +861,27 @@ fn buffered_stream_response(
                 for (index, call) in generated.calls.into_iter().enumerate() {
                     send(chunk(tool_call_delta(index as u32, call), None));
                 }
-                send(chunk(
+                let finish = chunk(
                     Default::default(),
                     Some(crate::response::finish_reason_for(
                         generated.decode.reason,
                         has_calls,
                     )),
-                ));
+                );
+                let timings = Some(Timings::from(&generated.decode));
                 if include_usage {
-                    send(crate::response::usage_chunk(
-                        id.clone(),
-                        created,
-                        model_name.clone(),
-                        generated.decode.prompt_tokens as u32,
-                        generated.decode.new_tokens as u32,
-                    ));
+                    send(finish);
+                    send_last(
+                        crate::response::usage_chunk(
+                            id.clone(),
+                            created,
+                            model_name.clone(),
+                            &generated.decode,
+                        ),
+                        timings,
+                    );
+                } else {
+                    send_last(finish, timings);
                 }
             }
             // Same contract as the live path: a failed run is not a

@@ -13,6 +13,12 @@
 //! `python3 -I`) reports compute-encoder busy percent and idle gaps, and
 //! per-kernel shares of the shader timeline. A traced run is never
 //! quotable: the ledger record says so, and no tok/s from it is printed.
+//!
+//! The analyzer also gives idle and busy milliseconds and the command-buffer
+//! count. `--window-tokens N`, the tokens decoded inside the recorded
+//! window, divides them per token. tslab cannot read N from the trace or
+//! from the worker record (the window is not aligned with the decode), so
+//! it is never guessed.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -39,6 +45,7 @@ pub fn trace_cmd(mut args: Args) -> Result<CmdOutput, String> {
     let record_s: u64 = args.parsed("--record-s", 10)?;
     let wait_s: u64 = args.parsed("--marker-timeout-s", 600)?;
     let arm_spec = args.take("--arm")?.unwrap_or_else(|| "traced".into());
+    let window_tokens = parse_window_tokens(args.take("--window-tokens")?)?;
     let common: std::collections::BTreeMap<String, String> = args
         .take_all("--env")?
         .iter()
@@ -75,6 +82,8 @@ pub fn trace_cmd(mut args: Args) -> Result<CmdOutput, String> {
             arm: arm.clone(),
             workload: workload.clone(),
             mode: Mode::Timing,
+            forced_ids: None,
+            synthetic_accept: None,
             logits_path: None,
         })
         .map_err(|e| e.to_string())?,
@@ -147,7 +156,7 @@ pub fn trace_cmd(mut args: Args) -> Result<CmdOutput, String> {
             recorder_log.trim()
         ));
     }
-    let analysis = analyze(&analyzer, &trace_path, pid)?;
+    let analysis = analyze(&analyzer, &trace_path, pid, window_tokens)?;
     print_summary(&analysis);
     let rec = json!({
         "model": model, "arm": arm, "workload": workload, "record_s": record_s,
@@ -162,12 +171,31 @@ pub fn trace_cmd(mut args: Args) -> Result<CmdOutput, String> {
         .warn("a traced run is never quotable: compare shares between traces, not times"))
 }
 
-fn analyze(script: &Path, trace: &Path, pid: u32) -> Result<Value, String> {
+fn parse_window_tokens(value: Option<String>) -> Result<Option<u64>, String> {
+    value
+        .map(|v| match v.parse::<u64>() {
+            Ok(n) if n > 0 => Ok(n),
+            _ => Err(format!("--window-tokens {v:?}: a positive token count")),
+        })
+        .transpose()
+}
+
+fn analyzer_args(trace: &Path, pid: u32, window_tokens: Option<u64>) -> Vec<std::ffi::OsString> {
+    let mut args = vec![trace.as_os_str().to_owned(), pid.to_string().into()];
+    args.extend(window_tokens.map(|n| n.to_string().into()));
+    args
+}
+
+fn analyze(
+    script: &Path,
+    trace: &Path,
+    pid: u32,
+    window_tokens: Option<u64>,
+) -> Result<Value, String> {
     let out = Command::new("python3")
         .arg("-I")
         .arg(script)
-        .arg(trace)
-        .arg(pid.to_string())
+        .args(analyzer_args(trace, pid, window_tokens))
         .output()
         .map_err(|e| format!("python3: {e}"))?;
     if !out.status.success() {
@@ -193,12 +221,67 @@ fn print_summary(a: &Value) {
             .as_f64()
             .map_or("-".into(), |v| format!("{v:.1}")),
     );
+    crate::say!("{}", gap_line(e));
     for s in a["shaders"].as_array().into_iter().flatten().take(12) {
         crate::say!(
             "  {:>5.1}%  {:>6} samples  {}",
             s["share"].as_f64().unwrap_or(0.0) * 100.0,
             s["samples"],
             s["name"].as_str().unwrap_or("?")
+        );
+    }
+}
+
+/// Idle, busy and command buffers: per token when the window's token count
+/// was given, else the window totals.
+fn gap_line(e: &Value) -> String {
+    let n = |key: &str| e[key].as_f64().map_or("-".into(), |v| format!("{v:.3}"));
+    if e["window_tokens"].is_u64() {
+        format!(
+            "  per token over {} tokens: busy {} ms, idle {} ms, {} command buffers",
+            e["window_tokens"],
+            n("busy_ms_per_token"),
+            n("idle_ms_per_token"),
+            n("command_buffers_per_token"),
+        )
+    } else {
+        format!(
+            "  window: busy {} ms, idle {} ms, {} command buffers (give --window-tokens for per-token figures)",
+            n("busy_ms"),
+            n("idle_ms"),
+            e["command_buffers"],
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_tokens_reach_the_analyzer_only_when_given() {
+        assert_eq!(parse_window_tokens(None), Ok(None));
+        assert_eq!(parse_window_tokens(Some("128".into())), Ok(Some(128)));
+        assert!(parse_window_tokens(Some("0".into())).is_err());
+        assert!(parse_window_tokens(Some("a".into())).is_err());
+        let with = analyzer_args(Path::new("t.trace"), 7, Some(128));
+        assert_eq!(with, ["t.trace", "7", "128"]);
+        assert_eq!(analyzer_args(Path::new("t.trace"), 7, None).len(), 2);
+    }
+
+    #[test]
+    fn the_gap_line_says_which_figures_it_prints() {
+        let per = gap_line(&json!({"window_tokens": 10, "busy_ms_per_token": 2.0,
+            "idle_ms_per_token": 0.25, "command_buffers_per_token": 4.0}));
+        assert!(
+            per.contains("idle 0.250 ms") && per.contains("over 10 tokens"),
+            "{per}"
+        );
+        let total = gap_line(&json!({"window_tokens": null, "busy_ms": 20.0,
+            "idle_ms": 2.5, "command_buffers": 40}));
+        assert!(
+            total.contains("idle 2.500 ms") && total.contains("--window-tokens"),
+            "{total}"
         );
     }
 }

@@ -19,6 +19,7 @@ use serde_json::json;
 
 use super::fit::{break_even, c_of_m, fit_affine};
 use super::support::{copies_for, f16_activations, int4_blob, median, Primer};
+use super::tile_pin::{self, Bucket};
 use super::{BenchOpts, Case, KernelBench, Subject};
 use crate::bench::{fnv_hex, ArmCurve, Axis, BenchResult, BreakEven, Point};
 
@@ -85,6 +86,21 @@ impl KernelBench for Int4Matmul {
                 r.subject.insert(k.into(), case.params[k].clone());
             }
         }
+        // Tiles against the route the runtime takes: the GEMV for one row,
+        // the scalar batched GEMM above. The GEMV itself takes no tile
+        // parameter, so at M = 1 the only candidates are other kernels.
+        tile_pin::attach(
+            &mut r,
+            &tile_pin::Plan {
+                buckets: vec![
+                    (Bucket { lo: 1, hi: 1 }, "gemv_per_row"),
+                    (Bucket { lo: 2, hi: 16 }, "scalar_gemm"),
+                    (Bucket { lo: 17, hi: 64 }, "scalar_gemm"),
+                    (Bucket { lo: 65, hi: 512 }, "scalar_gemm"),
+                ],
+                candidates: vec!["mma8", "steel_m32", "steel_m64", "small_n"],
+            },
+        );
         Ok(r)
     }
 }
@@ -214,6 +230,29 @@ pub fn run_shape(
     cols: usize,
     opts: &BenchOpts,
 ) -> Result<BenchResult, String> {
+    // The tile only where the engine routes to it today.
+    let want = |arm: Arm, m: usize| arm != Arm::Mma8 || m <= MMA8_BENCH_MAX_M;
+    let mut r = run_shape_where(context, label, rows, cols, opts, &want, false)?;
+    if opts.rows.iter().any(|&m| m > MMA8_BENCH_MAX_M) {
+        r.notes.push(format!(
+            "mma8 is timed only up to M = {MMA8_BENCH_MAX_M}, the rows the engine routes to it"
+        ));
+    }
+    Ok(r)
+}
+
+/// [`run_shape`] over the (arm, M) pairs `want` picks. `by_slices` counts a
+/// wide batch's `MAX_BATCH_ROWS` slices as dispatches when sizing a pass, so
+/// a 96-row sweep does not hold six times the work of a 16-row one.
+pub fn run_shape_where(
+    context: &mut MetalContext,
+    label: &str,
+    rows: usize,
+    cols: usize,
+    opts: &BenchOpts,
+    want: &dyn Fn(Arm, usize) -> bool,
+    by_slices: bool,
+) -> Result<BenchResult, String> {
     let (ms, reps) = (&opts.rows[..], opts.reps);
     let weight_bytes = rows * cols / 2 + rows * cols / 64 * 4;
     let copies = copies_for(weight_bytes, 256 << 20);
@@ -222,7 +261,14 @@ pub fn run_shape(
     // (the 48-row gate read 157 us against 46 us in the 64-copy bench). Walk
     // the copies more than once per pass until it holds at least this many
     // dispatches; the weights stay distinct within each walk.
-    let sweeps = MIN_DISPATCHES_PER_PASS.div_ceil(copies).max(1);
+    let sweeps_at = |m: usize| {
+        let slices = if by_slices {
+            m.div_ceil(MAX_BATCH_ROWS)
+        } else {
+            1
+        };
+        MIN_DISPATCHES_PER_PASS.div_ceil(copies * slices).max(1)
+    };
     let mats: Vec<_> = (0..copies)
         .map(|i| {
             let (data, scales, biases) = int4_blob(rows, cols, 0xC0FF_EE00 + i as u64);
@@ -263,8 +309,7 @@ pub fn run_shape(
     let mut primer_ms: Vec<f64> = Vec::new();
     // Whether an arm has a point at M: the tile only where the engine would
     // route to it.
-    let runs_at =
-        |a: usize, m: usize| supported[a] && (ARMS[a] != Arm::Mma8 || m <= MMA8_BENCH_MAX_M);
+    let runs_at = |a: usize, m: usize| supported[a] && want(ARMS[a], m);
     // (m, per-arm median ms, per-arm output hash, per-arm first-row hash)
     #[allow(clippy::type_complexity)]
     let mut table: Vec<(usize, Vec<f64>, Vec<Option<String>>, Vec<Option<String>>)> = Vec::new();
@@ -272,6 +317,7 @@ pub fn run_shape(
         let mut samples = vec![Vec::new(); ARMS.len()];
         let mut hashes = vec![None; ARMS.len()];
         let mut row_hashes = vec![None; ARMS.len()];
+        let sweeps = sweeps_at(m);
         for rep in 0..=reps {
             for (a, &arm) in ARMS.iter().enumerate() {
                 if !runs_at(a, m) {
@@ -375,12 +421,7 @@ pub fn run_shape(
     subject.insert("copies".into(), json!(copies));
     subject.insert("one_row_gemv_ms".into(), json!(one_row));
     subject.insert("primer".into(), Primer::describe(&mut primer_ms));
-    let mut notes = Vec::new();
-    if ms.iter().any(|&m| m > MMA8_BENCH_MAX_M) {
-        notes.push(format!(
-            "mma8 is timed only up to M = {MMA8_BENCH_MAX_M}, the rows the engine routes to it"
-        ));
-    }
+    let notes = Vec::new();
     Ok(BenchResult {
         bench: "int4_matmul".into(),
         case: label.to_string(),

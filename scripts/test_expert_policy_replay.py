@@ -1,8 +1,14 @@
 import itertools
+import json
+import pathlib
 import random
+import subprocess
+import sys
+import tempfile
 import unittest
 
 from expert_policy_replay import (
+    AdmitLfu,
     ClassLru,
     ClassLruPerLayer,
     ClassLruPool,
@@ -11,8 +17,13 @@ from expert_policy_replay import (
     Lru,
     Oracle,
     compulsory,
+    felt_verdict,
+    felt_wait,
     from_capture,
+    keep_replay,
     next_use_index,
+    parse_admit,
+    parse_keep,
     replay,
     schedule,
     tally,
@@ -144,6 +155,146 @@ class ThePoolLendsSlotsAcrossLayers(unittest.TestCase):
         self.assertEqual(pooled, compulsory(steps, [0])[0])
         self.assertEqual(pooled, 5)
         self.assertEqual(per_layer, 40 + 1)
+
+
+class AdmissionKeepsTheHotSet(unittest.TestCase):
+    def reads(self, margin, bounce, slots=3):
+        # Experts 0 and 1 are hot; 2, 3, 4, ... each appear once.
+        groups = []
+        for scan in range(2, 22):
+            groups += [[0], [1], [scan]]
+        steps = schedule([from_capture(capture([groups], 32, 1), "scan")])
+        return sum(misses_by_pass(steps, lambda layer: AdmitLfu(slots, margin, bounce)))
+
+    def test_a_one_off_expert_is_bounced_instead_of_evicting_a_hot_one(self):
+        # Two residents plus one bounce slot: the scan is read and dropped,
+        # so only 0, 1 and the 20 one-offs miss.
+        self.assertEqual(self.reads(1, 1), 22)
+        # With a margin no count difference can fail, each scan evicts a hot
+        # expert, which then misses again.
+        self.assertGreater(self.reads(-1000, 1), 40)
+
+    def test_residents_exclude_the_bounce_ring(self):
+        cache = AdmitLfu(4, 1, 2)
+        for t, e in enumerate([0, 1, 2, 3, 4]):
+            cache.plan([e], t)
+        self.assertEqual(len(cache.resident), 2)
+
+    def test_more_failures_than_the_ring_holds_are_admitted(self):
+        cache = AdmitLfu(3, 100, 1)
+        cache.plan([0, 1], 0)
+        self.assertEqual(cache.plan([2, 3], 1), 2)
+        # One of the two had to take a resident slot for the dispatch.
+        self.assertEqual(len(cache.resident & {2, 3}), 1)
+
+    def test_the_arm_syntax(self):
+        self.assertEqual(parse_admit("admit:0.5"), (0.5, 2))
+        self.assertEqual(parse_admit("admit:2,bounce=1"), (2.0, 1))
+        for bad in ("lru", "admit:1,ring=2", "admit:"):
+            with self.assertRaises(ValueError):
+                parse_admit(bad)
+
+
+def keep_capture(groups, weights, pred=None, layers=1):
+    cap = capture([groups] * layers, 8, len(groups[0]))
+    cap["gate_weights"] = [[w for g in weights for w in g]] * layers
+    if pred is not None:
+        cap["pred"] = [[]] + [[e for g in pred for e in g]] * (layers - 1)
+    return from_capture(cap, "keep")
+
+
+class KeepDropsOnlyColdLowRanks(unittest.TestCase):
+    def run_keep(self, cap, j, r=None, skip=0, slots=4):
+        return keep_replay([cap], schedule([cap]), slots, 8, j, r, [skip])
+
+    def test_a_cold_low_rank_is_dropped_and_a_resident_one_is_used(self):
+        groups = [[0, 1, 2], [3, 4, 5], [3, 4, 0]]
+        weights = [[0.5, 0.3, 0.2]] * 3
+        # Pass 0 warms the cache in full (skip 1). Pass 1: rank 2 (expert 5)
+        # is cold and dropped. Pass 2: rank 2 (expert 0) is resident.
+        out = self.run_keep(keep_capture(groups, weights), 2, skip=1, slots=6)
+        self.assertEqual((out["reads"], out["full_reads"]), (2, 3))
+        self.assertAlmostEqual(out["dropped_mass"], 0.2 / 2)
+        self.assertAlmostEqual(out["tokens_with_drop"], 0.5)
+
+    def test_keeping_every_rank_is_the_engine_lfu(self):
+        rng = random.Random(3)
+        groups = [rng.sample(range(8), 3) for _ in range(40)]
+        out = self.run_keep(keep_capture(groups, [[0.5, 0.3, 0.2]] * 40), 3)
+        self.assertEqual(out["reads"], out["full_reads"])
+        self.assertEqual(out["dropped_mass"], 0.0)
+
+    def test_without_weights_the_mass_is_unknown_not_zero(self):
+        cap = from_capture(capture([[[0, 1]]], 8, 2), "v1")
+        self.assertIsNone(self.run_keep(cap, 1)["dropped_mass"])
+
+    def test_r_narrows_later_layers_unless_announced(self):
+        groups = [[0, 1]]
+        weights = [[0.75, 0.25]]
+        # J=2 R=2: layer 0 keeps both; layer 1's rank 2 is cold.
+        plain = self.run_keep(keep_capture(groups, weights, layers=2), 2, 2)
+        self.assertEqual(plain["reads"], 3)
+        # Announced by the previous layer's lookahead, it is read.
+        told = self.run_keep(
+            keep_capture(groups, weights, pred=[[1, 7]], layers=2), 2, 2)
+        self.assertEqual(told["reads"], 4)
+
+    def test_the_keep_syntax(self):
+        self.assertEqual(parse_keep("5", 8), (5, None))
+        self.assertEqual(parse_keep("5,4", 8), (5, 4))
+        for bad in ("9", "0", "5,6", "5,4,3"):
+            with self.assertRaises(ValueError):
+                parse_keep(bad, 8)
+
+    def test_mismatched_weights_are_refused(self):
+        cap = capture([[[0, 1]]], 8, 2)
+        cap["gate_weights"] = [[0.5]]
+        with self.assertRaises(SystemExit):
+            from_capture(cap, "short")
+
+
+class FeltWaitWeightsLayers(unittest.TestCase):
+    def test_per_layer_costs_felt_fraction_and_skip(self):
+        steps = schedule([from_capture(capture([[[0], [1]], [[0], [0]]], 4, 1), "f")])
+        rows = list(replay(steps, lambda layer: Lru(1)))
+        # Counted from pass 0: layer 0 misses twice, layer 1 once.
+        got = felt_wait(steps, rows, [0], {0: 10.0, 1: 2.0}, 0.5)
+        self.assertAlmostEqual(got[0], (2 * 10 + 1 * 2) * 0.5 / 2)
+        later = felt_wait(steps, rows, [1], {0: 10.0, 1: 2.0}, 0.5)
+        self.assertAlmostEqual(later[0], 5.0)
+
+    def test_the_gate_and_the_predicted_gain(self):
+        v = felt_verdict({0: 10.0, 1: 10.0}, {0: 7.0, 1: 10.2}, token_ms=100.0)
+        self.assertAlmostEqual(v["mean"], 0.14)
+        self.assertAlmostEqual(v["worst"], -0.02)
+        self.assertTrue(v["passes"])
+        self.assertAlmostEqual(v["predicted_gain"], (100 / 97 - 1 + 100 / 100.2 - 1) / 2)
+        self.assertFalse(felt_verdict({0: 10.0, 1: 10.0}, {0: 5.0, 1: 10.5})["passes"])
+        self.assertFalse(felt_verdict({0: 10.0}, {0: 9.5})["passes"])
+        with self.assertRaises(ValueError):
+            felt_verdict({0: 10.0}, {0: 1.0}, token_ms=5.0)
+
+
+class TheCommandRuns(unittest.TestCase):
+    def test_every_new_flag_end_to_end(self):
+        rng = random.Random(5)
+        groups = [rng.sample(range(16), 4) for _ in range(60)]
+        cap = capture([groups, groups], 16, 4)
+        cap["gate_weights"] = [[0.25] * 240] * 2
+        with tempfile.TemporaryDirectory() as d:
+            path = pathlib.Path(d) / "c.json"
+            path.write_text(json.dumps(cap))
+            out = subprocess.run(
+                [sys.executable, str(pathlib.Path(__file__).with_name(
+                    "expert_policy_replay.py")), str(path), "--slots", "8",
+                 "--skip", "10", "--arm", "admit:1,bounce=2", "--keep", "3,2",
+                 "--felt-fraction", "0.5", "--layer-cost", "1,2",
+                 "--token-ms", "100"],
+                capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        for needle in ("admit:1,bounce=2", "keep 3,2", "dropped gate mass",
+                       "predicted_gain", "not a performance result"):
+            self.assertIn(needle, out.stdout)
 
 
 class DecayRebaseKeepsTheOrder(unittest.TestCase):

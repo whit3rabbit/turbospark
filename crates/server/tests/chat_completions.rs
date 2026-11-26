@@ -139,9 +139,10 @@ async fn a_plain_request_carries_no_degradation_header() {
     assert!(response.headers().get("x-anyllm-degradation").is_none());
 }
 
-/// A non-text `response_format`, `n > 1`, and `logprobs` are accepted rather
-/// than rejected -- OpenAI clients that always send them must not 400 --
-/// but every one of them is reported, since none is actually honoured.
+/// A non-text `response_format` and `logprobs` are accepted rather than
+/// rejected -- OpenAI clients that always send them must not 400 -- but each
+/// is reported, since neither is actually honoured. `n > 1` and strict
+/// schemas are the exceptions: see `unservable_promises_are_refused`.
 /// `presence_penalty` / `frequency_penalty` used to be in this list too,
 /// back when neither reached `selection::shaping`; commit B wired both, so
 /// they belong to `presence_penalty_and_frequency_penalty_actually_shape_
@@ -158,7 +159,6 @@ async fn unsupported_openai_fields_are_reported_on_the_degradation_header() {
             "model": "m", "max_tokens": 2, "temperature": 0.0,
             "messages": [{"role": "user", "content": "hi"}],
             "response_format": {"type": "json_object"},
-            "n": 2,
             "logprobs": true
         }))
         .send()
@@ -172,12 +172,41 @@ async fn unsupported_openai_fields_are_reported_on_the_degradation_header() {
         .to_str()
         .unwrap()
         .to_string();
-    // `n` is checked as a whole comma-separated item rather than a
-    // substring: every other label here contains the letter `n`.
-    let items: Vec<&str> = header.split(", ").collect();
     assert!(header.contains("response_format"), "{header}");
-    assert!(items.contains(&"n"), "{header}");
     assert!(header.contains("logprobs"), "{header}");
+}
+
+/// `n > 1` and `strict: true` promise something the reply cannot carry, and a
+/// header is easy to miss, so both are a 400, streaming or not.
+#[tokio::test]
+async fn unservable_promises_are_refused() {
+    let tok = load_tokenizer();
+    let steps = h_steps(&tok, 50);
+    let base = spawn_server(steps).await;
+    let strict = serde_json::json!({"type": "json_schema",
+        "json_schema": {"name": "a", "strict": true, "schema": {}}});
+
+    for (field, value, named) in [
+        ("n", serde_json::json!(2), "n greater than 1"),
+        ("response_format", strict, "strict=true"),
+    ] {
+        for stream in [false, true] {
+            let mut body = serde_json::json!({
+                "model": "m", "max_tokens": 2, "stream": stream,
+                "messages": [{"role": "user", "content": "hi"}]
+            });
+            body[field] = value.clone();
+            let response = reqwest::Client::new()
+                .post(format!("{base}/v1/chat/completions"))
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), 400, "{field} stream={stream}");
+            let text = response.text().await.unwrap();
+            assert!(text.contains(named), "{text}");
+        }
+    }
 }
 
 /// **`presence_penalty` / `frequency_penalty` NO LONGER DEGRADE** (commit B
@@ -278,7 +307,7 @@ async fn streaming_responses_also_carry_the_degradation_header() {
         .json(&serde_json::json!({
             "model": "m", "max_tokens": 2, "temperature": 0.0, "stream": true,
             "messages": [{"role": "user", "content": "hi"}],
-            "n": 2
+            "logprobs": true
         }))
         .send()
         .await
@@ -291,7 +320,7 @@ async fn streaming_responses_also_carry_the_degradation_header() {
         .to_str()
         .unwrap()
         .to_string();
-    assert!(header.contains('n'), "{header}");
+    assert!(header.contains("logprobs"), "{header}");
     // The header is set on the response before the body streams, so it says
     // nothing about whether generation itself succeeded; check that too.
     let body = response.text().await.unwrap();

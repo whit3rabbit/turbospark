@@ -33,7 +33,7 @@ The public surface is small:
 - `build_router_with_options(state, options)` adds an API key and an event observer through `RouterOptions`.
 - `ServerState` holds the model registry, plus optional image and audio providers.
 
-Chat, completions, responses, messages, embeddings, Ollama, and model listing routes are always registered. The audio routes and `/v1/metrics` exist only when you attach an audio provider. `/v1/images/generations` always exists, but it returns 503 until you attach an image provider. The [router options page](router-options.md) covers those settings in detail.
+Chat, completions, responses, messages, embeddings, Ollama, and model listing routes are always registered. The audio routes exist only when you attach an audio provider. `/v1/metrics` always exists. `/v1/images/generations` always exists, but it returns 503 until you attach an image provider. The [router options page](router-options.md) covers those settings in detail.
 
 ## Smallest working example
 

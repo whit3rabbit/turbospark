@@ -187,7 +187,8 @@ result is discarded.
   catalog alias. Paths are refused because the route is reachable over HTTP.
   It refuses with 400 once 8 models are attached or loading (startup
   `--*-model` flags are not capped). Unload one first. `DELETE /v1/audio/models/ID` unloads (409 while jobs run).
-- `GET /v1/metrics` is Prometheus text for the audio routes only:
+- `GET /v1/metrics` is Prometheus text. After the text-generation series it
+  holds the audio ones:
   request counts and time by endpoint and status, in-flight, 429s, models,
   jobs by status.
 - `GET /health` reports `ready` when any model, audio included, is attached.

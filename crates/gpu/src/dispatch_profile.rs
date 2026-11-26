@@ -138,7 +138,7 @@ pub fn register_pipeline(pipeline: &metal::ComputePipelineState, function_name: 
         .insert(pipeline_key(pipeline), function_name);
 }
 
-fn pipeline_name(pipeline: &metal::ComputePipelineStateRef) -> &'static str {
+pub(crate) fn pipeline_name(pipeline: &metal::ComputePipelineStateRef) -> &'static str {
     names()
         .lock()
         .expect("names")

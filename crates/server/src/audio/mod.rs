@@ -46,7 +46,7 @@ pub(crate) fn valid_alias(alias: &str) -> bool {
 
 pub(crate) use generate::generate;
 pub(crate) use jobs::{delete_job, get_job, get_job_result, JobStore};
-pub(crate) use metrics::{metrics_endpoint, AudioMetrics};
+pub(crate) use metrics::{render_metrics, AudioMetrics};
 pub(crate) use models::{delete_model, list_models, load_model};
 pub(crate) use speech::speech;
 pub(crate) use stt::{transcriptions, translations_unsupported};

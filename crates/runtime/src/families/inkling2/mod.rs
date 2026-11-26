@@ -139,6 +139,7 @@ impl Ctx<'_> {
             return Ok(());
         }
         let enc = if gemv2_enabled() {
+            foundation::engaged!("inkling2_gemv2");
             gpu::encode_inkling2_bf16_gemv_multi2
         } else {
             gpu::encode_inkling2_bf16_gemv_multi

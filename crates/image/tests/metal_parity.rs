@@ -130,6 +130,46 @@ fn packed_native_matches_quality_envelope_and_vae_parity() {
     );
 }
 
+/// A single step from a rollout's own latent must be that rollout's next
+/// latent, bit for bit: the lab's teacher-forced gate compares steps through
+/// this entry, so it may not differ from the production loop.
+#[test]
+#[ignore = "opt-in packed Metal single-step against rollout"]
+fn one_step_from_a_rollout_latent_reproduces_the_next_latent() {
+    let root = image_install();
+    let mut backend = MetalImageBackend::open(&root).expect("open packed Metal image install");
+    let cancellation = CancellationToken::new();
+    let conditioning = backend
+        .encode_conditioning(PROMPT, 512, &cancellation, &mut |_, _| {})
+        .expect("native conditioning");
+    let request = request();
+    let mut scheduler = FlowMatchEulerScheduler::default();
+    scheduler.set_timesteps(IMAGE_STEPS as usize);
+    let noise = read_fixture("initial_noise.npy");
+    let rollout = backend
+        .denoise_steps_from_noise(&conditioning, &request, &scheduler, &cancellation, &noise)
+        .expect("rollout");
+    for step in [0, 1, rollout.len() - 1] {
+        let input = if step == 0 {
+            &noise
+        } else {
+            &rollout[step - 1]
+        };
+        let one = backend
+            .denoise_one_step(
+                &conditioning,
+                &request,
+                &scheduler,
+                step,
+                input,
+                &cancellation,
+            )
+            .expect("one step");
+        let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+        assert_eq!(bits(&one), bits(&rollout[step]), "step {step}");
+    }
+}
+
 #[test]
 #[ignore = "opt-in bounded packed first-step divergence trace"]
 fn packed_native_first_step_trace_localizes_divergent_boundary() {

@@ -541,21 +541,31 @@ fn response_format_json_is_reported_but_text_is_not() {
 }
 
 #[test]
-fn n_greater_than_one_is_reported_but_one_and_absent_are_not() {
-    let absent = request(serde_json::json!({
-        "model": "m", "messages": [{"role": "user", "content": "hi"}]
-    }));
-    assert_eq!(openai_request_warnings(&absent), None);
-
-    let one = request(serde_json::json!({
-        "model": "m", "messages": [{"role": "user", "content": "hi"}], "n": 1
-    }));
-    assert_eq!(openai_request_warnings(&one), None);
-
-    let two = request(serde_json::json!({
-        "model": "m", "messages": [{"role": "user", "content": "hi"}], "n": 2
-    }));
-    assert_eq!(openai_request_warnings(&two), Some("n".to_string()));
+fn only_a_strict_schema_or_extra_choices_are_refused() {
+    let with = |extra: serde_json::Value| {
+        let mut body = serde_json::json!({
+            "model": "m", "messages": [{"role": "user", "content": "hi"}]
+        });
+        body.as_object_mut()
+            .expect("object")
+            .extend(extra.as_object().expect("object").clone());
+        unsupported_request_field(&request(body))
+    };
+    let schema = |strict: bool| {
+        serde_json::json!({"response_format": {"type": "json_schema",
+            "json_schema": {"name": "a", "strict": strict, "schema": {}}}})
+    };
+    for accepted in [
+        serde_json::json!({}),
+        serde_json::json!({"n": 1}),
+        serde_json::json!({"response_format": {"type": "json_object"}}),
+        serde_json::json!({"response_format": {"type": "text"}}),
+        schema(false),
+    ] {
+        assert_eq!(with(accepted.clone()), None, "{accepted}");
+    }
+    assert!(with(serde_json::json!({"n": 2})).is_some_and(|m| m.starts_with("n ")));
+    assert!(with(schema(true)).is_some_and(|m| m.contains("strict=true")));
 }
 
 /// **`presence_penalty` AND `frequency_penalty` USED TO BE REPORTED HERE**

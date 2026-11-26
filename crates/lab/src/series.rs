@@ -91,6 +91,9 @@ pub struct Series {
     pub quotable: bool,
     /// Series sharing a group belong on one chart.
     pub group: String,
+    /// The methodology id of the record it came from, when recorded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub methodology: Option<String>,
     pub label: String,
     pub subject: Map<String, Value>,
     pub x: Axis,
@@ -99,6 +102,25 @@ pub struct Series {
     /// Reference values a chart draws as lines (an effect floor, a bar).
     #[serde(skip_serializing_if = "Map::is_empty")]
     pub refs: Map<String, Value>,
+}
+
+/// A chart must not draw two protocols as one series (LAB-09): where a group
+/// holds more than one methodology id (records without one included), each
+/// series' group names its own.
+pub fn split_by_methodology(series: &mut [Series]) {
+    let mut seen: std::collections::BTreeMap<String, std::collections::BTreeSet<Option<String>>> =
+        Default::default();
+    for s in series.iter() {
+        seen.entry(s.group.clone())
+            .or_default()
+            .insert(s.methodology.clone());
+    }
+    for s in series.iter_mut() {
+        if seen[&s.group].len() > 1 {
+            let id = s.methodology.as_deref().unwrap_or("unrecorded");
+            s.group = format!("{} [{id}]", s.group);
+        }
+    }
 }
 
 /// How to treat paths in the output.
@@ -155,6 +177,7 @@ impl Ctx<'_> {
             eligible: self.rec["eligible"].as_bool().unwrap_or(true),
             quotable: self.rec["quotable"].as_bool().unwrap_or(true),
             group: group.into(),
+            methodology: self.rec["methodology"]["id"].as_str().map(str::to_string),
             label: label.into(),
             subject: Map::new(),
             x,
@@ -805,5 +828,56 @@ mod tests {
         let csv = to_csv(&s);
         assert_eq!(csv.lines().count(), 1 + 4);
         assert!(csv.lines().nth(1).unwrap().contains("\"e,x\""));
+    }
+}
+
+#[cfg(test)]
+mod methodology_split_tests {
+    use super::*;
+
+    #[test]
+    fn groups_split_only_where_protocols_differ() {
+        let series = |group: &str, id: Option<&str>| Series {
+            group: group.into(),
+            methodology: id.map(str::to_string),
+            schema: "tslab/1",
+            id: String::new(),
+            kind: String::new(),
+            experiment: String::new(),
+            source_kind: String::new(),
+            source_id: String::new(),
+            source_schema: 1,
+            model: None,
+            family: None,
+            chip: None,
+            rev: None,
+            eligible: true,
+            quotable: true,
+            label: String::new(),
+            subject: Default::default(),
+            x: Axis {
+                name: "x".into(),
+                unit: "x".into(),
+                scale: "x".into(),
+            },
+            y: Axis {
+                name: "x".into(),
+                unit: "x".into(),
+                scale: "x".into(),
+            },
+            points: Vec::new(),
+            refs: Default::default(),
+        };
+        let mut s = vec![
+            series("a", Some("timing/2:x")),
+            series("a", None),
+            series("b", Some("timing/2:x")),
+            series("b", Some("timing/2:x")),
+        ];
+        split_by_methodology(&mut s);
+        assert_eq!(s[0].group, "a [timing/2:x]");
+        assert_eq!(s[1].group, "a [unrecorded]");
+        assert_eq!(s[2].group, "b");
+        assert_eq!(s[3].group, "b");
     }
 }

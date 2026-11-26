@@ -125,7 +125,7 @@ pub const KNOBS: &[Knob] = &[
         ],
         quotable: true,
         doc: "docs/ENV.md",
-        engagement: &[],
+        engagement: &[on("1", "batched_gemv"), off("0", "batched_gemv")],
     },
     Knob {
         name: "prefill_steel",
@@ -169,7 +169,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen35", "qwen36", "lfm3"],
         quotable: true,
         doc: "docs/SPEEDUP_PLAYBOOK.md",
-        engagement: &[],
+        engagement: &[off("0", "qwen_batched_row_ops")],
     },
     Knob {
         name: "qwen_fused_ffn",
@@ -373,7 +373,7 @@ pub const KNOBS: &[Knob] = &[
         families: &[],
         quotable: true,
         doc: "docs/ENV.md",
-        engagement: &[],
+        engagement: &[off("0", "routed_pipeline")],
     },
     Knob {
         name: "shared_cb",
@@ -392,7 +392,7 @@ pub const KNOBS: &[Knob] = &[
         ],
         quotable: true,
         doc: "docs/ENV.md",
-        engagement: &[],
+        engagement: &[off("0", "shared_cb")],
     },
     Knob {
         name: "mtp_batched_prime",
@@ -403,7 +403,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen35"],
         quotable: true,
         doc: "docs/MTP.md",
-        engagement: &[],
+        engagement: &[off("0", "mtp_batched_prime")],
     },
     Knob {
         name: "qwen_moe_chunked",
@@ -414,7 +414,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen36"],
         quotable: true,
         doc: "docs/ENV.md",
-        engagement: &[],
+        engagement: &[off("0", "qwen_moe_chunked")],
     },
     Knob {
         name: "expert_cache_decay",
@@ -425,7 +425,7 @@ pub const KNOBS: &[Knob] = &[
         families: &[],
         quotable: true,
         doc: "docs/ENV.md",
-        engagement: &[],
+        engagement: &[on("*", "expert_cache_decay")],
     },
     Knob {
         name: "ane_prefill",
@@ -478,7 +478,7 @@ pub const KNOBS: &[Knob] = &[
         families: &[],
         quotable: true,
         doc: "docs/ENV.md",
-        engagement: &[],
+        engagement: &[on("1", "metal_kernel_warmup")],
     },
     Knob {
         // Counters and host wall timers around phases the loop already
@@ -491,7 +491,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen35", "qwen36"],
         quotable: true,
         doc: "docs/CLI.md",
-        engagement: &[],
+        engagement: &[on("1", "spec_stats")],
     },
     Knob {
         // Only changes which depth each round proposes; the speculative loop
@@ -504,7 +504,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen35"],
         quotable: true,
         doc: "docs/ENV.md",
-        engagement: &[],
+        engagement: &[on("*", "adaptive_depth_tuned")],
     },
     Knob {
         // Only changes how much of a chat follow-up the runtime continues
@@ -519,7 +519,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen35"],
         quotable: true,
         doc: "docs/ENV.md",
-        engagement: &[],
+        engagement: &[on("1", "gdn_turn_snapshot")],
     },
     Knob {
         // L1: N exact multiplies by 1.0 on each dense FFN's chain. Bit-exact,
@@ -558,7 +558,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["whisper"],
         quotable: true,
         doc: "docs/ENV.md",
-        engagement: &[],
+        engagement: &[on("cpu", "whisper_cpu")],
     },
     Knob {
         // Audio: Moonshine's device. CPU is its default until its Metal peak
@@ -571,7 +571,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["moonshine"],
         quotable: true,
         doc: "crates/audio/src/stt/moonshine/README.md",
-        engagement: &[],
+        engagement: &[on("cpu", "moonshine_cpu"), on("metal", "moonshine_metal")],
     },
     Knob {
         // Flint's layer-batched chunk driver, the default since the clean
@@ -736,7 +736,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["inkling2_loop"],
         quotable: true,
         doc: "docs/INKLING2_PHASE0.md",
-        engagement: &[],
+        engagement: &[off("0", "inkling2_prefill_attn")],
     },
     Knob {
         // Inkling 2 rows per chunked-prefill pass (1 to 128, default 128). A
@@ -780,7 +780,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["inkling2_loop"],
         quotable: true,
         doc: "docs/INKLING2_PHASE0.md",
-        engagement: &[],
+        engagement: &[off("0", "inkling2_gemv2")],
     },
     Knob {
         // LFM3's M-row chunk driver, default on for INT4 installs; `0` is the
@@ -834,7 +834,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen36"],
         quotable: true,
         doc: "docs/ENV.md",
-        engagement: &[],
+        engagement: &[on("1", "qwen_shared_read_overlap")],
     },
     Knob {
         // Router-guess prefetch width for the next layer's experts. A
@@ -847,7 +847,16 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen36"],
         quotable: true,
         doc: "docs/ENV.md",
-        engagement: &[],
+        engagement: &[
+            on("1", "qwen_prefetch"),
+            on("2", "qwen_prefetch"),
+            on("3", "qwen_prefetch"),
+            on("4", "qwen_prefetch"),
+            on("5", "qwen_prefetch"),
+            on("6", "qwen_prefetch"),
+            on("7", "qwen_prefetch"),
+            on("8", "qwen_prefetch"),
+        ],
     },
     Knob {
         name: "mapped_demand_prep",
@@ -858,7 +867,10 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen36"],
         quotable: true,
         doc: "docs/ENV.md",
-        engagement: &[],
+        engagement: &[
+            on("advice", "mapped_demand_advice"),
+            on("touch", "mapped_demand_touch"),
+        ],
     },
     Knob {
         // Forces dense attention past the sparse indexer's budget.
@@ -870,7 +882,7 @@ pub const KNOBS: &[Knob] = &[
         families: &["qwen4exp"],
         quotable: true,
         doc: "docs/QWEN4_EXP.md",
-        engagement: &[],
+        engagement: &[on("1", "qsa_force_dense")],
     },
     Knob {
         name: "read_qos",
@@ -881,7 +893,7 @@ pub const KNOBS: &[Knob] = &[
         families: &[],
         quotable: true,
         doc: "docs/ENV.md",
-        engagement: &[],
+        engagement: &[on("utility", "read_qos_utility")],
     },
     Knob {
         // Compiles every shader without fast math: numerics move everywhere.
@@ -893,7 +905,7 @@ pub const KNOBS: &[Knob] = &[
         families: &[],
         quotable: true,
         doc: "docs/ENV.md",
-        engagement: &[],
+        engagement: &[on("*", "metal_precise_math")],
     },
     Knob {
         // One-layer-ahead router probe: a measurement, never a lane.
@@ -1144,6 +1156,19 @@ pub const KNOBS: &[Knob] = &[
         engagement: &[],
     },
     Knob {
+        // Counts submitted dispatches and command buffers, with a lock per
+        // dispatch: the counts are the measurement, the timing is not.
+        name: "launch_count",
+        env: "TURBOSPARK_LAUNCH_COUNT",
+        values: &["<unset>", "1"],
+        read_at: ReadAt::ProcessCached,
+        exactness: Exactness::BitExact,
+        families: &[],
+        quotable: false,
+        doc: "docs/ENV.md",
+        engagement: &[],
+    },
+    Knob {
         name: "expert_disk_io",
         env: "TURBOSPARK_EXPERT_DISK_IO",
         values: &["<unset>", "1"],
@@ -1381,5 +1406,71 @@ mod tests {
         assert_eq!(v, ["TURBOSPARK_STANDIN=attn,mlp: no [engaged] standin_mlp"]);
         let v = engagement_violations(&Default::default(), &["new_lane".into()], &lines);
         assert_eq!(v.len(), 1);
+    }
+
+    /// A switch set where its lane never runs (the wrong family, residency or
+    /// workload) prints nothing, so the arm must not read as measured.
+    /// The switches whose lane has one call site.
+    #[test]
+    fn single_site_switches_are_attested() {
+        let env =
+            |k: &str, v: &str| std::collections::BTreeMap::from([(k.to_string(), v.to_string())]);
+        for (name, value, line) in [
+            ("metal_precise_math", "1", "metal_precise_math"),
+            ("read_qos", "utility", "read_qos_utility"),
+            ("gdn_turn_snapshot", "1", "gdn_turn_snapshot"),
+            ("adaptive_depth", "3,1,1,2", "adaptive_depth_tuned"),
+            ("metal_kernel_warmup", "1", "metal_kernel_warmup"),
+            ("whisper_device", "cpu", "whisper_cpu"),
+            ("moonshine_device", "cpu", "moonshine_cpu"),
+            ("moonshine_device", "metal", "moonshine_metal"),
+            ("spec_stats", "1", "spec_stats"),
+        ] {
+            let env = env(by_name(name).unwrap().env, value);
+            assert_eq!(
+                engagement_violations(&env, &[], &[]).len(),
+                1,
+                "{name}={value}"
+            );
+            assert!(
+                engagement_violations(&env, &[], &[line.into()]).is_empty(),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_knob_set_on_a_path_that_prints_nothing_is_flagged() {
+        let env =
+            |k: &str, v: &str| std::collections::BTreeMap::from([(k.to_string(), v.to_string())]);
+        for (name, value, line) in [
+            ("batched_gemv", "1", "batched_gemv"),
+            ("expert_cache_decay", "16", "expert_cache_decay"),
+            ("qwen_shared_read_overlap", "1", "qwen_shared_read_overlap"),
+            ("qwen_prefetch", "4", "qwen_prefetch"),
+            ("mapped_demand_prep", "advice", "mapped_demand_advice"),
+            ("mapped_demand_prep", "touch", "mapped_demand_touch"),
+            ("qsa_force_dense", "1", "qsa_force_dense"),
+        ] {
+            let env = env(by_name(name).unwrap().env, value);
+            let v = engagement_violations(&env, &[], &[]);
+            assert_eq!(v.len(), 1, "{name}={value} with no line: {v:?}");
+            assert!(engagement_violations(&env, &[], &[line.into()]).is_empty());
+        }
+        for name in [
+            "batched_gemv",
+            "qwen_batched_row_ops",
+            "routed_pipeline",
+            "shared_cb",
+            "mtp_batched_prime",
+            "qwen_moe_chunked",
+            "inkling2_prefill_attn",
+            "inkling2_gemv2",
+        ] {
+            let env = env(by_name(name).unwrap().env, "0");
+            assert!(engagement_violations(&env, &[], &[]).is_empty(), "{name}");
+            let v = engagement_violations(&env, &[], &[name.into()]);
+            assert_eq!(v.len(), 1, "{name}=0 with its lane still running: {v:?}");
+        }
     }
 }

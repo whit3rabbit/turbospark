@@ -151,7 +151,7 @@ pub(super) fn encode_moe_layer(
         router_topk_gemma4(&router_logits, top_k, &qwen4.per_expert_ones);
     if let Some(hist) = router_hist.as_mut() {
         hist.record_router_logits(layer, &router_logits);
-        hist.record(layer, &selected);
+        hist.record(layer, &selected, &route_weights);
     }
     let mapped_active = mapped.buffers.get(layer).is_some_and(Option::is_some);
     let slots: Vec<usize> = if prefill_bank.is_some() {

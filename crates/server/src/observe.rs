@@ -184,8 +184,9 @@ pub(crate) fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// A [`crate::ChatModel`] that reports every generation it runs, wrapping
-/// the one a request resolved to.
+/// A [`crate::ChatModel`] that counts every generation it runs for
+/// `/v1/metrics`, and reports it to the observer when there is one. Wraps the
+/// model a request resolved to.
 ///
 /// **A DECORATOR ON `run_completion` RATHER THAN A PARAMETER THREADED
 /// THROUGH THE GENERATION CORE**, and the reason is that this method IS the
@@ -200,26 +201,25 @@ pub(crate) fn now_ms() -> u64 {
 /// `stream_blocking`, `run_full`, `run_guarded` and four handlers, for
 /// facts all of them get from the same return value.
 ///
-/// The cost is one vtable hop per REQUEST (never per token) and one `Arc`
-/// clone, and it is paid only when an observer is configured -- with none,
-/// `crate::handler::resolve_backend` hands back the bare model and this
-/// type is never constructed.
+/// The cost is one vtable hop per REQUEST (never per token) and a few `Arc`
+/// clones. EVERY `ChatModel` method must be delegated: a trait default here
+/// silently replaces the backend's answer.
 pub(crate) struct ReportingModel {
     inner: Arc<dyn crate::ChatModel>,
-    observer: Arc<dyn ServerObserver>,
-    id: RequestId,
+    metrics: Arc<crate::metrics::TextMetrics>,
+    report: Option<(Arc<dyn ServerObserver>, RequestId)>,
 }
 
 impl ReportingModel {
     pub(crate) fn new(
         inner: Arc<dyn crate::ChatModel>,
-        observer: Arc<dyn ServerObserver>,
-        id: RequestId,
+        metrics: Arc<crate::metrics::TextMetrics>,
+        report: Option<(Arc<dyn ServerObserver>, RequestId)>,
     ) -> Self {
         Self {
             inner,
-            observer,
-            id,
+            metrics,
+            report,
         }
     }
 }
@@ -248,6 +248,12 @@ impl crate::ChatModel for ReportingModel {
     }
     fn guardrails(&self) -> crate::guardrails::GuardrailConfig {
         self.inner.guardrails()
+    }
+    fn generation_queue(&self) -> Option<Arc<crate::queue::GenerationQueue>> {
+        self.inner.generation_queue()
+    }
+    fn queue_rejected(&self) {
+        self.metrics.rejected();
     }
     fn default_reasoning(&self) -> tokenizer::ReasoningEffort {
         self.inner.default_reasoning()
@@ -295,12 +301,14 @@ impl crate::ChatModel for ReportingModel {
         cancel: runtime::CancelFlag<'_>,
         on_progress: &mut dyn FnMut(runtime::RawDecodeProgress),
     ) -> Result<runtime::RawDecodeResult, runtime::RuntimeError> {
+        self.metrics.started();
         let result = self
             .inner
             .run_completion(prompt_ids, config, images, cancel, on_progress);
-        if let Ok(decode) = &result {
-            self.observer.record(ServerEvent::Generated {
-                id: self.id,
+        self.metrics.finished(result.as_ref().ok());
+        if let (Ok(decode), Some((observer, id))) = (&result, &self.report) {
+            observer.record(ServerEvent::Generated {
+                id: *id,
                 model: self.inner.model_id().to_string(),
                 prompt_tokens: decode.prompt_tokens as u32,
                 new_tokens: decode.new_tokens as u32,

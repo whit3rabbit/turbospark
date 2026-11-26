@@ -589,8 +589,8 @@ async fn main() -> std::process::ExitCode {
         eprintln!(
             "  GET  /v1/audio/models       (POST loads an installed alias, DELETE :id unloads)"
         );
-        eprintln!("  GET  /v1/metrics            (Prometheus, audio series)");
     }
+    eprintln!("  GET  /v1/metrics            (Prometheus)");
     if let Err(e) = axum::serve(listener, router).await {
         eprintln!("server error: {e}");
         return std::process::ExitCode::from(1);

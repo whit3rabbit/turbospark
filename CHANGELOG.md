@@ -14,14 +14,47 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Server: llama.cpp-style `timings` and `usage.prompt_tokens_details.cached_tokens`
+  on chat completion and completion responses, and `turbospark_text_*` series on
+  `GET /v1/metrics`, which every server now serves behind the usual auth.
+- Tool calling on Inkling 2 installs.
+- tslab: a teacher-forced decode quality gate, golden-answer, tool-call and
+  long-context checks, server bench and soak, and the other items in
+  `docs/TSLAB_IMPROVE.md`.
 - DFlash2 block drafter for Inkling 2 (`incoai/Inkling-2-Mini-DFlash2`), a new
   `dflash2` speculative drafter value in the CLI, server, C ABI, Swift package
   and app, and catalog download on `inkling2-mini-mlx4` and
   `inkling2-mini-ud-q4kxl` (about 1 GB more per install). See
   `docs/DFLASH2.md` section 9.
 
+### Performance
+- Qwen2 and Qwen2.5 prompt processing multiplies each projection once per
+  group of tokens instead of once per token. INT4 (MLX) installs use the
+  matrix-unit kernels at 64 tokens: 5x to 6x faster on Qwen2.5 7B (M4 Max),
+  with logits within a mean KL of 2e-5 nats of the old loop, not bit-identical.
+  `TURBOSPARK_PREFILL_STEEL=0` selects a bit-identical 16-token form (about 2x;
+  GGUF installs always use it) and `TURBOSPARK_BATCHED_GEMV=0` the old loop.
+  Peak memory rises by about 13 MiB (9 MiB for the bit-identical form).
+- The repetition penalty and top-p sampling with top-k off cost far less on
+  large vocabularies and long contexts, with the same results.
+
 ### Changed
+- `/v1/chat/completions` now answers 400 to `n` greater than 1 and to a
+  `json_schema` response format with `strict: true`. Both were accepted before
+  with only the `x-anyllm-degradation` header, so a client got one choice, or
+  unconstrained text, where it asked for something else. `n: 1`,
+  `strict: false` and `json_object` are still accepted.
+- The macOS app's server now queues generation requests in arrival order and
+  answers 429 past 64 waiting requests. It had no queue before.
+- With prefix reuse on (off by default), `cached_tokens` shows a client how much
+  of its prompt matched a cache shared with other clients.
+- A tslab spec's arms may differ only in `knob_env` unless declared in
+  `also_changes`, and a decoding workload is now gated on its decode path too.
 - The app's `dflash` drafter choice is now labelled "Block Drafter".
+
+### Fixed
+- Inkling 2 tool requests failed to render (`tojson` arguments the template
+  engine refused).
 
 ## [0.10.2] - 2026-11-24
 

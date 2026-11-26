@@ -64,6 +64,9 @@ public enum ServerEndpointCatalog {
             summary: "Liveness, the attached model ids, and the engine version.",
             streams: false),
         ServerEndpoint(
+            method: "GET", path: "/v1/metrics", family: .turbospark,
+            summary: "Prometheus counters for generation requests and tokens.", streams: false),
+        ServerEndpoint(
             method: "GET", path: "/v1/models", family: .openAI,
             summary: "Every attached model. This is what a client's model picker reads.",
             streams: false),

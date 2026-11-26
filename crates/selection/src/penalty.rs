@@ -5,7 +5,7 @@
 //! truncation mode or the temperature reweighting.
 
 use foundation::TokenId;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Attenuate the score of every distinct candidate identifier present in
 /// `history` exactly once, regardless of how often it repeats in history.
@@ -16,25 +16,33 @@ pub fn apply_repetition_penalty(scores: &mut [f32], history: &[TokenId], penalty
     if penalty == 1.0 || history.is_empty() {
         return;
     }
-    let seen: HashSet<TokenId> = history.iter().copied().collect();
+    // One bit per candidate, not a hash set of the history: this runs once per
+    // generated token over the whole context, and hashing a 128K history cost
+    // about 1.7 ms per token (2026-11, M4 Max). Out-of-range ids set no bit.
+    let mut seen = vec![0u64; scores.len().div_ceil(64)];
+    for &id in history {
+        match usize::try_from(id) {
+            Ok(idx) if idx < scores.len() => seen[idx / 64] |= 1 << (idx % 64),
+            _ => {}
+        }
+    }
     // `ShapingConfig` accepts any finite positive f64, and a request can send
     // one outside the f32 range. Unclamped, the cast gives inf (0 * inf is
     // NaN) or 0 (s / 0 is inf), and both poison the softmax. Clamping is a
     // no-op, bit for bit, for every penalty already representable as a
     // normal f32.
     let penalty = (penalty as f32).clamp(f32::MIN_POSITIVE, f32::MAX);
-    for &id in &seen {
-        let Ok(idx) = usize::try_from(id) else {
-            continue;
-        };
-        if idx >= scores.len() {
-            continue;
+    for (word, &bits) in seen.iter().enumerate() {
+        let mut bits = bits;
+        while bits != 0 {
+            let idx = word * 64 + bits.trailing_zeros() as usize;
+            bits &= bits - 1;
+            let s = scores[idx];
+            let attenuated = if s > 0.0 { s / penalty } else { s * penalty };
+            // Saturate rather than overflow: a score of -inf on every candidate
+            // makes the softmax max -inf and every exp NaN.
+            scores[idx] = attenuated.clamp(f32::MIN, f32::MAX);
         }
-        let s = scores[idx];
-        let attenuated = if s > 0.0 { s / penalty } else { s * penalty };
-        // Saturate rather than overflow: a score of -inf on every candidate
-        // makes the softmax max -inf and every exp NaN.
-        scores[idx] = attenuated.clamp(f32::MIN, f32::MAX);
     }
 }
 
@@ -86,6 +94,38 @@ mod tests {
     //! Light inline checks; frequency-based penalty-effect coverage lives in
     //! the integration test suite.
     use super::*;
+
+    /// The bitset walk must touch exactly the set the history names: bit
+    /// positions across several words, repeats, ids past the vocabulary and
+    /// negative ids.
+    #[test]
+    fn bitset_matches_a_per_candidate_membership_scan() {
+        let len = 200usize;
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        for round in 0..50 {
+            let history: Vec<TokenId> = (0..round * 3)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    (state % 260) as TokenId - 20
+                })
+                .chain([0, 63, 64, 127, 128, 199, 200])
+                .collect();
+            let mut scores: Vec<f32> = (0..len).map(|i| i as f32 - 100.0).collect();
+            let want: Vec<f32> = scores
+                .iter()
+                .enumerate()
+                .map(|(i, &s)| match history.contains(&(i as TokenId)) {
+                    true if s > 0.0 => s / 1.5,
+                    true => s * 1.5,
+                    false => s,
+                })
+                .collect();
+            apply_repetition_penalty(&mut scores, &history, 1.5);
+            assert_eq!(scores, want, "round {round}");
+        }
+    }
 
     #[test]
     fn identity_penalty_is_a_no_op() {

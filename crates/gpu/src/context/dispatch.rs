@@ -4,7 +4,8 @@ use metal::{ComputePipelineState, MTLSize};
 
 use super::device::MetalContext;
 use super::error::autorelease_pool;
-use super::pass::warn_on_command_buffer_error;
+use super::pass::{assert_threadgroup_fits, warn_on_command_buffer_error};
+use crate::launch_count;
 
 /// One threadgroup per row/head, `threads_per_group` threads each -- the
 /// dispatch shape every kernel in `rmsnorm.metal` assumes.
@@ -16,7 +17,10 @@ pub fn dispatch_one_threadgroup_per_row(
     rows: u64,
     threads_per_group: u64,
 ) {
+    assert_threadgroup_fits(pipeline, (threads_per_group, 1, 1));
     autorelease_pool(|| {
+        launch_count::command_buffer();
+        launch_count::dispatch(pipeline);
         let command_buffer = context.queue().new_command_buffer();
         let encoder = command_buffer.new_compute_command_encoder();
         encoder.set_compute_pipeline_state(pipeline);
@@ -55,7 +59,10 @@ pub fn dispatch_one_threadgroup_per_row_offsets(
     rows: u64,
     threads_per_group: u64,
 ) {
+    assert_threadgroup_fits(pipeline, (threads_per_group, 1, 1));
     autorelease_pool(|| {
+        launch_count::command_buffer();
+        launch_count::dispatch(pipeline);
         let command_buffer = context.queue().new_command_buffer();
         let encoder = command_buffer.new_compute_command_encoder();
         encoder.set_compute_pipeline_state(pipeline);
@@ -88,7 +95,10 @@ pub fn dispatch_threads_3d(
     grid: (u64, u64, u64),
     threadgroup: (u64, u64, u64),
 ) {
+    assert_threadgroup_fits(pipeline, threadgroup);
     autorelease_pool(|| {
+        launch_count::command_buffer();
+        launch_count::dispatch(pipeline);
         let command_buffer = context.queue().new_command_buffer();
         let encoder = command_buffer.new_compute_command_encoder();
         encoder.set_compute_pipeline_state(pipeline);

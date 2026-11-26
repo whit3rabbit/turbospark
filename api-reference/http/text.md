@@ -15,6 +15,11 @@ Dedicated OpenAPI specification: [`text.openapi.yaml`](../openapi/text.openapi.y
 
 Standard OpenAI chat completion endpoint.
 
+`n` greater than 1 and a `json_schema` response format with `strict: true`
+are refused with a 400: one choice is generated and output is not constrained
+to a schema. Other fields the server does not act on, such as `logprobs` or
+`json_object`, are accepted and named in the `x-anyllm-degradation` header.
+
 ```sh
 curl http://127.0.0.1:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
@@ -75,6 +80,17 @@ Pass tools in standard OpenAI function calling format:
 ```
 
 The server parses native tool calls and applies tool-call guardrails with rescue formatting when necessary.
+
+## Timings and cached tokens
+
+`/v1/chat/completions` and `/v1/completions` add a llama.cpp-compatible `timings` object to the JSON body, or to the last chunk of a stream:
+
+```json
+"timings": {"prompt_n": 40, "prompt_ms": 500.0, "prompt_per_second": 80.0,
+            "predicted_n": 20, "predicted_ms": 2000.0, "predicted_per_second": 10.0}
+```
+
+`prompt_n` is the tokens actually prefilled. `usage.prompt_tokens_details.cached_tokens` is the reused KV prefix (streamed chat needs `stream_options.include_usage`; streamed `/v1/completions` sends no `usage`). With `--prefix-reuse on` the cache is shared by every client, and these fields report another client's prefix match exactly. Server-wide counters are on [`GET /v1/metrics`](../http.md#get-v1-metrics).
 
 ---
 

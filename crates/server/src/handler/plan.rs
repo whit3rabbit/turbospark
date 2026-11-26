@@ -366,6 +366,30 @@ pub(crate) fn reasoning_effort(
     })
 }
 
+/// The request fields whose silent drop would hand the client a wrong answer
+/// it cannot detect, so they are refused with a 400 rather than reported.
+/// `strict: true` promises schema-valid output and this server has no
+/// constrained decoding; `n > 1` promises that many choices and one is
+/// generated. Neutral values (`n: 1`, `strict: false`, `json_object`) stay
+/// accepted, and [`openai_request_warnings`] reports what it drops of them.
+pub(crate) fn unsupported_request_field(request: &ChatCompletionRequest) -> Option<String> {
+    let strict_schema = request.response_format.as_ref().is_some_and(|f| {
+        f.format_type == "json_schema"
+            && f.json_schema.as_ref().and_then(|s| s.get("strict")) == Some(&true.into())
+    });
+    if strict_schema {
+        return Some(
+            "response_format json_schema with strict=true is not supported: output is not \
+             constrained to the schema"
+                .to_string(),
+        );
+    }
+    if request.extra.get("n").and_then(|v| v.as_u64()).unwrap_or(1) > 1 {
+        return Some("n greater than 1 is not supported: one choice is generated".to_string());
+    }
+    None
+}
+
 /// The OpenAI request fields this server accepts on the wire but does not
 /// act on, as a comma-separated note for [`crate::DEGRADATION_HEADER`] --
 /// the OpenAI-side counterpart to `anyllm_translate::compute_request_warnings`,
@@ -373,7 +397,8 @@ pub(crate) fn reasoning_effort(
 /// translates from.
 ///
 /// `response_format` warns only past `"text"` (the default the server
-/// already produces); `n` only past 1 (the default it already returns).
+/// already produces). `n` and strict schemas are refused instead
+/// ([`unsupported_request_field`]).
 /// `presence_penalty` and `frequency_penalty` used to warn unconditionally
 /// here, since neither reached `selection::shaping`; they do now (commit
 /// B), so both arms are gone rather than left as permanent no-ops.
@@ -385,9 +410,6 @@ pub(crate) fn openai_request_warnings(request: &ChatCompletionRequest) -> Option
         .is_some_and(|f| f.format_type != "text")
     {
         warnings.add("response_format");
-    }
-    if request.extra.get("n").and_then(|v| v.as_u64()).unwrap_or(1) > 1 {
-        warnings.add("n");
     }
     if request.extra.contains_key("logprobs") {
         warnings.add("logprobs");
