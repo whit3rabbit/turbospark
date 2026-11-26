@@ -143,8 +143,7 @@ pub fn sanity_cmd(mut args: Args) -> Result<CmdOutput, String> {
         .zip(o.record["prompts"].as_array().cloned().unwrap_or_default())
     {
         let text = p["decode_text"].as_str().unwrap_or("");
-        // The run ignores end-of-turn, so judge up to the first end marker.
-        let reply = crate::golden::visible_reply(first_turn(text));
+        let reply = crate::golden::visible_reply(text);
         let pass = crate::golden::accepts(case, &reply.answer);
         failed += usize::from(!pass);
         let answer: String = reply.answer.chars().take(120).collect();
@@ -168,26 +167,6 @@ pub fn sanity_cmd(mut args: Args) -> Result<CmdOutput, String> {
                      "passed": passed, "cases": cases, "run_id": o.run_id});
     session.ledger.append("sanity", rec.clone())?;
     Ok(CmdOutput::with_code(i32::from(!passed), rec))
-}
-
-/// The text up to the first end-of-turn marker a chat template uses. The
-/// worker decodes a fixed count, so the model keeps writing past its reply.
-fn first_turn(text: &str) -> &str {
-    const END: [&str; 7] = [
-        "<|im_end|>",
-        "<|eot_id|>",
-        "<end_of_turn>",
-        "<|end|>",
-        "<|return|>",
-        "<|endoftext|>",
-        "</s>",
-    ];
-    let cut = END
-        .iter()
-        .filter_map(|m| text.find(m))
-        .min()
-        .unwrap_or(text.len());
-    &text[..cut]
 }
 
 // ---- noise (LAB-03) ----
@@ -843,13 +822,6 @@ mod tests {
         assert_eq!(first_divergence(&[1, 2, 3], &[1, 2, 3]), None);
         assert_eq!(first_divergence(&[1, 2, 3], &[1, 9, 3]), Some(1));
         assert_eq!(first_divergence(&[1, 2], &[1, 2, 3]), Some(2));
-    }
-
-    #[test]
-    fn the_reply_is_cut_at_the_first_end_marker() {
-        assert_eq!(first_turn("Paris<|im_end|>\nuser"), "Paris");
-        assert_eq!(first_turn("a</s>b<|im_end|>"), "a");
-        assert_eq!(first_turn("no marker"), "no marker");
     }
 
     #[test]
