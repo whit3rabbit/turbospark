@@ -31,8 +31,8 @@ use std::io::{Read, Seek, SeekFrom};
 use half::f16;
 use turbospark_gpu::{
     autorelease_pool, encode_dequant_int4_gemv_resident, encode_dequant_q4_k_gemv_resident,
-    encode_dequant_q8_0_gemv_resident, Int4ResidentMatrix, MetalContext, PassEncoder,
-    Q4KResidentMatrix, Q8_0ResidentMatrix,
+    encode_dequant_q4_k_gemv_resident_wide, encode_dequant_q8_0_gemv_resident, Int4ResidentMatrix,
+    MetalContext, PassEncoder, Q4KResidentMatrix, Q8_0ResidentMatrix,
 };
 
 /// Weight bytes each timed command buffer walks, as in gemv_format_price.rs.
@@ -119,6 +119,8 @@ struct Arm {
 enum ArmKind {
     Block(Block),
     Int4,
+    /// The KERN-04 Stage A unit-wide loads arm (Q4_K only so far).
+    Q4KWide,
 }
 
 /// INT4 bytes for a matrix: packed nibbles, then BF16 scales and biases, one
@@ -142,7 +144,7 @@ fn build_arm(
         offsets.push(cursor);
         let bytes = match kind {
             ArmKind::Int4 => int4_bytes(t.rows, t.cols),
-            ArmKind::Block(_) => t.nbytes,
+            ArmKind::Block(_) | ArmKind::Q4KWide => t.nbytes,
         };
         cursor = align_up(cursor + bytes);
     }
@@ -206,6 +208,21 @@ fn encode_one(
             )
             .expect("encode q4_k");
         }
+        ArmKind::Q4KWide => {
+            encode_dequant_q4_k_gemv_resident_wide(
+                context,
+                pass,
+                &Q4KResidentMatrix {
+                    buffer: &arm.blob,
+                    weights_offset: off,
+                    rows: t.rows,
+                    cols: t.cols,
+                },
+                (x, 0),
+                (y, 0),
+            )
+            .expect("encode q4_k wide");
+        }
         ArmKind::Block(Block::Q8) => {
             encode_dequant_q8_0_gemv_resident(
                 context,
@@ -267,14 +284,23 @@ fn run(block: Block, manifest_var: &str, ty: &str) {
         None,
     );
     let int4_arm = build_arm(&context, "INT4 same shapes", ArmKind::Int4, &tensors, None);
-    let arms = [real_arm, zero_arm, int4_arm];
+    // The wide arm reads the real arm's buffer: same bytes, no second copy.
+    let wide_arm = (block == Block::Q4K).then(|| Arm {
+        label: "wide loads",
+        kind: ArmKind::Q4KWide,
+        blob: real_arm.blob.clone(),
+        offsets: real_arm.offsets.clone(),
+        footprint: real_arm.footprint,
+    });
+    let mut arms = vec![real_arm, zero_arm, int4_arm];
+    arms.extend(wide_arm);
 
     let max_cols = tensors.iter().map(|t| t.cols).max().unwrap();
     let max_rows = tensors.iter().map(|t| t.rows).max().unwrap();
     let x = context.new_output_buffer((max_cols * 2) as u64);
     let y = context.new_output_buffer((max_rows * 2) as u64);
 
-    let mut best = [0.0f64; 3];
+    let mut best = vec![0.0f64; arms.len()];
     // Round 0 is warmup. Arms interleave each round so thermal drift hits all alike.
     for round in 0..6 {
         for (i, arm) in arms.iter().enumerate() {
@@ -305,6 +331,12 @@ fn run(block: Block, manifest_var: &str, ty: &str) {
         "  real vs zero control: {:.3}x (near 1.0 means the data does not change the rate)",
         best[0] / best[1]
     );
+    if arms.len() > 3 {
+        println!(
+            "  wide loads vs current on the same real bytes: {:.3}x (the bench rule asks 1.25x)",
+            best[3] / best[0]
+        );
+    }
 }
 
 #[test]

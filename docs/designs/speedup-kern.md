@@ -399,6 +399,31 @@ weights-per-second ratio is about 0.17, not 0.32. The proceed rule uses GB/s,
 which measures bandwidth. Quote the AC run. It still started with a 5-minute load
 near 6.5, so a quieter machine could move these by a few percent.
 
+Stage A wide-loads arm (2026-11-26). Built as `dequant_q4_k_gemv_wide` in
+`dequant_q4_k.metal`, a bench arm the engine does not call. Each lane makes one
+`uint` load of 4 nibble bytes from one group, two `half4` loads of x and one
+`uint` for d and dmin, and unpacks only its group's two scale pairs instead of
+all eight. It sits beside the current kernel in
+`crates/gpu/tests/gguf_real_bytes_price.rs` rather than in a new lab file,
+because that probe already times the same real bytes and the INT4 baseline. It
+is held to the CPU decoder by `the_wide_load_arm_matches_cpu_reference`, which
+fails when the high-nibble x load is pointed at the wrong element. The same 36
+Q4_K FFN gate tensors of Qwen3 8B were used, three runs, AC power. The first run
+had a browser at about 100% CPU; the other two did not:
+
+| Run | current GB/s | wide GB/s | wide / current |
+|---|---|---|---|
+| 1 | 63.7 | 99.7 | 1.566x |
+| 2 | 38.8 | 61.9 | 1.594x |
+| 3 | 59.4 | 89.5 | 1.506x |
+
+Absolute GB/s moved by nearly 2x between runs (clocks, and another session's
+idle server on the machine). The arms interleave each round, so the ratio is the
+reading. The wide arm clears the 1.25x bar on real bytes, so for Q4_K **both
+halves of the proceed rule are met**. Stage B (the other arms, rows 2 to 8,
+other formats) is now open for Q4_K. Q8_0 has no wide arm yet: its 34-byte
+block is not 4-byte aligned, so it needs a different load plan.
+
 Bench (new file `crates/lab/src/kernel/gguf_gemv.rs`, to be created):
 
 *   **Stage A (first):** the current kernel and one unit-wide loads arm, at row 1,
@@ -743,7 +768,7 @@ decided), DECLINE (not pursued).
 | KERN-01 | Central pipeline thread-limit guard on every dispatch | DO-NOW | built on this branch |
 | KERN-02 | TurboQuant decode attention: GQA-shared, barrier-free, simdgroup-stripe rewrite | DO-NOW | waits on the decode gate |
 | KERN-03 | head_dim 512 GQA-shared decode attention (Gemma 4) | DO-NOW | waits on the decode gate |
-| KERN-04 | GGUF K-quant / Q8_0 / IQ decode GEMV: first measure, then wide-unit kernels | DO-NOW | priced on real bytes (battery and AC agree): Q4_K 0.36x, Q8_0 0.33x of INT4 GB/s; not built, 1.25x arm not written |
+| KERN-04 | GGUF K-quant / Q8_0 / IQ decode GEMV: first measure, then wide-unit kernels | DO-NOW | Q4_K wide-loads arm 1.51x to 1.59x the current kernel on real bytes (bar 1.25x); bench arm only, not in the engine; Q8_0 arm not written |
 | KERN-05 | Idle stall: cause test, then residency set (Step 1a, 1b) | DO-NOW | Step 1a run: stall reproduced on mlx4; wake and weights touch do not remove it; Step 1b not built |
 | KERN-06 | Spin-poll on command-buffer completion versus sleep (settle with a paired A/B including a hybrid) | CONTESTED | needs an install not on this Mac |
 | KERN-07 | Price precise (safe) math for text decode and the GDN gate transcendentals | DO-NOW | needs an install not on this Mac |
