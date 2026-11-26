@@ -6,6 +6,30 @@ use metal::{ComputePipelineState, MTLSize};
 
 use crate::dispatch_profile::PassProfile;
 
+/// Panics when a dispatch asks for a larger threadgroup than the compiled
+/// pipeline allows on this device. Metal reports nothing for that: it skips
+/// the dispatch, the destination keeps its old contents and decode turns into
+/// fluent garbage (a 448-thread limit against a 512-thread request on an M2
+/// Max, upstream report). The limit is per chip and per compiled kernel, so
+/// only a run-time check sees it. A panic, not a `Result`, because no encode
+/// method returns one; FFI entry points already catch unwinds.
+pub(crate) fn assert_threadgroup_fits(
+    pipeline: &metal::ComputePipelineStateRef,
+    threads_per_group: (u64, u64, u64),
+) {
+    let limit = pipeline.max_total_threads_per_threadgroup();
+    let asked = threadgroup_threads(threads_per_group);
+    assert!(
+        asked <= limit,
+        "dispatch of '{}' needs {asked} threads per threadgroup but this device allows {limit}",
+        crate::dispatch_profile::pipeline_name(pipeline)
+    );
+}
+
+fn threadgroup_threads((x, y, z): (u64, u64, u64)) -> u64 {
+    x.saturating_mul(y).saturating_mul(z)
+}
+
 /// An open command buffer + serial compute encoder; see
 /// [`MetalContext::begin_pass`](super::MetalContext::begin_pass). Every `encode_*` call appends one
 /// dispatch; nothing runs until [`PassEncoder::commit_and_wait`] (or
@@ -70,6 +94,7 @@ impl PassEncoder {
         threadgroups: u64,
         threads_per_group: u64,
     ) {
+        assert_threadgroup_fits(pipeline, (threads_per_group, 1, 1));
         self.begin_dispatch(pipeline);
         let encoder = self.encoder.borrow();
         encoder.set_compute_pipeline_state(pipeline);
@@ -97,6 +122,7 @@ impl PassEncoder {
         threadgroups: (u64, u64, u64),
         threads_per_group: (u64, u64, u64),
     ) {
+        assert_threadgroup_fits(pipeline, threads_per_group);
         self.begin_dispatch(pipeline);
         let encoder = self.encoder.borrow();
         encoder.set_compute_pipeline_state(pipeline);
@@ -125,6 +151,7 @@ impl PassEncoder {
         grid: (u64, u64, u64),
         threadgroup: (u64, u64, u64),
     ) {
+        assert_threadgroup_fits(pipeline, threadgroup);
         self.begin_dispatch(pipeline);
         let encoder = self.encoder.borrow();
         encoder.set_compute_pipeline_state(pipeline);
@@ -379,5 +406,57 @@ impl Drop for CommittedPass {
             self.command_buffer.wait_until_completed();
             warn_on_command_buffer_error(&self.command_buffer);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{threadgroup_threads, PassEncoder};
+    use crate::context::MetalContext;
+
+    const SOURCE: &str = "
+        #include <metal_stdlib>
+        using namespace metal;
+        kernel void guard_probe(device uint* out [[buffer(0)]],
+                                uint id [[thread_position_in_grid]]) {
+            out[0] = id;
+        }
+    ";
+
+    #[test]
+    fn threadgroup_size_is_the_product_and_never_wraps() {
+        assert_eq!(threadgroup_threads((32, 4, 1)), 128);
+        assert_eq!(threadgroup_threads((u64::MAX, 2, 1)), u64::MAX);
+    }
+
+    fn probe(extra: u64) {
+        let context = MetalContext::new().expect("Metal device");
+        let device = context.device();
+        let library = device
+            .new_library_with_source(SOURCE, &metal::CompileOptions::new())
+            .expect("compile");
+        let function = library.get_function("guard_probe", None).expect("function");
+        let pipeline = device
+            .new_compute_pipeline_state_with_function(&function)
+            .expect("pipeline");
+        let out = device.new_buffer(64, metal::MTLResourceOptions::StorageModeShared);
+        let queue = context.queue();
+        let buffer = queue.new_command_buffer().to_owned();
+        let encoder = buffer.new_compute_command_encoder().to_owned();
+        let pass = PassEncoder::new(buffer, std::cell::RefCell::new(encoder), None);
+        let threads = pipeline.max_total_threads_per_threadgroup() + extra;
+        pass.encode_threadgroups(&pipeline, &[(&out, 0, 0)], &[], 1, threads);
+        pass.commit_and_wait();
+    }
+
+    #[test]
+    fn a_threadgroup_at_the_device_limit_dispatches() {
+        probe(0);
+    }
+
+    #[test]
+    #[should_panic(expected = "threads per threadgroup")]
+    fn a_threadgroup_past_the_device_limit_panics_before_encoding() {
+        probe(1);
     }
 }
