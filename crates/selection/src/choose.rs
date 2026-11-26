@@ -174,27 +174,34 @@ fn shape_candidates(
     // ranked order, so ranking beyond `top_k` cannot change the
     // result. Ranking the whole domain when it is disabled is the
     // fallback, not the path.
-    match config.top_k() {
-        0 => rank_indices_u32_into(exps, ranked),
-        k => rank_top_k_u32_into(exps, k as usize, ranked),
-    }
-
-    // Probability-mass truncation over the ranked prefix, against the
-    // full-distribution probabilities.
     let mut surviving: Vec<u32> = Vec::new();
-    match config.top_p() {
-        None => surviving.extend_from_slice(ranked),
-        Some(threshold) => {
-            let mut cumulative = 0.0;
-            for &i in ranked.iter() {
-                surviving.push(i);
-                cumulative += exps[i as usize] / sum;
-                if cumulative >= threshold {
-                    break;
-                }
+    match (config.top_k(), config.top_p()) {
+        (0, Some(threshold)) => {
+            // Nucleus sampling with the rank cut off reads only a prefix of
+            // the ranked order, usually a few dozen entries, but the full
+            // sort that used to produce it cost ~17 ms per token at
+            // V=262144. Rank a short prefix first, and sort everything only
+            // when the mass is still short of the threshold.
+            rank_top_k_u32_into(exps, NUCLEUS_PREFIX, ranked);
+            if !mass_prefix(ranked, exps, sum, threshold, &mut surviving)
+                && ranked.len() < exps.len()
+            {
+                rank_indices_u32_into(exps, ranked);
+                mass_prefix(ranked, exps, sum, threshold, &mut surviving);
             }
-            if surviving.is_empty() && !ranked.is_empty() {
-                surviving.push(ranked[0]);
+        }
+        (k, threshold) => {
+            match k {
+                0 => rank_indices_u32_into(exps, ranked),
+                k => rank_top_k_u32_into(exps, k as usize, ranked),
+            }
+            // Probability-mass truncation over the ranked prefix, against the
+            // full-distribution probabilities.
+            match threshold {
+                None => surviving.extend_from_slice(ranked),
+                Some(threshold) => {
+                    mass_prefix(ranked, exps, sum, threshold, &mut surviving);
+                }
             }
         }
     }
@@ -225,6 +232,33 @@ fn shape_candidates(
     }
 
     Ok((surviving, sum))
+}
+
+/// First prefix ranked for nucleus sampling when top-k is off. The top-k
+/// finder is quadratic-ish in `k`, so this stays small; a nucleus wider than
+/// it pays this pass once on top of the full sort.
+const NUCLEUS_PREFIX: usize = 256;
+
+/// Keeps the shortest prefix of `ranked` whose mass reaches `threshold`, never
+/// empty when `ranked` is not. Returns whether the threshold was reached, so a
+/// caller that ranked only a prefix knows whether it ranked enough.
+fn mass_prefix(
+    ranked: &[u32],
+    exps: &[f64],
+    sum: f64,
+    threshold: f64,
+    surviving: &mut Vec<u32>,
+) -> bool {
+    surviving.clear();
+    let mut cumulative = 0.0;
+    for &i in ranked {
+        surviving.push(i);
+        cumulative += exps[i as usize] / sum;
+        if cumulative >= threshold {
+            return true;
+        }
+    }
+    false
 }
 
 /// The distribution [`select`] samples from, materialized: the surviving
