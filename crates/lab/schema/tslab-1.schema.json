@@ -45,6 +45,7 @@
         "launch_count",
         "anchor",
         "idle_gap",
+        "spec_rounds",
         "release_gate",
         "serve_bench",
         "soak"

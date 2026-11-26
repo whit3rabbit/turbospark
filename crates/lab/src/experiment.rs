@@ -23,6 +23,7 @@ use crate::gates::{
     effective_bounds, judge_decode, judge_quality, DecodeResult, GateClass, PromptComparison,
     QualityBounds, QualityResult, DECODE_TRACE_TOKENS,
 };
+use crate::gates::{judge_divergence, Divergence};
 use crate::integrity;
 use crate::lock::MachineLock;
 use crate::logit_trace::TraceReader;
@@ -245,7 +246,9 @@ pub fn decode_trace_gate(session: &Session, spec: &GateArms) -> Result<DecodeRes
         let _ = std::fs::remove_file(t);
     }
     let bounds = match spec.exactness {
-        GateClass::BitExact | GateClass::TextExact => spec.exactness.default_bounds(),
+        GateClass::BitExact | GateClass::TextExact | GateClass::TokenDivergence => {
+            spec.exactness.default_bounds()
+        }
         class => effective_bounds(class, spec.quality_bounds)?,
     };
     Ok(judge_decode(spec.exactness, bounds, &compared?))
@@ -275,6 +278,9 @@ pub fn prefill_quality_gate(session: &Session, spec: &GateArms) -> Result<Qualit
     };
     let pa = a.record["prompts"].as_array().cloned().unwrap_or_default();
     let pb = b.record["prompts"].as_array().cloned().unwrap_or_default();
+    if spec.exactness == GateClass::TokenDivergence {
+        return divergence_gate(session, spec, &workload);
+    }
     // Runtime-loop workloads are judged bit-exact on generated tokens.
     if runs_the_runtime_loop(spec, &workload) {
         if spec.exactness != GateClass::BitExact {
@@ -325,7 +331,98 @@ pub fn prefill_quality_gate(session: &Session, spec: &GateArms) -> Result<Qualit
         GateClass::BitExact => spec.exactness.default_bounds(),
         class => effective_bounds(class, spec.quality_bounds)?,
     };
-    Ok(judge_quality(spec.exactness, bounds, prompts, tokens_equal))
+    let result = judge_quality(spec.exactness, bounds, prompts, tokens_equal);
+    Ok(match position_comparison(session, spec, &a, &b, bounds)? {
+        Some(positions) => result.with_positions(positions),
+        None => result,
+    })
+}
+
+/// The chunk-end prefill logits of the two quality runs (LAB-02). `None` when
+/// the workload prefills token by token or one chunk covers every prompt.
+fn position_comparison(
+    session: &Session,
+    spec: &GateArms,
+    a: &Outcome,
+    b: &Outcome,
+    bounds: QualityBounds,
+) -> Result<Option<DecodeResult>, String> {
+    let path = |o: &Outcome| {
+        session
+            .exp_dir
+            .join("runs")
+            .join(format!("{}.logits.positions", o.run_id))
+    };
+    let targets: Vec<Vec<i32>> = a.record["prompts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|p| serde_json::from_value(p["position_targets"].clone()).ok())
+        .collect();
+    let rows: usize = targets.iter().map(Vec::len).sum();
+    let result = if rows == 0 {
+        None
+    } else {
+        let labels = vec![0usize; targets.len()];
+        let compared = compare_traces(&path(a), &path(b), &labels, &targets)?;
+        Some(judge_decode(spec.exactness, bounds, &compared))
+    };
+    for o in [a, b] {
+        let _ = std::fs::remove_file(path(o));
+    }
+    Ok(result)
+}
+
+/// Verify-width changes: both arms under the probe, compared where their
+/// outputs part, against the model's own run-to-run floor.
+fn divergence_gate(
+    session: &Session,
+    spec: &GateArms,
+    workload: &Workload,
+) -> Result<QualityResult, String> {
+    let run = |arm: &Arm| -> Result<Vec<Value>, String> {
+        let o = session.run_probe(arm, workload, None)?;
+        if o.status != "ok" {
+            return Err(format!(
+                "divergence run for {} was {}: {}",
+                o.arm,
+                o.status,
+                o.record["refusal"].as_str().unwrap_or("(see its stderr)")
+            ));
+        }
+        Ok(o.record["prompts"].as_array().cloned().unwrap_or_default())
+    };
+    let (a, b) = (run(spec.baseline)?, run(spec.candidate)?);
+    let ids = |p: &Value| -> Vec<i64> {
+        serde_json::from_value(p["decode_ids"].clone()).unwrap_or_default()
+    };
+    let divergences: Vec<Divergence> = a
+        .iter()
+        .zip(&b)
+        .map(|(x, y)| {
+            let first = crate::checks::first_divergence(&ids(x), &ids(y));
+            Divergence {
+                first,
+                baseline_margin: first.and_then(|i| x["spec_probe"]["margins"][i].as_f64()),
+            }
+        })
+        .collect();
+    let floor = crate::checks::noise_floor(&lab_dir(), &session.model);
+    let (passed, reasons) = judge_divergence(&divergences, floor);
+    let mut result = judge_quality(
+        GateClass::BitExact,
+        GateClass::BitExact.default_bounds(),
+        Vec::new(),
+        divergences.iter().all(|d| d.first.is_none()),
+    );
+    result.class = GateClass::TokenDivergence;
+    result.all_bits_equal = false;
+    result.passed = passed && a.len() == b.len();
+    result.reasons = reasons;
+    result
+        .reasons
+        .push(format!("floor {floor:.2}; divergences {divergences:?}"));
+    Ok(result)
 }
 
 /// An audio spec runs its job once per arm and compares outputs: the

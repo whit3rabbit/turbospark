@@ -101,6 +101,7 @@ mod handler;
 mod host_check;
 mod images;
 mod messages;
+mod metrics;
 mod model;
 pub mod observe;
 mod ollama;
@@ -114,6 +115,7 @@ mod real_model_tests;
 pub mod registry;
 mod response;
 mod responses;
+mod timings;
 pub mod vision;
 
 /// The header both routes report a degraded request on.
@@ -242,6 +244,7 @@ pub struct ServerState {
     pub(crate) ids: Arc<observe::RequestIds>,
     pub(crate) image_provider: Option<Arc<dyn ImageProvider>>,
     pub(crate) audio: Option<audio::AudioState>,
+    pub(crate) text_metrics: Arc<metrics::TextMetrics>,
 }
 
 impl ServerState {
@@ -253,6 +256,7 @@ impl ServerState {
             ids: Arc::new(observe::RequestIds::default()),
             image_provider: None,
             audio: None,
+            text_metrics: Arc::default(),
         }
     }
 
@@ -262,8 +266,8 @@ impl ServerState {
     }
 
     /// Attaches speech-to-text, text-to-speech and music generation. The
-    /// `/v1/audio/*` routes (and `/v1/metrics`) exist only on a state that
-    /// has one, so an embedding host that sets none keeps its route surface.
+    /// `/v1/audio/*` routes exist only on a state that has one, so an
+    /// embedding host that sets none keeps them off its route surface.
     pub fn with_audio_provider(mut self, provider: Arc<dyn AudioProvider>) -> Self {
         self.audio = Some(audio::AudioState::new(provider));
         self
@@ -351,6 +355,8 @@ pub fn build_router_with_options(state: impl Into<ServerState>, options: RouterO
         .route("/api/generate", post(ollama::generate))
         .route("/api/embeddings", post(embeddings::ollama_embeddings))
         .route("/api/embed", post(embeddings::ollama_embed))
+        // Text series always; the audio series join them when attached.
+        .route("/v1/metrics", get(metrics::metrics_endpoint))
         // Explicit rather than left at axum's 2 MiB default -- see
         // `MAX_REQUEST_BODY_BYTES`'s own doc. `/health` is unaffected: it
         // carries no body and is never a member of this router.
@@ -433,7 +439,6 @@ fn audio_router() -> Router<ServerState> {
             get(audio::list_models).post(audio::load_model),
         )
         .route("/v1/audio/models/:id", delete(audio::delete_model))
-        .route("/v1/metrics", get(audio::metrics_endpoint))
         .layer(axum::extract::DefaultBodyLimit::max(
             audio::MAX_AUDIO_UPLOAD_BYTES,
         ))

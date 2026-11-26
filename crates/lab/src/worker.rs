@@ -44,6 +44,10 @@ pub enum Mode {
     /// write every step's logits (LAB-01). Without `forced_ids` the run's own
     /// greedy ids become the sequence. Never a timing run.
     ForcedDecode,
+    /// A speculative run under the runtime's probe (`runtime::spec_probe`):
+    /// per round timings and expert reads, and the margin behind every
+    /// committed token. Never a timing run.
+    SpecProbe,
     /// Sleep between short decodes and time the first step after each gap
     /// (LAB-24): does an idle GPU cost the next token anything?
     IdleGap,
@@ -65,6 +69,10 @@ pub struct WorkerRequest {
     /// arm's record.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forced_ids: Option<Vec<Vec<i32>>>,
+    /// `Mode::SpecProbe` only: accept each proposal with this chance instead
+    /// of by the model (LAB-23). The output is wrong by design.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub synthetic_accept: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +103,13 @@ pub struct PromptRecord {
     /// `TURBOSPARK_LAUNCH_COUNT=1` (LAB-26). Such a run is not a timing run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launches: Option<serde_json::Value>,
+    /// `Mode::SpecProbe`'s rounds and margins.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spec_probe: Option<serde_json::Value>,
+    /// Quality mode: the token that follows each recorded prefill position
+    /// (one per row of the `.positions` trace).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position_targets: Option<Vec<i32>>,
     /// Per turn, for a chat prompt. The fields above then total the chat
     /// (`prompt_tokens` counting only the tokens prefilled, not the reused
     /// ones), and `decode_digest` covers every turn's tokens in order.
@@ -567,6 +582,39 @@ fn prefill(
     Ok(())
 }
 
+/// Chunked prefill that asks for the head after EVERY chunk and records the
+/// logits at each chunk end but the last (the final row is the quality
+/// mode's own). A family whose chunk driver skips the head leaves the buffer
+/// as it was filled, and that position is not recorded. Returns the token
+/// following each recorded position.
+fn prefill_recording(
+    runner: &mut RealForwardRunner,
+    ids: &[i32],
+    chunk: usize,
+    logits: &mut [LogitValue],
+    sampler: &mut AppMemorySampler,
+    out: &mut crate::logit_trace::TraceWriter,
+) -> Result<Vec<i32>, String> {
+    let spans = prefill_chunk_spans(ids.len(), 0, chunk);
+    let mut targets = Vec::new();
+    for (i, span) in spans.iter().enumerate() {
+        let end = span.token_offset + span.token_count;
+        logits.fill(LogitValue::from_f32(f32::NAN));
+        runner.prefill_chunk_with_status(
+            &ids[span.token_offset..end],
+            span.start_position,
+            logits,
+            true,
+        )?;
+        sampler.sample();
+        if i + 1 < spans.len() && !logits.iter().all(|v| v.to_f32().is_nan()) {
+            out.row(&f16_bits(logits))?;
+            targets.push(ids[end]);
+        }
+    }
+    Ok(targets)
+}
+
 fn greedy_config(max_new: usize) -> Result<runtime::GenerationConfig, String> {
     Ok(runtime::GenerationConfig {
         // Temperature exactly 0: the speculative loop refuses anything else
@@ -815,6 +863,18 @@ fn open(
     )
     .map_err(|e| e.to_string())?;
     Ok((runner, tokenizer, family))
+}
+
+fn probe_json(r: runtime::spec_probe::Record) -> serde_json::Value {
+    serde_json::json!({
+        "synthetic": r.synthetic,
+        "margins": r.margins,
+        "rounds": r.rounds.iter().map(|r| serde_json::json!({
+            "at_s": r.at_s, "width": r.width, "accepted": r.accepted, "copy": r.copy,
+            "verify_ms": r.verify_ms, "expert_requests": r.expert_requests,
+            "expert_bytes": r.expert_bytes,
+        })).collect::<Vec<_>>(),
+    })
 }
 
 /// The idle gaps the probe sleeps, seconds.
@@ -1069,6 +1129,21 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
     let measured_prompts: &[Vec<i32>] = if idle_gap.is_some() { &[] } else { &all_ids };
     let mut prompts = Vec::new();
     let mut logits_out: Vec<u8> = Vec::new();
+    if req.mode == Mode::SpecProbe && speculation.is_none() {
+        return Err("the speculative probe needs a speculative arm (~mtp:N or ~dflash:N)".into());
+    }
+    if req.synthetic_accept.is_some() && req.mode != Mode::SpecProbe {
+        return Err("synthetic acceptance is a probe-only mode".into());
+    }
+    // Quality mode also keeps the logits at every chunk end (LAB-02): the
+    // prefill kernels hand them out, only the head is asked for each time.
+    let mut positions = match (req.mode, &req.logits_path) {
+        (Mode::Quality, Some(path)) => Some(crate::logit_trace::TraceWriter::create(
+            &path.with_extension("positions"),
+            vocab,
+        )?),
+        _ => None,
+    };
     let mut trace = match (req.mode, &req.logits_path) {
         (Mode::ForcedDecode, Some(path)) => {
             check_forced(req)?;
@@ -1125,6 +1200,8 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
                 decode_ids: None,
                 decode_text: None,
                 launches: None,
+                spec_probe: None,
+                position_targets: None,
             });
             continue;
         }
@@ -1132,6 +1209,9 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
             runner.reset();
             let e0 = energy.mark();
             let p0 = runner.phase_counters();
+            if req.mode == Mode::SpecProbe {
+                runtime::spec_probe::install(req.synthetic_accept);
+            }
             let (result, generated) = speculative_once(
                 &mut runner,
                 &tokenizer,
@@ -1164,6 +1244,8 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
                 decode_ids: Some(generated.clone()),
                 decode_text: Some(tokenizer.decode(&generated, false)),
                 launches: None,
+                spec_probe: runtime::spec_probe::take().map(probe_json),
+                position_targets: None,
             });
             continue;
         }
@@ -1176,13 +1258,26 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
             runtime::launch_count::take();
         }
         let t0 = Instant::now();
-        prefill(
-            &mut runner,
-            ids,
-            req.workload.prefill_chunk,
-            &mut logits,
-            &mut sampler,
-        )?;
+        let mut position_targets = None;
+        match (&mut positions, req.workload.prefill_chunk) {
+            (Some(out), Some(chunk)) => {
+                position_targets = Some(prefill_recording(
+                    &mut runner,
+                    ids,
+                    chunk,
+                    &mut logits,
+                    &mut sampler,
+                    out,
+                )?);
+            }
+            _ => prefill(
+                &mut runner,
+                ids,
+                req.workload.prefill_chunk,
+                &mut logits,
+                &mut sampler,
+            )?,
+        }
         let prefill_s = t0.elapsed().as_secs_f64();
         let prefill_launches = counting.then(runtime::launch_count::take);
         let prefill_end_footprint_bytes = sampler.sample();
@@ -1260,10 +1355,15 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
             decode_text: Some(tokenizer.decode(&generated, false)),
             decode_ids: Some(generated),
             launches,
+            spec_probe: None,
+            position_targets,
         });
     }
     if let Some(trace) = trace.take() {
         trace.finish()?;
+    }
+    if let Some(positions) = positions.take() {
+        positions.finish()?;
     }
 
     if let Some(path) = &req.logits_path {

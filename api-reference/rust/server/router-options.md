@@ -84,7 +84,7 @@ The events cover the request lifecycle and model changes. The variants are `Requ
 - `with_audio_provider(provider)` attaches an `Arc<dyn AudioProvider>`.
 - `with_max_concurrent_resolutions(n)` sets how many model resolutions can run at once. The default is 4. A request that arrives while the limit is reached gets a retryable 503. Resolution can open an installed model synchronously, so this limit keeps those opens off the request workers.
 
-The audio routes and `/v1/metrics` exist only on a state with an audio provider. A host that attaches no audio provider keeps the chat-only route surface.
+The audio routes exist only on a state with an audio provider. `/v1/metrics` is always registered behind the API key; the audio series appear in it only with a provider.
 
 ## Model registries
 

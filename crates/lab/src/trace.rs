@@ -83,6 +83,7 @@ pub fn trace_cmd(mut args: Args) -> Result<CmdOutput, String> {
             workload: workload.clone(),
             mode: Mode::Timing,
             forced_ids: None,
+            synthetic_accept: None,
             logits_path: None,
         })
         .map_err(|e| e.to_string())?,

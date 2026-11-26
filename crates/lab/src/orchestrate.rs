@@ -138,6 +138,7 @@ pub fn methodology(workload: &Workload, mode: Mode) -> Value {
         Mode::Quality => "quality",
         Mode::ForcedDecode => "forced_decode",
         Mode::IdleGap => "idle_gap",
+        Mode::SpecProbe => "spec_probe",
     };
     let workload_sha256 = model_io::hash_data(text.as_bytes());
     json!({
@@ -402,6 +403,38 @@ impl Session {
         warmup: bool,
         forced_ids: Option<Vec<Vec<i32>>>,
     ) -> Result<Outcome, String> {
+        self.run_request(arm, workload, mode, round, warmup, forced_ids, None)
+    }
+
+    /// [`Self::run_once`] under the speculative probe.
+    pub fn run_probe(
+        &self,
+        arm: &Arm,
+        workload: &Workload,
+        synthetic_accept: Option<f64>,
+    ) -> Result<Outcome, String> {
+        self.run_request(
+            arm,
+            workload,
+            Mode::SpecProbe,
+            0,
+            false,
+            None,
+            synthetic_accept,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_request(
+        &self,
+        arm: &Arm,
+        workload: &Workload,
+        mode: Mode,
+        round: usize,
+        warmup: bool,
+        forced_ids: Option<Vec<Vec<i32>>>,
+        synthetic_accept: Option<f64>,
+    ) -> Result<Outcome, String> {
         if !self.worker.is_file() {
             return Err(sibling_worker()
                 .err()
@@ -415,7 +448,7 @@ impl Session {
         let logits_path = match mode {
             Mode::Quality => Some(runs.join(format!("{run_id}.logits.f16"))),
             Mode::ForcedDecode => Some(runs.join(format!("{run_id}.trace.f16"))),
-            Mode::Timing | Mode::IdleGap => None,
+            Mode::Timing | Mode::IdleGap | Mode::SpecProbe => None,
         };
         let request = WorkerRequest {
             run_id: run_id.clone(),
@@ -425,6 +458,7 @@ impl Session {
             mode,
             logits_path: logits_path.clone(),
             forced_ids,
+            synthetic_accept,
         };
         crate::atomic::write_new_json(
             &request_path,
@@ -557,6 +591,10 @@ impl Session {
         if status != "ok" {
             reasons.insert(0, format!("worker status {status}"));
         }
+        if synthetic_accept.is_some() {
+            reasons
+                .push("synthetic acceptance: the output is wrong by design, never quotable".into());
+        }
         for env in knobs::unquotable_envs() {
             if arm.env.contains_key(env) {
                 reasons.push(format!("{env} perturbs timing; run is not quotable"));
@@ -597,6 +635,7 @@ impl Session {
             "totals": record["totals"],
             "audio": record["audio"],
             "open_pressure": record["open_pressure"],
+            "synthetic_accept": synthetic_accept,
             "peak_footprint_bytes": record["peak_footprint_bytes"],
             "exe_sha256": record["provenance"]["exe_sha256"],
             "speculation": arm.speculation,
@@ -613,7 +652,12 @@ impl Session {
         // L7: every measured speculative call is also a round-cost reading.
         let mut with_model = run_payload;
         with_model["model"] = json!(self.model);
-        for cost in crate::round_cost::from_run(&with_model, &record) {
+        let probe_free = synthetic_accept.is_none() && mode == Mode::Timing;
+        for cost in probe_free
+            .then(|| crate::round_cost::from_run(&with_model, &record))
+            .into_iter()
+            .flatten()
+        {
             self.ledger.append("round_cost", cost)?;
         }
         if self.verbose {

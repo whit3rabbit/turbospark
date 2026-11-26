@@ -31,6 +31,7 @@ use crate::handler::{
     build_shaping, error_response, now_unix, request_id, status_for, stop_strings, AppState,
 };
 use crate::response::finish_reason;
+use crate::timings::{prompt_tokens_details, Timings, WithTimings};
 
 const SSE_KEEP_ALIVE: Duration = Duration::from_secs(15);
 
@@ -211,8 +212,11 @@ fn stream_response(
     let cancel_for_gate = cancel.clone();
     tokio::spawn(async move {
         let _ = crate::queue::run_gated(gate, &cancel_for_gate, move || {
-            let send = |text: String, finish: Option<&'static str>| {
-                let chunk = text_completion_chunk(&id, created, &model_name, text, finish);
+            let send = |text: String, finish: Option<&'static str>, timings: Option<Timings>| {
+                let chunk = WithTimings {
+                    body: text_completion_chunk(&id, created, &model_name, text, finish),
+                    timings,
+                };
                 // Fast-path disconnect detection: `CancelOnDrop` below catches
                 // the same event even with no chunk in flight (a long prefill
                 // sends none), so this is a speed-up rather than the only
@@ -220,7 +224,7 @@ fn stream_response(
                 // cancels too.
                 crate::cancel::send_or_cancel(
                     &tx,
-                    Event::default().data(chunk.to_string()),
+                    Event::default().data(serde_json::to_string(&chunk).unwrap_or_default()),
                     &cancel_for_task,
                 );
             };
@@ -232,7 +236,7 @@ fn stream_response(
                     RawDecodeProgress::Prefill { .. } => return,
                 };
                 if !text.is_empty() {
-                    send(text, None);
+                    send(text, None, None);
                 }
             });
             match result {
@@ -248,7 +252,7 @@ fn stream_response(
                         anyllm_translate::openai::FinishReason::ToolCalls => "tool_calls",
                         _ => "stop",
                     };
-                    send(String::new(), Some(reason));
+                    send(String::new(), Some(reason), Some(Timings::from(&r)));
                 }
                 // A failed run is not a completed one: report it as a FRAMED
                 // `error` event, matching the chat endpoints' contract -- never
@@ -376,6 +380,7 @@ fn text_completion_full(
     text: String,
     decode: RawDecodeResult,
 ) -> serde_json::Value {
+    let timings = Timings::from(&decode);
     serde_json::json!({
         "id": id,
         "object": "text_completion",
@@ -391,7 +396,9 @@ fn text_completion_full(
             "prompt_tokens": decode.prompt_tokens,
             "completion_tokens": decode.new_tokens,
             "total_tokens": decode.prompt_tokens + decode.new_tokens,
-        }
+            "prompt_tokens_details": prompt_tokens_details(&decode),
+        },
+        "timings": timings,
     })
 }
 

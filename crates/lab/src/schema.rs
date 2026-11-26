@@ -125,6 +125,10 @@ pub const KINDS: &[(&str, &str)] = &[
     ),
     ("anchor", "greedy digests keyed by family and toolchain"),
     (
+        "spec_rounds",
+        "speculative rounds under the probe: verify time by age, expert reads, synthetic acceptance (unquotable)",
+    ),
+    (
         "idle_gap",
         "first decode step after 0.5 to 8 s idle gaps against the busy median",
     ),

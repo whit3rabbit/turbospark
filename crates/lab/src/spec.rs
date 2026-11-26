@@ -243,6 +243,15 @@ impl ExperimentSpec {
         if self.exactness != GateClass::BitExact {
             effective_bounds(self.exactness, self.quality_bounds)?;
         }
+        if self.exactness == GateClass::TokenDivergence
+            && self.baseline.effective_speculation(&self.workload)
+                == self.candidate.effective_speculation(&self.workload)
+        {
+            return Err(
+                "token_divergence is for a change of verify width: the arms' speculation must differ"
+                    .into(),
+            );
+        }
         let audio = self.workload.audio.is_some();
         if self.exactness == GateClass::TextExact && !audio {
             return Err("text_exact gates an audio transcript; a text spec declares bit_exact, dense_kl or moe_kl".into());

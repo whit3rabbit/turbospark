@@ -66,6 +66,7 @@ mod resid_capture;
 mod router_hist;
 #[cfg(target_os = "macos")]
 mod session_pool;
+pub mod spec_probe;
 #[cfg(target_os = "macos")]
 mod speculation_policy;
 mod speculative;

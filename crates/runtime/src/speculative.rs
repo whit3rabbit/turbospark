@@ -423,6 +423,11 @@ fn run_speculative<P: SpeculativeProducer>(
         &sink.history,
         sink.generated as u64,
     )?;
+    // The margin of the row that chose `next`, kept for the lab's probe
+    // (`crate::spec_probe`); computed only while one is installed.
+    let probing = crate::spec_probe::active();
+    let row_margin = |row: &[LogitValue]| probing.then(|| crate::spec_probe::margin(row)).flatten();
+    let mut next_margin = row_margin(&logits);
 
     // THE ACCEPTANCE COUNTER, off by default and env-gated like every other
     // diagnostic here (`TURBOSPARK_PHASES`, `TURBOSPARK_ROUTER_HIST`). It exists
@@ -449,6 +454,7 @@ fn run_speculative<P: SpeculativeProducer>(
         // `next` was sampled but not yet fed. Committing it first is what
         // makes the invariant below hold: after every round,
         // `position == sink.history.len()`.
+        crate::spec_probe::committed(next_margin);
         if let Some(stop) = sink.commit(next, cancel, &mut on_progress) {
             reason = stop;
             break;
@@ -599,6 +605,7 @@ fn run_speculative<P: SpeculativeProducer>(
                 break 'rounds;
             }
             next = bonus.expect("a walk that did not stop ends on a bonus pick");
+            next_margin = None;
             continue 'rounds;
         }
 
@@ -703,12 +710,18 @@ fn run_speculative<P: SpeculativeProducer>(
         feed.clear();
         feed.push(next);
         feed.extend_from_slice(&proposals);
+        let experts_before = probing.then(|| producer.expert_counters()).flatten();
         let t_verify = std::time::Instant::now();
         let point = producer.checkpoint();
         producer
             .verify(&feed, base, &mut batch_logits[..feed.len() * vocab_size])
             .map_err(RuntimeError::Producer)?;
-        ph[1] += t_verify.elapsed();
+        let verify_time = t_verify.elapsed();
+        ph[1] += verify_time;
+        let experts = experts_before
+            .zip(producer.expert_counters())
+            .map(|((r0, b0), (r1, b1))| (r1.saturating_sub(r0), b1.saturating_sub(b0)))
+            .unwrap_or_default();
         if copy_round {
             copy_ph[1] += t_verify.elapsed();
         }
@@ -778,9 +791,15 @@ fn run_speculative<P: SpeculativeProducer>(
                         &sink.history,
                         sink.generated as u64,
                     )?;
-                    if target != proposal {
+                    // The lab's synthetic mode decides acceptance itself
+                    // (never reachable without `spec_probe::install`).
+                    let synthetic = crate::spec_probe::synthetic_accept();
+                    if !synthetic.unwrap_or(target == proposal) {
                         break;
                     }
+                    crate::spec_probe::committed(
+                        synthetic.is_none().then(|| row_margin(row)).flatten(),
+                    );
                     if stats {
                         stat_matched[i] += 1;
                     }
@@ -794,6 +813,17 @@ fn run_speculative<P: SpeculativeProducer>(
             stat_accepted += accepted;
             if stats {
                 stat_depth[proposals.len()] += 1;
+            }
+            if probing {
+                crate::spec_probe::round(crate::spec_probe::Round {
+                    width: proposals.len(),
+                    accepted,
+                    copy: copy_round,
+                    verify_ms: verify_time.as_secs_f64() * 1000.0,
+                    expert_requests: experts.0,
+                    expert_bytes: experts.1,
+                    ..Default::default()
+                });
             }
             if copy_round {
                 prompt_copy.observe(accepted, proposals.len());
@@ -901,6 +931,7 @@ fn run_speculative<P: SpeculativeProducer>(
         // from, and the corrected token IS `next` -- a second draw from it
         // would double-sample one position.
         let t_bonus = std::time::Instant::now();
+        next_margin = row_margin(&batch_logits[accepted * vocab_size..(accepted + 1) * vocab_size]);
         if let Some(token) = corrected {
             next = token;
         } else if sampled {

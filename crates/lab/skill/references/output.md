@@ -49,7 +49,7 @@ is `$TURBOSPARK_LAB_DIR`, else `$TURBOSPARK_HOME/lab`, else
 | `projection` | `tslab project`: `projection.{ratio, improvement_throughput, improvement_time, coverage, floor, clears_floor, cases, skipped, notes}` and the `inputs` it read |
 | `calibration` | `tslab calibrate`: `calibration.{predicted, measured, error, miss, sign_flip, reason}` and the projection and verdict it joined |
 | `experiment`, `confirm`, `gate`, `experiment_start` | run-experiment's records and decision. `quality.decode` holds the forced-trace summary (`overall` and per prompt: KL mean, median, p99, flips, flips by reference margin, PPL per arm, paired NLL delta and SE) |
-| `sanity`, `noise`, `floor`, `quant_ab`, `launch_count`, `idle_gap`, `anchor`, `release_gate`, `serve_bench`, `soak` | What the command of that name measured; `serve_bench` and `soak` carry a `methodology` string so server rows never merge with in-process ones |
+| `sanity`, `noise`, `floor`, `quant_ab`, `launch_count`, `idle_gap`, `spec_rounds`, `anchor`, `release_gate`, `serve_bench`, `soak` | What the command of that name measured; `serve_bench` and `soak` carry a `methodology` string so server rows never merge with in-process ones |
 | `workflow_step`, `workflow_run` | A workflow's steps and summary |
 
 A run is `eligible: false` when the host guard rejected it, the worker

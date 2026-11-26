@@ -212,8 +212,11 @@ pub fn sample(
     outcome: Outcome,
 ) -> Sample {
     let timing = |k: &str| outcome.timings.as_ref().and_then(|t| t[k].as_f64());
-    let long_enough = outcome
-        .prompt_tokens
+    // What the server says it PREFILLED when it says so: with prefix reuse a
+    // long prompt can cost only a few tokens.
+    let long_enough = timing("prompt_n")
+        .map(|n| n as u64)
+        .or(outcome.prompt_tokens)
         .is_some_and(|n| n >= MIN_PREFILL_PROMPT_TOKENS);
     Sample {
         size: size.to_string(),
@@ -480,8 +483,11 @@ mod tests {
         );
         o.prompt_tokens = Some(MIN_PREFILL_PROMPT_TOKENS);
         assert_eq!(
-            sample("a", &req(), 0.0, 0.0, o).server_prefill_tok_s,
+            sample("a", &req(), 0.0, 0.0, o.clone()).server_prefill_tok_s,
             Some(900.0)
         );
+        // Mostly reused: the long prompt was not a long prefill.
+        o.timings = Some(json!({"prompt_per_second": 900.0, "prompt_n": 8}));
+        assert_eq!(sample("a", &req(), 0.0, 0.0, o).server_prefill_tok_s, None);
     }
 }

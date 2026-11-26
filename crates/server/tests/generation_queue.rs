@@ -388,6 +388,20 @@ async fn a_full_queue_refuses_with_429_before_any_response_starts() {
             bodies.push(response.text().await.expect("error body"));
         }
         assert_eq!(held.queue.queued(), 1, "a refusal took no queue place");
+        let metrics = client
+            .get(format!("{base}/v1/metrics"))
+            .send()
+            .await
+            .expect("connects")
+            .text()
+            .await
+            .expect("metrics body");
+        for want in [
+            "\nturbospark_text_queue_waiting 1\n",
+            "\nturbospark_text_queue_rejected_total 3\n",
+        ] {
+            assert!(metrics.contains(want), "missing {want:?} in\n{metrics}");
+        }
 
         held.release();
         for handle in [r0, r1] {

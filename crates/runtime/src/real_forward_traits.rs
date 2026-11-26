@@ -346,6 +346,11 @@ impl LogitProducer for RealForwardRunner {
 /// condition that has to agree with the first, and the failure mode of
 /// disagreeing is a refusal message that names the wrong cause.
 impl SpeculativeProducer for RealForwardRunner {
+    fn expert_counters(&self) -> Option<(u64, u64)> {
+        let c = self.phase_counters();
+        Some((c.expert_requests, c.expert_io_bytes_requested))
+    }
+
     type Checkpoint = RollbackPoint;
 
     // WHICH DRAFTER answers is a property of the open state, and at most

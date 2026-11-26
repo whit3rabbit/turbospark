@@ -87,6 +87,9 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab quant-ab --ref M --base M --cand M [--cand M]   (installs on one reference's ids: no worse KL at no more bytes)
   tslab launch-count --model M [--arm SPEC]... [--decode 32] [--us-per-dispatch X]  (unquotable)
   tslab idle-gap --model M [--arm SPEC]            (does a 0.5-8 s idle gap cost the next token?)
+  tslab spec-rounds --model M --arm NAME~mtp:4 [--synth-len 1.5,2,3] [--decode 256]
+                (per round verify time by run age, expert reads per committed token, and costs at a
+                 forced acceptance; synthetic output is wrong by design)
   tslab anchor  --model M --file anchors.json [--update]   (greedy digests per family and toolchain; exit 3 on change)
   tslab release-gate --base-worker PATH --model M... [--declared FILE] [--metric decode_tok_s] [--pairs 3]
   tslab type1   [--trials 20000]                   (false WIN and LOSS rates from stored null calibrations)
@@ -203,6 +206,7 @@ pub const COMMANDS: &[&str] = &[
     "quant-ab",
     "launch-count",
     "idle-gap",
+    "spec-rounds",
     "anchor",
     "release-gate",
     "type1",
@@ -250,6 +254,7 @@ pub fn dispatch(cmd: &str, args: Args) -> Result<CmdOutput, String> {
         "quant-ab" => crate::checks::quant_ab_cmd(args),
         "launch-count" => crate::checks::launch_count_cmd(args),
         "idle-gap" => crate::checks::idle_gap_cmd(args),
+        "spec-rounds" => crate::checks::spec_rounds_cmd(args),
         "anchor" => crate::checks::anchor_cmd(args),
         "release-gate" => crate::checks::release_gate_cmd(args),
         "type1" => crate::checks::type1_cmd(args),

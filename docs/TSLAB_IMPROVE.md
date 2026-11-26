@@ -31,8 +31,8 @@ shared while this was built, so no speed claim was taken from it.
 | Id | Status | What the lab does now | Not done, and why |
 |---|---|---|---|
 | LAB-01 teacher-forced decode gate | done | Worker mode `forced_decode`; every KL or bit-exact gate of a decoding workload replays the baseline's greedy ids through the candidate (up to 256 steps on 64, 500 and 2000 token prompts) and judges per position. A decode-only change can no longer pass on prefill logits. `gate --decode-trace` forces it. | Speculative and chat workloads stay token-identity only: the runtime loop does not hand out logits. The qwen38 and qwen36 pilots the plan names were not run (neither install is in the catalog store on this host). |
-| LAB-02 per-token KL statistics | partial | KL mean, median, p99 and SE, flip rate, share of flips under 0.5 logits of reference margin, flips at 2 logits or more (fails a KL class), PPL per arm, paired NLL delta and SE, per prompt. | Prefill-side stays final-position. No split by text class beyond per prompt (the corpus is one class). No compact u16 reference: it is the same size as the f16 trace, which is the saved reference `quant-ab` reuses. The pilots were not run. |
-| LAB-03 A/A quality noise | partial | `gate --noise-arms` compares each arm with itself; `tslab noise` records distinct outputs and first divergence over K fresh processes, at any arm including a verify width. | The `TokenDivergence` gate class is not built: it needs the reference margin at a divergence inside the speculative loop, which the runtime does not expose, and a looser class must not exist without that evidence (root rule on tolerances). |
+| LAB-02 per-token KL statistics | partial | KL mean, median, p99 and SE, flip rate and flips by reference margin, PPL per arm, paired NLL delta and SE. Over the forced decode trace, and now over prefill logits at every chunk end (`quality.positions`), which can only fail a gate. | Prefill positions are chunk ends, not every token: the chunked kernels return one row per chunk. A family whose chunk driver skips the head records none. No split by text class beyond per prompt; no compact u16 reference (same size as the trace). |
+| LAB-03 A/A quality noise | partial | `gate --noise-arms`, `tslab noise`, and the `token_divergence` class for a change of verify width: both arms run under the speculative probe, and outputs may part only on a near tie (baseline margin under 0.5 logits) and no more often than the model's own `noise` record (zero without one). | Covers speculative verify width only, not batched decode or prefill batch width. Tree rounds record no margin, so a divergence there fails. No first-target runs (qwen36, MTP 2 against 3). |
 | LAB-04 floor table | partial | `tslab floor` records a family's arm against itself; `gate` prints limit, floor and margin. No path widens a bound. | The CPU or llama.cpp reference half stays `xengine-kl`, run separately. Floors for the listed families were not collected. |
 | LAB-08 golden answers | partial | `tslab sanity`: 8 exact cases, `--tools` (4 calls rendered by the checkpoint template, read by the runtime decoder), `--needle` (4K, 16K, 64K at depths 10, 50, 90), and `--candidate` as the functional gate (fails on any case the other arm passes). A `sanity` step in `new-family`. | The tool cases do not render on inkling2-mini-ud-q4kxl: its template uses `tojson(separators=...)`, which the template engine rejects (a server bug, see below). The per-family mutation pilot was not run. The reworded needle was not rerun on a model. |
 
@@ -42,7 +42,7 @@ shared while this was built, so no speed claim was taken from it.
 |---|---|---|---|
 | LAB-11 route trace v2 and replays | partial | The router trace adds `gate_weights` and `token_index`; `expert_policy_replay.py` adds `admit:`, `--keep`, `--felt-fraction`, `--layer-cost` and `predicted_gain`; `calibrate --predicted` joins it to a verdict. | `token_index` is -1 for families whose batched prefill opens no scope. No qwen36 or Gemma 4 capture was taken, so no policy is ranked. |
 | LAB-12 layer-major prefill replay | done | `prefill_bank_replay.py --layer-major` over chunk sizes and slot budgets. | With private per-layer slot caches, layer-major equals batch-major LFU by construction; it only beats a bank other layers overwrite. A build case needs shared slot memory, which is not modeled. No long-prompt capture replayed. |
-| LAB-13 union pricing | partial | `moe_route_replay.py --streams` (union growth) and `--phase verify`; `depth-replay --cost-model union`. | No per-verify `[spec-stats]` line: it needs a new producer method and per-family plumbing. Bytes are requested bytes, not physical. The streamed 35B pilot was not run. |
+| LAB-13 union pricing | done | `moe_route_replay.py --streams` and `--phase verify`, `depth-replay --cost-model union`, and per verify expert reads and bytes in `tslab spec-rounds`. | Reads are requested, not physically read; not distinct experts per verify. The streamed 35B pilot was not run. |
 | LAB-10 verify width beyond 16 | done | `verify_ladder` covers widths 1 to 64 and 96 through the sliced GEMM route, with step edges and a logits-memory budget. | No speculative verify accepts more than 16 rows today, so wider points are a what-if cost. The qwen38 and qwen36 sweeps were not run (not in the catalog store here). |
 | LAB-17 fill ladder | done | `fill-ladder` workflow (0.3K, 8K, 32K); `ab` and `sweep` print and record a per-context-bucket decode ratio and footprint, never pooled into a verdict. | The 64K and larger rungs are not in the built-in plan: the corpus ends near 100K tokens and a long rung on a streamed MoE competes with its slot pool. Not run on installs here. |
 | LAB-24 GPU-idle gap | partial | `trace_tables.py` per-token idle, busy and command buffers; `tslab idle-gap` (first decode step after 0.5 to 8 s gaps). | `idle-gap` times the step from the host, not GPU start against kernel start, and has not run on a model. The token count for the trace is given by the caller. |
@@ -51,10 +51,10 @@ shared while this was built, so no speed claim was taken from it.
 
 | Id | Status | What the lab does now | Not done, and why |
 |---|---|---|---|
-| LAB-18 server bench | partial | `tslab serve-bench` over a loopback HTTP/SSE client; run against the real `turbospark-server` on an inkling2-mini install (no failed request, accounting consistent). | The text server sends no timings and no cached token count, so server tok/s reads null and the server tax cannot be taken from server numbers. No queue or coalescing arms. |
-| LAB-19 open loop and goodput | partial | Closed, periodic and Poisson arrivals with SLO and goodput (tested against a fake server). | No `/metrics` scrape: the server has no text metrics surface. No open-loop pilot on a model. |
+| LAB-18 server bench | partial | `tslab serve-bench` over loopback HTTP/SSE. The server now sends llama.cpp-style `timings` and `usage.prompt_tokens_details.cached_tokens`, so server tok/s and cached tokens are readable. | No queue or coalescing arms. The server-tax comparison was not run. |
+| LAB-19 open loop and goodput | partial | Closed, periodic and Poisson arrivals with SLO and goodput. `GET /v1/metrics` now carries `turbospark_text_*` series on every server. | `serve-bench` does not yet scrape the series into histogram deltas. No open-loop pilot. |
 | LAB-35 soak | done | `tslab soak`; a 60 s run against the real server completed with no failure. | The hour-long soak was not run. |
-| LAB-20 agent workloads | partial | `chat:` files take `edit_variants` (A B C C B A from one history); `chats/edit-last-turn.chat.json`; per-turn reuse and TTFT already print. | `warm_start` and a message-span checkpoint arm need runtime features that do not exist. |
+| LAB-20 agent workloads | partial | `chat:` `edit_variants` and `chats/edit-last-turn.chat.json`. | `warm_start` is NOT built: it needs KV-cache persistence to disk across every family's state layout, a product feature of its own (the server accepts `--paged-ssd-cache-dir` and does not honour it). A message-span checkpoint arm likewise needs runtime work. |
 | LAB-15 cold-state hygiene | partial | Opt-in compressor and swap dirty rules; `file_age_s` per run; `open_pressure` (compressor pages and swap growth across the install's open). | Thresholds are not calibrated. No file-age refusal in `sweep`. The sampling is a before and after delta in the worker, not 1 Hz inside the memory oracle. |
 | LAB-21 memory ballast | done | `~ballast:GIB` (at most 12), refused when the host already swaps, dirty on swap growth. | Never run with a real model: this 36 GB host has been rebooted by memory pressure before, and the plan asks for an AC, quiet host. |
 | LAB-22 quant_ab | done | `tslab quant-ab`; the pass rule lives in `gates.rs`. | PPL is on the reference's own greedy ids, not a held-out multilingual and code slice. Not run on a pair of installs. |
@@ -66,8 +66,8 @@ shared while this was built, so no speed claim was taken from it.
 | Id | Status | What the lab does now | Not done, and why |
 |---|---|---|---|
 | LAB-09 methodology id | done | Every run and verdict records `methodology`; the logit trace has a row-count footer; `export` and the HTML report split a group that mixes ids; `report --md` says so. | Old records are not backfilled (they read `unrecorded`): their prompt bytes cannot be recovered reliably. `pinned` holds upstream settings, not ledger series, so it has nothing to group. Quality logit files keep their size check. |
-| LAB-23 synthetic acceptance | not built | none | It needs an override of verify decisions inside the production speculative loop, including KV and GDN rollback of intentionally wrong tokens. That is a runtime change with correctness risk in the shipped path and needs a decision of its own. |
-| LAB-25 busy-age round cost | not built | none | The runtime reports round costs per call, not per round with timestamps, and the plan marks it NEEDS-DATA behind LAB-10's measured ladder. |
+| LAB-23 synthetic acceptance | partial | `tslab spec-rounds --synth-len` forces acceptance to a mean committed length through a thread-local runtime probe no server or app path installs; such runs are marked unquotable and never feed round costs. | Greedy chain and copy rounds only (not tree or sampled). Not run on a model: no break-even per family yet. |
+| LAB-25 busy-age round cost | partial | Every probed round records its time into the run; `spec-rounds` prints verify median by width and run age (0-6, 6-15, 15-60, 60+ s). | Age is time since the probe started, not since the last GPU idle gap. The depth rule is unchanged until a measurement moves the ratio. Not run on a model. |
 | LAB-27 tile sweeps and no-harm rule | partial | The no-harm-per-bucket rule, attached to the `rows_attn`, `moe_routed` and INT4 sweeps as a chip-keyed record. | It proposes a pin and changes no default. No decode-GEMV threadgroup arms where the gpu crate takes no tile parameter. No sweep was run for a pin. |
 | LAB-28 real routes in `moe_routed` | partial | `moe_routed --routes trace:|uniform|zipf:`, rows-per-expert histogram, pair against expert-sorted grid with hash equality (synthetic test). | Not run on a real capture or install: the bench synthesizes affine INT4 experts and no such MoE install is here. |
 | LAB-31 host-quiet extensions | done | Low Power Mode and memory-pressure level in every host sample; `--require-full-power` and `--require-normal-pressure`. | Opt-in: old ledgers never recorded either, so the number of runs a default rule would dirty cannot be counted yet. |
@@ -76,22 +76,15 @@ shared while this was built, so no speed claim was taken from it.
 | LAB-34 GDN trajectory | partial | `gdn_trajectory` bench with a one-ULP fault self-test (synthetic GDN test). | Not run on a real GDN install (none here). |
 | LAB-36 image denoise stage gate | not built | none | Needs per-step reference latents captured from the BF16 or FP32 reference and an image bench kind; no such fixtures exist, and it depends on LAB-04 floors for its bounds. |
 
-## Found by these checks, not fixed here
+## Found by these checks and fixed
 
-- `inkling2-mini-ud-q4kxl`'s chat template calls
-  `tojson(separators=(",", ":"))`, which `crates/tokenizer`'s template engine
-  refuses. The server renders tool requests through the same function
-  (`encode_generic_tool_chat`), so tool calling on that install should fail.
-  Inferred from the shared code path; no server request was sent.
-
-## Needs a decision before building
-
-These change the shipped decode loop, runtime or server, not the lab:
-LAB-23 (synthetic acceptance in the speculative loop), LAB-25 (per-round
-timestamps), speculative-loop logits (LAB-03's divergence class), server
-`timings` and `/metrics` (LAB-18, LAB-19), warm start (LAB-20), per-verify
-expert telemetry (LAB-13), and prefill logits at every position (LAB-02:
-chunked prefill returns only the last one).
+Tool calling on Inkling 2 mini was broken twice over. The chat template calls
+`tojson(separators=...)`, which the template engine refused, so no tool
+request rendered; and the model's call frame had no parser, so a rendered
+request would have returned the call as reply text. `crates/tokenizer` now
+accepts the `json.dumps` arguments (byte-identical to Python on the real
+template, other calls unchanged) and parses
+`<|content_invoke_tool_json|>` into a tool call.
 
 ## What was run on hardware
 

@@ -54,6 +54,7 @@ process, which must sit beside `tslab`.
 | `floor --model M` | The arm quality-gated against itself, kept under the family; `gate` then prints limit, floor and margin. A floor never widens a bound | `run`, `floor` |
 | `quant-ab --ref M --base M --cand M` | Each install replays the reference's ids: a candidate passes only with no more bytes than the base and a KL from the reference no worse (2% slack) | `run`, `quant_ab` |
 | `launch-count --model M [--arm SPEC]...` | Dispatches and command buffers per decoded token, and the pipelines each arm used. Counts only: `TURBOSPARK_LAUNCH_COUNT=1` perturbs timing | `run`, `launch_count` |
+| `spec-rounds --model M --arm NAME~mtp:4 [--synth-len 1.5,2,3]` | Speculative rounds under the runtime probe: verify time by run age, expert reads per committed token, and costs at a forced acceptance. Synthetic output is wrong by design | `run`, `spec_rounds` |
 | `idle-gap --model M` | First decode step after 0.5, 1, 2, 4 and 8 s gaps; under 20% worse than the 0.5 s gap, drop the idle-GPU idea | `run`, `idle_gap` |
 | `anchor --model M --file F [--update]` | Greedy digests on three prompts keyed by family and toolchain; exit 3 lists changes for a person | `run`, `anchor` |
 | `release-gate --base-worker PATH --model M... [--declared F]` | A released `tslab-worker` against this one, interleaved: PASS, FAIL (undeclared loss), NEEDS-KL-GATE (output moved, undeclared), PASS-with-note, SKIP | `run`, `release_gate` |
@@ -215,6 +216,8 @@ replayed by the candidate for up to 256 steps on three corpus prompts, judged
 on mean KL over every position, with any top-1 flip the reference led by 2
 logits or more failing. `gate --decode-trace` forces the trace; `gate
 --noise-arms` also compares each arm with itself. A spec may add
+`exactness: token_divergence` is for a change of verify width (the arms' speculation must differ): outputs may part only on a near tie and no more often than the model's `noise` record.
+A prefill quality gate also compares the logits at every chunk end. A spec may add
 `also_changes` (extra arm differences, each with a reason; otherwise the arms
 may differ only in `knob_env`), `secondary_guard` and
 `noninferiority_limit` (needs `min_pairs` of 10).

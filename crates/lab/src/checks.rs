@@ -318,6 +318,170 @@ pub fn noise_cmd(mut args: Args) -> Result<CmdOutput, String> {
     Ok(CmdOutput::ok(rec))
 }
 
+/// The share of prompts on which the newest `tslab noise` record for `model`
+/// saw more than one output. Zero with no record: nothing is excused without
+/// a measurement.
+pub fn noise_floor(lab: &Path, model: &str) -> f64 {
+    let records = crate::paths::experiment_dir(lab, "noise")
+        .and_then(|d| Ledger::open(&d))
+        .and_then(|l| l.of_kind("noise"))
+        .unwrap_or_default();
+    records
+        .iter()
+        .rev()
+        .find(|r| r["model"] == model)
+        .and_then(|r| {
+            let p = r["prompts"].as_array()?;
+            let parted = p
+                .iter()
+                .filter(|p| p["digest_distinct_count"].as_u64().unwrap_or(1) > 1)
+                .count();
+            Some(parted as f64 / p.len().max(1) as f64)
+        })
+        .unwrap_or(0.0)
+}
+
+// ---- spec-rounds (LAB-23, LAB-25, LAB-13) ----
+
+/// The per-position acceptance chance `p` whose expected committed length is
+/// `len`: `p + p^2 + .. + p^block = len - 1`.
+pub fn acceptance_for_length(len: f64, block: usize) -> Option<f64> {
+    if !(1.0..=1.0 + block as f64).contains(&len) {
+        return None;
+    }
+    let sum = |p: f64| (1..=block).map(|k| p.powi(k as i32)).sum::<f64>();
+    let (mut lo, mut hi) = (0.0, 1.0);
+    for _ in 0..60 {
+        let mid = (lo + hi) / 2.0;
+        if sum(mid) < len - 1.0 {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    Some((lo + hi) / 2.0)
+}
+
+/// Median verify ms by (width, seconds into the run), the busy-age split.
+pub fn rounds_by_age(rounds: &[Value]) -> Value {
+    const AGES: [(&str, f64); 4] = [
+        ("0-6s", 6.0),
+        ("6-15s", 15.0),
+        ("15-60s", 60.0),
+        ("60s+", f64::INFINITY),
+    ];
+    let mut cells: BTreeMap<(u64, usize), Vec<f64>> = BTreeMap::new();
+    for r in rounds {
+        let (Some(width), Some(at), Some(ms)) = (
+            r["width"].as_u64(),
+            r["at_s"].as_f64(),
+            r["verify_ms"].as_f64(),
+        ) else {
+            continue;
+        };
+        let age = AGES.iter().position(|a| at < a.1).unwrap_or(AGES.len() - 1);
+        cells.entry((width, age)).or_default().push(ms);
+    }
+    Value::Array(
+        cells
+            .into_iter()
+            .map(|((width, age), ms)| {
+                json!({"width": width, "age": AGES[age].0, "rounds": ms.len(),
+                       "verify_ms": stats::median(&ms)})
+            })
+            .collect(),
+    )
+}
+
+/// `tslab spec-rounds --model M --arm NAME~mtp:4 [--synth-len 1.5,2,3]`: the
+/// speculative loop under the runtime's probe. With `--synth-len`, acceptance
+/// is forced to that mean committed length (output wrong by design).
+pub fn spec_rounds_cmd(mut args: Args) -> Result<CmdOutput, String> {
+    let model = args.required("--model")?;
+    let experiment = args
+        .take("--experiment")?
+        .unwrap_or_else(|| "spec_rounds".into());
+    let arm = parse_arm(
+        &args.required("--arm")?,
+        OpenParams::default(),
+        &BTreeMap::new(),
+    )?;
+    let block = arm
+        .speculation
+        .as_ref()
+        .map(|s| s.block)
+        .ok_or("--arm needs a drafter, e.g. mtp~mtp:4")?;
+    let lengths: Vec<f64> = match args.take("--synth-len")? {
+        Some(v) => v
+            .split(',')
+            .map(|n| n.parse().map_err(|_| format!("--synth-len {v:?}")))
+            .collect::<Result<_, _>>()?,
+        None => Vec::new(),
+    };
+    let decode: usize = args.parsed("--decode", 256)?;
+    let context: u32 = args.parsed("--context", 4096)?;
+    let prompt = match args.take("--prompt")? {
+        Some(p) => parse_prompt(&p)?,
+        None => PromptSource::Protocol("long-synthesis".into()),
+    };
+    let (session, _lock) = session(&mut args, &experiment, &model)?;
+    args.finish()?;
+    let mut plan: Vec<(Option<f64>, Option<f64>)> = vec![(None, None)];
+    for len in lengths {
+        let p = acceptance_for_length(len, block)
+            .ok_or_else(|| format!("--synth-len {len}: within 1..{}", block + 1))?;
+        plan.push((Some(len), Some(p)));
+    }
+    let w = workload(vec![prompt], decode, context);
+    let mut rows = Vec::new();
+    for (target, chance) in plan {
+        let o = session.run_probe(&arm, &w, chance)?;
+        ok(&o)?;
+        let probe = &o.record["prompts"][0]["spec_probe"];
+        let rounds = probe["rounds"].as_array().cloned().unwrap_or_default();
+        if rounds.is_empty() {
+            return Err("the probe recorded no speculative round".into());
+        }
+        let total = |k: &str| rounds.iter().filter_map(|r| r[k].as_f64()).sum::<f64>();
+        let n = rounds.len() as f64;
+        let committed = 1.0 + total("accepted") / n;
+        let verify: Vec<f64> = rounds
+            .iter()
+            .filter_map(|r| r["verify_ms"].as_f64())
+            .collect();
+        let accepted = total("accepted") + n;
+        crate::say!(
+            "  {}: {} rounds, {committed:.2} committed/round, verify median {:.1} ms{}",
+            target.map_or("model acceptance".into(), |t| format!("synthetic L={t}")),
+            rounds.len(),
+            stats::median(&verify),
+            if total("expert_requests") > 0.0 {
+                format!(
+                    ", {:.1} expert reads and {:.2} MiB per committed token",
+                    total("expert_requests") / accepted,
+                    total("expert_bytes") / accepted / (1 << 20) as f64
+                )
+            } else {
+                String::new()
+            }
+        );
+        rows.push(
+            json!({"synthetic_length": target, "synthetic_chance": chance,
+                         "rounds": rounds.len(), "committed_per_round": committed,
+                         "verify_ms_median": stats::median(&verify),
+                         "expert_requests": total("expert_requests"),
+                         "expert_bytes": total("expert_bytes"),
+                         "by_age": rounds_by_age(&rounds),
+                         "decode_s": o.record["totals"]["decode_s"],
+                         "run_id": o.run_id}),
+        );
+    }
+    let rec = json!({"model": model, "arm": arm, "block": block, "rows": rows,
+                     "quotable": false});
+    session.ledger.append("spec_rounds", rec.clone())?;
+    Ok(CmdOutput::ok(rec))
+}
+
 // ---- floor (LAB-04) ----
 
 /// `tslab floor --model M`: the quality gate of an arm against ITSELF, keyed
@@ -997,6 +1161,33 @@ mod tests {
         assert!((idle_penalty(&rows).unwrap() - 0.4).abs() < 1e-9);
         assert_eq!(idle_penalty(&json!([{"first_ms": 10.0}])), None);
         assert_eq!(idle_penalty(&json!(null)), None);
+    }
+
+    #[test]
+    fn the_acceptance_chance_reproduces_the_asked_length() {
+        let p = acceptance_for_length(2.5, 3).unwrap();
+        assert!((1.0 + p + p * p + p * p * p - 2.5).abs() < 1e-6, "{p}");
+        assert!(acceptance_for_length(1.0, 3).unwrap() < 1e-6);
+        assert!(acceptance_for_length(4.0, 3).unwrap() > 0.999);
+        assert_eq!(acceptance_for_length(4.5, 3), None);
+        assert_eq!(acceptance_for_length(0.5, 3), None);
+    }
+
+    #[test]
+    fn rounds_split_by_width_and_age() {
+        let r = |width: u64, at: f64, ms: f64| json!({"width": width, "at_s": at, "verify_ms": ms});
+        let t = rounds_by_age(&[
+            r(2, 1.0, 10.0),
+            r(2, 2.0, 12.0),
+            r(2, 70.0, 20.0),
+            r(4, 1.0, 15.0),
+        ]);
+        assert_eq!(
+            t[0],
+            json!({"width": 2, "age": "0-6s", "rounds": 2, "verify_ms": 11.0})
+        );
+        assert_eq!(t[1]["age"], "60s+");
+        assert_eq!(t[2]["width"], 4);
     }
 
     #[test]

@@ -25,6 +25,10 @@ pub enum GateClass {
     /// logits under it may (a reduction-order change in an encoder kernel).
     /// Audio workloads only.
     TextExact,
+    /// Speculative verify-width changes only (LAB-03): outputs may part, but
+    /// no more often than the same arm parts from itself, and only where the
+    /// baseline's choice was a near tie.
+    TokenDivergence,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -36,10 +40,12 @@ pub struct QualityBounds {
 impl GateClass {
     pub fn default_bounds(self) -> QualityBounds {
         match self {
-            GateClass::BitExact | GateClass::TextExact => QualityBounds {
-                mean_kl: 0.0,
-                min_top1_fraction: 1.0,
-            },
+            GateClass::BitExact | GateClass::TextExact | GateClass::TokenDivergence => {
+                QualityBounds {
+                    mean_kl: 0.0,
+                    min_top1_fraction: 1.0,
+                }
+            }
             GateClass::DenseKl => QualityBounds {
                 mean_kl: 1e-3,
                 min_top1_fraction: 0.0,
@@ -124,6 +130,9 @@ pub struct QualityResult {
     pub passed: bool,
     pub reasons: Vec<String>,
     pub prompts: Vec<PromptComparison>,
+    /// The prefill logits at each chunk end (LAB-02). `passed` includes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub positions: Option<DecodeResult>,
     /// The teacher-forced decode gate, when the workload decodes. `passed`
     /// above already includes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -158,6 +167,11 @@ pub fn judge_quality(
                 reasons.push("the transcript differs from the reference".into());
             }
         }
+        // Judged by `judge_divergence` over a probed speculative run; reaching
+        // here means no such run happened.
+        GateClass::TokenDivergence => {
+            reasons.push("token_divergence needs speculative arms".into());
+        }
         GateClass::DenseKl | GateClass::MoeKl => {
             // NaN fails closed: a broken arm must not pass by comparing false.
             if mean_kl.is_nan() || mean_kl > bounds.mean_kl {
@@ -184,11 +198,24 @@ pub fn judge_quality(
         passed: reasons.is_empty(),
         reasons,
         prompts,
+        positions: None,
         decode: None,
     }
 }
 
 impl QualityResult {
+    /// Fold the prefill-position half in; like the decode half it can only
+    /// fail a result.
+    pub fn with_positions(mut self, mut positions: DecodeResult) -> Self {
+        for r in &mut positions.reasons {
+            *r = r.replacen("decode:", "prefill positions:", 1);
+        }
+        self.passed &= positions.passed;
+        self.reasons.extend(positions.reasons.iter().cloned());
+        self.positions = Some(positions);
+        self
+    }
+
     /// Fold the decode gate in: it can only fail a result, never rescue one.
     pub fn with_decode(mut self, decode: DecodeResult) -> Self {
         self.passed &= decode.passed;
@@ -237,8 +264,8 @@ pub fn judge_decode(
                 reasons.push("decode: logits bits differ from the reference".into());
             }
         }
-        GateClass::TextExact => {
-            reasons.push("decode: text_exact has no decode-trace bound".into());
+        GateClass::TextExact | GateClass::TokenDivergence => {
+            reasons.push(format!("decode: {class:?} has no decode-trace bound"));
         }
         GateClass::DenseKl | GateClass::MoeKl => {
             // NaN fails closed.
@@ -300,6 +327,43 @@ pub fn judge_quant(base_kl: f64, base_bytes: u64, cand_kl: f64, cand_bytes: u64)
         passed: reasons.is_empty(),
         reasons,
     }
+}
+
+/// One prompt of a divergence gate: where the two arms first parted, and how
+/// many logits the baseline's choice led by there.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Divergence {
+    pub first: Option<usize>,
+    pub baseline_margin: Option<f64>,
+}
+
+/// `floor` is the share of prompts on which the SAME arm gave two outputs
+/// (`tslab noise`); with no measurement it is zero, so any divergence fails.
+/// A divergence with no recorded margin, or a margin that was not a near tie,
+/// fails whatever the floor.
+pub fn judge_divergence(prompts: &[Divergence], floor: f64) -> (bool, Vec<String>) {
+    use crate::kl_stats::SMALL_MARGIN;
+    let mut reasons = Vec::new();
+    if prompts.is_empty() {
+        reasons.push("no prompts compared".to_string());
+    }
+    let parted: Vec<&Divergence> = prompts.iter().filter(|p| p.first.is_some()).collect();
+    let rate = parted.len() as f64 / prompts.len().max(1) as f64;
+    if rate > floor {
+        reasons.push(format!(
+            "outputs part on {rate:.2} of prompts; the same arm parts from itself on {floor:.2}"
+        ));
+    }
+    for p in parted {
+        if p.baseline_margin.is_none_or(|m| !(m < SMALL_MARGIN)) {
+            reasons.push(format!(
+                "divergence at token {} was not a near tie (margin {:?})",
+                p.first.unwrap_or(0),
+                p.baseline_margin
+            ));
+        }
+    }
+    (reasons.is_empty(), reasons)
 }
 
 /// Peak footprint growth allowed for the candidate arm: the larger of
@@ -432,6 +496,33 @@ mod tests {
         assert!(!judge_quant(0.10, 100, 0.05, 101).passed);
         assert!(!judge_quant(0.10, 100, f64::NAN, 90).passed);
         assert!(!judge_quant(f64::NAN, 100, 0.05, 90).passed);
+    }
+
+    #[test]
+    fn a_divergence_passes_only_as_a_near_tie_within_the_floor() {
+        let same = Divergence {
+            first: None,
+            baseline_margin: None,
+        };
+        let tie = Divergence {
+            first: Some(3),
+            baseline_margin: Some(0.1),
+        };
+        let sure = Divergence {
+            first: Some(3),
+            baseline_margin: Some(4.0),
+        };
+        let unknown = Divergence {
+            first: Some(3),
+            baseline_margin: None,
+        };
+        assert!(judge_divergence(&[same; 4], 0.0).0);
+        // No measured floor: even a tie fails.
+        assert!(!judge_divergence(&[same, tie], 0.0).0);
+        assert!(judge_divergence(&[same, tie], 0.5).0);
+        assert!(!judge_divergence(&[same, sure], 1.0).0);
+        assert!(!judge_divergence(&[same, unknown], 1.0).0);
+        assert!(!judge_divergence(&[], 1.0).0);
     }
 
     #[test]
