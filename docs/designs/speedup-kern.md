@@ -263,6 +263,35 @@ Reading the result:
     not show that a residency set would fail, because a touch may not keep pages
     wired the way a set does.
 
+Result (2026-11-26, `inkling2-mini-mlx4`, one run per arm, AC, load under 2;
+ledger `inkling2_loop.idle-gap-cause-2026-11-26`). After a gap of 2 s or more,
+the first command buffer waited:
+
+| Arm | Wait after 2, 4, 8 s gap (ms) | Prestep after the gap (ms) |
+|---|---|---|
+| none | 178, 199, 206 | |
+| wake | 194, 191, 194 | 6, 10, 13 |
+| touch | 147, 171, 162 | 34, 49, 52 (59,378 pages) |
+
+After 0.5 or 1 s the wait is under 3 ms in every arm. Decode digests are
+equal across arms at every gap.
+
+*   Arm T does not bring the after-gap step to 50 ms or less, so **Step 1b is
+    not built on this evidence**.
+*   Arm W shows the stall is not the GPU waking for any command buffer: an
+    empty dispatch runs in 6 to 13 ms after the gap, and the step after it
+    still waits about 190 ms. The stall follows the step's own work or the
+    resources it binds.
+*   The weights touch costs 34 to 52 ms after a gap (1 to 2 ms after a short
+    one) and lowers the wait by about the same amount: the trunk's pages are a
+    part of the stall, not most of it.
+*   Arm P (`GPUPH`) shows the GPU `OFF` for the whole of a 0.5 s gap as well,
+    so this counter does not tell the stalled gaps from the fast ones.
+
+Per the order below, this is inconclusive and the step stops here. The next
+cause test would touch every buffer the step binds (KV, scratch, expert slots),
+not only the weights. That is a design change, so it waits for the owner.
+
 #### Step 1b: residency set (only if Step 1a supports it)
 
 Author decision, 2026-11-26: a residency set through `metal::objc` messages. Its
@@ -715,7 +744,7 @@ decided), DECLINE (not pursued).
 | KERN-02 | TurboQuant decode attention: GQA-shared, barrier-free, simdgroup-stripe rewrite | DO-NOW | waits on the decode gate |
 | KERN-03 | head_dim 512 GQA-shared decode attention (Gemma 4) | DO-NOW | waits on the decode gate |
 | KERN-04 | GGUF K-quant / Q8_0 / IQ decode GEMV: first measure, then wide-unit kernels | DO-NOW | priced on real bytes (battery and AC agree): Q4_K 0.36x, Q8_0 0.33x of INT4 GB/s; not built, 1.25x arm not written |
-| KERN-05 | Idle stall: cause test, then residency set (Step 1a, 1b) | DO-NOW | one reading in #329: stall found, cause not identified |
+| KERN-05 | Idle stall: cause test, then residency set (Step 1a, 1b) | DO-NOW | Step 1a run: stall reproduced on mlx4; wake and weights touch do not remove it; Step 1b not built |
 | KERN-06 | Spin-poll on command-buffer completion versus sleep (settle with a paired A/B including a hybrid) | CONTESTED | needs an install not on this Mac |
 | KERN-07 | Price precise (safe) math for text decode and the GDN gate transcendentals | DO-NOW | needs an install not on this Mac |
 | KERN-08 | TurboQuant norm-correction fold, K/V split and boundary-layer sweep | DO-NOW | needs an install not on this Mac |

@@ -355,6 +355,85 @@
       },
       "conditions": "one reading on a shared Mac, AC power; a second run before it showed the same step times",
       "note": "after 2 s or more idle the first command buffer waits about 200 ms between kernel scheduling and GPU start; the cause (GPU power state or another) is not established"
+    },
+    {
+      "id": "inkling2_loop.idle-gap-cause-2026-11-26",
+      "date": "2026-11-26",
+      "install": "inkling2-mini-mlx4",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "46e73be8",
+      "workload": "tslab idle-gap with TURBOSPARK_LAB_IDLE_PRESTEP none, wake, touch (KERN-05 Step 1a), one run each",
+      "arms": {
+        "none": {},
+        "wake": {
+          "TURBOSPARK_LAB_IDLE_PRESTEP": "wake"
+        },
+        "touch": {
+          "TURBOSPARK_LAB_IDLE_PRESTEP": "touch"
+        }
+      },
+      "metric": "first_submit_ms",
+      "values": {
+        "none": {
+          "gap_0.5s": 0.83,
+          "gap_1s": 2.35,
+          "gap_2s": 178.47,
+          "gap_4s": 199.16,
+          "gap_8s": 206.12
+        },
+        "wake": {
+          "gap_0.5s": 0.87,
+          "gap_1s": 0.67,
+          "gap_2s": 193.72,
+          "gap_4s": 190.75,
+          "gap_8s": 194.26,
+          "prestep_ms_after_2_to_8s": [
+            5.8,
+            10.4,
+            13.2
+          ]
+        },
+        "touch": {
+          "gap_0.5s": 0.61,
+          "gap_1s": 0.73,
+          "gap_2s": 147.2,
+          "gap_4s": 170.6,
+          "gap_8s": 162.32,
+          "prestep_ms_after_2_to_8s": [
+            33.8,
+            48.8,
+            51.8
+          ],
+          "pages": 59378
+        },
+        "first_step_ms_after_2_to_8s": {
+          "none": [
+            211.4,
+            233.2,
+            240.7
+          ],
+          "wake": [
+            226.3,
+            220.2,
+            224.9
+          ],
+          "touch": [
+            181.0,
+            199.4,
+            196.2
+          ]
+        },
+        "busy_median_ms": 21.0
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "kern05_idle",
+        "record": "1795732615643-46213-2"
+      },
+      "conditions": "AC power, load average under 2, no other model process; swap 8.0 of 9.2 GB used; one run per arm, so no spread; the record is the none run, wake is 1795732673707-51207-2 and touch 1795732731238-55891-2",
+      "note": "the stall reproduces on this install. Neither arm brings the after-gap step near 50 ms, so Step 1a does not support a residency set. The empty dispatch runs in 6 to 13 ms after the gap, yet the next real step still waits about 190 ms: the stall is not the GPU waking for any command buffer, it follows the step's own work or resources. Touching the weights takes 34 to 52 ms after a gap (1 to 2 ms after a short one) and lowers the wait by about the same amount, so the trunk's pages explain a part, not most. GPUPH shows the GPU OFF for all of a 0.5 s gap too, so this counter does not separate the stalled gaps from the fast ones. Decode digests were equal across arms at every gap."
     }
   ],
   "open_questions": [
