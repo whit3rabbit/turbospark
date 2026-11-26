@@ -32,9 +32,9 @@ shared while this was built, so no speed claim was taken from it.
 |---|---|---|---|
 | LAB-01 teacher-forced decode gate | done | Worker mode `forced_decode`; every KL or bit-exact gate of a decoding workload replays the baseline's greedy ids through the candidate (up to 256 steps on 64, 500 and 2000 token prompts) and judges per position. A decode-only change can no longer pass on prefill logits. `gate --decode-trace` forces it. | Speculative and chat workloads stay token-identity only: the runtime loop does not hand out logits. The qwen38 and qwen36 pilots the plan names were not run (neither install is in the catalog store on this host). |
 | LAB-02 per-token KL statistics | partial | KL mean, median, p99 and SE, flip rate and flips by reference margin, PPL per arm, paired NLL delta and SE, over the forced decode trace and the prefill logits at every chunk end. The trace has two text classes, documents and chat, each held to the bound on its own. | Prefill positions are chunk ends, not every token: the chunked kernels return one row per chunk, and a family whose chunk driver skips the head records none. Prefill positions are not split by class (that corpus is all documents). No compact u16 reference. |
-| LAB-03 A/A quality noise | partial | `gate --noise-arms`, `tslab noise`, and the `token_divergence` class for a change of verify width: both arms run under the speculative probe, and outputs may part only on a near tie (baseline margin under 0.5 logits) and no more often than the model's own `noise` record (zero without one). | Covers speculative verify width only, not batched decode or prefill batch width. Tree rounds record no margin, so a divergence there fails. No first-target runs (qwen36, MTP 2 against 3). |
-| LAB-04 floor table | partial | `tslab floor` records a family's arm against itself; `gate` prints limit, floor and margin. No path widens a bound. | The CPU or llama.cpp reference half stays `xengine-kl`, run separately. Floors for the listed families were not collected. |
-| LAB-08 golden answers | partial | `tslab sanity`: 8 exact cases, `--tools`, `--needle` (4K, 16K, 64K at depths 10, 50, 90) and `--candidate` as the functional gate; 15 of 15 on inkling2-mini-ud-q4kxl with the tool and 4K needle cases. A `sanity` step in `new-family`. | The 16K and 64K needles and the per-family mutation pilot were not run. |
+| LAB-03 A/A quality noise | partial | `gate --noise-arms`, `tslab noise`, and the `token_divergence` class for a change of verify width: both arms run under the speculative probe, and outputs may part only on a near tie (baseline margin under 0.5 logits) and no more often than the model's own `noise` record (zero without one). First model run: DFlash depth 2 against 3 on inkling2 mini gave identical tokens. | Covers speculative verify width only, not batched decode or prefill batch width. Tree rounds record no margin. The near-tie rule has not been exercised on a model (nothing diverged). No first-target runs (qwen36, MTP 2 against 3). |
+| LAB-04 floor table | partial | `tslab floor` records a family's arm against itself; `gate` prints limit, floor and margin. No path widens a bound. Floors recorded for inkling2_loop on UD-IQ1_S and UD-Q4_K_XL: bit-identical run to run. | The CPU or llama.cpp reference half stays `xengine-kl`, run separately. Floors for the other listed families were not collected. |
+| LAB-08 golden answers | partial | `tslab sanity`: 8 exact cases, `--tools`, `--needle` (4K, 16K, 64K at depths 10, 50, 90) and `--candidate` as the functional gate; 15 of 15 on inkling2-mini-ud-q4kxl with the tool and 4K needle cases. A `sanity` step in `new-family`. The 16K needle passed at all three depths on inkling2-mini-ud-q4kxl. | The 64K needle was not run: its KV cache beside the install risks this 36 GB Mac. The per-family mutation pilot was not run. |
 
 ## Wave 2
 
@@ -45,7 +45,7 @@ shared while this was built, so no speed claim was taken from it.
 | LAB-13 union pricing | done | `moe_route_replay.py --streams` and `--phase verify` (distinct experts per verify), `depth-replay --cost-model union`, and per verify expert reads and bytes in `tslab spec-rounds`. | Reads are requested, not physically read. The streamed 35B pilot was not run. |
 | LAB-10 verify width beyond 16 | done | `verify_ladder` covers widths 1 to 64 and 96 through the sliced GEMM route, with step edges and a logits-memory budget. | No speculative verify accepts more than 16 rows today, so wider points are a what-if cost. The qwen38 and qwen36 sweeps were not run (not in the catalog store here). |
 | LAB-17 fill ladder | done | `fill-ladder` workflow (0.3K, 8K, 32K); `ab` and `sweep` print and record a per-context-bucket decode ratio and footprint, never pooled into a verdict. | The 64K and larger rungs are not in the built-in plan: the corpus ends near 100K tokens and a long rung on a streamed MoE competes with its slot pool. Not run on installs here. |
-| LAB-24 GPU-idle gap | partial | `trace_tables.py` per-token idle, busy and command buffers; `tslab idle-gap` reports the first step after each gap and how long its first command buffer waited between kernel scheduling and GPU start. | The token count for the trace is given by the caller. The one reading below was host timed on a shared machine; the GPU-side delay has not been read on a model. |
+| LAB-24 GPU-idle gap | partial | `trace_tables.py` per-token idle, busy and command buffers; `tslab idle-gap` reports the first step after each gap and how long its first command buffer waited between kernel scheduling and GPU start. | The token count for the trace is given by the caller. The cause of the idle wait is not established, and it was read on one family on a shared Mac. |
 
 ## Wave 3
 
@@ -120,3 +120,10 @@ All on inkling2-mini, on a Mac another session was also using at times.
 - `idle-gap`: first decode step about 41 ms after a 0.5 or 1 s gap and 240 to
   290 ms after 2, 4 and 8 s (busy median 26 to 33 ms). One reading, host
   timed: it opens the question, it does not name the cause.
+- `idle-gap` with the GPU-side delay (UD-Q4_K_XL): after 0.5 and 1 s idle the
+  first command buffer waits about 0.6 ms for the GPU and the step takes 42 ms;
+  after 2, 4 and 8 s it waits 180 to 225 ms and the step takes 220 to 260 ms.
+  The first version of the probe read nothing here: it did not hook the wait
+  that decode uses.
+- Floors, `noise` (DFlash depth 2), the divergence gate and the 16K needle are
+  findings in `crates/lab/families/inkling2_loop.json`.
