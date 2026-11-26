@@ -22,6 +22,7 @@ use std::time::Instant;
 
 use foundation::LogitValue;
 
+use super::prefill_batched::{batched_by_default, encode_layer_batched, LayerBatch};
 use super::{attn, dense, layer_tensor};
 use crate::real_forward::RealForwardRunner;
 use crate::real_forward_dispatch::{encode_embed_any, encode_gemv_any};
@@ -119,30 +120,36 @@ impl RealForwardRunner {
                 "prefill_chunk called with an empty chunk".to_string(),
             ));
         }
-        // REFUSED BY NAME rather than ignored. A dense driver ignores
-        // `TURBOSPARK_ROUTED_BATCH` legitimately (no routed half to refer
-        // to), but this seam names the driver's RESIDENT GEMVs, which every
-        // family has; the M-row GEMM is wired in Gemma 4's driver alone
-        // (INT4-affine, step 6), so running the per-token loop anyway would
-        // measure the unbatched engine under the batched arm's label
-        // (crate Gotcha 22's rule).
-        if self.batched_gemv_prefill {
-            return Err(RealForwardError::Unsupported(
-                "TURBOSPARK_BATCHED_GEMV is not wired for this family: the M-row \
-                 resident GEMM exists in the gemma4 chunked driver alone \
-                 (INT4-affine), and this driver keeps every resident GEMV per \
-                 token"
-                    .to_string(),
-            ));
-        }
+        // WHICH ARM. Forced (`TURBOSPARK_BATCHED_GEMV=1`) refuses BY NAME
+        // where the batched arm cannot serve, so the per-token loop is never
+        // measured under its label (crate Gotcha 22's rule). Unset takes it
+        // for the families verified on a real install; `=0` never does.
+        let batched = if self.batched_gemv_prefill {
+            if let Some(reason) = self.llama_dense_batched_refusal() {
+                return Err(RealForwardError::Unsupported(format!(
+                    "TURBOSPARK_BATCHED_GEMV cannot serve this install: {reason}"
+                )));
+            }
+            true
+        } else {
+            self.batched_gemv_prefill_auto
+                && batched_by_default(self.arch.family)
+                && self.llama_dense_batched_refusal().is_none()
+        };
+        let width = if batched {
+            self.ensure_llama_prefill_batch()?
+        } else {
+            MAX_PREFILL_BATCH
+        };
         let mut offset = 0usize;
         while offset < tokens.len() {
-            let take = (tokens.len() - offset).min(MAX_PREFILL_BATCH);
+            let take = (tokens.len() - offset).min(width);
             let last = offset + take == tokens.len();
             self.prefill_micro_batch_llama_dense(
                 &tokens[offset..offset + take],
                 start_position + offset,
                 last,
+                batched,
                 logits,
             )?;
             offset += take;
@@ -155,11 +162,17 @@ impl RealForwardRunner {
         tokens: &[i32],
         start_position: usize,
         want_head: bool,
+        batched: bool,
         logits: &mut [LogitValue],
     ) -> Result<(), RealForwardError> {
         let started = Instant::now();
-        let result =
-            self.prefill_micro_batch_llama_dense_inner(tokens, start_position, want_head, logits);
+        let result = self.prefill_micro_batch_llama_dense_inner(
+            tokens,
+            start_position,
+            want_head,
+            batched,
+            logits,
+        );
         // One forward pass per TOKEN, matching every other phase divisor in
         // this port (`crates/runtime/CLAUDE.md` Gotcha 6).
         self.phases.calls += tokens.len() as u64;
@@ -172,6 +185,7 @@ impl RealForwardRunner {
         tokens: &[i32],
         start_position: usize,
         want_head: bool,
+        batched: bool,
         logits: &mut [LogitValue],
     ) -> Result<(), RealForwardError> {
         let arch = self.arch.clone();
@@ -422,6 +436,30 @@ impl RealForwardRunner {
                     )?;
                 }
                 pass = Some(batch_pass);
+            } else if batched && m > 1 {
+                let scratch_m = llama.prefill_batch.as_ref().ok_or_else(|| {
+                    RealForwardError::Unsupported(
+                        "the batched prefill scratch was not allocated".into(),
+                    )
+                })?;
+                encode_layer_batched(
+                    context,
+                    pass.as_ref().expect("chunk pass remains active"),
+                    &LayerBatch {
+                        weights,
+                        index,
+                        arch: &arch,
+                        llama,
+                        scratch,
+                        batch: scratch_m,
+                        kv,
+                        steering,
+                        resid_capture,
+                        layer,
+                        start_position,
+                        rope_positions: &rope_positions,
+                    },
+                )?;
             } else {
                 let row_pass = pass.as_ref().expect("chunk pass remains active");
                 for (t, rope_position) in rope_positions.iter().enumerate() {

@@ -22,7 +22,23 @@ when this file gets updated relative to the version bump and the tag.
   long-context checks, server bench and soak, and the other items in
   `docs/TSLAB_IMPROVE.md`.
 
+### Performance
+- Qwen2 and Qwen2.5 prompt processing multiplies each projection once per
+  group of tokens instead of once per token. INT4 (MLX) installs use the
+  matrix-unit kernels at 64 tokens: 5x to 6x faster on Qwen2.5 7B (M4 Max),
+  with logits within a mean KL of 2e-5 nats of the old loop, not bit-identical.
+  `TURBOSPARK_PREFILL_STEEL=0` selects a bit-identical 16-token form (about 2x;
+  GGUF installs always use it) and `TURBOSPARK_BATCHED_GEMV=0` the old loop.
+  Peak memory rises by about 13 MiB (9 MiB for the bit-identical form).
+- The repetition penalty and top-p sampling with top-k off cost far less on
+  large vocabularies and long contexts, with the same results.
+
 ### Changed
+- `/v1/chat/completions` now answers 400 to `n` greater than 1 and to a
+  `json_schema` response format with `strict: true`. Both were accepted before
+  with only the `x-anyllm-degradation` header, so a client got one choice, or
+  unconstrained text, where it asked for something else. `n: 1`,
+  `strict: false` and `json_object` are still accepted.
 - The macOS app's server now queues generation requests in arrival order and
   answers 429 past 64 waiting requests. It had no queue before.
 - With prefix reuse on (off by default), `cached_tokens` shows a client how much

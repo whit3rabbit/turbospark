@@ -163,13 +163,9 @@ fn encode_attention_input_row(
     rope_position: crate::vision::RopePosition,
     query: (&gpu::MetalBuffer, u64),
 ) -> Result<(), RealForwardError> {
-    let gpu_err = RealForwardError::Gpu;
     let hidden = arch.hidden_size as usize;
-    let num_heads = arch.num_heads as u32;
-    let num_kv = arch.num_full_kv_heads as u32;
-    let head_dim = arch.full_head_dim as u32;
-    let q_dim = (num_heads * head_dim) as usize;
-    let kv_dim = (num_kv * head_dim) as usize;
+    let q_dim = arch.num_heads as usize * arch.full_head_dim as usize;
+    let kv_dim = arch.num_full_kv_heads as usize * arch.full_head_dim as usize;
     let name = |suffix: &str| layer_tensor(layer, &format!("self_attn.{suffix}"));
 
     // K and V are written STRAIGHT INTO the cache slot by the GEMV on an
@@ -208,6 +204,49 @@ fn encode_attention_input_row(
             out,
         )?;
     }
+
+    encode_attention_row_post(
+        context,
+        pass,
+        weights,
+        index,
+        arch,
+        llama,
+        layer,
+        position,
+        rope_position,
+        query,
+        (k_buf, k_off),
+        (v_buf, v_off),
+    )
+}
+
+/// Everything one position's Q/K/V still needs after the projections: the
+/// biases, the q/k norm and RoPE, in place. The batched prefill arm
+/// (`prefill_batched`) runs it per row after its M-row GEMMs, so the two arms
+/// cannot drift.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn encode_attention_row_post(
+    context: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &ResidentIndex,
+    arch: &ArchConfig,
+    llama: &RealLlamaState,
+    layer: usize,
+    position: usize,
+    rope_position: crate::vision::RopePosition,
+    query: (&gpu::MetalBuffer, u64),
+    (k_buf, k_off): (&gpu::MetalBuffer, u64),
+    (v_buf, v_off): (&gpu::MetalBuffer, u64),
+) -> Result<(), RealForwardError> {
+    let gpu_err = RealForwardError::Gpu;
+    let num_heads = arch.num_heads as u32;
+    let num_kv = arch.num_full_kv_heads as u32;
+    let head_dim = arch.full_head_dim as u32;
+    let q_dim = (num_heads * head_dim) as usize;
+    let kv_dim = (num_kv * head_dim) as usize;
+    let name = |suffix: &str| layer_tensor(layer, &format!("self_attn.{suffix}"));
 
     // Qwen2 applies all three projection biases before RoPE. Applying them
     // after rotation would rotate the learned bias differently at every

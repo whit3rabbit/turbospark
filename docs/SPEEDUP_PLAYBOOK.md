@@ -1723,3 +1723,251 @@ dispatch probe, a whole-forward verify-width ladder, engagement lines per
 arm, stand-in ablation, a Metal System Trace command, rows per simdgroup as
 a bench axis, a live round-cost table) are listed there with their gates. Its dead ends are recorded
 so they are not re-derived here.
+
+## SPEEDUP-IMPROVE first pass (2026-11-26)
+
+A first pass over the 145 entries of the combined speed and memory plan
+(`SPEEDUP-IMPROVE.md`, a working file not in the repository). Host: M4 Max,
+36 GB, AC power, load 2 to 7 from other sessions, so every rate below is a
+price, not a frozen benchmark row.
+
+### What changed
+
+| Change | Measured | Check |
+|---|---|---|
+| Repetition penalty marks a bitset instead of hashing the history (SERV-05) | At V=262144: 1660 us to 145 us at a 128K history, 463 to 63 us at 32K, 63 to 11 us at 4K. A 64-token history got slower, 0.9 to 3.2 us | Random histories against a membership scan |
+| Nucleus sampling with top-k off ranks a 256-entry prefix before it sorts the vocabulary (found while settling SERV-21) | `select` on peaked synthetic logits at V=262144: 13.8 to 2.0 ms | Same surviving set as the full sort: narrow, wide and flat inputs |
+| Every dispatch checks its threadgroup size against the pipeline limit and panics when over (KERN-01) | Safety, no speed claim | A dispatch at the limit runs, one past it panics; the whole gpu crate passes |
+| DFlash2 context-KV write batches its norm and RoPE dispatches (KERN-11) | Not timed. Per layer, one norm and one RoPE per ring span instead of per row | The batched primitives are already pinned bit-identical (`rms_norm_rows_as_heads`, `rope_parity`). No DFlash2 install ran |
+| Point-mass proposal keeps the target law (SPEC-01 step a) | 60000 seeds per proposal | `tests/point_mass_proposal.rs`; accept-all mutation fails it. The runtime still refuses sampled block drafting |
+
+Greedy and sampled smokes ran on an Inkling 2 Mini install and on
+`qwen25-7b-4bit` (downloaded for this, then removed) without the new guard
+firing. Seen in passing and not caused here: a 2237-token prompt on that
+Qwen2.5 install prefills in 27 s, and the released 0.10.2 takes 28 s.
+
+### What was priced
+
+`crates/gpu/tests/gemv_format_price.rs` times each GEMV on the same shapes
+(zero weights, interleaved arms). Weight GB/s against INT4 affine g64:
+
+| Format | GB/s ratio | Weights per second ratio |
+|---|---|---|
+| Q4_K | 0.30 to 0.36 | 0.30 to 0.36 |
+| Q8_0 | 0.53 to 0.68 | 0.28 to 0.36 |
+| 2-bit g128 | 0.24 to 0.31 | 0.48 to 0.62 |
+
+- Both KERN-04 (GGUF block formats) and QFAM-02 (2-bit) clear their "worth a
+  kernel rewrite" bar. Q5_K, Q6_K and the IQ types were not timed.
+- Packed `half4` loads of `x` in the 2-bit kernel changed nothing (110 to 117
+  GB/s either way): the compiler already merges them. A real gain needs a
+  different lane mapping, which changes rounding, so it needs the
+  teacher-forced decode gate first. Not kept.
+- SERV-21: `select` at V=262144 costs 0.7 ms greedy and 1.1 ms at top-k 40.
+  The two quoted audit figures were 1.18 and 2.9 ms. Greedy is under the
+  plan's 3% bar on a 25 ms token, so no GPU argmax was built.
+
+### Done here (4)
+
+SERV-05, SERV-18 and KERN-01 are built and tested (SERV-18: `/v1/chat/completions` answers 400 to `n > 1` and strict `json_schema`; its `logit_bias` and `logprobs` half is still queued). KERN-11 is built; its two primitives are proven bit-identical, but no DFlash2 install ran (see below).
+
+KERN-01, KERN-11, SERV-05, SERV-18
+
+### Priced or settled here, rewrite not built (4)
+
+See the numbers above.
+
+KERN-04, QFAM-02, SERV-21, SPEC-01
+
+### Applied by another session, not yet committed (3)
+
+These sit uncommitted in the main checkout; redoing them here would conflict.
+
+SERV-01, SERV-02, SERV-03
+
+### Tooling is in the open tslab PR (turbospark#329); the measurement is not run (17)
+
+Do not build a second copy. Run these once that PR merges.
+
+KERN-05, KERN-12, KERN-13, MOEK-03, MOEK-04, MOEM-01, MOEM-02, MOEM-04, MOEM-05, MOEM-06, MOEM-08, MOEM-09, MOEM-14, QFAM-01, QFAM-07, SERV-23, SPEC-04
+
+### Changes decode numbers, so it waits for the teacher-forced decode gate (5)
+
+Ground rule 2 of the plan. The gate (LAB-01) is in turbospark#329 and not on this branch.
+
+KERN-02, KERN-03, KERN-17, KERN-24, MOEK-02
+
+### Needs a Qwen, Gemma 4, Flint or LFM3 install that is not on this host (14)
+
+Only Inkling 2 Mini installs were present. The MoE ones are 17 to 19 GiB against 17 to 23 GB free, and a paired A/B also wants a quiet host: load was 2 to 7 with other sessions running.
+
+KERN-06, KERN-07, KERN-08, KERN-16, KERN-27, MOEK-01, MOEK-08, MOEK-09, MOEK-10, SERV-04, SERV-25, SPEC-02, SPEC-03, SPEC-09
+
+### Inkling 2 item, held while another session edits those files (3)
+
+The main checkout has uncommitted Inkling 2 runtime changes.
+
+MOEK-13, SERV-06, SERV-28
+
+### Family or tower intake (9)
+
+Each is its own project (checkpoint, mapping, kernels, quality and memory gates, `docs/NEW_MODEL.md`), not a speedup edit.
+
+QFAM-03, QFAM-04, QFAM-13, QFAM-14, QFAM-15, QFAM-16, QFAM-17, QFAM-20, QFAM-21
+
+### Queued by the plan, not started (28)
+
+A feature or build behind an earlier phase's result (Phase 3 and 4). None was started.
+
+KERN-09, KERN-22, KERN-29, MOEK-06, MOEM-03, MOEM-07, MOEM-13, QFAM-05, QFAM-06, QFAM-08, QFAM-11, QFAM-12, QFAM-18, QFAM-19, QFAM-25, QFAM-27, SERV-07, SERV-08, SERV-10, SERV-13, SERV-14, SERV-16, SERV-17, SERV-19, SERV-24, SPEC-12, SPEC-13, SPEC-14
+
+### Needs data first, not started (42)
+
+The entry's pricing step needs an install, a captured trace or a tslab capability that was not available here.
+
+KERN-10, KERN-14, KERN-15, KERN-18, KERN-19, KERN-21, KERN-25, KERN-26, KERN-30, MOEK-05, MOEK-07, MOEK-11, MOEK-12, MOEM-11, MOEM-12, MOEM-15, MOEM-16, MOEM-18, MOEM-19, MOEM-21, QFAM-22, QFAM-23, QFAM-24, QFAM-26, QFAM-31, SERV-09, SERV-11, SERV-12, SERV-15, SERV-20, SERV-22, SERV-26, SPEC-05, SPEC-06, SPEC-07, SPEC-08, SPEC-10, SPEC-11, SPEC-15, SPEC-16, SPEC-17, SPEC-18
+
+### Contested, not settled (5)
+
+Settled only by the paired A/B the entry names, on a quiet AC host.
+
+KERN-23, MOEM-10, MOEM-17, QFAM-09, QFAM-10
+
+### Declined by the plan (11)
+
+No action; reopen only on the entry's stated gate.
+
+KERN-20, KERN-28, MOEK-14, MOEM-20, QFAM-28, QFAM-29, QFAM-30, SERV-27, SPEC-19, SPEC-20, SPEC-21
+
+
+## Qwen2 prefill on the llama flow (2026-11-26)
+
+A 2237-token prompt on `qwen25-7b-4bit` took 27 s. M4 Max, AC power, load
+about 3 and 6 GB of swap in use from other processes, so these are prices.
+
+### Cause
+
+`families/llama/prefill.rs` groups 16 tokens into a command buffer but still
+multiplies every projection once per token (`encode_gemv_any`), so each prompt
+token rereads about 4 GB of weights, as a decode token does.
+
+- Prefill is 82 to 84 tok/s at 157, 577, 1117 and 2237 tokens. Decode on the
+  same runs is 105 to 115 tok/s.
+- `TURBOSPARK_PHASES=1`: 98% of the time is waiting on the GPU.
+- `TURBOSPARK_DISPATCH_PROFILE=1`: `dequant_int4_gemv_simd` is about 85% of the
+  chunk buffer (rank only, profiled times are inflated).
+- Why a prefill token (12 ms) costs more than a decode token (9.5 ms) was not
+  established.
+- Batched attention exists here for `ModelFamily::Llama` only, and Qwen2 is
+  `Qwen2Dense`.
+- The released 0.10.2 is the same speed, so this is not a regression.
+- By the code, dense Llama, Qwen3 and Qwen3-VL use this driver and have the
+  same per-token multiplies. Only Qwen2 was measured.
+
+The lab's `qwen2.batched-gemv-2026-10-29` row ("noise", "the chunk-128 batched
+prefill default stands on this family too") compared the same code twice. This
+driver never reads the automatic batched setting, and it refuses an explicit
+`TURBOSPARK_BATCHED_GEMV=1` by name.
+
+### Price
+
+`qwen38_int4_prefill_gemm_probe` with its shapes swapped for Qwen2.5-7B's
+(synthetic weights, 64 rows), summed over 28 layers, per prompt token:
+
+| Weight multiplies | ms per token |
+|---|---|
+| today (about 4 GB per token at about 400 GB/s) | about 10 |
+| scalar batched kernel, bit-identical to per-token | about 4.1 |
+| Steel `M32K32N32` | about 1.4 |
+
+Attention and the per-row ops stay on top of these. A projection, not a
+measurement: about 2x end to end with the scalar kernel and 3x to 5x with
+Steel.
+
+### Built: the scalar batched arm
+
+`families/llama/prefill_batched.rs` runs every projection once over the
+16-row micro-batch with the scalar M-row kernels. Biases, q/k norm, RoPE,
+attention, steering and capture stay the per-token arm's code, row by row.
+Qwen2 takes it by default; `TURBOSPARK_BATCHED_GEMV=0` restores the per-token
+loop and `=1` forces it on Qwen3, Qwen3-VL and MiniMax installs (dense Llama
+keeps its batch-attention route and is refused by name). It falls back, or
+refuses when forced, on quantized or ring KV, `TURBOSPARK_INT4_MMA8=verify`,
+or a projection with no M-row kernel (Q3_K, Q2_K, IQ).
+
+On `qwen25-7b-4bit`:
+
+- Bit-identical to the per-token loop: prompt logits and four greedy tokens on
+  a 1117-token prompt, four rounds
+  (`real_install_batched_prefill_is_bit_identical_and_timed`).
+- Prefill, same test, arms interleaved. One session: 83 to 195 tok/s
+  (2.2x to 2.4x). A later one, both arms slower for a reason not found: 44 to
+  135 tok/s (2.6x to 3.1x).
+- CLI, 2237 tokens: 28.7 to 13.2 s, same text.
+- Peak footprint on the chunked path: see "The matrix arm" below. It is over
+  the family's frozen ceiling.
+
+`qwen2_dense_memory_oracle` and `run_protocol_case` prefill one token at a
+time, so they do not exercise this arm.
+
+Only the MLX INT4 install was run. The Qwen2 Q4_K_M GGUF takes the default
+too, on K-quant M-row kernels that parity tests hold bit-exact, but no real
+GGUF install was run.
+
+### The matrix arm
+
+For INT4 installs of a family listed in `matrix_by_default` (Qwen2 only), the
+micro-batch is 64 rows, projections run Steel and attention runs the multi-row
+GQA partial. `TURBOSPARK_PREFILL_STEEL=0` returns the exact 16-row arm and
+`TURBOSPARK_PREFILL_ROWS_ATTN=0` keeps one-row attention. GGUF Qwen2 installs
+stay on the exact arm.
+
+Quality, `qwen2_prefill_arm_probe` on `qwen25-7b-4bit`, bars fixed before the
+first run (mean KL under 1e-3 nats and top-1 at least 99%, against the
+per-token loop):
+
+| Positions | Mean KL (nats) | Max KL | Top-1 |
+|---|---|---|---|
+| Prompt end, 14 prompts of 64 to 3000 tokens | 1.5e-5 | 3.0e-5 | 14/14 |
+| 448 teacher-forced decode steps on the written cache | 1.1e-5 | 1.2e-4 | 448/448 |
+
+`qwen2_dense_quality_gate` feeds one token at a time, so it says nothing about
+this arm and was not re-run.
+
+Prefill, 1117 tokens, arms interleaved in one process on a free GPU
+(`qwen2_prefill_arm_timing`, three rounds after warmup):
+
+| Arm | tok/s | Against per-token |
+|---|---|---|
+| per-token | 81 to 84 | 1x |
+| exact | 171 to 201 | 2.1x to 2.4x |
+| matrix, one-row attention | 382 to 445 | 4.7x to 5.3x |
+| matrix | 434 to 534 | 5.4x to 6.3x |
+
+Peak footprint, sampled as the memory oracle samples it, 8192 context, 2859
+tokens, one process per arm, two runs each:
+
+| Arm | MiB |
+|---|---|
+| per-token | 653.3 |
+| exact | 662.7 |
+| matrix | 666.0 to 666.2 |
+
+Both batched arms are over the 660 MiB ceiling `qwen2_dense_memory_oracle`
+asserts, and the oracle passes only because it prefills per token. The matrix
+arm was kept as the default anyway (2026-11-26 decision: about 13 MiB for 5x to
+6x prefill). The batched path has its own 706 MiB ceiling, about 6% over the
+reading, asserted by `qwen2_prefill_arm_footprint`; the per-token ceiling is
+unchanged. A later pass read 650.6, 659.4 and 666.0, so the per-token and
+exact rows move by about 3 MiB between sessions.
+
+Timing traps met here: another session's `tslab` run held the GPU while the
+CPU load read low, and cut every arm to about a third. Separate CLI processes
+swung 3x on the same arm (exact: 49 s, then 16 s), so only the interleaved
+in-process numbers are quoted.
+
+### Next
+
+1. A smaller scratch (the FFN activation could reuse the gate buffer).
+2. Qwen3 and Qwen3-VL: each needs the exact gate, the KL probe, memory and
+   paired timing before either arm is its default.

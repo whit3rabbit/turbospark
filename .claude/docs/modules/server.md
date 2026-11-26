@@ -448,9 +448,10 @@ TURBOSPARK_GEMMA4_INSTALL_DIR=~/models/gemma4.gturbo \
     combining it with a dropped-image note -- one function, both call sites.
 
     Every warning here is conditioned on the DEFAULT the server already
-    produces matching the field's own OpenAI default: `n` warns past 1, not
-    at 1 (this server already returns one choice), `response_format` warns
-    past `"text"`, not at it. `presence_penalty` and `frequency_penalty`
+    produces matching the field's own OpenAI default: `response_format` warns
+    past `"text"`, not at it. `n` past 1 and a `json_schema` with
+    `strict: true` do not warn: `unsupported_request_field` refuses them with
+    a 400, since the reply could not carry what they ask for. `presence_penalty` and `frequency_penalty`
     warn UNCONDITIONALLY whenever present, because neither reaches
     `selection::shaping` yet -- delete those two arms the day they do.
 

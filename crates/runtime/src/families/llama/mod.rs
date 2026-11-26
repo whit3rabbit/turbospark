@@ -31,6 +31,7 @@ mod dense;
 mod moe;
 mod moe_prefill;
 mod prefill;
+mod prefill_batched;
 pub(crate) mod router;
 mod state;
 
