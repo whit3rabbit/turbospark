@@ -38,7 +38,7 @@ extension AppModel {
             case .chat: return "Chat"
             case .images: return "Image Generation"
             case .files: return "Files"
-            case .modelManager: return "Installed"
+            case .modelManager: return "Models"
             case .modelHub: return "Discover"
             case .server: return "API"
             case .audio: return "Audio"
@@ -85,9 +85,15 @@ extension AppModel {
         /// panel's width there.
         public var hasSidebarPanel: Bool {
             switch self {
-            case .chat, .audio, .images, .modelManager, .server: return true
-            case .files, .modelHub, .humanize: return false
+            case .chat, .audio, .images, .modelManager, .modelHub, .server: return true
+            case .files, .humanize: return false
             }
+        }
+        /// The sidebar row this section lights up. Discover is a mode of Models
+        /// (reached from its panel), not a row of its own, so it highlights the
+        /// Models row and the rail's Models icon.
+        public var navigationRow: AppNavigationSection {
+            self == .modelHub ? .modelManager : self
         }
         /// Whether the Generation menu's Generate/Queue item may run the chat
         /// draft. Only the chat section shows the composer it would send: a

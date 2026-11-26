@@ -2,15 +2,17 @@ import SwiftUI
 
 /// Keep both sidebar presentations in the same order without changing shortcuts.
 enum SidebarNavigationGroup: CaseIterable, Identifiable {
-    case creation, models, utilities
+    /// The most used destinations first, then what you create with, then the
+    /// rest. Discover is not a row: it is a mode of Models.
+    case main, create, workspace
 
     var id: Self { self }
 
     var sections: [AppModel.AppNavigationSection] {
         switch self {
-        case .creation: return [.chat, .images, .audio, .humanize]
-        case .models: return [.modelManager, .modelHub]
-        case .utilities: return [.server, .files]
+        case .main: return [.chat, .humanize, .server, .modelManager]
+        case .create: return [.images, .audio]
+        case .workspace: return [.files]
         }
     }
 }

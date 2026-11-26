@@ -149,10 +149,11 @@ final class AppChromeLayoutTests: XCTestCase {
 
     func testExactlyTheSectionsWithPanelContentHaveASidebarPanel() {
         // The window floor and the sidebar both follow this, so a section
-        // listed here wrongly reserves (or drops) 260pt of width. Files,
-        // Discover and Humanize have nothing to list beside the rail.
+        // listed here wrongly reserves (or drops) 260pt of width. Files and
+        // Humanize have nothing to list beside the rail. Discover is a mode of
+        // Models and shows the Models panel.
         let withPanel = AppModel.AppNavigationSection.allCases.filter(\.hasSidebarPanel)
-        XCTAssertEqual(Set(withPanel), [.chat, .audio, .images, .modelManager, .server])
+        XCTAssertEqual(Set(withPanel), [.chat, .audio, .images, .modelManager, .modelHub, .server])
     }
 
     func testEveryPanelButChatsHasARailMenuForWhenItIsHidden() {
