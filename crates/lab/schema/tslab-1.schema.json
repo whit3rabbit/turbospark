@@ -44,6 +44,7 @@
         "quant_ab",
         "launch_count",
         "anchor",
+        "idle_gap",
         "release_gate",
         "serve_bench",
         "soak"

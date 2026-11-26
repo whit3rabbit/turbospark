@@ -79,11 +79,14 @@ tslab: the evaluator for kernel and method experiments (macOS).
   tslab export  --experiment A[,B]|--all [--kind K[,K]] [--format jsonl|json|csv] [--redact-paths]
                 [--out PATH [--force]]            (ledgers as tslab/1 series)
   tslab report  --experiment A[,B]|--all --html OUT.html [--title T] [--kind K] [--redact-paths] [--force]
-  tslab sanity  --model M [--file golden.json] [--arm SPEC] [--decode 512]   (exact golden answers; exit 1 on a miss)
+  tslab sanity  --model M [--file golden.json] [--arm SPEC] [--decode 512] [--tools] [--needle all|4096,16384]
+                [--candidate SPEC]                 (exact golden answers, tool calls, needle grid; exit 1 on a miss,
+                 or with --candidate on any case it loses against --arm)
   tslab noise   --model M [--runs 5] [--arm SPEC] [--prompt ...] [--decode 128]  (run-to-run output spread)
   tslab floor   --model M [--arm SPEC]             (the arm against itself, kept per family; gate prints the margin)
   tslab quant-ab --ref M --base M --cand M [--cand M]   (installs on one reference's ids: no worse KL at no more bytes)
   tslab launch-count --model M [--arm SPEC]... [--decode 32] [--us-per-dispatch X]  (unquotable)
+  tslab idle-gap --model M [--arm SPEC]            (does a 0.5-8 s idle gap cost the next token?)
   tslab anchor  --model M --file anchors.json [--update]   (greedy digests per family and toolchain; exit 3 on change)
   tslab release-gate --base-worker PATH --model M... [--declared FILE] [--metric decode_tok_s] [--pairs 3]
   tslab type1   [--trials 20000]                   (false WIN and LOSS rates from stored null calibrations)
@@ -199,6 +202,7 @@ pub const COMMANDS: &[&str] = &[
     "floor",
     "quant-ab",
     "launch-count",
+    "idle-gap",
     "anchor",
     "release-gate",
     "type1",
@@ -245,6 +249,7 @@ pub fn dispatch(cmd: &str, args: Args) -> Result<CmdOutput, String> {
         "floor" => crate::checks::floor_cmd(args),
         "quant-ab" => crate::checks::quant_ab_cmd(args),
         "launch-count" => crate::checks::launch_count_cmd(args),
+        "idle-gap" => crate::checks::idle_gap_cmd(args),
         "anchor" => crate::checks::anchor_cmd(args),
         "release-gate" => crate::checks::release_gate_cmd(args),
         "type1" => crate::checks::type1_cmd(args),
@@ -598,7 +603,7 @@ pub fn null_floor(
         .of_kind("null_calibration")?
         .iter()
         .rev()
-        .find(|r| r["workload"] == w && r["metric"] == m)
+        .find(|r| r["workload"] == w && r["metric"] == m && usable_null(r))
         .map(|r| {
             (
                 r["floor"].as_f64().unwrap_or(0.0),
@@ -606,6 +611,14 @@ pub fn null_floor(
             )
         })
         .unwrap_or((0.0, 0)))
+}
+
+/// A calibration with fewer pairs than a verdict needs measures no spread:
+/// one pair has a MAD of zero, which would read as a perfectly quiet host.
+pub fn usable_null(record: &Value) -> bool {
+    record["improvements"]
+        .as_array()
+        .is_some_and(|v| v.len() >= stats::MIN_PAIRS)
 }
 
 fn median_peak(outcomes: &[&Outcome]) -> Option<f64> {
@@ -712,6 +725,7 @@ fn ab(mut args: Args) -> Result<(), String> {
         null_floor(&session, &workload, metric)?
     };
     let min_effect = requested_effect.max(floor);
+    let baseline_route = session.baseline_route(&baseline, &workload)?;
     eprintln!(
         "tslab ab: {} vs {}, metric {metric:?}, effect floor {:.2}% (null floor {:.2}%)",
         baseline.name,
@@ -751,7 +765,13 @@ fn ab(mut args: Args) -> Result<(), String> {
     if let Some(why) = &stopped {
         crate::say!("  stopped early: {why}");
     }
-    if null {
+    if null && verdict.improvements.len() < stats::MIN_PAIRS {
+        crate::say!(
+            "  no null floor recorded: {} clean pairs, a calibration needs {}",
+            verdict.improvements.len(),
+            stats::MIN_PAIRS
+        );
+    } else if null {
         let floor = stats::null_floor(&verdict.improvements);
         // Twice the identical arms' peak gap is what this host's peak
         // reading cannot resolve.
@@ -773,6 +793,7 @@ fn ab(mut args: Args) -> Result<(), String> {
                    "baseline": baseline, "candidate": candidate, "verdict": verdict,
                    "null_floor": floor, "memory": memory, "pairs": run_ids,
                    "noninferiority": not_worse,
+                   "baseline_route": baseline_route,
                    "methodology": crate::orchestrate::methodology(&workload, crate::worker::Mode::Timing),
                    "buckets": report::bucket_table(&pairs)}),
         )?;
@@ -1029,6 +1050,14 @@ fn pinned_cmd(mut args: Args) -> Result<CmdOutput, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_one_pair_calibration_is_not_a_floor() {
+        assert!(!usable_null(&json!({"improvements": [-0.14]})));
+        assert!(!usable_null(&json!({"improvements": [0.0, 0.0]})));
+        assert!(usable_null(&json!({"improvements": [0.0, 0.01, -0.01]})));
+        assert!(!usable_null(&json!({})));
+    }
+
     use super::*;
 
     fn outcome(status: &str, reasons: &[&str]) -> Outcome {

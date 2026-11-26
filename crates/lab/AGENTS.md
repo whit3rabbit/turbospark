@@ -76,7 +76,8 @@ loop's `run-experiment`. Text and audio installs of every family.
   per-position statistics in `src/kl_stats.rs`, bounds in `gates.rs`
   `judge_decode`). A prefill number says nothing about the decode path.
 - `src/checks.rs`: the one-model commands beside the A/B (`sanity` over
-  `src/golden.rs`, `noise`, `floor`, `quant-ab`, `launch-count`, `anchor`,
+  `src/golden.rs` and `src/functional.rs`, `noise`, `floor`, `quant-ab`,
+  `launch-count`, `idle-gap`, `anchor`,
   `release-gate`, `type1`). `src/report_md.rs`: `report --md`.
 - `src/serve_bench/`: `serve-bench` and `soak` over a loopback HTTP/SSE
   server, with their own methodology strings.

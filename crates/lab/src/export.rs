@@ -61,6 +61,7 @@ pub fn collect(
             }
         }
     }
+    crate::series::split_by_methodology(&mut out);
     Ok(out)
 }
 

@@ -125,6 +125,10 @@ pub const KINDS: &[(&str, &str)] = &[
     ),
     ("anchor", "greedy digests keyed by family and toolchain"),
     (
+        "idle_gap",
+        "first decode step after 0.5 to 8 s idle gaps against the busy median",
+    ),
+    (
         "release_gate",
         "a released worker against this build, per install: verdict, digests, declared reason",
     ),

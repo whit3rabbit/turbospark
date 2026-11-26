@@ -65,6 +65,56 @@ fn evict_install(dir: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Lane lines the default route printed and this arm's run did not, and the
+/// reverse. A baseline that lost a default lane flatters the candidate
+/// (LAB-06).
+pub fn route_difference(default: &Value, arm: &Value) -> (Vec<String>, Vec<String>) {
+    let lines = |v: &Value| -> std::collections::BTreeSet<String> {
+        v["engaged"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|x| x.as_str().map(str::to_string))
+            .collect()
+    };
+    let (d, a) = (lines(default), lines(arm));
+    (
+        d.difference(&a).cloned().collect(),
+        a.difference(&d).cloned().collect(),
+    )
+}
+
+impl Session {
+    /// For a baseline that sets anything: one unmeasured run of the plain
+    /// default arm and one of the baseline, compared by engagement lines.
+    /// `Null` when the baseline is the default arm.
+    pub fn baseline_route(&self, baseline: &Arm, workload: &Workload) -> Result<Value, String> {
+        if baseline.env.is_empty() {
+            return Ok(Value::Null);
+        }
+        let default = Arm {
+            name: format!("{}-default", baseline.name),
+            env: Default::default(),
+            expect_engaged: Vec::new(),
+            ..baseline.clone()
+        };
+        let d = self.run_once(&default, workload, Mode::Timing, 0, true)?;
+        let b = self.run_once(baseline, workload, Mode::Timing, 0, true)?;
+        if d.status != "ok" || b.status != "ok" {
+            return Ok(json!({"unknown": "a route probe run did not finish"}));
+        }
+        let (missing, extra) = route_difference(&d.record, &b.record);
+        if !missing.is_empty() || !extra.is_empty() {
+            eprintln!(
+                "warning: the baseline {} is NOT the default route (missing {missing:?}, extra {extra:?}); \
+                 a gain over it is not a gain over what ships",
+                baseline.name
+            );
+        }
+        Ok(json!({"default_missing": missing, "default_extra": extra}))
+    }
+}
+
 /// Bumped when what a metric means changes. Records with different ids are
 /// not comparable.
 pub const METHODOLOGY_VERSION: u32 = 2;
@@ -87,6 +137,7 @@ pub fn methodology(workload: &Workload, mode: Mode) -> Value {
         Mode::Timing => "timing",
         Mode::Quality => "quality",
         Mode::ForcedDecode => "forced_decode",
+        Mode::IdleGap => "idle_gap",
     };
     let workload_sha256 = model_io::hash_data(text.as_bytes());
     json!({
@@ -364,7 +415,7 @@ impl Session {
         let logits_path = match mode {
             Mode::Quality => Some(runs.join(format!("{run_id}.logits.f16"))),
             Mode::ForcedDecode => Some(runs.join(format!("{run_id}.trace.f16"))),
-            Mode::Timing => None,
+            Mode::Timing | Mode::IdleGap => None,
         };
         let request = WorkerRequest {
             run_id: run_id.clone(),
@@ -482,6 +533,7 @@ impl Session {
             if !ane_stats.is_null() {
                 m.insert("ane_stats".into(), ane_stats.clone());
             }
+            m.insert("engaged".into(), json!(engaged));
         }
         let status = if timed_out {
             "timeout".to_string()
@@ -544,6 +596,7 @@ impl Session {
             "family": record["family"],
             "totals": record["totals"],
             "audio": record["audio"],
+            "open_pressure": record["open_pressure"],
             "peak_footprint_bytes": record["peak_footprint_bytes"],
             "exe_sha256": record["provenance"]["exe_sha256"],
             "speculation": arm.speculation,
@@ -1034,5 +1087,21 @@ mod methodology_tests {
         std::fs::write(&path, "two").unwrap();
         assert_ne!(a["id"], methodology(&w, Mode::Timing)["id"]);
         std::fs::remove_file(&path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::*;
+
+    #[test]
+    fn a_lane_the_baseline_lost_is_named() {
+        let d = json!({"engaged": ["a", "b"]});
+        let b = json!({"engaged": ["b", "c"]});
+        assert_eq!(
+            route_difference(&d, &b),
+            (vec!["a".to_string()], vec!["c".to_string()])
+        );
+        assert_eq!(route_difference(&d, &d), (vec![], vec![]));
     }
 }

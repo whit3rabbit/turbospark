@@ -77,6 +77,8 @@ pub mod experiment;
 #[cfg(target_os = "macos")]
 pub mod families;
 #[cfg(target_os = "macos")]
+pub mod functional;
+#[cfg(target_os = "macos")]
 pub mod host;
 #[cfg(target_os = "macos")]
 pub mod hybrid_replay;

@@ -44,6 +44,9 @@ pub enum Mode {
     /// write every step's logits (LAB-01). Without `forced_ids` the run's own
     /// greedy ids become the sequence. Never a timing run.
     ForcedDecode,
+    /// Sleep between short decodes and time the first step after each gap
+    /// (LAB-24): does an idle GPU cost the next token anything?
+    IdleGap,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -266,6 +269,13 @@ pub struct RunRecord {
     /// stages in ms, output_digest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio: Option<serde_json::Value>,
+    /// Compressor pages and swap growth across the install's open (LAB-15):
+    /// a footprint reading beside heavy compression is a false green.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub open_pressure: Option<serde_json::Value>,
+    /// `Mode::IdleGap`'s rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idle_gap: Option<serde_json::Value>,
 }
 
 fn refused(req: &WorkerRequest, reason: String) -> RunRecord {
@@ -290,6 +300,8 @@ fn refused(req: &WorkerRequest, reason: String) -> RunRecord {
         dispatch_profile: None,
         provenance: provenance::collect(),
         audio: None,
+        open_pressure: None,
+        idle_gap: None,
     }
 }
 
@@ -805,6 +817,54 @@ fn open(
     Ok((runner, tokenizer, family))
 }
 
+/// The idle gaps the probe sleeps, seconds.
+pub const IDLE_GAPS_S: [f64; 5] = [0.5, 1.0, 2.0, 4.0, 8.0];
+/// Decode steps timed after each gap.
+const IDLE_STEPS: usize = 20;
+
+/// Prefill the first prompt, then for each gap: sleep, time one step, then
+/// time the following steps as the busy reading.
+fn idle_gap_probe(
+    runner: &mut RealForwardRunner,
+    ids: &[i32],
+    chunk: Option<usize>,
+    logits: &mut [LogitValue],
+    sampler: &mut AppMemorySampler,
+) -> Result<serde_json::Value, String> {
+    runner.reset();
+    prefill(runner, ids, chunk, logits, sampler)?;
+    let mut pos = ids.len();
+    let mut step = |runner: &mut RealForwardRunner, logits: &mut [LogitValue]| {
+        let t = argmax(logits)?;
+        let started = Instant::now();
+        runner.produce(t, pos, logits).map_err(|e| e.to_string())?;
+        pos += 1;
+        Ok::<f64, String>(started.elapsed().as_secs_f64() * 1e3)
+    };
+    let mut rows = Vec::new();
+    for gap in IDLE_GAPS_S {
+        for _ in 0..IDLE_STEPS {
+            step(runner, logits)?;
+        }
+        std::thread::sleep(std::time::Duration::from_secs_f64(gap));
+        let first_ms = step(runner, logits)?;
+        let mut busy = Vec::with_capacity(IDLE_STEPS);
+        for _ in 0..IDLE_STEPS {
+            busy.push(step(runner, logits)?);
+        }
+        busy.sort_by(f64::total_cmp);
+        rows.push(serde_json::json!({"gap_s": gap, "first_ms": first_ms,
+                                     "busy_median_ms": busy[busy.len() / 2]}));
+    }
+    sampler.sample();
+    Ok(serde_json::Value::Array(rows))
+}
+
+/// Steps the probe needs room for beyond the prompt.
+pub fn idle_gap_steps() -> usize {
+    IDLE_GAPS_S.len() * (2 * IDLE_STEPS + 1)
+}
+
 /// A forced decode drives plain prompts only, and given ids must cover
 /// every prompt for the whole decode.
 fn check_forced(req: &WorkerRequest) -> Result<(), String> {
@@ -902,9 +962,23 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
     sampler.sample();
     let manifest_sha256 = provenance::sha256_file(&dir.join("manifest.json"));
 
+    let pressure_before = (
+        crate::host::compressor_counters(),
+        crate::host::swap_used_mib(),
+    );
     let t_open = Instant::now();
     let (mut runner, tokenizer, family) = open(req, &dir)?;
     let open_s = t_open.elapsed().as_secs_f64();
+    let open_pressure = {
+        let (c, _) = crate::host::compressor_counters();
+        let delta = c
+            .zip(pressure_before.0 .0)
+            .map(|(b, a)| b.saturating_sub(a));
+        let swap = crate::host::swap_used_mib()
+            .zip(pressure_before.1)
+            .map(|(b, a)| b - a);
+        Some(serde_json::json!({"compressions_delta": delta, "swap_growth_mib": swap}))
+    };
     sampler.sample();
 
     // The speculative loop owns its prefill, so the chunk size does not
@@ -976,6 +1050,23 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
     // trace covers measured work, not the model load or the warm pass.
     eprintln!("{MEASURING_MARKER}");
 
+    let idle_gap = match req.mode {
+        Mode::IdleGap => {
+            let ids = &all_ids[0];
+            if ids.len() + idle_gap_steps() + 1 > req.workload.max_context as usize {
+                return Err("the idle-gap probe does not fit max_context".into());
+            }
+            Some(idle_gap_probe(
+                &mut runner,
+                ids,
+                req.workload.prefill_chunk,
+                &mut logits,
+                &mut sampler,
+            )?)
+        }
+        _ => None,
+    };
+    let measured_prompts: &[Vec<i32>] = if idle_gap.is_some() { &[] } else { &all_ids };
     let mut prompts = Vec::new();
     let mut logits_out: Vec<u8> = Vec::new();
     let mut trace = match (req.mode, &req.logits_path) {
@@ -986,7 +1077,11 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         (Mode::ForcedDecode, None) => return Err("a forced decode needs a trace path".into()),
         _ => None,
     };
-    for (index, (ids, source)) in all_ids.iter().zip(&req.workload.prompts).enumerate() {
+    for (index, (ids, source)) in measured_prompts
+        .iter()
+        .zip(&req.workload.prompts)
+        .enumerate()
+    {
         let forced = req.forced_ids.as_ref().map(|f| f[index].as_slice());
         if let PromptSource::Chat(path) = source {
             let chat = ChatFile::load(path, &tokenizer)?;
@@ -1230,6 +1325,8 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         dispatch_profile,
         provenance: provenance::collect(),
         audio: None,
+        open_pressure,
+        idle_gap,
     })
 }
 

@@ -259,13 +259,17 @@ pub enum Metric {
     PrefillJ,
     /// Modeled joules over the measured decode steps.
     DecodeJ,
+    /// Expert cache hits over requests during decode, a streamed MoE only.
+    /// A guard metric (LAB-33): a policy change that wins tok/s must not
+    /// quietly lose hit rate.
+    ExpertHitRate,
 }
 
 impl Metric {
     pub fn direction(self) -> crate::stats::Direction {
         use crate::stats::Direction::*;
         match self {
-            Metric::PrefillTokS | Metric::DecodeTokS => HigherIsBetter,
+            Metric::PrefillTokS | Metric::DecodeTokS | Metric::ExpertHitRate => HigherIsBetter,
             Metric::PrefillS
             | Metric::PeakBytes
             | Metric::FollowupTtftS
@@ -289,6 +293,15 @@ impl Metric {
             Metric::Rtf => record["audio"]["rtf"].as_f64(),
             Metric::PrefillJ => totals["prefill_j"].as_f64(),
             Metric::DecodeJ => totals["decode_j"].as_f64(),
+            Metric::ExpertHitRate => {
+                let (mut hits, mut requests) = (0.0, 0.0);
+                for p in record["prompts"].as_array()? {
+                    let ph = &p["decode_phases"];
+                    hits += ph["expert_hits"].as_f64().unwrap_or(0.0);
+                    requests += ph["expert_requests"].as_f64().unwrap_or(0.0);
+                }
+                (requests > 0.0).then(|| hits / requests)
+            }
         }
     }
 }
@@ -343,6 +356,16 @@ mod tests {
         let r = serde_json::json!({"audio": {"run_s": 2.0, "rtf": 0.5}});
         assert_eq!(Metric::Rtf.read(&r), Some(0.5));
         assert_eq!(Metric::AudioRunS.read(&r), Some(2.0));
+    }
+
+    #[test]
+    fn hit_rate_sums_over_prompts_and_is_absent_without_requests() {
+        let r = serde_json::json!({"prompts": [
+            {"decode_phases": {"expert_hits": 30, "expert_requests": 40}},
+            {"decode_phases": {"expert_hits": 60, "expert_requests": 60}}]});
+        assert_eq!(Metric::ExpertHitRate.read(&r), Some(0.9));
+        let none = serde_json::json!({"prompts": [{"decode_phases": null}]});
+        assert_eq!(Metric::ExpertHitRate.read(&none), None);
     }
 
     #[test]

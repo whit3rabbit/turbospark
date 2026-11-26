@@ -100,9 +100,12 @@ fn family_of(model: &str) -> Result<(String, bool), String> {
 
 // ---- sanity (LAB-08) ----
 
-/// `tslab sanity --model M`: golden answers through the chat template.
-/// Exit 1 when an exact answer is missing.
+/// `tslab sanity --model M`: golden answers through the chat template, and
+/// with `--tools` / `--needle` the functional grid. Exit 1 when an exact
+/// answer is missing. With `--candidate`, both arms run and the candidate
+/// fails if it loses any case the other arm passes (the functional gate).
 pub fn sanity_cmd(mut args: Args) -> Result<CmdOutput, String> {
+    use crate::functional::{self, Check, Expect};
     let model = args.required("--model")?;
     let experiment = args
         .take("--experiment")?
@@ -113,58 +116,131 @@ pub fn sanity_cmd(mut args: Args) -> Result<CmdOutput, String> {
     };
     let set = crate::golden::parse_set(&text)?;
     let arm = one_arm(&mut args)?;
+    let candidate = args
+        .take("--candidate")?
+        .map(|a| parse_arm(&a, OpenParams::default(), &BTreeMap::new()))
+        .transpose()?;
+    let with_tools = args.flag("--tools");
+    // `--needle 4096,16384` or `--needle all`.
+    let needle: Vec<usize> = match args.take("--needle")?.as_deref() {
+        None => Vec::new(),
+        Some("all") => functional::NEEDLE_SIZES.to_vec(),
+        Some(v) => v
+            .split(',')
+            .map(|n| n.parse().map_err(|_| format!("--needle {v:?}")))
+            .collect::<Result<_, _>>()?,
+    };
     // Room for a reasoning model to finish thinking and answer.
     let decode: usize = args.parsed("--decode", 512)?;
-    let context: u32 = args.parsed("--context", 4096)?;
+    let longest = needle.iter().copied().max().unwrap_or(0);
+    let context: u32 = args.parsed("--context", 4096.max((longest + decode + 512) as u32))?;
     let (session, _lock) = session(&mut args, &experiment, &model)?;
     args.finish()?;
 
+    let tokenizer = tokenizer::MfTokenizer::load_from_dir(&catalog::resolve_model_arg(&model))
+        .map_err(|e| format!("tokenizer: {e}"))?;
     let dir = session.exp_dir.join("golden").join(crate::ledger::new_id());
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let mut prompts = Vec::new();
+    let mut checks = Vec::new();
     for case in &set.cases {
         let path = dir.join(format!("{}.messages.json", case.id));
         crate::atomic::write_new_json(&path, &json!([{"role": "user", "content": case.prompt}]))?;
-        prompts.push(PromptSource::MessagesFile(path));
+        checks.push(Check {
+            id: case.id.clone(),
+            source: PromptSource::MessagesFile(path),
+            expect: Expect::Answer(case.clone()),
+        });
     }
-    let o = session.run_once(
-        &arm,
-        &workload(prompts, decode, context),
-        Mode::Timing,
-        0,
-        false,
-    )?;
-    ok(&o)?;
-    let mut cases = Vec::new();
-    let mut failed = 0;
-    for (case, p) in set
-        .cases
-        .iter()
-        .zip(o.record["prompts"].as_array().cloned().unwrap_or_default())
-    {
-        let text = p["decode_text"].as_str().unwrap_or("");
-        let reply = crate::golden::visible_reply(text);
-        let pass = crate::golden::accepts(case, &reply.answer);
-        failed += usize::from(!pass);
-        let answer: String = reply.answer.chars().take(120).collect();
-        crate::say!(
-            "  {:<12} {}  {answer:?}",
-            case.id,
-            if pass { "pass" } else { "FAIL" }
-        );
-        cases.push(json!({"id": case.id, "passed": pass, "answer": answer,
-            "think_leak": reply.think_leak,
-            "garbage_flag": crate::golden::looks_like_garbage(&reply.answer)}));
+    let mut skipped = Vec::new();
+    if with_tools {
+        match functional::tool_checks(&tokenizer, &dir) {
+            Ok(mut tools) => checks.append(&mut tools),
+            Err(why) => skipped.push(why),
+        }
     }
-    let family = o.record["family"].clone();
-    let passed = failed == 0 && cases.len() == set.cases.len();
-    crate::say!(
-        "sanity: {} of {} exact answers",
-        cases.len() - failed,
-        set.cases.len()
+    if !needle.is_empty() {
+        let filler =
+            turbospark_bench::quality_corpus::corpus_text(crate::provenance::source_root())?;
+        let (mut grid, why) = functional::needle_checks(
+            &tokenizer,
+            &filler,
+            &dir,
+            &needle,
+            context as usize,
+            decode,
+        )?;
+        checks.append(&mut grid);
+        skipped.extend(why);
+    }
+    for why in &skipped {
+        crate::say!("  skipped: {why}");
+    }
+    let w = workload(
+        checks.iter().map(|c| c.source.clone()).collect(),
+        decode,
+        context,
     );
+
+    let run = |arm: &Arm| -> Result<(Vec<Value>, Value, String), String> {
+        let o = session.run_once(arm, &w, Mode::Timing, 0, false)?;
+        ok(&o)?;
+        let prompts = o.record["prompts"].as_array().cloned().unwrap_or_default();
+        if prompts.len() != checks.len() {
+            return Err(format!("{} of {} cases ran", prompts.len(), checks.len()));
+        }
+        let mut cases = Vec::new();
+        for (check, p) in checks.iter().zip(&prompts) {
+            let ids: Vec<i32> = serde_json::from_value(p["decode_ids"].clone()).unwrap_or_default();
+            let text = p["decode_text"].as_str().unwrap_or("");
+            let (pass, mut read) = functional::judge(check, &tokenizer, text, &ids);
+            crate::say!(
+                "  {:<10} {:<22} {}  {}",
+                arm.name,
+                check.id,
+                if pass { "pass" } else { "FAIL" },
+                read["answer"]
+            );
+            read["id"] = json!(check.id);
+            read["passed"] = json!(pass);
+            cases.push(read);
+        }
+        Ok((cases, o.record["family"].clone(), o.run_id.clone()))
+    };
+    let vector = |cases: &[Value]| -> Vec<(String, bool)> {
+        cases
+            .iter()
+            .map(|c| {
+                (
+                    c["id"].as_str().unwrap_or("").to_string(),
+                    c["passed"] == true,
+                )
+            })
+            .collect()
+    };
+
+    let (cases, family, run_id) = run(&arm)?;
+    let failed = vector(&cases).iter().filter(|c| !c.1).count();
+    crate::say!("sanity: {} of {} pass", cases.len() - failed, cases.len());
+    let (passed, other) = match &candidate {
+        None => (failed == 0, Value::Null),
+        Some(c) => {
+            let (theirs, _, candidate_run) = run(c)?;
+            let diff = functional::pass_vector_difference(&vector(&cases), &vector(&theirs));
+            let same = diff["lost"].as_array().is_some_and(Vec::is_empty);
+            crate::say!(
+                "functional gate: {} {diff}",
+                if same { "PASS" } else { "FAIL" }
+            );
+            (
+                same,
+                json!({"arm": c.name, "arm_env": c.env, "cases": theirs,
+                       "run_id": candidate_run, "difference": diff}),
+            )
+        }
+    };
     let rec = json!({"model": model, "family": family, "arm": arm.name, "arm_env": arm.env,
-                     "passed": passed, "cases": cases, "run_id": o.run_id});
+                     "passed": passed, "cases": cases, "run_id": run_id,
+                     "candidate": other, "skipped": skipped});
     session.ledger.append("sanity", rec.clone())?;
     Ok(CmdOutput::with_code(i32::from(!passed), rec))
 }
@@ -474,6 +550,71 @@ pub fn launch_count_cmd(mut args: Args) -> Result<CmdOutput, String> {
     let rec = json!({"model": model, "workload": w, "us_per_dispatch": us, "arms": rows,
                      "quotable": false});
     session.ledger.append("launch_count", rec.clone())?;
+    Ok(CmdOutput::ok(rec))
+}
+
+// ---- idle-gap (LAB-24) ----
+
+/// The first step after each gap against the first step after the shortest
+/// one; the largest increase, as a fraction.
+pub fn idle_penalty(rows: &Value) -> Option<f64> {
+    let first: Vec<f64> = rows
+        .as_array()?
+        .iter()
+        .filter_map(|r| r["first_ms"].as_f64())
+        .collect();
+    let base = *first.first()?;
+    (base > 0.0 && first.len() > 1).then(|| {
+        first[1..]
+            .iter()
+            .map(|v| v / base - 1.0)
+            .fold(f64::MIN, f64::max)
+    })
+}
+
+/// A gap that costs the next token less than this is not worth chasing.
+pub const IDLE_PENALTY_FLOOR: f64 = 0.20;
+
+/// `tslab idle-gap --model M`: sleep 0.5 to 8 s between short decodes.
+pub fn idle_gap_cmd(mut args: Args) -> Result<CmdOutput, String> {
+    let model = args.required("--model")?;
+    let experiment = args
+        .take("--experiment")?
+        .unwrap_or_else(|| "idle_gap".into());
+    let arm = one_arm(&mut args)?;
+    let context: u32 = args.parsed("--context", 1024)?;
+    let (session, _lock) = session(&mut args, &experiment, &model)?;
+    args.finish()?;
+    let w = workload(
+        vec![PromptSource::Protocol("short-explanation".into())],
+        0,
+        context,
+    );
+    let o = session.run_once(&arm, &w, Mode::IdleGap, 0, false)?;
+    ok(&o)?;
+    let rows = o.record["idle_gap"].clone();
+    for r in rows.as_array().into_iter().flatten() {
+        crate::say!(
+            "  gap {:>4} s: first step {:.1} ms, busy median {:.1} ms",
+            r["gap_s"],
+            r["first_ms"].as_f64().unwrap_or(f64::NAN),
+            r["busy_median_ms"].as_f64().unwrap_or(f64::NAN)
+        );
+    }
+    let penalty = idle_penalty(&rows);
+    let worth = penalty.is_some_and(|p| p > IDLE_PENALTY_FLOOR);
+    crate::say!(
+        "  worst first-step increase over the 0.5 s gap: {}: {}",
+        penalty.map_or("unmeasured".into(), |p| format!("{:+.1}%", p * 100.0)),
+        if worth {
+            "an idle gap costs something here"
+        } else {
+            "no gap worth chasing"
+        }
+    );
+    let rec = json!({"model": model, "arm": arm, "rows": rows, "penalty": penalty,
+                     "worth_chasing": worth, "eligible": o.eligible, "reasons": o.reasons});
+    session.ledger.append("idle_gap", rec.clone())?;
     Ok(CmdOutput::ok(rec))
 }
 
@@ -848,6 +989,14 @@ mod tests {
             compare_anchor(&a, "qwen3", "t1", &anchor("y"))["basis"],
             "none"
         );
+    }
+
+    #[test]
+    fn the_idle_penalty_is_read_against_the_shortest_gap() {
+        let rows = json!([{"first_ms": 10.0}, {"first_ms": 11.0}, {"first_ms": 14.0}]);
+        assert!((idle_penalty(&rows).unwrap() - 0.4).abs() < 1e-9);
+        assert_eq!(idle_penalty(&json!([{"first_ms": 10.0}])), None);
+        assert_eq!(idle_penalty(&json!(null)), None);
     }
 
     #[test]

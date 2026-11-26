@@ -298,6 +298,7 @@ pub fn sweep_cmd(mut args: Args) -> Result<CmdOutput, String> {
             min_effect.max(stats::MIN_EFFECT_FLOOR) * 100.0,
             floor * 100.0
         );
+        let baseline_route = session.baseline_route(&r.baseline, &r.workload)?;
         let SweepRun { arms, stopped } = run_sweep(
             &session,
             &r.baseline,
@@ -423,6 +424,7 @@ pub fn sweep_cmd(mut args: Args) -> Result<CmdOutput, String> {
             "workload": r.workload, "candidates": cands,
             "best": best.as_ref().map(|(arm, m)| json!({"arm": arm, "median": m})),
             "stopped": stopped, "false_wins_upper_bound": false_wins,
+            "baseline_route": baseline_route,
         });
         let id = session.ledger.append("sweep", record.clone())?;
         worst = worst.max(code);

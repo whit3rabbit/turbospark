@@ -49,11 +49,12 @@ process, which must sit beside `tslab`.
 
 | Command | Use | Writes (`kind`) |
 |---|---|---|
-| `sanity --model M [--file F]` | Eight exact golden answers through the chat template (`workloads/golden.json`); exit 1 on a miss. The `garbage_flag` and `think_leak` fields are advisory. A miss on a new family is a finding to read, not proof of a bug | `run`, `sanity` |
+| `sanity --model M [--file F] [--tools] [--needle all\|N,..] [--candidate SPEC]` | Eight exact golden answers through the chat template (`workloads/golden.json`), optional tool calls and a needle grid; exit 1 on a miss, or with `--candidate` on any case it loses against `--arm`. The `garbage_flag` and `think_leak` fields are advisory. A miss on a new family is a finding to read, not proof of a bug | `run`, `sanity` |
 | `noise --model M [--runs 5] [--arm SPEC]` | The same arm in fresh processes: distinct outputs per prompt and the first diverging token | `run`, `noise` |
 | `floor --model M` | The arm quality-gated against itself, kept under the family; `gate` then prints limit, floor and margin. A floor never widens a bound | `run`, `floor` |
 | `quant-ab --ref M --base M --cand M` | Each install replays the reference's ids: a candidate passes only with no more bytes than the base and a KL from the reference no worse (2% slack) | `run`, `quant_ab` |
 | `launch-count --model M [--arm SPEC]...` | Dispatches and command buffers per decoded token, and the pipelines each arm used. Counts only: `TURBOSPARK_LAUNCH_COUNT=1` perturbs timing | `run`, `launch_count` |
+| `idle-gap --model M` | First decode step after 0.5, 1, 2, 4 and 8 s gaps; under 20% worse than the 0.5 s gap, drop the idle-GPU idea | `run`, `idle_gap` |
 | `anchor --model M --file F [--update]` | Greedy digests on three prompts keyed by family and toolchain; exit 3 lists changes for a person | `run`, `anchor` |
 | `release-gate --base-worker PATH --model M... [--declared F]` | A released `tslab-worker` against this one, interleaved: PASS, FAIL (undeclared loss), NEEDS-KL-GATE (output moved, undeclared), PASS-with-note, SKIP | `run`, `release_gate` |
 | `type1` | False WIN and LOSS rates of the pair rule, replayed on every stored null calibration | nothing |
@@ -79,9 +80,12 @@ A `chat:` file may add `"edit_variants": [..]` (two or more): after the
 follow-ups the last message is edited A B C C B A from one history
 (`chats/edit-last-turn.chat.json`).
 
+`ab` and `sweep` warn when a baseline that sets anything lost a default lane.
+A null run with under 3 clean pairs records no floor.
+
 `ab --noninferior 0.02 --pairs 10` also asks "not worse than 2%?" with
 one-sided bounds. `sweep --guard prefill_tok_s` refuses a WIN that taxes a
-second metric, and prints how many false WINs its candidate count allows.
+second metric (`expert_hit_rate` among them), and prints how many false WINs its candidate count allows.
 
 Metrics: `prefill_tok_s`, `decode_tok_s`, `prefill_s`, `peak_bytes`,
 `followup_ttft_s`, `audio_run_s`, `rtf`, and the modeled-energy pair
