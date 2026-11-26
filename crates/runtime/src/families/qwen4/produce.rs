@@ -374,7 +374,7 @@ impl RealForwardRunner {
             // together. The three clocks split them for `TURBOSPARK_CB1_TRACE`
             // without changing what either counter reports.
             let t_wait = Instant::now();
-            let committed = pass.commit();
+            let committed = pass.commit_checked().map_err(RealForwardError::Gpu)?;
             let t_committed = Instant::now();
             let gpu_secs = committed.wait_with_gpu_time();
             let t_end = Instant::now();
@@ -493,7 +493,11 @@ impl RealForwardRunner {
             pass.relabel("final cb (prefill, no head)");
         }
         let t_wait = Instant::now();
-        phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
+        phases.final_cb_gpu_nanos += (pass
+            .commit_checked()
+            .map_err(RealForwardError::Gpu)?
+            .wait_with_gpu_time()
+            * 1e9) as u64;
         phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         if let Some(layer) = qwen4.qsa.first_nan_score_layer() {
             return Err(RealForwardError::Unsupported(format!(

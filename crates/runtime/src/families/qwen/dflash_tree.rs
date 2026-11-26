@@ -202,7 +202,7 @@ impl RealForwardRunner {
         }
         gather(context, &d.capture, 0, d.shape.aux_count * hidden)?;
         // Not waited (module header). Dropping the handle does not wait.
-        drop(pass.commit());
+        drop(pass.commit_checked().map_err(RealForwardError::Gpu)?);
         Ok(())
     }
 }

@@ -431,7 +431,9 @@ impl RealForwardRunner {
                 crate::families::qwen::replay_linear_state_batched(
                     context, &pass, weights, index, arch, qwen, batched, keep_rows, tape.rows,
                 )?;
-                pass.commit_and_wait();
+                pass.commit_checked()
+                    .map_err(crate::real_forward_types::RealForwardError::Gpu)?
+                    .wait();
                 Ok(())
             })
             .map_err(|e: crate::real_forward_types::RealForwardError| e.to_string())?;
@@ -590,7 +592,9 @@ impl RealForwardRunner {
             crate::families::qwen::commit_linear_state_batched(
                 context, &pass, weights, index, arch, qwen, batched, keep_rows, tape.rows,
             )?;
-            let committed = pass.commit();
+            let committed = pass
+                .commit_checked()
+                .map_err(crate::real_forward_types::RealForwardError::Gpu)?;
             self.pending_gdn_fold = Some(committed);
             Ok(())
         })

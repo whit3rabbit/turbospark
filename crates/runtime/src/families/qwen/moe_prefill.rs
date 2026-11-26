@@ -578,7 +578,7 @@ impl RealForwardRunner {
                 }
             }
 
-            let cb1 = pass.commit();
+            let cb1 = pass.commit_checked().map_err(RealForwardError::Gpu)?;
             let t_wait = Instant::now();
             self.phases.cb1_gpu_nanos += (cb1.wait_with_gpu_time() * 1e9) as u64;
             self.phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
@@ -775,7 +775,11 @@ impl RealForwardRunner {
                     self.retire_routed(&mut pending_routed);
                 }
                 debug_assert!(pending_routed.is_none(), "routed pipeline depth is 1");
-                pending_routed = Some(routed_pass.commit());
+                pending_routed = Some(
+                    routed_pass
+                        .commit_checked()
+                        .map_err(RealForwardError::Gpu)?,
+                );
                 previous_slots = used.into_iter().collect();
             }
 
@@ -831,7 +835,11 @@ impl RealForwardRunner {
             pass.relabel("qwen moe final cb (chunk, no head)");
         }
         let t_wait = Instant::now();
-        self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
+        self.phases.final_cb_gpu_nanos += (pass
+            .commit_checked()
+            .map_err(RealForwardError::Gpu)?
+            .wait_with_gpu_time()
+            * 1e9) as u64;
         self.phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         drop(shared_submissions);
         self.kv.advance_by(m);

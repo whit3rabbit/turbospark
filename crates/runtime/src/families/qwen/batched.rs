@@ -397,7 +397,7 @@ impl RealForwardRunner {
             batch,
         )?;
 
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         for _ in 0..batch {
             kv.advance();
         }

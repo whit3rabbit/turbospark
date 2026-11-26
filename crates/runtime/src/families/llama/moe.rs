@@ -338,7 +338,11 @@ impl crate::real_forward::RealForwardRunner {
                 self.retire_routed(pending_routed);
             }
             debug_assert!(pending_routed.is_none(), "routed pipeline depth is 1");
-            *pending_routed = Some(routed_pass.commit());
+            *pending_routed = Some(
+                routed_pass
+                    .commit_checked()
+                    .map_err(RealForwardError::Gpu)?,
+            );
             previous_slots = used.into_iter().collect();
         }
         Ok(())

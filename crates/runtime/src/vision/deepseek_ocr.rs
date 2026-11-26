@@ -568,7 +568,7 @@ impl DeepseekOcrVisionTower {
                 (tokens * SAM_WIDTH) as u32,
             )
             .map_err(gpu_err)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             stage("sam_patch", read(&x, tokens * SAM_WIDTH));
 
             // ---- SAM blocks ------------------------------------------------
@@ -583,7 +583,7 @@ impl DeepseekOcrVisionTower {
                     &sam,
                     (&self.window_gather, &self.window_scatter),
                 )?;
-                pass.commit_and_wait();
+                pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
                 match i {
                     0 => stage("sam_b0", read(&x, tokens * SAM_WIDTH)),
                     2 => stage("sam_b2", read(&x, tokens * SAM_WIDTH)),
@@ -667,7 +667,7 @@ impl DeepseekOcrVisionTower {
                 SAM_LAYER_NORM_EPS,
             )
             .map_err(gpu_err)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             stage("sam_neck", read(&t1, tokens * SAM_NECK));
 
             let pass = context.begin_pass();
@@ -721,7 +721,7 @@ impl DeepseekOcrVisionTower {
                 SAM_NET3 as u32,
             )
             .map_err(gpu_err)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             stage("sam_n2", read(&n2, half_grid * half_grid * SAM_NET2));
             let sam_bits = read(&sam_out, SAM_OUT_TOKENS * SAM_NET3);
             stage("sam_out", sam_bits.clone());
@@ -771,7 +771,7 @@ impl DeepseekOcrVisionTower {
                 CLIP_LAYER_NORM_EPS,
             )
             .map_err(gpu_err)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             stage("clip_pre", read(&c, rows * hidden));
 
             for blk in 0..self.shape.depth {
@@ -792,7 +792,7 @@ impl DeepseekOcrVisionTower {
                     &clip,
                     &self.shape,
                 )?;
-                pass.commit_and_wait();
+                pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
                 match blk {
                     0 => stage("clip_l0", read(&c, rows * hidden)),
                     11 => stage("clip_l11", read(&c, rows * hidden)),
@@ -827,7 +827,7 @@ impl DeepseekOcrVisionTower {
                 out_hidden as u32,
             )
             .map_err(gpu_err)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             let projected = read(&proj, SAM_OUT_TOKENS * out_hidden);
             stage("proj", projected.clone());
             Ok::<_, RealForwardError>(projected)

@@ -249,7 +249,7 @@ impl RealForwardRunner {
                 .map_err(gpu_err)?;
             }
         }
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         self.kv.advance();
 
         if self.skip_head {

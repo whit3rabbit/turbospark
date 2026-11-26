@@ -474,7 +474,7 @@ impl RealForwardRunner {
                 }
             }
 
-            let cb1 = pass.commit();
+            let cb1 = pass.commit_checked().map_err(RealForwardError::Gpu)?;
             let t_wait = Instant::now();
             self.phases.cb1_gpu_nanos += (cb1.wait_with_gpu_time() * 1e9) as u64;
             self.phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
@@ -657,7 +657,9 @@ impl RealForwardRunner {
                     self.retire_routed(&mut pending_routed);
                 }
                 debug_assert!(pending_routed.is_none(), "routed pipeline depth is 1");
-                let committed = routed_pass.commit();
+                let committed = routed_pass
+                    .commit_checked()
+                    .map_err(RealForwardError::Gpu)?;
                 pending_routed = Some(if loaded_bank.is_some() {
                     committed.waiting_on_drop()
                 } else {
@@ -713,7 +715,11 @@ impl RealForwardRunner {
             pass.relabel("final cb (chunk, no head)");
         }
         let t_wait = Instant::now();
-        self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
+        self.phases.final_cb_gpu_nanos += (pass
+            .commit_checked()
+            .map_err(RealForwardError::Gpu)?
+            .wait_with_gpu_time()
+            * 1e9) as u64;
         self.phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         let qwen4 = self.real_qwen4.as_ref().expect("checked above");
         if let Some(layer) = qwen4.qsa.first_nan_score_layer() {

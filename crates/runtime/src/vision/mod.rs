@@ -659,7 +659,7 @@ impl VisionTower {
                 &s,
                 &self.shape,
             )?;
-            timing.patch_embed_gpu_ms = wait_pass(pass, timed);
+            timing.patch_embed_gpu_ms = wait_pass(pass, timed).map_err(RealForwardError::Gpu)?;
             let wide = seq * self.shape.hidden;
             if let Some(c) = capture.as_mut() {
                 let t = std::time::Instant::now();
@@ -734,9 +734,9 @@ impl VisionTower {
                 // `s.x` from the host. The pread arm always waits, unchanged.
                 let needs_sync = capture.is_some() || self.overflow.is_some();
                 if mapped_active && !needs_sync {
-                    pass.commit();
+                    pass.commit_checked().map_err(RealForwardError::Gpu)?;
                 } else {
-                    timing.block_gpu_ms += wait_pass(pass, timed);
+                    timing.block_gpu_ms += wait_pass(pass, timed).map_err(RealForwardError::Gpu)?;
                 }
                 timing.block_read_ms += read_ms;
                 timing.block_wall_ms += ms_since(t_block) - read_ms;
@@ -780,7 +780,8 @@ impl VisionTower {
                         &s,
                         &self.shape,
                     )?;
-                    timing.deepstack_gpu_ms += wait_pass(pass, timed);
+                    timing.deepstack_gpu_ms +=
+                        wait_pass(pass, timed).map_err(RealForwardError::Gpu)?;
                     let t = std::time::Instant::now();
                     let count = s.merged * self.shape.out_hidden;
                     let ds_rows: Vec<u16> = gpu::read_buffer_f16(&s.out, 0, count)
@@ -804,7 +805,7 @@ impl VisionTower {
                 &s,
                 &self.shape,
             )?;
-            timing.merger_gpu_ms = wait_pass(pass, timed);
+            timing.merger_gpu_ms = wait_pass(pass, timed).map_err(RealForwardError::Gpu)?;
 
             let t = std::time::Instant::now();
             let count = s.merged * self.shape.out_hidden;
@@ -847,12 +848,14 @@ impl VisionTower {
 }
 
 /// Waits on `pass`; under `timed`, returns its GPU interval in ms.
-fn wait_pass(pass: gpu::PassEncoder, timed: bool) -> f64 {
+/// Refuses a pass that skipped an over-limit dispatch.
+fn wait_pass(pass: gpu::PassEncoder, timed: bool) -> Result<f64, gpu::GpuError> {
+    let committed = pass.commit_checked()?;
     if timed {
-        pass.commit_and_wait_with_gpu_time() * 1e3
+        Ok(committed.wait_with_gpu_time() * 1e3)
     } else {
-        pass.commit_and_wait();
-        0.0
+        committed.wait();
+        Ok(0.0)
     }
 }
 

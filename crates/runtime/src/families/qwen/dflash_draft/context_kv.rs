@@ -178,7 +178,7 @@ impl RealForwardRunner {
         }
         // The wait is unconditional: priming exists FOR the KV rows, and
         // they are not written until the GPU has run this pass.
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         let d = self.real_dflash.as_mut().expect("caller checked");
         let target = base_pos + rows;
         d.kv.advance_by(target - d.kv.position());

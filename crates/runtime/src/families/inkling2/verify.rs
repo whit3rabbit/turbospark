@@ -1090,7 +1090,11 @@ impl RealForwardRunner {
         }
         let encode_ms = t_encode.elapsed().as_secs_f64() * 1e3;
         let t_gpu = std::time::Instant::now();
-        let gpu_ms = pass.commit_and_wait_with_gpu_time() * 1e3;
+        let gpu_ms = pass
+            .commit_checked()
+            .map_err(RealForwardError::Gpu)?
+            .wait_with_gpu_time()
+            * 1e3;
         let wait_ms = t_gpu.elapsed().as_secs_f64() * 1e3;
         for _ in 0..n {
             self.kv.advance();
@@ -1163,7 +1167,9 @@ impl RealForwardRunner {
                     .map_err(|e| e.to_string())?;
                 }
             }
-            pass.commit_and_wait();
+            pass.commit_checked()
+                .map_err(|error| error.to_string())?
+                .wait();
             self.kv.rewind_cursor(rec.rows - keep);
         }
         st.verify = None;

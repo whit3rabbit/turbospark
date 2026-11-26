@@ -448,7 +448,8 @@ impl RealForwardRunner {
             } else {
                 let committed =
                     std::mem::replace(pass, c.context.begin_pass_labeled("inkling2 routed"))
-                        .commit();
+                        .commit_checked()
+                        .map_err(RealForwardError::Gpu)?;
                 let t1 = std::time::Instant::now();
                 tr.gpu_ms += committed.wait_with_gpu_time() * 1e3;
                 let t2 = std::time::Instant::now();
@@ -630,7 +631,11 @@ impl RealForwardRunner {
             )
             .map_err(RealForwardError::Gpu)?;
         }
-        tr.gpu_ms += pass.commit_and_wait_with_gpu_time() * 1e3;
+        tr.gpu_ms += pass
+            .commit_checked()
+            .map_err(RealForwardError::Gpu)?
+            .wait_with_gpu_time()
+            * 1e3;
         if trace {
             tr.report(position, t_token.elapsed().as_secs_f64() * 1e3);
         }

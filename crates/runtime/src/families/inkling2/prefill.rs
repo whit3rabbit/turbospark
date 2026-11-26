@@ -79,7 +79,7 @@ impl RealForwardRunner {
         }
         touch(self.weights.buffer())?;
         // Not waited on: the command buffer retains what it references.
-        let _ = pass.commit();
+        let _ = pass.commit_checked().map_err(RealForwardError::Gpu)?;
         Ok(())
     }
 

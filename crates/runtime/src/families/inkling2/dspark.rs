@@ -373,7 +373,7 @@ impl DsparkState {
             h as u32,
         )
         .map_err(g)?;
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         let head = "model.llm.unembed.weight";
         let pass = context.begin_pass_labeled("dspark fold head");
         let mut j = 0;
@@ -407,7 +407,7 @@ impl DsparkState {
             (&self.fold_b, 0, vocab as u32),
             1,
         )?;
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         Ok(())
     }
 
@@ -605,7 +605,7 @@ impl RealForwardRunner {
         }
         let pass = self.context.begin_pass_labeled("dspark sync");
         self.dspark_write_context(&pass, ctx_rows, base)?;
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         self.real_inkling2
             .as_mut()
             .and_then(|s| s.dspark.as_mut())
@@ -788,7 +788,7 @@ impl RealForwardRunner {
         }
         let pass = self.context.begin_pass_labeled("dspark prime");
         self.dspark_write_context(&pass, position, position + 1)?;
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         self.real_inkling2
             .as_mut()
             .and_then(|s| s.dspark.as_mut())
@@ -1140,7 +1140,7 @@ impl RealForwardRunner {
             )
             .map_err(g)?;
         }
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         // The proposals are u32 token ids; read the words and reinterpret.
         let out: Vec<i32> = gpu::read_f32_buffer_at(&d.proposals, 0, b - 1)
             .into_iter()

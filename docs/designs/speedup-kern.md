@@ -198,7 +198,18 @@ mutation-checked.
 Survey (2026-11-26, `rg '\.commit_and_wait\(\)|\.commit\(\)'`): about 126
 unchecked sites in about 70 files under `crates/runtime/src` (84 waiting, 42
 non-waiting) and 2 in `crates/image`; none in `crates/ffi` or `crates/server`,
-which reach the GPU only through the runtime. Not migrated yet.
+which reach the GPU only through the runtime.
+
+Migrated (caller half): every non-test runtime site moved to `commit_checked()`,
+either `pass.commit_checked()?` or `pass.commit_checked()?.wait()`, with the
+module's existing error mapping (`RealForwardError::Gpu`, `to_string`, or
+`gpu_err`). This keeps device-fault handling as before: the wait still warns
+and does not fail, so only the thread-limit violation changes from a panic to
+`Err`. `commit_and_wait_checked` would also have turned faults into errors,
+which is a separate decision. Left unchecked: test modules (`ane_split.rs`,
+`moonshine.rs`, `llama/attn_tests.rs`) and `crates/image`, whose
+`commit_deferred` returns a bare handle to many callers and is outside this
+step's scope. Those still panic.
 
 ### 1. Idle stall (KERN-05)
 

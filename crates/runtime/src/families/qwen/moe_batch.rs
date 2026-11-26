@@ -339,7 +339,7 @@ pub(crate) fn encode_qwen_layer_moe_batched(
         }
 
         sub_start += sub_len;
-        committed = Some(pass.commit());
+        committed = Some(pass.commit_checked().map_err(RealForwardError::Gpu)?);
     }
 
     Ok(committed.expect("batch >= 1 guarantees at least one sub-batch"))
@@ -602,7 +602,7 @@ pub(crate) fn encode_qwen_layer_routed_prefill(
         }
         in_flight = slot_of.values().copied().collect();
         alt = overlap && !alt;
-        committed = Some(pass.commit());
+        committed = Some(pass.commit_checked().map_err(RealForwardError::Gpu)?);
     }
 
     Ok(committed.expect("batch >= 1 guarantees at least one sub-batch"))

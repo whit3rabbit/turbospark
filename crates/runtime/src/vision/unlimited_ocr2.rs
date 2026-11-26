@@ -415,7 +415,7 @@ impl Uocr2Tower {
             (hw * SAM_DIM) as u32,
         )
         .map_err(gpu_err)?;
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         if let Some(c) = capture.as_mut() {
             c.patch = gpu::read_half_buffer(&x, hw * SAM_DIM);
         }
@@ -439,7 +439,7 @@ impl Uocr2Tower {
                 SAM_EPS,
             )
             .map_err(gpu_err)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
 
             // Partition on the host: the padded rows are zeros, as upstream's
             // `mx.pad` makes them, and they attend and are attended to.
@@ -511,7 +511,7 @@ impl Uocr2Tower {
                 SAM_DIM as u32,
             )
             .map_err(gpu_err)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
 
             let residual: &gpu::MetalBuffer = if global {
                 &projected
@@ -594,7 +594,7 @@ impl Uocr2Tower {
                 (hw * SAM_DIM) as u32,
             )
             .map_err(gpu_err)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         }
 
         // ---- neck, then the two downsamples ----
@@ -681,7 +681,7 @@ impl Uocr2Tower {
             conv(g2, 512, CLIP_DIM, 3, 2, 1),
         )
         .map_err(gpu_err)?;
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         let tokens = g4 * g4;
         let sam_rows = gpu::read_half_buffer(&features, tokens * CLIP_DIM);
         if let Some(c) = capture.as_mut() {
@@ -726,7 +726,7 @@ impl Uocr2Tower {
             CLIP_EPS,
         )
         .map_err(gpu_err)?;
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         gpu::write_buffer_bytes(
             &clip_x,
             0,
@@ -845,7 +845,7 @@ impl Uocr2Tower {
                 (seq * CLIP_DIM) as u32,
             )
             .map_err(gpu_err)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         }
 
         // ---- the projector over [CLIP past cls ; SAM] ----
@@ -873,7 +873,7 @@ impl Uocr2Tower {
             OUT_DIM as u32,
         )
         .map_err(gpu_err)?;
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         let rows = gpu::read_half_buffer(&out, tokens * OUT_DIM);
         if let Some(c) = capture {
             c.projected = rows.clone();

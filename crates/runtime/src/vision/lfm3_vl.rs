@@ -599,7 +599,7 @@ pub(crate) fn forward(
             NORM_EPS,
         )
         .map_err(e)?;
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         if let Some(c) = capture.as_deref_mut() {
             c.patch_embed = read_bits(&s.h, n * hid);
         }
@@ -607,7 +607,7 @@ pub(crate) fn forward(
         for block in 0..d.depth {
             let pass = context.begin_pass();
             encode_nth_block(context, &pass, block, &s)?;
-            pass.commit_and_wait();
+            pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
             if let Some(c) = capture.as_deref_mut() {
                 c.blocks.push(read_bits(&s.h, n * hid));
             }
@@ -675,7 +675,7 @@ pub(crate) fn forward(
             d.text_hidden as u32,
         )
         .map_err(e)?;
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         Ok(read_bits(&out, soft * d.text_hidden))
     })
 }

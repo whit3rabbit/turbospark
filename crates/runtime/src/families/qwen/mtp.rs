@@ -400,7 +400,7 @@ impl RealForwardRunner {
             )
             .map_err(gpu_err)?;
         }
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         self.real_mtp
             .as_mut()
             .expect("checked above")
@@ -699,7 +699,7 @@ impl RealForwardRunner {
 
         // The wait is NOT conditional: a priming step exists for its KV row,
         // and the row is not written until the GPU has run this block.
-        pass.commit_and_wait();
+        pass.commit_checked().map_err(RealForwardError::Gpu)?.wait();
         self.real_mtp.as_mut().expect("checked above").kv.advance();
         let has_logits = logits.is_some();
         if let Some(out) = logits {

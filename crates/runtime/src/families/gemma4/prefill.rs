@@ -309,7 +309,11 @@ impl RealForwardRunner {
             pass.relabel("final cb (dense chunk, no head)");
         }
         let t_wait = Instant::now();
-        self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
+        self.phases.final_cb_gpu_nanos += (pass
+            .commit_checked()
+            .map_err(RealForwardError::Gpu)?
+            .wait_with_gpu_time()
+            * 1e9) as u64;
         self.phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance_by(m);
         let skip_head = !want_head || !self.prefill_chunk_is_final;
@@ -452,7 +456,10 @@ impl RealForwardRunner {
                 }
             }
 
-            let cb1 = pass.commit().waiting_on_drop();
+            let cb1 = pass
+                .commit_checked()
+                .map_err(RealForwardError::Gpu)?
+                .waiting_on_drop();
             let t_wait = Instant::now();
             self.phases.cb1_gpu_nanos += (cb1.wait_with_gpu_time() * 1e9) as u64;
             self.phases.gpu_wait_nanos += t_wait.elapsed().as_nanos() as u64;
@@ -537,7 +544,11 @@ impl RealForwardRunner {
             pass.relabel("final cb (chunk, no head)");
         }
         let t_wait = Instant::now();
-        self.phases.final_cb_gpu_nanos += (pass.commit_and_wait_with_gpu_time() * 1e9) as u64;
+        self.phases.final_cb_gpu_nanos += (pass
+            .commit_checked()
+            .map_err(RealForwardError::Gpu)?
+            .wait_with_gpu_time()
+            * 1e9) as u64;
         self.phases.final_wait_nanos += t_wait.elapsed().as_nanos() as u64;
         self.kv.advance_by(m);
         // The command buffer has been waited on, so every layer's capture
@@ -668,7 +679,12 @@ impl RealForwardRunner {
                 self.retire_routed(pending_routed);
             }
             debug_assert!(pending_routed.is_none(), "routed pipeline depth is 1");
-            *pending_routed = Some(routed_pass.commit().waiting_on_drop());
+            *pending_routed = Some(
+                routed_pass
+                    .commit_checked()
+                    .map_err(RealForwardError::Gpu)?
+                    .waiting_on_drop(),
+            );
             previous_slots = used.into_iter().collect();
         }
         Ok(())
