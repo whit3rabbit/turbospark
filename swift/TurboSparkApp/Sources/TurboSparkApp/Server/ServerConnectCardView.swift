@@ -120,7 +120,7 @@ private struct ServerEndpointListView: View {
                         Text(verbatim: endpoint.method)
                             .themedCode(.small, weight: .semibold)
                             .foregroundStyle(.appSecondary)
-                            .frame(width: 34, alignment: .leading)
+                            .fixedSize().frame(minWidth: 34, alignment: .leading)
                         Text(verbatim: endpoint.path)
                             .themedCode(.callout)
                             .textSelection(.enabled)

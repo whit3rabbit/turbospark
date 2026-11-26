@@ -53,7 +53,6 @@ public struct ToastOverlayView: View {
             Text(verbatim: toast.message)
                 .themedFont(.base, weight: .medium)
                 .foregroundStyle(.appText)
-                .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 

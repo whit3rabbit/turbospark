@@ -87,7 +87,7 @@ struct ModelRecommendationRow: View {
                             .foregroundStyle(.appSecondary)
                         Text(verbatim: "\(Int(minRate))-\(Int(maxRate)) tok/s")
                             .themedFont(.tiny).monospacedDigit()
-                            .foregroundStyle(.appAccent)
+                            .foregroundStyle(.appSecondary)
                     }
                 }
             }
@@ -123,7 +123,9 @@ struct ModelRecommendationRow: View {
     static func isMoEModel(_ rec: ModelRecommendation) -> Bool {
         // One source of truth: the descriptor's exact family set. Alias
         // substrings mislabeled dense models (ornith, ternary) as MoE.
-        return rec.slotCacheSlots > 0 || ModelFeatureDescriptor.isKnownMoEFamily(rec.family)
+        // `slotCacheSlots` is not a signal: the fit reports 16 slots for a
+        // dense install too (inert there), which tagged qwen3vl-4b as MoE.
+        return ModelFeatureDescriptor.isKnownMoEFamily(rec.family)
     }
 }
 

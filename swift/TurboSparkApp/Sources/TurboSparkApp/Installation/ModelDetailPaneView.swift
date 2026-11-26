@@ -119,28 +119,29 @@ struct ModelDetailPaneView: View {
             ModelLogoView(visuals: visuals, size: 56, cornerRadius: 14)
 
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Text(verbatim: entry.name)
-                        .themedFont(.title2, weight: .bold)
-                        .lineLimit(2)
+                // The title owns its line, and the badges and facts wrap below it
+                // (FlowLayout). One HStack truncated the name to "Qwen3...." and
+                // broke "Verifiziert" mid-word at German + Extra Large text.
+                Text(verbatim: entry.name)
+                    .themedFont(.title2, weight: .bold)
+                    .lineLimit(3)
+                    .accessibilityAddTraits(.isHeader)
 
+                FlowLayout(spacing: 8, lineSpacing: 4) {
                     Text("CATALOG", bundle: .module)
                         .themedFont(.micro, weight: .bold)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(.appAccent.opacity(theme.surfaceOpacity(0.16)), in: RoundedRectangle(cornerRadius: AppMetrics.controlRadius, style: .continuous))
                         .foregroundStyle(.appAccent)
+                        .fixedSize()
 
                     statusSeal
-                }
 
-                HStack(spacing: 8) {
                     Text(verbatim: entry.alias)
                         .themedCode(.small, weight: .medium)
                         .foregroundStyle(.appSecondary)
-
-                    Text(verbatim: "\u{2022}")
-                        .foregroundStyle(.appSecondary)
+                        .fixedSize()
 
                     HStack(spacing: 4) {
                         Image(systemName: visuals.iconSystemName)
@@ -150,14 +151,13 @@ struct ModelDetailPaneView: View {
                     }
                     .themedFont(.small)
                     .foregroundStyle(.appSecondary)
+                    .fixedSize()
                     .help(Text("Model Family: \(visuals.family)", bundle: .module))
-
-                    Text(verbatim: "\u{2022}")
-                        .foregroundStyle(.appSecondary)
 
                     statusText
                         .themedFont(.small, weight: .medium)
                         .foregroundStyle(statusTint)
+                        .fixedSize()
                 }
             }
 

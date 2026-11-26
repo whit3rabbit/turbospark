@@ -300,15 +300,18 @@ struct EngineSettingsPaneView: View {
                 .themedFont(.small)
                 .foregroundStyle(.appSecondary)
             } else {
-                HStack(alignment: .top) {
+                // Adaptive: the link drops under the explanation instead of
+                // squeezing it into a narrow column.
+                AppAdaptiveHeader {
                     VStack(alignment: .leading, spacing: 4) {
                         Text("ThermalForge Not Installed", bundle: .module)
                             .themedFont(.base, weight: .medium)
                         Text("Fan speed cannot be controlled without ThermalForge installed. Install ThermalForge to monitor and pin fan speeds for sustained performance.", bundle: .module)
                         .themedFont(.small)
                         .foregroundStyle(.appSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     }
-                    Spacer()
+                } actions: {
                     Link(destination: URL(string: "https://github.com/ProducerGuy/ThermalForge")!) {
                         HStack(spacing: 4) {
                             Text("ThermalForge", bundle: .module)

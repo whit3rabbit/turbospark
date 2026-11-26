@@ -15,14 +15,16 @@ struct AgentModeHintsSectionView: View {
 
     public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            // Stacked, not side by side: the caption is a full sentence and
+            // truncated beside the title under German and Extra Large text.
+            VStack(alignment: .leading, spacing: 2) {
                 Label { Text("Agent Mode Classifier Hints", bundle: .module) } icon: { Image(systemName: "brain.head.profile") }
                     .themedFont(.base, weight: .semibold)
                     .accessibilityAddTraits(.isHeader)
-                Spacer()
                 Text("Used when the tool approval mode is \"Agent (classifier)\"", bundle: .module)
                     .themedFont(.tiny)
                     .foregroundStyle(.appSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Text("In Agent mode a local classifier judges each tool call the static rules would have asked about. These lists steer that judgment as plain sentences -- not shell patterns. Allow lines describe work to auto-approve in this workspace. Soft-deny lines describe destructive actions to refuse unless your recent request clearly asked for them. Hard-deny lines describe boundaries the classifier must refuse whatever you asked. Environment lines are facts about this machine it should know.", bundle: .module)
                 .themedFont(.small)

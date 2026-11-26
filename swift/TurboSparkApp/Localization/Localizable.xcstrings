@@ -247141,7 +247141,7 @@
         }
       }
     },
-    "Keyboard Shortcuts...": {
+    "Keyboard Shortcuts…": {
       "extractionState": "manual",
       "localizations": {
         "ar": {
@@ -247159,7 +247159,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Keyboard Shortcuts..."
+            "value": "Keyboard Shortcuts…"
           }
         },
         "es": {
@@ -293891,7 +293891,7 @@
         }
       }
     },
-    "New Profile...": {
+    "New Profile…": {
       "extractionState": "manual",
       "localizations": {
         "ar": {
@@ -293909,7 +293909,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "New Profile..."
+            "value": "New Profile…"
           }
         },
         "es": {
@@ -389198,7 +389198,7 @@
         }
       }
     },
-    "Report an Issue...": {
+    "Report an Issue…": {
       "extractionState": "manual",
       "localizations": {
         "ar": {
@@ -389216,7 +389216,7 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Report an Issue..."
+            "value": "Report an Issue…"
           }
         },
         "es": {
@@ -627901,264 +627901,264 @@
         }
       }
     },
-    "Command Center...": {
+    "Command Center…": {
       "extractionState": "manual",
       "localizations": {
         "ar": {
           "stringUnit": {
             "state": "translated",
-            "value": "مركز الأوامر..."
+            "value": "مركز الأوامر…"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Befehlszentrale..."
+            "value": "Befehlszentrale…"
           }
         },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Command Center..."
+            "value": "Command Center…"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Centro de comandos..."
+            "value": "Centro de comandos…"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Centre de commandes..."
+            "value": "Centre de commandes…"
           }
         },
         "he": {
           "stringUnit": {
             "state": "translated",
-            "value": "מרכז הפקודות..."
+            "value": "מרכז הפקודות…"
           }
         },
         "hi": {
           "stringUnit": {
             "state": "translated",
-            "value": "कमांड सेंटर..."
+            "value": "कमांड सेंटर…"
           }
         },
         "id": {
           "stringUnit": {
             "state": "translated",
-            "value": "Pusat Perintah..."
+            "value": "Pusat Perintah…"
           }
         },
         "it": {
           "stringUnit": {
             "state": "translated",
-            "value": "Centro comandi..."
+            "value": "Centro comandi…"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "コマンドセンター..."
+            "value": "コマンドセンター…"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "명령 센터..."
+            "value": "명령 센터…"
           }
         },
         "nl": {
           "stringUnit": {
             "state": "translated",
-            "value": "Opdrachtencentrum..."
+            "value": "Opdrachtencentrum…"
           }
         },
         "pl": {
           "stringUnit": {
             "state": "translated",
-            "value": "Centrum poleceń..."
+            "value": "Centrum poleceń…"
           }
         },
         "pt-BR": {
           "stringUnit": {
             "state": "translated",
-            "value": "Central de comandos..."
+            "value": "Central de comandos…"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Центр команд..."
+            "value": "Центр команд…"
           }
         },
         "sv": {
           "stringUnit": {
             "state": "translated",
-            "value": "Kommandocenter..."
+            "value": "Kommandocenter…"
           }
         },
         "tr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Komut Merkezi..."
+            "value": "Komut Merkezi…"
           }
         },
         "uk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Центр команд..."
+            "value": "Центр команд…"
           }
         },
         "vi": {
           "stringUnit": {
             "state": "translated",
-            "value": "Trung tâm lệnh..."
+            "value": "Trung tâm lệnh…"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "命令中心..."
+            "value": "命令中心…"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "指令中心..."
+            "value": "指令中心…"
           }
         }
       }
     },
-    "Run Command...": {
+    "Run Command…": {
       "extractionState": "manual",
       "localizations": {
         "ar": {
           "stringUnit": {
             "state": "translated",
-            "value": "تشغيل أمر..."
+            "value": "تشغيل أمر…"
           }
         },
         "de": {
           "stringUnit": {
             "state": "translated",
-            "value": "Befehl ausführen..."
+            "value": "Befehl ausführen…"
           }
         },
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Run Command..."
+            "value": "Run Command…"
           }
         },
         "es": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ejecutar comando..."
+            "value": "Ejecutar comando…"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Exécuter une commande..."
+            "value": "Exécuter une commande…"
           }
         },
         "he": {
           "stringUnit": {
             "state": "translated",
-            "value": "הפעל פקודה..."
+            "value": "הפעל פקודה…"
           }
         },
         "hi": {
           "stringUnit": {
             "state": "translated",
-            "value": "कमांड चलाएँ..."
+            "value": "कमांड चलाएँ…"
           }
         },
         "id": {
           "stringUnit": {
             "state": "translated",
-            "value": "Jalankan Perintah..."
+            "value": "Jalankan Perintah…"
           }
         },
         "it": {
           "stringUnit": {
             "state": "translated",
-            "value": "Esegui comando..."
+            "value": "Esegui comando…"
           }
         },
         "ja": {
           "stringUnit": {
             "state": "translated",
-            "value": "コマンドを実行..."
+            "value": "コマンドを実行…"
           }
         },
         "ko": {
           "stringUnit": {
             "state": "translated",
-            "value": "명령 실행..."
+            "value": "명령 실행…"
           }
         },
         "nl": {
           "stringUnit": {
             "state": "translated",
-            "value": "Opdracht uitvoeren..."
+            "value": "Opdracht uitvoeren…"
           }
         },
         "pl": {
           "stringUnit": {
             "state": "translated",
-            "value": "Uruchom polecenie..."
+            "value": "Uruchom polecenie…"
           }
         },
         "pt-BR": {
           "stringUnit": {
             "state": "translated",
-            "value": "Executar comando..."
+            "value": "Executar comando…"
           }
         },
         "ru": {
           "stringUnit": {
             "state": "translated",
-            "value": "Выполнить команду..."
+            "value": "Выполнить команду…"
           }
         },
         "sv": {
           "stringUnit": {
             "state": "translated",
-            "value": "Kör kommando..."
+            "value": "Kör kommando…"
           }
         },
         "tr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Komut Çalıştır..."
+            "value": "Komut Çalıştır…"
           }
         },
         "uk": {
           "stringUnit": {
             "state": "translated",
-            "value": "Виконати команду..."
+            "value": "Виконати команду…"
           }
         },
         "vi": {
           "stringUnit": {
             "state": "translated",
-            "value": "Chạy lệnh..."
+            "value": "Chạy lệnh…"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "运行命令..."
+            "value": "运行命令…"
           }
         },
         "zh-Hant": {
           "stringUnit": {
             "state": "translated",
-            "value": "執行指令..."
+            "value": "執行指令…"
           }
         }
       }
