@@ -42,6 +42,8 @@ pub mod lamq;
 /// Mixture-of-Experts (MoE) routing and FFN compute kernels.
 pub mod mla;
 pub mod moe;
+/// FP64 references and the pass rule for kernel oracles (KERN-13).
+pub mod oracle;
 /// `qwen4_exp`'s PLE (per-layer n-gram embedding) gate (PORT-LOCAL).
 pub mod ple;
 /// `qwen4_exp`'s QSA block indexer: pooling, scoring and top-k block

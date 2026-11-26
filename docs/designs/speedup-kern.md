@@ -330,6 +330,18 @@ in `crates/lab/src/kernel/gdn_delta.rs`. Both are planned work.
     fixture set, then recorded.
 *   **Negative test:** a deliberately perturbed arm must fail the oracle.
 
+Built (2026-11-26): the helper is `crates/compute/src/oracle.rs` (FP64
+gated-delta step, error stats, `oracle_tolerance`), chosen over
+`crates/gpu/tests/` so the lab can use it too (`crates/lab` gained a path
+dependency on `turbospark-compute`, owner-approved). `tslab kernel --bench
+gdn_delta --oracle on` checks decode and eager prefill (8 rows) over four
+seeds. Floors, relative to the largest reference value, from the incumbent's
+measured error at the Qwen3.6 geometry and a small one: y measured 2.3e-4 to
+3.8e-4, floor 2^-11 (one `half` rounding step); f32 state measured 1.3e-7 to
+3.6e-7, floor 8 x 2^-23. The negative test is a `dt_bias` shift of 0.01, which
+moves the state by 6.5e-4 to 3.2e-1. Both mutation checks (no shift, a reference
+without beta) fail the test. Not yet used by the existing parity tests.
+
 **Deferred: prefix-difference profiling (KERN-12).** No gate in this document reads
 its output. Build it when a kernel is blocked on attribution. Decision 4.
 

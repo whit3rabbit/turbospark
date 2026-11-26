@@ -154,7 +154,7 @@ case's `sidecar`. A trunk that already has a tower refuses the flag.
 | `moe_routed` | Routed-expert pair: M decode pairs against one route-list pair (union modeled as uniform routing) |
 | `verify_ladder` | Whole-model GEMM cost per verify width; `--verify-from EXP` adds the measured non-GEMM marginal |
 | `qkv_concurrent` | The attention q/k/v triple in a serial pass against a concurrent compute encoder (shared input, no barrier); `c(M)` is each arm's time over the serial arm's |
-| `gdn_delta` | Gated-DeltaNet delta kernels (decode, eager and lazy prefill, state fold) at the install's geometry. One build per process: put `TURBOSPARK_GDN_DK128=0` on the `tslab` process for the runtime-Dk build |
+| `gdn_delta` | Gated-DeltaNet delta kernels (decode, eager and lazy prefill, state fold) at the install's geometry. One build per process: put `TURBOSPARK_GDN_DK128=0` on the `tslab` process for the runtime-Dk build. `--oracle on` also checks decode and eager prefill against an FP64 reference (`turbospark_compute::oracle`) over four seeds and records `subject.oracle`: the kernel's error, the tolerance `max(floor x |ref|, 3 x incumbent)` and a run with `dt_bias` shifted by 0.01, which must exceed it or the bench errors |
 | `music3_grid` | Music 3 corpus: output hashes against goldens, per-config timing |
 | `whisper_linear` | Whisper encoder GEMM, decoder GEMV, GEMM at one row |
 | `ane_handoff` | Host handoff of one ANE prefill split point, `wait` against `poll`, quiet and under `--contend N` self-made CPU load. Needs a build with `--features ane-prefill`, a dense qwen install and its program set (`--ane-dir`, else the runtime's search list) |
