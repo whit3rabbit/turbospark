@@ -116,7 +116,8 @@ fn route_sources_run_and_the_sorted_grid_changes_no_bit() {
     let capture = std::env::temp_dir().join(format!("tslab-capture-{}.json", std::process::id()));
     // Two layers of eight passes, overlapping experts, rank order mixed.
     let layer: Vec<u32> = (0..8u32)
-        .flat_map(|p| [(p * 3) % 16, (p * 3 + 7) % 16, 5 + (p % 2), 15 - (p % 4)])
+        // Four distinct offsets, so a pass never routes one expert twice.
+        .flat_map(|p| [0, 11, 5, 7].map(|o| (p * 3 + o) % 16))
         .collect();
     std::fs::write(
         &capture,
@@ -141,6 +142,7 @@ fn route_sources_run_and_the_sorted_grid_changes_no_bit() {
             .unwrap_or_else(|e| panic!("{routes:?}: {e}"));
         let labels: Vec<&str> = r.arms.iter().map(|a| a.label.as_str()).collect();
         assert_eq!(labels, moe_routed::ARMS);
+        #[allow(clippy::needless_range_loop)] // one point index across three arms
         for m in 0..opts.rows.len() {
             let hash = |a: usize| r.arms[a].points[m].out_fnv.clone().expect("hashed");
             assert_eq!(hash(1), hash(2), "{routes:?}: sorted grid at point {m}");

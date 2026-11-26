@@ -368,6 +368,9 @@ fn flip_one_ulp(state: &MetalBuffer) {
     write_buffer_bytes(state, 0, &word);
 }
 
+/// One layer's two state buffers as bytes.
+type StateBytes = (Vec<u8>, Vec<u8>);
+
 /// The state and conv tail every arm starts from: `prefill` rows through the
 /// eager kernels.
 fn seed_state(
@@ -375,7 +378,7 @@ fn seed_state(
     cfg: &Config,
     z: &Sizes,
     inputs: &[LayerInputs],
-) -> Result<Vec<(Vec<u8>, Vec<u8>)>, String> {
+) -> Result<Vec<StateBytes>, String> {
     let mut out = Vec::with_capacity(cfg.layers);
     for i in inputs {
         let m = ArmLayer::new(context, z, SEED_CHUNK);

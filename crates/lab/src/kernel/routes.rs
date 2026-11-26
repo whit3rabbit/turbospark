@@ -230,13 +230,16 @@ pub fn windows(trace: &Trace, m: usize, cap: usize) -> Option<Windows> {
     })
 }
 
+/// One route: `(token, rank, slot)`.
+pub type Route = (u32, u32, u32);
+
 /// The route list in `(token, rank)` order, and the same routes sorted by
 /// slot (stable), the expert-ordered grid of phase 1. Phase 1 writes each
 /// route's activations at its own `(token, rank)`, so the order changes
 /// which threadgroups read which blob and not one bit of the result. Phase 2
 /// reads the list by position and must take the first.
-pub fn route_lists(slots: &[Vec<u32>]) -> (Vec<(u32, u32, u32)>, Vec<(u32, u32, u32)>) {
-    let pair: Vec<(u32, u32, u32)> = slots
+pub fn route_lists(slots: &[Vec<u32>]) -> (Vec<Route>, Vec<Route>) {
+    let pair: Vec<Route> = slots
         .iter()
         .enumerate()
         .flat_map(|(t, ranks)| {

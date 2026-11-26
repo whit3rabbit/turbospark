@@ -171,7 +171,7 @@ pub fn parse_arm(
             let gib: u32 = value
                 .parse()
                 .ok()
-                .filter(|&n| n >= 1 && n <= crate::workload::MAX_BALLAST_GIB)
+                .filter(|&n| (1..=crate::workload::MAX_BALLAST_GIB).contains(&n))
                 .ok_or_else(|| {
                     format!(
                         "arm {s:?}: ballast {value:?} must be 1..={} GiB",

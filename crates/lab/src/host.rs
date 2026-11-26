@@ -479,7 +479,7 @@ pub fn eligibility(samples: &[HostSample], rules: &HostRules) -> (bool, Vec<Stri
         let mut counts = samples.iter().filter_map(|s| s.compressions);
         match counts.next() {
             Some(first) => {
-                let delta = counts.last().unwrap_or(first).saturating_sub(first);
+                let delta = counts.next_back().unwrap_or(first).saturating_sub(first);
                 if delta > max {
                     reasons.insert(format!("compressor made {delta} pages, over {max}"));
                 }
