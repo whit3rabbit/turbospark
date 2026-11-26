@@ -59,6 +59,7 @@ pub(crate) struct RouterHistogram {
     /// `(first position, rows)` of the open batch, and how many rows each
     /// layer has routed in it.
     token_scope: Option<(usize, usize)>,
+    chunk_scope: Option<(usize, usize)>,
     scope_rows: Vec<usize>,
     /// `pred[layer]` is the ONE-LAYER-AHEAD prediction of that layer's
     /// top-k: what layer `layer`'s own router says when it is run early, on
@@ -140,12 +141,28 @@ impl RouterHistogram {
             gate_weights: vec![Vec::new(); num_layers],
             token_index: vec![Vec::new(); num_layers],
             token_scope: None,
+            chunk_scope: None,
             scope_rows: vec![0; num_layers],
             pred,
             pilot_self_test,
             router_logits,
             top_k,
         })
+    }
+
+    /// The tokens one prefill chunk covers, for `token_index`. Set by the
+    /// runner's one chunked entry, so every family's batched prefill has
+    /// positions; a family's own `begin_batch` narrows it and `end_batch`
+    /// gives it back. It opens no batch capture.
+    pub(crate) fn begin_chunk(&mut self, start: usize, count: usize) {
+        self.chunk_scope = Some((start, count));
+        self.token_scope = self.chunk_scope;
+        self.scope_rows.iter_mut().for_each(|rows| *rows = 0);
+    }
+
+    pub(crate) fn end_chunk(&mut self) {
+        self.chunk_scope = None;
+        self.token_scope = None;
     }
 
     pub(crate) fn begin_batch(&mut self, phase: &'static str, start: usize, count: usize) {
@@ -157,7 +174,7 @@ impl RouterHistogram {
     }
 
     pub(crate) fn end_batch(&mut self, completed: bool) {
-        self.token_scope = None;
+        self.token_scope = self.chunk_scope;
         if let Some(capture) = &mut self.batches {
             capture.end(completed);
         }
@@ -393,6 +410,7 @@ mod tests {
             gate_weights: vec![Vec::new(); 2],
             token_index: vec![Vec::new(); 2],
             token_scope: None,
+            chunk_scope: None,
             scope_rows: vec![0; 2],
             pred: pilot.then(|| vec![Vec::new(); 2]),
             pilot_self_test: false,
@@ -432,6 +450,23 @@ mod tests {
              \"gate_weights\":[[0.5,0.5,0.5,0.5],[0.5,0.5]],\
              \"token_index\":[[-1,-1],[-1]]}"
         );
+        std::mem::forget(hist);
+    }
+
+    #[test]
+    fn a_chunk_scope_gives_positions_and_survives_an_inner_batch() {
+        let mut hist = fixture(true);
+        hist.begin_chunk(7, 2);
+        hist.record(0, &[2, 0], &[0.5, 0.5]);
+        // A family's own narrower batch, then back to the chunk.
+        hist.begin_batch("prefill", 20, 1);
+        hist.record(1, &[1, 1], &[0.5, 0.5]);
+        hist.end_batch(true);
+        assert_eq!(hist.token_scope, Some((7, 2)));
+        hist.end_chunk();
+        hist.record(0, &[2, 1], &[0.5, 0.5]);
+        let json = hist.to_json();
+        assert!(json.contains("\"token_index\":[[7,-1],[20]]"), "{json}");
         std::mem::forget(hist);
     }
 

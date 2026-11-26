@@ -329,6 +329,7 @@ impl LogitProducer for RealForwardRunner {
     }
 
     fn take_turn_snapshot(&mut self, position: usize) {
+        foundation::engaged!("gdn_turn_snapshot");
         self.take_turn_snapshot_at(position);
     }
 }
@@ -679,7 +680,13 @@ impl ChunkedPrefillRunner for RealForwardRunner {
         self.note_eager_advance();
         self.batched_tape = None;
         self.batched_tape_row0 = None;
+        if let Some(hist) = &mut self.router_hist {
+            hist.begin_chunk(start_position, tokens.len());
+        }
         let result = self.prefill_chunk_inner(tokens, start_position, logits);
+        if let Some(hist) = &mut self.router_hist {
+            hist.end_chunk();
+        }
         // The server routes long prompts through here rather than through
         // `produce`, so without this the case prefix reuse exists for would
         // record nothing and never fire.

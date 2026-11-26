@@ -148,6 +148,8 @@ pub use families::qwen::{
 #[cfg(target_os = "macos")]
 pub use gpu::launch_count;
 #[cfg(target_os = "macos")]
+pub use gpu::submit_probe;
+#[cfg(target_os = "macos")]
 pub use gpu::MetalCompilationStats;
 #[cfg(target_os = "macos")]
 pub use hidden_trunk::{HiddenTrunk, PrefixSnapshot, TrunkRow};

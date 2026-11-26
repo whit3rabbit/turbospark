@@ -759,10 +759,12 @@ pub fn idle_gap_cmd(mut args: Args) -> Result<CmdOutput, String> {
     let rows = o.record["idle_gap"].clone();
     for r in rows.as_array().into_iter().flatten() {
         crate::say!(
-            "  gap {:>4} s: first step {:.1} ms, busy median {:.1} ms",
+            "  gap {:>4} s: first step {:.1} ms (busy {:.1}), its first buffer waited {:.2} ms for the GPU (busy {:.2})",
             r["gap_s"],
             r["first_ms"].as_f64().unwrap_or(f64::NAN),
-            r["busy_median_ms"].as_f64().unwrap_or(f64::NAN)
+            r["busy_median_ms"].as_f64().unwrap_or(f64::NAN),
+            r["first_submit_ms"].as_f64().unwrap_or(f64::NAN),
+            r["busy_submit_median_ms"].as_f64().unwrap_or(f64::NAN)
         );
     }
     let penalty = idle_penalty(&rows);

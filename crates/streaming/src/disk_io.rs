@@ -227,6 +227,11 @@ impl ExpertIoStats {
 mod tests {
     use super::*;
 
+    /// The disk counter is the PROCESS's, so a test that asserts a delta
+    /// must be the only one reading from disk while it runs.
+    #[cfg(target_os = "macos")]
+    static DISK_COUNTER: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// The probe answers at all. This is the whole load-bearing claim of
     /// the file: `proc_pid_rusage` takes no size argument, so a wrong
     /// flavor constant or a wrong cast shows up as a non-zero return and
@@ -273,6 +278,7 @@ mod tests {
         use std::io::Write;
         use std::os::unix::fs::FileExt;
         use std::os::unix::io::AsRawFd;
+        let _alone = DISK_COUNTER.lock().unwrap_or_else(|p| p.into_inner());
 
         // Large enough that no readahead heuristic can serve it as a
         // rounding error, small enough to stay cheap.
@@ -327,6 +333,7 @@ mod tests {
     fn msync_invalidate_evicts_hot_pages() {
         use std::os::unix::fs::FileExt;
         use std::os::unix::io::AsRawFd;
+        let _alone = DISK_COUNTER.lock().unwrap_or_else(|p| p.into_inner());
 
         const BYTES: usize = 8 << 20;
         let dir = std::env::temp_dir().join(format!("turbospark-evict-{}", std::process::id()));

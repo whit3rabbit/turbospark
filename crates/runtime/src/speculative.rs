@@ -436,6 +436,9 @@ fn run_speculative<P: SpeculativeProducer>(
     // `dflash2_accept_length_probe` and 0 here reads as a THROUGHPUT
     // mystery rather than as the acceptance gap it is.
     let stats = std::env::var("TURBOSPARK_SPEC_STATS").as_deref() == Ok("1");
+    if stats {
+        foundation::engaged!("spec_stats");
+    }
     let mut stat_rounds = 0usize;
     let mut stat_accepted = 0usize;
     let mut stat_offered = vec![0usize; widest];

@@ -237,6 +237,9 @@ pub struct DecodeResult {
     pub overall: crate::kl_stats::Summary,
     /// Per prompt, with its token count as the label.
     pub prompts: Vec<(usize, crate::kl_stats::Summary)>,
+    /// Per text class (LAB-02), when the caller named them.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub classes: std::collections::BTreeMap<String, crate::kl_stats::Summary>,
 }
 
 /// `positions` per prompt as `(prompt_tokens, positions)`. The mean KL bound
@@ -295,7 +298,38 @@ pub fn judge_decode(
         reasons,
         overall,
         prompts: prompts.iter().map(|(n, p)| (*n, summarize(p))).collect(),
+        classes: Default::default(),
     }
+}
+
+/// Hold each text class to the same bound on its own: a drift on one kind of
+/// text must not be averaged away by the others. `labels` name `prompts` in
+/// order. Like every other half, it can only fail a result.
+pub fn judge_text_classes(
+    mut result: DecodeResult,
+    class: GateClass,
+    bounds: QualityBounds,
+    labels: &[&str],
+    prompts: &[(usize, Vec<crate::kl_stats::Position>)],
+) -> DecodeResult {
+    type Prompt = (usize, Vec<crate::kl_stats::Position>);
+    let mut by_class: std::collections::BTreeMap<&str, Vec<Prompt>> = Default::default();
+    for (label, prompt) in labels.iter().zip(prompts) {
+        by_class.entry(label).or_default().push(prompt.clone());
+    }
+    let several = by_class.len() > 1;
+    for (label, members) in by_class {
+        let judged = judge_decode(class, bounds, &members);
+        // One class alone is the overall judgment again.
+        if several {
+            result.passed &= judged.passed;
+            result
+                .reasons
+                .extend(judged.reasons.iter().map(|r| format!("{label} text: {r}")));
+        }
+        result.classes.insert(label.to_string(), judged.overall);
+    }
+    result
 }
 
 /// How far above the base install's KL a candidate may sit and still count
@@ -355,7 +389,9 @@ pub fn judge_divergence(prompts: &[Divergence], floor: f64) -> (bool, Vec<String
         ));
     }
     for p in parted {
-        if p.baseline_margin.is_none_or(|m| !(m < SMALL_MARGIN)) {
+        if p.baseline_margin
+            .is_none_or(|m| m.is_nan() || m >= SMALL_MARGIN)
+        {
             reasons.push(format!(
                 "divergence at token {} was not a near tie (margin {:?})",
                 p.first.unwrap_or(0),
@@ -496,6 +532,41 @@ mod tests {
         assert!(!judge_quant(0.10, 100, 0.05, 101).passed);
         assert!(!judge_quant(0.10, 100, f64::NAN, 90).passed);
         assert!(!judge_quant(f64::NAN, 100, 0.05, 90).passed);
+    }
+
+    #[test]
+    fn a_drift_on_one_kind_of_text_is_not_averaged_away() {
+        use crate::kl_stats::position;
+        let same = position(&[3.0, 1.0, 0.0], &[3.0, 1.0, 0.0], 0).unwrap();
+        let off = position(&[3.0, 1.0, 0.0], &[3.0, 1.2, 0.0], 0).unwrap();
+        let b = GateClass::DenseKl.default_bounds();
+        // Many clean document positions, a few drifted chat positions: the
+        // pooled mean passes and the chat class alone does not.
+        assert!(
+            off.kl > b.mean_kl && off.kl * 20.0 / 20_020.0 < b.mean_kl,
+            "{}",
+            off.kl
+        );
+        let prompts = vec![(64, vec![same; 20_000]), (32, vec![off; 20])];
+        let pooled = judge_decode(GateClass::DenseKl, b, &prompts);
+        assert!(pooled.passed, "{:?}", pooled.reasons);
+        let split = judge_text_classes(
+            pooled.clone(),
+            GateClass::DenseKl,
+            b,
+            &["documents", "chat"],
+            &prompts,
+        );
+        assert!(!split.passed);
+        assert!(
+            split.reasons.iter().any(|r| r.starts_with("chat text:")),
+            "{:?}",
+            split.reasons
+        );
+        assert_eq!(split.classes.len(), 2);
+        // One class: recorded, not judged twice.
+        let one = judge_text_classes(pooled, GateClass::DenseKl, b, &["documents"; 2], &prompts);
+        assert!(one.passed && one.reasons.is_empty() && one.classes.len() == 1);
     }
 
     #[test]

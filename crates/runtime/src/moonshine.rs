@@ -1054,10 +1054,14 @@ impl MoonshineRunner {
             }
         }?;
         let backend = match choice {
-            DeviceChoice::Cpu => MoonshineBackend::Cpu(
-                Moonshine::open(model_dir).map_err(|error| error.to_string())?,
-            ),
+            DeviceChoice::Cpu => {
+                foundation::engaged!("moonshine_cpu");
+                MoonshineBackend::Cpu(
+                    Moonshine::open(model_dir).map_err(|error| error.to_string())?,
+                )
+            }
             DeviceChoice::Metal => {
+                foundation::engaged!("moonshine_metal");
                 MoonshineBackend::Metal(Mutex::new(MoonshineMetalEngine::open(model_dir)?))
             }
         };

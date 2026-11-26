@@ -23,7 +23,7 @@ use crate::gates::{
     effective_bounds, judge_decode, judge_quality, DecodeResult, GateClass, PromptComparison,
     QualityBounds, QualityResult, DECODE_TRACE_TOKENS,
 };
-use crate::gates::{judge_divergence, Divergence};
+use crate::gates::{judge_divergence, judge_text_classes, Divergence};
 use crate::integrity;
 use crate::lock::MachineLock;
 use crate::logit_trace::TraceReader;
@@ -138,6 +138,17 @@ fn runs_the_runtime_loop(spec: &GateArms, workload: &Workload) -> bool {
         || workload.prompts.iter().any(PromptSource::is_chat)
 }
 
+/// The chat-templated prompts of the forced trace, its second text class.
+pub const DECODE_TRACE_CHAT: [&str; 2] = ["short-explanation", "medium-review"];
+
+/// The text class a trace prompt belongs to.
+fn text_class(p: &PromptSource) -> &'static str {
+    match p {
+        PromptSource::Corpus(_) | PromptSource::TextFile(_) => "documents",
+        _ => "chat",
+    }
+}
+
 /// The prompts and decode length of the forced trace.
 pub fn decode_trace_workload(w: &Workload) -> Workload {
     let max = w.max_context as usize;
@@ -149,6 +160,13 @@ pub fn decode_trace_workload(w: &Workload) -> Workload {
             .iter()
             .filter(|&&n| n + steps < max)
             .map(|&n| PromptSource::Corpus(n))
+            .chain(
+                // A chat prompt is a few hundred tokens at most.
+                DECODE_TRACE_CHAT
+                    .iter()
+                    .filter(|_| 512 + steps < max)
+                    .map(|&c| PromptSource::Protocol(c.into())),
+            )
             .collect(),
         decode_tokens: steps,
         ..quality_workload(w)
@@ -251,7 +269,16 @@ pub fn decode_trace_gate(session: &Session, spec: &GateArms) -> Result<DecodeRes
         }
         class => effective_bounds(class, spec.quality_bounds)?,
     };
-    Ok(judge_decode(spec.exactness, bounds, &compared?))
+    let compared = compared?;
+    let labels: Vec<&str> = workload.prompts.iter().map(text_class).collect();
+    let judged = judge_decode(spec.exactness, bounds, &compared);
+    Ok(judge_text_classes(
+        judged,
+        spec.exactness,
+        bounds,
+        &labels,
+        &compared,
+    ))
 }
 
 /// The final-position prefill comparison over the quality corpus.
@@ -651,6 +678,16 @@ fn print_quality(q: &QualityResult) {
             s.nll_delta,
             s.nll_delta_se
         );
+        for (class, c) in &d.classes {
+            crate::say!(
+                "    {class}: {} positions, mean KL {:.3e}, {} flips ({} sure), NLL delta {:+.4}",
+                c.tokens,
+                c.mean_kl,
+                c.flips,
+                c.large_margin_flips,
+                c.nll_delta
+            );
+        }
     }
 }
 

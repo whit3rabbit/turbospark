@@ -56,7 +56,7 @@ process, which must sit beside `tslab`.
 | `launch-count --model M [--arm SPEC]...` | Dispatches and command buffers per decoded token, and the pipelines each arm used. Counts only: `TURBOSPARK_LAUNCH_COUNT=1` perturbs timing | `run`, `launch_count` |
 | `spec-rounds --model M --arm NAME~mtp:4 [--synth-len 1.5,2,3]` | Speculative rounds under the runtime probe: verify time by run age, expert reads per committed token, and costs at a forced acceptance. Synthetic output is wrong by design | `run`, `spec_rounds` |
 | `image-stage --model INSTALL --fixtures DIR [--against EXP]` | Each Z-Image denoise step from the reference latent (`scripts/z_image_capture.py`): update error and output hash; exit 3 when a step's bits changed. No quality bound | `image_stage` |
-| `idle-gap --model M` | First decode step after 0.5, 1, 2, 4 and 8 s gaps; under 20% worse than the 0.5 s gap, drop the idle-GPU idea | `run`, `idle_gap` |
+| `idle-gap --model M` | First decode step after 0.5, 1, 2, 4 and 8 s gaps, and how long its first command buffer waited for the GPU; under 20% worse than the 0.5 s gap, drop the idle-GPU idea | `run`, `idle_gap` |
 | `anchor --model M --file F [--update]` | Greedy digests on three prompts keyed by family and toolchain; exit 3 lists changes for a person | `run`, `anchor` |
 | `release-gate --base-worker PATH --model M... [--declared F]` | A released `tslab-worker` against this one, interleaved: PASS, FAIL (undeclared loss), NEEDS-KL-GATE (output moved, undeclared), PASS-with-note, SKIP | `run`, `release_gate` |
 | `type1` | False WIN and LOSS rates of the pair rule, replayed on every stored null calibration | nothing |
@@ -213,7 +213,7 @@ against `--base`, build the worker from the tree, run required tests, the
 quality gate, the paired A/B and the memory check, and print a `DECISION`.
 The quality gate compares final-position prefill logits and, when the
 workload decodes, a teacher-forced decode trace: the baseline's greedy ids
-replayed by the candidate for up to 256 steps on three corpus prompts, judged
+replayed by the candidate for up to 256 steps on three document and two chat prompts, each class judged on its own,, judged
 on mean KL over every position, with any top-1 flip the reference led by 2
 logits or more failing. `gate --decode-trace` forces the trace; `gate
 --noise-arms` also compares each arm with itself. A spec may add

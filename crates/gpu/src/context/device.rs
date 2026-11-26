@@ -73,6 +73,9 @@ impl MetalContext {
         let device = Device::system_default().ok_or(GpuError::NoDevice)?;
         let disk_cache = PipelineDiskCache::from_environment(&device);
         let precise_math = std::env::var_os("TURBOSPARK_METAL_PRECISE_MATH").is_some();
+        if precise_math {
+            foundation::engaged!("metal_precise_math");
+        }
         let use_precompiled = std::env::var("TURBOSPARK_METAL_PRECOMPILED").as_deref() == Ok("1");
         Ok(Self::with_options(
             device,

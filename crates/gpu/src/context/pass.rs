@@ -182,6 +182,7 @@ impl PassEncoder {
     pub fn commit_and_wait_checked(self) -> Result<(), super::GpuError> {
         let pass = self.commit();
         pass.command_buffer.wait_until_completed();
+        crate::submit_probe::completed(&pass.command_buffer);
         let status = pass.command_buffer.status();
         if status != metal::MTLCommandBufferStatus::Completed {
             warn_on_command_buffer_error(&pass.command_buffer);
@@ -311,6 +312,7 @@ impl CommittedPass {
     /// still be running.
     pub fn wait(mut self) {
         self.command_buffer.wait_until_completed();
+        crate::submit_probe::completed(&self.command_buffer);
         warn_on_command_buffer_error(&self.command_buffer);
         self.wait_on_drop = false;
     }

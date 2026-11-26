@@ -117,7 +117,7 @@ impl Session {
 
 /// Bumped when what a metric means changes. Records with different ids are
 /// not comparable.
-pub const METHODOLOGY_VERSION: u32 = 2;
+pub const METHODOLOGY_VERSION: u32 = 3;
 
 /// The id of a measurement protocol: kind, version and the workload with the
 /// BYTES of every prompt file it names, so an edited prompt is a new id

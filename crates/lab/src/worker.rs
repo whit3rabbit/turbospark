@@ -865,6 +865,49 @@ fn open(
     Ok((runner, tokenizer, family))
 }
 
+/// Swap read once a second while the install opens: a spike that is gone by
+/// the end still moved pages.
+struct PressureWatch {
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread: Option<std::thread::JoinHandle<(Option<f64>, usize)>>,
+}
+
+impl PressureWatch {
+    fn start() -> Self {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = stop.clone();
+        let thread = std::thread::spawn(move || {
+            let mut peak: Option<f64> = None;
+            let mut samples = 0;
+            let mut ticks = 0u32;
+            while !flag.load(std::sync::atomic::Ordering::Relaxed) {
+                if ticks % 10 == 0 {
+                    if let Some(used) = crate::host::swap_used_mib() {
+                        peak = Some(peak.map_or(used, |p: f64| p.max(used)));
+                        samples += 1;
+                    }
+                }
+                ticks += 1;
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            (peak, samples)
+        });
+        Self {
+            stop,
+            thread: Some(thread),
+        }
+    }
+
+    /// The highest swap use seen and how many readings it came from.
+    fn finish(mut self) -> (Option<f64>, usize) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        self.thread
+            .take()
+            .and_then(|t| t.join().ok())
+            .unwrap_or((None, 0))
+    }
+}
+
 fn probe_json(r: runtime::spec_probe::Record) -> serde_json::Value {
     serde_json::json!({
         "synthetic": r.synthetic,
@@ -907,14 +950,23 @@ fn idle_gap_probe(
             step(runner, logits)?;
         }
         std::thread::sleep(std::time::Duration::from_secs_f64(gap));
+        runtime::submit_probe::install();
         let first_ms = step(runner, logits)?;
+        // The first buffer after the gap is the one an idle GPU delays.
+        let first_submit_ms = runtime::submit_probe::take().first().copied();
         let mut busy = Vec::with_capacity(IDLE_STEPS);
+        let mut busy_submit = Vec::with_capacity(IDLE_STEPS);
         for _ in 0..IDLE_STEPS {
             busy.push(step(runner, logits)?);
+            busy_submit.extend(runtime::submit_probe::take().first().copied());
         }
+        runtime::submit_probe::remove();
+        busy_submit.sort_by(f64::total_cmp);
         busy.sort_by(f64::total_cmp);
         rows.push(serde_json::json!({"gap_s": gap, "first_ms": first_ms,
-                                     "busy_median_ms": busy[busy.len() / 2]}));
+                                     "busy_median_ms": busy[busy.len() / 2],
+                                     "first_submit_ms": first_submit_ms,
+                                     "busy_submit_median_ms": busy_submit.get(busy_submit.len() / 2)}));
     }
     sampler.sample();
     Ok(serde_json::Value::Array(rows))
@@ -1026,6 +1078,7 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         crate::host::compressor_counters(),
         crate::host::swap_used_mib(),
     );
+    let watch = PressureWatch::start();
     let t_open = Instant::now();
     let (mut runner, tokenizer, family) = open(req, &dir)?;
     let open_s = t_open.elapsed().as_secs_f64();
@@ -1037,7 +1090,12 @@ fn run_inner(req: &WorkerRequest) -> Result<RunRecord, String> {
         let swap = crate::host::swap_used_mib()
             .zip(pressure_before.1)
             .map(|(b, a)| b - a);
-        Some(serde_json::json!({"compressions_delta": delta, "swap_growth_mib": swap}))
+        let (swap_peak, samples) = watch.finish();
+        let peak = swap_peak.zip(pressure_before.1).map(|(p, a)| p - a);
+        Some(
+            serde_json::json!({"compressions_delta": delta, "swap_growth_mib": swap,
+                                "swap_peak_growth_mib": peak, "samples": samples}),
+        )
     };
     sampler.sample();
 
@@ -1593,6 +1651,15 @@ mod tests {
         let edits: Vec<&str> = (2..=7).map(|t| chat_turn(&f, &v, t).unwrap().0).collect();
         assert_eq!(edits, ["a", "b", "c", "c", "b", "a"]);
         assert!(chat_turn(&f, &v, 2).unwrap().1);
+    }
+
+    #[test]
+    fn the_pressure_watch_reads_at_least_once_and_stops() {
+        let watch = PressureWatch::start();
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        let (peak, samples) = watch.finish();
+        // A host where swap is unreadable records nothing, never zero.
+        assert_eq!(peak.is_some(), samples > 0);
     }
 
     #[test]
