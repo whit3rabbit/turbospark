@@ -522,6 +522,9 @@ pub async fn chat_completions(
         Ok(m) => m,
         Err(response) => return response,
     };
+    if let Some(message) = unsupported_request_field(&request) {
+        return error_response(axum::http::StatusCode::BAD_REQUEST, message);
+    }
     // Planned here as well as inside `run_guarded` so an unparseable request
     // is still refused with a 400 before any generation starts. The guarded
     // path re-plans because a retry turn changes the messages.

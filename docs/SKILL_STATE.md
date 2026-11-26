@@ -165,7 +165,7 @@ Every row is checkable with the named file or a grep; none of it is inferred.
 | JSON validation of model output | Post-hoc only: `crates/server/src/guardrails.rs:237` calls forge-guardrails' `validate_tool_arguments` against the request's own tool schemas. No JSON-Schema crate anywhere in the workspace (grep `jsonschema\|schemars` over the Cargo.tomls). The Swift app mirrors this with a shallower hand-rolled check (`ForgeGuardrailsEngine.swift`, flat string arguments, no nested objects or arrays). |
 | A retry-on-invalid loop | Exists: `run_guarded` (`crates/server/src/guardrails.rs:304`), default budget 1, re-renders the whole prompt with the failed turn plus a nudge appended. Note requests carrying tools are BUFFERED rather than streamed while guardrails are on. |
 | Grammar-constrained decoding | Absent, and documented as absent (docs/FORGE_GUARDRAILS.md, DEVIATIONS.md). No vocabulary masking of any kind exists: no logit_bias (the OpenAI field is swept into `extra` and never read), no allowed-token set, no grammar. |
-| Structured-output API (`response_format` / `json_schema`) | Absent on both server endpoints. |
+| Structured-output API (`response_format` / `json_schema`) | Absent on both server endpoints. `/v1/chat/completions` refuses `strict: true` with a 400. |
 | Prefix KV reuse | Implemented (`crates/runtime/src/kv_prefix.rs`, `LogitProducer::try_reuse_prefix`, opted in per session via `set_prefix_reuse`; `--chat` is a caller). It was docs-only when this page was first written on 2026-08-29 and landed on `main` the next day, which is why the section below reads as a projection. See it for what SKILL.state does to the reusable prefix. |
 
 The measurement below says constrained decoding is NOT needed for this, so

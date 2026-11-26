@@ -89,7 +89,8 @@ curl http://127.0.0.1:8080/health
 
 ### POST /v1/chat/completions
 
-OpenAI-compatible chat completions.
+OpenAI-compatible chat completions. `n` greater than 1 and a strict
+`json_schema` response format are refused with a 400.
 
 ```sh
 curl http://127.0.0.1:8080/v1/chat/completions \

@@ -15,6 +15,11 @@ Dedicated OpenAPI specification: [`text.openapi.yaml`](../openapi/text.openapi.y
 
 Standard OpenAI chat completion endpoint.
 
+`n` greater than 1 and a `json_schema` response format with `strict: true`
+are refused with a 400: one choice is generated and output is not constrained
+to a schema. Other fields the server does not act on, such as `logprobs` or
+`json_object`, are accepted and named in the `x-anyllm-degradation` header.
+
 ```sh
 curl http://127.0.0.1:8080/v1/chat/completions \
   -H "Content-Type: application/json" \
