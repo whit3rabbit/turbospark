@@ -106,14 +106,14 @@ impl IoReport {
     }
 }
 
-fn cf_string(s: &str) -> CFTypeRef {
+pub(crate) fn cf_string(s: &str) -> CFTypeRef {
     let c = CString::new(s).expect("no interior nul");
     // SAFETY: a valid C string and encoding; the result is owned (Create
     // rule) and released by the caller.
     unsafe { CFStringCreateWithCString(std::ptr::null(), c.as_ptr(), UTF8) }
 }
 
-fn read_string(s: CFTypeRef) -> Result<String, String> {
+pub(crate) fn read_string(s: CFTypeRef) -> Result<String, String> {
     if s.is_null() {
         return Err("IOReport returned a null string".into());
     }

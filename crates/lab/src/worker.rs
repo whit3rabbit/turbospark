@@ -925,8 +925,67 @@ pub const IDLE_GAPS_S: [f64; 5] = [0.5, 1.0, 2.0, 4.0, 8.0];
 /// Decode steps timed after each gap.
 const IDLE_STEPS: usize = 20;
 
-/// Prefill the first prompt, then for each gap: sleep, time one step, then
-/// time the following steps as the busy reading.
+/// The idle-gap arm, from `TURBOSPARK_LAB_IDLE_PRESTEP` (KERN-05 Step 1a):
+/// what runs between the sleep and the timed first step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdlePrestep {
+    /// Nothing: the baseline reading.
+    None,
+    /// One empty dispatch (GPU power or scheduling state).
+    Wake,
+    /// One read per page of the resident weights (paging).
+    Touch,
+}
+
+pub const IDLE_PRESTEP_ENV: &str = "TURBOSPARK_LAB_IDLE_PRESTEP";
+
+impl IdlePrestep {
+    pub fn parse(value: Option<&str>) -> Result<Self, String> {
+        match value.unwrap_or("none") {
+            "" | "none" => Ok(Self::None),
+            "wake" => Ok(Self::Wake),
+            "touch" => Ok(Self::Touch),
+            other => Err(format!(
+                "{IDLE_PRESTEP_ENV}={other:?}: expected none, wake or touch"
+            )),
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Wake => "wake",
+            Self::Touch => "touch",
+        }
+    }
+}
+
+/// GPU P-state readings for arm P, or the reason there are none. Every
+/// window it brackets is read on this thread, so the meter never moves.
+struct PstateLog(Result<crate::gpu_pstate::GpuPstateMeter, String>);
+
+impl PstateLog {
+    fn read(&self) -> Option<crate::gpu_pstate::PstateReading> {
+        self.0.as_ref().ok().and_then(|m| m.read().ok())
+    }
+
+    fn window(
+        a: &Option<crate::gpu_pstate::PstateReading>,
+        b: &Option<crate::gpu_pstate::PstateReading>,
+    ) -> serde_json::Value {
+        match (a, b) {
+            (Some(a), Some(b)) => crate::gpu_pstate::shares(a, b)
+                .map_or(serde_json::Value::Null, |s| serde_json::json!(s)),
+            _ => serde_json::Value::Null,
+        }
+    }
+}
+
+/// Prefill the first prompt, then for each gap: sleep, run the arm's
+/// prestep, time one step, then time the following steps as the busy
+/// reading. Each row also carries the GPU P-state shares of the gap, the
+/// prestep, the first step and the busy steps (arm P), and the digest of the
+/// gap's tokens, which every arm must reproduce.
 fn idle_gap_probe(
     runner: &mut RealForwardRunner,
     ids: &[i32],
@@ -934,39 +993,77 @@ fn idle_gap_probe(
     logits: &mut [LogitValue],
     sampler: &mut AppMemorySampler,
 ) -> Result<serde_json::Value, String> {
+    let prestep = IdlePrestep::parse(std::env::var(IDLE_PRESTEP_ENV).ok().as_deref())?;
+    // Built before any timing so compiling never lands in a window.
+    let probe = match prestep {
+        IdlePrestep::None => None,
+        _ => Some(runner.idle_probe().map_err(|e| e.to_string())?),
+    };
+    let pstate = PstateLog(crate::gpu_pstate::GpuPstateMeter::open());
     runner.reset();
     prefill(runner, ids, chunk, logits, sampler)?;
     let mut pos = ids.len();
-    let mut step = |runner: &mut RealForwardRunner, logits: &mut [LogitValue]| {
-        let t = argmax(logits)?;
-        let started = Instant::now();
-        runner.produce(t, pos, logits).map_err(|e| e.to_string())?;
-        pos += 1;
-        Ok::<f64, String>(started.elapsed().as_secs_f64() * 1e3)
-    };
+    let mut tokens: Vec<i32> = Vec::new();
+    let mut step =
+        |runner: &mut RealForwardRunner, logits: &mut [LogitValue], tokens: &mut Vec<i32>| {
+            let t = argmax(logits)?;
+            tokens.push(t);
+            let started = Instant::now();
+            runner.produce(t, pos, logits).map_err(|e| e.to_string())?;
+            pos += 1;
+            Ok::<f64, String>(started.elapsed().as_secs_f64() * 1e3)
+        };
     let mut rows = Vec::new();
     for gap in IDLE_GAPS_S {
+        tokens.clear();
         for _ in 0..IDLE_STEPS {
-            step(runner, logits)?;
+            step(runner, logits, &mut tokens)?;
         }
+        let before_gap = pstate.read();
         std::thread::sleep(std::time::Duration::from_secs_f64(gap));
+        let after_gap = pstate.read();
+        let started = Instant::now();
+        let pages = match &probe {
+            Some(p) => runner
+                .run_idle_probe(p, prestep == IdlePrestep::Touch)
+                .map_err(|e| e.to_string())?,
+            None => 0,
+        };
+        let prestep_ms = started.elapsed().as_secs_f64() * 1e3;
+        let after_prestep = pstate.read();
+        // Installed after the prestep, so `first_submit_ms` is still the
+        // timed step's own first buffer.
         runtime::submit_probe::install();
-        let first_ms = step(runner, logits)?;
+        let first_ms = step(runner, logits, &mut tokens)?;
+        let after_first = pstate.read();
         // The first buffer after the gap is the one an idle GPU delays.
         let first_submit_ms = runtime::submit_probe::take().first().copied();
         let mut busy = Vec::with_capacity(IDLE_STEPS);
         let mut busy_submit = Vec::with_capacity(IDLE_STEPS);
         for _ in 0..IDLE_STEPS {
-            busy.push(step(runner, logits)?);
+            busy.push(step(runner, logits, &mut tokens)?);
             busy_submit.extend(runtime::submit_probe::take().first().copied());
         }
         runtime::submit_probe::remove();
+        let after_busy = pstate.read();
         busy_submit.sort_by(f64::total_cmp);
         busy.sort_by(f64::total_cmp);
+        let token_bytes: Vec<u8> = tokens.iter().flat_map(|t| t.to_le_bytes()).collect();
         rows.push(serde_json::json!({"gap_s": gap, "first_ms": first_ms,
                                      "busy_median_ms": busy[busy.len() / 2],
                                      "first_submit_ms": first_submit_ms,
-                                     "busy_submit_median_ms": busy_submit.get(busy_submit.len() / 2)}));
+                                     "busy_submit_median_ms": busy_submit.get(busy_submit.len() / 2),
+                                     "prestep": prestep.name(),
+                                     "prestep_ms": prestep_ms,
+                                     "prestep_pages": pages,
+                                     "decode_digest": model_io::hash_data(&token_bytes),
+                                     "pstate": {
+                                         "gap": PstateLog::window(&before_gap, &after_gap),
+                                         "prestep": PstateLog::window(&after_gap, &after_prestep),
+                                         "first_step": PstateLog::window(&after_prestep, &after_first),
+                                         "busy": PstateLog::window(&after_first, &after_busy),
+                                     },
+                                     "pstate_error": pstate.0.as_ref().err()}));
     }
     sampler.sample();
     Ok(serde_json::Value::Array(rows))

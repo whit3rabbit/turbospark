@@ -26,6 +26,34 @@ impl RealForwardRunner {
         self.context.buffer_allocation_count()
     }
 
+    /// Builds the idle-stall probe pipelines on this runner's device, for
+    /// tslab's idle-gap arms (KERN-05 Step 1a). Lab only.
+    #[cfg(target_os = "macos")]
+    pub fn idle_probe(&self) -> Result<gpu::touch::IdleProbe, RealForwardError> {
+        gpu::touch::IdleProbe::new(&self.context).map_err(RealForwardError::Gpu)
+    }
+
+    /// Runs one idle-stall probe action on this runner's queue and waits:
+    /// `touch` reads one word per page of the resident weights buffer (the
+    /// trunk only; mapped experts, KV and scratch are not covered), `wake`
+    /// commits one empty dispatch. Returns the pages touched (0 for wake).
+    /// Lab only: reads, never writes, so decode output cannot change.
+    #[cfg(target_os = "macos")]
+    pub fn run_idle_probe(
+        &self,
+        probe: &gpu::touch::IdleProbe,
+        touch: bool,
+    ) -> Result<u64, RealForwardError> {
+        if touch {
+            probe
+                .touch(&self.context, self.weights.buffer())
+                .map_err(RealForwardError::Gpu)
+        } else {
+            probe.wake(&self.context).map_err(RealForwardError::Gpu)?;
+            Ok(0)
+        }
+    }
+
     /// Let the NEXT turn continue from this turn's KV when its prompt begins
     /// with exactly the tokens that built it, instead of re-prefilling the
     /// whole transcript (`crate::kv_prefix`).

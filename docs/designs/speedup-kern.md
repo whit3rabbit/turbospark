@@ -234,6 +234,25 @@ Run with `tslab idle-gap` at 2, 4 and 8 s idle, same install, two fresh processe
 *   **Arm P (power state):** record GPU power and clock state at the first step.
     The sampling tool is not named yet and must be chosen in this step.
 
+Built (2026-11-26, not run): `gpu::touch::IdleProbe` (`crates/gpu/src/touch.rs`)
+and `crates/lab/src/gpu_pstate.rs`, wired into the idle-gap probe in
+`crates/lab/src/worker.rs`. Arm selection is `TURBOSPARK_LAB_IDLE_PRESTEP=none|wake|touch`.
+Three choices differ from the text above:
+
+*   Arm T reads one word per 16 KB page of the resident weights buffer. It does
+    not write, so it cannot change decode output. It covers the trunk only:
+    mapped experts, KV and scratch are not touched.
+*   An added arm W (`wake`) commits one empty dispatch. If W alone removes the
+    stall, the cause is GPU power or scheduling state, not paging.
+*   Arm P's tool is IOReport `GPU Stats / GPU Performance States` (channel
+    `GPUPH`, states `OFF`, `P1` to `P15` on the M4 Max). It needs no sudo and,
+    like the energy meter, reads the whole machine. It is recorded on every
+    run, not as a separate arm.
+
+The original reading's install (`inkling2-mini-ud-q4kxl`) is no longer on this
+Mac. The run uses `inkling2-mini-mlx4.gturbo`, so the baseline is re-measured
+there first, with no other Inkling 2 process running.
+
 Reading the result:
 
 *   If arm T brings the after-gap step to 50 ms or less with an equal decode

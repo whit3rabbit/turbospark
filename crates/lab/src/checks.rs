@@ -736,6 +736,28 @@ pub fn idle_penalty(rows: &Value) -> Option<f64> {
     })
 }
 
+/// The three largest state shares of one P-state window, e.g. `OFF 97%,
+/// P15 3%`, from the first channel (`GPUPH` on Apple Silicon).
+pub fn pstate_brief(window: &Value) -> String {
+    let Some(states) = window
+        .as_object()
+        .and_then(|w| w.values().next()?.as_object().cloned())
+    else {
+        return "unread".into();
+    };
+    let mut shares: Vec<(String, f64)> = states
+        .into_iter()
+        .filter_map(|(k, v)| Some((k, v.as_f64()?)))
+        .collect();
+    shares.sort_by(|a, b| b.1.total_cmp(&a.1));
+    shares
+        .iter()
+        .take(3)
+        .map(|(k, v)| format!("{k} {:.0}%", v * 100.0))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// A gap that costs the next token less than this is not worth chasing.
 pub const IDLE_PENALTY_FLOOR: f64 = 0.20;
 
@@ -766,6 +788,30 @@ pub fn idle_gap_cmd(mut args: Args) -> Result<CmdOutput, String> {
             r["first_submit_ms"].as_f64().unwrap_or(f64::NAN),
             r["busy_submit_median_ms"].as_f64().unwrap_or(f64::NAN)
         );
+        if r["prestep"].as_str().is_some_and(|p| p != "none") {
+            crate::say!(
+                "           prestep {} took {:.1} ms ({} pages)",
+                r["prestep"].as_str().unwrap_or("?"),
+                r["prestep_ms"].as_f64().unwrap_or(f64::NAN),
+                r["prestep_pages"]
+            );
+        }
+        let p = &r["pstate"];
+        if p.is_object() {
+            crate::say!(
+                "           gpu state: gap [{}], first step [{}], busy [{}]",
+                pstate_brief(&p["gap"]),
+                pstate_brief(&p["first_step"]),
+                pstate_brief(&p["busy"])
+            );
+        }
+    }
+    if let Some(reason) = rows
+        .as_array()
+        .and_then(|r| r.first())
+        .and_then(|r| r["pstate_error"].as_str())
+    {
+        crate::say!("  no GPU state readings: {reason}");
     }
     let penalty = idle_penalty(&rows);
     let worth = penalty.is_some_and(|p| p > IDLE_PENALTY_FLOOR);
@@ -1222,5 +1268,28 @@ mod tests {
         assert_eq!(declared_reason(&d, "gemma4"), None);
         // An empty reason declares nothing.
         assert_eq!(declared_reason(&d, "lfm3"), None);
+    }
+}
+
+#[cfg(test)]
+mod idle_arm_tests {
+    use super::pstate_brief;
+    use crate::worker::IdlePrestep;
+    use serde_json::json;
+
+    #[test]
+    fn prestep_parses_the_three_arms_and_refuses_others() {
+        assert_eq!(IdlePrestep::parse(None), Ok(IdlePrestep::None));
+        assert_eq!(IdlePrestep::parse(Some("")), Ok(IdlePrestep::None));
+        assert_eq!(IdlePrestep::parse(Some("wake")), Ok(IdlePrestep::Wake));
+        assert_eq!(IdlePrestep::parse(Some("touch")), Ok(IdlePrestep::Touch));
+        assert!(IdlePrestep::parse(Some("Touch")).is_err());
+    }
+
+    #[test]
+    fn pstate_brief_lists_the_largest_three_shares() {
+        let w = json!({"GPUPH": {"OFF": 0.5, "P1": 0.1, "P15": 0.3, "P2": 0.05, "P3": 0.05}});
+        assert_eq!(pstate_brief(&w), "OFF 50%, P15 30%, P1 10%");
+        assert_eq!(pstate_brief(&serde_json::Value::Null), "unread");
     }
 }

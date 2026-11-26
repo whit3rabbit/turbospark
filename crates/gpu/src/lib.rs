@@ -181,6 +181,9 @@ mod short_conv;
 mod short_conv_state;
 #[cfg(target_os = "macos")]
 pub mod submit_probe;
+/// Lab-only idle-stall probes (KERN-05 Step 1a).
+#[cfg(target_os = "macos")]
+pub mod touch;
 #[cfg(target_os = "macos")]
 mod utility;
 #[cfg(target_os = "macos")]
