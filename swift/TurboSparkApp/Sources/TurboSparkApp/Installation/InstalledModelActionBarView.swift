@@ -114,29 +114,34 @@ struct InstalledModelActionBarView: View {
                     .accessibilityLabel(Text("Move to...", bundle: .module))
                     .accessibilityValue(Text(verbatim: UntrustedText.display(installedModel.alias)))
                 }
-            }
 
-            Spacer(minLength: 0)
-
-            if rowModel.offersRemoveFromList {
-                Button(role: .destructive, action: onRemoveFromList) {
-                    Label { Text("Remove from list", bundle: .module) } icon: { Image(systemName: "minus.circle") }
+                // Delete sits in the same wrapping row as every other action, so a
+                // narrow pane or Extra Large text moves it to its own line
+                // instead of clipping it off the trailing edge. It stays red,
+                // labeled and last.
+                if rowModel.offersRemoveFromList {
+                    Button(role: .destructive, action: onRemoveFromList) {
+                        Label { Text("Remove from list", bundle: .module) } icon: { Image(systemName: "minus.circle") }
+                    }
+                    .appAction(.destructive)
+                    .disabled(isChanging)
+                    .help(Text("TurboSpark stops listing this model. Its files are not deleted.", bundle: .module))
+                    .accessibilityValue(Text(verbatim: UntrustedText.display(installedModel.alias)))
                 }
-                .appAction(.destructive)
-                .disabled(isChanging)
-                .help(Text("TurboSpark stops listing this model. Its files are not deleted.", bundle: .module))
-                .accessibilityValue(Text(verbatim: UntrustedText.display(installedModel.alias)))
-            }
-            if rowModel.offersDelete {
-                Button(role: .destructive, action: onDelete) {
-                    Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
+                if rowModel.offersDelete {
+                    Button(role: .destructive, action: onDelete) {
+                        Label { Text("Delete", bundle: .module) } icon: { Image(systemName: "trash") }
+                    }
+                    .appAction(.destructive)
+                    // state#73: this pane offered Delete during a load, where the
+                    // model file is mapped by an open still in flight.
+                    .disabled(!canDeleteModel || isChanging)
+                    .help(
+                        canDeleteModel
+                            ? Text("Delete model from disk", bundle: .module)
+                            : Text("Wait for the current reply or load to finish.", bundle: .module))
+                    .accessibilityLabel(Text("Delete \(installedModel.alias)", bundle: .module))
                 }
-                .appAction(.destructive)
-                // state#73: this pane offered Delete during a load, where the
-                // model file is mapped by an open still in flight.
-                .disabled(!canDeleteModel || isChanging)
-                .help(Text("Delete model from disk", bundle: .module))
-                .accessibilityLabel(Text("Delete \(installedModel.alias)", bundle: .module))
             }
         }
     }

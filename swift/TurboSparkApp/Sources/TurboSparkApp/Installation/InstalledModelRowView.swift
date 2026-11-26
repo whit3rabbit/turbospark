@@ -17,6 +17,23 @@ struct InstalledModelRowView: View {
     let isFavorite: Bool
     let tags: [String]
     let onSelect: () -> Void
+    /// Multi-select delete (`InstalledModelSelection`). Nil outside selection
+    /// mode: the row then opens the detail pane and offers the hover trash.
+    var selection: Selection?
+    /// Opens the Delete confirmation for this row. Nil hides the trash and the
+    /// context menu item (a row that has no files to delete).
+    var onRequestDelete: (() -> Void)?
+
+    /// What a row needs in selection mode.
+    struct Selection {
+        var isChecked: Bool
+        /// Why the row cannot be ticked, nil when it can.
+        var blockedReason: String?
+        var onToggle: () -> Void
+    }
+
+    @State private var isHovering = false
+    @FocusState private var trashFocused: Bool
 
     private var descriptor: ModelFeatureDescriptor {
         ModelFeatureDescriptor.resolve(installedModel: modelItem)
@@ -31,125 +48,124 @@ struct InstalledModelRowView: View {
     }
 
     var body: some View {
-        Button(action: onSelect) {
-            HStack(alignment: .center, spacing: 10) {
-                ModelLogoView(visuals: visuals, size: 36, cornerRadius: 8)
-                    // Not text, so fading it cannot cost any contrast; the
-                    // words below stay at full strength.
-                    .opacity(rowModel.isDimmed ? 0.5 : 1)
+        if let selection {
+            selectableRow(selection)
+        } else {
+            openableRow
+        }
+    }
 
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 4) {
-                        Text(verbatim: modelItem.alias)
-                            .themedFont(.base, weight: .semibold)
-                            // Secondary only for a model that cannot be opened; any
-                            // other row keeps the primary text it always had.
-                            .foregroundStyle(rowModel.isDimmed ? AnyShapeStyle(.appSecondary) : AnyShapeStyle(.primary))
-                            .lineLimit(1)
+    /// Selection mode: a native checkbox whose label is the whole row, so a
+    /// click anywhere on it toggles, VoiceOver says "checkbox" and the state,
+    /// and a blocked row is a disabled checkbox that says why (never color alone).
+    private func selectableRow(_ selection: Selection) -> some View {
+        Toggle(
+            isOn: Binding(get: { selection.isChecked }, set: { _ in selection.onToggle() })
+        ) {
+            rowContent
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+        .toggleStyle(.checkbox)
+        .disabled(selection.blockedReason != nil)
+        .padding(.horizontal, 8)
+        .background(
+            selection.isChecked ? AnyShapeStyle(.appAccent.opacity(0.14)) : AnyShapeStyle(Color.clear),
+            in: RoundedRectangle(cornerRadius: 8)
+        )
+        .help(selection.blockedReason.map { Text(verbatim: $0) } ?? Text(verbatim: rowModel.accessibilityLabel))
+        .accessibilityLabel(rowModel.accessibilityLabel)
+        .accessibilityValue(accessibilityDescription)
+        .accessibilityHint(selection.blockedReason ?? "")
+    }
 
-                        if isFavorite {
-                            Image(systemName: "star.fill")
-                                .themedFont(.micro)
-                                .foregroundStyle(.appWarning)
-                        }
+    /// The row's name, size, state and chips, drawn the same in both modes.
+    private var rowContent: some View {
+        HStack(alignment: .center, spacing: 10) {
+            ModelLogoView(visuals: visuals, size: 36, cornerRadius: 8)
+                // Not text, so fading it cannot cost any contrast; the
+                // words below stay at full strength.
+                .opacity(rowModel.isDimmed ? 0.5 : 1)
 
-                        Spacer(minLength: 2)
+            // A row says the name, the size, ONE state and at most two chips.
+            // The rest (MoE or Dense, the drafter, tags, the load-time
+            // estimate) is in the detail pane, and in the row's spoken value.
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 4) {
+                    Text(verbatim: modelItem.alias)
+                        .themedFont(.base, weight: .semibold)
+                        // Secondary only for a model that cannot be opened; any
+                        // other row keeps the primary text it always had.
+                        .foregroundStyle(rowModel.isDimmed ? AnyShapeStyle(.appSecondary) : AnyShapeStyle(.primary))
+                        .lineLimit(1)
 
-                        if isLoaded {
-                            HStack(spacing: 3) {
-                                Circle().fill(.appSuccess).frame(width: 5, height: 5)
-                                Text("Loaded", bundle: .module)
-                                    .themedFont(.tiny, weight: .bold)
-                                    .foregroundStyle(.appSuccess)
-                            }
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1.5)
-                            .background(.appSuccessTint, in: Capsule())
-                        }
+                    if isFavorite {
+                        Image(systemName: "star.fill")
+                            .themedFont(.micro)
+                            .foregroundStyle(.appWarning)
                     }
 
-                    // The state of a model that cannot be opened: a glyph AND a
-                    // word, so it never rests on color. Drawn above the badges
-                    // so a narrow list and a long translation still show it.
-                    if let status = rowModel.status, let text = rowModel.statusText {
-                        HStack(alignment: .firstTextBaseline, spacing: 4) {
-                            Image(systemName: status.glyph)
-                                .themedFont(.tiny)
-                                .accessibilityHidden(true)
-                            Text(verbatim: text)
-                                .themedFont(.tiny, weight: .semibold)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .foregroundStyle(.appText)
-                    }
+                    Spacer(minLength: 2)
 
-                    // Feature & Source Badges. Same density rule as the
-                    // Discover cards: badges wrap instead of clipping, size
-                    // stays on the trailing edge of the first line.
-                    HStack(alignment: .top, spacing: 4) {
-                        FlowLayout(spacing: 4, lineSpacing: 3) {
-                            locationOrSourceBadge
-
-                            if descriptor.routingType == .moe {
-                                ModelFeatureBadgeView.moe(details: "MoE", style: .compact)
-                            } else {
-                                ModelFeatureBadgeView.dense(details: "Dense", style: .compact)
-                            }
-
-                            ModelFeatureBadgeView.quant(descriptor.quantFormat, style: .compact)
-
-                            if descriptor.speculativeDrafter == .dynamicSloth {
-                                ModelFeatureBadgeView.dynamicSloth(style: .compact)
-                            } else if descriptor.speculativeDrafter == .mtp {
-                                ModelFeatureBadgeView.mtp(style: .compact)
-                            }
-                        }
-
-                        Spacer(minLength: 2)
-
-                        HStack(spacing: 2) {
-                            Image(systemName: "internaldrive")
-                                .themedFont(.micro)
-                                .foregroundStyle(.appSecondary)
-                                .accessibilityHidden(true)
-                            Text(verbatim: MetricFormat.storage(modelItem.installBytes))
-                                .themedFont(.tiny).monospacedDigit()
-                                .foregroundStyle(.appSecondary)
-                        }
-                        .fixedSize()
-                    }
-
-                    // How long the drive will take (requirement 5.3). Only for a
-                    // model on an external drive whose link has a known rate.
-                    if let estimate = rowModel.estimateText {
-                        HStack(alignment: .firstTextBaseline, spacing: 4) {
-                            Image(systemName: "clock")
-                                .themedFont(.micro)
-                                .accessibilityHidden(true)
-                            Text(verbatim: estimate)
-                                .themedFont(.tiny)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+                    Text(verbatim: MetricFormat.storage(modelItem.installBytes))
+                        .themedFont(.tiny).monospacedDigit()
                         .foregroundStyle(.appSecondary)
-                    }
+                        .fixedSize()
+                }
 
-                    if !tags.isEmpty {
-                        HStack(spacing: 3) {
-                            ForEach(tags.prefix(3), id: \.self) { tag in
-                                Text(verbatim: tag)
-                                    .themedFont(.micro, weight: .medium)
-                                    .padding(.horizontal, 4)
-                                    .padding(.vertical, 1)
-                                    .background(.appAccent.opacity(0.12), in: RoundedRectangle(cornerRadius: 3))
-                                    .foregroundStyle(.appAccentText)
-                            }
-                        }
-                    }
+                stateMarker
+
+                FlowLayout(spacing: 4, lineSpacing: 3) {
+                    locationOrSourceBadge
+                    ModelFeatureBadgeView.quant(descriptor.quantFormat, style: .compact)
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+    }
+
+    /// The normal row: one button that opens the detail pane, plus the trash.
+    ///
+    /// **THE TRASH IS FINDABLE AND NEVER HOVER-ONLY.** It is drawn while the
+    /// pointer is over the row or the trash holds keyboard focus, and it stays in
+    /// the accessibility tree and the key-focus chain the whole time (opacity, not
+    /// removal), so keyboard and VoiceOver users reach it; the row also exposes
+    /// the same action by name, and the context menu offers "Delete...". All three
+    /// open the one confirmation in the list.
+    private var openableRow: some View {
+        ZStack(alignment: .bottomTrailing) {
+            openButton
+            if let onRequestDelete, rowModel.offersDelete {
+                let showTrash = isHovering || trashFocused
+                AppIconButton(
+                    "trash", label: Text("Delete \(modelItem.alias)", bundle: .module), role: .destructive,
+                    action: onRequestDelete
+                )
+                .appAction(.destructive, size: .small)
+                .focused($trashFocused)
+                .opacity(showTrash ? 1 : 0)
+                // A hidden trash must not take a stray click; keyboard focus and
+                // VoiceOver still reach it and make it visible.
+                .allowsHitTesting(showTrash)
+                .padding(.trailing, 6)
+                .padding(.bottom, 4)
+            }
+        }
+        .onHover { isHovering = $0 }
+        .contextMenu {
+            if let onRequestDelete, rowModel.offersDelete {
+                Button(role: .destructive, action: onRequestDelete) {
+                    Text("Delete...", bundle: .module)
+                }
+            }
+        }
+    }
+
+    private var openButton: some View {
+        Button(action: onSelect) {
+            rowContent
+                .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
         .background(
@@ -170,6 +186,37 @@ struct InstalledModelRowView: View {
         .accessibilityLabel(rowModel.accessibilityLabel)
         .accessibilityValue(accessibilityDescription)
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
+        .accessibilityAction(named: Text("Delete...", bundle: .module)) {
+            if rowModel.offersDelete { onRequestDelete?() }
+        }
+    }
+
+    /// The one state a row shows. A model that cannot be opened says why, with a
+    /// glyph AND a word so it never rests on color, and drawn above the chips so
+    /// a narrow list and a long translation still show it. Otherwise the loaded
+    /// model says Loaded. A model that is simply there says nothing.
+    @ViewBuilder private var stateMarker: some View {
+        if let status = rowModel.status, let text = rowModel.statusText {
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Image(systemName: status.glyph)
+                    .themedFont(.tiny)
+                    .accessibilityHidden(true)
+                Text(verbatim: text)
+                    .themedFont(.tiny, weight: .semibold)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .foregroundStyle(.appText)
+        } else if isLoaded {
+            HStack(spacing: 3) {
+                Circle().fill(.appSuccess).frame(width: 5, height: 5)
+                Text("Loaded", bundle: .module)
+                    .themedFont(.tiny, weight: .bold)
+                    .foregroundStyle(.appSuccess)
+            }
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1.5)
+            .background(.appSuccessTint, in: Capsule())
+        }
     }
 
     /// A model the engine lists says which library holds it. A model only a scan

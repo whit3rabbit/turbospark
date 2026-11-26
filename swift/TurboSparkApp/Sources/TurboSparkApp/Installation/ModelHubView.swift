@@ -78,13 +78,16 @@ struct ModelHubView: View {
     /// search in the filter bar below rather than squeezed into this row.
     private var header: some View {
         AppAdaptiveHeader {
-            ModelWorkspaceTitle(
-                systemImage: "shippingbox.fill",
-                title: Text("Discover Models", bundle: .module),
-                // Not "online": the catalog ships inside the app and changes
-                // with an update. What sets it apart is that every row was run here.
-                badge: Text("TESTED ON MAC", bundle: .module),
-                summary: summaryText)
+            VStack(alignment: .leading, spacing: 8) {
+                ModelWorkspaceSwitcher(model: model)
+                ModelWorkspaceTitle(
+                    systemImage: "shippingbox.fill",
+                    title: Text("Discover Models", bundle: .module),
+                    // Not "online": the catalog ships inside the app and changes
+                    // with an update. What sets it apart is that every row was run here.
+                    badge: Text("TESTED ON MAC", bundle: .module),
+                    summary: summaryText)
+            }
         } actions: {
             Button {
                 showingProbeSheet = true
@@ -101,6 +104,8 @@ struct ModelHubView: View {
             .appAction(.secondary)
             .help(Text("Inkling 2 Mini from a LookAtMyQuant release folder or an Inkling 2 GGUF file.", bundle: .module))
         }
+        // ViewThatFits centers a header narrower than the pane; keep it leading.
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }

@@ -30,7 +30,7 @@ struct AudioInstalledModelsView: View {
     var body: some View {
         let scale = AppMetrics.textScale(theme)
         VStack(spacing: 0) {
-            AudioInstalledHeaderView(controller: controller, entries: entries) {
+            AudioInstalledHeaderView(model: model, controller: controller, entries: entries) {
                 guard let first = entries.first(where: { $0.group == .available }) else { return }
                 selectedID = first.id
                 scrollTarget = first.id
@@ -198,6 +198,7 @@ struct AudioInstalledRow: View {
 /// Text, with Rescan, Add Local Model... and Discover Models.
 @MainActor
 struct AudioInstalledHeaderView: View {
+    @ObservedObject var model: AppModel
     @ObservedObject var controller: AudioWorkspaceController
     let entries: [AudioInstalledEntry]
     /// Shows the first pinned model this Mac can download.
@@ -205,11 +206,14 @@ struct AudioInstalledHeaderView: View {
 
     var body: some View {
         AppAdaptiveHeader {
-            ModelWorkspaceTitle(
-                systemImage: "waveform",
-                title: Text("Installed Models", bundle: .module),
-                badge: Text("LOCAL STORAGE", bundle: .module),
-                summary: summary)
+            VStack(alignment: .leading, spacing: 8) {
+                ModelWorkspaceSwitcher(model: model)
+                ModelWorkspaceTitle(
+                    systemImage: "waveform",
+                    title: Text("Installed Models", bundle: .module),
+                    badge: Text("LOCAL STORAGE", bundle: .module),
+                    summary: summary)
+            }
         } actions: {
             rescanButton.appAction(.secondary)
             addLocalMenu
@@ -224,6 +228,8 @@ struct AudioInstalledHeaderView: View {
             }
             .appMenuAction()
         }
+        // ViewThatFits centers a header narrower than the pane; keep it leading.
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
@@ -265,7 +271,9 @@ struct AudioInstalledHeaderView: View {
         Button(action: discover) {
             Label { Text("Discover Models", bundle: .module) } icon: { Image(systemName: "shippingbox.fill") }
         }
-        .appAction(.primary)
+        // Secondary: the switcher beside the title is the way to Discover. This
+        // one only jumps to the pinned downloads inside this same list.
+        .appAction(.secondary)
         .disabled(!entries.contains { $0.group == .available })
         .help(Text("Show the pinned audio models this Mac can download", bundle: .module))
     }

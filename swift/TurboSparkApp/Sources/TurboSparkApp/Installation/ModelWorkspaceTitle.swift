@@ -16,7 +16,9 @@ import SwiftUI
 struct ModelWorkspaceTitle: View {
     let systemImage: String
     let title: Text
-    let badge: Text
+    /// A scope tag beside the title. Nil when the title and the summary already
+    /// say it (Installed: the summary reads "On disk").
+    var badge: Text?
     let summary: Text
 
     var body: some View {
@@ -36,12 +38,14 @@ struct ModelWorkspaceTitle: View {
                     title
                         .themedFont(.callout, weight: .semibold)
                         .accessibilityAddTraits(.isHeader)
-                    badge
-                        .themedFont(.micro, weight: .bold)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1.5)
-                        .background(.appAccent.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
-                        .foregroundStyle(.appAccentText)
+                    if let badge {
+                        badge
+                            .themedFont(.micro, weight: .bold)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1.5)
+                            .background(.appAccent.opacity(0.15), in: RoundedRectangle(cornerRadius: 4))
+                            .foregroundStyle(.appAccentText)
+                    }
                 }
                 summary
                     .themedFont(.tiny)
