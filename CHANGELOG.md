@@ -21,6 +21,9 @@ when this file gets updated relative to the version bump and the tag.
 - tslab: a teacher-forced decode quality gate, golden-answer, tool-call and
   long-context checks, server bench and soak, and the other items in
   `docs/TSLAB_IMPROVE.md`.
+- tslab: `idle-gap` cause arms (`TURBOSPARK_LAB_IDLE_PRESTEP=wake|touch`) with
+  GPU power-state readings, and `kernel --bench gdn_delta --oracle on`, which
+  checks the GDN delta kernels against an FP64 reference.
 
 ### Performance
 - Qwen2 and Qwen2.5 prompt processing multiplies each projection once per
@@ -45,6 +48,9 @@ when this file gets updated relative to the version bump and the tag.
   of its prompt matched a cache shared with other clients.
 - A tslab spec's arms may differ only in `knob_env` unless declared in
   `also_changes`, and a decoding workload is now gated on its decode path too.
+- A GPU dispatch that asks for more threads per threadgroup than the device
+  allows now fails the generation with an error naming the kernel, instead of
+  panicking the process. Device-fault handling is unchanged.
 
 ### Fixed
 - Inkling 2 tool requests failed to render (`tojson` arguments the template
