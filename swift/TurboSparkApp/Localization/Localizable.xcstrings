@@ -358038,6 +358038,137 @@
         }
       }
     },
+    "Prometheus counters for generation requests and tokens.": {
+      "extractionState": "manual",
+      "localizations": {
+        "ar": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "عدّادات Prometheus لطلبات التوليد والرموز."
+          }
+        },
+        "de": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prometheus-Zähler für Generierungsanfragen und Tokens."
+          }
+        },
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prometheus counters for generation requests and tokens."
+          }
+        },
+        "es": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Contadores de Prometheus para solicitudes de generación y tokens."
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Compteurs Prometheus des requêtes de génération et des tokens."
+          }
+        },
+        "he": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "מוני Prometheus לבקשות יצירה ולאסימונים."
+          }
+        },
+        "hi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "जनरेशन अनुरोधों और टोकन के Prometheus काउंटर।"
+          }
+        },
+        "id": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Penghitung Prometheus untuk permintaan pembuatan dan token."
+          }
+        },
+        "it": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Contatori Prometheus per richieste di generazione e token."
+          }
+        },
+        "ja": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成リクエストとトークンの Prometheus カウンター。"
+          }
+        },
+        "ko": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "생성 요청과 토큰에 대한 Prometheus 카운터."
+          }
+        },
+        "nl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prometheus-tellers voor generatieverzoeken en tokens."
+          }
+        },
+        "pl": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Liczniki Prometheus dla żądań generowania i tokenów."
+          }
+        },
+        "pt-BR": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Contadores do Prometheus para solicitações de geração e tokens."
+          }
+        },
+        "ru": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Счетчики Prometheus для запросов генерации и токенов."
+          }
+        },
+        "sv": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Prometheus-räknare för genereringsförfrågningar och token."
+          }
+        },
+        "tr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Üretim istekleri ve belirteçler için Prometheus sayaçları."
+          }
+        },
+        "uk": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Лічильники Prometheus для запитів генерації та токенів."
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Bộ đếm Prometheus cho yêu cầu tạo và token."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成请求和令牌的 Prometheus 计数器。"
+          }
+        },
+        "zh-Hant": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "生成請求與權杖的 Prometheus 計數器。"
+          }
+        }
+      }
+    },
     "Promote this chat to the main conversation": {
       "extractionState": "manual",
       "localizations": {

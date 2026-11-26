@@ -59,7 +59,7 @@ process, which must sit beside `tslab`.
 | `anchor --model M --file F [--update]` | Greedy digests on three prompts keyed by family and toolchain; exit 3 lists changes for a person | `run`, `anchor` |
 | `release-gate --base-worker PATH --model M... [--declared F]` | A released `tslab-worker` against this one, interleaved: PASS, FAIL (undeclared loss), NEEDS-KL-GATE (output moved, undeclared), PASS-with-note, SKIP | `run`, `release_gate` |
 | `type1` | False WIN and LOSS rates of the pair rule, replayed on every stored null calibration | nothing |
-| `serve-bench`, `soak` | The server path over HTTP/SSE on loopback: latency, server usage, aggregate throughput, open-loop arrivals and goodput; the soak watches footprint, threads and stalls | `serve_bench`, `soak` |
+| `serve-bench`, `soak` | The server path over HTTP/SSE on loopback: latency, server usage, aggregate throughput, open-loop arrivals and goodput, and `serve-bench` the growth of the server's `turbospark_text_*` series over the run (`server_metrics`); the soak watches footprint, threads and stalls | `serve_bench`, `soak` |
 
 Workload flags: `--prompt protocol:ID|messages:PATH|text:PATH|corpus:N|chat:PATH`
 (repeatable), `--decode N`, `--chunk N|off`, `--context N`. An audio install

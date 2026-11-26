@@ -52,6 +52,61 @@ fn lab_dir(args: &mut Args) -> Result<PathBuf, String> {
         .map_or_else(crate::paths::lab_dir, PathBuf::from))
 }
 
+/// The server's own text-generation series, by name without the prefix.
+fn parse_series(text: &str) -> std::collections::BTreeMap<String, f64> {
+    text.lines()
+        .filter_map(|l| l.strip_prefix("turbospark_text_"))
+        .filter_map(|l| {
+            let (name, value) = l.split_once(' ')?;
+            Some((name.to_string(), value.trim().parse().ok()?))
+        })
+        .collect()
+}
+
+/// A scrape, or why there is none (an older server, or one that wants a key).
+fn scrape(server: &http::Server) -> Result<std::collections::BTreeMap<String, f64>, String> {
+    let (status, text) = http::text_request(server, "/v1/metrics", Duration::from_secs(10))?;
+    let series = parse_series(&text);
+    if status != 200 || series.is_empty() {
+        return Err(format!(
+            "/v1/metrics answered {status} with no turbospark_text_ series"
+        ));
+    }
+    Ok(series)
+}
+
+/// Counters as their growth over the run, gauges as their last value, plus a
+/// warning when the server generated a different number of tokens from what
+/// this client received (another client, or a retried generation).
+fn series_delta(
+    before: &std::collections::BTreeMap<String, f64>,
+    after: &std::collections::BTreeMap<String, f64>,
+    received_tokens: u64,
+) -> (Value, Option<String>) {
+    let delta: serde_json::Map<String, Value> = after
+        .iter()
+        .map(|(name, &v)| {
+            let value = if name.ends_with("_total") {
+                v - before.get(name).copied().unwrap_or(0.0)
+            } else {
+                v
+            };
+            (name.clone(), json!(value))
+        })
+        .collect();
+    let warning = delta
+        .get("predicted_tokens_total")
+        .and_then(Value::as_f64)
+        .filter(|&g| g != received_tokens as f64)
+        .map(|g| {
+            format!(
+                "the server counted {g} generated tokens, this client received {received_tokens}: \
+                 another client or a retried generation shares these series"
+            )
+        });
+    (Value::Object(delta), warning)
+}
+
 /// Filler word counts that land near each target token count, using the
 /// server's own counter when it has one.
 fn calibrate(target: &Target, sizes: &[Size]) -> (Vec<Option<usize>>, Vec<String>) {
@@ -267,6 +322,9 @@ pub fn serve_bench_cmd(mut args: Args) -> Result<CmdOutput, String> {
     let target = spec.open(&dir)?;
     let watch = target::HostWatch::start(target.pid, allow_battery);
     let (words, mut warnings) = calibrate(&target, &plan.sizes);
+    // Scraped around warmup and every measured request, so the deltas cover
+    // exactly this run's traffic on a server nobody else is using.
+    let before = scrape(&target.server);
 
     // Warmup is reported apart and counts toward nothing but failures.
     // Its seeds are outside every measured range.
@@ -348,6 +406,7 @@ pub fn serve_bench_cmd(mut args: Args) -> Result<CmdOutput, String> {
         }
     }
 
+    let after = scrape(&target.server);
     let memory = target.pid.and_then(target::proc_stats);
     let (mut eligible, mut reasons, host) = watch.finish();
     let all: Vec<&Sample> = warmup
@@ -372,6 +431,18 @@ pub fn serve_bench_cmd(mut args: Args) -> Result<CmdOutput, String> {
         reasons.push(format!("{mismatched} token accounting mismatch(es)"));
         warnings.push(format!("{mismatched} token accounting mismatch(es)"));
     }
+    let received: u64 = all.iter().filter_map(|s| s.outcome.completion_tokens).sum();
+    let server_metrics = match (&before, &after) {
+        (Ok(b), Ok(a)) => {
+            let (delta, warning) = series_delta(b, a, received);
+            warnings.extend(warning);
+            delta
+        }
+        (Err(e), _) | (_, Err(e)) => {
+            warnings.push(format!("no server metrics: {e}"));
+            Value::Null
+        }
+    };
     if all.iter().all(|s| s.server_decode_tok_s.is_none()) {
         warnings.push("the server sends no timings: server tok/s is null".into());
     }
@@ -387,6 +458,7 @@ pub fn serve_bench_cmd(mut args: Args) -> Result<CmdOutput, String> {
         "counts": {"requests": all.len(), "failed": failed, "capped": capped,
                    "accounting_mismatch": mismatched},
         "server_memory": memory,
+        "server_metrics": server_metrics,
         "warmup": warmup,
         "provenance": target::provenance(),
     });
@@ -409,4 +481,33 @@ pub fn serve_bench_cmd(mut args: Args) -> Result<CmdOutput, String> {
     let mut out = CmdOutput::with_code(code, record);
     out.warnings = warnings;
     Ok(out)
+}
+
+#[cfg(test)]
+mod metrics_tests {
+    use super::*;
+
+    const BEFORE: &str = "# HELP x y\n\
+        turbospark_text_requests_total 2\n\
+        turbospark_text_predicted_tokens_total 10\n\
+        turbospark_text_queue_waiting 3\n\
+        turbospark_audio_requests_total 9\n";
+
+    #[test]
+    fn counters_become_deltas_and_gauges_stay() {
+        let before = parse_series(BEFORE);
+        assert_eq!(before.len(), 3, "audio series are not text series");
+        let after = parse_series(
+            "turbospark_text_requests_total 5\n\
+             turbospark_text_predicted_tokens_total 82\n\
+             turbospark_text_queue_waiting 0\n",
+        );
+        let (d, warning) = series_delta(&before, &after, 72);
+        assert_eq!(d["requests_total"], 3.0);
+        assert_eq!(d["predicted_tokens_total"], 72.0);
+        assert_eq!(d["queue_waiting"], 0.0);
+        assert_eq!(warning, None);
+        let (_, warning) = series_delta(&before, &after, 70);
+        assert!(warning.unwrap().contains("received 70"));
+    }
 }

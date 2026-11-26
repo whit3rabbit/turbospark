@@ -52,7 +52,7 @@ shared while this was built, so no speed claim was taken from it.
 | Id | Status | What the lab does now | Not done, and why |
 |---|---|---|---|
 | LAB-18 server bench | partial | `tslab serve-bench` over loopback HTTP/SSE. The server now sends llama.cpp-style `timings` and `usage.prompt_tokens_details.cached_tokens`, so server tok/s and cached tokens are readable. | No queue or coalescing arms. The server-tax comparison was not run. |
-| LAB-19 open loop and goodput | partial | Closed, periodic and Poisson arrivals with SLO and goodput. `GET /v1/metrics` now carries `turbospark_text_*` series on every server. | `serve-bench` does not yet scrape the series into histogram deltas. No open-loop pilot. |
+| LAB-19 open loop and goodput | partial | Closed, periodic and Poisson arrivals with SLO and goodput. `GET /v1/metrics` now carries `turbospark_text_*` series on every server. | `serve-bench` records each series' growth over the run (`server_metrics`); they are counters, not histograms. No open-loop pilot. |
 | LAB-35 soak | done | `tslab soak`; a 60 s run against the real server completed with no failure. | The hour-long soak was not run. |
 | LAB-20 agent workloads | partial | `chat:` `edit_variants` and `chats/edit-last-turn.chat.json`. | `warm_start` is NOT built: it needs KV-cache persistence to disk across every family's state layout, a product feature of its own (the server accepts `--paged-ssd-cache-dir` and does not honour it). A message-span checkpoint arm likewise needs runtime work. |
 | LAB-15 cold-state hygiene | partial | Opt-in compressor and swap dirty rules; `file_age_s` per run; `open_pressure` (compressor pages and swap growth across the install's open). | Thresholds are not calibrated. No file-age refusal in `sweep`. The sampling is a before and after delta in the worker, not 1 Hz inside the memory oracle. |
@@ -74,7 +74,7 @@ shared while this was built, so no speed claim was taken from it.
 | LAB-32 markdown report | done | `report --md` with the derived "claims not made" list. | |
 | LAB-33 secondary guard | done | Spec `secondary_guard` and `sweep --guard`, including `expert_hit_rate` as the guard metric. | The allowance is a relative change (at most 2%), not percentage points. |
 | LAB-34 GDN trajectory | partial | `gdn_trajectory` bench with a one-ULP fault self-test (synthetic GDN test). | Not run on a real GDN install (none here). |
-| LAB-36 image denoise stage gate | not built | none | Needs per-step reference latents captured from the BF16 or FP32 reference and an image bench kind; no such fixtures exist, and it depends on LAB-04 floors for its bounds. |
+| LAB-36 image denoise stage gate | not built | none | Needs per-step reference latents, a Z-Image install and a single-step entry in the Metal backend. `scripts/z_image_capture.py` already captures the latents (`crates/image/tests/metal_parity.rs` reads them), but no capture or image install was on this host. Its bounds depend on a measured reference-against-reference floor. |
 
 ## Found by these checks and fixed
 

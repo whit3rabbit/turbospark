@@ -242,6 +242,21 @@ fn send(
     Ok((response, handle))
 }
 
+/// One non-streaming request for a plain-text body, such as `/v1/metrics`.
+pub fn text_request(
+    server: &Server,
+    path: &str,
+    timeout: Duration,
+) -> Result<(u16, String), String> {
+    let (mut r, _) = send(server, "GET", path, None, Instant::now() + timeout, None)?;
+    let mut text = String::new();
+    (&mut r.body)
+        .take(8 << 20)
+        .read_to_string(&mut text)
+        .map_err(|e| format!("GET {path}: {e}"))?;
+    Ok((r.status, text))
+}
+
 /// One non-streaming request: status and parsed JSON body (null when the
 /// body is not JSON).
 pub fn json_request(
