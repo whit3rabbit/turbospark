@@ -569,7 +569,11 @@ final class DecoderBlockUpsample: Module {
 
         if trimRight > 0 {
             let split = max(0, h.dim(2) - trimRight)
-            overflow = h[0..., 0..., split...]
+            // Carry the tail without its bias: the next chunk's head already
+            // has it, and one call adds it once (mlx-audio PR 1003).
+            var tail = h[0..., 0..., split...]
+            if let bias = conv.bias { tail = tail - bias.reshaped([1, -1, 1]) }
+            overflow = tail
             h = h[0..., 0..., ..<split]
         } else {
             overflow = nil

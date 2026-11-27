@@ -37,6 +37,25 @@ Local changes:
   is valid; generated sequences contain no padding. Trim reference audio by
   its exact codec frame count.
 - Map ISO language codes to the checkpoint's language names.
+- Streaming codec decode carries the transposed-conv overlap tail without its
+  bias, so chunked decode matches one call (mlx-audio PR 1003, fixed upstream
+  in 0.5.9). `testUpsampleStepMatchesFullCallForAnyChunking` pins it.
+
+Breeze TTS 2 (`Sources/Qwen3TTS/Breeze/`) is not part of mlx-audio-swift. It is
+a local port of mlx-audio 0.5.7 `tts/models/breeze_tts` (same pinned commit)
+that shares this package's codec, because Breeze bundles the Qwen3-TTS 12 Hz
+tokenizer unchanged under `audio_tokenizer/`. Deviations:
+
+- Only the shapes of the two pinned exports load (mxfp4 group 32, affine int8
+  group 64, BF16; no audio embedding projector). Others are refused.
+- Quantized linears are packed through `BreezeTTSModel.quantizeLayer`:
+  mlx-swift 0.30.6 `QuantizedLinear(weight:...)` drops the mode, which gives an
+  mxfp4 layer affine biases.
+- The unused `embed_text_tokens` table is not loaded.
+- EOS before any frame yields no audio rather than the reference's one-frame
+  dummy decode; `hitFrameLimit` reports a segment that never reached EOS.
+- Greedy frames match the pinned Python reference until the first bf16 near
+  tie; Python mlx 0.32.3 and mlx-swift 0.30.6 kernels round differently there.
 
 Regenerate speaker-mel.json from the pinned Python mel_spectrogram using the
 fixture's samples. Tests never download checkpoints. Qwen3TTSSmoke is an
