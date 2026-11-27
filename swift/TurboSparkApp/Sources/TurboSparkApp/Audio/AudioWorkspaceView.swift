@@ -272,6 +272,10 @@ struct AudioWorkspaceView: View {
                 Qwen3TTSInputsView(controller: controller)
             } else if controller.selectedProfileClonesNatively {
                 VoiceCloneInputsView(controller: controller)
+            } else if controller.selectedProfileTakesInstruction {
+                // Breeze on Voice Design: the description is the voice.
+                SpeechStyleEditor(controller: controller)
+                AudioSpeechValidationLabel(controller: controller)
             }
             AudioSpeechOptions(controller: controller)
             AudioScriptSections(controller: controller)

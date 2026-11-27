@@ -59,9 +59,11 @@ final class AudioEngineLabelTests: XCTestCase {
         XCTAssertFalse(AudioEngineLabel.isAppOnly(rust))
         // A payload from before the flag is never shown as app-only.
         XCTAssertFalse(AudioEngineLabel.isAppOnly(profile(backend: "metal")))
-        // Shipped rows are app-only exactly when the app is their only runtime.
+        // Shipped rows are app-only exactly when the app is their only runtime:
+        // FluidAudio, and Breeze, which has no server speech bridge.
         for p in try AudioCatalog.profiles() {
-            XCTAssertEqual(AudioEngineLabel.isAppOnly(p), p.capabilities.backend == "swift_coreml", p.identity.alias)
+            XCTAssertEqual(AudioEngineLabel.isAppOnly(p), p.capabilities.backend == "swift_coreml" || p.family == "breeze_tts",
+                           p.identity.alias)
         }
     }
 }

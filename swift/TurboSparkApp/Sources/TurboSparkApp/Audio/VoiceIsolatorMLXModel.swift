@@ -131,7 +131,7 @@ extension AudioWorkspaceController {
         if let previous = session { await Task.detached { previous.close() }.value }
         session = nil
         modelAccessURL?.stopAccessingSecurityScopedResource(); modelAccessURL = nil
-        qwenModel = nil; voiceIsolatorModel = nil; liveVoiceIsolator = nil; fluidTranscriber = nil; sessionKey = nil; loadedModelAlias = nil
+        qwenModel = nil; breezeModel = nil; voiceIsolatorModel = nil; liveVoiceIsolator = nil; fluidTranscriber = nil; sessionKey = nil; loadedModelAlias = nil
         MLX.Memory.clearCache()
 
         let token = epoch

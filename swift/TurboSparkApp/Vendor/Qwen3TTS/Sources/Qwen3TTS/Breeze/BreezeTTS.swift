@@ -72,7 +72,9 @@ public struct BreezeTTSResult: Sendable {
     public let codes: [[Int]]
 }
 
-public final class BreezeTTSModel: Module {
+// Unchecked like Qwen3TTSModel: the app hands one resident model to one
+// producer at a time (Qwen3TTSSpeechJob), never to two at once.
+public final class BreezeTTSModel: Module, @unchecked Sendable {
     public let config: BreezeTTSConfig
     @ModuleInfo(key: "lm_head") var lmHead: Linear
     @ModuleInfo(key: "backbone_model") var backbone: BreezeBackbone

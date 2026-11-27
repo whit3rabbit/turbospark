@@ -2179,6 +2179,31 @@ fn profile_capabilities(family: &str) -> AudioCapabilities {
             ..Default::default()
         };
     }
+    if family == "breeze_tts" {
+        // The app's Swift MLX provider runs it (Vendor/Qwen3TTS, Breeze);
+        // the crates/audio port ends at codebook frames, so a Rust session
+        // cannot. It speaks with a preset speaker or an instruction, and a
+        // reference with its exact transcript makes it a clone, which needs
+        // consent. No server speech bridge exists for it yet.
+        return AudioCapabilities {
+            languages: vec![],
+            voices: vec![],
+            max_input_seconds: None,
+            supports_lyrics: false,
+            operations: vec!["synthesize".into(), "voice_clone".into()],
+            timing: None,
+            backend: "swift_mlx".into(),
+            cancellation: "frame".into(),
+            can_run: false,
+            unavailable_reason: Some(
+                "Breeze TTS 2 runs through the native Swift MLX provider; the Rust session API does not execute this family"
+                    .into(),
+            ),
+            compute: None,
+            http_api: false,
+            ..Default::default()
+        };
+    }
     if family == "megatts3" {
         return AudioCapabilities {
             languages: vec![],
@@ -3538,7 +3563,7 @@ mod tests {
     #[test]
     fn initial_audio_profiles_have_exact_complete_pins_and_wire_metadata() {
         let catalog = AudioCatalog::embedded().unwrap();
-        assert_eq!(catalog.entries().count(), 26);
+        assert_eq!(catalog.entries().count(), 27);
         for (task, alias, repo, revision, rate, channels) in [
             (
                 AudioTask::TextToSpeech,
@@ -3579,6 +3604,14 @@ mod tests {
                 "c7ea32923b245fe5afc22d740a1936ad2ac590f3",
                 44100,
                 2,
+            ),
+            (
+                AudioTask::TextToSpeech,
+                "breeze-tts-2-mxfp4",
+                "mlx-community/Breeze-TTS-2-mlx-4bit",
+                "3a06d26b172ea4ae1da2f42d708383e9c79d5526",
+                24000,
+                1,
             ),
             (
                 AudioTask::TextToSpeech,
@@ -3998,6 +4031,63 @@ mod tests {
                 "{alias}"
             );
         }
+    }
+
+    #[test]
+    fn breeze_tts_profile_pins_codec_tokenizer_and_license_for_swift() {
+        let catalog = AudioCatalog::embedded().unwrap();
+        let profiles: Vec<_> = catalog
+            .entries()
+            .filter(|p| p.family == "breeze_tts")
+            .collect();
+        assert_eq!(profiles.len(), 1);
+        let profile = profiles[0];
+        assert_eq!(profile.identity.alias, "breeze-tts-2-mxfp4");
+        assert_eq!(profile.identity.task, AudioTask::TextToSpeech);
+        assert_eq!(profile.capabilities.backend, "swift_mlx");
+        assert!(
+            !profile.capabilities.can_run,
+            "Rust sessions must not claim Swift inference"
+        );
+        assert!(!profile.capabilities.http_api, "no server speech bridge");
+        assert_eq!(
+            profile.capabilities.operations,
+            vec!["synthesize".to_string(), "voice_clone".to_string()]
+        );
+        assert_eq!(profile.pcm_format.sample_rate, 24_000);
+        for path in [
+            "model.safetensors",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "audio_tokenizer/config.json",
+            "audio_tokenizer/model.safetensors",
+            "LICENSE",
+            "NOTICE",
+        ] {
+            assert!(profile.assets.iter().any(|f| f.path == path), "{path}");
+        }
+        // Breeze bundles the Qwen3-TTS 12 Hz codec unchanged.
+        let codec = |p: &AudioProfile, path: &str| {
+            p.assets
+                .iter()
+                .find(|f| f.path == path)
+                .map(|f| f.sha256.clone())
+        };
+        let qwen = catalog.get("qwen3-tts-12hz-06b-base-8bit").unwrap();
+        assert_eq!(
+            codec(profile, "audio_tokenizer/model.safetensors"),
+            codec(qwen, "speech_tokenizer/model.safetensors")
+        );
+        assert_eq!(
+            profile
+                .acknowledgments
+                .iter()
+                .map(|a| a.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["breezeblue_noncommercial_license"]
+        );
+        assert_eq!(profile.capabilities.voices.len(), 10);
+        assert!(catalog.pinned_plan(&profile.identity).is_ok());
     }
 
     #[test]
@@ -4917,10 +5007,11 @@ mod tests {
             .entries()
             .any(|p| p.capabilities.backend == "swift_coreml"));
         for p in catalog.entries() {
-            // App-only exactly when the app is the only runtime.
+            // App-only exactly when the app is the only runtime. Breeze runs
+            // on Swift MLX like Qwen3-TTS but has no server speech bridge.
             assert_eq!(
                 p.capabilities.http_api,
-                p.capabilities.backend != "swift_coreml",
+                p.capabilities.backend != "swift_coreml" && p.family != "breeze_tts",
                 "{}",
                 p.identity.alias
             );

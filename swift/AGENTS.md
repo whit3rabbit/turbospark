@@ -245,6 +245,12 @@ staging files changed.
   (`referenceFreeSpeechFamilies`). Whether a run clones follows the
   recipe's speech mode (`runClonesNatively`), which `normalizeModelOptions`
   sets by page, never the profile alone. MegaTTS3 always clones.
+  Breeze TTS 2 (`breeze_tts`, Swift MLX, `.breezeMLX`) is a native cloner
+  in this sense: its request is `nativeCloneRequest`'s, it needs the exact
+  reference transcript, and `BreezeTTSSpeech.modelRequest` refuses a
+  reference without consent again because the Swift job runs outside the
+  Rust session's own check. Its resident `breezeModel` is cleared wherever
+  `qwenModel` is (`docs/BREEZE_TTS.md`).
 - Audio model residency lifecycle is managed by `AudioWorkspaceController`
   (`isModelLoaded`, `canLoadModel`, `canUnloadModel`). Unloading is wired into
   `AppModel.canUnloadAnyModel` and the top bar eject button, ensuring audio

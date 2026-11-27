@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Inputs of an engine that clones from reference audio in a native session
-/// (MegaTTS3, OmniVoice, Drama 3): the reference, the user's consent for that
+/// (MegaTTS3, OmniVoice, Drama 3, Breeze): the reference, the user's consent for that
 /// exact region, and the diffusion settings, or for Drama 3 the reference's
 /// transcript instead. Speed, language and the script come from the shared
 /// speech editor. The Voice Cloning page lays the same parts
@@ -16,6 +16,8 @@ struct VoiceCloneInputsView: View {
             VoiceCloneConsentControls(controller: controller)
             if controller.selectedProfileNeedsReferenceTranscript {
                 Qwen3ReferenceTranscriptEditor(controller: controller)
+                // Breeze: an optional instruction directs the cloned voice.
+                if controller.selectedProfileTakesInstruction { SpeechStyleEditor(controller: controller) }
             } else {
                 if controller.selectedProfile?.family == "omnivoice" {
                     Qwen3ReferenceTranscriptEditor(controller: controller, optional: true)

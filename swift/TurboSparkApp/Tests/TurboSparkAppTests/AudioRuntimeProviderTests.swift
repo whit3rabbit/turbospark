@@ -34,8 +34,10 @@ final class AudioRuntimeProviderTests: XCTestCase {
                 continue
             }
             XCTAssertEqual(provider == .qwenMLX, p.family == "qwen3_tts", p.identity.alias)
+            XCTAssertEqual(provider == .breezeMLX, p.family == "breeze_tts", p.identity.alias)
             XCTAssertNotEqual(provider, .unsupported, p.identity.alias)
-            XCTAssertEqual(provider.canRun(p), p.family == "qwen3_tts" || p.capabilities.canRun, p.identity.alias)
+            let swiftMLX = p.family == "qwen3_tts" || p.family == "breeze_tts"
+            XCTAssertEqual(provider.canRun(p), swiftMLX || p.capabilities.canRun, p.identity.alias)
         }
     }
 

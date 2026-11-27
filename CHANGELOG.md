@@ -14,6 +14,10 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Audio: Breeze TTS 2 (`breeze-tts-2-mxfp4`, mlx-community 4-bit) in the app
+  through Swift MLX, on Voice Cloning (clone and voice direction), Voice Design,
+  and Text-to-Speech with speakers S0 to S9. Non-commercial license, accepted
+  before download. See `docs/BREEZE_TTS.md`.
 - Server: llama.cpp-style `timings` and `usage.prompt_tokens_details.cached_tokens`
   on chat completion and completion responses, and `turbospark_text_*` series on
   `GET /v1/metrics`, which every server now serves behind the usual auth.
@@ -47,6 +51,9 @@ when this file gets updated relative to the version bump and the tag.
   `also_changes`, and a decoding workload is now gated on its decode path too.
 
 ### Fixed
+- Qwen3-TTS streaming decode no longer adds the codec's transposed-conv
+  bias twice at every chunk boundary (mlx-audio PR 1003), so streamed speech
+  matches a one-call decode.
 - Inkling 2 tool requests failed to render (`tojson` arguments the template
   engine refused).
 

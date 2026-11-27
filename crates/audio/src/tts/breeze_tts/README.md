@@ -140,6 +140,8 @@ gate.
   has not been executed; the fixtures are seeded tiny instances.
 - The waveform decode requires the Qwen3-TTS speech tokenizer Rust port
   (the codec encoder AND decoder); until then the family ends at frames.
+  The macOS app runs the whole family, codec included, in Swift MLX
+  (`docs/BREEZE_TTS.md`); that port, not this one, is what ships.
 - The cfg path is pinned at guidance scale 2.0 and the unity-scale
   no-op; real checkpoint guidance quality is unqualified.
 - Sampled (temperature > 0) generation is not bit-reproducible against
