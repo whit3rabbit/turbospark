@@ -55,7 +55,14 @@ fn minimax_mixed_gguf_decode_prefill_reset_and_slots_agree() {
         .fold(0xcbf29ce484222325u64, |h, b| {
             (h ^ b as u64).wrapping_mul(0x100000001b3)
         });
-    assert_eq!(digest, 0x9422bdb22e2f00f2);
+    // Pinned under the wide Q4_K GEMV default (KERN-04, cb8be041), whose
+    // reduction order moves the low bits. `TURBOSPARK_GGUF_KERNEL=current`
+    // runs the previous kernels and gives 0x9422bdb22e2f00f2.
+    let pinned = match std::env::var("TURBOSPARK_GGUF_KERNEL").as_deref() {
+        Ok("current") => 0x9422bdb22e2f00f2,
+        _ => 0xbda61e5ace4d9aa7,
+    };
+    assert_eq!(digest, pinned);
     drop((small, large));
     std::fs::remove_dir_all(dir).unwrap();
 }
