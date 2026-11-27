@@ -7,6 +7,25 @@ use model_io::{ArchConfig, ExpertCacheSlots, KvQuant};
 use crate::real_forward::{RealForwardRunner, DEFAULT_MAX_CONTEXT, EXPERT_CACHE_SLOTS};
 use crate::real_forward_types::{PhaseCounters, RealForwardError};
 
+/// What [`RealForwardRunner::run_idle_probe`] runs (KERN-05, tslab's
+/// idle-gap arms). Each separates a candidate cause of the first-buffer
+/// wait after an idle gap by which buffers it names and how much it reads.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IdleProbeAction {
+    /// One empty dispatch that names only an 8-byte scratch buffer.
+    Wake,
+    /// One read per page of the trunk (the resident weights buffer).
+    TouchWeights,
+    /// The open-time prewarm, waited on: one element read from every
+    /// resident expert buffer and the trunk. Names every big buffer a step
+    /// names, reads almost nothing.
+    Prewarm,
+    /// One read per page of the trunk and of every resident expert buffer.
+    /// KV, scratch and mapped or streamed experts are not covered.
+    TouchAll,
+}
+
 impl RealForwardRunner {
     /// Opens a `.gturbo` install directory whose `manifest.json` matches
     /// `expecting` field-by-field, and whose weights are all resident
@@ -33,24 +52,52 @@ impl RealForwardRunner {
         gpu::touch::IdleProbe::new(&self.context).map_err(RealForwardError::Gpu)
     }
 
-    /// Runs one idle-stall probe action on this runner's queue and waits:
-    /// `touch` reads one word per page of the resident weights buffer (the
-    /// trunk only; mapped experts, KV and scratch are not covered), `wake`
-    /// commits one empty dispatch. Returns the pages touched (0 for wake).
-    /// Lab only: reads, never writes, so decode output cannot change.
+    /// Runs one idle-stall probe action on this runner's queue and waits.
+    /// Returns the pages read (0 for `Wake` and `Prewarm`, which read one
+    /// element per buffer). Lab only: the model's buffers are only read, so
+    /// decode output cannot change. `Prewarm` is refused by name on a runner
+    /// without Inkling 2 resident experts, the only buffers it names.
     #[cfg(target_os = "macos")]
     pub fn run_idle_probe(
-        &self,
+        &mut self,
         probe: &gpu::touch::IdleProbe,
-        touch: bool,
+        action: IdleProbeAction,
     ) -> Result<u64, RealForwardError> {
-        if touch {
-            probe
+        let gpu = RealForwardError::Gpu;
+        match action {
+            IdleProbeAction::Wake => {
+                probe.wake(&self.context).map_err(gpu)?;
+                Ok(0)
+            }
+            IdleProbeAction::TouchWeights => probe
                 .touch(&self.context, self.weights.buffer())
-                .map_err(RealForwardError::Gpu)
-        } else {
-            probe.wake(&self.context).map_err(RealForwardError::Gpu)?;
-            Ok(0)
+                .map_err(gpu),
+            IdleProbeAction::Prewarm => match self.inkling2_prewarm_commit()? {
+                Some(pass) => {
+                    pass.wait();
+                    Ok(0)
+                }
+                None => Err(RealForwardError::Unsupported(
+                    "idle probe prewarm: only an Inkling 2 install with resident experts \
+                     has a prewarm"
+                        .into(),
+                )),
+            },
+            IdleProbeAction::TouchAll => {
+                let mut pages = probe
+                    .touch(&self.context, self.weights.buffer())
+                    .map_err(gpu)?;
+                if let Some(res) = self
+                    .real_inkling2
+                    .as_ref()
+                    .and_then(|st| st.resident.as_ref())
+                {
+                    for b in &res.layers {
+                        pages += probe.touch(&self.context, b).map_err(gpu)?;
+                    }
+                }
+                Ok(pages)
+            }
         }
     }
 

@@ -925,16 +925,21 @@ pub const IDLE_GAPS_S: [f64; 5] = [0.5, 1.0, 2.0, 4.0, 8.0];
 /// Decode steps timed after each gap.
 const IDLE_STEPS: usize = 20;
 
-/// The idle-gap arm, from `TURBOSPARK_LAB_IDLE_PRESTEP` (KERN-05 Step 1a):
-/// what runs between the sleep and the timed first step.
+/// The idle-gap arm, from `TURBOSPARK_LAB_IDLE_PRESTEP` (KERN-05 Steps 1a
+/// and 1): what runs between the sleep and the timed first step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdlePrestep {
     /// Nothing: the baseline reading.
     None,
     /// One empty dispatch (GPU power or scheduling state).
     Wake,
-    /// One read per page of the resident weights (paging).
+    /// One read per page of the trunk (paging of the trunk only).
     Touch,
+    /// The open-time prewarm, waited on: names every resident buffer, reads
+    /// one element of each. Inkling 2 resident installs only.
+    Prewarm,
+    /// One read per page of the trunk and every resident expert buffer.
+    TouchAll,
 }
 
 pub const IDLE_PRESTEP_ENV: &str = "TURBOSPARK_LAB_IDLE_PRESTEP";
@@ -945,8 +950,10 @@ impl IdlePrestep {
             "" | "none" => Ok(Self::None),
             "wake" => Ok(Self::Wake),
             "touch" => Ok(Self::Touch),
+            "prewarm" => Ok(Self::Prewarm),
+            "touch-all" => Ok(Self::TouchAll),
             other => Err(format!(
-                "{IDLE_PRESTEP_ENV}={other:?}: expected none, wake or touch"
+                "{IDLE_PRESTEP_ENV}={other:?}: expected none, wake, touch, prewarm or touch-all"
             )),
         }
     }
@@ -956,7 +963,86 @@ impl IdlePrestep {
             Self::None => "none",
             Self::Wake => "wake",
             Self::Touch => "touch",
+            Self::Prewarm => "prewarm",
+            Self::TouchAll => "touch-all",
         }
+    }
+
+    /// The runner action, `None` for the baseline.
+    pub fn action(self) -> Option<runtime::IdleProbeAction> {
+        use runtime::IdleProbeAction as A;
+        match self {
+            Self::None => None,
+            Self::Wake => Some(A::Wake),
+            Self::Touch => Some(A::TouchWeights),
+            Self::Prewarm => Some(A::Prewarm),
+            Self::TouchAll => Some(A::TouchAll),
+        }
+    }
+}
+
+/// Keep-warm period, ms (KERN-05 Step 2). Set together with
+/// [`IDLE_KEEPWARM_ENV`], or neither.
+pub const IDLE_KEEPWARM_MS_ENV: &str = "TURBOSPARK_LAB_IDLE_KEEPWARM_MS";
+/// Keep-warm action, one of the prestep names other than `none`.
+pub const IDLE_KEEPWARM_ENV: &str = "TURBOSPARK_LAB_IDLE_KEEPWARM";
+
+/// Shortest and longest keep-warm periods the probe accepts. Below 50 ms the
+/// action itself dominates the gap; above 5 s no gap in [`IDLE_GAPS_S`]
+/// but the last would see more than one.
+pub const KEEPWARM_MS_RANGE: std::ops::RangeInclusive<u64> = 50..=5000;
+
+/// Run `action` every `every_ms` during each gap, on the probe thread, so
+/// the gap's last stretch of true idle is at most one period long. This
+/// tests the mechanism a bounded background keep-warm would rely on, with
+/// no thread and no engine change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeepWarm {
+    pub every_ms: u64,
+    pub action: IdlePrestep,
+}
+
+impl KeepWarm {
+    pub fn parse(every_ms: Option<&str>, action: Option<&str>) -> Result<Option<Self>, String> {
+        let (every_ms, action) = match (every_ms, action) {
+            (None, None) => return Ok(None),
+            (Some(ms), Some(a)) => (ms, a),
+            _ => {
+                return Err(format!(
+                    "{IDLE_KEEPWARM_MS_ENV} and {IDLE_KEEPWARM_ENV} are set together or not at all"
+                ))
+            }
+        };
+        let every_ms: u64 = every_ms
+            .parse()
+            .ok()
+            .filter(|ms| KEEPWARM_MS_RANGE.contains(ms))
+            .ok_or_else(|| {
+                format!(
+                    "{IDLE_KEEPWARM_MS_ENV}={every_ms:?}: expected {}..={} ms",
+                    KEEPWARM_MS_RANGE.start(),
+                    KEEPWARM_MS_RANGE.end()
+                )
+            })?;
+        let action = IdlePrestep::parse(Some(action))
+            .ok()
+            .filter(|a| *a != IdlePrestep::None)
+            .ok_or_else(|| {
+                format!(
+                    "{IDLE_KEEPWARM_ENV}={action:?}: expected wake, touch, prewarm or touch-all"
+                )
+            })?;
+        Ok(Some(Self { every_ms, action }))
+    }
+
+    /// Offsets into a gap of `gap_s` at which the action starts: every
+    /// period, strictly inside the gap, so the gap always ends in idle.
+    pub fn ticks(&self, gap_s: f64) -> Vec<f64> {
+        let period = self.every_ms as f64 / 1e3;
+        (1..)
+            .map(|k| k as f64 * period)
+            .take_while(|t| *t < gap_s)
+            .collect()
     }
 }
 
@@ -981,11 +1067,71 @@ impl PstateLog {
     }
 }
 
-/// Prefill the first prompt, then for each gap: sleep, run the arm's
-/// prestep, time one step, then time the following steps as the busy
-/// reading. Each row also carries the GPU P-state shares of the gap, the
-/// prestep, the first step and the busy steps (arm P), and the digest of the
-/// gap's tokens, which every arm must reproduce.
+/// Modeled joules (IOReport Energy Model, machine-wide) over the gap, by
+/// block, or null when the meter is missing or the interval unreadable.
+struct GapEnergy(Result<crate::energy::EnergyMeter, String>);
+
+impl GapEnergy {
+    fn read(&self) -> Option<crate::energy::EnergyReading> {
+        self.0.as_ref().ok().and_then(|m| m.read().ok())
+    }
+
+    fn window(
+        a: &Option<crate::energy::EnergyReading>,
+        b: &Option<crate::energy::EnergyReading>,
+    ) -> serde_json::Value {
+        match (a, b) {
+            (Some(a), Some(b)) => crate::energy::delta(a, b).map_or(
+                serde_json::Value::Null,
+                |d| serde_json::json!({"total_j": d.total_j, "by_block": d.by_block}),
+            ),
+            _ => serde_json::Value::Null,
+        }
+    }
+}
+
+/// Sleeps `gap_s`, running the keep-warm action at each tick when there is
+/// one. Returns how many actions ran and their summed wall time, ms.
+fn idle_gap_sleep(
+    runner: &mut RealForwardRunner,
+    probe: Option<&gpu::touch::IdleProbe>,
+    keepwarm: Option<KeepWarm>,
+    gap_s: f64,
+) -> Result<(usize, f64), String> {
+    let start = Instant::now();
+    let until = |t: f64| {
+        let left = t - start.elapsed().as_secs_f64();
+        if left > 0.0 {
+            std::thread::sleep(std::time::Duration::from_secs_f64(left));
+        }
+    };
+    let (mut count, mut spent_ms) = (0usize, 0.0f64);
+    if let (Some(kw), Some(probe)) = (keepwarm, probe) {
+        let action = kw.action.action().ok_or("keep-warm action is none")?;
+        for tick in kw.ticks(gap_s) {
+            until(tick);
+            let t = Instant::now();
+            runner
+                .run_idle_probe(probe, action)
+                .map_err(|e| e.to_string())?;
+            spent_ms += t.elapsed().as_secs_f64() * 1e3;
+            count += 1;
+        }
+    }
+    until(gap_s);
+    Ok((count, spent_ms))
+}
+
+/// Busy steps reported one by one after each gap, to show any ramp.
+const IDLE_BUSY_HEAD: usize = 5;
+
+/// Prefill the first prompt, then for each gap: sleep (running the keep-warm
+/// action between slices, when set), run the arm's prestep, time one step,
+/// then time the following steps as the busy reading. Each row also carries
+/// the GPU P-state shares of the gap, the prestep, the first step and the
+/// busy steps (arm P), the gap's modeled energy, the footprint, swap and
+/// compressor movement over the row, and the digest of the gap's tokens,
+/// which every arm must reproduce.
 fn idle_gap_probe(
     runner: &mut RealForwardRunner,
     ids: &[i32],
@@ -994,12 +1140,17 @@ fn idle_gap_probe(
     sampler: &mut AppMemorySampler,
 ) -> Result<serde_json::Value, String> {
     let prestep = IdlePrestep::parse(std::env::var(IDLE_PRESTEP_ENV).ok().as_deref())?;
+    let keepwarm = KeepWarm::parse(
+        std::env::var(IDLE_KEEPWARM_MS_ENV).ok().as_deref(),
+        std::env::var(IDLE_KEEPWARM_ENV).ok().as_deref(),
+    )?;
     // Built before any timing so compiling never lands in a window.
-    let probe = match prestep {
-        IdlePrestep::None => None,
+    let probe = match (prestep, keepwarm) {
+        (IdlePrestep::None, None) => None,
         _ => Some(runner.idle_probe().map_err(|e| e.to_string())?),
     };
     let pstate = PstateLog(crate::gpu_pstate::GpuPstateMeter::open());
+    let energy = GapEnergy(crate::energy::EnergyMeter::open());
     runner.reset();
     prefill(runner, ids, chunk, logits, sampler)?;
     let mut pos = ids.len();
@@ -1019,25 +1170,31 @@ fn idle_gap_probe(
         for _ in 0..IDLE_STEPS {
             step(runner, logits, &mut tokens)?;
         }
+        // Subprocess readings go before the gap and after the busy steps,
+        // never inside a timed window.
+        let swap_before = crate::host::swap_used_mib();
+        let compressions_before = crate::host::compressor_counters().0;
         let before_gap = pstate.read();
-        std::thread::sleep(std::time::Duration::from_secs_f64(gap));
+        let energy_before = energy.read();
+        let (keepwarm_count, keepwarm_ms) = idle_gap_sleep(runner, probe.as_ref(), keepwarm, gap)?;
+        let energy_after = energy.read();
         let after_gap = pstate.read();
         let started = Instant::now();
-        let pages = match &probe {
-            Some(p) => runner
-                .run_idle_probe(p, prestep == IdlePrestep::Touch)
+        let pages = match (&probe, prestep.action()) {
+            (Some(p), Some(action)) => runner
+                .run_idle_probe(p, action)
                 .map_err(|e| e.to_string())?,
-            None => 0,
+            _ => 0,
         };
         let prestep_ms = started.elapsed().as_secs_f64() * 1e3;
         let after_prestep = pstate.read();
-        // Installed after the prestep, so `first_submit_ms` is still the
-        // timed step's own first buffer.
+        // Installed after the prestep, so the waits are the timed step's own.
         runtime::submit_probe::install();
         let first_ms = step(runner, logits, &mut tokens)?;
         let after_first = pstate.read();
-        // The first buffer after the gap is the one an idle GPU delays.
-        let first_submit_ms = runtime::submit_probe::take().first().copied();
+        // The first buffer after the gap is the one an idle GPU delays; the
+        // sum covers a stall that lands on a later buffer of the same step.
+        let first_waits = runtime::submit_probe::take();
         let mut busy = Vec::with_capacity(IDLE_STEPS);
         let mut busy_submit = Vec::with_capacity(IDLE_STEPS);
         for _ in 0..IDLE_STEPS {
@@ -1046,16 +1203,39 @@ fn idle_gap_probe(
         }
         runtime::submit_probe::remove();
         let after_busy = pstate.read();
+        let footprint = sampler.sample();
+        let swap_growth = crate::host::swap_used_mib()
+            .zip(swap_before)
+            .map(|(b, a)| b - a);
+        let compressions = crate::host::compressor_counters()
+            .0
+            .zip(compressions_before)
+            .map(|(b, a)| b.saturating_sub(a));
+        let busy_head: Vec<f64> = busy.iter().take(IDLE_BUSY_HEAD).copied().collect();
         busy_submit.sort_by(f64::total_cmp);
         busy.sort_by(f64::total_cmp);
         let token_bytes: Vec<u8> = tokens.iter().flat_map(|t| t.to_le_bytes()).collect();
         rows.push(serde_json::json!({"gap_s": gap, "first_ms": first_ms,
                                      "busy_median_ms": busy[busy.len() / 2],
-                                     "first_submit_ms": first_submit_ms,
+                                     "busy_head_ms": busy_head,
+                                     "first_submit_ms": first_waits.first().copied(),
+                                     "first_submit_total_ms": first_waits.iter().sum::<f64>(),
+                                     "first_submit_buffers": first_waits.len(),
                                      "busy_submit_median_ms": busy_submit.get(busy_submit.len() / 2),
                                      "prestep": prestep.name(),
                                      "prestep_ms": prestep_ms,
                                      "prestep_pages": pages,
+                                     "keepwarm": keepwarm.map(|k| serde_json::json!({
+                                         "every_ms": k.every_ms,
+                                         "action": k.action.name(),
+                                         "count": keepwarm_count,
+                                         "spent_ms": keepwarm_ms,
+                                     })),
+                                     "gap_energy": GapEnergy::window(&energy_before, &energy_after),
+                                     "energy_error": energy.0.as_ref().err(),
+                                     "footprint_bytes": footprint,
+                                     "swap_growth_mib": swap_growth,
+                                     "compressions_delta": compressions,
                                      "decode_digest": model_io::hash_data(&token_bytes),
                                      "pstate": {
                                          "gap": PstateLog::window(&before_gap, &after_gap),

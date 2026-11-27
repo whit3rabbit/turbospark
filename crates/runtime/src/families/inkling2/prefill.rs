@@ -58,16 +58,39 @@ impl RealForwardRunner {
     /// installs only (a streamed open has no expert buffers to map). Writes
     /// one half into a scratch buffer; the model's buffers are only read.
     pub(crate) fn inkling2_prewarm(&mut self) -> Result<(), RealForwardError> {
-        if !prewarm_enabled() {
+        if !prewarm_enabled() || !self.inkling2_has_resident_experts() {
             return Ok(());
         }
-        let Some(st) = self.real_inkling2.as_ref() else {
-            return Ok(());
-        };
-        let Some(res) = st.resident.as_ref() else {
-            return Ok(());
-        };
         foundation::engaged!("inkling2_prewarm");
+        // Not waited on: the command buffer retains what it references.
+        let _ = self.inkling2_prewarm_commit()?;
+        Ok(())
+    }
+
+    /// Whether this is an Inkling 2 runner with resident experts, the only
+    /// case [`Self::inkling2_prewarm_commit`] has buffers to name.
+    pub(crate) fn inkling2_has_resident_experts(&self) -> bool {
+        self.real_inkling2
+            .as_ref()
+            .is_some_and(|st| st.resident.is_some())
+    }
+
+    /// The prewarm's command buffer: one tiny dispatch per resident expert
+    /// buffer and one on the trunk, committed and NOT waited on. Shared by
+    /// the open-time prewarm and tslab's idle-gap `prewarm` arm (KERN-05),
+    /// which waits on it. `None` without resident experts. Ignores
+    /// `TURBOSPARK_INKLING2_PREWARM` and marks nothing engaged: the caller
+    /// decides both.
+    pub(crate) fn inkling2_prewarm_commit(
+        &mut self,
+    ) -> Result<Option<gpu::CommittedPass>, RealForwardError> {
+        let Some(res) = self
+            .real_inkling2
+            .as_ref()
+            .and_then(|st| st.resident.as_ref())
+        else {
+            return Ok(None);
+        };
         let scratch = self.context.new_output_buffer(16);
         let pass = self.context.begin_pass_labeled("inkling2 prewarm");
         let mut touch = |b: &gpu::MetalBuffer| {
@@ -78,9 +101,7 @@ impl RealForwardRunner {
             touch(b)?;
         }
         touch(self.weights.buffer())?;
-        // Not waited on: the command buffer retains what it references.
-        let _ = pass.commit_checked().map_err(RealForwardError::Gpu)?;
-        Ok(())
+        Ok(Some(pass.commit_checked().map_err(RealForwardError::Gpu)?))
     }
 
     /// Why this install cannot take the chunked driver, or `None` when it

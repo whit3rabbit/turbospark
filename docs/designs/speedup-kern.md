@@ -292,6 +292,89 @@ Per the order below, this is inconclusive and the step stops here. The next
 cause test would touch every buffer the step binds (KV, scratch, expert slots),
 not only the weights. That is a design change, so it waits for the owner.
 
+#### Re-read of Step 1a (2026-11-26, recorded data and code, no new runs)
+
+The three arms fit one mechanism. **Likely cause:** after about 1 to 2 s with
+no command buffer, macOS drops the GPU-side mapping of the process's buffers,
+and the next command buffer pays, in the kernel and before the GPU starts, to
+map again the buffers it names.
+
+*   The engine already measured this cost at open: `inkling2_prewarm`
+    (`crates/runtime/src/families/inkling2/prefill.rs`, 2026-11-23) exists
+    because the first buffer naming the resident experts and trunk waits 1.2 to
+    2.8 s while the driver maps them. The idle stall is the same wait, smaller,
+    coming back after idle.
+*   The wait is `GPUStartTime - kernelStartTime`, and `GPUPH` reads `OFF` for
+    82 to 87% of a stalled first step (8 to 21% after a short gap). The earlier
+    "counter cannot tell them apart" holds for the gap window only.
+*   `wake` names an 8-byte buffer, maps nothing, and completes in 6 to 13 ms:
+    GPU power-up is cheap.
+*   The cost moves with the buffer named. `touch` names the trunk (928 MiB),
+    and prestep plus remaining wait equals the baseline wait (34+147=181 vs
+    178, 49+171=220 vs 199, 52+162=214 vs 206 ms). The GPU is `OFF` for 99.8%
+    of the 4 s and 8 s touch presteps, so that time is kernel-side too.
+
+**Correction to Step 1a and Step 1b:** the mlx4 run did not use mapped
+experts. `auto` resolved to resident (`resident_experts_decision`, peak
+footprint 17.74 GiB in the ledger). One step names the trunk plus 24 copied
+expert buffers (about 14.6 GiB) plus KV, so the touch arm covered about 6% of
+the named bytes, and invariant 2 does not exclude these buffers.
+
+**Open point:** about 36 to 56 ms per GiB for the trunk (every page read)
+against about 10 to 12 ms per GiB averaged over the experts (only routed
+strides read). The cost is either per page the GPU reads or per buffer kind
+(file-backed no-copy trunk vs copied expert buffers). The `prewarm` and
+`touch-all` arms below separate these. The Step 1a host had 8 GB of swap in
+use and about 1M compressions per run, a confound.
+
+**Upstream:** the PolyStrata audit (section 9.5) reports the same symptom and
+threshold and ships a one-thread kernel that calls `useResource` on every
+buffer every 250 ms, for at most 120 s after the last command buffer, paused
+under memory pressure; a residency set alone and a keep-alive naming no buffer
+did not help there. llama.cpp (PR 11427) keeps per-buffer residency sets and
+calls `requestResidency` every 5 ms for 180 s, citing memory "collected by the
+OS after 1 second of inactivity". Apple documents no residency duration.
+
+**Consequence:** Step 1b as written (a set requested once or per generation)
+is the variant upstream reports as not working, so it is not built first. The
+fix primitive already exists (the prewarm); the question is when to run it
+again. Alternative A's bounded form is what PolyStrata ships, so it is
+reopened as a lab arm only. A production default stays a separate decision.
+
+The first step after any gap of 0.5 s or more also runs 12 to 16 ms slow while
+the GPU ramps from P1 to P15. That is separate and out of scope (the
+2026-11-21 ALU keep-alive was tried and not kept).
+
+#### Steps 0 to 2 of the re-plan (lab only)
+
+Built (2026-11-26): `runtime::IdleProbeAction` (`Wake`, `TouchWeights`,
+`Prewarm`, `TouchAll`) replaces the `touch: bool` of `run_idle_probe`.
+`Prewarm` shares its encode-and-commit body with the open-time prewarm
+(`inkling2_prewarm_commit`), waits on it, and is refused by name without
+resident experts. tslab arms: `TURBOSPARK_LAB_IDLE_PRESTEP=prewarm|touch-all`,
+and keep-warm `TURBOSPARK_LAB_IDLE_KEEPWARM_MS=<n>` with
+`TURBOSPARK_LAB_IDLE_KEEPWARM=<action>`, which runs the action every `n` ms
+strictly inside each gap on the probe thread (no engine change, no
+background thread). Rows add the summed first-step waits, the first five busy
+steps, gap energy, footprint, and swap and compressor movement.
+
+Reading, Step 1:
+
+| Result | Meaning |
+|---|---|
+| `prewarm` prestep about 200 ms, wait under 3 ms, digest equal | naming is enough. The existing prewarm is the fix primitive |
+| `prewarm` cheap and wait unchanged, `touch-all` absorbs it | the cost is per page read. A keep-alive must touch what a step reads |
+| neither moves the wait | the diagnosis is wrong. Stop and re-plan |
+
+Outcome, Step 2 (against `none`, arms every 250 ms, every 750 ms, and `wake`
+every 250 ms as the negative control):
+
+| Outcome | Condition | Action |
+|---|---|---|
+| Pass | first-buffer wait under 3 ms at 2, 4 and 8 s, digest equal, footprint and swap unchanged | price the production forms (prewarm on intent, bounded keep-warm), separate approval |
+| Partial | stall cut by half or more | record. Try a shorter interval or the touch form |
+| Negative | cut by less than half | record, drop keep-warm, re-plan |
+
 #### Step 1b: residency set (only if Step 1a supports it)
 
 Author decision, 2026-11-26: a residency set through `metal::objc` messages. Its
