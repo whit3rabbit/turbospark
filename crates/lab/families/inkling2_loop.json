@@ -434,13 +434,177 @@
       },
       "conditions": "AC power, load average under 2, no other model process; swap 8.0 of 9.2 GB used; one run per arm, so no spread; the record is the none run, wake is 1795732673707-51207-2 and touch 1795732731238-55891-2",
       "note": "the stall reproduces on this install. Neither arm brings the after-gap step near 50 ms, so Step 1a does not support a residency set. The empty dispatch runs in 6 to 13 ms after the gap, yet the next real step still waits about 190 ms: the stall is not the GPU waking for any command buffer, it follows the step's own work or resources. Touching the weights takes 34 to 52 ms after a gap (1 to 2 ms after a short one) and lowers the wait by about the same amount, so the trunk's pages explain a part, not most. GPUPH shows the GPU OFF for all of a 0.5 s gap too, so this counter does not separate the stalled gaps from the fast ones. Decode digests were equal across arms at every gap."
+    },
+    {
+      "id": "inkling2_loop.idle-gap-fix-2026-11-27",
+      "date": "2026-11-27",
+      "install": "inkling2-mini-mlx4",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "3c8343a0",
+      "workload": "tslab idle-gap, KERN-05 re-plan Steps 0 to 2: prestep none, wake, touch, prewarm, touch-all, and keep-warm prewarm every 250 and 750 ms and wake every 250 ms; two fresh processes per arm, interleaved",
+      "arms": {
+        "none": {},
+        "prewarm": {
+          "TURBOSPARK_LAB_IDLE_PRESTEP": "prewarm"
+        },
+        "touch-all": {
+          "TURBOSPARK_LAB_IDLE_PRESTEP": "touch-all"
+        },
+        "kw250-prewarm": {
+          "TURBOSPARK_LAB_IDLE_KEEPWARM_MS": "250",
+          "TURBOSPARK_LAB_IDLE_KEEPWARM": "prewarm"
+        },
+        "kw750-prewarm": {
+          "TURBOSPARK_LAB_IDLE_KEEPWARM_MS": "750",
+          "TURBOSPARK_LAB_IDLE_KEEPWARM": "prewarm"
+        },
+        "kw250-wake": {
+          "TURBOSPARK_LAB_IDLE_KEEPWARM_MS": "250",
+          "TURBOSPARK_LAB_IDLE_KEEPWARM": "wake"
+        }
+      },
+      "metric": "first_submit_ms",
+      "values": {
+        "gaps_s": [2, 4, 8],
+        "none": [[197.29, 239.49, 262.17], [156.84, 205.33, 213.93], [172.0, 221.63, 198.32], [151.34, 188.13, 194.0]],
+        "prewarm": [[1.83, 1.74, 1.43], [4.34, 1.98, 2.32]],
+        "prewarm_prestep_ms": [[141.9, 157.1, 164.7], [196.0, 162.0, 159.6]],
+        "touch-all": [[1.51, 11.12, 2.43], [1.84, 1.33, 1.41]],
+        "touch-all_prestep_ms": [[151.8, 175.7, 178.5], [159.9, 167.7, 164.9]],
+        "kw250-prewarm": [[4.51, 5.46, 2.31], [4.75, 4.09, 5.85]],
+        "kw750-prewarm": [[5.09, 5.82, 4.11], [4.78, 4.5, 4.31]],
+        "kw250-wake": [[142.3, 191.09, 196.33], [136.67, 184.99, 198.12]],
+        "dense_qwen3_8b_q4km_none": [[46.98, 48.34, 48.99], [47.88, 33.94, 47.65]],
+        "dense_qwen3_8b_q4km_touch": [[1.14, 1.36, 1.7], [1.54, 1.06, 1.34]],
+        "footprint_gib": [17.72, 17.74]
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "kern05_idle",
+        "record": "1795750718043-33235-2"
+      },
+      "conditions": "AC power, load average under 2 before each arm, swap 0 after a reboot, no other model process; four runs carry tslab's DIRTY flag (Spotlight re-indexing or foreign CPU) and sit inside the clean spread. Records: prewarm 1795750718043-33235-2 and 1795757670238-67760-2, touch-all 1795750805248-39073-2 and 1795757938130-71520-2, kw250-prewarm 1795759121935-93527-2 and 1795759620540-6853-2, kw750-prewarm 1795759208840-96672-2 and 1795759857866-10043-2, kw250-wake 1795759265960-99713-2 and 1795760005212-12928-2; dense in kern05_idle_dense. Gap energy is machine-wide and overlaps across arms, so idle power is not priced",
+      "note": "the stall is the next buffer mapping again every buffer it names after 1 to 2 s idle. Re-running the open-time prewarm (one element of each resident buffer) moves the whole wait into the prestep, and touching every page of all of them costs the same, so the cost is per buffer named, not per page. A keep-warm prewarm every 250 or 750 ms keeps the buffers mapped (about 1 ms per action) and cuts the stall 97 to 98%, leaving 2 to 6 ms (Partial against a 3 ms bar); a keep-warm wake at the same rate leaves it all. A dense install (qwen3-8b q4km) shows a 34 to 49 ms stall that a trunk touch removes. Digests equal across every arm and gap."
+    },
+    {
+      "id": "inkling2_loop.idle-gap-keepwarm-knob-2026-11-27",
+      "date": "2026-11-27",
+      "install": "inkling2-mini-mlx4",
+      "machine": "Apple M4 Max 36 GB",
+      "power": "ac",
+      "rev": "d3d7ec72 plus the uncommitted keep-warm tree",
+      "workload": "tslab idle-gap, KERN-05 Step 3: the production knob TURBOSPARK_INKLING2_KEEPWARM_MS=750 against none, and the same with a 3 s window; two fresh processes per arm, interleaved",
+      "arms": {
+        "none": {},
+        "kw750": {
+          "TURBOSPARK_INKLING2_KEEPWARM_MS": "750"
+        },
+        "kw750-w3": {
+          "TURBOSPARK_INKLING2_KEEPWARM_MS": "750",
+          "TURBOSPARK_INKLING2_KEEPWARM_WINDOW_S": "3"
+        }
+      },
+      "metric": "first_submit_ms",
+      "values": {
+        "gaps_s": [
+          2,
+          4,
+          8
+        ],
+        "none": [
+          [
+            227.63,
+            262.64,
+            1440.39
+          ],
+          [
+            1633.29,
+            2224.07,
+            146.08
+          ]
+        ],
+        "kw750": [
+          [
+            5.67,
+            5.38,
+            4.03
+          ],
+          [
+            3.57,
+            4.24,
+            4.66
+          ]
+        ],
+        "kw750-w3": [
+          [
+            6.49,
+            1719.32,
+            178.35
+          ],
+          [
+            5.11,
+            176.09,
+            158.93
+          ]
+        ],
+        "kw750_ticks_fired": [
+          [
+            2,
+            4,
+            10
+          ],
+          [
+            2,
+            5,
+            10
+          ]
+        ],
+        "kw750-w3_ticks_fired": [
+          [
+            2,
+            3,
+            2
+          ],
+          [
+            2,
+            3,
+            3
+          ]
+        ],
+        "kw750-w3_ticks_paused": [
+          [
+            0,
+            0,
+            3
+          ],
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "footprint_gib_kw750": [
+          17.73,
+          17.74
+        ]
+      },
+      "verdict": "reading",
+      "provenance": {
+        "kind": "ledger",
+        "experiment": "kern05_idle",
+        "record": "1795792326392-89077-2"
+      },
+      "conditions": "AC power, load average under 2 before each arm, no other model process. Foreign work pushed swap to about 7 GB during the runs: the none rows at 1.4 to 2.2 s and the window row at 1.7 s coincide with swap growth and footprint dropping to 16.06 GiB (paging, a different stall) and are excluded from the comparison. Two runs carry the DIRTY flag (foreign CPU, one a compile). Records: none 1795791967676-81247-2 and 1795792719073-98679-2, kw750 1795792326392-89077-2 and 1795792775895-2938-2, kw750-w3 1795792657357-95715-2 and 1795793676996-23134-2. Idle power not priced",
+      "note": "the opt-in production keep-warm reproduces the Step 2 lab arm: 3.6 to 5.7 ms after 2 to 8 s idle in both runs, against 146 to 263 ms for none rows without paging, decode digests equal across all six runs. A 3 s window stops the ticks and the 4 and 8 s gaps stall again, so the bound holds. The memory-pressure pause engaged live once (3 paused ticks). Default stays off."
     }
   ],
   "open_questions": [
     "resident experts against streamed has no paired verdict: tslab pairs only arms in the same page-cache class, and the two modes never are",
     "auto now resolves resident experts where the resident weights, the table and the 10 GiB reserve fit Metal's working set (the 36 GB M4 Max does): measure with an explicit @N/streamed arm, since a bare auto arm is resident there; a quality gate at resident exactness is still owed",
     "the CPU reference matched llama.cpp (top-1 19/19, mean KL 4.2e-4 on 19 tokens), a correctness check, not a lab measurement (docs/INKLING2_PHASE0.md)",
-    "why the first command buffer after 2 s or more of GPU idle waits about 200 ms (inkling2_loop.idle-gap-2026-11-26), whether other families and installs see it, and whether keeping the GPU warm between turns is worth its power"
+    "the idle stall's cause is settled (inkling2_loop.idle-gap-fix-2026-11-27); still open: what the 2 to 6 ms left under a keep-warm is (GPU power-up is the guess), a keep-warm's idle power on a quiet host, a mapped-expert install, and whether the opt-in keep-warm (inkling2_loop.idle-gap-keepwarm-knob-2026-11-27) should become a default or an app setting"
   ],
   "traps": [
     "layers 6-17 run three times per token: per-layer stats, prefetch keyed on layer + 1, and the router histogram all assume one application per layer",

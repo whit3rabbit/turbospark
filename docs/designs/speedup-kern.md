@@ -375,6 +375,123 @@ every 250 ms as the negative control):
 | Partial | stall cut by half or more | record. Try a shorter interval or the touch form |
 | Negative | cut by less than half | record, drop keep-warm, re-plan |
 
+Result (2026-11-26 and 27, M4 Max, AC, load under 2, swap 0 after a reboot,
+tslab built from `3c8343a0`; two fresh processes per arm, interleaved;
+ledgers `kern05_idle` and `kern05_idle_dense`; reading
+`inkling2_loop.idle-gap-fix-2026-11-27`). First-buffer wait after a 2, 4 and
+8 s gap, ms, one triple per run:
+
+| Install, arm | Wait (ms) | Prestep or keep-warm cost |
+|---|---|---|
+| mlx4 `none` (4 runs) | 197/239/262, 157/205/214, 172/222/198, 151/188/194 | |
+| mlx4 `wake` | 152/191/183, 194/220/206 | prestep 4 to 9 ms |
+| mlx4 `touch` (trunk) | 132/160/167, 198/192/183 | prestep 19 to 42 ms |
+| mlx4 `prewarm` | 1.8/1.7/1.4, 4.3/2.0/2.3 | prestep 142 to 196 ms, 0 pages |
+| mlx4 `touch-all` | 1.5/11.1/2.4, 1.8/1.3/1.4 | prestep 152 to 179 ms, 1,017,842 pages |
+| mlx4 keep-warm `prewarm` / 250 ms | 4.5/5.5/2.3, 4.8/4.1/5.9 | about 1 ms per action |
+| mlx4 keep-warm `prewarm` / 750 ms | 5.1/5.8/4.1, 4.8/4.5/4.3 | about 1 ms per action |
+| mlx4 keep-warm `wake` / 250 ms | 142/191/196, 137/185/198 | about 1 ms per action |
+| qwen3-8b q4km `none` | 47/48/49, 48/34/48 | |
+| qwen3-8b q4km `touch` | 1.1/1.4/1.7, 1.5/1.1/1.3 | prestep 36 to 51 ms, 306,471 pages |
+
+After 0.5 and 1 s every arm waits under 3 ms. Decode digests are equal across
+every arm at every gap on each install (29 mlx4 and 4 dense runs, and equal to
+the Step 1a digests). Footprint stays 17.72 to 17.74 GiB on mlx4 and swap does
+not grow. Four runs carry tslab's DIRTY flag (Spotlight re-indexing after the
+reboot, or foreign CPU over 150%); their waits sit inside the clean runs'
+spread.
+
+*   **Step 1: row 1, the diagnosis holds.** Naming every resident buffer moves
+    the whole stall into the prestep, and the first step returns to the
+    short-gap baseline (31 to 41 ms). `touch-all` reads every page of about 15.5
+    GiB, `prewarm` one element of each of 25 buffers, and they cost about the
+    same, so the cost is per buffer
+    named after idle, not per page read. That settles the open point. The
+    existing prewarm is the fix primitive.
+*   **The prestep form moves the cost, it does not remove it.** Prestep plus
+    remaining wait is about the `none` wait. Re-issuing the prewarm when a
+    request arrives hides the stall only behind CPU work it overlaps.
+*   **Dense (Alternative G):** the stall is present on a dense install with one
+    file-backed buffer, at the same 1 to 2 s threshold, and `touch` moves at
+    least 95% of it into the prestep. The size was not as predicted: about 47
+    ms for 4.7 GB (about 10 ms per GiB), not 170 to 260 ms. The cost does not
+    scale with trunk bytes at the Inkling trunk's rate.
+*   **Step 2: Partial by the table.** A keep-warm `prewarm` cuts the stall by
+    97 to 98%, and each action costs about 1 ms instead of about 160 ms: named
+    every 250 or 750 ms, the buffers are never unmapped. The wait left is 2.3
+    to 5.9 ms, over the 3 ms Pass bar at 2 and 4 s. The `wake` control, at the
+    same rate and cost, leaves the whole stall, which matches the PolyStrata
+    report that a keep-alive naming no buffer does not help.
+*   **The table's Partial action does not apply as written.** 250 and 750 ms
+    leave the same residual, so a shorter interval is not expected to help, and
+    the touch form names the same buffers. The residual is probably GPU
+    power-up (an empty dispatch after a gap takes 4 to 9 ms, and the prestep
+    form, where the step follows the prewarm at once, leaves 1.4 to 2.3 ms).
+    That is an inference, not measured.
+*   **Energy is not priced.** Gap energy is machine-wide IOReport, and on this
+    host it overlaps across arms (`none` reads 3.4 to 27 J for the same gaps).
+    A keep-warm's idle power needs a quieter host or a per-process meter before
+    any default.
+
+Owner decision (2026-11-27): the 2 to 6 ms residual is acceptable, and the
+production form is the bounded keep-warm prewarm. Step 1b's residency set is
+not needed for this mechanism.
+
+#### Step 3: bounded keep-warm (built, default off)
+
+Built (2026-11-27): `gpu::KeepWarm` (`crates/gpu/src/keep_warm.rs`), started at
+open by `inkling2_start_keep_warm` when `TURBOSPARK_INKLING2_KEEPWARM_MS=<50..=5000>`
+is set; `TURBOSPARK_INKLING2_KEEPWARM_WINDOW_S=<1..=3600>`, default 120 (the
+PolyStrata bound).
+
+*   Its own thread and its own command queue; one single-thread dispatch per
+    buffer reads one word and writes only its own scratch, so decode output
+    cannot change. Names what the prewarm names: every resident expert buffer
+    and the trunk. A streamed install is refused by name (its experts are
+    mapped and must stay droppable), and so is a malformed value.
+*   Fires once a full interval has passed since the buffers were last named,
+    by a pass on the runner's context or by its own tick. `MetalContext`
+    stamps the time at every pass begin (one atomic store), so a busy decode
+    costs nothing. It polls at a quarter interval, so the longest unnamed
+    stretch is about 1.25 intervals.
+*   Stops once the window has passed since the runner's last pass. Skips any
+    tick where `kern.memorystatus_vm_pressure_level` is not normal (or
+    unread).
+*   Tests: parse, decision and refusal unit tests; `crates/gpu/tests/keep_warm.rs`
+    on the device (fires while idle, silent while the context is busy, stops
+    after the window, joins on drop). Mutants killed: passes no longer stamp
+    activity, the window never closes, only critical pressure pauses. tslab
+    rows count the runner's ticks over each gap (`runner_keep_warm`).
+
+Result (2026-11-27, M4 Max, AC, mlx4, tslab built from the uncommitted tree
+on `d3d7ec72`; two fresh processes per arm, interleaved; ledger `kern05_idle`
+records `1795791967676-81247-2` to `1795793676996-23134-2`). First-buffer
+wait after a 2, 4 and 8 s gap, ms:
+
+| Arm | Wait (ms) | Keep-warm ticks over the gap |
+|---|---|---|
+| `none` | 228/263/1440, 1633/2224/146 | |
+| `KEEPWARM_MS=750` | 5.7/5.4/4.0, 3.6/4.2/4.7 | 2/4-5/10, 0 paused, 0 failed |
+| `KEEPWARM_MS=750`, window 3 s | 6.5/1719/178, 5.1/176/159 | 2/3/2-3, then none |
+
+*   **Production knob reproduces the Step 2 lab arm.** 3.6 to 5.7 ms at every
+    gap of 2 s or more in both runs, against 146 to 263 ms for `none` rows
+    without paging. Decode digests are equal across all six runs at every gap,
+    and equal to the Step 1 digests.
+*   **The window bounds it.** With a 3 s window the 2 s gap stays warm, and
+    the 4 and 8 s gaps stall again (159 to 178 ms on rows without paging): ticks stop
+    at the window, and the mappings drop within about 1 s of the last one.
+*   **The pressure pause engaged live.** The host swapped up to about 7 GB
+    from foreign work during these runs. One window-arm row logged 3 paused
+    ticks, and `none` and window rows that hit paging show a different, larger
+    stall (1.4 to 2.2 s, swap growth, footprint dropping to 16.06 GiB) that a
+    keep-warm does not claim to fix. Those rows are excluded from the
+    comparison above. Two runs carry tslab's DIRTY flag (foreign CPU, one a
+    compile); their waits sit inside the clean runs' spread.
+*   **Not priced:** idle power over the window (gap energy is machine-wide and
+    overlaps across arms here too), a default-on decision, and the app's
+    settings surface. The knob is off unless set; nothing in Swift sets it.
+
 #### Step 1b: residency set (only if Step 1a supports it)
 
 Author decision, 2026-11-26: a residency set through `metal::objc` messages. Its
@@ -699,6 +816,10 @@ cannot be checked from here.
     (upstream, not reproduced here). This is why Step 1a tests the cause before
     any set is built. A bounded keep-warm (stay warm for N seconds after the last
     token, sized from Step 1a) is not yet priced, and MOEM-10 covers it.
+*   **Status (2026-11-27):** reopened as a lab arm only. A keep-warm that names
+    every resident buffer every 250 or 750 ms cuts the stall by 97 to 98%; one
+    that names none does not (section 1, Steps 0 to 2 result). Idle power is
+    not priced, and no production form is built.
 
 ### Alternative B: Residency set through objc2-metal
 
@@ -747,6 +868,10 @@ cannot be checked from here.
 *   **Reason for Rejection:** Not possible yet. Step 1a runs on the one install
     available. A trunk-only result is recorded as inconclusive for the expert path
     (section 1). Revisit when a second install is available.
+*   **Status (2026-11-27):** the dense half ran on
+    `qwen3-8b-q4km.gturbo`: the stall is present (about 47 ms) and a trunk
+    touch moves at least 95% of it. A mapped-expert install is still not
+    probed.
 
 ## Risks & Limits
 
@@ -954,7 +1079,7 @@ decided), DECLINE (not pursued).
 | KERN-02 | TurboQuant decode attention: GQA-shared, barrier-free, simdgroup-stripe rewrite | DO-NOW | waits on the decode gate |
 | KERN-03 | head_dim 512 GQA-shared decode attention (Gemma 4) | DO-NOW | waits on the decode gate |
 | KERN-04 | GGUF K-quant / Q8_0 / IQ decode GEMV: first measure, then wide-unit kernels | DO-NOW | Q4_K wide-loads arm 1.51x to 1.59x the current kernel on real bytes (bar 1.25x); bench arm only, not in the engine; Q8_0 arm not written |
-| KERN-05 | Idle stall: cause test, then residency set (Step 1a, 1b) | DO-NOW | Step 1a run: stall reproduced on mlx4; wake and weights touch do not remove it; Step 1b not built |
+| KERN-05 | Idle stall: cause test, then residency set (Step 1a, 1b) | DO-NOW | Cause confirmed (2026-11-27): after 1 to 2 s idle the next buffer pays to map again every buffer it names; re-running the prewarm moves the stall out of the step, a keep-warm prewarm every 250 or 750 ms cuts it 97 to 98% (Partial: 2 to 6 ms left), a dense install shows it too. Step 1b not needed. Step 3 built (2026-11-27): opt-in bounded keep-warm `TURBOSPARK_INKLING2_KEEPWARM_MS`, 3.6 to 5.7 ms after 2 to 8 s idle, digests equal, window and pressure pause shown live; default stays off |
 | KERN-06 | Spin-poll on command-buffer completion versus sleep (settle with a paired A/B including a hybrid) | CONTESTED | needs an install not on this Mac |
 | KERN-07 | Price precise (safe) math for text decode and the GDN gate transcendentals | DO-NOW | needs an install not on this Mac |
 | KERN-08 | TurboQuant norm-correction fold, K/V split and boundary-layer sweep | DO-NOW | needs an install not on this Mac |
