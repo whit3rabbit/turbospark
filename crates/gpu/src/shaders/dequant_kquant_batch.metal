@@ -322,6 +322,50 @@ kernel void dequant_q6_k_gemm_simd(
     }
 }
 
+// Q8_0 wide loads: `dequant_q8_0_gemv_wide`'s walk, B accumulators (KERN-04).
+// Selected together with that GEMV, never alone; expressions textually the
+// GEMV's, only the `bi` loop is new. `dequant_q8_0_wide_pair_parity.rs` is the
+// evidence.
+[[kernel, max_total_threads_per_threadgroup(256)]]
+kernel void dequant_q8_0_gemm_wide(
+    device const uint8_t* W      [[buffer(0)]],
+    device const half*    x      [[buffer(1)]],
+    device half*          y      [[buffer(2)]],
+    constant uint&        M      [[buffer(3)]],
+    constant uint&        N      [[buffer(4)]],
+    constant uint&        B      [[buffer(5)]],
+    uint                  tg_idx [[threadgroup_position_in_grid]],
+    uint                  sg_idx [[simdgroup_index_in_threadgroup]],
+    uint                  lane   [[thread_index_in_simdgroup]]
+) {
+    const uint b_dim = kq_batch(B);
+    const uint row = tg_idx * kRowsPerTGQ8_0 + sg_idx;
+    if (row >= M) return;
+    const uint n_blocks = N / kQ8_0BlockElems;
+    device const uint8_t* W_row = W + uint(row) * n_blocks * kQ8_0BlockBytes;
+    const uint k = lane / 8u;
+    const uint l = (lane % 8u) * 4u;
+
+    float acc[kMaxBatchRowsKQuant];
+    for (uint bi = 0; bi < b_dim; ++bi) {
+        acc[bi] = 0.0f;
+    }
+    for (uint b = k; b < n_blocks; b += 4u) {
+        device const uint8_t* blk = W_row + b * kQ8_0BlockBytes;
+        #pragma clang loop unroll_count(4)
+        for (uint bi = 0; bi < b_dim; ++bi) {
+            const half4 xv = *(device const half4*)(x + bi * N + b * kQ8_0BlockElems + l);
+            acc[bi] = fma(q8_0_scale(blk), q8_0_wide_dot(blk, xv, l), acc[bi]);
+        }
+    }
+    for (uint bi = 0; bi < b_dim; ++bi) {
+        const float s = simd_sum(acc[bi]);
+        if (lane == 0) {
+            y[bi * M + row] = half(s);
+        }
+    }
+}
+
 // Q8_0: `dequant_q8_0_gemv_simd`'s walk, B accumulators.
 [[kernel, max_total_threads_per_threadgroup(256)]]
 kernel void dequant_q8_0_gemm_simd(

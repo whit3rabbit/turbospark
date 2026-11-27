@@ -41,31 +41,39 @@ fn no_function_constants() -> FunctionConstantValues {
     FunctionConstantValues::new()
 }
 
-/// Whether `TURBOSPARK_GGUF_KERNEL=wide` is the default (KERN-04). Flipped
-/// only with its decode gate and paired timing on a real install.
-const WIDE_BY_DEFAULT: bool = false;
+/// Whether each format's wide kernels are its default (KERN-04). Each is
+/// flipped only with its own decode gate and paired timing on a real install.
+const Q4_K_WIDE_BY_DEFAULT: bool = false;
+const Q8_0_WIDE_BY_DEFAULT: bool = false;
 
-/// The Q4_K GEMV the engine dispatches, read once per process from
-/// `TURBOSPARK_GGUF_KERNEL` (`current` or `wide`; unset gives the default). It
-/// selects the GEMV and the batched verify GEMM TOGETHER: the two must keep
-/// one accumulation order or speculation stops being bit-exact against plain
-/// decode. An unknown value warns and keeps the default.
+/// `TURBOSPARK_GGUF_KERNEL`, read once per process: `wide` or `current`
+/// forces every format that has a wide pair, unset leaves each format at its
+/// default. An unknown value warns and is treated as unset.
+fn gguf_kernel_override() -> Option<bool> {
+    static OVERRIDE: std::sync::OnceLock<Option<bool>> = std::sync::OnceLock::new();
+    *OVERRIDE.get_or_init(|| match std::env::var("TURBOSPARK_GGUF_KERNEL").as_deref() {
+        Ok("wide") => Some(true),
+        Ok("current") => Some(false),
+        Err(_) | Ok("") => None,
+        Ok(other) => {
+            eprintln!(
+                "[gpu] TURBOSPARK_GGUF_KERNEL={other:?} is not current or wide; using each format's default"
+            );
+            None
+        }
+    })
+}
+
+/// The Q4_K GEMV the engine dispatches. It selects the GEMV and the batched
+/// verify GEMM TOGETHER: the two must keep one accumulation order or
+/// speculation stops being bit-exact against plain decode.
 pub fn q4_k_wide_selected() -> bool {
-    static SELECTED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *SELECTED.get_or_init(
-        || match std::env::var("TURBOSPARK_GGUF_KERNEL").as_deref() {
-            Ok("wide") => true,
-            Ok("current") => false,
-            Err(_) | Ok("") => WIDE_BY_DEFAULT,
-            Ok(other) => {
-                eprintln!(
-                    "[gpu] TURBOSPARK_GGUF_KERNEL={other:?} is not current or wide; using {}",
-                    if WIDE_BY_DEFAULT { "wide" } else { "current" }
-                );
-                WIDE_BY_DEFAULT
-            }
-        },
-    )
+    gguf_kernel_override().unwrap_or(Q4_K_WIDE_BY_DEFAULT)
+}
+
+/// [`q4_k_wide_selected`] for Q8_0, same pairing rule.
+pub fn q8_0_wide_selected() -> bool {
+    gguf_kernel_override().unwrap_or(Q8_0_WIDE_BY_DEFAULT)
 }
 
 /// Whether a resident Q4_K matrix at `weights_offset` runs the wide kernels.

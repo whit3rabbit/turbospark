@@ -116,6 +116,10 @@ pub fn encode_dequant_q8_0_gemv_resident(
 ) -> Result<(), GpuError> {
     assert!(w.rows > 0);
     let _ = q8_0_row_bytes(w.cols);
+    if q8_0_use_wide(w.weights_offset) {
+        foundation::engaged!("gguf_q8_0_wide");
+        return encode_dequant_q8_0_gemv_resident_wide(context, pass, w, x, y, false);
+    }
     let m_u32 = w.rows as u32;
     let n_u32 = w.cols as u32;
     let pipeline = context.pipeline(
@@ -210,13 +214,24 @@ pub fn dequant_q8_0_gemv_resident_wide(
     Ok(read_half_buffer(&y_buffer, w.rows))
 }
 
-/// One-shot [`encode_dequant_q8_0_gemv_resident`] for the parity tests.
+/// Whether a resident Q8_0 matrix at `weights_offset` runs the wide pair
+/// (one row per simdgroup; the two-row arm stays a bench arm). Depends only on
+/// the matrix, so its GEMV and batched GEMM always agree.
+pub(crate) fn q8_0_use_wide(weights_offset: u64) -> bool {
+    crate::dequant_q4_k_gemv::q8_0_wide_selected() && weights_offset % 2 == 0
+}
+
+/// One-shot [`encode_dequant_q8_0_gemv_resident`] for the parity tests,
+/// routed like the encoder.
 pub fn dequant_q8_0_gemv_resident(
     context: &mut MetalContext,
     w: &Q8_0ResidentMatrix<'_>,
     x: &[f16],
 ) -> Result<Vec<f16>, GpuError> {
     assert_eq!(x.len(), w.cols);
+    if q8_0_use_wide(w.weights_offset) {
+        return dequant_q8_0_gemv_resident_wide(context, w, x, false);
+    }
     let x_buffer = context.new_buffer_with_data(&half_slice_to_le_bytes(x));
     let y_buffer = context.new_output_buffer((w.rows * std::mem::size_of::<u16>()) as u64);
 

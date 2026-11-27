@@ -120,6 +120,16 @@ pub fn encode_dequant_kquant_gemm_resident(
             )));
         }
         "dequant_q4_k_gemm_wide"
+    } else if w.kind == KQuantBatchType::Q8_0
+        && crate::dequant_q8_0_gemv::q8_0_use_wide(w.weights_offset)
+    {
+        if x.1 % 8 != 0 {
+            return Err(GpuError::InvalidInput(format!(
+                "dequant_q8_0_gemm_wide needs an 8-byte aligned x offset (got {})",
+                x.1
+            )));
+        }
+        "dequant_q8_0_gemm_wide"
     } else {
         w.kind.kernel()
     };
