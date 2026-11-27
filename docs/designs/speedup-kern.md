@@ -523,7 +523,13 @@ GGUF with `gguf_local_install`), `tslab gate` with the trusted evaluator
     +20%, 95% CI -10% to +50%, 1 better and 1 worse). 5 of 10 runs were dirty
     from other sessions' compiles. Ledger `1795740462768-70075-33`.
 
-The default stays `current` until a re-run on a quiet host gives a verdict.
+Owner decision, 2026-11-26: the wide Q4_K pair is the default (`cb8be041`)
+without waiting for a clean paired A/B, on the quality pass and the Stage A and
+B bench readings. `TURBOSPARK_GGUF_KERNEL=current` restores the old pair. The
+knob A/B queued at base `5fe079f5` (default still `current` there) is now a
+check of that decision. From `cb8be041` on, a Q4_K A/B must set
+`TURBOSPARK_GGUF_KERNEL=current` on its baseline explicitly. Q8_0 stays
+`current` until its own A/B.
 
 Stage B for Q4_K (2026-11-26, two runs on a quiet host, same 36 real tensors;
 `crates/gpu/tests/gguf_stage_b_price.rs`). Ratios against the current GEMV:
