@@ -951,7 +951,10 @@ mod tests {
         let catalog = catalog::audio_catalog::AudioCatalog::embedded().unwrap();
         let mut refused = 0;
         for profile in catalog.entries() {
-            let app_only = profile.capabilities.backend == "swift_coreml";
+            // FluidAudio rows, and Breeze, which runs in Swift MLX with no
+            // server speech bridge (`http_api: false`).
+            let app_only =
+                profile.capabilities.backend == "swift_coreml" || profile.family == "breeze_tts";
             let alias = &profile.identity.alias;
             assert_eq!(app_only_refusal(profile).is_err(), app_only, "{alias}");
             assert_eq!(refuse_app_only(alias).is_err(), app_only, "{alias}");
