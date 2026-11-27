@@ -346,7 +346,8 @@ pub use dequant_q6_k_gemv::{
 };
 #[cfg(target_os = "macos")]
 pub use dequant_q8_0_gemv::{
-    dequant_q8_0_gemv, dequant_q8_0_gemv_resident, encode_dequant_q8_0_gemv_resident,
+    dequant_q8_0_gemv, dequant_q8_0_gemv_resident, dequant_q8_0_gemv_resident_wide,
+    encode_dequant_q8_0_gemv_resident, encode_dequant_q8_0_gemv_resident_wide,
     encode_embed_lookup_q8_0, q8_0_row_bytes, Q8_0ResidentMatrix, Q8_0_BLOCK_BYTES,
     Q8_0_BLOCK_ELEMS,
 };
