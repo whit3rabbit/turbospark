@@ -586,6 +586,9 @@ final class LocalizationParityTests: XCTestCase {
         for option in AppSpeculationOption.allCases {
             values.append(("AppSpeculationOption.menuLabel", option.menuLabel))
         }
+        for option in AppSpeculativeDrafterOption.allCases {
+            values.append(("AppSpeculativeDrafterOption.menuLabel", option.menuLabel))
+        }
         for kind in InstalledModelKind.allCases {
             values.append(("InstalledModelKind.title", kind.title))
         }

@@ -2375,3 +2375,17 @@ are `lfm3-1.7b` and `lfm3-1.7b-q8`, both `verified`.
   prompts are identical to llama.cpp build 11960 on the same file and the
   same prompt ids. The MLX 4-bit bytes have no external reference, since
   mlx-lm has no `lfm3` model.
+
+## Inkling 2 DFlash2 drafter (`families/inkling2/dflash2.rs`)
+
+Against the checkpoint's reference (llama.cpp, ggml-org/llama.cpp#33073, and
+the model repository's SGLang patch):
+
+- **Greedy only.** The softcap on the pair score is not applied, because a
+  monotonic cap cannot change a greedy pick. There is no sampled selector and
+  no tree verify.
+- **Window.** 2048 context positions before the block, plus the whole block.
+- **FP16 transport.** The finish convolutions are stored divided by 32; the
+  residual stream is F32.
+- **Not compared with a reference run.** Parity is against this repository's
+  own f32 CPU reference, up to the target head.

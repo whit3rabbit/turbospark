@@ -275,6 +275,12 @@ pub struct CatalogEntry {
     /// [`MtpSource`].
     #[serde(default)]
     pub mtp: Option<MtpSource>,
+    /// Inkling 2 rows only: the repository of the DFlash2 block drafter
+    /// (`model.safetensors` and `config.json`), installed into `dflash2/`.
+    /// `download_bytes` counts the source repository alone, so it excludes
+    /// this as it does `mtp`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dflash2: Option<MtpSource>,
     /// Position in the app's Featured list, lowest first. `None` (the
     /// default, and every row written before this field) is not featured.
     /// A hand-picked starting point, not a ranking: fit for this Mac is
@@ -444,6 +450,20 @@ impl CatalogEntry {
                 ));
             }
         }
+        if let Some(draft) = &self.dflash2 {
+            if draft.repo.split('/').count() != 2 {
+                return Err(format!(
+                    "{}: dflash2.repo {:?} is not owner/name",
+                    self.alias, draft.repo
+                ));
+            }
+            if !crate::is_inkling2_row(self) {
+                return Err(format!(
+                    "{}: only an Inkling 2 row installs a dflash2 drafter",
+                    self.alias
+                ));
+            }
+        }
         for m in &self.measured {
             m.validate(&self.alias)?;
         }
@@ -548,6 +568,7 @@ mod entry_kind_tests {
             measured: Vec::new(),
             notes: None,
             mtp: None,
+            dflash2: None,
             featured_rank: None,
         }
     }

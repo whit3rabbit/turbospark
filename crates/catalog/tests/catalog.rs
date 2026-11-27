@@ -518,3 +518,24 @@ fn every_tag_resolves_to_its_alias_and_aliases_still_win() {
         .iter()
         .any(|entry| entry.alias == "qwen36"));
 }
+
+/// A drafter fetched at install time is pinned, so a re-upload cannot change
+/// what a new install runs.
+#[test]
+fn every_dflash2_drafter_is_pinned_to_a_commit() {
+    let catalog = Catalog::embedded().expect("catalog");
+    let mut rows = 0;
+    for entry in catalog.entries() {
+        let Some(draft) = &entry.dflash2 else {
+            continue;
+        };
+        rows += 1;
+        assert!(
+            draft.revision.len() == 40 && draft.revision.bytes().all(|b| b.is_ascii_hexdigit()),
+            "{}: dflash2.revision {:?} is not a commit sha",
+            entry.alias,
+            draft.revision
+        );
+    }
+    assert_eq!(rows, 2, "the two Inkling rows that carry a DSpark drafter");
+}

@@ -1371,6 +1371,9 @@ Stage B: speed and memory (after A's gates, each with a kill switch)
     tslab arm) could not commit a single Inkling token. Padding is now the
     most negative finite FP16 (`PAD_LOGIT`); a softcapped logit is within
     +-30, so a padding row never wins or carries probability.
+  - A second block drafter, DFlash2, shares this drafter's state and taps
+    (`families/inkling2/dflash2.rs`): `<install>/dflash2/`, selected with the
+    `dflash2` drafter. See `docs/DFLASH2.md` section 9.
   - Stage 5a, losslessness (`tests/real_forward_inkling2_speculative.rs`,
     2026-11-21, M4 Max, 256 greedy tokens per prompt, block 7): the
     speculative loop commits exactly the plain greedy stream on every prompt

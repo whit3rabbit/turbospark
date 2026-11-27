@@ -133,6 +133,27 @@ pub fn encode_dspark_residual(
     Ok(())
 }
 
+/// `x = bf16(x) + scale * d`: for a delta whose true values leave FP16's
+/// range, stored divided by `scale`.
+pub fn encode_dspark_residual_scaled(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    x: Buf<'_>,
+    d: Buf<'_>,
+    n: u32,
+    scale: f32,
+) -> Result<(), GpuError> {
+    let p = pipeline(context, "dspark_residual_scaled")?;
+    pass.encode_threads_3d(
+        &p,
+        &binds(&[x, d]),
+        &[(u32_bytes(&n), 2), (&scale.to_le_bytes(), 3)],
+        (u64::from(n), 1, 1),
+        (256, 1, 1),
+    );
+    Ok(())
+}
+
 /// `act = silu(g) * u` over `n` FP16 elements.
 pub fn encode_dspark_silu_mul(
     context: &mut MetalContext,

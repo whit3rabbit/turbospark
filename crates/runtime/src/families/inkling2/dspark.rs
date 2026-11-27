@@ -1,6 +1,8 @@
-//! The Inkling 2 DSpark block drafter on Metal. PORT-LOCAL.
+//! The Inkling 2 block drafters on Metal: the shared state, and the DSpark
+//! drafter. PORT-LOCAL. The DFlash2 drafter (`dflash2.rs`) shares the state,
+//! the tap tracking, the context ring and the rewind.
 //!
-//! The bundled `mtp.safetensors` (`mlx-community/Inkling-2-Mini-oQ4e-mtp`,
+//! DSpark. The bundled `mtp.safetensors` (`mlx-community/Inkling-2-Mini-oQ4e-mtp`,
 //! BF16): 3 layers, block 8 (the anchor and 7 mask rows), context K/V
 //! projected from four target taps, the target's own embedding and LM head,
 //! and an RNN Markov head that conditions each proposal on the previous one.
@@ -22,6 +24,7 @@
 //! drafter is not part of the target's checkpoint), or the directory named
 //! by `TURBOSPARK_INKLING2_DSPARK`.
 
+use super::dflash2::Dflash2Head;
 use super::lamq::LamqRuntime;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -32,30 +35,126 @@ use super::DSPARK_TAP_ROWS;
 use crate::real_forward::{RealForwardError, RealForwardRunner};
 use crate::real_forward_utils::entry;
 
-/// The drafter directory for an install, if one is present.
-pub fn inkling2_dspark_dir(model_dir: &Path) -> Option<PathBuf> {
-    let dir = std::env::var_os("TURBOSPARK_INKLING2_DSPARK")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| model_dir.join("dspark"));
-    (dir.join("mtp.safetensors").is_file() && dir.join("config.json").is_file()).then_some(dir)
+const DSPARK_ENV: &str = "TURBOSPARK_INKLING2_DSPARK";
+const DFLASH2_ENV: &str = "TURBOSPARK_INKLING2_DFLASH2";
+pub(super) const DRAFT_HEAD: &str = "model.llm.unembed.weight";
+
+/// Which block drafter a directory holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Inkling2Drafter {
+    DSpark,
+    Dflash2,
+}
+
+impl Inkling2Drafter {
+    /// The user-facing name.
+    pub(super) fn name(self) -> &'static str {
+        match self {
+            Self::DSpark => "DSpark",
+            Self::Dflash2 => "DFlash2",
+        }
+    }
+
+    fn weights_file(self) -> &'static str {
+        match self {
+            Self::DSpark => "mtp.safetensors",
+            Self::Dflash2 => "model.safetensors",
+        }
+    }
+
+    fn holds(self, dir: &Path) -> bool {
+        dir.join(self.weights_file()).is_file() && dir.join("config.json").is_file()
+    }
+}
+
+/// The drafter to open, from the install and the two overrides. `dflash2`
+/// is a caller that asked for DFlash2 by name. A named drafter that is not
+/// there is an error, never a fallback to the other one.
+fn resolve_drafter_dir(
+    model_dir: &Path,
+    dflash2: bool,
+    dspark_env: Option<PathBuf>,
+    dflash2_env: Option<PathBuf>,
+) -> Result<(Inkling2Drafter, PathBuf), String> {
+    use Inkling2Drafter::{DSpark, Dflash2};
+    let named = |kind: Inkling2Drafter, dir: PathBuf, from: &str| {
+        if kind.holds(&dir) {
+            Ok((kind, dir))
+        } else {
+            Err(format!(
+                "{from} names {}, which has no {} and config.json",
+                dir.display(),
+                kind.weights_file()
+            ))
+        }
+    };
+    match (dspark_env, dflash2_env) {
+        (Some(_), Some(_)) => Err(format!(
+            "{DSPARK_ENV} and {DFLASH2_ENV} are both set; a round drafts with one model"
+        )),
+        (_, Some(dir)) => named(Dflash2, dir, DFLASH2_ENV),
+        (Some(_), None) if dflash2 => Err(format!(
+            "the DFlash2 drafter was asked for, but {DSPARK_ENV} is set"
+        )),
+        (Some(dir), None) => named(DSpark, dir, DSPARK_ENV),
+        (None, None) => {
+            let order: &[(Inkling2Drafter, &str)] = if dflash2 {
+                &[(Dflash2, "dflash2")]
+            } else {
+                &[(DSpark, "dspark"), (Dflash2, "dflash2")]
+            };
+            order
+                .iter()
+                .map(|&(kind, sub)| (kind, model_dir.join(sub)))
+                .find(|(kind, dir)| kind.holds(dir))
+                .ok_or_else(|| {
+                    let files = if dflash2 {
+                        "dflash2/model.safetensors and config.json".to_string()
+                    } else {
+                        "dspark/mtp.safetensors or dflash2/model.safetensors with its config.json"
+                            .to_string()
+                    };
+                    format!(
+                        "{} has no {files}, and neither {DSPARK_ENV} nor {DFLASH2_ENV} names a \
+                         drafter directory",
+                        model_dir.display()
+                    )
+                })
+        }
+    }
+}
+
+/// [`resolve_drafter_dir`] with the process environment.
+fn drafter_dir(model_dir: &Path, dflash2: bool) -> Result<(Inkling2Drafter, PathBuf), String> {
+    let env = |k| std::env::var_os(k).map(PathBuf::from);
+    resolve_drafter_dir(model_dir, dflash2, env(DSPARK_ENV), env(DFLASH2_ENV))
+}
+
+/// Whether an open has a block drafter to try: one in the install, or an
+/// override naming a directory (a broken override must fail at open, by
+/// name, rather than read as "no drafter").
+pub(crate) fn inkling2_drafter_offered(model_dir: &Path) -> bool {
+    std::env::var_os(DSPARK_ENV).is_some()
+        || std::env::var_os(DFLASH2_ENV).is_some()
+        || drafter_dir(model_dir, false).is_ok()
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct DsparkConfig {
-    h: usize,
-    layers: usize,
-    heads: usize,
-    kvh: usize,
-    hd: usize,
-    ffn: usize,
-    eps: f32,
-    theta: f32,
-    rank: usize,
+    pub(super) h: usize,
+    pub(super) layers: usize,
+    pub(super) heads: usize,
+    pub(super) kvh: usize,
+    pub(super) hd: usize,
+    pub(super) ffn: usize,
+    pub(super) eps: f32,
+    pub(super) theta: f32,
+    pub(super) rank: usize,
     /// Block rows: the anchor plus `block - 1` proposals.
     pub(crate) block: usize,
-    window: usize,
-    local: Vec<bool>,
-    taps: usize,
+    pub(super) window: usize,
+    pub(super) local: Vec<bool>,
+    pub(super) taps: usize,
 }
 
 impl DsparkConfig {
@@ -143,37 +242,48 @@ pub(crate) enum TapSource {
 
 pub(crate) struct DsparkState {
     pub(crate) cfg: DsparkConfig,
-    w: gpu::MetalBuffer,
+    pub(super) w: gpu::MetalBuffer,
     offs: HashMap<String, u64>,
-    /// Softmax of each `fuse_weight` row: layers, then the Markov head.
-    alpha: Vec<[f32; 4]>,
+    pub(super) head: Head,
     caps: Vec<usize>,
     kc: Vec<gpu::MetalBuffer>,
     vc: Vec<gpu::MetalBuffer>,
-    /// FP16 `[rank][vocab]`: the LM head folded through `hidden_out`.
-    fold_t: gpu::MetalBuffer,
-    /// FP16 `[vocab]`: the LM head applied to `hidden_out.bias`.
-    fold_b: gpu::MetalBuffer,
     /// Context rows written: positions `0 .. ctx_rows`.
     pub(crate) ctx_rows: usize,
     pub(crate) source: TapSource,
     // Scratch.
-    cmix: gpu::MetalBuffer,
-    ck: gpu::MetalBuffer,
-    cv: gpu::MetalBuffer,
-    emb: gpu::MetalBuffer,
-    emb_n: gpu::MetalBuffer,
-    x: gpu::MetalBuffer,
-    xn: gpu::MetalBuffer,
-    q: gpu::MetalBuffer,
-    kb: gpu::MetalBuffer,
-    vb: gpu::MetalBuffer,
-    att: gpu::MetalBuffer,
-    o: gpu::MetalBuffer,
-    g: gpu::MetalBuffer,
-    u: gpu::MetalBuffer,
-    act: gpu::MetalBuffer,
-    hid: gpu::MetalBuffer,
+    pub(super) cmix: gpu::MetalBuffer,
+    pub(super) ck: gpu::MetalBuffer,
+    pub(super) cv: gpu::MetalBuffer,
+    pub(super) emb: gpu::MetalBuffer,
+    pub(super) emb_n: gpu::MetalBuffer,
+    pub(super) x: gpu::MetalBuffer,
+    pub(super) xn: gpu::MetalBuffer,
+    pub(super) q: gpu::MetalBuffer,
+    pub(super) kb: gpu::MetalBuffer,
+    pub(super) vb: gpu::MetalBuffer,
+    pub(super) att: gpu::MetalBuffer,
+    pub(super) o: gpu::MetalBuffer,
+    pub(super) g: gpu::MetalBuffer,
+    pub(super) u: gpu::MetalBuffer,
+    pub(super) act: gpu::MetalBuffer,
+    pub(super) hid: gpu::MetalBuffer,
+}
+
+/// What differs between the two drafters.
+pub(super) enum Head {
+    Markov(Box<MarkovHead>),
+    Selector(Dflash2Head),
+}
+
+/// DSpark's context mix and RNN Markov head.
+pub(super) struct MarkovHead {
+    /// Softmax of each `fuse_weight` row: layers, then the Markov head.
+    alpha: Vec<[f32; 4]>,
+    /// FP16 `[rank][vocab]`: the LM head folded through `hidden_out`.
+    fold_t: gpu::MetalBuffer,
+    /// FP16 `[vocab]`: the LM head applied to `hidden_out.bias`.
+    fold_b: gpu::MetalBuffer,
     base: gpu::MetalBuffer,
     feature: gpu::MetalBuffer,
     mstate: gpu::MetalBuffer,
@@ -279,72 +389,199 @@ impl DsparkState {
         drop(bytes);
 
         let vocab = arch.vocab_size as usize;
-        let half = |c: &gpu::MetalContext, n: usize| c.new_output_buffer((n.max(1) * 2) as u64);
-        let f32b = |c: &gpu::MetalContext, n: usize| c.new_output_buffer((n.max(1) * 4) as u64);
+        let (b, rank) = (cfg.block, cfg.rank);
+        let half = |n: usize| context.new_output_buffer((n.max(1) * 2) as u64);
+        let f32b = |n: usize| context.new_output_buffer((n.max(1) * 4) as u64);
+        let groups = (arch.vocab_size as u32).div_ceil(gpu::DSPARK_LOGITS_PER_GROUP) as usize;
+        let markov = MarkovHead {
+            alpha,
+            fold_t: half(rank * vocab),
+            fold_b: half(vocab),
+            base: half((b - 1) * vocab),
+            feature: half(h),
+            mstate: f32b(rank),
+            input: half(2 * rank + 2 * h),
+            gts: half(3 * rank),
+            latent: half(rank),
+            part_v: f32b(groups),
+            part_i: f32b(groups),
+            last: f32b(1),
+            proposals: f32b(b),
+        };
+        let s = Self::new(
+            context,
+            cfg,
+            w,
+            offs,
+            Head::Markov(Box::new(markov)),
+            max_ctx,
+        );
+        s.fold(context, weights, index, arch, lamq)?;
+        Ok(s)
+    }
+
+    /// The context ring and block scratch both drafters use.
+    pub(super) fn new(
+        context: &gpu::MetalContext,
+        cfg: DsparkConfig,
+        w: gpu::MetalBuffer,
+        offs: HashMap<String, u64>,
+        head: Head,
+        max_ctx: usize,
+    ) -> Self {
+        let (h, kvd, b) = (cfg.h, cfg.kvh * cfg.hd, cfg.block);
+        let half = |n: usize| context.new_output_buffer((n.max(1) * 2) as u64);
+        let f32b = |n: usize| context.new_output_buffer((n.max(1) * 4) as u64);
         let caps: Vec<usize> = cfg
             .local
             .iter()
             .map(|&l| if l { max_ctx.min(cfg.window) } else { max_ctx })
             .collect();
-        let kc = caps.iter().map(|&c| half(context, c * kvd)).collect();
-        let vc = caps.iter().map(|&c| half(context, c * kvd)).collect();
-        let b = cfg.block;
-        let groups = (arch.vocab_size as u32).div_ceil(gpu::DSPARK_LOGITS_PER_GROUP) as usize;
-        let mut s = Self {
-            fold_t: half(context, rank * vocab),
-            fold_b: half(context, vocab),
-            cmix: half(context, b * h),
-            ck: half(context, b * kvd),
-            cv: half(context, b * kvd),
-            emb: half(context, h),
-            emb_n: half(context, h),
-            x: f32b(context, b * h),
-            xn: half(context, b * h),
-            q: half(context, b * cfg.heads * cfg.hd),
-            kb: half(context, b * kvd),
-            vb: half(context, b * kvd),
-            att: half(context, b * cfg.heads * cfg.hd),
-            o: half(context, b * h),
-            g: half(context, b * cfg.ffn),
-            u: half(context, b * cfg.ffn),
-            act: half(context, b * cfg.ffn),
-            hid: half(context, b * h),
-            base: half(context, (b - 1) * vocab),
-            feature: half(context, h),
-            mstate: f32b(context, rank),
-            input: half(context, 2 * rank + 2 * h),
-            gts: half(context, 3 * rank),
-            latent: half(context, rank),
-            part_v: f32b(context, groups),
-            part_i: f32b(context, groups),
-            last: f32b(context, 1),
-            proposals: f32b(context, b),
+        Self {
+            kc: caps.iter().map(|&c| half(c * kvd)).collect(),
+            vc: caps.iter().map(|&c| half(c * kvd)).collect(),
+            cmix: half(b * h),
+            ck: half(b * kvd),
+            cv: half(b * kvd),
+            emb: half(h),
+            emb_n: half(h),
+            x: f32b(b * h),
+            xn: half(b * h),
+            q: half(b * cfg.heads * cfg.hd),
+            kb: half(b * kvd),
+            vb: half(b * kvd),
+            att: half(b * cfg.heads * cfg.hd),
+            o: half(b * h),
+            g: half(b * cfg.ffn),
+            u: half(b * cfg.ffn),
+            act: half(b * cfg.ffn),
+            hid: half(b * h),
             cfg,
             w,
             offs,
-            alpha,
+            head,
             caps,
-            kc,
-            vc,
             ctx_rows: 0,
             source: TapSource::None,
-        };
-        s.fold(context, weights, index, arch, lamq)?;
-        Ok(s)
+        }
     }
 
-    fn off(&self, name: &str) -> u64 {
+    /// Which drafter this is.
+    pub(super) fn kind(&self) -> Inkling2Drafter {
+        match self.head {
+            Head::Markov(_) => Inkling2Drafter::DSpark,
+            Head::Selector(_) => Inkling2Drafter::Dflash2,
+        }
+    }
+
+    /// Norms the block's q and k per head and ropes them at `base`, then runs
+    /// layer `l`'s attention over the context ring and the whole block.
+    pub(super) fn attention(
+        &self,
+        ctx: &mut gpu::MetalContext,
+        pass: &gpu::PassEncoder,
+        l: usize,
+        base: usize,
+    ) -> Result<(), RealForwardError> {
+        let g = RealForwardError::Gpu;
+        let c = &self.cfg;
+        let (b, kvd, qd) = (c.block, c.kvh * c.hd, c.heads * c.hd);
+        for (buf, nh, wn, stride) in [
+            (&self.q, c.heads, "q_norm", qd),
+            (&self.kb, c.kvh, "k_norm", kvd),
+        ] {
+            let r = gpu::Inkling2Rows::plain((buf, 0), stride as u32);
+            gpu::encode_inkling2_rms_rows(
+                ctx,
+                pass,
+                r,
+                Some(self.wv(&format!("layers.{l}.self_attn.{wn}.weight"))),
+                r,
+                c.hd as u32,
+                nh as u32,
+                c.eps,
+                b as u32,
+            )
+            .map_err(g)?;
+            gpu::encode_dspark_rope_rows(
+                ctx,
+                pass,
+                (buf, 0),
+                nh as u32,
+                c.hd as u32,
+                base as u32,
+                c.theta,
+                b as u32,
+            )
+            .map_err(g)?;
+        }
+        let first = if c.local[l] {
+            base - base.min(c.window)
+        } else {
+            0
+        };
+        gpu::encode_dspark_attention(
+            ctx,
+            pass,
+            (&self.q, 0),
+            (&self.kc[l], 0),
+            (&self.vc[l], 0),
+            (&self.kb, 0),
+            (&self.vb, 0),
+            (&self.att, 0),
+            first as u32,
+            base as u32,
+            gpu::DsparkAttnShape {
+                heads: c.heads as u32,
+                kv_heads: c.kvh as u32,
+                head_dim: c.hd as u32,
+                cap: self.caps[l] as u32,
+                n_block: b as u32,
+            },
+        )
+        .map_err(g)
+    }
+
+    /// Ropes the normed context K in `ck` and stores it with `cv` into layer
+    /// `l`'s ring at positions `p ..`.
+    pub(super) fn ctx_store(
+        &self,
+        ctx: &mut gpu::MetalContext,
+        pass: &gpu::PassEncoder,
+        l: usize,
+        p: usize,
+        n: usize,
+    ) -> Result<(), RealForwardError> {
+        let c = &self.cfg;
+        gpu::encode_dspark_ctx_store(
+            ctx,
+            pass,
+            (&self.ck, 0),
+            (&self.cv, 0),
+            (&self.kc[l], 0),
+            (&self.vc[l], 0),
+            c.kvh as u32,
+            c.hd as u32,
+            p as u32,
+            self.caps[l] as u32,
+            c.theta,
+            n as u32,
+        )
+        .map_err(RealForwardError::Gpu)
+    }
+
+    pub(super) fn off(&self, name: &str) -> u64 {
         self.offs[name]
     }
 
-    fn wv(&self, name: &str) -> (&gpu::MetalBuffer, u64) {
+    pub(super) fn wv(&self, name: &str) -> (&gpu::MetalBuffer, u64) {
         (&self.w, self.off(name))
     }
 
     /// `fold_t[j] = head @ hidden_out[:, j]` and `fold_b = head @ hidden_out.bias`,
     /// once at open, on the GPU.
     fn fold(
-        &mut self,
+        &self,
         context: &mut gpu::MetalContext,
         weights: &gpu::ResidentGpuWeights,
         index: &model_io::ResidentIndex,
@@ -352,6 +589,9 @@ impl DsparkState {
         lamq: Option<&LamqRuntime>,
     ) -> Result<(), RealForwardError> {
         let g = RealForwardError::Gpu;
+        let Head::Markov(m) = &self.head else {
+            return Ok(());
+        };
         let (h, rank, vocab) = (self.cfg.h, self.cfg.rank, arch.vocab_size as usize);
         let hot = context.new_output_buffer((rank * h * 2) as u64);
         let hb = context.new_output_buffer((h * 2) as u64);
@@ -374,7 +614,7 @@ impl DsparkState {
         )
         .map_err(g)?;
         pass.commit_and_wait();
-        let head = "model.llm.unembed.weight";
+        let head = DRAFT_HEAD;
         let pass = context.begin_pass_labeled("dspark fold head");
         let mut j = 0;
         while j < rank {
@@ -389,7 +629,7 @@ impl DsparkState {
                 vocab,
                 h,
                 (&hot, (j * h * 2) as u64, h as u32),
-                (&self.fold_t, (j * vocab * 2) as u64, vocab as u32),
+                (&m.fold_t, (j * vocab * 2) as u64, vocab as u32),
                 n,
             )?;
             j += n;
@@ -404,7 +644,7 @@ impl DsparkState {
             vocab,
             h,
             (&hb, 0, h as u32),
-            (&self.fold_b, 0, vocab as u32),
+            (&m.fold_b, 0, vocab as u32),
             1,
         )?;
         pass.commit_and_wait();
@@ -421,7 +661,7 @@ impl DsparkState {
 /// head, the shared dispatcher per row on an MLX affine one, decode's coded
 /// head per row on a LookAtMyQuant install.
 #[allow(clippy::too_many_arguments)]
-fn head_rows(
+pub(super) fn head_rows(
     context: &mut gpu::MetalContext,
     pass: &gpu::PassEncoder,
     weights: &gpu::ResidentGpuWeights,
@@ -482,70 +722,144 @@ fn head_rows(
     Ok(())
 }
 
-/// Drafter-weight GEMVs (all BF16, in the drafter's own buffer) over `n` rows.
-fn dgemv(
-    context: &mut gpu::MetalContext,
-    pass: &gpu::PassEncoder,
-    d: &DsparkState,
-    x: (&gpu::MetalBuffer, u32),
-    segs: &[(&str, usize, usize, &gpu::MetalBuffer, u32)],
-    n: usize,
-) -> Result<(), RealForwardError> {
-    let v: Vec<gpu::Inkling2GemvRowsSegment<'_>> = segs
-        .iter()
-        .map(|&(name, rows, cols, y, ys)| gpu::Inkling2GemvRowsSegment {
-            w_offset: d.off(name),
-            rows: rows as u32,
-            cols: cols as u32,
-            x: 0,
-            y: (y, 0),
-            y_stride: ys,
-        })
-        .collect();
-    gpu::encode_inkling2_bf16_gemv_rows(context, pass, &d.w, &[((x.0, 0), x.1)], &v, n as u32)
+impl DsparkState {
+    /// Drafter-weight GEMVs (all BF16, in the drafter's own buffer) over `n`
+    /// rows.
+    pub(super) fn dgemv(
+        &self,
+        context: &mut gpu::MetalContext,
+        pass: &gpu::PassEncoder,
+        x: (&gpu::MetalBuffer, u32),
+        segs: &[(&str, usize, usize, &gpu::MetalBuffer, u32)],
+        n: usize,
+    ) -> Result<(), RealForwardError> {
+        let v: Vec<gpu::Inkling2GemvRowsSegment<'_>> = segs
+            .iter()
+            .map(|&(name, rows, cols, y, ys)| gpu::Inkling2GemvRowsSegment {
+                w_offset: self.off(name),
+                rows: rows as u32,
+                cols: cols as u32,
+                x: 0,
+                y: (y, 0),
+                y_stride: ys,
+            })
+            .collect();
+        gpu::encode_inkling2_bf16_gemv_rows(
+            context,
+            pass,
+            &self.w,
+            &[((x.0, 0), x.1)],
+            &v,
+            n as u32,
+        )
         .map_err(RealForwardError::Gpu)
+    }
+}
+
+/// The target's embedding of `id` into `out.0`, normed by `embed_norm` into
+/// `out.1`: what both drafters feed their first layer.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn embed_normed(
+    ctx: &mut gpu::MetalContext,
+    pass: &gpu::PassEncoder,
+    weights: &gpu::ResidentGpuWeights,
+    index: &model_io::ResidentIndex,
+    lamq: Option<&LamqRuntime>,
+    id: u32,
+    out: (&gpu::MetalBuffer, &gpu::MetalBuffer),
+    h: usize,
+    vocab: usize,
+    eps: f32,
+) -> Result<(), RealForwardError> {
+    if let Some(l) = lamq {
+        l.embed(ctx, pass, weights.buffer(), id, (out.0, 0))?;
+    } else {
+        crate::real_forward_dispatch::encode_embed_any(
+            ctx,
+            pass,
+            weights,
+            index,
+            "model.llm.embed.weight",
+            (out.0, 0),
+            id,
+            h as u32,
+            vocab,
+            1.0,
+        )?;
+    }
+    let en = entry(index, "model.llm.embed_norm.weight")?;
+    let en = (
+        weights.buffer(),
+        weights.gpu_offset(en.file_offset - index.header.index_size),
+    );
+    gpu::encode_inkling2_rms_rows(
+        ctx,
+        pass,
+        gpu::Inkling2Rows::plain((out.0, 0), h as u32),
+        Some(en),
+        gpu::Inkling2Rows::plain((out.1, 0), h as u32),
+        h as u32,
+        1,
+        eps,
+        1,
+    )
+    .map_err(RealForwardError::Gpu)
 }
 
 impl RealForwardRunner {
-    /// Opens the DSpark drafter for rounds of up to `block` proposals, at open
-    /// (`DflashDraftPolicy::Fixed`). Refuses by name what it cannot serve.
-    pub(crate) fn inkling2_open_dspark(&mut self, block: usize) -> Result<(), RealForwardError> {
+    /// Opens a block drafter for rounds of up to `block` proposals, at open
+    /// (`DflashDraftPolicy::Fixed`, or `Dflash2` which names that drafter).
+    /// Refuses by name what it cannot serve.
+    pub(crate) fn inkling2_open_dspark(
+        &mut self,
+        block: usize,
+        dflash2: bool,
+    ) -> Result<(), RealForwardError> {
         let unsupported = RealForwardError::Unsupported;
-        let dir = inkling2_dspark_dir(&self.install_dir).ok_or_else(|| {
-            unsupported(format!(
-                "the DSpark drafter was asked for, but {} has no dspark/mtp.safetensors and \
-                 config.json, and TURBOSPARK_INKLING2_DSPARK names no such directory",
-                self.install_dir.display()
-            ))
-        })?;
+        let (kind, dir) = drafter_dir(&self.install_dir, dflash2)
+            .map_err(|why| unsupported(format!("a block drafter was asked for, but {why}")))?;
+        let name = kind.name();
         let st = self
             .real_inkling2
             .as_ref()
             .expect("inkling state built first");
         if st.resident.is_none() {
-            return Err(unsupported(
-                "the DSpark drafter needs resident expert residency: its verify is the batched \
+            return Err(unsupported(format!(
+                "the {name} drafter needs resident expert residency: its verify is the batched \
                  Inkling forward, which has no streamed form (--expert-residency resident)"
-                    .to_string(),
-            ));
+            )));
         }
         if let Some(why) = st.multi_row_refusal() {
             return Err(unsupported(why));
         }
         let max_ctx = st.max_ctx;
         let lamq = st.lamq.clone();
-        let d = DsparkState::build(
-            &mut self.context,
-            &self.weights,
-            &self.index,
-            &self.arch,
-            &dir,
-            max_ctx,
-            lamq.as_deref(),
-        )?;
+        let (unpadded, eps) = (st.cfg.unpadded_vocab, st.cfg.rms_eps);
+        let d = match kind {
+            Inkling2Drafter::DSpark => DsparkState::build(
+                &mut self.context,
+                &self.weights,
+                &self.index,
+                &self.arch,
+                &dir,
+                max_ctx,
+                lamq.as_deref(),
+            )?,
+            Inkling2Drafter::Dflash2 => DsparkState::build_dflash2(
+                &mut self.context,
+                &self.weights,
+                &self.index,
+                &self.arch,
+                &dir,
+                max_ctx,
+                lamq.as_deref(),
+                unpadded,
+                eps,
+            )?,
+        };
         if block == 0 || block > d.cfg.block - 1 {
             return Err(unsupported(format!(
-                "the DSpark drafter proposes {} tokens per round; {block} was asked for",
+                "the {name} drafter proposes {} tokens per round; {block} was asked for",
                 d.cfg.block - 1
             )));
         }
@@ -559,6 +873,20 @@ impl RealForwardRunner {
         }
         st.dspark = Some(d);
         Ok(())
+    }
+
+    /// What a startup line calls the block drafter this runner drafts with.
+    pub fn block_drafter_name(&self) -> &'static str {
+        match self.inkling2_drafter_name() {
+            Some("DSpark") => "dspark",
+            _ => "dflash2",
+        }
+    }
+
+    /// The name of the open Inkling 2 block drafter, if one is open.
+    pub fn inkling2_drafter_name(&self) -> Option<&'static str> {
+        let d = self.real_inkling2.as_ref()?.dspark.as_ref()?;
+        Some(d.kind().name())
     }
 
     /// Proposals per round of the open drafter (`block - 1`), or 0.
@@ -619,9 +947,11 @@ impl RealForwardRunner {
         let st = self.real_inkling2.as_ref()?;
         if st.dspark.is_none() {
             return Some(format!(
-                "inkling2_loop speculates with its DSpark block drafter, which was not opened: \
-                 put the drafter at {}/dspark (mtp.safetensors and config.json) or name it with \
-                 TURBOSPARK_INKLING2_DSPARK, and select the dflash drafter with a block of 1 to 7",
+                "inkling2_loop speculates with a block drafter, which was not opened: put \
+                 DSpark at {0}/dspark (mtp.safetensors and config.json) or DFlash2 at \
+                 {0}/dflash2 (model.safetensors and config.json), or name one with \
+                 {DSPARK_ENV} or {DFLASH2_ENV}, and select the dflash or dflash2 drafter with \
+                 a block of 1 to 7",
                 self.install_dir.display()
             ));
         }
@@ -635,7 +965,7 @@ impl RealForwardRunner {
         None
     }
 
-    /// Whether the Inkling 2 DSpark drafter is open.
+    /// Whether an Inkling 2 block drafter is open.
     pub(crate) fn inkling2_dspark_open(&self) -> bool {
         self.real_inkling2
             .as_ref()
@@ -663,7 +993,7 @@ impl RealForwardRunner {
 
     /// Writes context rows `from .. to` (each from its own tap row) for every
     /// drafter layer into `pass`.
-    fn dspark_write_context(
+    pub(super) fn dspark_write_context(
         &mut self,
         pass: &gpu::PassEncoder,
         from: usize,
@@ -694,72 +1024,65 @@ impl RealForwardRunner {
             {
                 n += 1;
             }
-            for l in 0..c.layers {
-                let lp = |s: &str| format!("layers.{l}.{s}");
-                gpu::encode_dspark_tap_mix_norm(
-                    &mut self.context,
-                    pass,
-                    (&buf, off),
-                    d.wv(&lp("dflare_norm.weight")),
-                    (&d.cmix, 0),
-                    d.alpha[l],
-                    h as u32,
-                    ts,
-                    c.eps,
-                    n as u32,
-                )
-                .map_err(g)?;
-                dgemv(
-                    &mut self.context,
-                    pass,
-                    d,
-                    (&d.cmix, h as u32),
-                    &[
-                        (
-                            &lp("self_attn.k_proj_ctx.weight"),
-                            kvd,
-                            h,
-                            &d.ck,
-                            kvd as u32,
-                        ),
-                        (
-                            &lp("self_attn.v_proj_ctx.weight"),
-                            kvd,
-                            h,
-                            &d.cv,
-                            kvd as u32,
-                        ),
-                    ],
-                    n,
-                )?;
-                let ck = gpu::Inkling2Rows::plain((&d.ck, 0), kvd as u32);
-                gpu::encode_inkling2_rms_rows(
-                    &mut self.context,
-                    pass,
-                    ck,
-                    Some(d.wv(&lp("self_attn.k_norm_ctx.weight"))),
-                    ck,
-                    c.hd as u32,
-                    c.kvh as u32,
-                    c.eps,
-                    n as u32,
-                )
-                .map_err(g)?;
-                gpu::encode_dspark_ctx_store(
-                    &mut self.context,
-                    pass,
-                    (&d.ck, 0),
-                    (&d.cv, 0),
-                    (&d.kc[l], 0),
-                    (&d.vc[l], 0),
-                    c.kvh as u32,
-                    c.hd as u32,
-                    p as u32,
-                    d.caps[l] as u32,
-                    c.theta,
-                    n as u32,
-                )
-                .map_err(g)?;
+            let ctx = &mut self.context;
+            match &d.head {
+                Head::Selector(head) => {
+                    d.dflash2_context_rows(head, ctx, pass, (&buf, off), p, n)?;
+                }
+                Head::Markov(m) => {
+                    for (l, &alpha) in m.alpha.iter().take(c.layers).enumerate() {
+                        let lp = |s: &str| format!("layers.{l}.{s}");
+                        gpu::encode_dspark_tap_mix_norm(
+                            ctx,
+                            pass,
+                            (&buf, off),
+                            d.wv(&lp("dflare_norm.weight")),
+                            (&d.cmix, 0),
+                            alpha,
+                            h as u32,
+                            ts,
+                            c.eps,
+                            n as u32,
+                        )
+                        .map_err(g)?;
+                        d.dgemv(
+                            ctx,
+                            pass,
+                            (&d.cmix, h as u32),
+                            &[
+                                (
+                                    &lp("self_attn.k_proj_ctx.weight"),
+                                    kvd,
+                                    h,
+                                    &d.ck,
+                                    kvd as u32,
+                                ),
+                                (
+                                    &lp("self_attn.v_proj_ctx.weight"),
+                                    kvd,
+                                    h,
+                                    &d.cv,
+                                    kvd as u32,
+                                ),
+                            ],
+                            n,
+                        )?;
+                        let ck = gpu::Inkling2Rows::plain((&d.ck, 0), kvd as u32);
+                        gpu::encode_inkling2_rms_rows(
+                            ctx,
+                            pass,
+                            ck,
+                            Some(d.wv(&lp("self_attn.k_norm_ctx.weight"))),
+                            ck,
+                            c.hd as u32,
+                            c.kvh as u32,
+                            c.eps,
+                            n as u32,
+                        )
+                        .map_err(g)?;
+                        d.ctx_store(ctx, pass, l, p, n)?;
+                    }
+                }
             }
             p += n;
         }
@@ -837,6 +1160,10 @@ impl RealForwardRunner {
                 "anchor {anchor} outside the vocabulary"
             )));
         }
+        let dflash2 = self.inkling2_drafter_name() == Some(Inkling2Drafter::Dflash2.name());
+        if dflash2 {
+            return self.inkling2_dflash2_draft(anchor, base, ctx_rows);
+        }
         let pass = self.context.begin_pass_labeled("dspark draft");
         self.dspark_write_context(&pass, ctx_rows, base)?;
         let st = self.real_inkling2.as_ref().expect("checked");
@@ -847,51 +1174,26 @@ impl RealForwardRunner {
             ))
         })?;
         let d = st.dspark.as_ref().expect("checked");
+        let Head::Markov(m) = &d.head else {
+            return Err(unsupported("the open drafter is not DSpark".into()));
+        };
         let c = d.cfg.clone();
         let (b, kvd, qd) = (c.block, c.kvh * c.hd, c.heads * c.hd);
         let ctx = &mut self.context;
 
         // Block input.
-        if let Some(l) = st.lamq.as_deref() {
-            l.embed(
-                ctx,
-                &pass,
-                self.weights.buffer(),
-                anchor as u32,
-                (&d.emb, 0),
-            )?;
-        } else {
-            crate::real_forward_dispatch::encode_embed_any(
-                ctx,
-                &pass,
-                &self.weights,
-                &self.index,
-                "model.llm.embed.weight",
-                (&d.emb, 0),
-                anchor as u32,
-                h as u32,
-                vocab,
-                1.0,
-            )?;
-        }
-        let en = entry(&self.index, "model.llm.embed_norm.weight")?;
-        let en = (
-            self.weights.buffer(),
-            self.weights
-                .gpu_offset(en.file_offset - self.index.header.index_size),
-        );
-        gpu::encode_inkling2_rms_rows(
+        embed_normed(
             ctx,
             &pass,
-            gpu::Inkling2Rows::plain((&d.emb, 0), h as u32),
-            Some(en),
-            gpu::Inkling2Rows::plain((&d.emb_n, 0), h as u32),
-            h as u32,
-            1,
+            &self.weights,
+            &self.index,
+            st.lamq.as_deref(),
+            anchor as u32,
+            (&d.emb, &d.emb_n),
+            h,
+            vocab,
             st.cfg.rms_eps,
-            1,
-        )
-        .map_err(g)?;
+        )?;
         gpu::encode_dspark_init_x(
             ctx,
             &pass,
@@ -916,10 +1218,9 @@ impl RealForwardRunner {
                 b as u32,
             )
             .map_err(g)?;
-            dgemv(
+            d.dgemv(
                 ctx,
                 &pass,
-                d,
                 (&d.xn, h as u32),
                 &[
                     (&lp("self_attn.q_proj.weight"), qd, h, &d.q, qd as u32),
@@ -928,64 +1229,10 @@ impl RealForwardRunner {
                 ],
                 b,
             )?;
-            for (buf, nh, wn, stride) in [
-                (&d.q, c.heads, "self_attn.q_norm.weight", qd),
-                (&d.kb, c.kvh, "self_attn.k_norm.weight", kvd),
-            ] {
-                let r = gpu::Inkling2Rows::plain((buf, 0), stride as u32);
-                gpu::encode_inkling2_rms_rows(
-                    ctx,
-                    &pass,
-                    r,
-                    Some(d.wv(&lp(wn))),
-                    r,
-                    c.hd as u32,
-                    nh as u32,
-                    c.eps,
-                    b as u32,
-                )
-                .map_err(g)?;
-                gpu::encode_dspark_rope_rows(
-                    ctx,
-                    &pass,
-                    (buf, 0),
-                    nh as u32,
-                    c.hd as u32,
-                    base as u32,
-                    c.theta,
-                    b as u32,
-                )
-                .map_err(g)?;
-            }
-            let first = if c.local[l] {
-                base - base.min(c.window)
-            } else {
-                0
-            };
-            gpu::encode_dspark_attention(
+            d.attention(ctx, &pass, l, base)?;
+            d.dgemv(
                 ctx,
                 &pass,
-                (&d.q, 0),
-                (&d.kc[l], 0),
-                (&d.vc[l], 0),
-                (&d.kb, 0),
-                (&d.vb, 0),
-                (&d.att, 0),
-                first as u32,
-                base as u32,
-                gpu::DsparkAttnShape {
-                    heads: c.heads as u32,
-                    kv_heads: c.kvh as u32,
-                    head_dim: c.hd as u32,
-                    cap: d.caps[l] as u32,
-                    n_block: b as u32,
-                },
-            )
-            .map_err(g)?;
-            dgemv(
-                ctx,
-                &pass,
-                d,
                 (&d.att, qd as u32),
                 &[(&lp("self_attn.o_proj.weight"), h, qd, &d.o, h as u32)],
                 b,
@@ -1003,10 +1250,9 @@ impl RealForwardRunner {
                 b as u32,
             )
             .map_err(g)?;
-            dgemv(
+            d.dgemv(
                 ctx,
                 &pass,
-                d,
                 (&d.xn, h as u32),
                 &[
                     (&lp("mlp.gate_proj.weight"), c.ffn, h, &d.g, c.ffn as u32),
@@ -1023,10 +1269,9 @@ impl RealForwardRunner {
                 (b * c.ffn) as u32,
             )
             .map_err(g)?;
-            dgemv(
+            d.dgemv(
                 ctx,
                 &pass,
-                d,
                 (&d.act, c.ffn as u32),
                 &[(&lp("mlp.down_proj.weight"), h, c.ffn, &d.o, h as u32)],
                 b,
@@ -1051,11 +1296,11 @@ impl RealForwardRunner {
             &self.weights,
             &self.index,
             st.lamq.as_deref(),
-            "model.llm.unembed.weight",
+            DRAFT_HEAD,
             vocab,
             h,
             (&d.hid, (h * 2) as u64, h as u32),
-            (&d.base, 0, vocab as u32),
+            (&m.base, 0, vocab as u32),
             b - 1,
         )?;
 
@@ -1065,41 +1310,40 @@ impl RealForwardRunner {
             &pass,
             (&fbuf, foff),
             d.wv("markov_head.dflare_norm.weight"),
-            (&d.feature, 0),
-            d.alpha[c.layers],
+            (&m.feature, 0),
+            m.alpha[c.layers],
             h as u32,
             (DSPARK_TAP_ROWS * h) as u32,
             c.eps,
             1,
         )
         .map_err(g)?;
-        gpu::write_buffer_bytes(&d.mstate, 0, &vec![0u8; c.rank * 4]);
-        gpu::write_buffer_bytes(&d.last, 0, &(anchor as u32).to_le_bytes());
+        gpu::write_buffer_bytes(&m.mstate, 0, &vec![0u8; c.rank * 4]);
+        gpu::write_buffer_bytes(&m.last, 0, &(anchor as u32).to_le_bytes());
         let in_len = 2 * c.rank + 2 * h;
         for i in 0..b - 1 {
             gpu::encode_dspark_markov_input(
                 ctx,
                 &pass,
-                (&d.mstate, 0),
+                (&m.mstate, 0),
                 d.wv("markov_head.markov_w1.weight"),
-                (&d.last, 0),
+                (&m.last, 0),
                 (&d.hid, ((i + 1) * h * 2) as u64),
-                (&d.feature, 0),
-                (&d.input, 0),
+                (&m.feature, 0),
+                (&m.input, 0),
                 c.rank as u32,
                 h as u32,
             )
             .map_err(g)?;
-            dgemv(
+            d.dgemv(
                 ctx,
                 &pass,
-                d,
-                (&d.input, in_len as u32),
+                (&m.input, in_len as u32),
                 &[(
                     "markov_head.rnn_proj.weight",
                     3 * c.rank,
                     in_len,
-                    &d.gts,
+                    &m.gts,
                     (3 * c.rank) as u32,
                 )],
                 1,
@@ -1107,22 +1351,22 @@ impl RealForwardRunner {
             gpu::encode_dspark_markov_gate(
                 ctx,
                 &pass,
-                (&d.gts, 0),
+                (&m.gts, 0),
                 d.wv("markov_head.rnn_proj.bias"),
-                (&d.mstate, 0),
-                (&d.latent, 0),
+                (&m.mstate, 0),
+                (&m.latent, 0),
                 c.rank as u32,
             )
             .map_err(g)?;
             let parts = gpu::encode_dspark_markov_logits(
                 ctx,
                 &pass,
-                (&d.base, (i * vocab * 2) as u64),
-                (&d.fold_b, 0),
-                (&d.fold_t, 0),
-                (&d.latent, 0),
-                (&d.part_v, 0),
-                (&d.part_i, 0),
+                (&m.base, (i * vocab * 2) as u64),
+                (&m.fold_b, 0),
+                (&m.fold_t, 0),
+                (&m.latent, 0),
+                (&m.part_v, 0),
+                (&m.part_i, 0),
                 unpadded,
                 vocab as u32,
                 c.rank as u32,
@@ -1131,10 +1375,10 @@ impl RealForwardRunner {
             gpu::encode_dspark_markov_argmax(
                 ctx,
                 &pass,
-                (&d.part_v, 0),
-                (&d.part_i, 0),
-                (&d.last, 0),
-                (&d.proposals, 0),
+                (&m.part_v, 0),
+                (&m.part_i, 0),
+                (&m.last, 0),
+                (&m.proposals, 0),
                 parts,
                 i as u32,
             )
@@ -1142,7 +1386,7 @@ impl RealForwardRunner {
         }
         pass.commit_and_wait();
         // The proposals are u32 token ids; read the words and reinterpret.
-        let out: Vec<i32> = gpu::read_f32_buffer_at(&d.proposals, 0, b - 1)
+        let out: Vec<i32> = gpu::read_f32_buffer_at(&m.proposals, 0, b - 1)
             .into_iter()
             .map(|v| v.to_bits() as i32)
             .collect();

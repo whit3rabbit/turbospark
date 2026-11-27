@@ -243,6 +243,7 @@ pub fn parse(tokens: &[String]) -> ParseOutcome {
                 "auto" => speculative_drafter = SpeculativeDrafter::Auto,
                 "mtp" => speculative_drafter = SpeculativeDrafter::Mtp,
                 "dflash" => speculative_drafter = SpeculativeDrafter::Dflash,
+                "dflash2" => speculative_drafter = SpeculativeDrafter::Dflash2,
                 _ => return invalid("--speculative-drafter", value),
             },
             "--prefill-chunk" => {

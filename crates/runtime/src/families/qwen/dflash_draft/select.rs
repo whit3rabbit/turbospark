@@ -226,11 +226,11 @@ impl RealForwardRunner {
 /// A resident BF16 codebook validated against the model vocabulary and the
 /// selector rank before host gathers can address it by token id.
 #[derive(Clone, Copy)]
-struct CodebookView<'a> {
-    buffer: &'a gpu::MetalBuffer,
-    offset: u64,
-    rows: usize,
-    rank: usize,
+pub(crate) struct CodebookView<'a> {
+    pub(crate) buffer: &'a gpu::MetalBuffer,
+    pub(crate) offset: u64,
+    pub(crate) rows: usize,
+    pub(crate) rank: usize,
 }
 
 fn codebook_view<'a>(
@@ -283,7 +283,10 @@ fn top_k(logits: &[LogitValue], k: usize) -> (Vec<TokenId>, Vec<f32>) {
 /// non-finite id, the same one a separate `position` pass would name. A
 /// finite row returns exactly what [`top_k`] returns: the compare is the
 /// same expression on the same values, and the finite check only reads.
-fn top_k_finite(logits: &[LogitValue], k: usize) -> Result<(Vec<TokenId>, Vec<f32>), usize> {
+pub(crate) fn top_k_finite(
+    logits: &[LogitValue],
+    k: usize,
+) -> Result<(Vec<TokenId>, Vec<f32>), usize> {
     let mut idx = vec![0usize; k];
     let mut val = vec![f32::NEG_INFINITY; k];
     let mut bad: Option<usize> = None;
@@ -321,7 +324,10 @@ pub(crate) fn read_f16_rows(buffer: &gpu::MetalBuffer, rows: usize, width: usize
 }
 
 /// Reads one BF16 codebook row as f32.
-fn read_bf16_row(view: CodebookView<'_>, token: TokenId) -> Result<Vec<f32>, RealForwardError> {
+pub(crate) fn read_bf16_row(
+    view: CodebookView<'_>,
+    token: TokenId,
+) -> Result<Vec<f32>, RealForwardError> {
     let row = usize::try_from(token).map_err(|_| {
         RealForwardError::Unsupported(format!("negative DFlash2 codebook token id {token}"))
     })?;

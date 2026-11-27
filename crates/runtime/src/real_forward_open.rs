@@ -492,7 +492,10 @@ impl RealForwardRunner {
                 // and the FFI).
                 use crate::families::qwen::{DflashDraftPolicy, MtpDraftPolicy};
                 let (mtp_policy, dflash_policy) = match (speculation.mtp, speculation.dflash) {
-                    (MtpDraftPolicy::Fixed(_), DflashDraftPolicy::Fixed(_)) => {
+                    (
+                        MtpDraftPolicy::Fixed(_),
+                        DflashDraftPolicy::Fixed(_) | DflashDraftPolicy::Dflash2(_),
+                    ) => {
                         return Err(RealForwardError::Unsupported(
                             "both the multi-token-prediction head and the DFlash2 drafter \
                                  were asked for by name; a speculative round drafts with ONE \
@@ -603,12 +606,15 @@ impl RealForwardRunner {
                     max_ctx,
                     runner.resolved_residency == model_io::ResolvedExpertResidency::Resident,
                 )?);
-                // The DSpark drafter builds only when a caller NAMED it (a
+                // A block drafter builds only when a caller NAMED it (a
                 // fixed block); `Auto` never opens it, so a plain open is
                 // byte- and footprint-identical with or without a drafter
                 // directory beside the install.
-                if let crate::families::qwen::DflashDraftPolicy::Fixed(block) = speculation.dflash {
-                    runner.inkling2_open_dspark(block)?;
+                use crate::families::qwen::DflashDraftPolicy::{Dflash2, Fixed};
+                match speculation.dflash {
+                    Fixed(block) => runner.inkling2_open_dspark(block, false)?,
+                    Dflash2(block) => runner.inkling2_open_dspark(block, true)?,
+                    _ => {}
                 }
                 // Map the resident buffers in the background (no wait): the
                 // first pass otherwise stalls 1 to 3 s on it.

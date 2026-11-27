@@ -132,7 +132,9 @@ by construction and always rewritten before anything reads them again.
 ## How the policy resolves
 
 The flags are `--speculative off|auto|N` (a block size 1-15) and
-`--speculative-drafter auto|mtp|dflash` (`crates/invocation/src/options.rs`).
+`--speculative-drafter auto|mtp|dflash|dflash2`
+(`crates/invocation/src/options.rs`). On Inkling 2, `dflash` prefers DSpark
+and `dflash2` names DFlash2.
 The server takes the same pair; the C ABI takes the drafter choice as an
 option key.
 

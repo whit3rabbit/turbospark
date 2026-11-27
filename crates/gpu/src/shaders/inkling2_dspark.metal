@@ -105,6 +105,17 @@ kernel void dspark_residual(
     if (i < n) x[i] = dsp_round_bf16(x[i]) + float(d[i]);
 }
 
+// --- Residual with an FP16 delta that was stored divided by `scale` ----------
+kernel void dspark_residual_scaled(
+    device float*      x     [[buffer(0)]],
+    device const half* d     [[buffer(1)]],
+    constant uint&     n     [[buffer(2)]],
+    constant float&    scale [[buffer(3)]],
+    uint               i     [[thread_position_in_grid]]
+) {
+    if (i < n) x[i] = dsp_round_bf16(x[i]) + scale * float(d[i]);
+}
+
 // --- SwiGLU: act = silu(g) * u ------------------------------------------------
 kernel void dspark_silu_mul(
     device const half* g   [[buffer(0)]],

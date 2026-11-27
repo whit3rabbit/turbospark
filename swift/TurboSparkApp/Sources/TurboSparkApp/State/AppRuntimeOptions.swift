@@ -195,8 +195,10 @@ public enum AppSpeculativeDrafterOption: String, CaseIterable, Identifiable, Sen
     case auto = "auto"
     /// Use the checkpoint's multi-token prediction head.
     case mtp = "mtp"
-    /// Use the DFlash2 diffusion-based block drafter.
+    /// Use the model's block drafter (on Inkling 2, DSpark when installed).
     case dflash = "dflash"
+    /// Use the DFlash2 diffusion-based block drafter by name.
+    case dflash2 = "dflash2"
 
     /// Unique string identifier.
     public var id: String { rawValue }
@@ -206,7 +208,8 @@ public enum AppSpeculativeDrafterOption: String, CaseIterable, Identifiable, Sen
         switch self {
         case .auto: return "Auto (MTP Default)"
         case .mtp: return "MTP Head"
-        case .dflash: return "DFlash2"
+        case .dflash: return "Block Drafter"
+        case .dflash2: return "DFlash2"
         }
     }
 
@@ -216,6 +219,7 @@ public enum AppSpeculativeDrafterOption: String, CaseIterable, Identifiable, Sen
         case .auto: return .auto
         case .mtp: return .mtp
         case .dflash: return .dflash
+        case .dflash2: return .dflash2
         }
     }
 }

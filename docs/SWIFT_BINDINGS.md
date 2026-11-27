@@ -1750,8 +1750,9 @@ because a caller's encoder may produce any of them. Any *other* string is an
 error rather than a silent fallback.
 
 `speculation` accepts `"off"`, `"auto"`, `null`, absence, or a block size as
-either a number or a string. `speculativeDrafter` accepts `"auto"`, `"mtp"`
-or `"dflash"`. Both are refused by name rather than defaulted when
+either a number or a string. `speculativeDrafter` accepts `"auto"`, `"mtp"`,
+`"dflash"` or `"dflash2"` (on Inkling 2, `"dflash"` prefers DSpark and
+`"dflash2"` names DFlash2). Both are refused by name rather than defaulted when
 misspelled, and both are mapped BEFORE the install is touched, so a bad
 option is reported ahead of a bad path.
 

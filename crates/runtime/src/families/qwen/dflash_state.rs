@@ -122,6 +122,9 @@ pub enum DflashDraftPolicy {
     Off,
     /// Build one at this block, and ERROR if the install has no drafter.
     Fixed(usize),
+    /// [`Self::Fixed`] naming DFlash2. Qwen has only that drafter; Inkling 2
+    /// takes it over its DSpark drafter.
+    Dflash2(usize),
 }
 
 impl DflashDraftPolicy {

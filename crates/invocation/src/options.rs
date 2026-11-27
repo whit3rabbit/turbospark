@@ -188,9 +188,10 @@ pub const OPTIONS: &[OptionDecl] = &[
         takes_value: true,
         is_required: false,
         is_mode_selecting: false,
-        usage_hint: "drafter --speculative drives: auto, mtp or dflash (default auto, \
+        usage_hint: "drafter --speculative drives: auto, mtp, dflash or dflash2 (default auto, \
                      which enables an mtp head but only REPORTS a dflash one -- \
-                     dflash is 0.88x on prose, so name it to run it)",
+                     dflash is 0.88x on prose, so name it to run it. On Inkling 2, dflash \
+                     prefers DSpark and dflash2 names DFlash2)",
     },
     OptionDecl {
         flag: "--prefill-chunk",

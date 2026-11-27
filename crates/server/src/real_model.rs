@@ -54,6 +54,9 @@ pub struct RealChatModel {
     /// `AdaptiveDepth` picks each round's depth between its floor and it,
     /// as the CLI and the FFI path do.
     adaptive_depth: bool,
+    /// What [`Self::speculation_line`] calls the block drafter, read off the
+    /// runner before it moves behind its lock.
+    block_drafter: &'static str,
     /// Which drafter [`Self::speculation`] would drive, for the startup line.
     drafter: runtime::SpeculativeDrafter,
     /// Tool-call guardrails, resolved once at open like the rate cap.
@@ -439,7 +442,7 @@ impl RealChatModel {
             speculation,
             choice.drafter,
             match choice.drafter {
-                runtime::SpeculativeDrafter::Dflash => runner.dflash_speculation_blocker(),
+                d if d.is_block_drafter() => runner.dflash_speculation_blocker(),
                 // The note outranks the engine's blocker where there is one,
                 // for `crates/cli/CLAUDE.md` Gotcha 10's reason: both are true
                 // of a DFlash2-only install and only one names a flag.
@@ -447,6 +450,7 @@ impl RealChatModel {
             },
             true,
         )?;
+        let block_drafter = runner.block_drafter_name();
         // Resolved HERE, before `runner` moves into the `Mutex` below, so
         // `ChatModel::vision` never has to lock for it: `has_vision_tower`
         // and `vision_config` are pure reads of a field this checkpoint
@@ -581,6 +585,7 @@ impl RealChatModel {
             model_id,
             rate,
             adaptive_depth: matches!(speculation, runtime::Speculation::Adaptive(_)),
+            block_drafter,
             speculation: plan,
             drafter: choice.drafter,
             guardrails,
@@ -774,11 +779,13 @@ impl RealChatModel {
     pub fn speculation_line(&self) -> String {
         match &self.speculation {
             runtime::SpeculationPlan::Enabled { block } => {
-                let which = match self.drafter {
-                    runtime::SpeculativeDrafter::Dflash => {
-                        "dflash2 (block drafter, temperature-0 requests only)"
-                    }
-                    _ => "mtp head (step drafter, any temperature)",
+                let which = if self.drafter.is_block_drafter() {
+                    format!(
+                        "{} (block drafter, temperature-0 requests only)",
+                        self.block_drafter
+                    )
+                } else {
+                    "mtp head (step drafter, any temperature)".to_string()
                 };
                 if self.adaptive_depth {
                     format!(

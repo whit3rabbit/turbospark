@@ -330,8 +330,11 @@ pub enum SpeculativeDrafter {
     Auto,
     /// The checkpoint's own multi-token-prediction head (`mtp.*` tensors).
     Mtp,
-    /// The DFlash2 block-diffusion drafter (`dflash.*` tensors).
+    /// The family's block drafter: DFlash2 (`dflash.*` tensors), or on
+    /// Inkling 2 its DSpark drafter when the install has one.
     Dflash,
+    /// DFlash2 by name.
+    Dflash2,
 }
 
 /// Context-window sizing: a fixed token count, or automatic sizing against

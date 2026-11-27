@@ -145,7 +145,7 @@ impl DflashState {
                 }
                 super::dflash_state::dflash_serving_block()
             }
-            DflashDraftPolicy::Fixed(block) => {
+            DflashDraftPolicy::Fixed(block) | DflashDraftPolicy::Dflash2(block) => {
                 if arch.num_experts != 0 {
                     return Err(RealForwardError::Unsupported(dflash_moe_unsupported(
                         arch.num_experts,

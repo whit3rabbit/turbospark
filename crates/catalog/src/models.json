@@ -1880,8 +1880,12 @@
         "repo": "thinkingmachines/Inkling-2-Mini",
         "revision": "ed40e7da625f594fc9c4990f5f66be24873c22d7"
       },
+      "dflash2": {
+        "repo": "incoai/Inkling-2-Mini-DFlash2",
+        "revision": "4f9088ea66c21f2b99ed657d1941c306b03e84d2"
+      },
       "download_bytes": 17334678817,
-      "install_bytes": 17900000000,
+      "install_bytes": 18900000000,
       "status": "verified",
       "gates": [
         "inkling2_mlx4_quality_gate",
@@ -1899,7 +1903,7 @@
           "source": "this port, two oracle sessions, AC, streamed (inkling2_mlx4_memory_oracle); all three protocol cases stop at end of turn; resident experts peak about 17.7 GiB instead"
         }
       ],
-      "notes": "mlx-lm's conversion (PR 2086): attention, embedding and head at affine 4-bit group 64, the experts kept as the original NVFP4 and MXFP8 bytes, so it saves disk but not expert memory. Downloaded whole at the pinned revision, then converted; it needs about 33 GiB free while both exist. Not bit-exact with inkling2-mini (4-bit dense weights). The memory oracle (inkling2_mlx4_memory_oracle) holds it streamed at 16 slots: 2,663 MiB peak, 17.9 to 20.5 tok/s, the fastest Inkling install streamed. The quality gate (inkling2_mlx4_quality_gate) holds perplexity 4.8026 and both digests, so the status is verified. Resident (auto with room), one indicative reading decoded about 46 tok/s at the original's 17.7 GiB. The conversion drops mtp.safetensors, so the row's mtp source fetches the original's DSpark block drafter (636 MB) into the install's dspark/; speculative decoding stays off unless asked for."
+      "notes": "mlx-lm's conversion (PR 2086): attention, embedding and head at affine 4-bit group 64, the experts kept as the original NVFP4 and MXFP8 bytes, so it saves disk but not expert memory. Downloaded whole at the pinned revision, then converted; it needs about 33 GiB free while both exist. Not bit-exact with inkling2-mini (4-bit dense weights). The memory oracle (inkling2_mlx4_memory_oracle) holds it streamed at 16 slots: 2,663 MiB peak, 17.9 to 20.5 tok/s, the fastest Inkling install streamed. The quality gate (inkling2_mlx4_quality_gate) holds perplexity 4.8026 and both digests, so the status is verified. Resident (auto with room), one indicative reading decoded about 46 tok/s at the original's 17.7 GiB. The conversion drops mtp.safetensors, so the row's mtp source fetches the original's DSpark block drafter (636 MB) into the install's dspark/; speculative decoding stays off unless asked for. The DFlash2 drafter (incoai/Inkling-2-Mini-DFlash2, 990 MB) lands in dflash2/; the dflash2 drafter choice runs it, while dflash keeps DSpark."
     },
     {
       "alias": "inkling2-mini-lamq54",
@@ -1966,8 +1970,12 @@
         "repo": "thinkingmachines/Inkling-2-Mini",
         "revision": "ed40e7da625f594fc9c4990f5f66be24873c22d7"
       },
+      "dflash2": {
+        "repo": "incoai/Inkling-2-Mini-DFlash2",
+        "revision": "4f9088ea66c21f2b99ed657d1941c306b03e84d2"
+      },
       "download_bytes": 17629760736,
-      "install_bytes": 17900000000,
+      "install_bytes": 18900000000,
       "status": "verified",
       "gates": [
         "inkling2_ud_q4kxl_quality_gate",
@@ -1985,7 +1993,7 @@
           "source": "this port, two oracle sessions, AC, streamed (inkling2_ud_q4kxl_memory_oracle); all three protocol cases stop at end of turn"
         }
       ],
-      "notes": "unsloth's recommended dynamic GGUF (UD-Q4_K_XL, Apache 2.0): the original NVFP4 expert bytes with per-expert scales on layers 0-19, Q8_0 experts on 20-23, block-quantized dense weights. Downloaded whole at the pinned revision, then converted; it needs about 35 GiB free while both exist. The NVFP4 layers run the native Inkling pair (a GGUF NVFP4 row is the native layout), so resident decode is about 29 tok/s on a 36 GB Mac and chunked prefill about 90 tok/s, bit-exact with sequential decode. The memory oracle (inkling2_ud_q4kxl_memory_oracle) holds it streamed at 16 slots: 2,705 MiB peak at 8,192 context, 16.4 to 19.7 tok/s. The quality gate (inkling2_ud_q4kxl_quality_gate) holds perplexity 4.6844 (0.4 percent under the original's 4.7024) and both digests, so the status is verified. Logits sit within llama.cpp's own noise on the same file (docs/INKLING2_PHASE0.md). The row's mtp source fetches the original's DSpark block drafter (636 MB) into the install's dspark/; unsloth's own drafter GGUFs are a different drafter and are not read. Speculative decoding stays off unless asked for."
+      "notes": "unsloth's recommended dynamic GGUF (UD-Q4_K_XL, Apache 2.0): the original NVFP4 expert bytes with per-expert scales on layers 0-19, Q8_0 experts on 20-23, block-quantized dense weights. Downloaded whole at the pinned revision, then converted; it needs about 35 GiB free while both exist. The NVFP4 layers run the native Inkling pair (a GGUF NVFP4 row is the native layout), so resident decode is about 29 tok/s on a 36 GB Mac and chunked prefill about 90 tok/s, bit-exact with sequential decode. The memory oracle (inkling2_ud_q4kxl_memory_oracle) holds it streamed at 16 slots: 2,705 MiB peak at 8,192 context, 16.4 to 19.7 tok/s. The quality gate (inkling2_ud_q4kxl_quality_gate) holds perplexity 4.6844 (0.4 percent under the original's 4.7024) and both digests, so the status is verified. Logits sit within llama.cpp's own noise on the same file (docs/INKLING2_PHASE0.md). The row's mtp source fetches the original's DSpark block drafter (636 MB) into the install's dspark/; unsloth's own drafter GGUFs are a different drafter and are not read. Speculative decoding stays off unless asked for. The DFlash2 drafter (incoai/Inkling-2-Mini-DFlash2, 990 MB) lands in dflash2/; the dflash2 drafter choice runs it, while dflash keeps DSpark."
     }
   ]
 }

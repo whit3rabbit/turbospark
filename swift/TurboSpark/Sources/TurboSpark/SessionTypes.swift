@@ -175,8 +175,10 @@ public struct SessionInfo: Decodable, Sendable, Equatable {
             /// The checkpoint's own multi-token-prediction head, a token at
             /// a time.
             case mtp
-            /// The DFlash2 block-diffusion drafter, a whole block per pass.
+            /// The family's block drafter, a whole block per pass.
             case dflash
+            /// DFlash2 asked for by name.
+            case dflash2
         }
 
         /// How many tokens a round proposes, or nil when this session does

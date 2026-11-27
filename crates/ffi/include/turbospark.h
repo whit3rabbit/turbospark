@@ -304,12 +304,14 @@ void ts_string_free(char *s);
  *                       saw. It is a named request like a number, so it
  *                       fails this call when it cannot be served, and
  *                       "auto" never picks it. The head is allocated at N.
- *   speculativeDrafter "auto" | "mtp" | "dflash" | null
+ *   speculativeDrafter "auto" | "mtp" | "dflash" | "dflash2" | null
  *                       (default auto). "auto" ENABLES an MTP head and only
  *                       REPORTS a DFlash2 one, which is measured rather
  *                       than stylistic: DFlash2 reads 1.43-1.50x on code
  *                       and math and 0.96x throughput at +17.4% J/token on
- *                       PROSE, so it is opt-in.
+ *                       PROSE, so it is opt-in. "dflash" is the family's
+ *                       block drafter (on Inkling 2, DSpark when installed);
+ *                       "dflash2" names DFlash2.
  *   loadGuard         "off" | "relaxed" | "balanced" | "strict" | number | null
  *                       How much of the machine may be committed. A NUMBER is
  *                       an absolute ceiling in BYTES on what the engine
@@ -541,7 +543,7 @@ void ts_image_buffer_free(uint8_t *bytes, size_t len);
  *
  * speculation.block is the resolved block size, or null when this session
  * does not draft ahead; that null IS the "is it on" test, and drafter
- * ("mtp" | "dflash") is non-null exactly when block is. speculation.reason
+ * ("mtp" | "dflash" | "dflash2") is non-null exactly when block is. speculation.reason
  * says why it is off when a caller might have expected otherwise, and is
  * null both when they asked for "off" and when it is on. speculation.adaptive
  * is true when block is the CAP of adaptive depth rather than a fixed round

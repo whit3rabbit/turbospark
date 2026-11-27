@@ -21,13 +21,14 @@
 //! Exactness class: KL-bounded against the CPU reference (FP16 activations,
 //! FP32 accumulation, FP32 router). Prefill is this decode path per token.
 
+mod dflash2;
 mod dspark;
 mod lamq;
 mod prefill;
 mod state;
 mod verify;
 
-pub use dspark::inkling2_dspark_dir;
+pub(crate) use dspark::inkling2_drafter_offered;
 
 use half::f16;
 use model_io::ResidentIndex;
