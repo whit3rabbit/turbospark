@@ -93,6 +93,87 @@
           "sha256": "4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4"
         }
       ]
+    },
+    {
+      "alias": "embeddinggemma-2-coreml-int8",
+      "display_name": "EmbeddingGemma 2 int8 (Core ML)",
+      "family": "embeddinggemma2",
+      "backend": "coreml",
+      "repository": "lorelaiassistant/embeddinggemma-2-coreml-int8",
+      "revision": "45446c9c1bac44874191b6311dd4c26e0af313aa",
+      "license": "Apache-2.0",
+      "modalities": [
+        "text",
+        "image"
+      ],
+      "dimensions": 768,
+      "matryoshka_dims": [
+        768,
+        512,
+        256,
+        128
+      ],
+      "status": "runs",
+      "gates": [
+        "coreml_embeddinggemma2"
+      ],
+      "assets": [
+        {
+          "path": "EmbeddingGemma2Text.mlpackage/Data/com.apple.CoreML/model.mlmodel",
+          "size": 7539653,
+          "sha256": "584bc5af5817842f08488b1833a83eea74308495a4876e11bc1fd333e1fd87d5"
+        },
+        {
+          "path": "EmbeddingGemma2Text.mlpackage/Data/com.apple.CoreML/weights/weight.bin",
+          "size": 138959904,
+          "sha256": "380196ed01a06a4e26f66009992e14ac04dc4d07799f0cee108555119d772451"
+        },
+        {
+          "path": "EmbeddingGemma2Text.mlpackage/Manifest.json",
+          "size": 617,
+          "sha256": "e55ddbce1ac759d106d98088619b8851729ce246679c6a90be11c15ac7473c2f"
+        },
+        {
+          "path": "EmbeddingGemma2Vision.mlpackage/Data/com.apple.CoreML/model.mlmodel",
+          "size": 2099591,
+          "sha256": "4c1937e3a3adcac5c2b63677b25e6b655d2c521137034f8293f92af057a8d4c9"
+        },
+        {
+          "path": "EmbeddingGemma2Vision.mlpackage/Data/com.apple.CoreML/weights/weight.bin",
+          "size": 152429760,
+          "sha256": "5d8ca6ff93f928c5d704e51773ae94313545803fc7691f4b4fd9602fbdcb885b"
+        },
+        {
+          "path": "EmbeddingGemma2Vision.mlpackage/Manifest.json",
+          "size": 617,
+          "sha256": "a10b59fdec5865591cce431cbb009929770442101675876283434a91fa1d4900"
+        },
+        {
+          "path": "config.json",
+          "size": 2599,
+          "sha256": "19f37d5c9504e28fe22f2d091760e9e37ada2e743ac2924e9e1213186d7633d0"
+        },
+        {
+          "path": "embeddings.i8",
+          "size": 134217728,
+          "sha256": "2c07a275aba597010b4d06ba919e863a04afa4abf283e18d765cc4dd911b8ea3"
+        },
+        {
+          "path": "embeddings_scale.f16",
+          "size": 524288,
+          "sha256": "e77843e932248346050e51b00a6b9af1bfbc18ed75e4adb82d41f08c29218d25"
+        },
+        {
+          "path": "position_embeddings.f16",
+          "size": 3145728,
+          "sha256": "17de9480acc23638c0634a97ed89e51ed664433256d7d6f109587dcd91c79124"
+        },
+        {
+          "path": "tokenizer.json",
+          "size": 32170510,
+          "sha256": "4d777ef5bdc1aa36227abdfb77c3e49e7b9c892d16e1b6bda41c393504828be4"
+        }
+      ]
     }
   ]
 }

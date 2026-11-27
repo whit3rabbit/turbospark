@@ -26,6 +26,10 @@ when this file gets updated relative to the version bump and the tag.
   and app, and catalog download on `inkling2-mini-mlx4` and
   `inkling2-mini-ud-q4kxl` (about 1 GB more per install). See
   `docs/DFLASH2.md` section 9.
+- Embeddings: `embeddinggemma-2-coreml-int8`, an int8 EmbeddingGemma 2 Core ML
+  profile (text and image, 471 MB against 1.48 GB), status `runs`. The Core ML
+  host now reads int8 token tables with per-row fp16 scales and opens installs
+  without an audio tower. See `docs/COREML.md`.
 
 ### Performance
 - Qwen2 and Qwen2.5 prompt processing multiplies each projection once per

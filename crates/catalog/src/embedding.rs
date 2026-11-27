@@ -266,6 +266,34 @@ mod tests {
     }
 
     #[test]
+    fn int8_profile_pins_what_the_runtime_opens() {
+        let c = EmbeddingCatalog::embedded().unwrap();
+        let p = c.get("embeddinggemma-2-coreml-int8").unwrap();
+        assert_eq!(
+            p.repository,
+            "lorelaiassistant/embeddinggemma-2-coreml-int8"
+        );
+        assert_eq!(p.revision, "45446c9c1bac44874191b6311dd4c26e0af313aa");
+        assert_eq!(p.family, "embeddinggemma2");
+        // No audio tower in this derivative, so audio is not advertised.
+        assert_eq!(p.modalities, ["text", "image"]);
+        // Not verified until its gates run against an install of this pin.
+        assert_eq!(p.status, Status::Runs);
+        for f in [
+            "EmbeddingGemma2Text.mlpackage/Manifest.json",
+            "embeddings.i8",
+            "embeddings_scale.f16",
+            "tokenizer.json",
+            "config.json",
+            "EmbeddingGemma2Vision.mlpackage/Manifest.json",
+            "position_embeddings.f16",
+        ] {
+            assert!(p.assets.iter().any(|a| a.path == f), "{f}");
+        }
+        assert!(!p.assets.iter().any(|a| a.path.contains("Audio")));
+    }
+
+    #[test]
     fn manifest_refuses_unsafe_or_unpinned_rows() {
         let row = |alias: &str, rev: &str, path: &str| {
             format!(

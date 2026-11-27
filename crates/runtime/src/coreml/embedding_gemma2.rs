@@ -26,6 +26,10 @@ use turbospark_coreml::{ComputeUnits, CoreMlModel, LoadOptions, Tensor};
 
 pub const TEXT_PACKAGE: &str = "EmbeddingGemma2Text.mlpackage";
 pub const TOKEN_TABLE: &str = "embeddings.bf16";
+/// int8 table of the weight-quantized derivative
+/// (lorelaiassistant/embeddinggemma-2-coreml-int8): one fp16 scale per row.
+pub const TOKEN_TABLE_I8: &str = "embeddings.i8";
+pub const TOKEN_TABLE_I8_SCALE: &str = "embeddings_scale.f16";
 pub const CONFIG: &str = "config.json";
 pub const TOKENIZER: &str = "tokenizer.json";
 
@@ -75,10 +79,20 @@ pub(crate) struct SpecialIds {
     pub bos: u32,
     pub eos: u32,
     pub pad: u32,
-    pub audio_start: u32,
-    pub audio_end: u32,
+    /// `(<|audio>, <audio|>)`. `None` when `config.json` has no `audio`
+    /// section: the int8 derivative ships no audio tower.
+    pub audio: Option<(u32, u32)>,
     pub image_start: u32,
     pub image_end: u32,
+}
+
+/// Storage of the token table, from `config.json` `token_table`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TableFormat {
+    /// `embeddings.bf16`, row-major `[rows, hidden]`.
+    Bf16,
+    /// `embeddings.i8` plus `embeddings_scale.f16`: `row[r] = q[r] * scale[r]`.
+    Int8RowScaled,
 }
 
 /// What `config.json` declares and the host relies on.
@@ -88,6 +102,7 @@ pub(crate) struct Config {
     pub dimension: usize,
     pub matryoshka: Vec<usize>,
     pub embed_scale: f32,
+    pub table_format: TableFormat,
     pub table_rows: usize,
     /// Text function lengths, ascending.
     pub lengths: Vec<usize>,
@@ -123,11 +138,35 @@ pub(crate) fn parse_config(v: &serde_json::Value) -> Result<Config, String> {
     let table = v
         .get("token_table")
         .ok_or("config.json token_table is missing")?;
-    if table.get("dtype").and_then(|d| d.as_str()) != Some("bfloat16")
-        || table.get("file").and_then(|d| d.as_str()) != Some(TOKEN_TABLE)
-    {
-        return Err("config.json token_table must be bfloat16 embeddings.bf16".into());
+    fn str_at<'a>(v: &'a serde_json::Value, k: &str) -> Option<&'a str> {
+        v.get(k).and_then(|d| d.as_str())
     }
+    let table_format = match (str_at(table, "dtype"), str_at(table, "file")) {
+        (Some("bfloat16"), Some(TOKEN_TABLE)) => TableFormat::Bf16,
+        (Some("int8"), Some(TOKEN_TABLE_I8)) => {
+            // Only a per-row fp16 scale is understood; any other layout
+            // (per-block, zero point) would decode to wrong rows silently.
+            let scale = table.get("scale");
+            let rows = table.get("shape").and_then(|s| s.get(0));
+            let ok = scale.is_some_and(|s| {
+                str_at(s, "file") == Some(TOKEN_TABLE_I8_SCALE)
+                    && str_at(s, "dtype") == Some("float16")
+                    && s.get("shape").and_then(|x| x.as_array()).map(Vec::len) == Some(1)
+                    && s.get("shape").and_then(|x| x.get(0)) == rows
+            });
+            if !ok {
+                return Err(format!(
+                    "config.json int8 token_table needs a per-row float16 scale in {TOKEN_TABLE_I8_SCALE}"
+                ));
+            }
+            TableFormat::Int8RowScaled
+        }
+        _ => {
+            return Err(format!(
+                "config.json token_table must be bfloat16 {TOKEN_TABLE} or int8 {TOKEN_TABLE_I8}"
+            ))
+        }
+    };
     let table_rows = table
         .get("shape")
         .and_then(|s| s.get(0))
@@ -183,6 +222,7 @@ pub(crate) fn parse_config(v: &serde_json::Value) -> Result<Config, String> {
         dimension,
         matryoshka,
         embed_scale,
+        table_format,
         table_rows,
         lengths,
         prompts,
@@ -207,8 +247,16 @@ fn special_ids(tok: &tokenizer::Tokenizer, v: &serde_json::Value) -> Result<Spec
         bos: resolve("<bos>", &["bos_token_id"])?,
         eos: resolve("<eos>", &["eos_token_id"])?,
         pad: resolve("<pad>", &["pad_token_id"])?,
-        audio_start: resolve("<|audio>", &["audio", "boa_token_id"])?,
-        audio_end: resolve("<audio|>", &["audio", "eoa_token_id"])?,
+        // Declared audio is checked as strictly as the rest; only its
+        // absence is allowed.
+        audio: if v.get("audio").is_some() {
+            Some((
+                resolve("<|audio>", &["audio", "boa_token_id"])?,
+                resolve("<audio|>", &["audio", "eoa_token_id"])?,
+            ))
+        } else {
+            None
+        },
         image_start: resolve("<|image>", &["vision", "boi_token_id"])?,
         image_end: resolve("<image|>", &["vision", "eoi_token_id"])?,
     })
@@ -252,6 +300,90 @@ impl Bf16Table {
     }
 }
 
+/// Row-major int8 table `[rows, cols]` with one fp16 scale per row, both
+/// memory-mapped. Decodes as `q * f32(scale)`, the reference
+/// `table_int8.py` dequantization.
+pub(crate) struct I8RowScaledTable {
+    q: ResidentBuffer,
+    scales: ResidentBuffer,
+    rows: usize,
+    cols: usize,
+}
+
+fn map_exact(path: &Path, want: u64, what: &str) -> Result<ResidentBuffer, String> {
+    let len = std::fs::metadata(path)
+        .map_err(|e| format!("{}: {e}", path.display()))?
+        .len();
+    if len != want {
+        return Err(format!(
+            "{} is {len} bytes, expected {want} for {what}",
+            path.display()
+        ));
+    }
+    ResidentBuffer::map(path, 0, len).map_err(|e| e.to_string())
+}
+
+impl I8RowScaledTable {
+    pub fn open(table: &Path, scales: &Path, rows: usize, cols: usize) -> Result<Self, String> {
+        let q = map_exact(
+            table,
+            (rows * cols) as u64,
+            &format!("[{rows}, {cols}] int8"),
+        )?;
+        let scales = map_exact(scales, (rows * 2) as u64, &format!("[{rows}] fp16"))?;
+        Ok(Self {
+            q,
+            scales,
+            rows,
+            cols,
+        })
+    }
+
+    /// Appends row `id` times `scale` to `out` as f32.
+    pub fn push_row(&self, id: u32, scale: f32, out: &mut Vec<f32>) -> Result<(), String> {
+        let id = id as usize;
+        if id >= self.rows {
+            return Err(format!("token {id} is outside the {}-row table", self.rows));
+        }
+        let s = &self.scales.data()[id * 2..id * 2 + 2];
+        let row_scale = half::f16::from_le_bytes([s[0], s[1]]).to_f32();
+        let bytes = &self.q.data()[id * self.cols..(id + 1) * self.cols];
+        out.extend(
+            bytes
+                .iter()
+                .map(|&b| f32::from(b as i8) * row_scale * scale),
+        );
+        Ok(())
+    }
+}
+
+pub(crate) enum TokenTable {
+    Bf16(Bf16Table),
+    Int8(I8RowScaledTable),
+}
+
+impl TokenTable {
+    fn open(dir: &Path, config: &Config) -> Result<Self, String> {
+        let (rows, cols) = (config.table_rows, config.hidden);
+        Ok(match config.table_format {
+            TableFormat::Bf16 => Self::Bf16(Bf16Table::open(&dir.join(TOKEN_TABLE), rows, cols)?),
+            TableFormat::Int8RowScaled => Self::Int8(I8RowScaledTable::open(
+                &dir.join(TOKEN_TABLE_I8),
+                &dir.join(TOKEN_TABLE_I8_SCALE),
+                rows,
+                cols,
+            )?),
+        })
+    }
+
+    fn push_row(&self, id: u32, scale: f32, out: &mut Vec<f32>) -> Result<(), String> {
+        match self {
+            Self::Bf16(t) => t.push_row(id, scale, out),
+            Self::Int8(t) => t.push_row(id, scale, out),
+        }
+    }
+}
+
 /// L2-normalizes the leading `dim` values of `v`. The full-size output is
 /// already unit length; this re-normalizes after a Matryoshka truncation.
 pub fn truncate_normalize(v: &[f32], dim: usize) -> Vec<f32> {
@@ -281,7 +413,7 @@ pub struct EmbeddingGemma2CoreMl {
     pub(crate) config: Config,
     pub(crate) ids: SpecialIds,
     tokenizer: tokenizer::Tokenizer,
-    table: Bf16Table,
+    table: TokenTable,
     compiled_text: PathBuf,
     pub(crate) opts: EmbeddingGemma2Options,
     /// Text functions by length, loaded on first use. Each one is its own
@@ -322,7 +454,7 @@ impl EmbeddingGemma2CoreMl {
             .with_truncation(None)
             .map_err(|e| format!("{TOKENIZER}: {e}"))?;
         let ids = special_ids(&tokenizer, &config_value)?;
-        let table = Bf16Table::open(&dir.join(TOKEN_TABLE), config.table_rows, config.hidden)?;
+        let table = TokenTable::open(dir, &config)?;
         let compiled_text =
             turbospark_coreml::compile_if_needed(&dir.join(TEXT_PACKAGE), &super::cache_root(dir))
                 .map_err(|e| e.to_string())?;
@@ -547,6 +679,83 @@ mod tests {
         let mut bad = config_json();
         bad["matryoshka_dims"] = serde_json::json!([1024]);
         assert!(parse_config(&bad).is_err());
+    }
+
+    fn int8_config_json() -> serde_json::Value {
+        let mut c = config_json();
+        c["token_table"] = serde_json::json!({
+            "file": "embeddings.i8", "dtype": "int8", "shape": [262144, 512],
+            "scale": {"file": "embeddings_scale.f16", "dtype": "float16", "shape": [262144]}
+        });
+        c
+    }
+
+    #[test]
+    fn config_accepts_only_a_per_row_fp16_int8_scale() {
+        assert_eq!(
+            parse_config(&config_json()).unwrap().table_format,
+            TableFormat::Bf16
+        );
+        let c = parse_config(&int8_config_json()).unwrap();
+        assert_eq!(c.table_format, TableFormat::Int8RowScaled);
+        assert_eq!(c.table_rows, 262144);
+
+        let mut bad = int8_config_json();
+        bad["token_table"].as_object_mut().unwrap().remove("scale");
+        assert!(parse_config(&bad).is_err(), "missing scale");
+        let mut bad = int8_config_json();
+        bad["token_table"]["scale"]["dtype"] = serde_json::json!("float32");
+        assert!(parse_config(&bad).is_err(), "fp32 scale");
+        let mut bad = int8_config_json();
+        bad["token_table"]["scale"]["shape"] = serde_json::json!([8192, 32]);
+        assert!(parse_config(&bad).is_err(), "per-block scale");
+        let mut bad = int8_config_json();
+        bad["token_table"]["scale"]["shape"] = serde_json::json!([1000]);
+        assert!(
+            parse_config(&bad).is_err(),
+            "scale rows differ from table rows"
+        );
+        let mut bad = int8_config_json();
+        bad["token_table"]["file"] = serde_json::json!("embeddings.bf16");
+        assert!(parse_config(&bad).is_err(), "int8 dtype with the bf16 file");
+    }
+
+    #[test]
+    fn int8_rows_decode_with_their_row_scale() {
+        let dir = std::env::temp_dir().join(format!(
+            "ts-eg2-i8-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (tp, sp) = (dir.join("t.i8"), dir.join("s.f16"));
+        // Two rows of two: [127, -64] scale 0.5 | [-1, 2] scale 0.25.
+        std::fs::write(&tp, [127i8, -64, -1, 2].map(|q| q as u8)).unwrap();
+        let scales: Vec<u8> = [0.5f32, 0.25]
+            .iter()
+            .flat_map(|s| half::f16::from_f32(*s).to_le_bytes())
+            .collect();
+        std::fs::write(&sp, &scales).unwrap();
+        let t = I8RowScaledTable::open(&tp, &sp, 2, 2).unwrap();
+        let mut out = Vec::new();
+        t.push_row(0, 2.0, &mut out).unwrap();
+        t.push_row(1, 2.0, &mut out).unwrap();
+        // Row 1 must use its own scale, not row 0's.
+        assert_eq!(out, vec![127.0, -64.0, -0.5, 1.0]);
+        assert!(t.push_row(2, 1.0, &mut out).is_err());
+        assert!(
+            I8RowScaledTable::open(&tp, &sp, 3, 2).is_err(),
+            "table size"
+        );
+        std::fs::write(&sp, [0u8; 2]).unwrap();
+        assert!(
+            I8RowScaledTable::open(&tp, &sp, 2, 2).is_err(),
+            "scale size"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
