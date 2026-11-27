@@ -37,6 +37,11 @@ when this file gets updated relative to the version bump and the tag.
   large vocabularies and long contexts, with the same results.
 
 ### Changed
+- GGUF Q4_K tensors decode and verify through new wide-load kernels by default:
+  1.5x to 1.9x the previous kernel's bandwidth on real Q4_K bytes, and 1.4x to
+  2.4x for speculative verify. Output moves within a mean KL of about 1e-5 nats
+  (Qwen3 8B Q4_K_M), so it is not bit-identical to the previous kernel.
+  `TURBOSPARK_GGUF_KERNEL=current` restores it.
 - `/v1/chat/completions` now answers 400 to `n` greater than 1 and to a
   `json_schema` response format with `strict: true`. Both were accepted before
   with only the `x-anyllm-degradation` header, so a client got one choice, or

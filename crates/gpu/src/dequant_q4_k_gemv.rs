@@ -41,9 +41,13 @@ fn no_function_constants() -> FunctionConstantValues {
     FunctionConstantValues::new()
 }
 
-/// Whether each format's wide kernels are its default (KERN-04). Each is
-/// flipped only with its own decode gate and paired timing on a real install.
-const Q4_K_WIDE_BY_DEFAULT: bool = false;
+/// Whether each format's wide kernels are its default (KERN-04). Q4_K is on
+/// by the owner's decision (2026-11-26): Qwen3 8B Q4_K_M passed the decode
+/// quality gate (mean KL 1.1e-5, PPL unchanged) and every kernel bench favours
+/// it (1.5x to 1.9x GEMV, 1.4x to 2.4x verify), while the paired decode A/B
+/// was inconclusive on a busy host. `TURBOSPARK_GGUF_KERNEL=current` restores
+/// the previous kernels. Q8_0 waits for its own gate.
+const Q4_K_WIDE_BY_DEFAULT: bool = true;
 const Q8_0_WIDE_BY_DEFAULT: bool = false;
 
 /// `TURBOSPARK_GGUF_KERNEL`, read once per process: `wide` or `current`

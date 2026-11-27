@@ -61,6 +61,7 @@ These variables configure runtime diagnostics, kernel execution seams, and profi
 
 | Variable | Affected Binaries / Crates | Purpose | Default |
 | --- | --- | --- | --- |
+| `TURBOSPARK_GGUF_KERNEL` | `turbospark-gpu` (every GGUF install) | `current` or `wide`: which GGUF Q4_K and Q8_0 decode GEMV and speculative-verify GEMM pair runs, read once per process. Both kernels of a pair switch together, so verify stays bit-exact against decode. Unset gives each format its default: wide for Q4_K, current for Q8_0. `current` restores the previous Q4_K kernels (KERN-04, `docs/designs/speedup-kern.md`). | unset (Q4_K wide, Q8_0 current) |
 | `TURBOSPARK_PHASES` | `turbospark-check` | Set to `1` to print forward-pass phase timing breakdowns (GPU wait, router sync, expert pread, bind, logits wait) on stderr. | unset |
 | `TURBOSPARK_DISPATCH_PROFILE` | `turbospark-check`, `turbospark-server`, `turbospark-bench` | Set to `1` to collect per-dispatch GPU kernel timing and ranking inside command buffers. | unset |
 | `TURBOSPARK_LAUNCH_COUNT` | `gpu` / `runtime` (`launch_count::take`) | Set to `1` to count submitted compute dispatches, command buffers and the distinct `function#constants-hash` pipelines. It adds a lock per dispatch, so a counted run's counts are the result and its timing is never quoted. | unset |
