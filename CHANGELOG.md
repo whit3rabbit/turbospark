@@ -14,6 +14,12 @@ when this file gets updated relative to the version bump and the tag.
 ## [Unreleased]
 
 ### Added
+- Vision for Inkling 2 Mini: an `inkling2-mini-vision-tower` sidecar
+  (`turbospark-model pull-vision`, about 636 MB range-read from the HF
+  original) that pairs with every Inkling 2 Mini install, through the CLI, the
+  server and the C ABI. Image turns decode without a speculative drafter. The
+  macOS app does not attach vision sidecars yet. See
+  `docs/INKLING2_VISION_PHASE0.md`.
 - Server: llama.cpp-style `timings` and `usage.prompt_tokens_details.cached_tokens`
   on chat completion and completion responses, and `turbospark_text_*` series on
   `GET /v1/metrics`, which every server now serves behind the usual auth.

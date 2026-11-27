@@ -778,6 +778,18 @@ pub(crate) fn plan(model: &AppState, request: &ChatCompletionRequest) -> Result<
             let images = crate::vision::siglip_preprocess_all(&encoded, params)?;
             Some(crate::vision::RequestImages::SigLip { images, spans })
         }
+        // Inkling 2: one placeholder per 40 px tile, counted from the headers
+        // (and the cap) before any pixel is decoded.
+        (Some(crate::vision::VisionInfo::Inkling2 { max_tokens }), false) => {
+            let counts = crate::vision::inkling2_preflight_all(&encoded, *max_tokens)?;
+            let (expanded, spans) =
+                turbospark_vision_io::inkling2_expand_image_placeholders(&prompt_ids, &counts)
+                    .map_err(|e| format!("cannot place {} image(s): {e}", counts.len()))?;
+            prompt_ids = expanded;
+            check_context(&prompt_ids, &config, model.max_context())?;
+            let images = crate::vision::inkling2_preprocess_all(&encoded, *max_tokens)?;
+            Some(crate::vision::RequestImages::Inkling2 { images, spans })
+        }
         // DeepSeek-OCR: every image is one padded base view and a 273-position
         // run, so the counts need only the headers.
         (

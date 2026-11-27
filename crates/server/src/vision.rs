@@ -118,6 +118,10 @@ pub enum VisionInfo {
         marker: i32,
         fill: i32,
     },
+    /// The Inkling 2 tower: no resize below the cap, 40 px tiles, one token
+    /// each, the rendered placeholder expanded to one id per tile
+    /// (`docs/INKLING2_VISION_PHASE0.md`).
+    Inkling2 { max_tokens: usize },
 }
 
 /// One request's images, preprocessed, plus what the trunk needs to place
@@ -155,6 +159,11 @@ pub enum RequestImages {
     /// DeepSeek-OCR: each image's padded base view and placeholder run.
     DeepseekOcr {
         images: Vec<turbospark_vision_io::DeepseekOcrView>,
+        spans: Vec<ImageSpan>,
+    },
+    /// Inkling 2: each image's patch rows and placeholder run.
+    Inkling2 {
+        images: Vec<turbospark_vision_io::Inkling2Patches>,
         spans: Vec<ImageSpan>,
     },
 }
@@ -596,6 +605,52 @@ pub(crate) fn siglip_preprocess_all(
             let decoded = turbospark_vision_io::decode_image_bytes(bytes)
                 .map_err(|e| format!("image {i}: {e}"))?;
             turbospark_vision_io::deepseek_vl2_preprocess(&decoded, params, crop)
+                .map_err(|e| format!("image {i}: {e}"))
+        })
+        .collect()
+}
+
+/// The Inkling 2 preflight: from the headers alone, check the per-request
+/// source-pixel budget and return each image's tile count under the cap.
+pub(crate) fn inkling2_preflight_all(
+    encoded: &[Vec<u8>],
+    max_tokens: usize,
+) -> Result<Vec<usize>, String> {
+    let mut source_pixels = 0u64;
+    let mut counts = Vec::with_capacity(encoded.len());
+    for (i, bytes) in encoded.iter().enumerate() {
+        let (width, height) =
+            turbospark_vision_io::image_dimensions(bytes).map_err(|e| format!("image {i}: {e}"))?;
+        source_pixels = source_pixels
+            .checked_add(u64::from(width) * u64::from(height))
+            .ok_or_else(|| "image pixel count overflows".to_string())?;
+        if source_pixels > MAX_SOURCE_PIXELS_PER_REQUEST {
+            return Err(format!(
+                "images contain {source_pixels} source pixels; the per-request limit is {MAX_SOURCE_PIXELS_PER_REQUEST}"
+            ));
+        }
+        let (h, w) =
+            turbospark_vision_io::inkling2_capped_dims(height as usize, width as usize, max_tokens)
+                .map_err(|e| format!("image {i}: {e}"))?;
+        let (rows, cols) = turbospark_vision_io::inkling2_tile_grid(h, w);
+        counts.push(rows * cols);
+    }
+    Ok(counts)
+}
+
+/// Decode (transparency composited onto the reference's checkerboard) and
+/// preprocess every Inkling 2 image.
+pub(crate) fn inkling2_preprocess_all(
+    encoded: &[Vec<u8>],
+    max_tokens: usize,
+) -> Result<Vec<turbospark_vision_io::Inkling2Patches>, String> {
+    encoded
+        .iter()
+        .enumerate()
+        .map(|(i, bytes)| {
+            let decoded = turbospark_vision_io::inkling2_decode_image_bytes(bytes)
+                .map_err(|e| format!("image {i}: {e}"))?;
+            turbospark_vision_io::inkling2_preprocess(&decoded, max_tokens)
                 .map_err(|e| format!("image {i}: {e}"))
         })
         .collect()

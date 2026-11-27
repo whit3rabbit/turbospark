@@ -410,6 +410,7 @@ impl RealForwardRunner {
             lfm3_vision: None,
             clip_vision: None,
             muse_vision: None,
+            inkling2_vision: None,
             pixtral_vision: None,
             siglip_vision: None,
             deepseek_ocr_vision: None,

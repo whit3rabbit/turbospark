@@ -46,6 +46,7 @@ pub mod deepseek_ocr;
 pub mod deepseek_vl2;
 pub mod error;
 pub mod gemma4;
+pub mod inkling2;
 pub mod minicpm;
 pub mod mrope;
 pub mod muse;
@@ -84,6 +85,12 @@ pub use gemma4::{
     gemma4_expand_image_placeholders, gemma4_preprocess, gemma4_resize_dims,
     gemma4_soft_tokens_for, Gemma4ImageIds, Gemma4Patches, GEMMA4_DEFAULT_SOFT_TOKENS,
     GEMMA4_PATCH, GEMMA4_PATCH_DIM, GEMMA4_POOL, GEMMA4_SOFT_TOKEN_BUDGETS,
+};
+pub use inkling2::{
+    inkling2_capped_dims, inkling2_composite_rgba, inkling2_decode_image_bytes,
+    inkling2_expand_image_placeholders, inkling2_preprocess, inkling2_tile_grid, Inkling2Patches,
+    INKLING2_CONTENT_IMAGE_ID, INKLING2_IMAGE_TOKEN_ID, INKLING2_MAX_TOKENS, INKLING2_MERGE,
+    INKLING2_PATCH, INKLING2_PATCH_DIM, INKLING2_TILE,
 };
 pub use minicpm::{
     canvas_positions, minicpm_preprocess, minicpm_resize_dims, minicpm_splice_and_positions,

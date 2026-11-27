@@ -955,10 +955,16 @@ impl RealForwardRunner {
                 self.install_dir.display()
             ));
         }
-        if self.prompt_vision.is_some() || self.arch.vision.is_active() {
+        // Only a prompt that CARRIES an image is refused. An attached tower
+        // (`arch.vision.is_active()`) on a text turn speculates as before:
+        // refusing on the tower alone would cost every text turn of a session
+        // that once saw a picture its drafter. With an image, the drafter's
+        // context and prompt-copy drafting have not been gated against image
+        // rows (`docs/INKLING2_VISION_PHASE0.md`), so the turn runs plain.
+        if self.prompt_vision.is_some() {
             return Some(
-                "the Inkling 2 verify embeds every row from the token table; image prompts \
-                 are not served"
+                "Inkling 2 speculation is not gated with image rows in the prompt; this \
+                 image turn decodes without a drafter"
                     .to_string(),
             );
         }

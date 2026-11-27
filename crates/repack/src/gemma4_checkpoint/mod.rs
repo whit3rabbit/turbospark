@@ -27,6 +27,7 @@ mod vision;
 mod vision_clip;
 mod vision_deepseek_ocr;
 mod vision_gemma4;
+mod vision_inkling2;
 mod vision_lfm3;
 mod vision_minicpm;
 mod vision_muse;
@@ -81,6 +82,10 @@ pub use vision_deepseek_ocr::{
 pub use vision_gemma4::{
     parse_gemma4_vision_config, EMBED_VISION_PREFIX, GEMMA4_BLOCK_ROLES,
     GEMMA4_PROJECTOR_INSTALL_NAME, GEMMA4_RESIDENT_TENSORS,
+};
+pub use vision_inkling2::{
+    parse_inkling2_vision_config, read_inkling2_vision_entries, INKLING2_CONTENT_IMAGE_ID,
+    INKLING2_IMAGE_TOKEN_ID, INKLING2_MODEL_TYPE, INKLING2_RESIDENT_TENSORS,
 };
 pub use vision_lfm3::parse_lfm3_vl_vision_config;
 pub use vision_minicpm::{

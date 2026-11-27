@@ -352,6 +352,11 @@ pub fn read_vision_entries_quantized(
     if vision.tower == model_io::VisionTowerKind::Lfm3Vl {
         return super::vision_lfm3::read_lfm3_vl_vision_entries(shards, vision_bases, vision);
     }
+    // Inkling 2: CLIP-style names, a class row, layer scale folded and q/k
+    // permuted at ingest so the runtime runs the Muse block.
+    if vision.tower == model_io::VisionTowerKind::Inkling2 {
+        return super::vision_inkling2::read_inkling2_vision_entries(shards, vision_bases, vision);
+    }
     // Muse-Glimmer spreads its tower over three prefixes, fuses q/k/v, and
     // quantizes the adapter and projection, so it has its own reader.
     if vision.tower == model_io::VisionTowerKind::MuseGlimmer {
