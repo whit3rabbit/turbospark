@@ -442,6 +442,24 @@ GGUF with `gguf_local_install`), `tslab gate` with the trusted evaluator
 
 The default stays `current` until a re-run on a quiet host gives a verdict.
 
+Stage B for Q4_K (2026-11-26, two runs on a quiet host, same 36 real tensors;
+`crates/gpu/tests/gguf_stage_b_price.rs`). Ratios against the current GEMV:
+
+| Arm | Run 1 | Run 2 |
+|---|---|---|
+| wide | 1.915x | 1.855x |
+| wide, unroll 2 | 1.614x | 1.949x |
+| wide, unroll 4 | 1.637x | 1.966x |
+| verify GEMM B=2, wide / current | 1.725x | 1.607x |
+| verify GEMM B=4, wide / current | 1.442x | 1.693x |
+| verify GEMM B=8, wide / current | 2.311x | 2.441x |
+
+On a quiet host the wide arm is about 1.9x. Unrolling is not a consistent gain
+over it (below wide in run 1, at or just above it in run 2), so it is not
+adopted. The current verify GEMM falls to 0.24x to 0.26x of the GEMV rate at
+B=8, and the wide twin is faster at every width, so speculation on a Q4_K trunk
+has the most to gain. Two rows per simdgroup (NR0=2) was not built.
+
 Bench (new file `crates/lab/src/kernel/gguf_gemv.rs`, to be created):
 
 *   **Stage A (first):** the current kernel and one unit-wide loads arm, at row 1,
