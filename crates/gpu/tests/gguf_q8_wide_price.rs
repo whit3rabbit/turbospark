@@ -421,7 +421,7 @@ fn stage_a_q8_wide_arms() {
     let wide = share("wide", ArmKind::Q8Wide { two_rows: false });
     let wide2 = share("wide, 2 rows", ArmKind::Q8Wide { two_rows: true });
     let int4 = build_arm(&context, "INT4 same shapes", ArmKind::Int4, &tensors, None);
-    let arms = vec![base, wide, wide2, int4];
+    let arms = [base, wide, wide2, int4];
 
     let max_cols = tensors.iter().map(|t| t.cols).max().unwrap();
     let max_rows = tensors.iter().map(|t| t.rows).max().unwrap();
