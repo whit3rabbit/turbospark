@@ -543,6 +543,28 @@ adopted. The current verify GEMM falls to 0.24x to 0.26x of the GEMV rate at
 B=8, and the wide twin is faster at every width, so speculation on a Q4_K trunk
 has the most to gain. Two rows per simdgroup (NR0=2) was not built.
 
+Q8_0 Stage A (2026-11-26, `crates/gpu/tests/gguf_q8_wide_price.rs`, the 27
+Q8_0 tensors of the dspark Inkling 2 Mini file). `dequant_q8_0_gemv_wide`
+uses `ushort` quant loads because 34-byte blocks keep block starts only 2-byte
+aligned, plus `half4` x loads and the scale factored out of each block's sum.
+`_r2` adds two rows per simdgroup sharing x (llama.cpp's NR0 = 2):
+
+| Arm | Run 1 | Run 2 |
+|---|---|---|
+| wide / current | 1.595x | 1.594x |
+| wide, 2 rows / current | 1.628x | 1.620x |
+
+Both clear 1.25x. These 278 MB are partly cache-warm (the INT4 arm read about
+635 GB/s, above DRAM bandwidth), so the ratio needs the full-model A/B. Step 4a
+for Q8_0 uses the one-row arm: `TURBOSPARK_GGUF_KERNEL` now also selects it and
+its batched twin `dequant_q8_0_gemm_wide`, each format with its own default
+(both `current`). The pair parity test first asserts that the fixture separates
+the two reductions: at 19 to 67 rows the half rounding of y hid the difference
+and a verify path left on the current kernel passed; 2048 rows of 133 blocks
+does separate them, and the mispaired mutation then fails at batch 1. The
+knob A/B for both formats (Qwen3 8B Q4_K_M and Q8_0, base `5fe079f5`, from a
+clean worktree) waits for AC power and a quiet host.
+
 Bench (new file `crates/lab/src/kernel/gguf_gemv.rs`, to be created):
 
 *   **Stage A (first):** the current kernel and one unit-wide loads arm, at row 1,
@@ -570,6 +592,31 @@ Gate: the decode gate (LAB-01); a token's bits do not depend on rows per dispatc
 parity with the `crates/compute` CPU decoders; and the real-bytes bench above.
 
 ### 4. Attention (KERN-02, KERN-03)
+
+Step (a) price, 2026-11-26. `attn_decode` gains `tq4_barrier` and
+`tq3.5_barrier` arms (today's TurboQuant kernel over the same rows, quantized
+once with `kv_quantize_tq`), and `attn_decode_gemma4` times Gemma 4's shapes on
+any install. Both runs were on battery with foreign CPU, so the times are not
+quotable; the arms interleave in one process.
+
+Qwen3 8B geometry (32q over 8kv, head_dim 128, 36 layers), ms per token over
+all layers:
+
+| Context | FP16 barrier | FP16 GQA (default) | TQ 4 | TQ 3.5 |
+|---|---|---|---|---|
+| 4k | 23.5 | 2.2 | 26.4 | 26.5 |
+| 16k | 114.9 | 6.8 | 111.0 | 110.1 |
+| 32k | 232.5 | 13.1 | 248.0 | 236.2 |
+
+`--kv-bits` attention runs at the barrier kernel's cost, about 16x the FP16
+default at 16k, so the KERN-02 trigger (slower than FP16 GQA) is met. The
+share-of-decode reading from `tslab profile` on `qwen38-27b` is still owed.
+
+Gemma 4 shapes (head_dim 512): full layers (5) take 7.4 ms barrier and 16.3 ms
+TQ 4 at 16k; sliding layers (25, window 1024) take about 2.4 ms. Against the
+25 to 29 ms Gemma token in the frozen rows that is roughly a third of a token
+at 16k, so the KERN-03 trigger looks met. That share is an estimate: no Gemma
+install is on this Mac for `tslab profile`.
 
 *   Add `tq_barrier` and head_dim 512 arms to `crates/lab/src/kernel/attn_decode.rs`.
 *   **KERN-02 build trigger:** the TurboQuant kernel takes over more than 5% of
