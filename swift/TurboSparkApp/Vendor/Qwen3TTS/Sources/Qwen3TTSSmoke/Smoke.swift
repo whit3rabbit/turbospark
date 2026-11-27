@@ -6,6 +6,7 @@ import Qwen3TTS
 @main struct Smoke {
     static func main() async throws {
         let args = CommandLine.arguments
+        if args.count > 1 && args[1] == "breeze" { return try await breeze(Array(args.dropFirst(2))) }
         guard args.count >= 3 else {
             throw NSError(domain: "Usage: Qwen3TTSSmoke MODEL OUTPUT.wav [REFERENCE_AUDIO] [REFERENCE_TEXT] [TARGET_TEXT] [VOICE]", code: 1)
         }
@@ -31,6 +32,39 @@ import Qwen3TTS
         try output.write(from: buffer)
         let rms = sqrt(samples.reduce(Double(0)) { $0 + Double($1) * Double($1) } / Double(samples.count))
         print("SMOKE variant=\(descriptor.variant.rawValue) samples=\(samples.count) seconds=\(Double(samples.count)/24000) rms=\(rms) elapsed=\(Date().timeIntervalSince(start)) output=\(args[2])")
+    }
+
+    /// `Qwen3TTSSmoke breeze MODEL OUT.wav TEXT [--ref AUDIO --ref-text T]
+    /// [--instruct I] [--cfg S] [--speaker N] [--greedy] [--stream] [--max N]`
+    static func breeze(_ args: [String]) async throws {
+        guard args.count >= 3 else {
+            throw NSError(domain: "Usage: Qwen3TTSSmoke breeze MODEL OUT.wav TEXT [--ref AUDIO --ref-text T] [--instruct I] [--cfg S] [--speaker N] [--greedy] [--stream] [--max N]", code: 1)
+        }
+        func option(_ name: String) -> String? { args.firstIndex(of: name).flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil } }
+        var request = BreezeTTSRequest(text: args[2], speaker: Int(option("--speaker") ?? "0") ?? 0, instruction: option("--instruct"),
+                                       referenceText: option("--ref-text"), cfgScale: option("--cfg").flatMap(Float.init),
+                                       maxFramesPerSegment: Int(option("--max") ?? "750") ?? 750, seed: 42)
+        if let ref = option("--ref") { request.referenceAudio = try readReference(URL(fileURLWithPath: ref)) }
+        if args.contains("--greedy") { request.temperature = 0 }
+        let start = Date()
+        let model = try await BreezeTTSModel.fromModelDirectory(URL(fileURLWithPath: args[0]))
+        let loaded = Date()
+        var firstAudio: Date?
+        let result = try model.generate(request, onAudio: args.contains("--stream") ? { _ in if firstAudio == nil { firstAudio = Date() } } : nil)
+        let samples = result.samples
+        guard !samples.isEmpty, samples.allSatisfy(\.isFinite), samples.contains(where: { abs($0) > 1e-5 }) else {
+            throw BreezeTTSError.invalidRequest("generated audio is empty or silent")
+        }
+        let format = AVAudioFormat(standardFormatWithSampleRate: Double(result.sampleRate), channels: 1)!
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(samples.count))!
+        buffer.frameLength = buffer.frameCapacity
+        samples.withUnsafeBufferPointer { buffer.floatChannelData![0].update(from: $0.baseAddress!, count: samples.count) }
+        let output = try AVAudioFile(forWriting: URL(fileURLWithPath: args[1]), settings: format.settings)
+        try output.write(from: buffer)
+        let rms = sqrt(samples.reduce(Double(0)) { $0 + Double($1) * Double($1) } / Double(samples.count))
+        let ttfa = firstAudio.map { String(format: "%.3f", $0.timeIntervalSince(loaded)) } ?? "n/a"
+        print("BREEZE frames=\(result.frames) limit=\(result.hitFrameLimit) seconds=\(Double(samples.count) / Double(result.sampleRate)) rms=\(rms) load=\(loaded.timeIntervalSince(start)) gen=\(Date().timeIntervalSince(loaded)) ttfa=\(ttfa) peakGB=\(Double(Memory.peakMemory) / 1e9) output=\(args[1])")
+        print("BREEZE first_frames=\(args.contains("--all-codes") ? Array(result.codes) : Array(result.codes.prefix(3)))")
     }
 
     static func readReference(_ url: URL) throws -> [Float] {

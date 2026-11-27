@@ -1229,6 +1229,13 @@ public final class Qwen3TTSModel: Module, SpeechGenerationModel, @unchecked Send
     }
 
     private static func loadSpeechTokenizer(model: Qwen3TTSModel, path: URL) throws {
+        model.speechTokenizer = try loadSpeechTokenizer(path: path)
+        print("Loaded speech tokenizer decoder")
+    }
+
+    /// Loads the Qwen3-TTS 12 Hz codec from its folder. Breeze TTS 2 bundles
+    /// the same codec under `audio_tokenizer/` and shares this loader.
+    static func loadSpeechTokenizer(path: URL) throws -> Qwen3TTSSpeechTokenizer {
         // A missing codec config must not silently select another architecture.
         let configPath = path.appendingPathComponent("config.json")
         let tokenizerConfig = try JSONDecoder().decode(Qwen3TTSTokenizerConfig.self, from: Data(contentsOf: configPath))
@@ -1253,9 +1260,7 @@ public final class Qwen3TTSModel: Module, SpeechGenerationModel, @unchecked Send
             try speechTokenizer.update(parameters: ModuleParameters.unflattened(pairs), verify: .all)
             eval(speechTokenizer.parameters())
         }
-
-        model.speechTokenizer = speechTokenizer
-        print("Loaded speech tokenizer decoder")
+        return speechTokenizer
     }
 
     // MARK: - Generate tokenizer.json from vocab.json + merges.txt
