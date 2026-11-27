@@ -42,6 +42,10 @@ when this file gets updated relative to the version bump and the tag.
   2.4x for speculative verify. Output moves within a mean KL of about 1e-5 nats
   (Qwen3 8B Q4_K_M), so it is not bit-identical to the previous kernel.
   `TURBOSPARK_GGUF_KERNEL=current` restores it.
+- GGUF Q8_0 tensors also decode and verify through wide-load kernels by
+  default: Qwen3 8B Q8_0 decodes about 1.4x to 1.5x faster, with a mean KL of
+  about 1.5e-5 nats and the same greedy tokens. `TURBOSPARK_GGUF_KERNEL=current`
+  restores the previous Q4_K and Q8_0 kernels together.
 - `/v1/chat/completions` now answers 400 to `n` greater than 1 and to a
   `json_schema` response format with `strict: true`. Both were accepted before
   with only the `x-anyllm-degradation` header, so a client got one choice, or

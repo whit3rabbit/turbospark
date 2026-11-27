@@ -46,9 +46,11 @@ fn no_function_constants() -> FunctionConstantValues {
 /// quality gate (mean KL 1.1e-5, PPL unchanged) and every kernel bench favours
 /// it (1.5x to 1.9x GEMV, 1.4x to 2.4x verify), while the paired decode A/B
 /// was inconclusive on a busy host. `TURBOSPARK_GGUF_KERNEL=current` restores
-/// the previous kernels. Q8_0 waits for its own gate.
+/// the previous kernels. Q8_0 is on from its own gate (2026-11-26, Qwen3 8B
+/// Q8_0): quality PASS (mean KL 1.5e-5, greedy tokens equal) and a clean
+/// paired decode A/B of +43% (confirm on held-out prompts +49%).
 const Q4_K_WIDE_BY_DEFAULT: bool = true;
-const Q8_0_WIDE_BY_DEFAULT: bool = false;
+const Q8_0_WIDE_BY_DEFAULT: bool = true;
 
 /// `TURBOSPARK_GGUF_KERNEL`, read once per process: `wide` or `current`
 /// forces every format that has a wide pair, unset leaves each format at its

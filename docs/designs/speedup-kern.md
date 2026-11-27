@@ -531,6 +531,19 @@ check of that decision. From `cb8be041` on, a Q4_K A/B must set
 `TURBOSPARK_GGUF_KERNEL=current` on its baseline explicitly. Q8_0 stays
 `current` until its own A/B.
 
+Knob A/B and confirm (2026-11-26, AC power, quiet host, trusted evaluator
+`~/.turbospark/lab/bin/5fe079f5`, `current` vs `wide`, 3 clean pairs each):
+
+| Format | Quality (mean KL) | run-experiment median (95% CI) | confirm, held-out (95% CI) | Ledger (confirm) |
+|---|---|---|---|---|
+| Q4_K (Qwen3 8B Q4_K_M) | PASS, 1.11e-5, top-1 1.00 | +50.8% (+50.2, +50.8) | +45.5% (+41.7, +47.4) | `1795755163935-70733-21` |
+| Q8_0 (Qwen3 8B Q8_0) | PASS, 1.50e-5, tokens equal | +43.3% (+42.6, +47.5) | +49.2% (+49.2, +50.0) | `1795756390103-6512-25` |
+
+Peak memory is unchanged in both. Both verdicts are `keep`, so the Q4_K
+decision holds and Q8_0 is now wide by default too. `TURBOSPARK_GGUF_KERNEL=current`
+restores both previous pairs, and a GGUF A/B from here on must set it on the
+baseline.
+
 Stage B for Q4_K (2026-11-26, two runs on a quiet host, same 36 real tensors;
 `crates/gpu/tests/gguf_stage_b_price.rs`). Ratios against the current GEMV:
 
