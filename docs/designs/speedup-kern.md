@@ -424,6 +424,24 @@ halves of the proceed rule are met**. Stage B (the other arms, rows 2 to 8,
 other formats) is now open for Q4_K. Q8_0 has no wide arm yet: its 34-byte
 block is not 4-byte aligned, so it needs a different load plan.
 
+Step 4a (2026-11-26). `TURBOSPARK_GGUF_KERNEL=current|wide` (default
+`current`) selects the wide GEMV and a wide twin of the batched verify GEMM
+(`dequant_q4_k_gemm_wide`) together. `dequant_q4_k_wide_parity.rs` asserts the
+twin is bit-identical to B GEMV calls at every width 1 to 16; pointing the batched
+path back at the current kernel fails it. The wide lane prints
+`[engaged] gguf_q4k_wide`. On Qwen3 8B Q4_K_M (an install built from the local
+GGUF with `gguf_local_install`), `tslab gate` with the trusted evaluator
+(`~/.turbospark/lab/bin/22d70656`) gives:
+
+*   Quality: PASS. Mean KL 1.1e-5; teacher-forced decode over 1,280 positions has
+    mean KL 1.3e-5 (p99 1.1e-4) and 1 flip, not a sure one; PPL 1.390 in both arms.
+*   Memory: peak 820 MB in both arms.
+*   Paired decode tok/s: **inconclusive**. 2 clean pairs of 3 needed (median
+    +20%, 95% CI -10% to +50%, 1 better and 1 worse). 5 of 10 runs were dirty
+    from other sessions' compiles. Ledger `1795740462768-70075-33`.
+
+The default stays `current` until a re-run on a quiet host gives a verdict.
+
 Bench (new file `crates/lab/src/kernel/gguf_gemv.rs`, to be created):
 
 *   **Stage A (first):** the current kernel and one unit-wide loads arm, at row 1,
