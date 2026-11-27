@@ -242,7 +242,11 @@ impl EmbeddingGemma2CoreMl {
             .get("audio_tokens")
             .and_then(Tensor::to_f32_vec)
             .ok_or("audio_tokens output is missing or not float")?;
-        self.embed_soft(self.ids.audio_start, self.ids.audio_end, &soft, tokens)
+        let (start, end) = self
+            .ids
+            .audio
+            .ok_or("config.json declares no audio tokens for this install")?;
+        self.embed_soft(start, end, &soft, tokens)
     }
 
     /// Embeds an image (interleaved RGB8). `budget` picks the soft-token

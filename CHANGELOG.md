@@ -21,6 +21,10 @@ when this file gets updated relative to the version bump and the tag.
 - tslab: a teacher-forced decode quality gate, golden-answer, tool-call and
   long-context checks, server bench and soak, and the other items in
   `docs/TSLAB_IMPROVE.md`.
+- Embeddings: `embeddinggemma-2-coreml-int8`, an int8 EmbeddingGemma 2 Core ML
+  profile (text and image, 471 MB against 1.48 GB), status `runs`. The Core ML
+  host now reads int8 token tables with per-row fp16 scales and opens installs
+  without an audio tower. See `docs/COREML.md`.
 
 ### Performance
 - Qwen2 and Qwen2.5 prompt processing multiplies each projection once per

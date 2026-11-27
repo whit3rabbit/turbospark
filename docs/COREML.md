@@ -18,6 +18,7 @@ audio catalog reports `can_run: false`.
 | [FluidInference/parakeet-ultra-coreml](https://huggingface.co/FluidInference/parakeet-ultra-coreml/tree/95eaa59a39d4394f047a4dc5cce480388a60d1b6) | `95eaa59a39d4394f047a4dc5cce480388a60d1b6` | `coreml::parakeet` (same component contract as Redux) | CC-BY-4.0 |
 | [FluidInference/parakeet-unified-en-0.6b-coreml](https://huggingface.co/FluidInference/parakeet-unified-en-0.6b-coreml/tree/d32e972dd4315f1dc3f6be28fb2aab0ab3e80358) (streaming subset only) | `d32e972dd4315f1dc3f6be28fb2aab0ab3e80358` | `coreml::parakeet_unified`, `parakeet_unified_stream` | CC-BY-4.0 |
 | [FluidInference/embeddinggemma-2-coreml](https://huggingface.co/FluidInference/embeddinggemma-2-coreml/tree/3f978ddf92cac9aa07eb2dcf6eb36cf450f3dba4) | `3f978ddf92cac9aa07eb2dcf6eb36cf450f3dba4` | `coreml::embedding_gemma2`, `embedding_gemma2_media` | Apache-2.0 |
+| [lorelaiassistant/embeddinggemma-2-coreml-int8](https://huggingface.co/lorelaiassistant/embeddinggemma-2-coreml-int8/tree/45446c9c1bac44874191b6311dd4c26e0af313aa) (text and vision, no audio) | `45446c9c1bac44874191b6311dd4c26e0af313aa` | `coreml::embedding_gemma2` (int8 token table), `embedding_gemma2_media` | Apache-2.0 |
 | [FluidInference/speaker-diarization-coreml](https://huggingface.co/FluidInference/speaker-diarization-coreml/tree/7eab74f3463c736418d0eb10296261ae581146c9) (community-1 subset only) | `7eab74f3463c736418d0eb10296261ae581146c9` | `coreml::diarization` | CC-BY-4.0 (that subset) |
 | [FluidInference/unlimited-ocr-mlx-coreml](https://huggingface.co/FluidInference/unlimited-ocr-mlx-coreml/tree/4568571eacd864e0a253c609b3c9d0e00450cebc) (Core ML parts only) | `4568571eacd864e0a253c609b3c9d0e00450cebc` | `coreml::unlimited_ocr` | MIT |
 
@@ -167,6 +168,12 @@ Override values are `cpu`, `cpu_gpu`, `cpu_ane` and `all`.
 - **EmbeddingGemma 2:** text compiles each function for the Neural Engine on
   first use. Measured here: 15 s for `embed_32` at open, 37 s for `embed_128` on
   its first request.
+- **EmbeddingGemma 2 int8:** same defaults. `coreml_plan` puts every int8
+  text function wholly on the Neural Engine and `vision_280` wholly on the
+  GPU under `cpu_gpu`. Unlike the int8 Parakeet encoders, the int8 vision
+  tower ran on the GPU without aborting and with finite output
+  (`int8_gpu_tracks_fp16`), so it keeps the GPU default. One run, seven
+  inputs: not a broad stability claim.
 - **OCR:** the card reports wrong page embeddings on the Neural Engine.
 - **Speaker diarization:** `MLComputePlan` puts the segmentation model's
   LSTMs, FBank and PldaRho on the CPU whatever is requested, so they load
@@ -446,6 +453,20 @@ refuse any other, so a retried download never adopts a different pin.
   receipt is never replaced. The profile's `status` is `verified` because
   its named gates (`coreml_embeddinggemma2`, `pinned_coreml_installs_network`)
   ran on this pin; the loader refuses `verified` without gates.
+- **EmbeddingGemma 2 int8** (`embeddinggemma-2-coreml-int8`, 471 MB against
+  1.48 GB) installs to `models/embeddings/embeddinggemma-2-coreml-int8` by
+  the same rules. It is the pinned FluidInference packages weight-quantized
+  to int8 per output channel, plus an int8 token table with one fp16 scale
+  per row; there is no audio tower, so audio requests fail with "not
+  installed". Provenance: running the repository's own `scripts/quantize.py`
+  and `scripts/table_int8.py` (coremltools 9.0) on our fp16 pin reproduced
+  the token table, its scales and the vision `weight.bin` byte for byte;
+  the text `weight.bin` differs by 32 bytes of blob layout, and every
+  constant of all seven functions is equal by value. Against the fp16
+  reference the worst cosine is 0.99901 (text) and 0.99957 (image) over CPU,
+  Neural Engine and GPU. Its vectors are close to fp16 but not equal: do not
+  mix them with fp16 vectors in one index. Status is `runs`: throughput and
+  peak footprint are not measured yet.
 - **Unlimited OCR** installs to `models/ocr/unlimited-ocr-coreml` with an
   `ocr-receipt.json`, by the same rules (`crates/catalog/src/pinned_dir.rs`
   is shared with embeddings). It pins the nine Core ML files, 4.09 GB, and
@@ -646,6 +667,19 @@ now; the note is here so the guard is not removed.
   guard.
 - **`pack_256`:** batching for EmbeddingGemma 2 is unused until it has its own
   parity gate.
+- **EmbeddingGemma 2 int8 to `verified`:** needs a quotable placement bench
+  and peak footprint (`benchmark_coreml.py embed`, AC power, quiet host) and
+  its alias in `pinned_coreml_installs_network`. Nothing marks a stored index
+  stale when the embedding model changes, for this profile or any other.
+- **EmbeddingGemma 2 exports reviewed and declined (2026-11-27):**
+  - `shirochenkov90/embeddinggemma-2-coreml`: text only, enumerated 64 or
+    256 tokens, and its card reports all 2942 ops on the CPU under `.all`
+    (the "Flexible input shapes" trap above). Worse than the current pin on
+    every axis but exact fp32 parity.
+  - `silv4souz4/embeddinggemma-2-coreai-w8a16`: Apple Core AI `.aimodel`,
+    not Core ML. Needs macOS 27 and the beta Core AI runtime, which this
+    workspace has no binding for. It has 2048-token text and video frames;
+    revisit when Core AI is stable.
 - **Speaker diarization:** no speaker-count hints (pyannote's
   `num_speakers`, `min_speakers`, `max_speakers`), no overlapped-speech
   output (turns are exclusive), and no server endpoint. Imported files
