@@ -1373,6 +1373,27 @@ final class SurfaceTests: XCTestCase {
         XCTAssertThrowsError(try EmbeddingCatalog.install(alias: gemma.alias, revision: "main"))
     }
 
+    /// The int8 EmbeddingGemma 2 row reaches the app's embedding picker
+    /// (which lists every catalog profile) at its exact pin, after the fp16
+    /// row, without audio, and not claiming verification it has not earned.
+    func testEmbeddingCatalogListsThePinnedInt8Profile() throws {
+        let profiles = try EmbeddingCatalog.profiles()
+        let aliases = profiles.map(\.alias)
+        let fp16 = try XCTUnwrap(aliases.firstIndex(of: "embeddinggemma-2-coreml"))
+        let int8Index = try XCTUnwrap(aliases.firstIndex(of: "embeddinggemma-2-coreml-int8"))
+        XCTAssertLessThan(fp16, int8Index, "the verified fp16 profile stays first")
+        let int8 = profiles[int8Index]
+        XCTAssertEqual(int8.repository, "lorelaiassistant/embeddinggemma-2-coreml-int8")
+        XCTAssertEqual(int8.revision, "45446c9c1bac44874191b6311dd4c26e0af313aa")
+        XCTAssertEqual(int8.family, "embeddinggemma2")
+        // Audio search picks a profile by modality; this one has no audio tower.
+        XCTAssertEqual(int8.modalities, ["text", "image"])
+        XCTAssertEqual(int8.downloadBytes, 471_090_995)
+        XCTAssertFalse(int8.isVerified)
+        XCTAssertThrowsError(try EmbeddingCatalog.install(alias: int8.alias, revision: "main"))
+        XCTAssertThrowsError(try EmbeddingCatalog.install(alias: int8.alias, revision: String(repeating: "0", count: 40)))
+    }
+
     /// The probe refuses a family the runtime cannot run and accepts a
     /// supported one as runnable but not verified.
     func testEmbeddingProbeReportsFamilyVerdicts() throws {
