@@ -304,7 +304,8 @@ pub use dequant_iq_gemv::{
 #[cfg(target_os = "macos")]
 pub use dequant_kquant_gemm_batch::{
     bf16_gemm_resident, dequant_kquant_gemm_resident, encode_bf16_gemm_resident,
-    encode_dequant_kquant_gemm_resident, KQuantBatchType, KQuantResidentMatrix,
+    encode_dequant_kquant_gemm_resident, encode_dequant_q4_k_gemm_resident_choose,
+    KQuantBatchType, KQuantResidentMatrix,
 };
 #[cfg(target_os = "macos")]
 pub use dequant_legacy_gemv::{
@@ -326,7 +327,8 @@ pub use dequant_q3_k_gemv::{
 #[cfg(target_os = "macos")]
 pub use dequant_q4_k_gemv::{
     dequant_q4_k_gemv, dequant_q4_k_gemv_resident, dequant_q4_k_gemv_resident_wide,
-    encode_dequant_q4_k_gemv_resident, encode_dequant_q4_k_gemv_resident_wide,
+    dequant_q4_k_gemv_resident_wide_unroll, encode_dequant_q4_k_gemv_resident,
+    encode_dequant_q4_k_gemv_resident_wide, encode_dequant_q4_k_gemv_resident_wide_unroll,
     encode_embed_lookup_q4_k, q4_k_wide_selected, q4_k_row_bytes, Q4KResidentMatrix, Q4_K_BLOCK_BYTES,
     Q4_K_BLOCK_ELEMS,
 };

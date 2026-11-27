@@ -140,6 +140,47 @@ pub fn encode_dequant_kquant_gemm_resident(
     Ok(())
 }
 
+/// The batched Q4_K verify GEMM with an explicit kernel choice, for the
+/// KERN-04 Stage B probe, which times both in one process (the engine path
+/// above reads `TURBOSPARK_GGUF_KERNEL` once). Bench only.
+pub fn encode_dequant_q4_k_gemm_resident_choose(
+    context: &mut MetalContext,
+    pass: &PassEncoder,
+    w: &KQuantResidentMatrix<'_>,
+    x: (&metal::Buffer, u64),
+    y: (&metal::Buffer, u64),
+    batch: usize,
+    wide: bool,
+) -> Result<(), GpuError> {
+    assert_eq!(w.kind, KQuantBatchType::Q4K);
+    assert!((1..=MAX_BATCH_ROWS).contains(&batch));
+    if wide && (w.weights_offset % 4 != 0 || x.1 % 8 != 0) {
+        return Err(GpuError::InvalidInput(
+            "dequant_q4_k_gemm_wide needs 4-byte aligned weights and 8-byte aligned x".into(),
+        ));
+    }
+    let kernel = if wide {
+        "dequant_q4_k_gemm_wide"
+    } else {
+        "dequant_q4_k_gemm_simd"
+    };
+    let (m, n, b) = (w.rows as u32, w.cols as u32, batch as u32);
+    let (constants, key) = specialized_constants(b);
+    let pipeline = context.pipeline(SOURCE, kernel, &constants, &key)?;
+    pass.encode_threadgroups(
+        &pipeline,
+        &[
+            (w.buffer, 0, w.weights_offset),
+            (x.0, 1, x.1),
+            (y.0, 2, y.1),
+        ],
+        &[(u32_bytes(&m), 3), (u32_bytes(&n), 4), (u32_bytes(&b), 5)],
+        w.rows.div_ceil(ROWS_PER_THREADGROUP as usize) as u64,
+        THREADS_PER_GROUP,
+    );
+    Ok(())
+}
+
 /// `bf16_gemv_rows` and its batched sibling, ONE `&'static str` (Gotcha 4).
 const BF16_SOURCE: &str = concat!(
     include_str!("shaders/gemv_bf16.metal"),

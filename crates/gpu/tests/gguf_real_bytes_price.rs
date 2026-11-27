@@ -30,9 +30,11 @@ use std::io::{Read, Seek, SeekFrom};
 
 use half::f16;
 use turbospark_gpu::{
-    autorelease_pool, encode_dequant_int4_gemv_resident, encode_dequant_q4_k_gemv_resident,
-    encode_dequant_q4_k_gemv_resident_wide, encode_dequant_q8_0_gemv_resident, Int4ResidentMatrix,
-    MetalContext, PassEncoder, Q4KResidentMatrix, Q8_0ResidentMatrix,
+    autorelease_pool, encode_dequant_int4_gemv_resident, encode_dequant_q4_k_gemm_resident_choose,
+    encode_dequant_q4_k_gemv_resident, encode_dequant_q4_k_gemv_resident_wide,
+    encode_dequant_q4_k_gemv_resident_wide_unroll, encode_dequant_q8_0_gemv_resident,
+    Int4ResidentMatrix, KQuantBatchType, KQuantResidentMatrix, MetalContext, PassEncoder,
+    Q4KResidentMatrix, Q8_0ResidentMatrix,
 };
 
 /// Weight bytes each timed command buffer walks, as in gemv_format_price.rs.
@@ -121,6 +123,13 @@ enum ArmKind {
     Int4,
     /// The KERN-04 Stage A unit-wide loads arm (Q4_K only so far).
     Q4KWide,
+    /// Stage B: the wide GEMV over this many superblocks per iteration.
+    Q4KWideUnroll(u32),
+    /// Stage B: the batched verify GEMM at this width, wide or current.
+    Q4KGemm {
+        batch: usize,
+        wide: bool,
+    },
 }
 
 /// INT4 bytes for a matrix: packed nibbles, then BF16 scales and biases, one
@@ -144,7 +153,10 @@ fn build_arm(
         offsets.push(cursor);
         let bytes = match kind {
             ArmKind::Int4 => int4_bytes(t.rows, t.cols),
-            ArmKind::Block(_) | ArmKind::Q4KWide => t.nbytes,
+            ArmKind::Block(_)
+            | ArmKind::Q4KWide
+            | ArmKind::Q4KWideUnroll(_)
+            | ArmKind::Q4KGemm { .. } => t.nbytes,
         };
         cursor = align_up(cursor + bytes);
     }
@@ -222,6 +234,40 @@ fn encode_one(
                 (y, 0),
             )
             .expect("encode q4_k wide");
+        }
+        ArmKind::Q4KWideUnroll(unroll) => {
+            encode_dequant_q4_k_gemv_resident_wide_unroll(
+                context,
+                pass,
+                &Q4KResidentMatrix {
+                    buffer: &arm.blob,
+                    weights_offset: off,
+                    rows: t.rows,
+                    cols: t.cols,
+                },
+                (x, 0),
+                (y, 0),
+                unroll,
+            )
+            .expect("encode q4_k wide unroll");
+        }
+        ArmKind::Q4KGemm { batch, wide } => {
+            encode_dequant_q4_k_gemm_resident_choose(
+                context,
+                pass,
+                &KQuantResidentMatrix {
+                    buffer: &arm.blob,
+                    weights_offset: off,
+                    rows: t.rows,
+                    cols: t.cols,
+                    kind: KQuantBatchType::Q4K,
+                },
+                (x, 0),
+                (y, 0),
+                batch,
+                wide,
+            )
+            .expect("encode q4_k gemm");
         }
         ArmKind::Block(Block::Q8) => {
             encode_dequant_q8_0_gemv_resident(
@@ -344,4 +390,77 @@ fn run(block: Block, manifest_var: &str, ty: &str) {
 fn stage_a_real_bytes_price() {
     run(Block::Q4K, "TURBOSPARK_BENCH_Q4K_MANIFEST", "Q4_K");
     run(Block::Q8, "TURBOSPARK_BENCH_Q8_MANIFEST", "Q8_0");
+}
+
+/// Stage B for Q4_K (docs/designs/speedup-kern.md section 3), run only after
+/// Stage A cleared 1.25x: the unroll arms of the wide GEMV at one row, and the
+/// batched verify GEMM, current against wide, at B = 2, 4 and 8. Every arm
+/// reads the SAME real bytes (one shared buffer), and arms interleave each
+/// round. GB/s counts weight bytes once per dispatch, so a batched arm's rate
+/// is how fast it moves the matrix while serving B tokens.
+#[test]
+#[ignore = "benchmark: needs a real Metal device and a Q4_K manifest, reports rather than asserts"]
+fn stage_b_q4k_arms() {
+    let tensors = read_manifest("TURBOSPARK_BENCH_Q4K_MANIFEST", "Q4_K");
+    let real: Vec<Vec<u8>> = tensors.iter().map(read_tensor).collect();
+    let mut context = MetalContext::new().expect("Metal device");
+    let base = build_arm(
+        &context,
+        "current",
+        ArmKind::Block(Block::Q4K),
+        &tensors,
+        Some(&real),
+    );
+    let share = |label: &'static str, kind: ArmKind| Arm {
+        label,
+        kind,
+        blob: base.blob.clone(),
+        offsets: base.offsets.clone(),
+        footprint: base.footprint,
+    };
+    let mut arms = vec![
+        share("wide", ArmKind::Q4KWide),
+        share("wide u2", ArmKind::Q4KWideUnroll(2)),
+        share("wide u4", ArmKind::Q4KWideUnroll(4)),
+    ];
+    for batch in [2usize, 4, 8] {
+        let label_cur: &'static str = Box::leak(format!("gemm B={batch} current").into_boxed_str());
+        let label_wide: &'static str = Box::leak(format!("gemm B={batch} wide").into_boxed_str());
+        arms.push(share(label_cur, ArmKind::Q4KGemm { batch, wide: false }));
+        arms.push(share(label_wide, ArmKind::Q4KGemm { batch, wide: true }));
+    }
+    arms.insert(0, base);
+
+    let max_cols = tensors.iter().map(|t| t.cols).max().unwrap();
+    let max_rows = tensors.iter().map(|t| t.rows).max().unwrap();
+    let x = context.new_output_buffer((8 * max_cols * 2) as u64);
+    let y = context.new_output_buffer((8 * max_rows * 2) as u64);
+
+    let mut best = vec![0.0f64; arms.len()];
+    for round in 0..6 {
+        for (i, arm) in arms.iter().enumerate() {
+            let (seconds, walked) = walk(&mut context, arm, &tensors, &x, &y);
+            if round > 0 {
+                best[i] = best[i].max(walked as f64 / seconds / 1e9);
+            }
+        }
+    }
+    println!(
+        "Q4K stage B: {} tensors, {:.1} MB of real Q4_K bytes, one shared buffer",
+        tensors.len(),
+        arms[0].footprint as f64 / 1e6
+    );
+    for (i, arm) in arms.iter().enumerate() {
+        println!(
+            "  {:<20} {:6.1} GB/s  ({:.3}x current GEMV)",
+            arm.label,
+            best[i],
+            best[i] / best[0]
+        );
+    }
+    for (k, batch) in [2usize, 4, 8].iter().enumerate() {
+        let cur = best[4 + 2 * k];
+        let wide = best[5 + 2 * k];
+        println!("  verify B={batch}: wide / current {:.3}x", wide / cur);
+    }
 }

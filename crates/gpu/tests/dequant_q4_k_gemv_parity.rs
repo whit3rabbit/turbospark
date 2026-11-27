@@ -13,8 +13,8 @@
 
 use half::f16;
 use turbospark_gpu::{
-    dequant_q4_k_gemv, dequant_q4_k_gemv_resident, dequant_q4_k_gemv_resident_wide, q4_k_row_bytes,
-    MetalContext, Q4KResidentMatrix,
+    dequant_q4_k_gemv, dequant_q4_k_gemv_resident, dequant_q4_k_gemv_resident_wide,
+    dequant_q4_k_gemv_resident_wide_unroll, q4_k_row_bytes, MetalContext, Q4KResidentMatrix,
 };
 
 const SUPERBLOCK: usize = 256;
@@ -353,4 +353,38 @@ fn the_wide_load_arm_refuses_a_misaligned_offset() {
     )
     .expect_err("misaligned offset");
     assert!(err.to_string().contains("aligned"), "{err}");
+}
+
+/// The Stage B unroll arms against the CPU reference. Five superblocks per
+/// row, so U = 2 and U = 4 both run a tail through accumulator 0, and each U
+/// runs in the same context: a pipeline key missing U would serve the first
+/// U's pipeline to the others and the tail cases would fail.
+#[test]
+fn the_unrolled_wide_arms_match_cpu_reference_with_a_tail() {
+    let mut context = MetalContext::new().expect("Metal device available on this machine");
+    let (m, n) = (11usize, 5 * SUPERBLOCK);
+    let rows: Vec<Vec<u8>> = (0..m)
+        .map(|r| turbospark_compute::quantize_q4_k(&weights(n, 600 + r as u32)))
+        .collect();
+    let refs: Vec<&[u8]> = rows.iter().map(|r| r.as_slice()).collect();
+    let blob: Vec<u8> = rows.concat();
+    let buffer = context.new_buffer_with_data(&blob);
+    let x_f32 = weights(n, 4242);
+    let x_f16: Vec<f16> = x_f32.iter().map(|&v| f16::from_f32(v)).collect();
+    let cpu = turbospark_compute::dequant_q4_k_gemv(&refs, &x_f32, n);
+    for unroll in 1..=4 {
+        let gpu = dequant_q4_k_gemv_resident_wide_unroll(
+            &mut context,
+            &Q4KResidentMatrix {
+                buffer: &buffer,
+                weights_offset: 0,
+                rows: m,
+                cols: n,
+            },
+            &x_f16,
+            unroll,
+        )
+        .expect("GPU dispatch succeeds");
+        assert_matches(&format!("wide unroll {unroll}"), &gpu, &cpu, n);
+    }
 }
