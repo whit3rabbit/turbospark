@@ -21,9 +21,17 @@ when this file gets updated relative to the version bump and the tag.
 - tslab: a teacher-forced decode quality gate, golden-answer, tool-call and
   long-context checks, server bench and soak, and the other items in
   `docs/TSLAB_IMPROVE.md`.
-- tslab: `idle-gap` cause arms (`TURBOSPARK_LAB_IDLE_PRESTEP=wake|touch`) with
-  GPU power-state readings, and `kernel --bench gdn_delta --oracle on`, which
+- tslab: `idle-gap` cause arms (`TURBOSPARK_LAB_IDLE_PRESTEP=wake|touch|prewarm|touch-all`)
+  and keep-warm arms (`TURBOSPARK_LAB_IDLE_KEEPWARM_MS`,
+  `TURBOSPARK_LAB_IDLE_KEEPWARM`) with GPU power-state, energy and memory
+  readings, and `kernel --bench gdn_delta --oracle on`, which
   checks the GDN delta kernels against an FP64 reference.
+- Inkling 2: an opt-in bounded keep-warm for resident installs
+  (`TURBOSPARK_INKLING2_KEEPWARM_MS=<50..5000>`, window
+  `TURBOSPARK_INKLING2_KEEPWARM_WINDOW_S`, default 120 s). Off by default.
+  While the runner is idle it names the resident buffers so macOS keeps them
+  mapped, which removes most of the first-pass stall after 1 to 2 s idle; it
+  stops after the window and pauses under memory pressure.
 
 ### Performance
 - Qwen2 and Qwen2.5 prompt processing multiplies each projection once per

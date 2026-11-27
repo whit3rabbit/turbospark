@@ -826,6 +826,15 @@ pub fn idle_gap_cmd(mut args: Args) -> Result<CmdOutput, String> {
                 kw["spent_ms"].as_f64().unwrap_or(f64::NAN)
             );
         }
+        let rkw = &r["runner_keep_warm"];
+        if rkw.is_object() {
+            crate::say!(
+                "           runner keep-warm over the gap: {} fired, {} paused, {} failed",
+                rkw["fired"],
+                rkw["paused"],
+                rkw["failed"]
+            );
+        }
         crate::say!(
             "           gap energy {}; footprint {}; swap {:+.0} MiB, {} compressions over the row",
             r["gap_energy"]["total_j"]

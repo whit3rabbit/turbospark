@@ -101,6 +101,13 @@ impl RealForwardRunner {
         }
     }
 
+    /// The bounded keep-warm's counters (`TURBOSPARK_INKLING2_KEEPWARM_MS`),
+    /// or `None` when this runner started none.
+    #[cfg(target_os = "macos")]
+    pub fn keep_warm_stats(&self) -> Option<gpu::KeepWarmStats> {
+        self.inkling2_keep_warm_stats()
+    }
+
     /// Let the NEXT turn continue from this turn's KV when its prompt begins
     /// with exactly the tokens that built it, instead of re-prefilling the
     /// whole transcript (`crate::kv_prefix`).

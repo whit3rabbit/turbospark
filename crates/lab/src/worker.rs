@@ -1176,8 +1176,20 @@ fn idle_gap_probe(
         let compressions_before = crate::host::compressor_counters().0;
         let before_gap = pstate.read();
         let energy_before = energy.read();
+        let runner_kw_before = runner.keep_warm_stats();
         let (keepwarm_count, keepwarm_ms) = idle_gap_sleep(runner, probe.as_ref(), keepwarm, gap)?;
         let energy_after = energy.read();
+        // The runner's own keep-warm thread (TURBOSPARK_INKLING2_KEEPWARM_MS),
+        // counted over the gap alone.
+        let runner_kw = runner_kw_before
+            .zip(runner.keep_warm_stats())
+            .map(|(a, b)| {
+                serde_json::json!({
+                    "fired": b.fired - a.fired,
+                    "paused": b.paused - a.paused,
+                    "failed": b.failed - a.failed,
+                })
+            });
         let after_gap = pstate.read();
         let started = Instant::now();
         let pages = match (&probe, prestep.action()) {
@@ -1231,6 +1243,7 @@ fn idle_gap_probe(
                                          "count": keepwarm_count,
                                          "spent_ms": keepwarm_ms,
                                      })),
+                                     "runner_keep_warm": runner_kw,
                                      "gap_energy": GapEnergy::window(&energy_before, &energy_after),
                                      "energy_error": energy.0.as_ref().err(),
                                      "footprint_bytes": footprint,

@@ -67,6 +67,54 @@ impl RealForwardRunner {
         Ok(())
     }
 
+    /// Starts the bounded keep-warm (KERN-05 Step 3) when
+    /// `TURBOSPARK_INKLING2_KEEPWARM_MS=<50..=5000>` is set, optionally with
+    /// `TURBOSPARK_INKLING2_KEEPWARM_WINDOW_S=<1..=3600>` (default 120). Off
+    /// by default. A thread names the buffers the prewarm names (every
+    /// resident expert buffer and the trunk) once per interval while the
+    /// runner is idle, until the window after its last pass, and not under
+    /// memory pressure. Without it the first pass after 1 to 2 s idle waits
+    /// 150 to 260 ms on mlx4 while macOS remaps them; with it, 2 to 6 ms
+    /// (`docs/designs/speedup-kern.md`). A streamed install names nothing
+    /// (its experts are mapped and the system must stay free to drop them),
+    /// so the knob is refused there rather than ignored, and so is a bad
+    /// value.
+    pub(crate) fn inkling2_start_keep_warm(&mut self) -> Result<(), RealForwardError> {
+        let env = |k: &str| std::env::var(k).ok();
+        let cfg = gpu::KeepWarmConfig::parse(
+            env("TURBOSPARK_INKLING2_KEEPWARM_MS").as_deref(),
+            env("TURBOSPARK_INKLING2_KEEPWARM_WINDOW_S").as_deref(),
+        )
+        .map_err(|e| RealForwardError::Unsupported(format!("TURBOSPARK_INKLING2_KEEPWARM: {e}")))?;
+        let Some(cfg) = cfg else {
+            return Ok(());
+        };
+        let Some(st) = self.real_inkling2.as_mut() else {
+            return Ok(());
+        };
+        let Some(res) = st.resident.as_ref() else {
+            return Err(RealForwardError::Unsupported(
+                "TURBOSPARK_INKLING2_KEEPWARM: only an install with resident experts keeps \
+                 warm; a streamed install's experts are mapped and never named"
+                    .to_string(),
+            ));
+        };
+        let mut buffers: Vec<gpu::MetalBuffer> = res.layers.to_vec();
+        buffers.push(self.weights.buffer().to_owned());
+        st.keep_warm =
+            Some(gpu::KeepWarm::start(&self.context, buffers, cfg).map_err(RealForwardError::Gpu)?);
+        foundation::engaged!("inkling2_keep_warm");
+        Ok(())
+    }
+
+    /// The keep-warm's counters, or `None` when none is running.
+    pub(crate) fn inkling2_keep_warm_stats(&self) -> Option<gpu::KeepWarmStats> {
+        self.real_inkling2
+            .as_ref()
+            .and_then(|st| st.keep_warm.as_ref())
+            .map(gpu::KeepWarm::stats)
+    }
+
     /// Whether this is an Inkling 2 runner with resident experts, the only
     /// case [`Self::inkling2_prewarm_commit`] has buffers to name.
     pub(crate) fn inkling2_has_resident_experts(&self) -> bool {

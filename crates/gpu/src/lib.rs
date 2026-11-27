@@ -123,6 +123,9 @@ mod inkling2_batch;
 mod inkling2_dspark;
 #[cfg(target_os = "macos")]
 mod inkling2_ops;
+/// Opt-in bounded keep-warm for resident buffers (KERN-05 Step 3).
+#[cfg(target_os = "macos")]
+mod keep_warm;
 #[cfg(target_os = "macos")]
 mod kv_cache;
 #[cfg(target_os = "macos")]
@@ -184,6 +187,11 @@ pub mod submit_probe;
 /// Lab-only idle-stall probes (KERN-05 Step 1a).
 #[cfg(target_os = "macos")]
 pub mod touch;
+#[cfg(target_os = "macos")]
+pub use keep_warm::{
+    keep_warm_tick, KeepWarm, KeepWarmConfig, KeepWarmStats, KeepWarmTick,
+    KEEP_WARM_DEFAULT_WINDOW_S, KEEP_WARM_EVERY_MS_RANGE, KEEP_WARM_WINDOW_S_RANGE,
+};
 #[cfg(target_os = "macos")]
 mod utility;
 #[cfg(target_os = "macos")]

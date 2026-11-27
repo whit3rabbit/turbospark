@@ -87,6 +87,9 @@ pub(crate) struct RealInkling2State {
     /// The DSpark block drafter, open only when a caller asked for it
     /// (`DflashDraftPolicy::Fixed` at open, `dspark.rs`).
     pub(crate) dspark: Option<super::dspark::DsparkState>,
+    /// The opt-in bounded keep-warm (`TURBOSPARK_INKLING2_KEEPWARM_MS`,
+    /// `prefill.rs`), naming the resident experts and the trunk while idle.
+    pub(crate) keep_warm: Option<gpu::KeepWarm>,
     /// Per physical layer, host copies of the F32 router bias.
     pub(crate) router_bias: Vec<Vec<f32>>,
     /// Per core layer, the four message queries [Q, K, V, FFN] as F32 rows.
@@ -616,6 +619,7 @@ impl RealInkling2State {
             batch: None,
             verify: None,
             dspark: None,
+            keep_warm: None,
             resident,
             lamq: lamq.map(std::sync::Arc::new),
             max_ctx,
