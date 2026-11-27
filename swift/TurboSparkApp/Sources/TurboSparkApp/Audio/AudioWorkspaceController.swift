@@ -506,7 +506,11 @@ final class AudioWorkspaceController: ObservableObject {
             recipe.modelID = listed.first?.identity.alias
         }
     }
-    static let speechPreference = ["parakeet-ultra-coreml", "parakeet-redux-coreml", "whisper-base"]
+    // Fluid Speech Pro ranks after Ultra until this repo measures its WER;
+    // only its transcript parity with the CPU port is gated. Its CPU row
+    // (the one with clean transcripts) is slower than any Core ML row.
+    static let speechPreference = ["parakeet-ultra-coreml", "fluid-speech-pro-coreml", "parakeet-redux-coreml",
+                                   "fluid-speech-pro-mlx-8bit", "whisper-base"]
     static func preferredMusicProfiles(_ profiles: [AudioProfile]) -> [AudioProfile] {
         profiles.enumerated().sorted { left, right in
             let leftIsDefault = left.element.identity.alias == defaultMusicProfileAlias
@@ -874,7 +878,10 @@ final class AudioWorkspaceController: ObservableObject {
             }
         }
     }
-    func residentSession(for profile: AudioProfile, portable: Bool = false, experimentalMetal: Bool = false, source: AudioLibraryItem? = nil) async throws -> AudioSession {
+    func residentSession(for profile: AudioProfile, portable requestedPortable: Bool = false, experimentalMetal: Bool = false, source: AudioLibraryItem? = nil) async throws -> AudioSession {
+        // A row whose declared runtime is the CPU opens portable from every
+        // caller (the Record final pass included), as `beginRun` does.
+        let portable = requestedPortable || Self.runsOnDeclaredCPU(profile)
         idleTask?.cancel()
         var url: URL?
         let path: String

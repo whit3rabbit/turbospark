@@ -15,6 +15,13 @@
 //! (`audio::stt::parakeet`, `redux_mode`): a blank advances at least one
 //! frame, and the step count is capped at `max_symbols * frames`. That CPU
 //! decoder on `moondream/parakeet-redux` is the parity oracle.
+//!
+//! FluidVoice's `fluid-speech-pro-coreml` uses the same feature names and
+//! shapes with the joint program named `JointDecision`, a `config.json`
+//! without `contract`, and its FrameCleaner compiled into `Encoder`. Its
+//! reference (parakeet-mlx through `fluid_speech_mlx.py`) decodes with the
+//! standard TDT loop, so that export uses [`tdt_greedy_standard`], whose
+//! oracle is the CPU Fluid decoder.
 
 use std::path::Path;
 
@@ -37,6 +44,58 @@ pub const REQUIRED_DIRS: [&str; 4] = [
 /// export. A different contract may use a different vocabulary or graph,
 /// so it is refused rather than guessed at.
 pub const KNOWN_CONTRACT: &str = "parakeet-tdt-0.6b-v3-coreml";
+/// The four programs of FluidVoice's Fluid Speech Pro export.
+pub const FLUID_REQUIRED_DIRS: [&str; 4] = [
+    "Preprocessor.mlmodelc",
+    "Encoder.mlmodelc",
+    "Decoder.mlmodelc",
+    "JointDecision.mlmodelc",
+];
+/// `name` in the Fluid export's `config.json`, which carries no `contract`.
+pub const FLUID_EXPORT_NAME: &str = "Fluid Speech Pro";
+/// The Fluid export states its encoder weights only in prose ("8-bit
+/// (int8, one scale per output channel)"), so the format is recorded here.
+/// Not GPU-verified, so the encoder defaults to the Neural Engine.
+const FLUID_WEIGHT_FORMAT: &str = "int8_linear_per_channel";
+
+/// Which Core ML Parakeet export a directory holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParakeetExport {
+    /// FluidInference v3 contract (Redux, Ultra).
+    V3,
+    /// FluidVoice Fluid Speech Pro (verbatim style).
+    FluidSpeechPro,
+}
+
+impl ParakeetExport {
+    pub fn required_dirs(self) -> [&'static str; 4] {
+        match self {
+            Self::V3 => REQUIRED_DIRS,
+            Self::FluidSpeechPro => FLUID_REQUIRED_DIRS,
+        }
+    }
+
+    /// Identifies the export from its program directories, vocabulary and,
+    /// for Fluid, the `name` its `config.json` declares. A directory with
+    /// both joint programs is refused: which one runs would be a guess.
+    pub fn detect(dir: &Path) -> Option<Self> {
+        let has = |dirs: [&str; 4]| dirs.iter().all(|d| dir.join(d).is_dir());
+        if !dir.join(VOCAB_FILE).is_file() {
+            return None;
+        }
+        match (has(REQUIRED_DIRS), has(FLUID_REQUIRED_DIRS)) {
+            (true, false) => Some(Self::V3),
+            (false, true) => {
+                let named = read_config(dir).ok().flatten().is_some_and(|c| {
+                    c.get("name").and_then(|n| n.as_str()) == Some(FLUID_EXPORT_NAME)
+                        && c.get("contract").is_none()
+                });
+                named.then_some(Self::FluidSpeechPro)
+            }
+            _ => None,
+        }
+    }
+}
 
 /// Hop 160 times subsampling 8: one encoder frame per 80 ms. Same grid as
 /// the CPU decoder (`subsampling_factor * hop / sample_rate`).
@@ -111,6 +170,9 @@ impl ParakeetCoreMlOptions {
 /// `encoders["Encoder.mlmodelc"].weight_format` from the export's
 /// `config.json`, or `None` when the export does not declare one.
 pub fn encoder_weight_format(dir: &Path) -> Result<Option<String>, String> {
+    if ParakeetExport::detect(dir) == Some(ParakeetExport::FluidSpeechPro) {
+        return Ok(Some(FLUID_WEIGHT_FORMAT.to_owned()));
+    }
     let Some(config) = read_config(dir)? else {
         return Ok(None);
     };
@@ -172,6 +234,7 @@ pub struct ParakeetCoreMl {
     joint: CoreMlModel,
     vocabulary: Vec<String>,
     dims: Dims,
+    export: ParakeetExport,
 }
 
 impl std::fmt::Debug for ParakeetCoreMl {
@@ -340,6 +403,13 @@ impl ParakeetCoreMl {
             return Err("Parakeet on Core ML requires macOS 15 or newer".into());
         }
         check_contract(dir)?;
+        let export = ParakeetExport::detect(dir).ok_or_else(|| {
+            format!(
+                "{} is not a recognized Core ML Parakeet export",
+                dir.display()
+            )
+        })?;
+        let programs = export.required_dirs();
         check_encoder_units(
             encoder_weight_format(dir)?.as_deref(),
             opts.encoder_units,
@@ -353,10 +423,10 @@ impl ParakeetCoreMl {
         };
         // The preprocessor runs on the CPU in FluidAudio too: it is a small
         // STFT whose output feeds every later stage, so it stays exact.
-        let preprocessor = load(REQUIRED_DIRS[0], ComputeUnits::CpuOnly)?;
-        let encoder = load(REQUIRED_DIRS[1], opts.encoder_units)?;
-        let decoder = load(REQUIRED_DIRS[2], opts.step_units)?;
-        let joint = load(REQUIRED_DIRS[3], opts.step_units)?;
+        let preprocessor = load(programs[0], ComputeUnits::CpuOnly)?;
+        let encoder = load(programs[1], opts.encoder_units)?;
+        let decoder = load(programs[2], opts.step_units)?;
+        let joint = load(programs[3], opts.step_units)?;
         let dims = read_dims(&preprocessor, &encoder, &decoder, &joint)?;
         Ok(Self {
             preprocessor,
@@ -365,6 +435,7 @@ impl ParakeetCoreMl {
             joint,
             vocabulary,
             dims,
+            export,
         })
     }
 
@@ -451,7 +522,14 @@ impl ParakeetCoreMl {
             dims: d,
         };
         let blank = self.vocabulary.len();
-        let emitted = tdt_greedy_redux(&stepper, frames, blank, &DURATIONS, MAX_SYMBOLS)?;
+        let emitted = match self.export {
+            ParakeetExport::V3 => {
+                tdt_greedy_redux(&stepper, frames, blank, &DURATIONS, MAX_SYMBOLS)?
+            }
+            ParakeetExport::FluidSpeechPro => {
+                tdt_greedy_standard(&stepper, frames, blank, &DURATIONS, MAX_SYMBOLS)?
+            }
+        };
         let frame_seconds = FRAME_SAMPLES as f32 / SAMPLE_RATE as f32;
         let offset = start_sample as f32 / SAMPLE_RATE as f32;
         let mut accumulated_text = String::new();
@@ -507,7 +585,11 @@ fn take<'a>(
 /// Joins a window onto the transcript so far. The contiguous-run merge is
 /// tried first and the subsequence merge is its fallback, the same order
 /// mlx-audio's chunked Parakeet decode uses.
-fn merge_windows(a: Vec<AlignedToken>, b: Vec<AlignedToken>, overlap: f32) -> Vec<AlignedToken> {
+pub(crate) fn merge_windows(
+    a: Vec<AlignedToken>,
+    b: Vec<AlignedToken>,
+    overlap: f32,
+) -> Vec<AlignedToken> {
     match merge_longest_contiguous(a.clone(), b.clone(), overlap) {
         Ok(m) => m,
         Err(_) => merge_longest_common_subsequence(a, b, overlap)
@@ -516,14 +598,14 @@ fn merge_windows(a: Vec<AlignedToken>, b: Vec<AlignedToken>, overlap: f32) -> Ve
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct WindowPlan {
-    starts: Vec<usize>,
-    overlap: usize,
+pub(crate) struct WindowPlan {
+    pub(crate) starts: Vec<usize>,
+    pub(crate) overlap: usize,
 }
 
 /// Window start samples. Starts are whole encoder frames apart, so every
 /// window's frames land on the same 80 ms grid as the first.
-fn plan_windows(len: usize, window: usize) -> WindowPlan {
+pub(crate) fn plan_windows(len: usize, window: usize) -> WindowPlan {
     let hop = (window - OVERLAP_SAMPLES) / FRAME_SAMPLES * FRAME_SAMPLES;
     let mut starts = vec![0];
     while starts[starts.len() - 1] + window < len {
@@ -597,6 +679,56 @@ pub(crate) fn tdt_greedy_redux<S: TdtStepper>(
             });
         }
         time = time.saturating_add(duration);
+    }
+    Ok(out)
+}
+
+/// Greedy TDT decode with the standard (NeMo / parakeet-mlx) semantics, as
+/// the CPU decoder's non-Redux branch: a blank may have duration 0, and
+/// after `max_symbols` consecutive zero-duration steps time is forced one
+/// frame on. The prediction is cached as in [`tdt_greedy_redux`].
+pub(crate) fn tdt_greedy_standard<S: TdtStepper>(
+    s: &S,
+    frames: usize,
+    blank: usize,
+    durations: &[usize],
+    max_symbols: usize,
+) -> Result<Vec<Emitted>, String> {
+    let mut last = blank;
+    let mut state = s.initial();
+    let mut proposal: Option<(Vec<f32>, S::State)> = None;
+    let mut time = 0usize;
+    let mut zero_duration_steps = 0usize;
+    let mut out = Vec::new();
+    while time < frames {
+        if proposal.is_none() {
+            proposal = Some(s.predict(last, &state)?);
+        }
+        let prediction = &proposal.as_ref().expect("set above").0;
+        let (token, duration_index) = s.joint(time, prediction)?;
+        let duration = *durations
+            .get(duration_index)
+            .ok_or_else(|| format!("duration index {duration_index} is out of range"))?;
+        if token > blank {
+            return Err(format!("token {token} is beyond blank {blank}"));
+        }
+        if token != blank {
+            last = token;
+            state = proposal.take().expect("set above").1;
+            out.push(Emitted {
+                token,
+                frame: time,
+                duration,
+            });
+        }
+        time = time.saturating_add(duration);
+        zero_duration_steps += 1;
+        if duration != 0 {
+            zero_duration_steps = 0;
+        } else if zero_duration_steps >= max_symbols {
+            time += 1;
+            zero_duration_steps = 0;
+        }
     }
     Ok(out)
 }
@@ -723,6 +855,28 @@ mod tests {
         assert_eq!(*s.frames_seen.borrow(), vec![0, 1, 2]);
         // Only the initial prediction: no token was accepted.
         assert_eq!(s.predicts.get(), 1);
+    }
+
+    #[test]
+    fn standard_loop_forces_progress_after_max_symbols_zero_steps() {
+        // A zero-duration blank stays on its frame (unlike Redux) until
+        // `max_symbols` zero steps, then time moves one frame.
+        let s = Scripted::new(vec![(BLANK, 0), (BLANK, 0), (BLANK, 1), (BLANK, 1)]);
+        let out = tdt_greedy_standard(&s, 2, BLANK, &DURATIONS, 2).unwrap();
+        assert!(out.is_empty());
+        assert_eq!(*s.frames_seen.borrow(), vec![0, 0, 1]);
+        assert_eq!(s.predicts.get(), 1);
+    }
+
+    #[test]
+    fn standard_loop_emits_like_the_cpu_decoder() {
+        // Two tokens on frame 0, then a jump of 2, then a blank to the end.
+        let s = Scripted::new(vec![(3, 0), (4, 0), (5, 2), (BLANK, 1)]);
+        let out = tdt_greedy_standard(&s, 3, BLANK, &DURATIONS, 10).unwrap();
+        let tokens: Vec<(usize, usize)> = out.iter().map(|e| (e.token, e.frame)).collect();
+        assert_eq!(tokens, vec![(3, 0), (4, 0), (5, 0)]);
+        assert_eq!(*s.frames_seen.borrow(), vec![0, 0, 0, 2]);
+        assert_eq!(s.predicts.get(), 4);
     }
 
     #[test]

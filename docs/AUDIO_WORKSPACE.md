@@ -107,7 +107,12 @@ its text is saved into one draft revision that each save replaces. Otherwise, or
 if the stream stops, live text is a draft assembled from bounded windows every
 15 seconds. A voice reference recording has no live text. Final refinement reads
 the saved recording with the selected batch model; a fresh install prefers
-Parakeet Ultra, then Redux, then Whisper Base, and a saved choice always wins.
+Parakeet Ultra, then Fluid Speech Pro (Core ML), then Redux, then Fluid Speech
+Pro (CPU), then Whisper Base, and a saved choice always wins. Fluid Speech Pro
+ranks below Ultra until this repo measures its WER. With its CPU row as the
+final model, the Final Transcript slot shows "Remove fillers and repeats"
+(`cleanTranscripts`, off by default), which sends `transcript_style: clean`;
+no other model receives the field.
 With none of them installed on macOS 26 or newer, the final pass uses Apple
 Speech (built-in), `SpeechAnalyzer` with `SpeechTranscriber`
 (`Audio/AppleSpeech/`). It needs no TurboSpark download: macOS fetches and

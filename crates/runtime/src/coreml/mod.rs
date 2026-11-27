@@ -26,7 +26,8 @@ pub use unlimited_ocr::{OcrEvent, OcrOptions, OcrPage, OcrResult, OcrStats, Unli
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CoreMlLayout {
     /// FluidInference Parakeet TDT export: Preprocessor, Encoder, Decoder,
-    /// JointDecisionv3 plus `parakeet_vocab.json`.
+    /// JointDecisionv3 plus `parakeet_vocab.json`, or FluidVoice's Fluid
+    /// Speech Pro export (`JointDecision`, see [`parakeet::ParakeetExport`]).
     ParakeetTdt,
     /// FluidInference Parakeet Unified EN streaming export: decoder, joint
     /// decision, `vocab.json`, `config.json` and one streaming encoder.
@@ -58,9 +59,7 @@ impl CoreMlLayout {
 /// before it. A directory that is not a known layout returns `None` and the
 /// caller falls through to its usual checks.
 pub fn detect_layout(dir: &Path) -> Option<CoreMlLayout> {
-    if parakeet::REQUIRED_DIRS.iter().all(|d| dir.join(d).is_dir())
-        && dir.join(parakeet::VOCAB_FILE).is_file()
-    {
+    if parakeet::ParakeetExport::detect(dir).is_some() {
         return Some(CoreMlLayout::ParakeetTdt);
     }
     if [parakeet_unified::DECODER, parakeet_unified::JOINT]

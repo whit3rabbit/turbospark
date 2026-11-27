@@ -58,7 +58,8 @@ pub use multitalker_asr::{MultitalkerAsr, MultitalkerProfile, MULTITALKER_PARAKE
 pub use nemo::{AlignedResult, AlignedSentence, AlignedToken};
 pub use nemotron_asr::{NemotronAsr, NemotronAsrConfig, NemotronAsrProfile, NEMOTRON_3_5_ASR};
 pub use parakeet::{
-    ParakeetConfig, ParakeetProfile, ParakeetTdt, PARAKEET_REDUX, PARAKEET_TDT_V2, PARAKEET_TDT_V3,
+    FluidSpeechConfig, ParakeetConfig, ParakeetProfile, ParakeetTdt, TranscriptStyle,
+    PARAKEET_FLUID_SPEECH_PRO, PARAKEET_REDUX, PARAKEET_TDT_V2, PARAKEET_TDT_V3,
 };
 pub use phonon::{Phonon, PhononProfile, PHONON_1};
 pub use qwen2_audio::{Qwen2Audio, Qwen2AudioProfile, QWEN2_AUDIO_7B_INSTRUCT_4BIT};

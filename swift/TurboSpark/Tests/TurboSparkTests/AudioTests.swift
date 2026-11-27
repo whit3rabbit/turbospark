@@ -42,6 +42,10 @@ final class AudioTests: XCTestCase {
         XCTAssertNil(plain["t_w"])
         XCTAssertNil(plain["reference_sample_rate"])
         XCTAssertEqual(plain["consent"] as? Bool, false)
+        XCTAssertNil(plain["transcript_style"], "unset style leaves the model's verbatim default")
+        var clean = AudioRequest(task: .speechToText)
+        clean.transcriptStyle = "clean"
+        XCTAssertEqual(try wire(clean)["transcript_style"] as? String, "clean")
     }
     func testVoiceCloneCapabilityAndAcknowledgmentsDecode() throws {
         let clone = AudioCapabilities(operations: ["synthesize", "voice_clone"], backend: "portable_cpu",

@@ -452,6 +452,59 @@ fn load_vec(file: &SafetensorsFile, name: &str) -> Result<Vec<f32>> {
     })
 }
 
+/// A named low-rank update folded into a dense `[out, in]` weight at load.
+pub(crate) type WeightDelta<'a> = &'a dyn Fn(&str, &mut [f32]) -> Result<()>;
+
+/// Where Parakeet-layout encoder linears come from: plain tensors, or MLX
+/// groupwise-affine quantized ones under `quant`, with an optional `delta`
+/// called with each linear's module name (Fluid Speech Pro clean mode).
+/// Quantized weights are dequantized to f32 first, so a delta folds into
+/// them exactly like into a float checkpoint.
+#[derive(Clone, Copy)]
+pub(crate) struct ParakeetWeights<'a> {
+    pub file: &'a SafetensorsFile,
+    pub quant: Option<crate::quant::QuantScheme>,
+    pub delta: Option<WeightDelta<'a>>,
+}
+
+impl<'a> ParakeetWeights<'a> {
+    pub(crate) fn plain(file: &'a SafetensorsFile) -> Self {
+        Self {
+            file,
+            quant: None,
+            delta: None,
+        }
+    }
+
+    /// `(weight [out, in], bias)` for module `base`, delta applied.
+    pub(crate) fn linear(&self, base: &str) -> Result<(Vec<f32>, Option<Vec<f32>>)> {
+        let (mut weight, bias) = match self.quant {
+            Some(scheme) => crate::quant::load_quantized(self.file, base, scheme)?,
+            None => {
+                if crate::quant::is_quantized(self.file, base) {
+                    return Err(SpeechError::Tensor {
+                        name: format!("{base}.scales"),
+                        why: "quantized linear in a checkpoint opened without a scheme".into(),
+                    });
+                }
+                (
+                    load_vec(self.file, &format!("{base}.weight"))?,
+                    load_optional_vec(self.file, &format!("{base}.bias"))?,
+                )
+            }
+        };
+        self.apply_delta(base, &mut weight)?;
+        Ok((weight, bias))
+    }
+
+    fn apply_delta(&self, base: &str, weight: &mut [f32]) -> Result<()> {
+        match self.delta {
+            Some(delta) => delta(base, weight),
+            None => Ok(()),
+        }
+    }
+}
+
 fn load_optional_vec(file: &SafetensorsFile, name: &str) -> Result<Option<Vec<f32>>> {
     if file.contains_tensor(name) {
         load_vec(file, name).map(Some)
@@ -567,21 +620,26 @@ impl Subsampling {
         })
     }
 
-    fn load_parakeet(file: &SafetensorsFile, cfg: &FcEncoderConfig) -> Result<Self> {
+    fn load_parakeet(weights: &ParakeetWeights<'_>, cfg: &FcEncoderConfig) -> Result<Self> {
+        let file = weights.file;
         let ch = cfg.subsampling_conv_channels;
         let ks = cfg.subsampling_conv_kernel_size;
         let base = "encoder.pre_encode.conv";
         let conv = |idx: usize, out: usize, inp: usize| {
             load_conv2d_pair(file, &format!("{base}.{idx}"), out, inp, ks, ks)
         };
+        let (linear_w, linear_b) = weights.linear("encoder.pre_encode.out")?;
         Ok(Subsampling {
             conv0: conv(0, ch, 1)?,
             dw2: conv(2, ch, 1)?,
             pw3: load_conv2d_pair(file, &format!("{base}.3"), ch, ch, 1, 1)?,
             dw5: conv(5, ch, 1)?,
             pw6: load_conv2d_pair(file, &format!("{base}.6"), ch, ch, 1, 1)?,
-            linear_w: load_vec(file, "encoder.pre_encode.out.weight")?,
-            linear_b: load_vec(file, "encoder.pre_encode.out.bias")?,
+            linear_w,
+            linear_b: linear_b.ok_or_else(|| SpeechError::Tensor {
+                name: "encoder.pre_encode.out.bias".into(),
+                why: "missing from safetensors".into(),
+            })?,
             conv_channels: ch,
             kernel_size: ks,
             stride: cfg.subsampling_conv_stride,
@@ -692,13 +750,18 @@ impl ConformerConvolution {
     }
 
     fn load_parakeet(
-        file: &SafetensorsFile,
+        weights: &ParakeetWeights<'_>,
         prefix: &str,
         d: usize,
         kernel: usize,
     ) -> Result<Self> {
-        let pointwise = |name: &str, out: usize| {
-            load_conv_weight(file, &format!("{prefix}.{name}.weight"), out, d, 1, 1)
+        let file = weights.file;
+        // A kernel-1 conv weight flattens to the same [out, in] matrix in
+        // either layout, so a low-rank delta applies to it like a linear.
+        let pointwise = |name: &str, out: usize| -> Result<Vec<f32>> {
+            let mut w = load_conv_weight(file, &format!("{prefix}.{name}.weight"), out, d, 1, 1)?;
+            weights.apply_delta(&format!("{prefix}.{name}"), &mut w)?;
+            Ok(w)
         };
         Ok(ConformerConvolution {
             pw1_w: pointwise("pointwise_conv1", 2 * d)?,
@@ -768,14 +831,21 @@ impl ConformerLayer {
         })
     }
 
-    fn load_parakeet(file: &SafetensorsFile, prefix: &str, cfg: &FcEncoderConfig) -> Result<Self> {
+    fn load_parakeet(
+        weights: &ParakeetWeights<'_>,
+        prefix: &str,
+        cfg: &FcEncoderConfig,
+    ) -> Result<Self> {
+        let file = weights.file;
         let ff = |name: &str| -> Result<ConformerFeedForward> {
             let base = format!("{prefix}.{name}");
+            let (l1_w, l1_b) = weights.linear(&format!("{base}.linear1"))?;
+            let (l2_w, l2_b) = weights.linear(&format!("{base}.linear2"))?;
             Ok(ConformerFeedForward {
-                l1_w: load_vec(file, &format!("{base}.linear1.weight"))?,
-                l1_b: load_optional_vec(file, &format!("{base}.linear1.bias"))?,
-                l2_w: load_vec(file, &format!("{base}.linear2.weight"))?,
-                l2_b: load_optional_vec(file, &format!("{base}.linear2.bias"))?,
+                l1_w,
+                l1_b,
+                l2_w,
+                l2_b,
             })
         };
         let norm = |name: &str| -> Result<(Vec<f32>, Vec<f32>)> {
@@ -790,8 +860,11 @@ impl ConformerLayer {
         let (norm_ff2_w, norm_ff2_b) = norm("norm_feed_forward2")?;
         let (norm_out_w, norm_out_b) = norm("norm_out")?;
         let attn_prefix = format!("{prefix}.self_attn");
-        let projection =
-            |name: &str| load_vec(file, &format!("{attn_prefix}.linear_{name}.weight"));
+        // Config parsing refuses attention biases for this layout, so only
+        // the weight is taken.
+        let projection = |name: &str| -> Result<Vec<f32>> {
+            Ok(weights.linear(&format!("{attn_prefix}.linear_{name}"))?.0)
+        };
         Ok(ConformerLayer {
             norm_ff1_w,
             norm_ff1_b,
@@ -807,14 +880,14 @@ impl ConformerLayer {
                 v_b: None,
                 o_w: projection("out")?,
                 o_b: None,
-                rel_k_w: load_vec(file, &format!("{attn_prefix}.linear_pos.weight"))?,
+                rel_k_w: projection("pos")?,
                 bias_u: load_vec(file, &format!("{attn_prefix}.pos_bias_u"))?,
                 bias_v: load_vec(file, &format!("{attn_prefix}.pos_bias_v"))?,
             },
             norm_conv_w,
             norm_conv_b,
             conv: ConformerConvolution::load_parakeet(
-                file,
+                weights,
                 &format!("{prefix}.conv"),
                 cfg.hidden_size,
                 cfg.conv_kernel_size,
@@ -911,7 +984,7 @@ impl ConformerLayer {
             norm_conv_w,
             norm_conv_b,
             conv: ConformerConvolution::load_parakeet(
-                file,
+                &ParakeetWeights::plain(file),
                 &format!("{prefix}.conv"),
                 cfg.hidden_size,
                 cfg.conv_kernel_size,
@@ -1157,6 +1230,19 @@ fn relu_in_place(v: &mut [f32]) {
     }
 }
 
+/// Zeroes time rows `t >= len` of a channel-major `[ch, frames, width]` map.
+/// `None` leaves the map unmasked.
+fn mask_time_rows(x: &mut [f32], ch: usize, frames: usize, width: usize, len: Option<usize>) {
+    let Some(len) = len else { return };
+    if len >= frames {
+        return;
+    }
+    for c in 0..ch {
+        let base = c * frames * width;
+        x[base + len * width..base + frames * width].fill(0.0);
+    }
+}
+
 /// One stage of the stride-2 subsampling length formula
 /// `floor((L - 1) / 2) + 1`.
 fn subsample_len(len: usize) -> usize {
@@ -1167,10 +1253,28 @@ impl Subsampling {
     /// `[n_mels, frames]` mel features -> `[frames/8, hidden]` embeddings,
     /// returned t-major `[time, hidden]`.
     fn forward(&self, feats: &[f32], n_mels: usize, frames: usize, hidden: usize) -> Vec<f32> {
+        self.forward_masked(feats, n_mels, frames, hidden, None)
+    }
+
+    /// `forward` with NeMo's masked conv subsampling when `valid` is set:
+    /// time rows at or past each stage's valid length are zeroed before the
+    /// next layer, so a trailing padded mel frame cannot leak into real
+    /// frames through the stride-2 kernels. parakeet-mlx (and so the plain
+    /// Parakeet profiles) does not mask. Fluid Speech Pro was scored with the
+    /// masked form (`SubsamplingWithFrameCleaner` in its `fluid_speech_mlx.py`).
+    fn forward_masked(
+        &self,
+        feats: &[f32],
+        n_mels: usize,
+        frames: usize,
+        hidden: usize,
+        valid: Option<usize>,
+    ) -> Vec<f32> {
         let ks = self.kernel_size;
         let stride = self.stride;
         let pad = (ks - 1) / 2;
         let ch = self.conv_channels;
+        let next_len = |len: Option<usize>| len.map(|l| (l + 2 * pad - ks) / stride + 1);
         // Channel-major [1, frames, n_mels] image for conv2d.
         let mut img = vec![0.0f32; frames * n_mels];
         for m in 0..n_mels {
@@ -1178,6 +1282,10 @@ impl Subsampling {
                 img[t * n_mels + m] = feats[m * frames + t];
             }
         }
+        mask_time_rows(&mut img, 1, frames, n_mels, valid);
+        let l1 = next_len(valid);
+        let l2 = next_len(l1);
+        let l3 = next_len(l2);
         let mut x = ops::conv2d(
             &img,
             &self.conv0.w,
@@ -1196,6 +1304,7 @@ impl Subsampling {
             (frames + 2 * pad - ks) / stride + 1,
             (n_mels + 2 * pad - ks) / stride + 1,
         );
+        mask_time_rows(&mut x, ch, f1, m1, l1);
         relu_in_place(&mut x);
         x = ops::conv2d(
             &x,
@@ -1215,6 +1324,7 @@ impl Subsampling {
             (f1 + 2 * pad - ks) / stride + 1,
             (m1 + 2 * pad - ks) / stride + 1,
         );
+        mask_time_rows(&mut x, ch, f2, m2, l2);
         x = ops::conv2d(
             &x,
             &self.pw3.w,
@@ -1229,6 +1339,7 @@ impl Subsampling {
             0,
             1,
         );
+        mask_time_rows(&mut x, ch, f2, m2, l2);
         relu_in_place(&mut x);
         x = ops::conv2d(
             &x,
@@ -1248,6 +1359,7 @@ impl Subsampling {
             (f2 + 2 * pad - ks) / stride + 1,
             (m2 + 2 * pad - ks) / stride + 1,
         );
+        mask_time_rows(&mut x, ch, f3, m3, l3);
         x = ops::conv2d(
             &x,
             &self.pw6.w,
@@ -1262,6 +1374,7 @@ impl Subsampling {
             0,
             1,
         );
+        mask_time_rows(&mut x, ch, f3, m3, l3);
         relu_in_place(&mut x);
         // Flatten (c, f) per time step in channel-major order, matching
         // the reference's (b, t, c, f) reshape, then project to hidden.
@@ -1531,18 +1644,78 @@ impl FastConformer {
     /// layout. The encoder is shared with Sortformer, while Parakeet uses
     /// `encoder.pre_encode` and omits the disabled linear/convolution biases.
     pub(crate) fn load_parakeet(file: &SafetensorsFile, cfg: &FcEncoderConfig) -> Result<Self> {
+        Self::load_parakeet_weights(&ParakeetWeights::plain(file), cfg)
+    }
+
+    /// `load_parakeet` through a [`ParakeetWeights`] source, for checkpoints
+    /// with MLX-quantized linears or a folded low-rank delta.
+    pub(crate) fn load_parakeet_weights(
+        weights: &ParakeetWeights<'_>,
+        cfg: &FcEncoderConfig,
+    ) -> Result<Self> {
         if cfg.subsampling_conv_kernel_size != 3 || cfg.subsampling_conv_stride != 2 {
             return Err(SpeechError::Unsupported {
                 why: "Parakeet encoder requires 3x3 stride-2 subsampling convolutions".into(),
             });
         }
         let layers = (0..cfg.num_hidden_layers)
-            .map(|i| ConformerLayer::load_parakeet(file, &format!("encoder.layers.{i}"), cfg))
+            .map(|i| ConformerLayer::load_parakeet(weights, &format!("encoder.layers.{i}"), cfg))
             .collect::<Result<Vec<_>>>()?;
         Ok(Self {
-            subsampling: Subsampling::load_parakeet(file, cfg)?,
+            subsampling: Subsampling::load_parakeet(weights, cfg)?,
             layers,
         })
+    }
+
+    /// Fluid Speech Pro encode. `mel_frames` includes NeMo's trailing padded
+    /// frame and `mel_length` counts the real ones. Subsampling is masked to
+    /// the valid lengths, `pre` runs on every subsampled frame (the padded
+    /// one included, as the reference does), and the Conformer sees only the
+    /// valid frames.
+    pub(crate) fn encode_mel_masked(
+        &self,
+        features: &[f32],
+        mel_frames: usize,
+        mel_length: usize,
+        cfg: &FcEncoderConfig,
+        pre: &dyn Fn(&mut [f32], usize) -> Result<()>,
+    ) -> Result<(Vec<f32>, usize)> {
+        if mel_frames == 0
+            || mel_length == 0
+            || mel_length > mel_frames
+            || features.len() != cfg.num_mel_bins.saturating_mul(mel_frames)
+        {
+            return Err(SpeechError::Input {
+                why:
+                    "Parakeet mel features must be nonempty [mel, frame] with a valid frame length"
+                        .into(),
+            });
+        }
+        let (mut valid_len, mut total) = (mel_length, mel_frames);
+        for _ in 0..3 {
+            valid_len = subsample_len(valid_len);
+            total = subsample_len(total);
+        }
+        let mut hidden = self.subsampling.forward_masked(
+            features,
+            cfg.num_mel_bins,
+            mel_frames,
+            cfg.hidden_size,
+            Some(mel_length),
+        );
+        if hidden.len() != total.saturating_mul(cfg.hidden_size) {
+            return Err(SpeechError::Tensor {
+                name: "encoder.pre_encode".into(),
+                why: format!(
+                    "subsampling produced {} frames, expected {total}",
+                    hidden.len() / cfg.hidden_size
+                ),
+            });
+        }
+        pre(&mut hidden, total)?;
+        hidden.truncate(valid_len * cfg.hidden_size);
+        self.encode(&mut hidden, valid_len, cfg);
+        Ok((hidden, valid_len))
     }
 
     /// Loads the FastConformer encoder from the Canary MLX conversion. The
